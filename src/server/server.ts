@@ -210,7 +210,7 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     return c.json(message);
   });
 
-  // Read from the transcript, a page at a time and at most about 2 MiB per
+  // Read from the transcript, a page at a time and at most about 8 MiB per
   // page, only for sessions in the latest snapshot. The guard checks the id
   // first, and the cursor is checked before the index sees it.
   app.get(CONVERSATION_ROUTE, async (c) => {

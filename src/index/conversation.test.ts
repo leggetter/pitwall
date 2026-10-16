@@ -552,14 +552,14 @@ describe('readConversationPage: the cursor', () => {
 });
 
 describe('readConversationPage: bounded on hostile files', () => {
-  it('reads at most 2 MiB for a page, and pages on through a transcript of skipped lines', async () => {
+  it('reads at most 8 MiB for a page, and pages on through a transcript of skipped lines', async () => {
     const lines: unknown[] = [user('the first prompt')];
-    // About 5 MiB of lines the reader skips, after the prompt.
-    for (let i = 0; i < 5 * 32; i++) lines.push(filler(32 * 1024));
+    // About 20 MiB of lines the reader skips, after the prompt.
+    for (let i = 0; i < 20 * 32; i++) lines.push(filler(32 * 1024));
     lines.push(user('the newest prompt'));
     const file = await transcript(jsonl(...lines));
     const { pages, entries, bytes } = await allPages(file);
-    expect(PAGE_READ_BUDGET).toBe(2 * 1024 * 1024);
+    expect(PAGE_READ_BUDGET).toBe(8 * 1024 * 1024);
     expect(Math.max(...bytes)).toBeLessThanOrEqual(PAGE_READ_BUDGET);
     expect(pages.length).toBeGreaterThanOrEqual(3);
     expect(pages[0]?.entries.map((e) => e.text)).toEqual(['the newest prompt']);
@@ -567,7 +567,7 @@ describe('readConversationPage: bounded on hostile files', () => {
   });
 
   it('skips a line longer than the whole budget, and reads the lines on both sides of it', async () => {
-    const huge = `${JSON.stringify(user(`big ${'y'.repeat(3 * 1024 * 1024)}`))}\n`;
+    const huge = `${JSON.stringify(user(`big ${'y'.repeat(PAGE_READ_BUDGET + 1024 * 1024)}`))}\n`;
     const file = await transcript(jsonl(user('before the huge line')) + huge + jsonl(user('after the huge line')));
     const { entries, bytes } = await allPages(file);
     expect(Math.max(...bytes)).toBeLessThanOrEqual(PAGE_READ_BUDGET);
@@ -575,7 +575,7 @@ describe('readConversationPage: bounded on hostile files', () => {
   });
 
   it('skips a huge line at the very start or the very end, unfinished or not', async () => {
-    const huge = `${JSON.stringify(user('z'.repeat(5 * 1024 * 1024)))}`;
+    const huge = `${JSON.stringify(user('z'.repeat(PAGE_READ_BUDGET + 3 * 1024 * 1024)))}`;
     const atStart = await allPages(await transcript(`${huge}\n${jsonl(user('kept'))}`));
     expect(atStart.entries.map((e) => e.text)).toEqual(['kept']);
     const atEnd = await allPages(await transcript(`${jsonl(user('kept'))}${huge.slice(0, -10)}`));
@@ -621,7 +621,7 @@ describe('readConversationPage: bounded on hostile files', () => {
   const FAST_MS = 200;
   const N = 64 * 1024;
 
-  // 24 KiB each, three times what an entry keeps, so 50 of them fit in one page's 2 MiB.
+  // 24 KiB each, three times what an entry keeps, so 50 of them fit in one page's 8 MiB.
   const M = 24 * 1024;
   it.each([
     ['emphasis that never closes', '*\\\\ '.repeat(M / 4)],
@@ -649,8 +649,8 @@ describe('readConversationPage: bounded on hostile files', () => {
     expect(await bestOf3(() => readConversationPage(file, SID))).toBeLessThan(FAST_MS);
   });
 
-  it('reads 2 MiB of lines that parse but give nothing quickly', async () => {
-    const file = await transcript(jsonl(...Array.from({ length: 2048 }, () => toolResult('toolu_none'))) + jsonl(...Array.from({ length: 4000 }, () => filler(400))));
+  it('reads 8 MiB of lines that parse but give nothing quickly', async () => {
+    const file = await transcript(jsonl(...Array.from({ length: 8192 }, () => toolResult('toolu_none'))) + jsonl(...Array.from({ length: 16000 }, () => filler(400))));
     expect(await bestOf3(() => readConversationPage(file, SID))).toBeLessThan(FAST_MS);
   });
 });

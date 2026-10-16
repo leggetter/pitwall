@@ -3,7 +3,7 @@
 // line it can't read is skipped, never an exception.
 //
 // A page is read backwards from the end of the file (or from a cursor), in
-// chunks, until it has 50 entries or has read about 2 MiB. The cursor says
+// chunks, until it has 50 entries or has read about 8 MiB. The cursor says
 // where the older page ends, which file it belongs to, and which tool results
 // the newer pages have seen whose calls are further back.
 
@@ -22,7 +22,7 @@ export const PAGE_ENTRIES = 50;
 /** How much is read from the file at a time. */
 export const CHUNK_BYTES = 256 * KIB;
 /** The most read from the file for one page. */
-export const PAGE_READ_BUDGET = 2 * MIB;
+export const PAGE_READ_BUDGET = 8 * MIB;
 /**
  * The most text an entry carries, in UTF-16 code units, as the contract
  * allows. It's also the most of an entry's source that is stripped of
@@ -54,7 +54,7 @@ export interface ConversationReadOptions {
   pageEntries?: number;
   /** Default 256 KiB. */
   chunkBytes?: number;
-  /** Default 2 MiB. */
+  /** Default 8 MiB. Most of a real transcript's bytes are internal request records, so 2 MiB filled only 7-43 entries a page. */
   readBudget?: number;
 }
 
