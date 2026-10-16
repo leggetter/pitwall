@@ -59,7 +59,8 @@ function summary(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sess
 const SESSIONS: SessionSummary[] = [
   summary({ sessionId: BG_ID }),
   summary({ sessionId: IDLE_ID, shortId: 'bgidle', pid: undefined, alive: false, status: undefined, state: 'blocked' }),
-  summary({ sessionId: DONE_ID, shortId: 'bgdone', state: 'done' }),
+  // Stopped: `claude stop` leaves a session 'done' with no process.
+  summary({ sessionId: DONE_ID, shortId: 'bgdone', state: 'done', pid: undefined, alive: false, status: undefined }),
   summary({ sessionId: INTERACTIVE_ID, kind: 'interactive', shortId: undefined, state: undefined }),
   summary({ sessionId: NO_SHORT_ID, shortId: undefined }),
   summary({ sessionId: FLAG_SHORT_ID, shortId: '--help' }),
@@ -446,16 +447,17 @@ describe('the attach socket', () => {
       expect(spawner.last.options).toMatchObject({ cols: 90, rows: 30 });
     });
 
-    it('treats done, stopped and failed as not running, and working or blocked with a process as running', () => {
+    it('asks to restart only a session with no live process, whatever its state', () => {
       const base = summary({ sessionId: BG_ID });
       expect(needsRestart(base)).toBe(false);
-      expect(needsRestart({ ...base, state: 'blocked' })).toBe(false);
-      for (const state of ['done', 'stopped', 'failed'] as const) expect(needsRestart({ ...base, state })).toBe(true);
+      // A finished session whose process is still alive is attached to as it is.
+      for (const state of ['working', 'blocked', 'done', 'stopped', 'failed'] as const) expect(needsRestart({ ...base, state })).toBe(false);
       const { pid: _pid, ...noPid } = base;
       expect(needsRestart({ ...noPid, alive: false })).toBe(true);
+      expect(needsRestart({ ...noPid, alive: false, state: 'done' })).toBe(true);
     });
 
-    it('asks first for a session whose state is done', async () => {
+    it('asks first for a stopped session (done, with no process)', async () => {
       const { server } = await start();
       const client = await ready(server.port);
       send(client, { type: 'open', sessionId: DONE_ID, cols: 80, rows: 24 });
@@ -675,6 +677,12 @@ describe('the attach socket', () => {
 
     it('childEnvironment drops undefined values and keeps the rest as they are', () => {
       expect(childEnvironment({ A: '1', B: undefined, PITWALL_X: '2' }, TOKEN)).toEqual({ A: '1' });
+      expect(
+        childEnvironment(
+          { A: '1', CLAUDE_CODE_MESSAGING_SOCKET: 'uds:/tmp/x.sock', CLAUDE_CODE_MESSAGING_TOKEN: 'inbox', CLAUDE_JOB_DIR: '/j' },
+          TOKEN,
+        ),
+      ).toEqual({ A: '1' });
     });
   });
 });

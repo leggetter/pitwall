@@ -64,9 +64,6 @@ const CLOSE_GRACE_MS = 250;
 /** A short id `claude attach` can take as one argument: never empty, never an option such as `--help`. */
 const SAFE_SHORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
-/** Background states in which `claude attach` restarts the session (D9). */
-const NOT_RUNNING_STATES = new Set(['done', 'stopped', 'failed']);
-
 export interface AttachOptions {
   indexer: Pick<Indexer, 'latest'>;
   token: string;
@@ -85,9 +82,13 @@ export interface AttachServer {
   close(): Promise<void>;
 }
 
-/** True when attaching would restart the session: it has no process, or has finished. */
+/**
+ * True when attaching would restart the session: it has no live process. A
+ * session that finished its work but whose process is still alive ('done' and
+ * idle) is attached to as it is, because `claude attach` doesn't restart it.
+ */
 export function needsRestart(session: SessionSummary): boolean {
-  return session.pid === undefined || !session.alive || (session.state !== undefined && NOT_RUNNING_STATES.has(session.state));
+  return session.pid === undefined || !session.alive;
 }
 
 export function createAttachServer(options: AttachOptions): AttachServer {
