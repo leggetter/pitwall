@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IndexSnapshot, SessionSummary } from '../shared/protocol.js';
-import { startIndexer } from './index.js';
+import { startIndexer, type Indexer } from './index.js';
 import { isWithin, resolveCwd } from './roots.js';
 import { compareGroups, compareSessions } from './summaries.js';
 
@@ -80,6 +80,27 @@ function sessionProblems(s: SessionSummary, at: string): string[] {
   return problems;
 }
 
+/** lastMessage for every session: well-formed for those with a reply, and nothing for an id that isn't listed. */
+function lastMessageProblems(indexer: Indexer, snapshot: IndexSnapshot): string[] {
+  const problems: string[] = [];
+  for (const [g, group] of snapshot.groups.entries()) {
+    for (const [i, s] of group.sessions.entries()) {
+      const at = `groups[${g}].sessions[${i}].lastMessage`;
+      const message = indexer.lastMessage(s.sessionId);
+      if (message === undefined) {
+        if (s.lastAssistantText !== undefined) problems.push(`${at} (missing, with lastAssistantText)`);
+        continue;
+      }
+      if (message.sessionId !== s.sessionId) problems.push(`${at}.sessionId`);
+      if (typeof message.text !== 'string' || message.text === '') problems.push(`${at}.text`);
+      if (typeof message.truncated !== 'boolean') problems.push(`${at}.truncated`);
+      if (!optional(message.at, isIso)) problems.push(`${at}.at`);
+    }
+  }
+  if (indexer.lastMessage('00000000-0000-4000-8000-000000000000') !== undefined) problems.push('lastMessage (unlisted id)');
+  return problems;
+}
+
 async function snapshotProblems(snapshot: IndexSnapshot): Promise<string[]> {
   const problems: string[] = [];
   const check = (ok: boolean, field: string) => {
@@ -120,6 +141,8 @@ describe.runIf(live)('live index (PITWALL_LIVE=1, read-only)', () => {
     const indexer = startIndexer({ roots: [root], intervalMs: 1000 });
     try {
       const first = await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+      // Before anything async, so the next poll can't change what the reader holds.
+      expect(lastMessageProblems(indexer, first)).toEqual([]);
       expect(await snapshotProblems(first)).toEqual([]);
 
       // Let the poller run again, so the incremental read path runs on real files.
