@@ -136,9 +136,10 @@ export function createConnection(options: ConnectionOptions): Connection {
       if (message.type === 'snapshot') {
         attempt = 0;
         update({ state: 'live', snapshot: message.snapshot });
-      } else {
+      } else if (message.type === 'error') {
         update({ serverError: message.error });
       }
+      // 'heartbeat' is ignored until W7a uses it for "updated Ns ago".
     };
 
     // A failed connection fires `error` and then `close`; the close handler decides.
