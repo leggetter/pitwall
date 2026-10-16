@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionState, ConnectionView } from '../connection.js';
 import { formatRoots, plainText, updatedAgo } from '../format.js';
-import { countAttention, filterGroups, needYou, type Filters } from '../sessions.js';
+import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
 import { GroupSection } from './GroupSection.js';
 
 /** The current time, refreshed every second, for relative times. */
@@ -50,11 +50,11 @@ export function Dashboard({ view }: { view: ConnectionView }) {
     };
   }, [attention]);
 
-  const toggle = (key: string) =>
+  const toggle = (id: string) =>
     setCollapsed((current) => {
       const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
@@ -149,17 +149,20 @@ export function Dashboard({ view }: { view: ConnectionView }) {
               : 'No sessions match the filter.'}
           </p>
         ) : (
-          visible.map(({ group, sessions }) => (
-            <GroupSection
-              key={group.key}
-              group={group}
-              sessions={sessions}
-              collapsed={collapsed.has(group.key)}
-              onToggle={() => toggle(group.key)}
-              showRoot={snapshot.roots.length > 1}
-              now={now}
-            />
-          ))
+          visible.map(({ group, sessions }) => {
+            const id = groupId(group);
+            return (
+              <GroupSection
+                key={id}
+                group={group}
+                sessions={sessions}
+                collapsed={collapsed.has(id)}
+                onToggle={() => toggle(id)}
+                showRoot={snapshot.roots.length > 1}
+                now={now}
+              />
+            );
+          })
         )}
       </main>
     </div>
