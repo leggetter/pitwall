@@ -463,11 +463,36 @@ input {
   gap: 4px 8px;
 }
 
+/* The name, then the title: the name keeps its room, a long title ends in an ellipsis. */
+.session-ident {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .session-name {
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 0.95rem;
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+.session-title-sep {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kind {
