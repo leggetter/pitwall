@@ -417,6 +417,27 @@ describe('copy command', () => {
 
     expect(within(row('odd')).queryByRole('button', { name: 'Copy' })).toBeNull();
   });
+
+  it('is not offered when the short id starts with "-", which claude would read as an option', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          sessions: [
+            session({ name: 'dash-h', kind: 'background', shortId: '-h', state: 'working' }),
+            session({ name: 'dash-help', kind: 'background', shortId: '--help', state: 'working' }),
+            session({ name: 'inner-dash', kind: 'background', shortId: 'bg-7f3a', state: 'working' }),
+            session({ name: 'underscore', kind: 'background', shortId: '_bg7f', state: 'working' }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(within(row('dash-h')).queryByRole('button', { name: 'Copy' })).toBeNull();
+    expect(within(row('dash-help')).queryByRole('button', { name: 'Copy' })).toBeNull();
+    expect(row('dash-h').textContent).not.toContain('claude attach');
+    expect(within(row('inner-dash')).getByText('claude attach bg-7f3a')).toBeTruthy();
+    expect(within(row('underscore')).getByText('claude attach _bg7f')).toBeTruthy();
+  });
 });
 
 describe('filters', () => {
