@@ -64,6 +64,12 @@ const MAX_CARRY_BYTES = 8 * MIB;
  * that are shown.
  */
 export const ASSISTANT_TEXT_KEEP = 64 * KIB;
+/**
+ * How much of the assistant text, outside code blocks, is stripped of
+ * markdown to make the 500 characters shown. Stripping is quadratic on some
+ * hostile lines, so it reads a bounded start rather than all 64 KiB.
+ */
+export const ASSISTANT_TEXT_STRIP_MAX = 4 * KIB;
 const NEWLINE = 0x0a;
 const EMPTY = Buffer.alloc(0);
 /** Session ids become file names, so anything that could escape the projects directory is refused. */
@@ -427,8 +433,28 @@ function textOf(content: unknown): string | undefined {
   return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
+const REMINDER_OPEN = '<system-reminder>';
+const REMINDER_CLOSE = '</system-reminder>';
+
+/**
+ * Removes every `<system-reminder>...</system-reminder>` block. An opening tag
+ * with no closing tag after it is left as it is. Done with indexOf rather than
+ * `/<system-reminder>[\s\S]*?<\/system-reminder>/g`, which scans to the end
+ * of the text from every unclosed tag: quadratic on a prompt full of them.
+ */
 export function stripSystemReminders(text: string): string {
-  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '');
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const start = text.indexOf(REMINDER_OPEN, pos);
+    if (start === -1) break;
+    const end = text.indexOf(REMINDER_CLOSE, start + REMINDER_OPEN.length);
+    // No closing tag after this one, so none after any later opening tag either.
+    if (end === -1) break;
+    out += text.slice(pos, start);
+    pos = end + REMINDER_CLOSE.length;
+  }
+  return pos === 0 ? text : out + text.slice(pos);
 }
 
 function isComplete(fields: Fields): boolean {
@@ -453,7 +479,7 @@ function derive(state: FileState, source: string): Derived {
   if (state.derived?.source !== source) {
     state.derived = {
       source,
-      text: truncate(stripMarkdown(source).trim(), ASSISTANT_TEXT_MAX),
+      text: truncate(stripMarkdown(source, ASSISTANT_TEXT_STRIP_MAX).trim(), ASSISTANT_TEXT_MAX),
       askedYou: detectAskedYou(source),
     };
   }

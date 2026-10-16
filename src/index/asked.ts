@@ -3,9 +3,16 @@
 // busy or idle, so this is the only way to tell "done" from "over to you".
 
 import type { AskedYou } from '../shared/protocol.js';
-import { isHeading, isThematicBreak, markFences, stripMarkdown, truncate, type MarkedLine } from './text.js';
+import { isHeading, isThematicBreak, markFences, stripMarkdown, tail, truncate, type MarkedLine } from './text.js';
 
 export const EXCERPT_MAX = 200;
+/**
+ * How much of one line is stripped of markdown: the start, for an excerpt, and
+ * for a trailing question also the end. Some inline patterns are quadratic in
+ * a line's length on hostile input, so this bounds the work per line while
+ * the message as a whole is still read to its end.
+ */
+export const LINE_STRIP_MAX = 1024;
 
 /**
  * Whether `fullText`, the whole raw markdown of an assistant message, asks the
@@ -17,7 +24,9 @@ export const EXCERPT_MAX = 200;
  * 2. Otherwise asked when the last non-empty line ends with a question mark,
  *    optionally followed by closing quotes or brackets. The excerpt is that line.
  *
- * Excerpts are plain text, on one line, at most 200 characters.
+ * Excerpts are plain text, on one line, at most 200 characters. Lines are
+ * read whole, but only the first and last 1024 characters of a line are
+ * stripped of markdown.
  */
 export function detectAskedYou(fullText: string): AskedYou | undefined {
   const lines = markFences(fullText);
@@ -29,12 +38,17 @@ export function detectAskedYou(fullText: string): AskedYou | undefined {
 // --- Open questions ------------------------------------------------------------
 
 /**
- * The label line. After any blockquote marker, list marker, `#`, `*` and `_`:
- * "open question" or "open questions", then the closing emphasis, a colon and
- * the rest of the line.
+ * The start of a label line. After any blockquote marker, list marker, `#`,
+ * `*` and `_`: "open question" or "open questions", then the closing emphasis
+ * and a colon. The rest of the line follows the match.
+ *
+ * `lead` starts with `*`, `_` or `#`, so it never competes with the
+ * whitespace before it, and nothing after "questions" can fail: two
+ * quantifiers that can both match the same spaces make a failed match try
+ * every split between them, which is quadratic on a long run of spaces.
  */
 const LABEL =
-  /^[\s>]*(?:(?:[-+]|\d+[.)])\s+)?(?<lead>[*_#\s]*)open[*_\s]+questions?(?<close>[*_]*)\s*(?<colon>:?)[*_]*\s*(?<rest>.*)$/i;
+  /^[\s>]*(?:(?:[-+]|\d+[.)])\s+)?(?<lead>(?:[*_#][*_#\s]*)?)open[*_\s]+questions?(?<close>[*_]*)\s*(?<colon>:?)[*_]*\s*/i;
 const LIST_ITEM = /^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+/;
 /** A line that starts a new labelled part, such as `**Next steps:**` or a line that is all bold. */
 const BOLD_LABEL = /^\s*(\*\*|__)(?:[^*_\n]+?(?::\s*\1|\1\s*:)|[^*_\n]+\1\s*$)/;
@@ -52,8 +66,8 @@ function openQuestions(lines: readonly MarkedLine[]): Section | undefined {
     if (line.code) continue;
     const match = LABEL.exec(line.text);
     const groups = match?.groups;
-    if (groups === undefined) continue;
-    const rest = groups.rest ?? '';
+    if (match === null || groups === undefined) continue;
+    const rest = line.text.slice(match[0].length);
     const heading = (groups.lead ?? '').includes('#');
     // "Open questions about the API remain." is prose, not a label: a label
     // has a colon, is wrapped in emphasis, is a heading, or stands alone.
@@ -124,18 +138,23 @@ function trailingQuestion(lines: readonly MarkedLine[]): AskedYou | undefined {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] as MarkedLine;
     if (line.code) continue;
-    const plain = plainLine(line.text);
-    if (plain === '') continue;
-    return ENDS_WITH_QUESTION.test(plain) ? { reason: 'question', excerpt: excerpt(plain) } : undefined;
+    const start = plainLine(line.text);
+    // For a long line, whether it ends with a question is read from its end.
+    const end = line.text.length > LINE_STRIP_MAX ? plainLine(tail(line.text, LINE_STRIP_MAX)) : start;
+    if (start === '' && end === '') continue;
+    return ENDS_WITH_QUESTION.test(end) ? { reason: 'question', excerpt: excerpt(start || end) } : undefined;
   }
   return undefined;
 }
 
 // --- Text ------------------------------------------------------------------------
 
-/** One line as plain text: markdown stripped, without a list marker, whitespace collapsed. */
+/**
+ * One line as plain text: markdown stripped, without a list marker, whitespace
+ * collapsed. Only its first 1024 characters are read.
+ */
 function plainLine(line: string): string {
-  return stripMarkdown(line).replace(LIST_ITEM, '').replace(/\s+/g, ' ').trim();
+  return stripMarkdown(line, LINE_STRIP_MAX).replace(LIST_ITEM, '').replace(/\s+/g, ' ').trim();
 }
 
 function excerpt(text: string): string {
