@@ -266,7 +266,8 @@ export interface ConversationPage {
 
 /**
  * HTTP path that returns a ConversationPage as JSON: the newest page, or the
- * page before the `before` cursor. Same rules as lastMessagePath(): only
+ * page before the `before` cursor. A cursor for a file that was rotated or
+ * rewritten gets 410, and the client should reload the newest page. Same rules as lastMessagePath(): only
  * sessions in the current snapshot, and a server building a route pattern
  * from this must decode it.
  */

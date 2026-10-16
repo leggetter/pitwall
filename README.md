@@ -17,7 +17,7 @@ node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 ```
 
 - **Roots:** a directory, or several. The default is the current directory. Sessions whose working directory is under a root are listed.
-- **Opening it:** the CLI opens your browser at `http://127.0.0.1:<port>/#token=...`. The token is per run, and the page moves it out of the address bar.
+- **Opening it:** the CLI opens your browser through a launch file in `~/.pitwall/` (D7), which sends it to `http://127.0.0.1:<port>/#token=...`. The token is per run and never appears in a process's arguments. The page moves it out of the address bar, and never sends it to the server: it proves it with an HMAC over the WebSocket. `PITWALL_HOME` overrides `~/.pitwall`.
 - **Port:** the default is 4517, falling back to a free port if it's busy. An explicit `--port` fails instead.
 - **Interval:** `--interval` sets the poll, in seconds (default 5).
 - **Read-only:** M1 never messages, attaches to or stops a session.
