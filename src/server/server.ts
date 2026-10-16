@@ -2,32 +2,43 @@
 //
 //   every request and upgrade   Host is 127.0.0.1:<port> (not localhost), else 403
 //   /api/*                      Origin, when present, is this server's origin, else 403;
-//                               then Authorization: Bearer <token>, else 401. That covers
-//                               the snapshot and each session's last message
+//                               then Authorization: Bearer <apiKey> or Bearer <token>, else 401.
+//                               A state-changing method (anything but GET and HEAD) also needs
+//                               the apiKey, not the token, and an Origin, else 403
+//   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
+//                               snapshot, else 503; the session in it, else 404. Every route that
+//                               takes a session id, and every M2 input path, goes through it
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
-//                               then the first message must be a valid auth within 5 seconds, else 4401
+//                               then the challenge-response handshake within 5 seconds, else 4401
+//                               (websocket.ts)
 //   static files                Host only. They are the public build output.
 //
-// No response carries CORS headers.
+// The token can read the API, for scripts. The apiKey, which only a client
+// that answered a challenge gets, can read it too, and is the only credential
+// for state-changing requests. Neither is ever logged. No response carries
+// CORS headers.
 import { createServer, STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { isSafeSessionId, type Indexer } from '../index/index.js';
+import type { Indexer } from '../index/index.js';
 import { lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import {
   bearerToken,
+  identifyCredential,
   isAllowedHost,
   isAllowedOrigin,
+  isStateChanging,
   LOOPBACK_HOST,
   MIN_TOKEN_LENGTH,
+  randomSecret,
   securityHeaders,
-  tokensMatch,
 } from './security.js';
-import { BUILDING_PAGE, resolveStaticFile } from './static.js';
+import { resolveSession } from './sessions.js';
+import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
 
 export const DEFAULT_PORT = 4517;
@@ -58,6 +69,11 @@ export interface ServerInternals {
   authTimeoutMs?: number;
   /** The port tried when options.port is undefined. Default 4517. */
   defaultPort?: number;
+  /**
+   * Adds routes after the /api/* checks and before the catch-all 404, as
+   * W10-W12's input routes will be. Tests use it for a state-changing route.
+   */
+  routes?: (app: Hono) => void;
 }
 
 export async function startServerWithInternals(
@@ -69,13 +85,18 @@ export async function startServerWithInternals(
     throw new Error(`startServer: the token must be at least ${MIN_TOKEN_LENGTH} characters`);
   }
 
+  // Authorizes HTTP API calls for clients that answered a challenge. One per
+  // server process, so it dies with the process, and a page that reconnects
+  // to a restarted server gets the new one from a fresh handshake.
+  const apiKey = randomSecret();
+
   // Set once the server is listening. Until then, nothing is allowed.
   let port: number | undefined;
   // Also set once listening, because the CSP names the WebSocket origins with the real port.
   let headers: [string, string][] = [];
   let closing = false;
 
-  const app = createApp({ indexer, token, webRoot, port: () => port ?? -1 });
+  const app = createApp({ indexer, token, apiKey, webRoot, port: () => port ?? -1, routes: internals.routes });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -99,7 +120,7 @@ export async function startServerWithInternals(
     if (req.url?.split('?')[0] !== WS_PATH) return rejectUpgrade(socket, 404);
     // Browsers always send Origin on a WebSocket upgrade, so a missing one is refused.
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
-    wss.handleUpgrade(req, socket, head, (ws) => handleClient(ws, { indexer, token, authTimeoutMs }));
+    wss.handleUpgrade(req, socket, head, (ws) => handleClient(ws, { indexer, token, apiKey, authTimeoutMs }));
   });
 
   const requested = options.port ?? internals.defaultPort ?? DEFAULT_PORT;
@@ -138,18 +159,26 @@ function gateStatus(req: IncomingMessage, port: number | undefined): number | un
 interface AppContext {
   indexer: Indexer;
   token: string;
+  apiKey: string;
   webRoot: string;
   port(): number;
+  routes: ServerInternals['routes'];
 }
 
-function createApp({ indexer, token, webRoot, port }: AppContext): Hono {
+function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
   const app = new Hono();
 
   app.use('/api/*', async (c, next) => {
     const origin = c.req.header('origin');
     if (origin !== undefined && !isAllowedOrigin(origin, port())) return c.body(null, 403);
     const presented = bearerToken(c.req.header('authorization'));
-    if (presented === undefined || !tokensMatch(presented, token)) return c.body(null, 401);
+    const credential = presented === undefined ? undefined : identifyCredential(presented, apiKey, token);
+    if (credential === undefined) return c.body(null, 401);
+    // Anything that can change state needs the apiKey, which only a page that
+    // answered a challenge holds, and must come from this server's own page.
+    // Browsers send Origin on every such request. 403, not 401: the web UI
+    // takes a 401 to mean its apiKey is stale and reconnects.
+    if (isStateChanging(c.req.method) && (credential !== 'apiKey' || origin === undefined)) return c.body(null, 403);
     await next();
   });
 
@@ -161,20 +190,30 @@ function createApp({ indexer, token, webRoot, port }: AppContext): Hono {
   });
 
   // Answered from memory, never by reading a file: the index serves only
-  // sessions in the latest snapshot, and the id is checked before it's used.
+  // sessions in the latest snapshot, and the guard checks the id first.
   app.get(LAST_MESSAGE_ROUTE, (c) => {
     c.header('Cache-Control', 'no-store');
-    const sessionId = c.req.param('sessionId') ?? '';
-    if (!isSafeSessionId(sessionId)) return c.body(null, 400);
-    const message = indexer.lastMessage(sessionId);
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    const message = indexer.lastMessage(lookup.session.sessionId);
     if (!message) return c.body(null, 404);
     return c.json(message);
   });
+
+  routes?.(app);
 
   app.all('/api/*', (c) => c.body(null, 404));
 
   // A plain request to the WebSocket path, without an upgrade.
   app.all(WS_PATH, (c) => c.body(null, 426));
+
+  // Loaded by the "still building" page so it reloads itself, keeping the URL
+  // and its #token fragment. Served from here because webRoot doesn't exist yet.
+  app.get(BUILDING_SCRIPT_PATH, (c) => {
+    c.header('Content-Type', 'text/javascript; charset=utf-8');
+    c.header('Cache-Control', 'no-store');
+    return c.body(BUILDING_SCRIPT);
+  });
 
   app.get('*', async (c) => {
     const result = await resolveStaticFile(webRoot, new URL(c.req.url).pathname);

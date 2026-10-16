@@ -184,13 +184,7 @@ export interface LastMessage {
  * challenge's nonce as UTF-8)). The browser computes it with WebCrypto. The
  * server compares it in constant time, and accepts each nonce only once.
  */
-export type ClientMessage = { type: 'auth'; proof: string } | LegacyClientAuth;
-
-/**
- * M1's raw-token auth, kept only while M2 is in progress. W8 removes it,
- * switching the server and the client to `proof` in the same change.
- */
-export type LegacyClientAuth = { type: 'auth'; token: string };
+export type ClientMessage = { type: 'auth'; proof: string };
 
 /**
  * WebSocket close code for a missing or wrong proof, an expired challenge, or
