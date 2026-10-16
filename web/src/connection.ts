@@ -20,6 +20,9 @@ import {
   type SourceHealth,
 } from '../../src/shared/protocol.js';
 import type { ApiKeys } from './api.js';
+import { computeProof, parseChallenge, SECRET_SHAPE, type Prover } from './proof.js';
+
+export { computeProof, type Prover };
 
 /**
  * - `connecting`: the first attempt, until the first snapshot arrives.
@@ -62,9 +65,6 @@ export interface ConnectionView {
   serverError?: string;
 }
 
-/** Computes the answer to a challenge. */
-export type Prover = (token: string, nonce: string) => Promise<string>;
-
 export interface ConnectionOptions {
   url: string;
   /** Used only to compute proofs. Never sent. */
@@ -100,27 +100,6 @@ export function socketUrl(host: string): string {
   return `ws://${host}${WS_PATH}`;
 }
 
-/**
- * base64url(HMAC-SHA256(key = token as UTF-8, message = nonce as UTF-8)), the
- * answer to a challenge. WebCrypto is available because pitwall's page is
- * served from http://127.0.0.1, which browsers treat as a secure context.
- */
-export async function computeProof(token: string, nonce: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', encoder.encode(token), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(nonce));
-  return toBase64Url(new Uint8Array(signature));
-}
-
-function toBase64Url(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-/** 32 bytes as base64url, as the contract says for both the nonce and the apiKey. */
-const SECRET_SHAPE = /^[A-Za-z0-9_-]{43}$/;
-
 /** Parses a server message, ignoring anything malformed or of a type this UI doesn't know. */
 export function parseServerMessage(data: unknown): ServerMessage | undefined {
   if (typeof data !== 'string') return undefined;
@@ -132,13 +111,7 @@ export function parseServerMessage(data: unknown): ServerMessage | undefined {
   }
   if (typeof message !== 'object' || message === null) return undefined;
   const candidate = message as Record<string, unknown>;
-  if (candidate.type === 'challenge') {
-    // Any numeric version parses, so a mismatch can be reported rather than ignored.
-    if (typeof candidate.version === 'number' && typeof candidate.nonce === 'string' && SECRET_SHAPE.test(candidate.nonce)) {
-      return { type: 'challenge', version: candidate.version, nonce: candidate.nonce };
-    }
-    return undefined;
-  }
+  if (candidate.type === 'challenge') return parseChallenge(candidate);
   if (candidate.type === 'authenticated') {
     if (typeof candidate.apiKey === 'string' && SECRET_SHAPE.test(candidate.apiKey)) {
       return { type: 'authenticated', apiKey: candidate.apiKey };
