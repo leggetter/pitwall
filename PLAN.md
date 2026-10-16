@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 done on 2026-10-16. Spikes [001](docs/spikes/001-session-control.md) and [002](docs/spikes/002-supervisor-to-interactive.md) pass, including a background supervisor messaging an interactive session and getting a reply. M1, a read-only index, is built and in review in [PR #6](https://github.com/leggetter/pitwall/pull/6). |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Fix the W6 review findings (W6a)<br>- Phil tries M1 and approves the merge (W7) |
+| **Next steps** | - Finish W7a<br>- Phil tries M1 and approves the merge (W7)<br>- Then M2, starting with its security gate |
 
 ## Who is this for
 
@@ -125,52 +125,98 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
 
 ## Milestones
 
-- **M0 - Spike.** Done.
-- **M1 - Read-only index.** `pitwall [root...]` starts the server and opens the UI. Sessions are grouped by repo, with kind, state, waiting reason, last activity and the last assistant message, refreshing on their own.
-  - Flag stale jobs: blocked with no activity for 7 days, process or not.
-  - Flag sessions that finished their turn by asking me something (`askedYou`), as a heuristic over the transcript.
-  - Read transcripts from a byte offset, never whole files (434 KB after two one-word turns).
-  - Tell cross-session messages apart from my own prompts. They're `user` entries with `isMeta: true` and content starting `Another Claude session sent a message:`.
-- **M1b - My open pull requests.** Read-only and separate from the session index. It adds no input path, so the M2 security gate doesn't block it. Requested by Phil on 2026-10-16.
-  - **Source:** one GraphQL search through `gh api graphql` (`is:pr is:open author:@me archived:false`), run with `execFile` and no shell, so the GitHub token stays inside `gh`.
-    - One query returns the repo, number, title, draft, `reviewDecision`, `mergeable`, the latest commit's `statusCheckRollup` and `updatedAt`.
-    - Measured on 2026-10-16: 44 PRs, 1 rate-limit point of 5,000 an hour, about 8 s.
-    - `gh search prs` takes 2.6 s but has no CI or review state.
-  - **Cadence:** its own poller, every 3 minutes by default, plus a refresh button. Never tied to the 5 s session poll.
-  - **Grouping:** org, then repo, then PR, with the same collapsed-by-default groups and saved state as sessions.
-    - Highlight failing CI, merge conflicts and changes requested.
-    - Show draft and approved as quieter states.
-  - **Noise:** 45 open PRs across 12 orgs on 2026-10-16, many of them years-old PRs to other people's repos. Default to PRs updated in the last 90 days, with a count of the hidden ones and a toggle to show them. Consider an org allowlist flag later.
-  - **Linking to sessions:** the index already reads transcripts. A PR whose URL appears in a session's recent turns shows that session's name on the PR row, and the session row gets a PR badge. Agent view does something similar for background sessions.
-  - **Contract:** a separate `prs` message type and `GET /api/prs`, both behind the existing token and `Origin` checks. PR titles from private repos are as sensitive as session data.
-  - **Fails soft:** if `gh` is missing or not logged in, the panel says so, and the sessions view is unaffected.
-  - **Feeds M4:** triage can then say things like "CI is failing on your PR, and the session that opened it is idle".
-- **M2 - Act.** Session view (transcript, plus attach for background sessions), a spawn dialog, stop and remove.
-  - Show the `Workspace not trusted` error with the command to run. Never grant trust for me.
-  - Contract additions suggested during M1:
-    - my home directory in the snapshot, so the UI doesn't guess `~`;
-    - an auth acknowledgement on the WebSocket;
-    - worktree branch names for sessions in worktrees;
-    - a background job's "needs" line from `state.json`, behind the adapter.
-  - Check whether `claude attach` works on a background session that isn't running (done, stopped or failed), and hide the attach command if not.
-  - **Security gate: none of these ships before any input path does** (W6 finding 1). Another local user can currently learn the token, which is harmless while pitwall is read-only.
-    - **WebSocket auth by challenge-response:** the server sends a nonce and the client answers with HMAC(token, nonce), so the raw token never leaves the page. A squatter on the port then learns nothing it can reuse.
-    - **Dev readiness:** `npm run dev` opens the browser only after the CLI child reports it is listening, not when anything answers on 4517.
-    - **No token in process arguments:** `ps` shows other users the `open <url#token>` command line. Use a 0600 redirect file or a single-use launch code instead.
-  - Detect a transcript rewritten in place within one poll (W6 finding 7), if Claude Code ever does that.
-- **M3 - Supervisor.** Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions.
-  - **First: titles from each session's recent turns** (W7 decision C).
-    - **Spike first:**
-      - Can `claude -p --bare --no-session-persistence --model haiku` run on Phil's Max login, rather than needing an API key?
-      - Does it stay out of `claude agents --json` and cross-session listings, so pitwall's own calls don't show up as sessions?
-      - What does each title cost, and how long does it take?
-    - **Then:** regenerate a session's title after new activity, once it's idle, at most every few minutes, within a token budget.
-  - Label relayed messages in the UI as coming from the supervisor, because that's how the receiving session sees them.
-  - Get status from pitwall's index (D1 polling and transcripts), not by messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
-  - Don't subscribe to idle notices broadly. Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
-- **M4 - Triage.** Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using PR and CI state from `gh`.
-  - The supervisor refines M1's `askedYou` heuristic: it reads each idle session's latest turns and judges whether it really needs me, and how urgently.
-  - Use age as a signal. In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
+In the order they'll be built. Each starts when the one before it has merged into `main`.
+
+### M0 - Spikes (done)
+
+Spikes 001 and 002 confirmed every interface pitwall relies on. See "M0: spike" above.
+
+### M1 - Read-only index (in progress)
+
+`pitwall [root...]` starts the server and opens the UI. Sessions are grouped by repo, with kind, state, waiting reason, last activity and the last assistant message, refreshing on their own. The work items are in "M1 work breakdown" below; only W7a and Phil's merge approval (W7) remain.
+
+- **Stale jobs:** flag those blocked with no activity for 7 days, process or not.
+- **`askedYou`:** flag sessions that finished their turn by asking me something, as a heuristic over the transcript.
+- **Transcripts:** read them from a byte offset, never whole files (434 KB after two one-word turns).
+- **Cross-session messages:** tell them apart from my own prompts. They're `user` entries with `isMeta: true` and content starting `Another Claude session sent a message:`.
+
+### M2 - Interact with sessions from the web UI (next)
+
+Open a session from its row, drive background sessions fully in the browser, start new sessions, and stop or remove them. Prioritised ahead of the PR view by Phil on 2026-10-16.
+
+**What can be driven from the browser, by session kind:**
+
+| Session kind | In the web UI | How |
+| --- | --- | --- |
+| Background, including sessions pitwall starts | Full interaction: type prompts, answer permission prompts and dialogs | xterm.js over a PTY running `claude attach <id>` (D3, spike S3) |
+| Interactive, in Warp or Cursor | Read-only, until I type `/bg` in its terminal. It then becomes a background session with the same conversation, and pitwall can attach | The row says so: "Running in a terminal. Type `/bg` there to drive it from here" (D2) |
+| Interactive, left where it is | A message relayed by the supervisor, which can't approve prompts | M4, cross-session messaging (D2) |
+
+**Order of work:**
+
+1. **Security gate.** Nothing that accepts input ships before this (W6 finding 1). Another local user can currently learn the token, which is harmless only while pitwall is read-only.
+   - **WebSocket auth by challenge-response:** the server sends a nonce, and the client answers with HMAC(token, nonce) using WebCrypto. The raw token never leaves the page, so a process squatting on the port learns nothing it can reuse.
+   - **No token in process arguments:** `ps` shows other users the `open <url#token>` command line. Use a 0600 redirect file or a single-use launch code instead.
+   - **Dev readiness:** `npm run dev` opens the browser only after the CLI child reports it's listening, not when anything answers on 4517.
+   - **Every new input path** (the attach WebSocket, spawn, stop, remove) sits behind the token, `Host` and `Origin` checks, and only acts on sessions in the current snapshot.
+2. **Session view.** Clicking a row opens the session: the full last message, and the conversation read from the transcript a page at a time, from the end, with tool calls collapsed. Read-only, so it works for every kind of session.
+3. **Attach for background sessions.**
+   - A PTY per open view, running `claude attach <id>` through `node-pty`, shown with xterm.js. It supports resize and input. Closing the view detaches, and the session keeps running.
+   - `node-pty` is the first native dependency, so the build needs its install script approved, and CI builds it.
+   - `claude attach` restarts a background session that isn't running (done, stopped or failed). That's an action, so the UI asks first: "This session isn't running. Attaching restarts it."
+4. **Interactive sessions.** The row explains the `/bg` route. Once moved, the session reappears as a background session with the same id, and attach works.
+5. **Spawn.** A "New session" dialog with a directory under a root, picked from the grouped repos, a name, an optional model and the first prompt.
+   - It runs `claude --bg --name <name> [--model <m>] "<prompt>"` with `execFile` (no shell) in that directory. The new session shows up in the list and can be attached straight away.
+   - Show Claude Code's `Workspace not trusted` error with the command to run. Never grant trust for me.
+6. **Stop and remove** a background session, with `claude stop <id>` and `claude rm <id>`, after a confirmation. `rm` keeps a worktree that has unpushed commits; show Claude Code's message when it does.
+
+**Also in M2:**
+- **Contract additions suggested during M1:**
+  - my home directory in the snapshot, so the UI doesn't guess `~`;
+  - an auth acknowledgement on the WebSocket, which the challenge-response handshake provides;
+  - worktree branch names for sessions in worktrees;
+  - a background job's "needs" line from `state.json`, behind the adapter.
+- **Detect a transcript rewritten in place** within one poll (W6 finding 7), if Claude Code ever does that.
+- **Tests never touch a real session.** Anything that attaches, spawns, stops or removes uses throwaway `pitwall-test-*` sessions on Haiku, removed afterwards. Live checks stay behind `PITWALL_LIVE=1`.
+
+### M3 - My open pull requests
+
+Read-only, and separate from the session index. Requested by Phil on 2026-10-16, and scheduled after M2 at his request.
+
+- **Source:** one GraphQL search through `gh api graphql` (`is:pr is:open author:@me archived:false`), run with `execFile` and no shell, so the GitHub token stays inside `gh`.
+  - One query returns the repo, number, title, draft, `reviewDecision`, `mergeable`, the latest commit's `statusCheckRollup` and `updatedAt`.
+  - Measured on 2026-10-16: 44 PRs, 1 rate-limit point of 5,000 an hour, about 8 s.
+  - `gh search prs` takes 2.6 s but has no CI or review state.
+- **Cadence:** its own poller, every 3 minutes by default, plus a refresh button. Never tied to the 5 s session poll.
+- **Grouping:** org, then repo, then PR, with the same collapsed-by-default groups and saved state as sessions.
+  - Highlight failing CI, merge conflicts and changes requested.
+  - Show draft and approved as quieter states.
+- **Noise:** 45 open PRs across 12 orgs on 2026-10-16, many of them years-old PRs to other people's repos. Default to PRs updated in the last 90 days, with a count of the hidden ones and a toggle to show them. Consider an org allowlist flag later.
+- **Linking to sessions:** a PR whose URL appears in a session's recent turns shows that session's name on the PR row, and the session row gets a PR badge.
+- **Contract:** a separate `prs` message type and `GET /api/prs`, behind the same token and `Origin` checks. PR titles from private repos are as sensitive as session data.
+- **Fails soft:** if `gh` is missing or not logged in, the panel says so, and the sessions view is unaffected.
+
+### M4 - Supervisor
+
+Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions. It's a background Claude Code session (D4).
+
+- **First: titles from each session's recent turns** (W7 decision C), replacing Claude Code's first-prompt titles from M1.
+  - **Spike first:**
+    - Can `claude -p --bare --no-session-persistence --model haiku` run on Phil's Max login, rather than needing an API key?
+    - Does it stay out of `claude agents --json` and cross-session listings, so pitwall's own calls don't show up as sessions?
+    - What does each title cost, and how long does it take?
+  - **Then:** regenerate a session's title after new activity, once it's idle, at most every few minutes, within a token budget.
+- **Relayed messages** are labeled in the UI as coming from the supervisor, because that's how the receiving session sees them.
+- **Status comes from pitwall's index** (D1 polling and transcripts), not from messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
+- **Don't subscribe to idle notices broadly.** Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
+
+### M5 - Triage
+
+Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using the session index, the supervisor and M3's PR and CI state.
+
+- **The supervisor refines M1's `askedYou` heuristic:** it reads each idle session's latest turns and judges whether it really needs me, and how urgently.
+- **Age is a signal.** In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
+- **PRs and sessions together,** for example: "CI is failing on your PR, and the session that opened it is idle."
 
 ## M1 work breakdown
 
@@ -195,7 +241,7 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 Run read-only against `~/hookdeck/git`: 17 of 17 sessions found and grouped by repo, live updates every poll, no console errors, clean shutdown, 315 tests passing.
 
 - **"Needs you" missed most of what needed Phil.** 1 of 17 sessions was flagged, against 10 in the manual sweep that morning. Interactive sessions only report busy or idle, so one that ended its turn with questions looks the same as one that's done.
-  - **Decision (Phil):** option C. Add a transcript heuristic now (`askedYou` in the contract). The M4 supervisor triage refines it later.
+  - **Decision (Phil):** option C. Add a transcript heuristic now (`askedYou` in the contract). M5 triage, with the M4 supervisor, refines it later.
 - **Stale missed abandoned jobs that still had a process.** A background job blocked since 24 Sep was flagged as needing Phil. Stale is now 7 days without activity, with or without a process.
 - **Raw markdown made the rows hard to read.** The index now strips markdown syntax before truncating.
 - **A deleted working directory grouped as a plain folder.** Rows now say the directory no longer exists (`cwdMissing`).
@@ -203,10 +249,10 @@ Run read-only against `~/hookdeck/git`: 17 of 17 sessions found and grouped by r
   - **Matched the morning sweep:** every session it had rated as waiting that still was, 7 sessions.
   - **Correctly cleared:** two sessions that had moved on since the morning.
   - **Extra flags:** small or moot questions the morning sweep had rated as housekeeping or closeable, including one whose question went moot when its PR merged.
-  - **What that means:** the heuristic finds what's waiting; judging urgency and spotting moot questions is M4's job.
+  - **What that means:** the heuristic finds what's waiting; judging urgency and spotting moot questions is M5's job.
 - **Heuristic rules decided:**
   - **An "Open questions: None" section decides,** even if a later line ends in a question mark. That matches how Phil's sessions write.
-  - **Ranking older questions lower is left for M4.**
+  - **Ranking older questions lower is left for M5.**
 
 ### W6 review findings (2026-10-16)
 
@@ -242,7 +288,7 @@ From Phil's first look at the running UI.
 - **Session names like `git-a0` don't say what a session is about.**
   - **Decision:** option C.
     - **Now:** show Claude Code's own generated title after the name (`titleSource: 'claude-code'`). It's free, but it's set once from the first prompt and never updated.
-    - **M3:** replace it with a title pitwall generates from the session's recent turns (`titleSource: 'pitwall'`).
+    - **M4:** replace it with a title pitwall generates from the session's recent turns (`titleSource: 'pitwall'`).
 
 ### Module layout
 
@@ -281,7 +327,11 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] Spike 002: a background supervisor messaging an interactive session
 - [x] Settle D1-D4 and D6
 - [x] Confirm D5, the stack (Phil)
-- [ ] Build M1
+- [ ] Build M1 (W7a, then Phil's approval)
+- [ ] M2: interact with sessions, security gate first
+- [ ] M3: my open pull requests
+- [ ] M4: supervisor
+- [ ] M5: triage
 
 ---
 
