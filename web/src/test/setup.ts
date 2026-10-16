@@ -7,6 +7,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   window.sessionStorage.clear();
+  window.localStorage.clear();
   window.history.replaceState(null, '', '/');
   document.title = '';
 });

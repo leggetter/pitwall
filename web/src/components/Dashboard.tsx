@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionState, ConnectionView } from '../connection.js';
 import { formatRoots, plainText, updatedAgo } from '../format.js';
+import { browserStorage, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
 import { GroupSection } from './GroupSection.js';
 
@@ -30,11 +31,18 @@ function ConnectionBadge({ state }: { state: ConnectionState }) {
   );
 }
 
-export function Dashboard({ view }: { view: ConnectionView }) {
+export interface DashboardProps {
+  view: ConnectionView;
+  /** Where the open groups are remembered. Tests pass their own; localStorage otherwise. */
+  storage?: StorageSource;
+}
+
+export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   const { state, snapshot, serverError } = view;
   const now = useNow();
   const [filters, setFilters] = useState<Filters>({ text: '', attentionOnly: false });
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  // Groups start collapsed; the ones opened are remembered across reloads.
+  const [open, setOpen] = useState<GroupState>(() => readGroupState(storage));
   const [dismissedError, setDismissedError] = useState<string>();
 
   const groups = snapshot?.groups ?? [];
@@ -50,13 +58,12 @@ export function Dashboard({ view }: { view: ConnectionView }) {
     };
   }, [attention]);
 
-  const toggle = (id: string) =>
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const toggle = (id: string) => {
+    const next = new Map(open);
+    next.set(id, !(open.get(id) ?? false));
+    setOpen(next);
+    writeGroupState(next, new Set(groups.map(groupId)), storage);
+  };
 
   const showError = serverError !== undefined && serverError !== dismissedError;
 
@@ -156,7 +163,7 @@ export function Dashboard({ view }: { view: ConnectionView }) {
                 key={id}
                 group={group}
                 sessions={sessions}
-                collapsed={collapsed.has(id)}
+                collapsed={!(open.get(id) ?? false)}
                 onToggle={() => toggle(id)}
                 showRoot={snapshot.roots.length > 1}
                 now={now}
