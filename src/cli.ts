@@ -10,18 +10,25 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
 import { DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
+import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
-export const USAGE = `Usage: pitwall [root...] [--port <n>] [--no-open]
+/** The shortest and longest poll interval `--interval` accepts, in seconds. */
+export const INTERVAL_MIN_SECONDS = 1;
+export const INTERVAL_MAX_SECONDS = 300;
+
+export const USAGE = `Usage: pitwall [root...] [--port <n>] [--interval <seconds>] [--no-open]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the current directory.
 
 Options:
-  --port <n>     Port on 127.0.0.1. Default ${DEFAULT_PORT}, or a free port if
-                 ${DEFAULT_PORT} is busy. 0 always picks a free port.
-  --no-open      Don't open the browser.
-  -h, --help     Show this help.
-  -v, --version  Show the version.
+  --port <n>            Port on 127.0.0.1. Default ${DEFAULT_PORT}, or a free port if
+                        ${DEFAULT_PORT} is busy. 0 always picks a free port.
+  --interval <seconds>  How often to poll claude agents --json, in whole seconds
+                        from ${INTERVAL_MIN_SECONDS} to ${INTERVAL_MAX_SECONDS}. Default ${DEFAULT_POLL_INTERVAL_MS / 1000}.
+  --no-open             Don't open the browser.
+  -h, --help            Show this help.
+  -v, --version         Show the version.
 
 Environment:
   PITWALL_TOKEN    Use this token instead of a random one. At least 32
@@ -42,6 +49,8 @@ export type CliCommand =
       roots: string[];
       /** Undefined means the default port, with fallback. */
       port?: number;
+      /** From `--interval <seconds>`. Undefined means the indexer's default. */
+      intervalMs?: number;
       open: boolean;
     };
 
@@ -54,6 +63,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       strict: true,
       options: {
         port: { type: 'string' },
+        interval: { type: 'string' },
         'no-open': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
@@ -70,6 +80,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     kind: 'run',
     roots: positionals,
     ...(values.port === undefined ? {} : { port: parsePort(values.port) }),
+    ...(values.interval === undefined ? {} : { intervalMs: parseInterval(values.interval) * 1000 }),
     open: !values['no-open'] && env.PITWALL_NO_OPEN !== '1',
   };
 }
@@ -80,6 +91,17 @@ function parsePort(raw: string): number {
     throw new UsageError(`--port must be a whole number from 0 to 65535, not "${raw}"`);
   }
   return port;
+}
+
+/** Whole seconds from 1 to 300. */
+function parseInterval(raw: string): number {
+  const seconds = /^\d{1,3}$/.test(raw) ? Number(raw) : NaN;
+  if (!(seconds >= INTERVAL_MIN_SECONDS && seconds <= INTERVAL_MAX_SECONDS)) {
+    throw new UsageError(
+      `--interval must be a whole number of seconds from ${INTERVAL_MIN_SECONDS} to ${INTERVAL_MAX_SECONDS}, not "${raw}"`,
+    );
+  }
+  return seconds;
 }
 
 /** Resolves the roots to absolute paths, defaulting to cwd. Throws UsageError for one that isn't a directory. */
@@ -167,7 +189,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   // later milestones start sessions that shouldn't be able to drive pitwall.
   delete process.env.PITWALL_TOKEN;
 
-  const indexer = startIndexer({ roots });
+  const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const indexer = startIndexer({ roots, intervalMs });
   let server;
   try {
     server = await startServer({
@@ -193,7 +216,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     console.log(`pitwall: port ${DEFAULT_PORT} is busy, so using ${server.port}.`);
   }
   console.log(`pitwall is running at ${url}`);
-  console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}`);
+  console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}, polling every ${intervalMs / 1000}s`);
   if (command.open) openBrowser(url);
 
   let stopping = false;
