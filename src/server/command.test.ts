@@ -101,6 +101,9 @@ describe('childEnvironment', () => {
       npm_package_name: '@leggetter/pitwall',
       INIT_CWD: '/Users/example/pitwall',
       ANTHROPIC_MODEL: 'kept',
+      CLAUDE_CODE_MESSAGING_SOCKET: 'uds:/tmp/cc-socks/1.sock',
+      CLAUDE_CODE_MESSAGING_TOKEN: 'inbox-secret',
+      CLAUDE_JOB_DIR: '/Users/example/.claude/jobs/abc',
       UNSET: undefined,
     });
     expect(env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', ANTHROPIC_MODEL: 'kept' });

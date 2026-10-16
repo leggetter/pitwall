@@ -55,6 +55,9 @@ export function childEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) continue;
     if (/^pitwall_/i.test(key) || /^npm_/i.test(key) || key === 'INIT_CWD') continue;
+    // When pitwall itself runs inside a Claude Code session, don't hand that
+    // session's inbox credentials or job directory to the processes it starts.
+    if (/^CLAUDE_CODE_MESSAGING_/i.test(key) || key === 'CLAUDE_JOB_DIR') continue;
     result[key] = value;
   }
   return result;
