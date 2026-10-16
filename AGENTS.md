@@ -10,7 +10,7 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 ## Status
 
-M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read-only index, is in integration on `m1/integration`: the index, server, CLI and web UI are built, with W5's fixes in progress. See "M1 work breakdown" in `PLAN.md`.
+M1, the read-only index, is built and in review on `m1/integration` ([PR #6](https://github.com/leggetter/pitwall/pull/6)), with the W6 review fixes in progress. See "M1 work breakdown" in `PLAN.md`.
 
 ## Rules
 

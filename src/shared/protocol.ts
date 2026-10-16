@@ -101,7 +101,8 @@ export interface SessionGroup {
   /** The configured root this group sits under. */
   root: string;
   /**
-   * Sorted: status 'waiting' first, then askedYou, then busy, then by
+   * Sorted: sessions that need the user first (status 'waiting', or a background
+   * job that is blocked and not stale), then askedYou, then busy, then by
    * lastActivityAt descending (startedAt when there's none). Stale sessions last.
    */
   sessions: SessionSummary[];
