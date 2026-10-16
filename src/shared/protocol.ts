@@ -182,6 +182,8 @@ export const SNAPSHOT_PATH = '/api/snapshot';
  * `Authorization: Bearer <token>`. Only sessions in the current snapshot (under
  * the roots) are served: any other id gets 404.
  */
+// For clients. A server building a route pattern from this must decode it,
+// because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
 export function lastMessagePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/last-message`;
 }
