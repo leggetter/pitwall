@@ -23,6 +23,11 @@ export interface TranscriptInfo {
    * drops this for a session that is still working.
    */
   askedYou?: AskedYou;
+  /**
+   * The newest title Claude Code generated for the session (an `ai-title`
+   * entry), on one line, at most 120 characters. Internal and undocumented.
+   */
+  aiTitle?: string;
 }
 
 export interface TranscriptReaderOptions {
@@ -77,6 +82,8 @@ export const ASSISTANT_TEXT_KEEP = 64 * KIB;
  * hostile lines, so it reads a bounded start rather than all 64 KiB.
  */
 export const ASSISTANT_TEXT_STRIP_MAX = 4 * KIB;
+/** The longest title kept from an `ai-title` entry. */
+export const TITLE_MAX = 120;
 const NEWLINE = 0x0a;
 const EMPTY = Buffer.alloc(0);
 /** Session ids become file names, so anything that could escape the projects directory is refused. */
@@ -354,12 +361,14 @@ export interface Fields {
   userPrompt?: string;
   /** True when a prompt came after the newest assistant text, in file order. */
   promptAfterText?: boolean;
+  /** The newest `ai-title` entry's title, in file order. */
+  aiTitle?: string;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
 export function applyLine(fields: Fields, line: string): void {
   // Cheap pre-filter: every entry the index uses names one of these types.
-  if (!line.includes('"user"') && !line.includes('"assistant"')) return;
+  if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"ai-title"')) return;
   let entry: unknown;
   try {
     entry = JSON.parse(line);
@@ -372,6 +381,12 @@ export function applyLine(fields: Fields, line: string): void {
 export function applyEntry(fields: Fields, entry: unknown): void {
   if (!isRecord(entry)) return;
   const type = entry.type;
+  if (type === 'ai-title') {
+    // No timestamp, and not activity: Claude Code writes these on its own.
+    const title = aiTitleOf(entry);
+    if (title !== undefined) fields.aiTitle = title;
+    return;
+  }
   if (type !== 'user' && type !== 'assistant') return;
 
   const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
@@ -418,6 +433,24 @@ export function assistantTextOf(entry: Record<string, unknown>): { id?: string; 
   const text = textOf(message.content)?.trim();
   if (!text) return undefined;
   return typeof message.id === 'string' ? { id: message.id, text } : { text };
+}
+
+/**
+ * An `ai-title` entry's title: Claude Code's generated title for the session,
+ * set from its first prompt. Internal and undocumented, so anything but a
+ * non-empty string is ignored. Whitespace is collapsed to single spaces and
+ * the result truncated to 120 characters.
+ */
+export function aiTitleOf(entry: Record<string, unknown>): string | undefined {
+  if (typeof entry.aiTitle !== 'string') return undefined;
+  const title = titleText(entry.aiTitle);
+  return title === '' ? undefined : title;
+}
+
+/** A title as the index shows it: on one line, trimmed, at most 120 characters. */
+export function titleText(text: string): string {
+  // Cap before collapsing, so a huge value isn't scanned in full.
+  return truncate(cap(text, 4 * TITLE_MAX).replace(/\s+/g, ' ').trim(), TITLE_MAX);
 }
 
 const CROSS_SESSION_PREFIX = 'Another Claude session sent a message:';
@@ -501,7 +534,12 @@ export function stripSystemReminders(text: string): string {
 }
 
 function isComplete(fields: Fields): boolean {
-  return fields.lastActivityMs !== undefined && fields.assistantText !== undefined && fields.userPrompt !== undefined;
+  return (
+    fields.lastActivityMs !== undefined &&
+    fields.assistantText !== undefined &&
+    fields.userPrompt !== undefined &&
+    fields.aiTitle !== undefined
+  );
 }
 
 function toInfo(state: FileState): TranscriptInfo {
@@ -514,6 +552,7 @@ function toInfo(state: FileState): TranscriptInfo {
     if (derived.askedYou !== undefined && fields.promptAfterText !== true) info.askedYou = derived.askedYou;
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
+  if (fields.aiTitle !== undefined) info.aiTitle = fields.aiTitle;
   return info;
 }
 

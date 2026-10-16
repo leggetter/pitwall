@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stripMarkdownBounded } from './text.js';
 import {
+  aiTitleOf,
   applyEntry,
   applyLine,
   ASSISTANT_TEXT_KEEP,
@@ -13,6 +14,7 @@ import {
   encodeProjectDir,
   isSafeSessionId,
   stripSystemReminders,
+  TITLE_MAX,
   userPromptOf,
   type Fields,
   type TranscriptReaderOptions,
@@ -44,6 +46,11 @@ function assistant(blocks: unknown[], id = 'msg_a', extra: Record<string, unknow
     message: { id, role: 'assistant', model: 'test-model', content: blocks },
     ...extra,
   };
+}
+
+/** Claude Code's generated title entry. It has no timestamp. */
+function aiTitle(title: unknown): Record<string, unknown> {
+  return { type: 'ai-title', aiTitle: title, sessionId: 'pitwall-test-session' };
 }
 
 const text = (t: string) => ({ type: 'text', text: t });
@@ -252,6 +259,21 @@ describe('applyEntry', () => {
     expect(next.assistantAtMs).toBeUndefined();
   });
 
+  it("keeps the newest ai-title entry's title, which is not activity", () => {
+    const prompt = user('go');
+    const fields = fieldsOf(prompt, aiTitle('First title'), aiTitle('  Second\n  title  '));
+    expect(fields.aiTitle).toBe('Second title');
+    expect(fields.lastActivityMs).toBe(Date.parse(prompt.timestamp as string));
+    const only = fieldsOf(aiTitle('Only a title'));
+    expect(only).toEqual({ aiTitle: 'Only a title' });
+  });
+
+  it('ignores ai-title entries without a usable title', () => {
+    for (const value of [undefined, 42, null, '', '   ', { text: 'x' }]) {
+      expect(fieldsOf(aiTitle('kept'), aiTitle(value)).aiTitle, String(value)).toBe('kept');
+    }
+  });
+
   it('keeps the newest real prompt, skipping cross-session messages and tool results after it', () => {
     const fields = fieldsOf(
       user('first prompt'),
@@ -262,6 +284,22 @@ describe('applyEntry', () => {
       user([toolResult('output')]),
     );
     expect(fields.userPrompt).toBe('second prompt');
+  });
+});
+
+describe('aiTitleOf', () => {
+  it('collapses whitespace and truncates to 120 characters', () => {
+    expect(aiTitleOf(aiTitle('Review\tthe\n\nauth   flow'))).toBe('Review the auth flow');
+    const long = aiTitleOf(aiTitle(`${'word '.repeat(100)}`));
+    expect(TITLE_MAX).toBe(120);
+    expect(long).toHaveLength(120);
+    expect(long?.endsWith('…')).toBe(true);
+  });
+
+  it('is quick on a huge title', () => {
+    const started = performance.now();
+    expect(aiTitleOf(aiTitle(' '.repeat(8 * 1024 * 1024) + 'x'))).toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(FAST_MS);
   });
 });
 
@@ -276,6 +314,12 @@ describe('isSafeSessionId', () => {
 });
 
 describe('applyLine', () => {
+  it('reads ai-title lines', () => {
+    const fields: Fields = {};
+    applyLine(fields, JSON.stringify(aiTitle('From a line')));
+    expect(fields.aiTitle).toBe('From a line');
+  });
+
   it('skips lines that do not parse', () => {
     const fields: Fields = {};
     applyLine(fields, '{"type":"user", broken');
@@ -387,6 +431,39 @@ describe('createTranscriptReader', () => {
   it('drops assistant text that is only markdown syntax', async () => {
     await writeFile(file, jsonl(assistant([text('---')])));
     expect(await reader().read(SID, [CWD])).toEqual({ transcript: 'ok', lastActivityAt: expect.any(String) });
+  });
+
+  describe('titles', () => {
+    it("reads the newest ai-title entry's title", async () => {
+      await writeFile(file, jsonl(aiTitle('Old title'), user('go'), aiTitle('New title'), assistant([text('ok')])));
+      expect((await reader().read(SID, [CWD])).aiTitle).toBe('New title');
+    });
+
+    it('follows a title written after the first read', async () => {
+      const r = reader();
+      await writeFile(file, jsonl(user('go'), assistant([text('ok')])));
+      expect((await r.read(SID, [CWD])).aiTitle).toBeUndefined();
+      await appendFile(file, jsonl(aiTitle('Added later')));
+      expect((await r.read(SID, [CWD])).aiTitle).toBe('Added later');
+      await appendFile(file, jsonl(aiTitle('Changed again'), user('more')));
+      expect((await r.read(SID, [CWD])).aiTitle).toBe('Changed again');
+    });
+
+    it('widens the window once for a title outside the first one', async () => {
+      const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 4096 });
+      // The title is ~2 KB from the end, past the first window; everything else is inside it.
+      await writeFile(file, jsonl(aiTitle('Further back'), filler(2000), user('the prompt'), assistant([text('the answer')])));
+      const info = await r.read(SID, [CWD]);
+      expect(info).toMatchObject({ aiTitle: 'Further back', lastUserPrompt: 'the prompt', lastAssistantText: 'the answer' });
+    });
+
+    it('leaves the title unset when the wider window does not have it either', async () => {
+      const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 4096 });
+      await writeFile(file, jsonl(aiTitle('Too far back'), ...Array.from({ length: 6 }, () => filler(1000)), user('p'), assistant([text('a')])));
+      const info = await r.read(SID, [CWD]);
+      expect(info.aiTitle).toBeUndefined();
+      expect(info).toMatchObject({ transcript: 'ok', lastUserPrompt: 'p', lastAssistantText: 'a' });
+    });
   });
 
   describe('lastMessage', () => {
