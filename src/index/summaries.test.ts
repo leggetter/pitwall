@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AskedYou, SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
 import { buildGroups, compareSessions, isStale, toSessionSummary, type PlacedSession } from './summaries.js';
-import type { TranscriptInfo } from './transcripts.js';
+import { titleText, type TranscriptInfo } from './transcripts.js';
 
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -112,6 +112,44 @@ describe('toSessionSummary', () => {
     expect(toSessionSummary(row(), { transcript: 'ok' }, NOW, { cwdMissing: true }).cwdMissing).toBe(true);
     expect(toSessionSummary(row(), { transcript: 'ok' }, NOW, { cwdMissing: false })).not.toHaveProperty('cwdMissing');
     expect(toSessionSummary(row(), { transcript: 'ok' }, NOW)).not.toHaveProperty('cwdMissing');
+  });
+
+  describe('title', () => {
+    const titled = (aiTitle: string, overrides: Partial<AgentRow> = {}) =>
+      toSessionSummary(row(overrides), { transcript: 'ok', aiTitle }, NOW);
+
+    it("is Claude Code's title, when there is one that differs from the name", () => {
+      expect(titled('Review the auth flow', { name: 'git-a0' })).toMatchObject({
+        name: 'git-a0',
+        title: 'Review the auth flow',
+        titleSource: 'claude-code',
+      });
+    });
+
+    it('is left out when it says the same as the name, ignoring case and spacing', () => {
+      for (const [name, aiTitle] of [
+        ['Review the auth flow', 'Review the auth flow'],
+        ['Review the auth flow', 'review THE auth flow'],
+        ['  Review the auth flow ', 'Review  the auth flow'],
+      ]) {
+        const summary = titled(aiTitle as string, { kind: 'background', name: name as string });
+        expect(summary, `${name} / ${aiTitle}`).not.toHaveProperty('title');
+        expect(summary).not.toHaveProperty('titleSource');
+      }
+    });
+
+    it('compares a long name as the title would show it, cut to 120 characters', () => {
+      const name = `Background job ${'with a long name '.repeat(10)}`;
+      const aiTitle = titleText(name);
+      expect(aiTitle).toHaveLength(120);
+      expect(titled(aiTitle, { name })).not.toHaveProperty('title');
+    });
+
+    it('is left out when there is no title', () => {
+      const summary = toSessionSummary(row(), { transcript: 'ok' }, NOW);
+      expect(summary).not.toHaveProperty('title');
+      expect(summary).not.toHaveProperty('titleSource');
+    });
   });
 
   describe('askedYou', () => {

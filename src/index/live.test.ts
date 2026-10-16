@@ -17,8 +17,8 @@ const live = process.env.PITWALL_LIVE === '1';
 const root = process.env.PITWALL_LIVE_ROOT || os.homedir();
 
 const SESSION_KEYS = new Set([
-  'sessionId', 'shortId', 'name', 'kind', 'cwd', 'cwdMissing', 'pid', 'alive', 'status', 'state', 'waitingFor',
-  'startedAt', 'stale', 'askedYou', 'lastActivityAt', 'lastAssistantText', 'lastUserPrompt', 'transcript',
+  'sessionId', 'shortId', 'name', 'title', 'titleSource', 'kind', 'cwd', 'cwdMissing', 'pid', 'alive', 'status', 'state',
+  'waitingFor', 'startedAt', 'stale', 'askedYou', 'lastActivityAt', 'lastAssistantText', 'lastUserPrompt', 'transcript',
 ]);
 const GROUP_KEYS = new Set(['key', 'label', 'kind', 'root', 'sessions']);
 
@@ -36,6 +36,11 @@ function sessionProblems(s: SessionSummary, at: string): string[] {
   check(typeof s.sessionId === 'string' && s.sessionId !== '', 'sessionId');
   check(optional(s.shortId, (v) => typeof v === 'string' && v !== ''), 'shortId');
   check(typeof s.name === 'string' && s.name !== '', 'name');
+  const isTitle = (v: unknown) =>
+    typeof v === 'string' && v !== '' && v.length <= 120 && !/\s\s|\n/.test(v) && v.toLowerCase() !== s.name.toLowerCase();
+  check(optional(s.title, isTitle), 'title');
+  check((s.title === undefined) === (s.titleSource === undefined), 'titleSource (with title)');
+  check(optional(s.titleSource, (v) => v === 'claude-code'), 'titleSource');
   check(oneOf(s.kind, ['interactive', 'background']), 'kind');
   check(isAbsolute(s.cwd), 'cwd');
   check(optional(s.cwdMissing, (v) => v === true), 'cwdMissing');
@@ -67,6 +72,7 @@ function sessionProblems(s: SessionSummary, at: string): string[] {
     'askedYou (conditions)',
   );
   check(oneOf(s.transcript, ['ok', 'missing', 'unreadable']), 'transcript');
+  check(s.transcript === 'ok' || s.title === undefined, 'title without ok');
   check(optional(s.lastActivityAt, isIso), 'lastActivityAt');
   check(optional(s.lastAssistantText, (v) => typeof v === 'string' && v.length > 0 && v.length <= 500), 'lastAssistantText');
   check(optional(s.lastUserPrompt, (v) => typeof v === 'string' && v.length > 0 && v.length <= 300), 'lastUserPrompt');
