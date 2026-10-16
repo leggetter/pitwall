@@ -61,7 +61,7 @@ export function groupId(group: Pick<SessionGroup, 'root' | 'key'>): string {
 }
 
 export interface Filters {
-  /** Matched case-insensitively against session names, group labels and cwds. */
+  /** Matched case-insensitively against session names and titles, group labels and cwds. */
   text: string;
   attentionOnly: boolean;
 }
@@ -81,7 +81,11 @@ export function filterGroups(groups: readonly SessionGroup[], filters: Filters):
     const sessions = group.sessions.filter((session) => {
       if (filters.attentionOnly && !needsAttention(session)) return false;
       if (needle === '' || labelMatches) return true;
-      return session.name.toLowerCase().includes(needle) || session.cwd.toLowerCase().includes(needle);
+      return (
+        session.name.toLowerCase().includes(needle) ||
+        (session.title?.toLowerCase().includes(needle) ?? false) ||
+        session.cwd.toLowerCase().includes(needle)
+      );
     });
     if (sessions.length > 0) visible.push({ group, sessions });
   }
