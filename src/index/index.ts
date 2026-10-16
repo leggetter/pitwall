@@ -1,5 +1,5 @@
 import os from 'node:os';
-import type { IndexSnapshot, LastMessage, SourceHealth } from '../shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage, type SourceHealth } from '../shared/protocol.js';
 import { createAgentsSource, type AgentsSource } from './agents.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, type GroupResolver } from './grouping.js';
@@ -12,7 +12,7 @@ export { isSafeSessionId } from './transcripts.js';
 export interface IndexerOptions {
   /** Absolute paths. The indexer resolves them with realpath. */
   roots: string[];
-  /** Poll interval in milliseconds. Default 2000. */
+  /** Poll interval in milliseconds. Default `DEFAULT_POLL_INTERVAL_MS`, 5000. */
   intervalMs?: number;
   /** Path or name of the claude binary. Default 'claude'. */
   claudeBin?: string;
@@ -70,7 +70,7 @@ export function startIndexer(options: IndexerOptions): Indexer {
 
 /** `startIndexer` with its dependencies passed in. */
 export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Indexer {
-  const intervalMs = options.intervalMs ?? 2000;
+  const intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   let latest: IndexSnapshot | undefined;
   /** The session ids in `latest`: the only ones lastMessage() answers for. */

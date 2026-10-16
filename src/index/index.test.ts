@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IndexSnapshot, LastMessage } from '../shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage } from '../shared/protocol.js';
 import type { AgentRow, AgentsResult } from './agents.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
@@ -116,11 +116,12 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
-  it('defaults to a 2 second interval', async () => {
+  it('defaults to a 5 second interval, the contract default', async () => {
+    expect(DEFAULT_POLL_INTERVAL_MS).toBe(5000);
     const { state, deps } = harness();
     const indexer = createIndexer({ roots: ['/work'] }, deps);
     await flush();
-    await vi.advanceTimersByTimeAsync(1999);
+    await vi.advanceTimersByTimeAsync(4999);
     expect(state.listCalls).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(state.listCalls).toBe(2);
