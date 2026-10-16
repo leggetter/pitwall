@@ -428,6 +428,68 @@ describe('session rows', () => {
   });
 });
 
+describe('session titles', () => {
+  const CLAUDE_CODE_HINT = "Claude Code's title, from the session's first prompt";
+
+  it("shows Claude Code's title after the name, muted, with where it came from on hover", () => {
+    renderDashboard(
+      snapshot([group({ sessions: [session({ name: 'git-a0', title: 'Review the auth flow', titleSource: 'claude-code' })] })]),
+    );
+
+    const head = row('git-a0').querySelector('.session-ident');
+    expect(head?.textContent).toBe('git-a0·Review the auth flow');
+    expect(head?.querySelector('.session-title-sep')?.getAttribute('aria-hidden')).toBe('true');
+    const title = within(row('git-a0')).getByText('Review the auth flow');
+    expect(title.className).toBe('session-title');
+    expect(title.getAttribute('title')).toBe(`Review the auth flow\n${CLAUDE_CODE_HINT}`);
+    // The heading stays the name alone.
+    expect(screen.getByRole('heading', { level: 3, name: 'git-a0' })).toBeTruthy();
+  });
+
+  it('shows nothing after the name when there is no title', () => {
+    renderDashboard(snapshot([group({ sessions: [session({ name: 'untitled' })] })]));
+
+    expect(row('untitled').querySelector('.session-title, .session-title-sep')).toBeNull();
+  });
+
+  it('keeps a long title whole in the text and the hover text, for the ellipsis to cut on screen', () => {
+    const long = `Investigate why ${'the very long session title '.repeat(4)}keeps going`;
+    renderDashboard(snapshot([group({ sessions: [session({ name: 'git-b1', title: long, titleSource: 'claude-code' })] })]));
+
+    const title = row('git-b1').querySelector('.session-title');
+    expect(title?.textContent).toBe(long);
+    expect(title?.getAttribute('title')).toBe(`${long}\n${CLAUDE_CODE_HINT}`);
+  });
+
+  it('renders the title as text, not markup', () => {
+    const { container } = renderDashboard(
+      snapshot([group({ sessions: [session({ name: 'html-title', title: '<img src=x onerror="alert(1)"> <b>t</b>', titleSource: 'claude-code' })] })]),
+    );
+
+    expect(container.querySelector('img, b')).toBeNull();
+    expect(row('html-title').querySelector('.session-title')?.textContent).toBe('<img src=x onerror="alert(1)"> <b>t</b>');
+  });
+
+  it('is matched by the filter, case-insensitively', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          sessions: [
+            session({ name: 'git-a0', title: 'Review the auth flow', titleSource: 'claude-code' }),
+            session({ name: 'git-a1', title: 'Fix the docs build', titleSource: 'claude-code' }),
+            session({ name: 'git-a2' }),
+          ],
+        }),
+      ]),
+    );
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'AUTH' } });
+    expect(visibleRowNames()).toEqual(['git-a0']);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'git-a' } });
+    expect(visibleRowNames()).toEqual(['git-a0', 'git-a1', 'git-a2']);
+  });
+});
+
 describe('sessions that asked you something', () => {
   const asked = (excerpt: string, reason: 'open-questions' | 'question' = 'open-questions') => ({ reason, excerpt });
 
