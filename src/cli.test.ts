@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { browserCommand, parseCliArgs, resolveRoots, resolveToken, resolveWebRoot, UsageError } from './cli.js';
@@ -140,12 +140,27 @@ describe('browserCommand', () => {
   });
 });
 
+/**
+ * A stand-in for `claude`, put first on the CLI's PATH so the real indexer
+ * never runs the real one. It prints an empty session list and records, next
+ * to itself, whether PITWALL_TOKEN reached it.
+ */
+const FAKE_CLAUDE = `#!/bin/sh
+if [ -n "\${PITWALL_TOKEN+set}" ]; then echo set; else echo unset; fi > "$(dirname "$0")/token-seen"
+echo '[]'
+`;
+
 describe('pitwall (the process)', () => {
   const cli = fileURLToPath(new URL('./cli.ts', import.meta.url));
+  const token = 'pitwall-test-token-0123456789abcdefghij';
   let tmp: string;
+  let bin: string;
 
   beforeAll(async () => {
     tmp = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
+    bin = join(tmp, 'bin');
+    await mkdir(bin);
+    await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
   });
 
   afterAll(async () => {
@@ -154,7 +169,7 @@ describe('pitwall (the process)', () => {
 
   function run(args: string[], env: NodeJS.ProcessEnv = {}): ChildProcessWithoutNullStreams {
     return spawn(process.execPath, ['--import', 'tsx', cli, ...args], {
-      env: { ...process.env, PITWALL_NO_OPEN: '1', ...env },
+      env: { ...process.env, PITWALL_NO_OPEN: '1', PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`, ...env },
     });
   }
 
@@ -165,6 +180,36 @@ describe('pitwall (the process)', () => {
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
     const [code] = (await once(child, 'exit')) as [number | null];
     return { code, stdout, stderr };
+  }
+
+  /** Starts the CLI on a free port and waits for it to print its URL and roots. */
+  async function start() {
+    const child = run(['--port', '0', tmp], { PITWALL_TOKEN: token });
+    const result = exited(child);
+    let stdout = '';
+    const [, url, printedToken] = await new Promise<RegExpExecArray>((resolve, reject) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        const match = /running at (http:\/\/127\.0\.0\.1:\d+)\/#token=(\S+)/.exec(stdout);
+        if (match && stdout.includes('Watching')) resolve(match);
+      });
+      child.on('exit', () => reject(new Error(`exited early: ${stdout}`)));
+    });
+    return { child, result, stdout, url: url as string, printedToken };
+  }
+
+  /**
+   * The snapshot, once the first poll has finished. Until then the server
+   * answers 503. Polls until it's ready, so the test doesn't depend on how
+   * quickly the fake claude and the indexer run on a loaded machine.
+   */
+  async function firstSnapshot(url: string): Promise<Response> {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const res = await fetch(`${url}/api/snapshot`, { headers: { authorization: `Bearer ${token}` } });
+      if (res.status !== 503 || Date.now() > deadline) return res;
+      await new Promise((r) => setTimeout(r, 25));
+    }
   }
 
   it('exits 1 with a clear message for a root that does not exist', async () => {
@@ -187,33 +232,28 @@ describe('pitwall (the process)', () => {
   });
 
   it('starts, prints the URL with the token and the roots, serves, and exits 0 on SIGTERM', async () => {
-    const token = 'pitwall-test-token-0123456789abcdefghij';
-    const child = run(['--port', '0', tmp], { PITWALL_TOKEN: token });
-    const result = exited(child);
-
-    let stdout = '';
-    const [, url, printedToken] = await new Promise<RegExpExecArray>((resolve, reject) => {
-      child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
-        const match = /running at (http:\/\/127\.0\.0\.1:\d+)\/#token=(\S+)/.exec(stdout);
-        if (match && stdout.includes('Watching')) resolve(match);
-      });
-      child.on('exit', () => reject(new Error(`exited early: ${stdout}`)));
-    });
+    const { child, result, stdout, url, printedToken } = await start();
     expect(printedToken).toBe(token);
     expect(stdout).toContain(`Watching root: ${tmp}`);
 
-    const snapshotUrl = `${url}/api/snapshot`;
-    expect((await fetch(snapshotUrl)).status).toBe(401);
-    let res = await fetch(snapshotUrl, { headers: { authorization: `Bearer ${token}` } });
-    // The W1 stub indexer emits its empty snapshot on the next tick.
-    for (let i = 0; res.status === 503 && i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      res = await fetch(snapshotUrl, { headers: { authorization: `Bearer ${token}` } });
-    }
+    expect((await fetch(`${url}/api/snapshot`)).status).toBe(401);
+    const res = await firstSnapshot(url);
     expect(res.status).toBe(200);
+    // The fake claude's empty list, not whatever the real one would report.
+    expect(await res.json()).toMatchObject({ groups: [], source: { ok: true } });
 
     child.kill('SIGTERM');
     expect((await result).code).toBe(0);
-  });
+  }, 30_000);
+
+  it('removes PITWALL_TOKEN from its environment before it runs claude', async () => {
+    await rm(join(bin, 'token-seen'), { force: true });
+    const { child, result, url } = await start();
+    expect((await firstSnapshot(url)).status).toBe(200);
+    // The first poll has run the fake claude, which wrote down what it saw.
+    expect((await readFile(join(bin, 'token-seen'), 'utf8')).trim()).toBe('unset');
+
+    child.kill('SIGTERM');
+    expect((await result).code).toBe(0);
+  }, 30_000);
 });
