@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { browserCommand, parseCliArgs, resolveRoots, resolveToken, resolveWebRoot, UsageError } from './cli.js';
+import { browserCommand, parseCliArgs, resolveRoots, resolveToken, resolveWebRoot, USAGE, UsageError } from './cli.js';
+import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
 describe('parseCliArgs', () => {
   it('defaults to no roots, the default port and opening the browser', () => {
@@ -44,6 +45,39 @@ describe('parseCliArgs', () => {
 
   it('rejects --port without a value', () => {
     expect(() => parseCliArgs(['--port'], {})).toThrow(UsageError);
+  });
+
+  it('takes --interval in whole seconds from 1 to 300, as milliseconds', () => {
+    expect(parseCliArgs(['--interval', '2', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], intervalMs: 2000, open: true });
+    expect(parseCliArgs(['--interval=1'], {})).toMatchObject({ intervalMs: 1000 });
+    expect(parseCliArgs(['--interval', '300'], {})).toMatchObject({ intervalMs: 300_000 });
+    expect(parseCliArgs(['--interval', '010'], {})).toMatchObject({ intervalMs: 10_000 });
+  });
+
+  it('leaves the interval to the indexer default, 5 seconds, without --interval', () => {
+    expect(parseCliArgs(['a'], {})).not.toHaveProperty('intervalMs');
+    expect(DEFAULT_POLL_INTERVAL_MS).toBe(5000);
+  });
+
+  it.each([['0'], ['301'], ['-1'], ['2.5'], ['abc'], [''], ['1e2'], ['0x10'], [' 5'], ['5s'], ['0005']])(
+    'rejects --interval %j with a clear message',
+    (interval) => {
+      expect(() => parseCliArgs(['--interval', interval], {})).toThrow(UsageError);
+      if (!interval.startsWith('-')) {
+        expect(() => parseCliArgs(['--interval', interval], {})).toThrow(
+          `--interval must be a whole number of seconds from 1 to 300, not "${interval}"`,
+        );
+      }
+    },
+  );
+
+  it('rejects --interval without a value', () => {
+    expect(() => parseCliArgs(['--interval'], {})).toThrow(UsageError);
+  });
+
+  it('mentions --interval and its default in the help', () => {
+    expect(USAGE).toContain('[--interval <seconds>]');
+    expect(USAGE).toMatch(/--interval <seconds> +How often to poll claude agents --json, in whole seconds\n +from 1 to 300\. Default 5\./);
   });
 
   it('rejects unknown options', () => {
@@ -143,10 +177,11 @@ describe('browserCommand', () => {
 /**
  * A stand-in for `claude`, put first on the CLI's PATH so the real indexer
  * never runs the real one. It prints an empty session list and records, next
- * to itself, whether PITWALL_TOKEN reached it.
+ * to itself, whether PITWALL_TOKEN reached it, and one line per call.
  */
 const FAKE_CLAUDE = `#!/bin/sh
 if [ -n "\${PITWALL_TOKEN+set}" ]; then echo set; else echo unset; fi > "$(dirname "$0")/token-seen"
+echo call >> "$(dirname "$0")/calls"
 echo '[]'
 `;
 
@@ -183,8 +218,8 @@ describe('pitwall (the process)', () => {
   }
 
   /** Starts the CLI on a free port and waits for it to print its URL and roots. */
-  async function start() {
-    const child = run(['--port', '0', tmp], { PITWALL_TOKEN: token });
+  async function start(args: string[] = []) {
+    const child = run(['--port', '0', ...args, tmp], { PITWALL_TOKEN: token });
     const result = exited(child);
     let stdout = '';
     const [, url, printedToken] = await new Promise<RegExpExecArray>((resolve, reject) => {
@@ -229,6 +264,13 @@ describe('pitwall (the process)', () => {
     const result = await exited(run(['--help']));
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Usage: pitwall [root...]');
+    expect(result.stdout).toContain('--interval <seconds>');
+  });
+
+  it('exits 1 with a clear message for an --interval out of range', async () => {
+    const result = await exited(run(['--interval', '0', tmp]));
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('pitwall: --interval must be a whole number of seconds from 1 to 300, not "0"');
   });
 
   it('starts, prints the URL with the token and the roots, serves, and exits 0 on SIGTERM', async () => {
@@ -241,6 +283,30 @@ describe('pitwall (the process)', () => {
     expect(res.status).toBe(200);
     // The fake claude's empty list, not whatever the real one would report.
     expect(await res.json()).toMatchObject({ groups: [], source: { ok: true } });
+
+    child.kill('SIGTERM');
+    expect((await result).code).toBe(0);
+  }, 30_000);
+
+  it('polls every 5 seconds by default, and says so', async () => {
+    const { child, result, stdout } = await start();
+    expect(stdout).toContain(`Watching root: ${tmp}, polling every 5s`);
+    child.kill('SIGTERM');
+    expect((await result).code).toBe(0);
+  }, 30_000);
+
+  it('passes --interval to the indexer, which polls that often', async () => {
+    const calls = join(bin, 'calls');
+    await rm(calls, { force: true });
+    const { child, result, stdout, url } = await start(['--interval', '1']);
+    expect(stdout).toContain('polling every 1s');
+    expect((await firstSnapshot(url)).status).toBe(200);
+    // Three polls take about 2 s at 1 s apart. At the 5 s default they would take 10 s.
+    const started = Date.now();
+    const count = async () => (await readFile(calls, 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
+    while ((await count()) < 3 && Date.now() - started < 6_000) await new Promise((r) => setTimeout(r, 100));
+    expect(await count()).toBeGreaterThanOrEqual(3);
+    expect(Date.now() - started).toBeLessThan(6_000);
 
     child.kill('SIGTERM');
     expect((await result).code).toBe(0);
