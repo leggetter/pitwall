@@ -22,7 +22,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D2 - Interactive sessions: relay through the supervisor, or `/bg` for full control
 
 - **Why:** an interactive session in Warp or Cursor belongs to that terminal. The only documented way in from outside is cross-session messaging. The receiving session sees such a message as coming from another session, "not typed by your user", so it can't approve a permission prompt or change configuration.
-- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
+- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a background session limited to `ListAgents` and `SendMessage`, which the M4 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
 - **Rejected:** posting to a session's inbox socket directly. Only the socket's auth line is documented, not the message format.
 
 ### D3 - Background sessions are driven through a PTY running `claude attach <id>`, shown with xterm.js

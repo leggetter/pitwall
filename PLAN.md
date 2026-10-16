@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 done on 2026-10-16. Spikes [001](docs/spikes/001-session-control.md) and [002](docs/spikes/002-supervisor-to-interactive.md) pass, including a background supervisor messaging an interactive session and getting a reply. M1, a read-only index, is built and in review in [PR #6](https://github.com/leggetter/pitwall/pull/6). |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Finish W7a<br>- Phil tries M1 and approves the merge (W7)<br>- Then M2, starting with its security gate |
+| **Next steps** | - Phil tries M1 and approves the merge (W7)<br>- Then M2, starting with its security gate |
 
 ## Who is this for
 
@@ -38,7 +38,7 @@ Stop losing track of Claude Code sessions: one place to see every session under 
 ## Measures of success
 
 - I open pitwall instead of cycling through terminal tabs to find out what needs me. This is qualitative. The real test is whether I still lose track of a session after two weeks of use.
-- A session that appears in `claude agents --json` under the root shows in pitwall within 5 seconds.
+- A session that appears in `claude agents --json` under the root shows in pitwall within one poll: 5 s by default, plus the poll's own 0.2-1.3 s.
 - The supervisor's triage matches a manual sweep like the one on 2026-10-16 (15 live sessions, 10 waiting on me) without me prompting each session.
 
 ## Context
@@ -149,8 +149,8 @@ Open a session from its row, drive background sessions fully in the browser, sta
 | Session kind | In the web UI | How |
 | --- | --- | --- |
 | Background, including sessions pitwall starts | Full interaction: type prompts, answer permission prompts and dialogs | xterm.js over a PTY running `claude attach <id>` (D3, spike S3) |
-| Interactive, in Warp or Cursor | Read-only, until I type `/bg` in its terminal. It then becomes a background session with the same conversation, and pitwall can attach | The row says so: "Running in a terminal. Type `/bg` there to drive it from here" (D2) |
-| Interactive, left where it is | A message relayed by the supervisor, which can't approve prompts | M4, cross-session messaging (D2) |
+| Interactive, in Warp or Cursor | **Send it a message.** The message starts a turn, and the session does the work within its own permissions and rules. It can't take a permission approval from me, and it sees the message as coming from another session (spike 002) | A relay: a background Claude session pitwall starts, limited to `ListAgents` and `SendMessage` (D2, D4). The M4 supervisor later takes over this role |
+| Interactive, moved with `/bg` | Full interaction, like any background session. The row explains the route: "Type `/bg` in its terminal to drive it fully from here" | `claude attach`, as above |
 
 **Order of work:**
 
@@ -164,11 +164,22 @@ Open a session from its row, drive background sessions fully in the browser, sta
    - A PTY per open view, running `claude attach <id>` through `node-pty`, shown with xterm.js. It supports resize and input. Closing the view detaches, and the session keeps running.
    - `node-pty` is the first native dependency, so the build needs its install script approved, and CI builds it.
    - `claude attach` restarts a background session that isn't running (done, stopped or failed). That's an action, so the UI asks first: "This session isn't running. Attaching restarts it."
-4. **Interactive sessions.** The row explains the `/bg` route. Once moved, the session reappears as a background session with the same id, and attach works.
-5. **Spawn.** A "New session" dialog with a directory under a root, picked from the grouped repos, a name, an optional model and the first prompt.
+4. **Message interactive sessions through a relay.**
+   - **The relay:** on first use, pitwall starts one named background session, `pitwall-relay`, on Haiku. Its tools are limited to `ListAgents` and `SendMessage`, and it's instructed to pass my text on verbatim.
+   - **Sending:** a "Message this session" box on interactive rows. The relay reports what `SendMessage` returned (delivered, held for approval, or refused), and pitwall shows it.
+   - **Replies:** the target's work shows in its own transcript, in the session view. A reply it sends back lands in the relay's transcript, and pitwall shows it on the target's row.
+   - **Cost:** one Haiku turn in the relay, plus one turn on the target's own model and effort, which is the same as typing the prompt there.
+   - **Limits:**
+     - The message can't approve prompts.
+     - A target that bypasses permission prompts holds the message for approval in its terminal.
+     - The target's own rules decide whether it acts.
+     - No idle-notice subscriptions: each prints a notice in the target's terminal, and polling already sees busy-to-idle changes.
+   - **Tests:** only `pitwall-test-*` targets, as in spike 002.
+5. **The `/bg` route for full control.** The row explains it. Once moved, the session reappears as a background session with the same id, and attach works.
+6. **Spawn.** A "New session" dialog with a directory under a root, picked from the grouped repos, a name, an optional model and the first prompt.
    - It runs `claude --bg --name <name> [--model <m>] "<prompt>"` with `execFile` (no shell) in that directory. The new session shows up in the list and can be attached straight away.
    - Show Claude Code's `Workspace not trusted` error with the command to run. Never grant trust for me.
-6. **Stop and remove** a background session, with `claude stop <id>` and `claude rm <id>`, after a confirmation. `rm` keeps a worktree that has unpushed commits; show Claude Code's message when it does.
+7. **Stop and remove** a background session, with `claude stop <id>` and `claude rm <id>`, after a confirmation. `rm` keeps a worktree that has unpushed commits; show Claude Code's message when it does.
 
 **Also in M2:**
 - **Contract additions suggested during M1:**
@@ -198,7 +209,7 @@ Read-only, and separate from the session index. Requested by Phil on 2026-10-16,
 
 ### M4 - Supervisor
 
-Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions. It's a background Claude Code session (D4).
+Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions. It's a background Claude Code session (D4), and it takes over M2's relay.
 
 - **First: titles from each session's recent turns** (W7 decision C), replacing Claude Code's first-prompt titles from M1.
   - **Spike first:**
@@ -233,8 +244,8 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | W5a | Fixes from W5: "asked you" heuristic, stale rule, markdown stripping, missing directories | `m1/followups` | Sub-agent | Merged ([#5](https://github.com/leggetter/pitwall/pull/5)) |
 | W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Done: approve with follow-ups |
 | W6a | Fixes from the W6 review, plus groups collapsed by default with their state saved (W7 feedback) | `m1/review-fixes` | Sub-agent | Merged ([#7](https://github.com/leggetter/pitwall/pull/7)) |
-| W7a | W7 feedback: full replies on expand, change-only pushes with a heartbeat, a 5 s default poll with `--interval`, and Claude Code's session titles | `m1/w7-feedback` | Sub-agent | In progress |
-| W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
+| W7a | W7 feedback: full replies on expand, change-only pushes with a heartbeat, a 5 s default poll with `--interval`, and Claude Code's session titles | `m1/w7-feedback` | Sub-agent | Merged ([#8](https://github.com/leggetter/pitwall/pull/8)) |
+| W7 | Try it, and approve the merge | - | Phil | Ready |
 
 ### W5 findings (2026-10-16)
 

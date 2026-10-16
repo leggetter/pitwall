@@ -10,7 +10,7 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 ## Status
 
-M1, the read-only index, is built and in review on `m1/integration` ([PR #6](https://github.com/leggetter/pitwall/pull/6)), with the W6 review fixes in progress. See "M1 work breakdown" in `PLAN.md`.
+M1, the read-only index, is built and in review on `m1/integration` ([PR #6](https://github.com/leggetter/pitwall/pull/6)), waiting for Phil's approval. M2, interacting with sessions, is next. See "Milestones" in `PLAN.md`.
 
 ## Rules
 
@@ -34,7 +34,7 @@ npm run dev -- [root...] rebuild the web UI and restart the server on change. Us
                          and one token per run, and refuses to start if 4517 is busy
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
-npm start -- [root...]   run the built CLI, node dist/cli.js
+npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5)
 ```
 
 There is no Vite dev server. `npm run dev` runs `vite build --watch` and `tsx watch src/cli.ts`, and the pitwall server serves `dist/web`.
