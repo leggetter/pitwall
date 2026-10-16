@@ -12,6 +12,7 @@ import {
   WS_CLOSE_UNAUTHORIZED,
   WS_PATH,
   type IndexSnapshot,
+  type LastMessage,
   type ServerMessage,
 } from '../shared/protocol.js';
 import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from './index.js';
@@ -26,11 +27,14 @@ const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 interface FakeIndexer extends Indexer {
   push(snapshot: IndexSnapshot): void;
   listenerCount(): number;
+  /** What lastMessage() answers, by session id. */
+  messages: Map<string, LastMessage>;
 }
 
 function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
   let latest = initial;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
+  const messages = new Map<string, LastMessage>();
   return {
     latest: () => latest,
     subscribe(listener) {
@@ -39,6 +43,8 @@ function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
         listeners.delete(listener);
       };
     },
+    lastMessage: vi.fn((sessionId: string) => messages.get(sessionId)),
+    messages,
     stop: vi.fn(),
     push(snapshot) {
       latest = snapshot;

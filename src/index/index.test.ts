@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IndexSnapshot } from '../shared/protocol.js';
+import type { IndexSnapshot, LastMessage } from '../shared/protocol.js';
 import type { AgentRow, AgentsResult } from './agents.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
@@ -33,6 +33,7 @@ function harness() {
     reads: [] as string[],
     retained: [] as string[][],
     transcripts: new Map<string, TranscriptInfo>(),
+    messages: new Map<string, LastMessage>(),
     /** When set, list() waits for this before answering. */
     gate: undefined as Promise<void> | undefined,
   };
@@ -54,6 +55,9 @@ function harness() {
       async read(sessionId) {
         state.reads.push(sessionId);
         return state.transcripts.get(sessionId) ?? { transcript: 'missing' };
+      },
+      lastMessage(sessionId) {
+        return state.messages.get(sessionId);
       },
       retain(ids) {
         state.retained.push([...ids].sort());
@@ -120,6 +124,34 @@ describe('createIndexer', () => {
     expect(state.listCalls).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(state.listCalls).toBe(2);
+    indexer.stop();
+  });
+
+  it('answers lastMessage only for sessions in the latest snapshot', async () => {
+    const { state, deps } = harness();
+    const message = (id: string): LastMessage => ({ sessionId: id, text: `full reply of ${id}`, truncated: false });
+    for (const id of ['in', 'out', 'later-gone']) state.messages.set(id, message(id));
+    state.result = { ok: true, rows: [row('in', '/work/repo/a'), row('out', '/elsewhere/b'), row('later-gone', '/work/repo/c')] };
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 1000 }, deps);
+    // Before the first poll there is no snapshot, so nothing is answered.
+    expect(indexer.lastMessage('in')).toBeUndefined();
+    await flush();
+
+    expect(indexer.lastMessage('in')).toEqual(message('in'));
+    expect(indexer.lastMessage('later-gone')).toEqual(message('later-gone'));
+    // Outside the roots: the reader may know it, but the index never serves it.
+    expect(indexer.lastMessage('out')).toBeUndefined();
+    expect(indexer.lastMessage('never-listed')).toBeUndefined();
+
+    state.result = { ok: true, rows: [row('in', '/work/repo/a')] };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.lastMessage('later-gone')).toBeUndefined();
+    expect(indexer.lastMessage('in')).toEqual(message('in'));
+
+    // A failed poll keeps the last sessions, so it keeps answering for them.
+    state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.lastMessage('in')).toEqual(message('in'));
     indexer.stop();
   });
 
@@ -407,6 +439,9 @@ describe('the indexer against temporary directories', () => {
         message: { id: 'm2', content: [{ type: 'text', text: '## Done\n\n**Open questions:**\n- Should I push it?\n\n**Next steps:**\n1. You review.' }] },
       },
     ]);
+    await transcript(path.join(dir, 'elsewhere'), ids.outside, [
+      { type: 'assistant', timestamp: '2026-10-16T11:52:00.000Z', message: { id: 'm4', content: [{ type: 'text', text: 'Outside the root.' }] } },
+    ]);
     await transcript(repo, ids.staleAlive, [
       { type: 'user', timestamp: '2026-09-24T09:00:00.000Z', message: { content: 'migrate the data' } },
       {
@@ -448,7 +483,21 @@ describe('the indexer against temporary directories', () => {
       },
     );
     const snapshot = await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+    const askedMessage = indexer.lastMessage(ids.asked);
+    const outsideMessage = indexer.lastMessage(ids.outside);
+    const noMessage = indexer.lastMessage(ids.worktree);
     indexer.stop();
+
+    expect(askedMessage).toEqual({
+      sessionId: ids.asked,
+      text: 'Done\n\nOpen questions:\n- Should I push it?\n\nNext steps:\n1. You review.',
+      truncated: false,
+      at: '2026-10-16T11:51:00.000Z',
+    });
+    // Its transcript exists, but the session is outside the root.
+    expect(outsideMessage).toBeUndefined();
+    // In the snapshot, but its transcript has no assistant text.
+    expect(noMessage).toBeUndefined();
 
     expect(snapshot.roots).toEqual([root]);
     expect(snapshot.source).toEqual({ ok: true });

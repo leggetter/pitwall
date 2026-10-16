@@ -1,11 +1,13 @@
 import os from 'node:os';
-import type { IndexSnapshot, SourceHealth } from '../shared/protocol.js';
+import type { IndexSnapshot, LastMessage, SourceHealth } from '../shared/protocol.js';
 import { createAgentsSource, type AgentsSource } from './agents.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, type GroupResolver } from './grouping.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
 import { buildGroups, toSessionSummary, type PlacedSession } from './summaries.js';
 import { createTranscriptReader, type TranscriptReader } from './transcripts.js';
+
+export { isSafeSessionId } from './transcripts.js';
 
 export interface IndexerOptions {
   /** Absolute paths. The indexer resolves them with realpath. */
@@ -21,6 +23,13 @@ export interface Indexer {
   latest(): IndexSnapshot | undefined;
   /** Called with every new snapshot. Returns an unsubscribe function. */
   subscribe(listener: (snapshot: IndexSnapshot) => void): () => void;
+  /**
+   * The full newest assistant message of a session in the latest snapshot.
+   * Undefined for any other session id, and for a session with no message.
+   * Synchronous and file-free: it strips what the last poll kept, once per
+   * change of message, in time bounded however hostile the text is.
+   */
+  lastMessage(sessionId: string): LastMessage | undefined;
   stop(): void;
 }
 
@@ -64,6 +73,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const intervalMs = options.intervalMs ?? 2000;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   let latest: IndexSnapshot | undefined;
+  /** The session ids in `latest`: the only ones lastMessage() answers for. */
+  let current = new Set<string>();
   let running = false;
   let stopped = false;
 
@@ -86,6 +97,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       }
       if (stopped) return;
       latest = snapshot;
+      current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
       for (const listener of [...listeners]) {
         try {
           listener(snapshot);
@@ -108,6 +120,10 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       return () => {
         listeners.delete(listener);
       };
+    },
+    lastMessage(sessionId) {
+      if (!current.has(sessionId)) return undefined;
+      return deps.transcripts.lastMessage(sessionId);
     },
     stop() {
       stopped = true;
