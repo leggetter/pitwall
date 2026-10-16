@@ -100,6 +100,20 @@ export interface SessionSummary {
    */
   lastUserPrompt?: string;
   transcript: TranscriptStatus;
+  /**
+   * The latest message pitwall relayed to this session (W11, D8), and the
+   * session's reply when one came back through the relay.
+   */
+  relay?: RelayExchange;
+}
+
+/** One relayed message and its outcome, shown on the target session's row. */
+export interface RelayExchange {
+  /** ISO 8601. */
+  sentAt: string;
+  status: RelayStatus;
+  /** The target's reply, as plain text, at most 2 KiB, when it sent one back. */
+  reply?: { at: string; text: string };
 }
 
 export interface SessionGroup {
@@ -275,3 +289,115 @@ export function conversationPath(sessionId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
   return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
 }
+
+// ---------------------------------------------------------------------------
+// M2 input paths (W10-W12). Every HTTP route below is state-changing: POST,
+// with the apiKey and an allowed Origin (W8's rule). Every route that names a
+// session resolves it with resolveSession(), and builds commands from the
+// resolved summary, never from the raw parameter. Each answers JSON.
+// ---------------------------------------------------------------------------
+
+/** What SendMessage reported for a relayed message (W11, D8). */
+export type RelayStatus =
+  /** In the target's inbox. Its Claude reads it at its next tool round, or starts a turn if idle. */
+  | 'delivered'
+  /** Held for approval in the target's own terminal, because it bypasses permission prompts. */
+  | 'held'
+  /** Refused by the target's inbound settings. */
+  | 'refused'
+  /** The relay couldn't send it, for example because the relay session isn't running. */
+  | 'failed';
+
+/** Body of a POST to relayPath(). `text` is 1 to 8,192 characters, sent verbatim. */
+export interface RelayRequest {
+  text: string;
+}
+
+export interface RelayResult {
+  status: RelayStatus;
+  /** A short explanation, for example why it was refused or failed. */
+  detail?: string;
+}
+
+/** Relay a message to an interactive session, through the pitwall-relay session. */
+export function relayPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/relay`;
+}
+
+/** Body of a POST to SPAWN_PATH (W12). */
+export interface SpawnRequest {
+  /** An absolute directory at or under one of the roots. */
+  cwd: string;
+  /** The first prompt, 1 to 16,384 characters. */
+  prompt: string;
+  /** Optional display name: letters, digits, space, `.`, `_` and `-`, at most 64 characters. */
+  name?: string;
+  /** Optional model alias, such as `sonnet` or `haiku`. */
+  model?: string;
+}
+
+export type SpawnResult =
+  | { ok: true; shortId: string; name: string }
+  /** `hint` is a command for the user to run, such as the one that trusts a workspace. */
+  | { ok: false; error: string; hint?: string };
+
+/** Start a new background session with `claude --bg`. */
+export const SPAWN_PATH = '/api/sessions';
+
+/** Result of stop and remove. Both apply to background sessions only; others get 409. */
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** Stop a background session with `claude stop`. Its conversation is kept. */
+export function stopPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/stop`;
+}
+
+/** Remove a background session with `claude rm`. Claude Code keeps a worktree that has unpushed commits. */
+export function removePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/remove`;
+}
+
+// ---------------------------------------------------------------------------
+// Attach (W10, D3, D9): a WebSocket per attached background session, carrying
+// a PTY running `claude attach <shortId>`.
+// ---------------------------------------------------------------------------
+
+/** WebSocket path for attaching. Same Host and Origin checks as WS_PATH. */
+export const ATTACH_PATH = '/attach';
+
+/** At most this many attached sessions at once (D9). */
+export const MAX_ATTACHED = 4;
+
+/** Close code when MAX_ATTACHED are already open. */
+export const WS_CLOSE_TOO_MANY = 4429;
+
+/**
+ * Client → server on an attach socket. The handshake is the same as on
+ * WS_PATH: the server sends `challenge`, and the client's first message is
+ * `auth` with a proof. Then `open`, then any number of `input` and `resize`.
+ * `restart` must be true to attach to a session that isn't running, after the
+ * user confirmed (D9).
+ */
+export type AttachClientMessage =
+  | { type: 'auth'; proof: string }
+  | { type: 'open'; sessionId: string; cols: number; rows: number; restart?: boolean }
+  | { type: 'input'; data: string }
+  | { type: 'resize'; cols: number; rows: number };
+
+/**
+ * Server → client on an attach socket, as JSON text frames. PTY output is sent
+ * as binary frames, so it's never parsed as a message.
+ * - 'ready': the proof was valid; send `open`.
+ * - 'needs-restart': the session isn't running, so attaching would restart
+ *   it. Ask the user, then send `open` again with `restart: true`.
+ * - 'attached': output follows as binary frames.
+ * - 'exit': `claude attach` ended. Closing the socket detaches; the session
+ *   keeps running.
+ */
+export type AttachServerMessage =
+  | { type: 'challenge'; version: number; nonce: string }
+  | { type: 'ready' }
+  | { type: 'needs-restart' }
+  | { type: 'attached' }
+  | { type: 'exit'; code: number | null }
+  | { type: 'error'; error: string };
