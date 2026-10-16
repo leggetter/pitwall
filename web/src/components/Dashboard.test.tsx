@@ -60,6 +60,29 @@ describe('Dashboard header', () => {
     expect(screen.getByText('updated 5s ago')).toBeTruthy();
   });
 
+  it("shows a heartbeat's time as the update age, newer than the snapshot's", () => {
+    const snap = snapshot([group({ sessions: [session({ name: 'kept' })] })]);
+    renderDashboard(snap, { lastPoll: { generatedAt: new Date(NOW - 1_000).toISOString(), source: { ok: true } } });
+
+    expect(screen.getByText('updated 1s ago')).toBeTruthy();
+    expect(visibleRowNames()).toEqual(['kept']);
+  });
+
+  it('warns when the latest heartbeat says the source failed, even though the snapshot did not', () => {
+    const snap = snapshot([group({ sessions: [session({ name: 'kept' })] })]);
+    renderDashboard(snap, { lastPoll: { generatedAt: new Date(NOW).toISOString(), source: { ok: false, error: 'timed out' } } });
+
+    expect(screen.getByRole('alert').textContent).toBe('claude agents --json failed on the latest poll: timed out');
+    expect(visibleRowNames()).toEqual(['kept']);
+  });
+
+  it('drops the warning when the latest heartbeat says the source works again', () => {
+    const snap = snapshot([], { source: { ok: false, error: 'timed out' } });
+    renderDashboard(snap, { lastPoll: { generatedAt: new Date(NOW).toISOString(), source: { ok: true } } });
+
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('shows the reconnecting state and a note that the list may be out of date', () => {
     renderDashboard(mixedSnapshot(), { state: 'reconnecting' });
 

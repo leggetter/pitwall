@@ -22,10 +22,27 @@ describe('backoffDelay', () => {
 });
 
 describe('parseServerMessage', () => {
-  it('accepts snapshot and error messages', () => {
+  it('accepts snapshot, heartbeat and error messages', () => {
     const snapshot = mixedSnapshot();
     expect(parseServerMessage(JSON.stringify({ type: 'snapshot', snapshot }))).toEqual({ type: 'snapshot', snapshot });
     expect(parseServerMessage(JSON.stringify({ type: 'error', error: 'boom' }))).toEqual({ type: 'error', error: 'boom' });
+    const ok = { type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z', source: { ok: true } };
+    expect(parseServerMessage(JSON.stringify(ok))).toEqual(ok);
+    const failing = { type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z', source: { ok: false, error: 'timed out' } };
+    expect(parseServerMessage(JSON.stringify(failing))).toEqual(failing);
+  });
+
+  it('ignores a heartbeat without a time or a well-formed source', () => {
+    for (const heartbeat of [
+      { type: 'heartbeat', source: { ok: true } },
+      { type: 'heartbeat', generatedAt: 5, source: { ok: true } },
+      { type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z' },
+      { type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z', source: { ok: false } },
+      { type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z', source: { ok: 'yes' } },
+      { type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z', source: null },
+    ]) {
+      expect(parseServerMessage(JSON.stringify(heartbeat)), JSON.stringify(heartbeat)).toBeUndefined();
+    }
   });
 
   it('ignores malformed messages and types this UI does not know', () => {
@@ -71,6 +88,51 @@ describe('createConnection', () => {
 
     fake.last.receive({ type: 'snapshot', snapshot: second });
     expect(latest().snapshot).toEqual(second);
+  });
+
+  it('records the poll time and source of each snapshot', () => {
+    const { fake, latest } = start();
+    fake.last.open();
+    const snapshot = { ...mixedSnapshot(), source: { ok: false as const, error: 'timed out' } };
+    fake.last.receive({ type: 'snapshot', snapshot });
+    expect(latest().lastPoll).toEqual({ generatedAt: snapshot.generatedAt, source: snapshot.source });
+  });
+
+  it('takes a heartbeat as a newer poll time and source, without replacing the snapshot', () => {
+    const { fake, latest } = start();
+    fake.last.open();
+    const sent = mixedSnapshot();
+    fake.last.receive({ type: 'snapshot', snapshot: sent });
+    const snapshot = latest().snapshot;
+    expect(snapshot).toEqual(sent);
+
+    fake.last.receive({ type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z', source: { ok: true } });
+    // The same object, so nothing that depends on it renders again.
+    expect(latest().snapshot).toBe(snapshot);
+    expect(latest().lastPoll).toEqual({ generatedAt: '2026-03-02T12:00:05.000Z', source: { ok: true } });
+
+    fake.last.receive({ type: 'heartbeat', generatedAt: '2026-03-02T12:00:10.000Z', source: { ok: false, error: 'timed out' } });
+    expect(latest()).toMatchObject({ state: 'live', lastPoll: { source: { ok: false, error: 'timed out' } } });
+    expect(latest().snapshot).toBe(snapshot);
+  });
+
+  it('counts a heartbeat as live, and starts the backoff again from 1 second', () => {
+    const { fake, latest } = start();
+    fake.last.open();
+    fake.last.receive({ type: 'snapshot', snapshot: mixedSnapshot() });
+    fake.last.serverClose();
+    vi.advanceTimersByTime(1_000);
+    fake.last.serverClose();
+    vi.advanceTimersByTime(2_000);
+    expect(fake.sockets).toHaveLength(3);
+    expect(latest().state).toBe('reconnecting');
+
+    fake.last.open();
+    fake.last.receive({ type: 'heartbeat', generatedAt: '2026-03-02T12:00:05.000Z', source: { ok: true } });
+    expect(latest().state).toBe('live');
+    fake.last.serverClose();
+    vi.advanceTimersByTime(1_000);
+    expect(fake.sockets).toHaveLength(4);
   });
 
   it('surfaces error messages and ignores malformed ones', () => {
