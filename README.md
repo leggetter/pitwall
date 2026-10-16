@@ -58,6 +58,21 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Packaging:** `@leggetter/pitwall` on npm, because the unscoped `pitwall` is taken. The binary is `pitwall`.
 - **Watch:** `node-pty` is a native module. npm warned in spike 001 that its install script isn't covered by `allowScripts`, so a clean install may need that script approved.
 
+### D7 - The browser is opened through a launch file, not a URL with the token in it
+
+- **Why:** macOS lets any user read every process's arguments with `ps`, so `open http://127.0.0.1:<port>/#token=...` exposes the token to other accounts on the machine. Instead, the CLI writes a small HTML page that sends the browser on to the token URL. The page sits in a file only you can read (0600, in a 0700 `~/.pitwall/` directory), and the CLI opens that file, so `ps` shows only a path. The file is deleted on exit. Jupyter does the same.
+- **Rejected:** a single-use launch code in the URL. It's still visible in `ps` briefly, and another user who used it first would get the token while your browser failed.
+- **Context:** W6 review finding 1. It's part of the M2 security gate, together with challenge-response WebSocket auth and dev readiness, because from M2 on the token authorizes typing into agents.
+
+### D8 - Messages to interactive sessions go through one relay session
+
+- **Why:** only a Claude session can call `SendMessage`, and the socket's message format isn't documented (D2). One background session named `pitwall-relay`, on Haiku and allowed only `ListAgents` and `SendMessage`, passes your text on. It starts on first use and is restarted when Claude Code has stopped it after about an hour idle.
+- **Later:** the M4 supervisor replaces it.
+
+### D9 - At most four attached sessions, and a confirmation before restarting one
+
+- **Why:** each attach is a PTY and a `claude attach` process. Closing the view or the tab detaches, and the session keeps running. `claude attach` restarts a background session that isn't running, which is an action, so the UI asks first.
+
 ### D6 - Group sessions by `git rev-parse --git-common-dir`
 
 - **Why:** worktrees sit under the repo they belong to. A directory that isn't a git repo groups as itself.
