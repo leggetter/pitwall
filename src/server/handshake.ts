@@ -1,0 +1,109 @@
+// The challenge-response handshake every pitwall WebSocket starts with: the
+// index socket at WS_PATH (websocket.ts) and the attach socket at ATTACH_PATH
+// (attach.ts). Host and Origin are checked before the upgrade, in server.ts.
+//
+// The handshake (PROTOCOL_VERSION 2, src/shared/protocol.ts):
+//   server  { type: 'challenge', version, nonce }   a fresh 32-byte nonce per connection
+//   client  { type: 'auth', proof }                 base64url(HMAC-SHA256(token, nonce))
+//   server  what the socket is for: 'authenticated' on WS_PATH, 'ready' on ATTACH_PATH
+//
+// The raw token never crosses the socket, so a process squatting on the port
+// learns nothing it can reuse: a proof is good for one nonce, and each nonce
+// belongs to one connection. Each connection gets one attempt. A wrong proof,
+// no proof within the timeout, M1's `{ type: 'auth', token }`, a binary frame,
+// or any other message closes the connection with 4401.
+import type { RawData, WebSocket } from 'ws';
+import {
+  PROTOCOL_VERSION,
+  WS_CLOSE_UNAUTHORIZED,
+  type AttachServerMessage,
+  type ServerMessage,
+} from '../shared/protocol.js';
+import { proofMatches, randomSecret } from './security.js';
+
+/** How long a new connection has to answer the challenge. */
+export const DEFAULT_AUTH_TIMEOUT_MS = 5000;
+
+export interface HandshakeOptions {
+  token: string;
+  timeoutMs: number;
+  /**
+   * Called once, when the proof is valid. The handshake stops listening
+   * first, so a 'message' listener added here gets every later frame.
+   */
+  onAuthenticated: () => void;
+}
+
+/**
+ * Sends the challenge and waits for one valid proof. Closes the socket with
+ * 4401 for anything else, or for nothing within `timeoutMs`.
+ */
+export function startHandshake(ws: WebSocket, options: HandshakeOptions): void {
+  let state: 'pending' | 'authed' | 'rejected' = 'pending';
+  // Fresh for every connection and never stored anywhere else, so a proof for
+  // it can't be replayed on another connection.
+  const nonce = randomSecret();
+
+  const reject = () => {
+    state = 'rejected';
+    clearTimeout(timer);
+    ws.close(WS_CLOSE_UNAUTHORIZED);
+  };
+  const timer = setTimeout(reject, options.timeoutMs);
+
+  const onMessage = (data: RawData, isBinary: boolean) => {
+    // One attempt per connection.
+    if (state !== 'pending') return;
+    const proof = isBinary ? undefined : parseAuth(data);
+    if (proof === undefined || !proofMatches(proof, options.token, nonce)) {
+      reject();
+      return;
+    }
+    state = 'authed';
+    clearTimeout(timer);
+    ws.off('message', onMessage);
+    options.onAuthenticated();
+  };
+  ws.on('message', onMessage);
+
+  ws.on('close', () => clearTimeout(timer));
+
+  // Oversized frames and protocol errors land here, followed by 'close'.
+  // Without a listener, ws would throw and take the process down.
+  ws.on('error', () => {});
+
+  // The same message on both sockets: ServerMessage and AttachServerMessage share it.
+  const challenge: ServerMessage & AttachServerMessage = { type: 'challenge', version: PROTOCOL_VERSION, nonce };
+  ws.send(JSON.stringify(challenge));
+}
+
+/**
+ * The proof from `{ "type": "auth", "proof": "..." }`, exactly that shape and
+ * nothing more, or undefined. Extra fields are refused rather than ignored, so
+ * a message that also carries M1's `token`, or a `version` the contract
+ * doesn't define for the client, fails the handshake.
+ */
+function parseAuth(data: RawData): string | undefined {
+  const message = parseJsonObject(data);
+  if (message === undefined) return undefined;
+  if (Object.keys(message).length !== 2 || message.type !== 'auth' || typeof message.proof !== 'string') return undefined;
+  return message.proof;
+}
+
+/** A text frame's JSON, when it's an object (not an array or null), or undefined. */
+export function parseJsonObject(data: RawData): Record<string, unknown> | undefined {
+  let message: unknown;
+  try {
+    message = JSON.parse(rawToString(data));
+  } catch {
+    return undefined;
+  }
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) return undefined;
+  return message as Record<string, unknown>;
+}
+
+function rawToString(data: RawData): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  return data.toString('utf8');
+}
