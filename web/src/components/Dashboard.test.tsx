@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IndexSnapshot } from '../../../src/shared/protocol.js';
+import { lastMessagePath, type IndexSnapshot, type LastMessage, type SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
 import { GROUP_STATE_KEY, type StorageSource } from '../groupState.js';
-import { group, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
+import { createReplyLoader, ReplyLoaderContext, type FetchLike } from '../lastMessage.js';
+import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
 import { Dashboard } from './Dashboard.js';
 
 interface RenderOptions {
@@ -660,6 +661,163 @@ describe('filters', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
 
     expect(screen.getByText('Nothing needs you right now.')).toBeTruthy();
+  });
+});
+
+describe('full replies', () => {
+  const SID = '00000000-0000-4000-8000-0000000000f1';
+  const PREVIEW = `Fixed the flaky test. ${'Details. '.repeat(50)}`.slice(0, 499) + '…';
+  const FULL = `Fixed the flaky test.\n\n${'Details. '.repeat(100)}\n\n- one\n- two`;
+
+  /** Every reply's paragraph reports that it overflows two lines, so "Show more" is offered. */
+  function overflowing() {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(40);
+  }
+
+  function replySession(overrides: Partial<SessionSummary> = {}): SessionSummary {
+    return session({ sessionId: SID, name: 'long-reply', lastAssistantText: PREVIEW, lastActivityAt: minutesAgo(5), ...overrides });
+  }
+
+  function message(overrides: Partial<LastMessage> = {}): LastMessage {
+    return { sessionId: SID, text: FULL, truncated: false, at: minutesAgo(5), ...overrides };
+  }
+
+  const ok = (body: LastMessage) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  /** Renders the dashboard with a reply loader over `fetch`, every group open. */
+  function renderWithReplies(rowSession: SessionSummary, fetch: FetchLike) {
+    const loader = createReplyLoader({ token: 'test-token', fetch });
+    const ui = (s: SessionSummary) => (
+      <ReplyLoaderContext.Provider value={loader}>
+        <Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [s] })]) }} />
+      </ReplyLoaderContext.Provider>
+    );
+    const result = render(ui(rowSession));
+    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) {
+      fireEvent.click(toggle);
+    }
+    return { ...result, update: (next: SessionSummary) => result.rerender(ui(next)) };
+  }
+
+  const text = () => row('long-reply').querySelector('.clamp-text') as HTMLElement;
+  const toggle = (name: 'Show more' | 'Show less') => fireEvent.click(within(row('long-reply')).getByRole('button', { name }));
+  const settle = () => act(async () => {});
+
+  it('fetches the whole reply on "Show more": a short loading state, then the text with its line breaks', async () => {
+    overflowing();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const fetch = vi.fn<FetchLike>(async () => {
+      await gate;
+      return ok(message());
+    });
+    renderWithReplies(replySession(), fetch);
+    expect(text().textContent).toBe(PREVIEW);
+
+    toggle('Show more');
+    expect(within(row('long-reply')).getByRole('status').textContent).toBe('Loading the full reply…');
+    expect(text().getAttribute('aria-busy')).toBe('true');
+    expect(text().textContent).toBe(PREVIEW);
+    expect(fetch).toHaveBeenCalledWith(lastMessagePath(SID), expect.objectContaining({ headers: { Authorization: 'Bearer test-token' } }));
+
+    release();
+    await settle();
+    expect(text().textContent).toBe(FULL);
+    expect(text().className).toContain('expanded');
+    expect(text().hasAttribute('aria-busy')).toBe(false);
+    expect(within(row('long-reply')).queryByText('Loading the full reply…')).toBeNull();
+  });
+
+  it('collapses to the preview again on "Show less"', async () => {
+    overflowing();
+    renderWithReplies(replySession(), vi.fn<FetchLike>(async () => ok(message())));
+    toggle('Show more');
+    await settle();
+    expect(text().textContent).toBe(FULL);
+
+    toggle('Show less');
+    expect(text().textContent).toBe(PREVIEW);
+    expect(text().className).not.toContain('expanded');
+    expect(within(row('long-reply')).getByRole('button', { name: 'Show more' }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps the preview, with a quiet note, when the reply cannot be loaded', async () => {
+    overflowing();
+    renderWithReplies(replySession(), vi.fn<FetchLike>(async () => new Response(null, { status: 404 })));
+    toggle('Show more');
+    await settle();
+
+    expect(text().textContent).toBe(PREVIEW);
+    expect(within(row('long-reply')).getByText("Couldn't load the full reply, so this is the preview.").className).toBe('reply-note');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('notes a reply that was cut at 64 KiB', async () => {
+    overflowing();
+    renderWithReplies(replySession(), vi.fn<FetchLike>(async () => ok(message({ truncated: true }))));
+    toggle('Show more');
+    await settle();
+
+    expect(text().textContent).toBe(FULL);
+    expect(within(row('long-reply')).getByText('This reply is longer than 64 KiB, so this is its first 64 KiB.')).toBeTruthy();
+  });
+
+  it('fetches once per session and activity time, and again once the session has moved on', async () => {
+    overflowing();
+    const fetch = vi.fn<FetchLike>(async () => ok(message()));
+    const { update } = renderWithReplies(replySession(), fetch);
+    toggle('Show more');
+    await settle();
+    toggle('Show less');
+    toggle('Show more');
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(text().textContent).toBe(FULL);
+
+    toggle('Show less');
+    update(replySession({ lastActivityAt: minutesAgo(1), lastAssistantText: `A newer reply. ${PREVIEW}` }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    fetch.mockImplementation(async () => ok(message({ text: 'A newer reply, in full.', at: minutesAgo(1) })));
+    toggle('Show more');
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(text().textContent).toBe('A newer reply, in full.');
+  });
+
+  it('fetches again while expanded when the session moves on, keeping the reply shown until the new one arrives', async () => {
+    overflowing();
+    const fetch = vi.fn<FetchLike>(async () => ok(message()));
+    const { update } = renderWithReplies(replySession(), fetch);
+    toggle('Show more');
+    await settle();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    fetch.mockImplementation(async () => {
+      await gate;
+      return ok(message({ text: 'Newest, in full.' }));
+    });
+    update(replySession({ lastActivityAt: minutesAgo(0.5) }));
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(text().textContent).toBe(FULL);
+    expect(within(row('long-reply')).queryByText('Loading the full reply…')).toBeNull();
+
+    release();
+    await settle();
+    expect(text().textContent).toBe('Newest, in full.');
+  });
+
+  it('renders the full reply as text, not markup, without control characters', async () => {
+    overflowing();
+    const hostile = '<img src=x onerror="alert(1)"><script>alert(2)</script><b>bold</b>\n\u001b[31mred\u001b[0m‮';
+    const { container } = renderWithReplies(replySession(), vi.fn<FetchLike>(async () => ok(message({ text: hostile }))));
+    toggle('Show more');
+    await settle();
+
+    expect(container.querySelector('img, script, b')).toBeNull();
+    expect(text().textContent).toBe('<img src=x onerror="alert(1)"><script>alert(2)</script><b>bold</b>\nred');
   });
 });
 
