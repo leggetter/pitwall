@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bearerToken, isAllowedHost, isAllowedOrigin, tokensMatch } from './security.js';
+import { bearerToken, contentSecurityPolicy, isAllowedHost, isAllowedOrigin, tokensMatch } from './security.js';
 
 describe('isAllowedHost', () => {
   it('allows exactly 127.0.0.1:<port> and localhost:<port>', () => {
@@ -38,5 +38,13 @@ describe('tokensMatch', () => {
     expect(tokensMatch(`${token}b`, token)).toBe(false);
     expect(tokensMatch(token.slice(1), token)).toBe(false);
     expect(tokensMatch('', token)).toBe(false);
+  });
+});
+
+describe('contentSecurityPolicy', () => {
+  it('names the WebSocket origins on the given port in connect-src', () => {
+    expect(contentSecurityPolicy(4517)).toBe(
+      "default-src 'self'; connect-src 'self' ws://127.0.0.1:4517 ws://localhost:4517; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    );
   });
 });

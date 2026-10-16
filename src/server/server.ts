@@ -23,7 +23,7 @@ import {
   isAllowedOrigin,
   LOOPBACK_HOST,
   MIN_TOKEN_LENGTH,
-  SECURITY_HEADERS,
+  securityHeaders,
   tokensMatch,
 } from './security.js';
 import { BUILDING_PAGE, resolveStaticFile } from './static.js';
@@ -63,13 +63,15 @@ export async function startServerWithInternals(
 
   // Set once the server is listening. Until then, nothing is allowed.
   let port: number | undefined;
+  // Also set once listening, because the CSP names the WebSocket origins with the real port.
+  let headers: [string, string][] = [];
   let closing = false;
 
   const app = createApp({ indexer, token, webRoot, port: () => port ?? -1 });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
-    for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
+    for (const [name, value] of headers) res.setHeader(name, value);
     const status = gateStatus(req, port);
     if (status !== undefined) {
       res.writeHead(status, { 'Content-Length': 0 }).end();
@@ -100,6 +102,7 @@ export async function startServerWithInternals(
     if (options.port !== undefined) throw new PortInUseError(requested, { cause: error });
     port = await listen(server, 0);
   }
+  headers = Object.entries(securityHeaders(port));
 
   let closed: Promise<void> | undefined;
   return {
