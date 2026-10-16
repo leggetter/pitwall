@@ -683,6 +683,202 @@ input {
   font-size: 0.8rem;
 }
 
+/* Opening a session's view from its row */
+
+.session.openable {
+  cursor: pointer;
+}
+
+.session.openable:hover {
+  background: var(--surface-raised);
+}
+
+.session.attention.openable:hover {
+  background: var(--attention-row);
+}
+
+.session.open {
+  box-shadow: inset 4px 0 0 var(--focus);
+}
+
+.session-open {
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.session-open:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* The session view: a panel over the right of the page, read-only */
+
+.session-view {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100vw);
+  background: var(--surface);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.18);
+}
+
+.session-view-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-view-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.session-view-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.session-view-subtitle {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.session-view-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.session-view-cwd {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.session-view-note {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.session-view-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 16px 24px;
+}
+
+.load-earlier {
+  display: block;
+  margin: 0 auto 12px;
+}
+
+.session-view-status {
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry-label {
+  margin-bottom: 2px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.entry-text {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.entry-user,
+.entry-cross-session {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.entry-cross-session {
+  border-left: 3px solid var(--busy-text);
+}
+
+/* A sender's name is shown as it is, not in capitals. */
+.entry-cross-session .entry-label {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.entry-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.entry-tool-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-error {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--failed-bg);
+  color: var(--failed-text);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.entry-notice .entry-text {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.entry-note {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
 @media (max-width: 600px) {
   body {
     font-size: 14px;

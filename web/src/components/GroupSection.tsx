@@ -14,9 +14,13 @@ export interface GroupSectionProps {
   /** Show which root the group sits under, when pitwall watches more than one. */
   showRoot: boolean;
   now: number;
+  /** Opens a session's view. */
+  onOpen?: ((sessionId: string) => void) | undefined;
+  /** The session whose view is open, if any. */
+  openSessionId?: string | undefined;
 }
 
-export function GroupSection({ group, sessions, collapsed, onToggle, showRoot, now }: GroupSectionProps) {
+export function GroupSection({ group, sessions, collapsed, onToggle, showRoot, now, onOpen, openSessionId }: GroupSectionProps) {
   const headingId = useId();
   const listId = useId();
   const total = group.sessions.length;
@@ -47,7 +51,14 @@ export function GroupSection({ group, sessions, collapsed, onToggle, showRoot, n
       </h2>
       <ul className="sessions" id={listId} hidden={collapsed}>
         {sessions.map((session) => (
-          <SessionRow key={session.sessionId} session={session} groupKey={group.key} now={now} />
+          <SessionRow
+            key={session.sessionId}
+            session={session}
+            groupKey={group.key}
+            now={now}
+            onOpen={onOpen}
+            isOpen={session.sessionId === openSessionId}
+          />
         ))}
       </ul>
     </section>

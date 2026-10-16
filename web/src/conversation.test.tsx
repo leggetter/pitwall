@@ -1,0 +1,177 @@
+import { describe, expect, it, vi } from 'vitest';
+import { conversationPath, type ConversationEntry, type ConversationPage } from '../../src/shared/protocol.js';
+import { createApiClient, type FetchLike } from './api.js';
+import {
+  asConversationPage,
+  entryKey,
+  entryKeys,
+  getConversation,
+  mergeNewest,
+  prependOlder,
+  STALE_CURSOR_STATUS,
+} from './conversation.js';
+
+// Made-up entries only.
+
+const at = (second: number) => `2026-03-02T11:00:${String(second).padStart(2, '0')}.000Z`;
+const userEntry = (second: number, text = `prompt ${second}`): ConversationEntry => ({ kind: 'user', at: at(second), text });
+const reply = (second: number, text: string): ConversationEntry => ({ kind: 'assistant', at: at(second), text });
+const tool = (second: number, toolError?: boolean): ConversationEntry => ({
+  kind: 'tool',
+  at: at(second),
+  text: 'Bash: npm test',
+  toolName: 'Bash',
+  ...(toolError === undefined ? {} : { toolError }),
+});
+
+describe('entryKey', () => {
+  it("doesn't count an assistant entry's text, or a tool entry's error, which change as the session goes on", () => {
+    expect(entryKey(reply(1, 'Part one.'))).toBe(entryKey(reply(1, 'Part one.\nPart two.')));
+    expect(entryKey(tool(2))).toBe(entryKey(tool(2, true)));
+    expect(entryKey(userEntry(3, 'a'))).not.toBe(entryKey(userEntry(3, 'b')));
+    expect(entryKey(userEntry(3))).not.toBe(entryKey({ ...userEntry(3), kind: 'notice' }));
+  });
+
+  it("counts an undated assistant entry's text, so undated entries stay apart", () => {
+    expect(entryKey({ kind: 'assistant', text: 'a' })).not.toBe(entryKey({ kind: 'assistant', text: 'b' }));
+  });
+});
+
+describe('mergeNewest', () => {
+  it('appends new entries without duplicating the ones on screen', () => {
+    const current = [userEntry(1), reply(2, 'Done.'), userEntry(3)];
+    const newest = [reply(2, 'Done.'), userEntry(3), userEntry(4), reply(5, 'Again.')];
+    expect(mergeNewest(current, newest)).toEqual([userEntry(1), reply(2, 'Done.'), userEntry(3), userEntry(4), reply(5, 'Again.')]);
+  });
+
+  it("takes the newest copy of an entry that grew or got its tool's result", () => {
+    const current = [userEntry(1), reply(2, 'Part one.'), tool(3)];
+    const newest = [reply(2, 'Part one.\nPart two.'), tool(3, true)];
+    expect(mergeNewest(current, newest)).toEqual([userEntry(1), reply(2, 'Part one.\nPart two.'), tool(3, true)]);
+  });
+
+  it('keeps the older pages loaded above the newest page', () => {
+    const older = Array.from({ length: 5 }, (_, i) => userEntry(i));
+    const current = [...older, userEntry(10), userEntry(11)];
+    expect(mergeNewest(current, [userEntry(10), userEntry(11), userEntry(12)])).toEqual([...current, userEntry(12)]);
+  });
+
+  it('says to replace the entries when the newest page does not overlap them', () => {
+    expect(mergeNewest([userEntry(1), userEntry(2)], [userEntry(40), userEntry(41)])).toBeUndefined();
+    expect(mergeNewest([], [userEntry(1)])).toBeUndefined();
+  });
+
+  it('keeps the entries when the newest page is empty', () => {
+    expect(mergeNewest([userEntry(1)], [])).toEqual([userEntry(1)]);
+  });
+});
+
+describe('prependOlder', () => {
+  it('puts the older page first, dropping any entry already on screen', () => {
+    expect(prependOlder([userEntry(1), userEntry(2)], [userEntry(3)])).toEqual([userEntry(1), userEntry(2), userEntry(3)]);
+    expect(prependOlder([userEntry(1), userEntry(2)], [userEntry(2), userEntry(3)])).toEqual([userEntry(1), userEntry(2), userEntry(3)]);
+  });
+});
+
+describe('entryKeys', () => {
+  it('numbers repeated keys, so every key is unique', () => {
+    const keys = entryKeys([userEntry(1), userEntry(1), userEntry(2)]);
+    expect(new Set(keys).size).toBe(3);
+    expect(keys[0]).toBe(entryKey(userEntry(1)));
+  });
+});
+
+describe('getConversation', () => {
+  const SID = '00000000-0000-4000-8000-0000000000c1';
+  const API_KEY = 'k'.repeat(43);
+  const PAGE: ConversationPage = {
+    sessionId: SID,
+    entries: [
+      { kind: 'user', at: at(1), text: 'run the tests' },
+      { kind: 'tool', at: at(2), text: 'Bash: npm test', toolName: 'Bash', toolError: true },
+    ],
+    before: 'b1',
+  };
+  const json = (body: unknown, status = 200) => () =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+  /** The app's API client, already holding an apiKey, over a fake fetch. */
+  function client(response: () => Response | Promise<Response>) {
+    const fetch = vi.fn<FetchLike>(async () => response());
+    return { fetch, api: createApiClient({ apiKey: API_KEY, fetch }) };
+  }
+
+  it('fetches the conversation path through the API client, with the apiKey, uncached', async () => {
+    const { fetch, api } = client(json(PAGE));
+    expect(await getConversation(api, SID)).toEqual({ kind: 'ok', page: PAGE });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe(conversationPath(SID));
+    expect(init).toMatchObject({ headers: { Authorization: `Bearer ${API_KEY}` }, cache: 'no-store' });
+  });
+
+  it('passes the before cursor, encoded', async () => {
+    const { fetch, api } = client(json({ sessionId: SID, entries: [] }));
+    expect(await getConversation(api, SID, 'a+b/c')).toEqual({ kind: 'ok', page: { sessionId: SID, entries: [] } });
+    expect(fetch.mock.calls[0]![0]).toBe(`${conversationPath(SID)}?before=a%2Bb%2Fc`);
+  });
+
+  it.each([
+    [404, 'not-found'],
+    [STALE_CURSOR_STATUS, 'stale'],
+    [400, 'failed'],
+    [500, 'failed'],
+    [503, 'failed'],
+  ])('reports a %i as %s', async (status, kind) => {
+    const { api } = client(() => new Response(null, { status }));
+    expect(await getConversation(api, SID)).toEqual({ kind });
+  });
+
+  it('answers 410 for a stale cursor, as the server does', () => {
+    expect(STALE_CURSOR_STATUS).toBe(410);
+  });
+
+  it.each([
+    ['a network error', () => Promise.reject(new Error('offline'))],
+    ['a body that is not JSON', () => new Response('<html>', { status: 200 })],
+    ['another session', json({ ...PAGE, sessionId: 'other' })],
+    ['entries that are not a list', json({ sessionId: SID, entries: {} })],
+    ['an empty cursor', json({ ...PAGE, before: '' })],
+  ])('reports %s as failed, never rejecting', async (_name, response) => {
+    const { api } = client(response);
+    expect(await getConversation(api, SID)).toEqual({ kind: 'failed' });
+  });
+
+  it('reports an aborted request as failed', async () => {
+    const api = createApiClient({ fetch: vi.fn<FetchLike>() });
+    const controller = new AbortController();
+    // No apiKey yet, so the request waits; aborting ends the wait.
+    const pending = getConversation(api, SID, undefined, controller.signal);
+    controller.abort();
+    expect(await pending).toEqual({ kind: 'failed' });
+  });
+});
+
+describe('asConversationPage', () => {
+  const SID = '00000000-0000-4000-8000-0000000000c2';
+
+  it('drops entries that are not well formed, and fields of the wrong type', () => {
+    const body = {
+      sessionId: SID,
+      entries: [
+        { kind: 'assistant', text: 'kept', at: 5, truncated: 'yes' },
+        { kind: 'html', text: 'unknown kind' },
+        { kind: 'user' },
+        null,
+        'text',
+        { kind: 'cross-session', text: 'hi', from: 'pitwall-test-sup', toolError: 'no' },
+      ],
+    };
+    expect(asConversationPage(body, SID)).toEqual({
+      sessionId: SID,
+      entries: [
+        { kind: 'assistant', text: 'kept' },
+        { kind: 'cross-session', text: 'hi', from: 'pitwall-test-sup' },
+      ],
+    });
+  });
+});
