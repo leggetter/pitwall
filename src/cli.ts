@@ -1,6 +1,245 @@
 #!/usr/bin/env node
 
-// W1 stub, replaced by W3: parse the roots, start the indexer and the server,
-// and open the browser.
-console.log('Usage: pitwall [root...]');
-process.exitCode = 0;
+// The `pitwall` command: parse the roots, start the indexer and the server,
+// print the URL and open the browser.
+import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import { startIndexer } from './index/index.js';
+import { DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
+
+export const USAGE = `Usage: pitwall [root...] [--port <n>] [--no-open]
+
+Lists the Claude Code sessions running under each root, in a local web UI.
+The roots default to the current directory.
+
+Options:
+  --port <n>     Port on 127.0.0.1. Default ${DEFAULT_PORT}, or a free port if
+                 ${DEFAULT_PORT} is busy. 0 always picks a free port.
+  --no-open      Don't open the browser.
+  -h, --help     Show this help.
+  -v, --version  Show the version.
+
+Environment:
+  PITWALL_TOKEN    Use this token instead of a random one. At least 32
+                   characters from A-Z, a-z, 0-9, "-" and "_".
+  PITWALL_NO_OPEN  Set to 1 to skip opening the browser.`;
+
+/** A problem with the command line or environment. Printed with a `pitwall:` prefix, exit 1. */
+export class UsageError extends Error {
+  override name = 'UsageError';
+}
+
+export type CliCommand =
+  | { kind: 'help' }
+  | { kind: 'version' }
+  | {
+      kind: 'run';
+      /** As given, not yet resolved. Empty means the current directory. */
+      roots: string[];
+      /** Undefined means the default port, with fallback. */
+      port?: number;
+      open: boolean;
+    };
+
+export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: true,
+      options: {
+        port: { type: 'string' },
+        'no-open': { type: 'boolean' },
+        help: { type: 'boolean', short: 'h' },
+        version: { type: 'boolean', short: 'v' },
+      },
+    });
+  } catch (error) {
+    throw new UsageError((error as Error).message);
+  }
+  const { values, positionals } = parsed;
+  if (values.help) return { kind: 'help' };
+  if (values.version) return { kind: 'version' };
+
+  return {
+    kind: 'run',
+    roots: positionals,
+    ...(values.port === undefined ? {} : { port: parsePort(values.port) }),
+    open: !values['no-open'] && env.PITWALL_NO_OPEN !== '1',
+  };
+}
+
+function parsePort(raw: string): number {
+  const port = /^\d{1,5}$/.test(raw) ? Number(raw) : NaN;
+  if (!(port >= 0 && port <= 65535)) {
+    throw new UsageError(`--port must be a whole number from 0 to 65535, not "${raw}"`);
+  }
+  return port;
+}
+
+/** Resolves the roots to absolute paths, defaulting to cwd. Throws UsageError for one that isn't a directory. */
+export function resolveRoots(roots: string[], cwd: string = process.cwd()): string[] {
+  const absolute = (roots.length > 0 ? roots : [cwd]).map((root) => resolve(cwd, root));
+  for (const root of absolute) {
+    let isDirectory = false;
+    try {
+      isDirectory = statSync(root).isDirectory();
+    } catch {
+      throw new UsageError(`root does not exist: ${root}`);
+    }
+    if (!isDirectory) throw new UsageError(`root is not a directory: ${root}`);
+  }
+  return absolute;
+}
+
+/** PITWALL_TOKEN when set and valid, otherwise 32 random bytes as base64url. */
+export function resolveToken(env: NodeJS.ProcessEnv = process.env): string {
+  const fromEnv = env.PITWALL_TOKEN;
+  if (fromEnv === undefined) return randomBytes(32).toString('base64url');
+  if (fromEnv.length < 32) throw new UsageError('PITWALL_TOKEN must be at least 32 characters');
+  // The token goes into a URL fragment, an Authorization header and, on
+  // Windows, a `cmd /c start` command line, so keep it to URL-safe characters.
+  if (!/^[A-Za-z0-9_-]+$/.test(fromEnv)) {
+    throw new UsageError('PITWALL_TOKEN may only contain A-Z, a-z, 0-9, "-" and "_"');
+  }
+  return fromEnv;
+}
+
+/**
+ * `<dir of cli.js>/web` when it exists: the built dist/cli.js next to dist/web.
+ * Otherwise `<repo>/dist/web`, for `tsx src/cli.ts`.
+ */
+export function resolveWebRoot(cliFile: string = fileURLToPath(import.meta.url)): string {
+  const here = dirname(cliFile);
+  const sibling = join(here, 'web');
+  return existsSync(sibling) ? sibling : resolve(here, '..', 'dist', 'web');
+}
+
+/** The command that opens a URL in the default browser. */
+export function browserCommand(url: string, platform: NodeJS.Platform = process.platform): [string, string[]] {
+  if (platform === 'darwin') return ['open', [url]];
+  // The empty argument is start's window title; without it, a quoted URL would become the title.
+  if (platform === 'win32') return ['cmd', ['/c', 'start', '', url]];
+  return ['xdg-open', [url]];
+}
+
+/** Opens the URL with execFile, so no shell parses it. A failure is reported, not fatal. */
+export function openBrowser(url: string): void {
+  const [command, args] = browserCommand(url);
+  const child = execFile(command, args, (error) => {
+    if (error) console.error(`pitwall: couldn't open a browser (${error.message}). Open the URL above instead.`);
+  });
+  child.unref();
+}
+
+function readVersion(): string {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  return pkg.version;
+}
+
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  let command: CliCommand;
+  let roots: string[];
+  let token: string;
+  try {
+    command = parseCliArgs(argv);
+    if (command.kind === 'help') {
+      console.log(USAGE);
+      return 0;
+    }
+    if (command.kind === 'version') {
+      console.log(readVersion());
+      return 0;
+    }
+    roots = resolveRoots(command.roots);
+    token = resolveToken();
+  } catch (error) {
+    if (!(error instanceof UsageError)) throw error;
+    console.error(`pitwall: ${error.message}\nRun pitwall --help for usage.`);
+    return 1;
+  }
+  // Keep the token out of child processes: the indexer runs `claude`, and
+  // later milestones start sessions that shouldn't be able to drive pitwall.
+  delete process.env.PITWALL_TOKEN;
+
+  const indexer = startIndexer({ roots });
+  let server;
+  try {
+    server = await startServer({
+      indexer,
+      token,
+      webRoot: resolveWebRoot(),
+      ...(command.port === undefined ? {} : { port: command.port }),
+    });
+  } catch (error) {
+    indexer.stop();
+    if (error instanceof PortInUseError) {
+      console.error(
+        `pitwall: port ${error.port} on 127.0.0.1 is already in use. Pick another with --port <n>, or use --port 0 for a free one.`,
+      );
+    } else {
+      console.error(`pitwall: couldn't start the server: ${(error as Error).message}`);
+    }
+    return 1;
+  }
+
+  const url = `${server.url}/#token=${token}`;
+  if (command.port === undefined && server.port !== DEFAULT_PORT) {
+    console.log(`pitwall: port ${DEFAULT_PORT} is busy, so using ${server.port}.`);
+  }
+  console.log(`pitwall is running at ${url}`);
+  console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}`);
+  if (command.open) openBrowser(url);
+
+  let stopping = false;
+  const shutdown = () => {
+    if (stopping) return;
+    stopping = true;
+    // tsx watch and terminals can deliver the same signal twice; the second is ignored.
+    setTimeout(() => process.exit(1), 3000).unref();
+    server
+      .close()
+      .then(
+        () => 0,
+        (error: unknown) => {
+          console.error(`pitwall: error while closing the server: ${(error as Error).message}`);
+          return 1;
+        },
+      )
+      .then((code) => {
+        indexer.stop();
+        process.exit(code);
+      });
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  return 0;
+}
+
+/** True when this file is the program being run, not a module imported by tests or scripts/dev.ts. */
+function isEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error: unknown) => {
+      console.error('pitwall:', error);
+      process.exitCode = 1;
+    },
+  );
+}
