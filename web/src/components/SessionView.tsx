@@ -4,6 +4,7 @@ import { ApiContext } from '../api.js';
 import { entryKeys, getConversation, mergeNewest, prependOlder, type ConversationResult } from '../conversation.js';
 import { absoluteTime, plainText, relativeTime, shortenHome } from '../format.js';
 import { statusPill } from '../sessions.js';
+import { SessionActions } from './SessionActions.js';
 
 /**
  * - `loading`: the first page hasn't arrived.
@@ -263,6 +264,7 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
         <p className="session-view-cwd" title={plainText(session.cwd)}>
           {plainText(shortenHome(session.cwd))}
         </p>
+        {session.kind === 'background' && listed && <SessionActions session={session} onRemoved={onClose} />}
         {session.kind === 'interactive' && (
           <p className="session-view-note">
             Read-only. Typing <code>/bg</code> in this session&apos;s terminal moves it to the background, which will let
