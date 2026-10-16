@@ -144,6 +144,12 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
     - **No token in process arguments:** `ps` shows other users the `open <url#token>` command line. Use a 0600 redirect file or a single-use launch code instead.
   - Detect a transcript rewritten in place within one poll (W6 finding 7), if Claude Code ever does that.
 - **M3 - Supervisor.** Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions.
+  - **First: titles from each session's recent turns** (W7 decision C).
+    - **Spike first:**
+      - Can `claude -p --bare --no-session-persistence --model haiku` run on Phil's Max login, rather than needing an API key?
+      - Does it stay out of `claude agents --json` and cross-session listings, so pitwall's own calls don't show up as sessions?
+      - What does each title cost, and how long does it take?
+    - **Then:** regenerate a session's title after new activity, once it's idle, at most every few minutes, within a token budget.
   - Label relayed messages in the UI as coming from the supervisor, because that's how the receiving session sees them.
   - Get status from pitwall's index (D1 polling and transcripts), not by messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
   - Don't subscribe to idle notices broadly. Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
@@ -165,7 +171,8 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Done; findings below |
 | W5a | Fixes from W5: "asked you" heuristic, stale rule, markdown stripping, missing directories | `m1/followups` | Sub-agent | Merged ([#5](https://github.com/leggetter/pitwall/pull/5)) |
 | W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Done: approve with follow-ups |
-| W6a | Fixes from the W6 review, before the merge | `m1/review-fixes` | Sub-agent | In progress |
+| W6a | Fixes from the W6 review, plus groups collapsed by default with their state saved (W7 feedback) | `m1/review-fixes` | Sub-agent | In progress |
+| W7a | W7 feedback: full replies on expand, change-only pushes with a heartbeat, a 5 s default poll with `--interval`, and Claude Code's session titles | `m1/w7-feedback` | Sub-agent | Waiting on W6a |
 | W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
 
 ### W5 findings (2026-10-16)
@@ -206,6 +213,21 @@ Verdict: approve with follow-ups. The reviewer probed the built CLI and found th
   - and the missing tests (#12).
 - **Fixed by the coordinator:** stale status lines (#5) and real session names in this file (#11).
 - **Moved to M2:** the token exposure to other local users (#1), as a security gate before any input path, and in-place transcript rewrites (#7).
+
+### W7 feedback (2026-10-16)
+
+From Phil's first look at the running UI.
+
+- **Replies were cut off, even when expanded.** The snapshot carries at most 500 characters per reply.
+  - **Decision:** fetch the full reply when a row is expanded, from `lastMessagePath(sessionId)`. Keep the 500-character preview in the snapshot.
+- **The first view was a wall of text.**
+  - **Decision:** groups start collapsed, and each group's open or closed state is saved in `localStorage` (pruned, failing safe to collapsed). This went into W6a, because it touches the same code.
+- **Polling cost.** Each `claude agents --json` call takes about 0.18 s of CPU and peaks at about 150 MB of memory. At a 2 s interval that's roughly 9% of a core, and the server pushed the full 20 KB snapshot after every poll.
+  - **Decision:** poll every 5 s by default, with `pitwall --interval <seconds>`. Push the full snapshot only when it changed, and a heartbeat otherwise.
+- **Session names like `git-a0` don't say what a session is about.**
+  - **Decision:** option C.
+    - **Now:** show Claude Code's own generated title after the name (`titleSource: 'claude-code'`). It's free, but it's set once from the first prompt and never updated.
+    - **M3:** replace it with a title pitwall generates from the session's recent turns (`titleSource: 'pitwall'`).
 
 ### Module layout
 

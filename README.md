@@ -17,7 +17,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** it's a documented interface and returns in about 0.2 s with 20 sessions. It includes interactive sessions started in any terminal or IDE, not just background ones. Third-party session managers only see sessions they launch themselves, which is why pitwall exists.
 - **Caveat:** interactive rows aren't in the agent view docs, which describe background sessions only. If they disappear in a later Claude Code release, pitwall loses most of its value, so watch the changelog.
-- **How:** poll every 2 s. Interactive rows give `status` (busy/idle) only; background rows add `state` and, when waiting, `waitingFor`.
+- **How:** poll every 5 s by default (`pitwall --interval <seconds>`). The full snapshot is pushed only when it changed, with a heartbeat after other polls. Each `claude agents --json` call costs about 0.18 s of CPU, so a 2 s interval used about 9% of a core; that was the M1 behavior until W7a. Interactive rows give `status` (busy/idle) only; background rows add `state` and, when waiting, `waitingFor`.
 
 ### D2 - Interactive sessions: relay through the supervisor, or `/bg` for full control
 
