@@ -55,9 +55,37 @@ function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
   };
 }
 
-function snapshot(generatedAt: string): IndexSnapshot {
-  return { generatedAt, roots: ['/tmp/pitwall-test-root'], groups: [], source: { ok: true } };
+function snapshot(generatedAt: string, overrides: Partial<IndexSnapshot> = {}): IndexSnapshot {
+  return { generatedAt, roots: ['/tmp/pitwall-test-root'], groups: [], source: { ok: true }, ...overrides };
 }
+
+/** A snapshot whose content differs from snapshot()'s: one group with one session. */
+function withSession(generatedAt: string, name = 'pitwall-test-a'): IndexSnapshot {
+  return snapshot(generatedAt, {
+    groups: [
+      {
+        key: '/tmp/pitwall-test-root/repo',
+        label: 'repo',
+        kind: 'git',
+        root: '/tmp/pitwall-test-root',
+        sessions: [
+          {
+            sessionId: '99999999-9999-4999-8999-999999999999',
+            name,
+            kind: 'interactive',
+            cwd: '/tmp/pitwall-test-root/repo',
+            alive: true,
+            startedAt: '2026-10-16T00:00:00.000Z',
+            stale: false,
+            transcript: 'missing',
+          },
+        ],
+      },
+    ],
+  });
+}
+
+const heartbeat = (s: IndexSnapshot): ServerMessage => ({ type: 'heartbeat', generatedAt: s.generatedAt, source: s.source });
 
 let tmp: string;
 let webRoot: string;
@@ -622,17 +650,76 @@ describe('startServer', () => {
       expect((await client.closed).code).toBe(1009);
     });
 
-    it('sends the latest snapshot after auth, then every push', async () => {
+    it('sends the latest snapshot after auth, then a heartbeat for an unchanged poll and a snapshot for a changed one', async () => {
       const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
       const server = await start(indexer);
       const client = await authedClient(server.port);
 
       expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: snapshot('2026-10-16T00:00:00.000Z') });
 
-      indexer.push(snapshot('2026-10-16T00:00:02.000Z'));
-      indexer.push(snapshot('2026-10-16T00:00:04.000Z'));
-      expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: snapshot('2026-10-16T00:00:02.000Z') });
-      expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: snapshot('2026-10-16T00:00:04.000Z') });
+      // Only generatedAt changed: a heartbeat, not the whole snapshot again.
+      indexer.push(snapshot('2026-10-16T00:00:05.000Z'));
+      expect(await client.nextMessage()).toEqual({
+        type: 'heartbeat',
+        generatedAt: '2026-10-16T00:00:05.000Z',
+        source: { ok: true },
+      });
+
+      const changed = withSession('2026-10-16T00:00:10.000Z');
+      indexer.push(changed);
+      expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: changed });
+
+      const same = withSession('2026-10-16T00:00:15.000Z');
+      indexer.push(same);
+      expect(await client.nextMessage()).toEqual(heartbeat(same));
+
+      // A change inside a session counts.
+      const renamed = withSession('2026-10-16T00:00:20.000Z', 'pitwall-test-renamed');
+      indexer.push(renamed);
+      expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: renamed });
+    });
+
+    it('sends a snapshot when only the source health changed', async () => {
+      const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
+      const server = await start(indexer);
+      const client = await authedClient(server.port);
+      await client.nextMessage();
+
+      const failed = snapshot('2026-10-16T00:00:05.000Z', { source: { ok: false, error: 'claude agents --json timed out after 10s' } });
+      indexer.push(failed);
+      expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: failed });
+
+      const stillFailing = snapshot('2026-10-16T00:00:10.000Z', { source: { ok: false, error: 'claude agents --json timed out after 10s' } });
+      indexer.push(stillFailing);
+      expect(await client.nextMessage()).toEqual(heartbeat(stillFailing));
+
+      const recovered = snapshot('2026-10-16T00:00:15.000Z');
+      indexer.push(recovered);
+      expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: recovered });
+    });
+
+    it('sends a client that joins late a snapshot first, and compares each client with what it was sent', async () => {
+      const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
+      const server = await start(indexer);
+      const early = await authedClient(server.port);
+      expect((await early.nextMessage()).type).toBe('snapshot');
+
+      indexer.push(snapshot('2026-10-16T00:00:05.000Z'));
+      expect((await early.nextMessage()).type).toBe('heartbeat');
+
+      // Joins after polls that sent the early client only heartbeats.
+      const late = await authedClient(server.port);
+      expect(await late.nextMessage()).toEqual({ type: 'snapshot', snapshot: snapshot('2026-10-16T00:00:05.000Z') });
+
+      const next = snapshot('2026-10-16T00:00:10.000Z');
+      indexer.push(next);
+      expect(await early.nextMessage()).toEqual(heartbeat(next));
+      expect(await late.nextMessage()).toEqual(heartbeat(next));
+
+      const changed = withSession('2026-10-16T00:00:15.000Z');
+      indexer.push(changed);
+      expect(await early.nextMessage()).toEqual({ type: 'snapshot', snapshot: changed });
+      expect(await late.nextMessage()).toEqual({ type: 'snapshot', snapshot: changed });
     });
 
     it('sends nothing until the first snapshot exists, then sends it', async () => {
