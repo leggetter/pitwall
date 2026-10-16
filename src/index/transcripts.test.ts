@@ -530,6 +530,45 @@ describe('createTranscriptReader', () => {
       expect((await r.read(SID, [CWD])).lastUserPrompt).toBe('héllo wörld 🎉 done');
     });
 
+    describe('a line that grows past 8 MiB without a newline', () => {
+      const MIB = 1024 * 1024;
+      // A user prompt that is valid JSON once its closing `"}}` and newline arrive.
+      const start = '{"type":"user","message":{"role":"user","content":"';
+
+      /** Writes a prompt, then grows one unfinished line to 9 MiB in 3 MiB steps, reading after each. */
+      async function growPastTheLimit() {
+        const r = reader({ maxWindowBytes: 4 * MIB });
+        await writeFile(file, jsonl(user('before the long line')));
+        expect((await r.read(SID, [CWD])).lastUserPrompt).toBe('before the long line');
+        await appendFile(file, start + 'x'.repeat(3 * MIB - start.length));
+        for (let read = 0; read < 3; read++) {
+          if (read > 0) await appendFile(file, 'x'.repeat(3 * MIB));
+          expect((await r.read(SID, [CWD])).lastUserPrompt).toBe('before the long line');
+        }
+        return r;
+      }
+
+      it('drops the line instead of keeping it: once finished, it is never applied', async () => {
+        const r = await growPastTheLimit();
+        // Kept and joined, the finished line would be a prompt of x's.
+        await appendFile(file, '"}}\n');
+        expect((await r.read(SID, [CWD])).lastUserPrompt).toBe('before the long line');
+
+        await appendFile(file, jsonl(user('after the long line')));
+        expect((await r.read(SID, [CWD])).lastUserPrompt).toBe('after the long line');
+      });
+
+      it('skips the rest of the dropped line, even when the rest on its own looks like an entry', async () => {
+        const r = await growPastTheLimit();
+        // Without skipping to the newline, these bytes would parse as a prompt.
+        await appendFile(file, jsonl(user('the end of the long line')));
+        expect((await r.read(SID, [CWD])).lastUserPrompt).toBe('before the long line');
+
+        await appendFile(file, jsonl(user('after the long line')));
+        expect((await r.read(SID, [CWD])).lastUserPrompt).toBe('after the long line');
+      });
+    });
+
     it('joins text blocks of one message written across two reads', async () => {
       const r = reader();
       await writeFile(file, jsonl(assistant([text('part one')], 'm1')));
