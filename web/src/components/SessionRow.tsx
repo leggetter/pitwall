@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, cwdWithinGroup, plainText, relativeTime } from '../format.js';
 import { attachCommand, needsAttention, statusPill } from '../sessions.js';
@@ -18,7 +19,20 @@ function titleHint(title: string, source: SessionSummary['titleSource']): string
   return from === undefined ? title : `${title}\n${from}`;
 }
 
-export function SessionRow({ session, groupKey, now }: { session: SessionSummary; groupKey: string; now: number }) {
+/** Clicks on these inside a row do their own thing, rather than opening the session. */
+const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="button"]';
+
+export interface SessionRowProps {
+  session: SessionSummary;
+  groupKey: string;
+  now: number;
+  /** Opens the session view. Clicking the name, or anywhere on the row that isn't a control, calls it. */
+  onOpen?: ((sessionId: string) => void) | undefined;
+  /** This session's view is open. */
+  isOpen?: boolean;
+}
+
+export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: SessionRowProps) {
   const attention = needsAttention(session);
   const pill = statusPill(session);
   const where = cwdWithinGroup(session.cwd, groupKey);
@@ -26,12 +40,34 @@ export function SessionRow({ session, groupKey, now }: { session: SessionSummary
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
 
+  const openFromRow = (event: MouseEvent<HTMLLIElement>) => {
+    if (!onOpen) return;
+    if (event.target instanceof Element && event.target.closest(OWN_CLICK)) return;
+    // Selecting text to copy it isn't a click on the row.
+    if ((window.getSelection()?.toString() ?? '') !== '') return;
+    onOpen(session.sessionId);
+  };
+  const className = ['session', attention && 'attention', onOpen && 'openable', isOpen && 'open'].filter(Boolean).join(' ');
+
   return (
-    <li className={attention ? 'session attention' : 'session'} data-attention={attention || undefined}>
+    <li className={className} data-attention={attention || undefined} onClick={openFromRow}>
       <div className="session-head">
         <div className="session-ident">
           <h3 className="session-name" title={`Session ${session.sessionId}, started ${absoluteTime(session.startedAt)}`}>
-            {name}
+            {onOpen ? (
+              <button
+                type="button"
+                className="session-open"
+                data-open-session={session.sessionId}
+                aria-haspopup="dialog"
+                aria-current={isOpen || undefined}
+                onClick={() => onOpen(session.sessionId)}
+              >
+                {name}
+              </button>
+            ) : (
+              name
+            )}
           </h3>
           {title && (
             <>

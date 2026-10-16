@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionState, ConnectionView } from '../connection.js';
 import { formatRoots, plainText, updatedAgo } from '../format.js';
 import { browserStorage, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
 import { GroupSection } from './GroupSection.js';
+import { SessionView } from './SessionView.js';
 
 /** The current time, refreshed every second, for relative times. */
 function useNow(intervalMs = 1_000): number {
@@ -47,12 +49,33 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   // Groups start collapsed; the ones opened are remembered across reloads.
   const [open, setOpen] = useState<GroupState>(() => readGroupState(storage));
   const [dismissedError, setDismissedError] = useState<string>();
+  // The session whose view is open, as it was when opened. While it's listed, the live summary is shown.
+  const [opened, setOpened] = useState<SessionSummary>();
 
   const groups = snapshot?.groups ?? [];
   const allSessions = useMemo(() => groups.flatMap((group) => group.sessions), [groups]);
   const attention = countAttention(allSessions);
   const visible = useMemo(() => filterGroups(groups, filters), [groups, filters]);
   const roots = snapshot ? formatRoots(snapshot.roots) : '';
+  const listedOpen = opened ? allSessions.find((session) => session.sessionId === opened.sessionId) : undefined;
+  const shownOpen = listedOpen ?? opened;
+
+  const openSession = useCallback(
+    (sessionId: string) => {
+      const session = allSessions.find((candidate) => candidate.sessionId === sessionId);
+      if (session) setOpened(session);
+    },
+    [allSessions],
+  );
+
+  const closeSession = useCallback(() => {
+    const id = opened?.sessionId;
+    setOpened(undefined);
+    // Back to the row it was opened from, when that's still on screen.
+    for (const button of document.querySelectorAll<HTMLElement>('[data-open-session]')) {
+      if (button.dataset.openSession === id) button.focus();
+    }
+  }, [opened]);
 
   useEffect(() => {
     document.title = attention > 0 ? `(${attention}) pitwall` : 'pitwall';
@@ -170,11 +193,23 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
                 onToggle={() => toggle(id)}
                 showRoot={snapshot.roots.length > 1}
                 now={now}
+                onOpen={openSession}
+                openSessionId={shownOpen?.sessionId}
               />
             );
           })
         )}
       </main>
+
+      {shownOpen && (
+        <SessionView
+          key={shownOpen.sessionId}
+          session={shownOpen}
+          listed={listedOpen !== undefined}
+          now={now}
+          onClose={closeSession}
+        />
+      )}
     </div>
   );
 }

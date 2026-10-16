@@ -1,0 +1,126 @@
+// The session view's conversation: fetching a page through the app's
+// ApiClient (api.ts), which sends the apiKey, never the token, and keeping the
+// pages on screen merged without duplicating an entry.
+
+import {
+  conversationPath,
+  type ConversationEntry,
+  type ConversationEntryKind,
+  type ConversationPage,
+} from '../../src/shared/protocol.js';
+import type { ApiClient } from './api.js';
+
+/** The status the server answers for a cursor made for another version of the transcript. */
+export const STALE_CURSOR_STATUS = 410;
+
+export type ConversationResult =
+  | { kind: 'ok'; page: ConversationPage }
+  /** The cursor no longer matches the transcript, which was replaced or rewritten: reload the newest page. */
+  | { kind: 'stale' }
+  /** The session isn't listed any more, or has no transcript. */
+  | { kind: 'not-found' }
+  /** The connection was refused (WebSocket 4401). The app is already showing that the token was rejected. */
+  | { kind: 'unauthorized' }
+  /** Anything else: a network error, another status, an aborted request, or a body that isn't a ConversationPage. */
+  | { kind: 'failed' };
+
+/**
+ * One page of a session's conversation, through the app's ApiClient: the
+ * newest, or the one before the `before` cursor. Waits while the page has no
+ * apiKey yet, as the client does. Never rejects.
+ */
+export async function getConversation(
+  api: ApiClient,
+  sessionId: string,
+  before?: string,
+  signal?: AbortSignal,
+): Promise<ConversationResult> {
+  const result = await api.get(conversationPath(sessionId, before), signal ? { signal } : {});
+  if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
+  if (result.kind === 'failed') {
+    if (result.status === 404) return { kind: 'not-found' };
+    if (result.status === STALE_CURSOR_STATUS) return { kind: 'stale' };
+    return { kind: 'failed' };
+  }
+  const page = asConversationPage(result.body, sessionId);
+  return page ? { kind: 'ok', page } : { kind: 'failed' };
+}
+
+const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 'tool', 'cross-session', 'notice']);
+
+/**
+ * The body as a ConversationPage for `sessionId`, or undefined when it isn't
+ * one. Entries that aren't well formed are dropped rather than failing the page.
+ */
+export function asConversationPage(body: unknown, sessionId: string): ConversationPage | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const { sessionId: id, entries, before } = body as Record<string, unknown>;
+  if (id !== sessionId || !Array.isArray(entries)) return undefined;
+  if (before !== undefined && (typeof before !== 'string' || before === '')) return undefined;
+  const page: ConversationPage = { sessionId, entries: entries.flatMap((entry) => asEntry(entry) ?? []) };
+  if (before !== undefined) page.before = before;
+  return page;
+}
+
+function asEntry(value: unknown): ConversationEntry | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { kind, at, text, toolName, toolError, from, truncated } = value as Record<string, unknown>;
+  if (typeof kind !== 'string' || !KINDS.has(kind as ConversationEntryKind) || typeof text !== 'string') return undefined;
+  const entry: ConversationEntry = { kind: kind as ConversationEntryKind, text };
+  if (typeof at === 'string') entry.at = at;
+  if (typeof toolName === 'string') entry.toolName = toolName;
+  if (typeof toolError === 'boolean') entry.toolError = toolError;
+  if (typeof from === 'string') entry.from = from;
+  if (truncated === true) entry.truncated = true;
+  return entry;
+}
+
+/**
+ * What identifies an entry across fetches. Entries have no id, so it's their
+ * kind, time and sender, plus their text where it can't change. An assistant
+ * entry's text grows as more of its message is written, and a tool entry
+ * gains its error flag when the result arrives, so neither of those counts.
+ */
+export function entryKey(entry: ConversationEntry): string {
+  const text = entry.kind === 'assistant' && entry.at !== undefined ? '' : entry.text;
+  return [entry.kind, entry.at ?? '', entry.toolName ?? '', entry.from ?? '', text].join('\u0000');
+}
+
+/**
+ * The entries on screen with a newer copy of the newest page merged in, or
+ * undefined when the two don't overlap, so the page should replace them.
+ *
+ * The newest page always runs to the end of the transcript, so from its first
+ * entry onwards it's the truth: entries on screen from that one on are
+ * replaced, which picks up a grown assistant message or a tool's result
+ * without duplicating either, and anything after is new.
+ */
+export function mergeNewest(current: readonly ConversationEntry[], newest: readonly ConversationEntry[]): ConversationEntry[] | undefined {
+  // An empty newest page, such as one that met only a line too long to read, says nothing new.
+  if (newest.length === 0) return [...current];
+  const anchor = entryKey(newest[0] as ConversationEntry);
+  for (let i = current.length - 1; i >= 0; i--) {
+    if (entryKey(current[i] as ConversationEntry) === anchor) return [...current.slice(0, i), ...newest];
+  }
+  return undefined;
+}
+
+/**
+ * An older page put before the entries on screen. Pages don't overlap, but
+ * any entry of the older page already on screen is dropped, to be safe.
+ */
+export function prependOlder(older: readonly ConversationEntry[], current: readonly ConversationEntry[]): ConversationEntry[] {
+  const shown = new Set(current.slice(0, older.length).map(entryKey));
+  return [...older.filter((entry) => !shown.has(entryKey(entry))), ...current];
+}
+
+/** Stable React keys for a list of entries: the entry's key, numbered when it repeats. */
+export function entryKeys(entries: readonly ConversationEntry[]): string[] {
+  const seen = new Map<string, number>();
+  return entries.map((entry) => {
+    const key = entryKey(entry);
+    const count = seen.get(key) ?? 0;
+    seen.set(key, count + 1);
+    return count === 0 ? key : `${key}\u0000${count}`;
+  });
+}
