@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 done on 2026-10-16. Spikes [001](docs/spikes/001-session-control.md) and [002](docs/spikes/002-supervisor-to-interactive.md) pass, including a background supervisor messaging an interactive session and getting a reply. No app code yet. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Confirm the stack (D5)<br>- Build M1 |
+| **Next steps** | - Build M1 |
 
 ## Who is this for
 
@@ -88,7 +88,7 @@ Each open one carries a lean. Settled decisions keep a one-line status here; the
 - **D2 - Acting on an interactive session pitwall didn't start:** relay messages through the supervisor, and ask me to `/bg` the session for anything that needs full control. Decided (S4).
 - **D3 - Direct interaction with background sessions: xterm.js over a PTY running `claude attach <id>`.** Decided (S3).
 - **D4 - Supervisor runtime: a background Claude Code session (`claude --bg`), not the Agent SDK.** Decided (spike 002). Revisit if chatting with the supervisor through a terminal is too crude.
-- **D5 - Stack: TypeScript on Node >= 22, npm, Hono and `ws` on the server, React and Vite for the UI, `node-pty`, xterm.js.** Lean: proposed, waiting on Phil. `node-pty@1.0.0` works on Node 25.1.0 (S3). Package `@leggetter/pitwall`, binary `pitwall`.
+- **D5 - Stack: TypeScript on Node >= 22, npm, Hono and `ws`, React and Vite, `node-pty`, xterm.js.** Decided (Phil, 2026-10-16).
 - **D6 - Grouping by `git rev-parse --git-common-dir`,** so worktrees sit under their repo, falling back to the working directory. Decided.
 
 ## Security
@@ -141,7 +141,7 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
 - [x] Run S1-S6
 - [x] Spike 002: a background supervisor messaging an interactive session
 - [x] Settle D1-D4 and D6
-- [ ] Confirm D5, the stack (Phil)
+- [x] Confirm D5, the stack (Phil)
 - [ ] Build M1
 
 ---

@@ -10,7 +10,7 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 ## Status
 
-M0, the spike. There is no app code yet. Don't scaffold the app until the spike results are recorded in `PLAN.md`.
+M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read-only index, is next. There is no app code yet.
 
 ## Rules
 
