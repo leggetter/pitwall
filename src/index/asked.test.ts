@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { detectAskedYou, EXCERPT_MAX } from './asked.js';
+import { detectAskedYou, EXCERPT_MAX, LINE_STRIP_MAX } from './asked.js';
 
 // Synthetic messages only, written in the shapes Claude Code sessions end turns with.
 
 const lines = (...parts: string[]) => parts.join('\n');
+
+function timed(fn: () => unknown): number {
+  const start = performance.now();
+  fn();
+  return performance.now() - start;
+}
+
+/** A few milliseconds is typical; the margin is for slow CI. The quadratic versions took seconds. */
+const FAST_MS = 200;
 
 describe('detectAskedYou: an "Open questions" section', () => {
   it('is not asked when the section says None or N/A, in any of the usual spellings', () => {
@@ -178,5 +187,52 @@ describe('detectAskedYou: a question at the end', () => {
 
   it('leaves HTML in the excerpt as text', () => {
     expect(detectAskedYou('Render <b>this</b>?')?.excerpt).toBe('Render <b>this</b>?');
+  });
+});
+
+describe('detectAskedYou: long and hostile messages', () => {
+  const N = 64 * 1024;
+
+  it.each([
+    ['an image opener and spaces', `![a](${' '.repeat(N - 5)}`],
+    ['spaces before a word', `${' '.repeat(N)}x`],
+    ['a label followed by emphasis, spaces and a line separator', `open questions${'* _'.repeat(N / 3)}\u2028`],
+    ['a run of [', '['.repeat(N)],
+    ['a heading with a long run of spaces', `# a${' '.repeat(N)}x`],
+  ])('checks %s in linear time', (_name, text) => {
+    expect(timed(() => detectAskedYou(text))).toBeLessThan(FAST_MS);
+  });
+
+  it('checks an "Open questions" section of hostile list items in bounded time', () => {
+    const item = `- ${'['.repeat(LINE_STRIP_MAX - 2)}`;
+    const text = lines('**Open questions:**', ...Array.from({ length: Math.floor(N / LINE_STRIP_MAX) }, () => item));
+    let asked;
+    expect(timed(() => (asked = detectAskedYou(text)))).toBeLessThan(FAST_MS);
+    expect(asked).toMatchObject({ reason: 'open-questions' });
+  });
+
+  it('finds an "Open questions" section at the end of a long message', () => {
+    const text = lines(...Array.from({ length: 1000 }, (_, i) => `Report line ${i} with **some** detail.`), '', '**Open questions:**', '- Should I push it?');
+    expect(text.length).toBeGreaterThan(30_000);
+    expect(detectAskedYou(text)).toEqual({ reason: 'open-questions', excerpt: 'Should I push it?' });
+  });
+
+  it('reads a long last line: the question from its end, the excerpt from its start', () => {
+    const long = `I checked **every** module. ${'The tests pass and the build is clean. '.repeat(60)}Should I merge it?`;
+    expect(long.length).toBeGreaterThan(2 * LINE_STRIP_MAX);
+    const asked = detectAskedYou(lines('Done.', '', long));
+    expect(asked?.reason).toBe('question');
+    expect(asked?.excerpt.startsWith('I checked every module. The tests pass')).toBe(true);
+    expect(asked?.excerpt.length).toBeLessThanOrEqual(EXCERPT_MAX);
+
+    expect(detectAskedYou(`Should I merge it? ${'Merged anyway. '.repeat(100)}`)).toBeUndefined();
+  });
+
+  it('reads a long "Open questions" item from its start', () => {
+    const item = `Should I keep the flag? ${'Context for the question. '.repeat(80)}`;
+    expect(detectAskedYou(lines('**Open questions:**', `- ${item}`))).toEqual({
+      reason: 'open-questions',
+      excerpt: `${item.slice(0, EXCERPT_MAX - 1).trimEnd()}…`,
+    });
   });
 });

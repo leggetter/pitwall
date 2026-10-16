@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { cap, markFences, stripMarkdown, truncate } from './text.js';
+import { cap, markFences, stripMarkdown, tail, truncate } from './text.js';
 
 // Synthetic text only.
+
+/** How long `fn` takes, in milliseconds. */
+function timed(fn: () => unknown): number {
+  const start = performance.now();
+  fn();
+  return performance.now() - start;
+}
+
+/**
+ * The most a hostile input may take. The patterns are linear, so these run in
+ * a few milliseconds; the margin is for slow CI machines, while the quadratic
+ * versions took seconds.
+ */
+const FAST_MS = 200;
 
 describe('truncate', () => {
   it('leaves short text alone', () => {
@@ -26,6 +40,15 @@ describe('cap', () => {
     expect(cap('abcdef', 3)).toBe('abc');
     expect(cap('ab🎉cd', 3)).toBe('ab');
     expect(cap('ab🎉cd', 4)).toBe('ab🎉');
+  });
+});
+
+describe('tail', () => {
+  it('keeps at most the last max code units, without half a surrogate pair', () => {
+    expect(tail('abcdef', 10)).toBe('abcdef');
+    expect(tail('abcdef', 3)).toBe('def');
+    expect(tail('ab🎉cd', 3)).toBe('cd');
+    expect(tail('ab🎉cd', 4)).toBe('🎉cd');
   });
 });
 
@@ -113,6 +136,7 @@ describe('stripMarkdown', () => {
   it('removes heading markers, including a closing sequence', () => {
     expect(stripMarkdown('# Title\n## Summary ##\n###### Deep')).toBe('Title\nSummary\nDeep');
     expect(stripMarkdown('#hashtag and #123')).toBe('#hashtag and #123');
+    expect(stripMarkdown('# Notes on C#\n# ###\n## Trailing ##   ')).toBe('Notes on C#\n###\nTrailing');
   });
 
   it('normalizes unordered list markers to "- " and keeps ordered ones', () => {
@@ -141,6 +165,18 @@ describe('stripMarkdown', () => {
     expect(stripMarkdown('[not a link] (x)')).toBe('[not a link] (x)');
   });
 
+  it('reads links the way CommonMark-ish patterns did: titles, empty parts, brackets in the text', () => {
+    expect(stripMarkdown('[a](  "a title")')).toBe('a');
+    expect(stripMarkdown("[a](x 'title')")).toBe('a');
+    expect(stripMarkdown('[a]()')).toBe('a');
+    expect(stripMarkdown('[a](  )')).toBe('a');
+    expect(stripMarkdown('![](chart.png) and ![x]()')).toBe(' and x');
+    expect(stripMarkdown('[](empty) [a] [b](u)')).toBe('[](empty) [a] b');
+    expect(stripMarkdown('[[a](u) and [x [b](v)')).toBe('[a and x [b');
+    expect(stripMarkdown('[a](x y) [b](unclosed')).toBe('[a](x y) [b](unclosed');
+    expect(stripMarkdown('[a](b) [c](d "t") ![e](f)')).toBe('a c e');
+  });
+
   it('removes blockquote markers', () => {
     expect(stripMarkdown('> quoted\n> > nested\n>no space')).toBe('quoted\nnested\nno space');
   });
@@ -166,6 +202,40 @@ describe('stripMarkdown', () => {
   it('leaves plain text alone', () => {
     const text = 'Done. The tests pass (12 of 12), and the build is clean: ready for review?';
     expect(stripMarkdown(text)).toBe(text);
+  });
+
+  describe('maxProse', () => {
+    it('stops after that many characters outside code blocks, even mid-line', () => {
+      expect(stripMarkdown('one two\nthree', 5)).toBe('one t');
+      // Syntax closed after the cut is left as it is.
+      expect(stripMarkdown('**one** two', 5)).toBe('**one');
+      expect(stripMarkdown('one\ntwo\nthree', 6)).toBe('one\ntwo');
+    });
+
+    it('does not count code blocks, so a long one at the start does not hide the prose after it', () => {
+      const code = `\`\`\`\n${'x'.repeat(10_000)}\n\`\`\``;
+      expect(stripMarkdown(`${code}\n\nShould I apply this?`, 100)).toBe('[code]\n\nShould I apply this?');
+    });
+  });
+
+  describe('hostile input', () => {
+    // The shapes the W6 review measured at about 10 s each, and others found alongside them.
+    const N = 64 * 1024;
+    it.each([
+      ['an image opener and spaces', `![a](${' '.repeat(N - 5)}`],
+      ['a link opener and spaces', `[a](${' '.repeat(N - 4)}`],
+      ['a run of [', '['.repeat(N)],
+      ['a run of ![', '!['.repeat(N / 2)],
+      ['a heading with a long run of spaces', `# a${' '.repeat(N)}x`],
+      ['link targets with unclosed titles', '[a](x "'.repeat(N / 7)],
+    ])('strips %s in linear time', (_name, text) => {
+      expect(timed(() => stripMarkdown(text))).toBeLessThan(FAST_MS);
+    });
+
+    it('keeps the result of those inputs as it was', () => {
+      expect(stripMarkdown(`![a](${' '.repeat(10)}`)).toBe(`![a](${' '.repeat(10)}`);
+      expect(stripMarkdown(`# a${' '.repeat(10)}x`)).toBe(`a${' '.repeat(10)}x`);
+    });
   });
 
   it('strips a typical end-of-turn message', () => {
