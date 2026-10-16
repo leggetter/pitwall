@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { lastMessagePath, type IndexSnapshot, type LastMessage, type SessionSummary } from '../../../src/shared/protocol.js';
+import { createApiClient } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { GROUP_STATE_KEY, type StorageSource } from '../groupState.js';
 import { createReplyLoader, ReplyLoaderContext, type FetchLike } from '../lastMessage.js';
@@ -749,7 +750,7 @@ describe('full replies', () => {
 
   /** Renders the dashboard with a reply loader over `fetch`, every group open. */
   function renderWithReplies(rowSession: SessionSummary, fetch: FetchLike) {
-    const loader = createReplyLoader({ token: 'test-token', fetch });
+    const loader = createReplyLoader({ api: createApiClient({ apiKey: 'test-token', fetch }) });
     const ui = (s: SessionSummary) => (
       <ReplyLoaderContext.Provider value={loader}>
         <Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [s] })]) }} />
