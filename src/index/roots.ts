@@ -2,6 +2,7 @@
 
 import { realpath as fsRealpath } from 'node:fs/promises';
 import path from 'node:path';
+import { isRecord } from './guards.js';
 
 export type Realpath = (p: string) => Promise<string>;
 
@@ -21,8 +22,24 @@ export async function resolveRoots(roots: readonly string[], realpath: Realpath 
 }
 
 /** A session's cwd for matching: its realpath when it still exists, as given otherwise. */
-export function resolveCwd(cwd: string, realpath: Realpath = fsRealpath): Promise<string> {
-  return realpathOr(cwd, realpath);
+export async function resolveCwd(cwd: string, realpath: Realpath = fsRealpath): Promise<string> {
+  return (await inspectCwd(cwd, realpath)).path;
+}
+
+export interface CwdInfo {
+  /** The realpath, or the cwd as given when it can't be resolved. */
+  path: string;
+  /** True when the directory no longer exists: realpath failed with ENOENT. */
+  missing: boolean;
+}
+
+/** `resolveCwd`, and whether the directory has gone. Any other failure, such as EACCES, isn't counted as missing. */
+export async function inspectCwd(cwd: string, realpath: Realpath = fsRealpath): Promise<CwdInfo> {
+  try {
+    return { path: await realpath(cwd), missing: false };
+  } catch (err) {
+    return { path: cwd, missing: isRecord(err) && err.code === 'ENOENT' };
+  }
 }
 
 /**

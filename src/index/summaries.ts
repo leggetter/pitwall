@@ -7,17 +7,40 @@ import type { TranscriptInfo } from './transcripts.js';
 
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** A background session that is blocked, has no process, and started more than 7 days ago. */
-export function isStale(row: AgentRow, nowMs: number): boolean {
+/**
+ * A background session that is blocked and has had no activity for more than
+ * 7 days, whether or not its process is still running. Activity is the newest
+ * transcript entry, or the start time when there's none.
+ */
+export function isStale(row: AgentRow, lastActivityAt: string | undefined, nowMs: number): boolean {
+  if (row.kind !== 'background' || row.state !== 'blocked') return false;
+  const activity = Date.parse(lastActivityAt ?? row.startedAt);
+  return Number.isFinite(activity) && nowMs - activity > STALE_AFTER_MS;
+}
+
+/**
+ * Whether a session has finished its turn, so a question in its last message
+ * is waiting on the user: not busy, not waiting on a prompt, not a background
+ * job that is working or blocked, and not stale.
+ */
+function turnIsOver(row: AgentRow, stale: boolean): boolean {
   return (
-    row.kind === 'background' &&
-    row.state === 'blocked' &&
-    row.pid === undefined &&
-    nowMs - Date.parse(row.startedAt) > STALE_AFTER_MS
+    row.status !== 'busy' && row.status !== 'waiting' && row.state !== 'working' && row.state !== 'blocked' && !stale
   );
 }
 
-export function toSessionSummary(row: AgentRow, transcript: TranscriptInfo, nowMs: number): SessionSummary {
+export interface SummaryExtras {
+  /** The working directory no longer exists. */
+  cwdMissing?: boolean;
+}
+
+export function toSessionSummary(
+  row: AgentRow,
+  transcript: TranscriptInfo,
+  nowMs: number,
+  extras: SummaryExtras = {},
+): SessionSummary {
+  const stale = isStale(row, transcript.lastActivityAt, nowMs);
   const summary: SessionSummary = {
     sessionId: row.sessionId,
     name: row.name,
@@ -25,9 +48,10 @@ export function toSessionSummary(row: AgentRow, transcript: TranscriptInfo, nowM
     cwd: row.cwd,
     alive: row.pid !== undefined,
     startedAt: row.startedAt,
-    stale: isStale(row, nowMs),
+    stale,
     transcript: transcript.transcript,
   };
+  if (extras.cwdMissing === true) summary.cwdMissing = true;
   if (row.shortId !== undefined) summary.shortId = row.shortId;
   if (row.pid !== undefined) summary.pid = row.pid;
   if (row.status !== undefined) summary.status = row.status;
@@ -36,6 +60,7 @@ export function toSessionSummary(row: AgentRow, transcript: TranscriptInfo, nowM
   if (transcript.lastActivityAt !== undefined) summary.lastActivityAt = transcript.lastActivityAt;
   if (transcript.lastAssistantText !== undefined) summary.lastAssistantText = transcript.lastAssistantText;
   if (transcript.lastUserPrompt !== undefined) summary.lastUserPrompt = transcript.lastUserPrompt;
+  if (transcript.askedYou !== undefined && turnIsOver(row, stale)) summary.askedYou = transcript.askedYou;
   return summary;
 }
 
@@ -50,11 +75,12 @@ export function activityMs(session: SessionSummary): number {
 
 function statusRank(session: SessionSummary): number {
   if (session.status === 'waiting') return 0;
-  if (session.status === 'busy') return 1;
-  return 2;
+  if (session.askedYou !== undefined) return 1;
+  if (session.status === 'busy') return 2;
+  return 3;
 }
 
-/** Stale sessions last; otherwise waiting, then busy, then most recently active first. */
+/** Stale sessions last; otherwise waiting, then asked you, then busy, then most recently active first. */
 export function compareSessions(a: SessionSummary, b: SessionSummary): number {
   return (
     Number(a.stale) - Number(b.stale) ||

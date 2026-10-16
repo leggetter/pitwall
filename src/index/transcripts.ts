@@ -5,15 +5,24 @@
 import { open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { TranscriptStatus } from '../shared/protocol.js';
+import type { AskedYou, TranscriptStatus } from '../shared/protocol.js';
+import { detectAskedYou } from './asked.js';
 import { isRecord } from './guards.js';
+import { cap, stripMarkdown, truncate } from './text.js';
 
 export interface TranscriptInfo {
   transcript: TranscriptStatus;
   /** ISO 8601. */
   lastActivityAt?: string;
+  /** The newest assistant text, with markdown stripped, trimmed and truncated to 500 characters. */
   lastAssistantText?: string;
   lastUserPrompt?: string;
+  /**
+   * Set when the newest assistant text asks the user something and no prompt
+   * has come since. The session's status isn't known here: `toSessionSummary`
+   * drops this for a session that is still working.
+   */
+  askedYou?: AskedYou;
 }
 
 export interface TranscriptReaderOptions {
@@ -49,8 +58,12 @@ const KIB = 1024;
 const MIB = 1024 * KIB;
 /** An incomplete line longer than this is dropped rather than kept for the next read. */
 const MAX_CARRY_BYTES = 8 * MIB;
-/** Kept from a message's text before truncation, so later text blocks of the same message can be joined. */
-const TEXT_KEEP = 4 * ASSISTANT_TEXT_MAX;
+/**
+ * How much of the newest assistant message's raw text is kept, its text blocks
+ * joined. The "asked you" check reads the whole message, not the 500 characters
+ * that are shown.
+ */
+export const ASSISTANT_TEXT_KEEP = 64 * KIB;
 const NEWLINE = 0x0a;
 const EMPTY = Buffer.alloc(0);
 /** Session ids become file names, so anything that could escape the projects directory is refused. */
@@ -144,7 +157,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
         consume(state, chunk);
         state.offset += chunk.length;
       }
-      return toInfo(state.fields);
+      return toInfo(state);
     } finally {
       await handle.close().catch(() => undefined);
     }
@@ -198,6 +211,14 @@ interface FileState {
   /** Drop bytes up to the next newline: the read started mid-line, or a line was too long to keep. */
   skipToNewline: boolean;
   fields: Fields;
+  /** What was worked out from `fields.assistantText`, kept until the text changes. */
+  derived?: Derived;
+}
+
+interface Derived {
+  source: string;
+  text: string;
+  askedYou: AskedYou | undefined;
 }
 
 async function readWindow(
@@ -283,8 +304,11 @@ export interface Fields {
   lastActivityMs?: number;
   /** The `message.id` of the newest assistant message with text, to join text blocks written on separate lines. */
   assistantMessageId?: string;
+  /** The newest assistant message's raw text, its text blocks joined, capped at 64 KiB. */
   assistantText?: string;
   userPrompt?: string;
+  /** True when a prompt came after the newest assistant text, in file order. */
+  promptAfterText?: boolean;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -316,16 +340,20 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     const text = assistantTextOf(entry);
     if (text === undefined) return;
     if (text.id !== undefined && text.id === fields.assistantMessageId && fields.assistantText !== undefined) {
-      fields.assistantText = `${fields.assistantText}\n${text.text}`.slice(0, TEXT_KEEP);
+      fields.assistantText = cap(`${fields.assistantText}\n${text.text}`, ASSISTANT_TEXT_KEEP);
     } else {
       fields.assistantMessageId = text.id;
-      fields.assistantText = text.text.slice(0, TEXT_KEEP);
+      fields.assistantText = cap(text.text, ASSISTANT_TEXT_KEEP);
     }
+    fields.promptAfterText = false;
     return;
   }
 
   const prompt = userPromptOf(entry);
-  if (prompt !== undefined) fields.userPrompt = prompt;
+  if (prompt !== undefined) {
+    fields.userPrompt = prompt;
+    fields.promptAfterText = true;
+  }
 }
 
 /**
@@ -403,29 +431,31 @@ export function stripSystemReminders(text: string): string {
   return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '');
 }
 
-/**
- * At most `max` characters. A cut text ends with `…`, within the limit, and
- * never splits a surrogate pair.
- */
-export function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  let cut = max - 1;
-  const code = text.charCodeAt(cut - 1);
-  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
-  return `${text.slice(0, cut).trimEnd()}…`;
-}
-
 function isComplete(fields: Fields): boolean {
   return fields.lastActivityMs !== undefined && fields.assistantText !== undefined && fields.userPrompt !== undefined;
 }
 
-function toInfo(fields: Fields): TranscriptInfo {
+function toInfo(state: FileState): TranscriptInfo {
+  const { fields } = state;
   const info: TranscriptInfo = { transcript: 'ok' };
   if (fields.lastActivityMs !== undefined) info.lastActivityAt = new Date(fields.lastActivityMs).toISOString();
   if (fields.assistantText !== undefined) {
-    const text = truncate(fields.assistantText.trim(), ASSISTANT_TEXT_MAX);
-    if (text !== '') info.lastAssistantText = text;
+    const derived = derive(state, fields.assistantText);
+    if (derived.text !== '') info.lastAssistantText = derived.text;
+    if (derived.askedYou !== undefined && fields.promptAfterText !== true) info.askedYou = derived.askedYou;
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
   return info;
+}
+
+/** Strips and checks the assistant text once per change, not on every poll. */
+function derive(state: FileState, source: string): Derived {
+  if (state.derived?.source !== source) {
+    state.derived = {
+      source,
+      text: truncate(stripMarkdown(source).trim(), ASSISTANT_TEXT_MAX),
+      askedYou: detectAskedYou(source),
+    };
+  }
+  return state.derived;
 }

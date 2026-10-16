@@ -188,6 +188,50 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
+  it('marks a session whose cwd no longer exists, and still groups it', async () => {
+    const { state, deps } = harness();
+    deps.realpath = async (p) => {
+      if (p === '/work/repo/gone') throw Object.assign(new Error('no such file or directory'), { code: 'ENOENT' });
+      return p;
+    };
+    state.result = { ok: true, rows: [row('gone', '/work/repo/gone'), row('here', '/work/repo/here')] };
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
+    expect(sessions.find((s) => s.sessionId === 'gone')?.cwdMissing).toBe(true);
+    expect(sessions.find((s) => s.sessionId === 'here')).not.toHaveProperty('cwdMissing');
+    indexer.stop();
+  });
+
+  it('keeps askedYou only for sessions that have finished their turn, and sorts them after waiting', async () => {
+    const { state, deps } = harness();
+    const asked = { reason: 'question' as const, excerpt: 'Ship it?' };
+    const at = (s: number) => new Date(NOW - s * 1000).toISOString();
+    state.result = {
+      ok: true,
+      rows: [
+        row('idle-asked', '/work/repo/a', { status: 'idle' }),
+        row('busy-asked', '/work/repo/b', { status: 'busy' }),
+        row('waiting', '/work/repo/c', { status: 'waiting', waitingFor: 'permission prompt' }),
+        row('idle', '/work/repo/d', { status: 'idle' }),
+      ],
+    };
+    state.transcripts.set('idle-asked', { transcript: 'ok', lastActivityAt: at(600), askedYou: asked });
+    state.transcripts.set('busy-asked', { transcript: 'ok', lastActivityAt: at(1), askedYou: asked });
+    state.transcripts.set('waiting', { transcript: 'ok', lastActivityAt: at(900) });
+    state.transcripts.set('idle', { transcript: 'ok', lastActivityAt: at(2) });
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    const sessions = indexer.latest()?.groups[0]?.sessions ?? [];
+    expect(sessions.map((s) => [s.sessionId, s.askedYou?.excerpt])).toEqual([
+      ['waiting', undefined],
+      ['idle-asked', 'Ship it?'],
+      ['busy-asked', undefined],
+      ['idle', undefined],
+    ]);
+    indexer.stop();
+  });
+
   it('drops sessions outside the roots, without reading their transcripts', async () => {
     const { state, deps } = harness();
     state.result = {
@@ -334,7 +378,11 @@ describe('the indexer against temporary directories', () => {
       plain: '66666666-6666-4666-8666-666666666663',
       stale: '66666666-6666-4666-8666-666666666664',
       outside: '66666666-6666-4666-8666-666666666665',
+      asked: '66666666-6666-4666-8666-666666666666',
+      gone: '66666666-6666-4666-8666-666666666667',
+      staleAlive: '66666666-6666-4666-8666-666666666668',
     };
+    const gone = path.join(root, 'removed-worktree');
     const transcript = async (cwd: string, id: string, lines: unknown[]) => {
       const projectDir = path.join(configDir, 'projects', encodeProjectDir(cwd));
       await mkdir(projectDir, { recursive: true });
@@ -351,6 +399,22 @@ describe('the indexer against temporary directories', () => {
     await transcript(worktree, ids.worktree, [
       { type: 'user', timestamp: '2026-10-16T11:00:00.000Z', message: { content: 'build the feature' } },
     ]);
+    await transcript(repo, ids.asked, [
+      { type: 'user', timestamp: '2026-10-16T11:50:00.000Z', message: { content: 'tidy the docs' } },
+      {
+        type: 'assistant',
+        timestamp: '2026-10-16T11:51:00.000Z',
+        message: { id: 'm2', content: [{ type: 'text', text: '## Done\n\n**Open questions:**\n- Should I push it?\n\n**Next steps:**\n1. You review.' }] },
+      },
+    ]);
+    await transcript(repo, ids.staleAlive, [
+      { type: 'user', timestamp: '2026-09-24T09:00:00.000Z', message: { content: 'migrate the data' } },
+      {
+        type: 'assistant',
+        timestamp: '2026-09-24T09:05:00.000Z',
+        message: { id: 'm3', content: [{ type: 'text', text: 'Which table first?' }] },
+      },
+    ]);
 
     const rows = [
       row(ids.repo, path.join(repo, 'src'), { status: 'busy' }),
@@ -365,6 +429,10 @@ describe('the indexer against temporary directories', () => {
         startedAt: new Date(NOW - 10 * 24 * 60 * 60 * 1000).toISOString(),
       }),
       row(ids.outside, path.join(dir, 'elsewhere')),
+      row(ids.asked, repo, { status: 'idle' }),
+      row(ids.gone, gone, { startedAt: new Date(NOW - 3 * 60 * 60 * 1000).toISOString() }),
+      // Blocked since 24 Sep with its process still running: stale all the same.
+      row(ids.staleAlive, repo, { kind: 'background', shortId: 'cd34ef56', pid: 2000, status: 'idle', state: 'blocked' }),
     ];
 
     const now = () => NOW;
@@ -397,12 +465,25 @@ describe('the indexer against temporary directories', () => {
         key: repo,
         sessions: [
           [ids.worktree, 'ok', false],
+          [ids.asked, 'ok', false],
           [ids.repo, 'ok', false],
           [ids.stale, 'missing', true],
+          [ids.staleAlive, 'ok', true],
         ],
       },
       { label: 'notes', kind: 'directory', key: plain, sessions: [[ids.plain, 'missing', false]] },
+      { label: 'removed-worktree', kind: 'directory', key: gone, sessions: [[ids.gone, 'missing', false]] },
     ]);
+    const sessions = snapshot.groups.flatMap((g) => g.sessions);
+    const byId = (id: string) => sessions.find((s) => s.sessionId === id);
+    expect(byId(ids.asked)).toMatchObject({
+      askedYou: { reason: 'open-questions', excerpt: 'Should I push it?' },
+      lastAssistantText: 'Done\n\nOpen questions:\n- Should I push it?\n\nNext steps:\n1. You review.',
+    });
+    // Blocked, so not "asked you" even though its last message is a question.
+    expect(byId(ids.staleAlive)).not.toHaveProperty('askedYou');
+    expect(byId(ids.gone)?.cwdMissing).toBe(true);
+    expect(sessions.filter((s) => s.cwdMissing).map((s) => s.sessionId)).toEqual([ids.gone]);
     const repoSession = snapshot.groups[0]?.sessions.find((s) => s.sessionId === ids.repo);
     expect(repoSession).toMatchObject({
       lastActivityAt: '2026-10-16T11:59:00.000Z',
