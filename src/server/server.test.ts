@@ -1,19 +1,21 @@
 import { createHmac } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { connect, createServer as createNetServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import { createIndexer, type Indexer } from '../index/index.js';
+import { ConversationCursorError, createIndexer, type Indexer } from '../index/index.js';
 import {
+  conversationPath,
   lastMessagePath,
   PROTOCOL_VERSION,
   SNAPSHOT_PATH,
   WS_CLOSE_UNAUTHORIZED,
   WS_PATH,
+  type ConversationPage,
   type IndexSnapshot,
   type LastMessage,
   type ServerMessage,
@@ -21,7 +23,7 @@ import {
 import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from './index.js';
 import { securityHeaders } from './security.js';
 import { BUILDING_SCRIPT, BUILDING_SCRIPT_PATH } from './static.js';
-import { startServerWithInternals, type ServerInternals } from './server.js';
+import { STALE_CURSOR_STATUS, startServerWithInternals, type ServerInternals } from './server.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
@@ -33,12 +35,15 @@ interface FakeIndexer extends Indexer {
   listenerCount(): number;
   /** What lastMessage() answers, by session id. */
   messages: Map<string, LastMessage>;
+  /** What conversation() answers, by session id: a page, or an error to reject with. */
+  conversations: Map<string, ConversationPage | Error>;
 }
 
 function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
   let latest = initial;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   const messages = new Map<string, LastMessage>();
+  const conversations = new Map<string, ConversationPage | Error>();
   return {
     latest: () => latest,
     subscribe(listener) {
@@ -49,6 +54,12 @@ function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
     },
     lastMessage: vi.fn((sessionId: string) => messages.get(sessionId)),
     messages,
+    conversation: vi.fn(async (sessionId: string, _before?: string) => {
+      const answer = conversations.get(sessionId);
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }),
+    conversations,
     stop: vi.fn(),
     push(snapshot) {
       latest = snapshot;
@@ -666,6 +677,7 @@ describe('startServer', () => {
           transcripts: {
             read: async () => ({ transcript: 'ok' }),
             lastMessage: (sessionId) => ({ sessionId, text: 'a reply', truncated: false }),
+            transcriptFile: () => undefined,
             retain() {},
           },
           realpath: async (p) => p,
@@ -724,6 +736,235 @@ describe('startServer', () => {
       const res = await get(server.port, lastMessagePath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) });
       expect(res.status).toBe(200);
       expect(JSON.parse(res.body)).toEqual(message);
+    });
+  });
+
+  describe('the conversation API', () => {
+    const SID = '66666666-6666-4666-8666-666666666666';
+    const page: ConversationPage = {
+      sessionId: SID,
+      entries: [
+        { kind: 'user', at: '2026-10-16T00:00:00.000Z', text: 'run the tests' },
+        { kind: 'tool', at: '2026-10-16T00:00:01.000Z', text: 'Bash: npm test', toolName: 'Bash', toolError: false },
+      ],
+      before: 'eyJ2IjoxfQ',
+    };
+    /** Well formed, so it reaches the index. */
+    const CURSOR = Buffer.from(JSON.stringify({ v: 1, o: 10, d: '1', i: '2', f: 'AAAAAAAAAAA' })).toString('base64url');
+
+    /** An index listing SID, whose conversation() answers with `answer`. */
+    function withPage(answer: ConversationPage | Error = page): FakeIndexer {
+      const indexer = fakeIndexer(withSession('2026-10-16T00:00:00.000Z', 'pitwall-test-conversation', SID));
+      indexer.conversations.set(SID, answer);
+      return indexer;
+    }
+
+    it('serves the path the contract names', () => {
+      expect(conversationPath(SID)).toBe(`/api/sessions/${SID}/conversation`);
+      expect(conversationPath(SID, 'a b')).toBe(`/api/sessions/${SID}/conversation?before=a%20b`);
+    });
+
+    it('returns 401 with no detail for a missing or wrong token, and 403 for another Origin, without asking the index', async () => {
+      const indexer = withPage();
+      const server = await start(indexer);
+      for (const headers of [{}, { authorization: 'Bearer wrong' }] as Record<string, string>[]) {
+        const res = await get(server.port, conversationPath(SID), headers);
+        expect(res.status).toBe(401);
+        expect(res.body).toBe('');
+      }
+      expect((await get(server.port, conversationPath(SID), { origin: 'http://evil.example', ...bearer })).status).toBe(403);
+      expect(indexer.conversation).not.toHaveBeenCalled();
+    });
+
+    it("returns a listed session's newest page as JSON, uncached", async () => {
+      const indexer = withPage();
+      const server = await start(indexer);
+      const res = await get(server.port, conversationPath(SID), { origin: origin(server.port), ...bearer });
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/^application\/json/);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(JSON.parse(res.body)).toEqual(page);
+      expect(indexer.conversation).toHaveBeenCalledWith(SID, undefined);
+    });
+
+    it('passes a well-formed before cursor to the index', async () => {
+      const indexer = withPage();
+      const server = await start(indexer);
+      expect((await get(server.port, conversationPath(SID, CURSOR), bearer)).status).toBe(200);
+      expect(indexer.conversation).toHaveBeenCalledWith(SID, CURSOR);
+    });
+
+    it('serves the page with the apiKey too', async () => {
+      const server = await start(withPage());
+      const apiKey = await apiKeyOf(server.port);
+      const res = await get(server.port, conversationPath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) });
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual(page);
+    });
+
+    it('returns 404, uncached, for a session that is not listed, without asking the index', async () => {
+      const indexer = withPage();
+      const server = await start(indexer);
+      const res = await get(server.port, conversationPath('88888888-8888-4888-8888-888888888888'), bearer);
+      expect(res.status).toBe(404);
+      expect(res.body).toBe('');
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(indexer.conversation).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 for a listed session the index has no page for, as one with no transcript', async () => {
+      const indexer = fakeIndexer(withSession('2026-10-16T00:00:00.000Z', 'pitwall-test-conversation', SID));
+      const server = await start(indexer);
+      expect((await get(server.port, conversationPath(SID), bearer)).status).toBe(404);
+      expect(indexer.conversation).toHaveBeenCalledWith(SID, undefined);
+    });
+
+    it('returns 503 before the first snapshot, without asking the index', async () => {
+      const indexer = fakeIndexer();
+      const server = await start(indexer);
+      expect((await get(server.port, conversationPath(SID), bearer)).status).toBe(503);
+      expect(indexer.conversation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['empty', '?before='],
+      ['not base64url', '?before=abc%2B%2F'],
+      ['too long', `?before=${'A'.repeat(9000)}`],
+      ['not a cursor', `?before=${Buffer.from('{"v":1}').toString('base64url')}`],
+      ['given twice', `?before=${CURSOR}&before=${CURSOR}`],
+      ['a bad escape', '?before=%E0%A4%A'],
+    ])('returns 400 for a before cursor that is %s, without asking the index', async (_name, query) => {
+      const indexer = withPage();
+      const server = await start(indexer);
+      const res = await get(server.port, `${conversationPath(SID)}${query}`, bearer);
+      expect(res.status).toBe(400);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(indexer.conversation).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for a cursor the index finds invalid, and 410 for one made for another version of the file', async () => {
+      const server = await start(withPage(new ConversationCursorError('invalid')));
+      expect((await get(server.port, conversationPath(SID, CURSOR), bearer)).status).toBe(400);
+      const stale = await start(withPage(new ConversationCursorError('stale')));
+      const res = await get(stale.port, conversationPath(SID, CURSOR), bearer);
+      expect(STALE_CURSOR_STATUS).toBe(410);
+      expect(res.status).toBe(410);
+      expect(res.body).toBe('');
+      expect(res.headers['cache-control']).toBe('no-store');
+    });
+
+    it('returns 500 with no detail when the index fails unexpectedly', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const server = await start(withPage(new Error('boom /secret/path')));
+      const res = await get(server.port, conversationPath(SID), bearer);
+      expect(res.status).toBe(500);
+      expect(res.body).toBe('');
+    });
+
+    it.each([
+      ['an encoded ..', '/api/sessions/%2e%2e/conversation'],
+      ['an encoded ../..', '/api/sessions/..%2F..%2Fsecret.txt/conversation'],
+      ['an encoded / in the id', '/api/sessions/a%2Fb/conversation'],
+      ['an encoded NUL', '/api/sessions/a%00b/conversation'],
+      ['a leading dot', '/api/sessions/.hidden/conversation'],
+      ['a bad escape', '/api/sessions/%E0%A4%A/conversation'],
+      ['a plain ..', '/api/sessions/../conversation'],
+    ])('answers %s with 400 or 404, and never asks the index for an unsafe id', async (_name, path) => {
+      const indexer = withPage();
+      const server = await start(indexer);
+      const res = await raw(
+        server.port,
+        `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nAuthorization: Bearer ${TOKEN}\r\nConnection: close\r\n\r\n`,
+      );
+      expect([400, 404]).toContain(statusOf(res));
+      expect(res).not.toContain('SECRET');
+      for (const [id] of vi.mocked(indexer.conversation).mock.calls) {
+        expect(id).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+      }
+    });
+
+    it('refuses other methods: 403 with the raw token, 404 with the apiKey and this Origin', async () => {
+      const indexer = withPage();
+      const server = await start(indexer);
+      expect((await get(server.port, conversationPath(SID), bearer, 'POST')).status).toBe(403);
+      const apiKey = await apiKeyOf(server.port);
+      const allowed = { authorization: `Bearer ${apiKey}`, origin: origin(server.port) };
+      expect((await get(server.port, conversationPath(SID), allowed, 'POST')).status).toBe(404);
+      expect(indexer.conversation).not.toHaveBeenCalled();
+    });
+
+    describe('with a real index and transcript', () => {
+      const inside = '66666666-6666-4666-8666-000000000001';
+      const outside = '66666666-6666-4666-8666-000000000002';
+      let transcriptFile: string;
+
+      async function realIndexer(): Promise<Indexer> {
+        const row = (sessionId: string, cwd: string) => ({
+          sessionId,
+          name: `pitwall-test-${sessionId.slice(-1)}`,
+          kind: 'interactive' as const,
+          cwd,
+          startedAt: '2026-10-16T00:00:00.000Z',
+        });
+        const indexer = createIndexer(
+          { roots: ['/work'], intervalMs: 60_000 },
+          {
+            agents: { list: async () => ({ ok: true, rows: [row(inside, '/work/repo'), row(outside, '/elsewhere/repo')] }) },
+            groups: { resolve: async (cwd) => ({ key: cwd, kind: 'directory' }), prune() {} },
+            // A reader that knows a transcript for either session, as it may.
+            transcripts: {
+              read: async () => ({ transcript: 'ok' }),
+              lastMessage: () => undefined,
+              transcriptFile: () => transcriptFile,
+              retain() {},
+            },
+            realpath: async (p) => p,
+            now: () => Date.parse('2026-10-16T00:00:00.000Z'),
+            home: '/home/someone',
+            concurrency: 2,
+          },
+        );
+        await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+        return indexer;
+      }
+
+      const prompts = (count: number, word = 'prompt') =>
+        Array.from({ length: count }, (_, i) =>
+          JSON.stringify({ type: 'user', timestamp: '2026-10-16T00:00:00.000Z', message: { content: `${word} ${i}` } }),
+        ).join('\n') + '\n';
+
+      it('pages a listed session, refuses one outside the roots, and answers 410 once the transcript is replaced', async () => {
+        transcriptFile = join(tmp, 'conversation.jsonl');
+        await writeFile(transcriptFile, prompts(70));
+        const indexer = await realIndexer();
+        try {
+          const server = await start(indexer);
+          const newest = await get(server.port, conversationPath(inside), bearer);
+          expect(newest.status).toBe(200);
+          const first = JSON.parse(newest.body) as ConversationPage;
+          expect(first.entries).toHaveLength(50);
+          expect(first.entries[0]).toEqual({ kind: 'user', at: '2026-10-16T00:00:00.000Z', text: 'prompt 20' });
+          expect(first.before).toEqual(expect.any(String));
+
+          const older = await get(server.port, conversationPath(inside, first.before), bearer);
+          expect(older.status).toBe(200);
+          expect((JSON.parse(older.body) as ConversationPage).entries.map((e) => e.text)).toEqual(
+            Array.from({ length: 20 }, (_, i) => `prompt ${i}`),
+          );
+
+          const res = await get(server.port, conversationPath(outside), bearer);
+          expect(res.status).toBe(404);
+          expect(res.body).toBe('');
+
+          // Rotated: a new file in its place.
+          await rename(transcriptFile, `${transcriptFile}.old`);
+          await writeFile(transcriptFile, prompts(70, 'other'));
+          expect((await get(server.port, conversationPath(inside, first.before), bearer)).status).toBe(410);
+          expect((await get(server.port, conversationPath(inside), bearer)).status).toBe(200);
+        } finally {
+          indexer.stop();
+        }
+      });
     });
   });
 

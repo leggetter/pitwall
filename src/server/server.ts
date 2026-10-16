@@ -23,8 +23,8 @@ import type { Duplex } from 'node:stream';
 import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { Indexer } from '../index/index.js';
-import { lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
+import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
+import { conversationPath, lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import {
   bearerToken,
@@ -49,6 +49,16 @@ export const DEFAULT_PORT = 4517;
  * pattern is decoded back.
  */
 const LAST_MESSAGE_ROUTE = decodeURIComponent(lastMessagePath(':sessionId'));
+
+/** The conversation route as a Hono pattern, decoded for the same reason. */
+const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
+
+/**
+ * The status for a `before` cursor made for another version of the
+ * transcript: it was replaced, rotated, truncated or rewritten since. The UI
+ * reloads the newest page.
+ */
+export const STALE_CURSOR_STATUS = 410;
 
 /** How long close() waits for WebSocket clients to finish the close handshake. */
 const CLOSE_GRACE_MS = 250;
@@ -198,6 +208,30 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     const message = indexer.lastMessage(lookup.session.sessionId);
     if (!message) return c.body(null, 404);
     return c.json(message);
+  });
+
+  // Read from the transcript, a page at a time and at most about 2 MiB per
+  // page, only for sessions in the latest snapshot. The guard checks the id
+  // first, and the cursor is checked before the index sees it.
+  app.get(CONVERSATION_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    const cursors = c.req.queries('before');
+    if (cursors !== undefined && cursors.length !== 1) return c.body(null, 400);
+    const before = cursors?.[0];
+    if (before !== undefined && !isWellFormedCursor(before)) return c.body(null, 400);
+    let page;
+    try {
+      page = await indexer.conversation(lookup.session.sessionId, before);
+    } catch (error) {
+      if (error instanceof ConversationCursorError) {
+        return c.body(null, error.reason === 'stale' ? STALE_CURSOR_STATUS : 400);
+      }
+      throw error;
+    }
+    if (!page) return c.body(null, 404);
+    return c.json(page);
   });
 
   routes?.(app);
