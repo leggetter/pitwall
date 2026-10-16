@@ -1,0 +1,40 @@
+{
+  "name": "@leggetter/pitwall",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A local CLI and web UI for supervising the Claude Code sessions on this machine.",
+  "type": "module",
+  "bin": {
+    "pitwall": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:web": "vite build",
+    "dev": "tsx scripts/dev.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.3",
+    "hono": "4.13.12",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/ws": "8.18.2",
+    "@vitejs/plugin-react": "6.1.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  }
+}
