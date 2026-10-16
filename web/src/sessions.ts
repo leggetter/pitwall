@@ -3,13 +3,16 @@
 
 import type { SessionGroup, SessionSummary } from '../../src/shared/protocol.js';
 
-/** A session that is waiting on Phil, or a background session blocked on him, and isn't stale. */
+/**
+ * A session that is waiting on Phil, a background session blocked on him, or
+ * one that ended its turn by asking him something. Never a stale one.
+ */
 export function needsAttention(session: SessionSummary): boolean {
   if (session.stale) return false;
-  return session.status === 'waiting' || session.state === 'blocked';
+  return session.status === 'waiting' || session.state === 'blocked' || session.askedYou !== undefined;
 }
 
-export type PillTone = 'attention' | 'busy' | 'idle' | 'done' | 'failed' | 'stopped' | 'offline';
+export type PillTone = 'attention' | 'asked' | 'busy' | 'idle' | 'done' | 'failed' | 'stopped' | 'offline';
 
 export interface StatusPill {
   /** The visible text, such as "waiting: permission prompt". */
@@ -17,11 +20,14 @@ export interface StatusPill {
   tone: PillTone;
 }
 
+/** Waiting first, then blocked (unless stale), then asked you, then the session's state or status. */
 export function statusPill(session: SessionSummary): StatusPill {
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
   if (session.status === 'waiting') return { label: `waiting${reason}`, tone: 'attention' };
+  if (session.state === 'blocked' && !session.stale) return { label: `blocked${reason}`, tone: 'attention' };
+  if (session.askedYou && !session.stale) return { label: 'asked you', tone: 'asked' };
   // A stale blocked job keeps its "blocked" text but loses the attention styling.
-  if (session.state === 'blocked') return { label: `blocked${reason}`, tone: session.stale ? 'offline' : 'attention' };
+  if (session.state === 'blocked') return { label: `blocked${reason}`, tone: 'offline' };
   if (session.state === 'failed') return { label: 'failed', tone: 'failed' };
   if (session.state === 'done') return { label: 'done', tone: 'done' };
   if (session.state === 'stopped') return { label: 'stopped', tone: 'stopped' };
