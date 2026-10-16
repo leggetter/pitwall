@@ -2,7 +2,8 @@
 //
 //   every request and upgrade   Host is 127.0.0.1:<port> (not localhost), else 403
 //   /api/*                      Origin, when present, is this server's origin, else 403;
-//                               then Authorization: Bearer <token>, else 401
+//                               then Authorization: Bearer <token>, else 401. That covers
+//                               the snapshot and each session's last message
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
 //                               then the first message must be a valid auth within 5 seconds, else 4401
 //   static files                Host only. They are the public build output.
@@ -14,8 +15,8 @@ import type { Duplex } from 'node:stream';
 import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { Indexer } from '../index/index.js';
-import { SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
+import { isSafeSessionId, type Indexer } from '../index/index.js';
+import { lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import {
   bearerToken,
@@ -30,6 +31,13 @@ import { BUILDING_PAGE, resolveStaticFile } from './static.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
 
 export const DEFAULT_PORT = 4517;
+
+/**
+ * The last-message route as a Hono pattern. lastMessagePath() encodes its
+ * argument, which would turn `:sessionId` into `%3AsessionId`, so the
+ * pattern is decoded back.
+ */
+const LAST_MESSAGE_ROUTE = decodeURIComponent(lastMessagePath(':sessionId'));
 
 /** How long close() waits for WebSocket clients to finish the close handshake. */
 const CLOSE_GRACE_MS = 250;
@@ -150,6 +158,17 @@ function createApp({ indexer, token, webRoot, port }: AppContext): Hono {
     const snapshot = indexer.latest();
     if (!snapshot) return c.body(null, 503);
     return c.json(snapshot);
+  });
+
+  // Answered from memory, never by reading a file: the index serves only
+  // sessions in the latest snapshot, and the id is checked before it's used.
+  app.get(LAST_MESSAGE_ROUTE, (c) => {
+    c.header('Cache-Control', 'no-store');
+    const sessionId = c.req.param('sessionId') ?? '';
+    if (!isSafeSessionId(sessionId)) return c.body(null, 400);
+    const message = indexer.lastMessage(sessionId);
+    if (!message) return c.body(null, 404);
+    return c.json(message);
   });
 
   app.all('/api/*', (c) => c.body(null, 404));
