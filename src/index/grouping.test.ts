@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RunFile } from './exec.js';
-import { createGroupResolver, groupLabel, shortenHome } from './grouping.js';
+import { createGroupResolver, groupLabel, isSubmoduleGitDir, shortenHome } from './grouping.js';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync(
@@ -15,6 +15,8 @@ function git(cwd: string, ...args: string[]): void {
       '-c', 'commit.gpgsign=false',
       '-c', 'init.defaultBranch=main',
       '-c', 'core.hooksPath=/dev/null',
+      // Submodules are cloned from a local path; never from the network.
+      '-c', 'protocol.file.allow=always',
       ...args,
     ],
     { cwd, stdio: 'ignore' },
@@ -26,6 +28,8 @@ describe('createGroupResolver against temporary repos', () => {
   let main: string;
   let worktree: string;
   let plain: string;
+  let submodule: string;
+  let worktreeWithSubmodule: string;
 
   beforeAll(async () => {
     dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-git-')));
@@ -38,6 +42,20 @@ describe('createGroupResolver against temporary repos', () => {
     git(main, 'init', '-q');
     git(main, 'commit', '-q', '--allow-empty', '-m', 'init');
     git(main, 'worktree', 'add', '-q', '-b', 'feature', worktree);
+
+    // A submodule cloned from a local repo, and a linked worktree of the
+    // superproject with the submodule checked out in it too.
+    const library = path.join(dir, 'library');
+    await mkdir(library);
+    git(library, 'init', '-q');
+    git(library, 'commit', '-q', '--allow-empty', '-m', 'library');
+    git(main, 'submodule', 'add', '-q', library, 'libs/library');
+    git(main, 'commit', '-q', '-m', 'add the submodule');
+    submodule = path.join(main, 'libs', 'library');
+    await mkdir(path.join(submodule, 'src'));
+    worktreeWithSubmodule = path.join(dir, 'worktrees', 'with-submodule');
+    git(main, 'worktree', 'add', '-q', '-b', 'with-submodule', worktreeWithSubmodule);
+    git(worktreeWithSubmodule, 'submodule', 'update', '-q', '--init');
   }, 30_000);
 
   afterAll(async () => {
@@ -57,6 +75,23 @@ describe('createGroupResolver against temporary repos', () => {
   it('puts a git worktree under its main repo', async () => {
     const groups = createGroupResolver();
     expect(await groups.resolve(worktree)).toEqual({ key: main, kind: 'git' });
+  });
+
+  it('keys a submodule by its own top-level directory, not by its git dir in .git/modules', async () => {
+    const groups = createGroupResolver();
+    expect(await groups.resolve(submodule)).toEqual({ key: submodule, kind: 'git' });
+    expect(await groups.resolve(path.join(submodule, 'src'))).toEqual({ key: submodule, kind: 'git' });
+  });
+
+  it('keys a submodule in a linked worktree of the superproject by its own top-level directory', async () => {
+    const checkout = path.join(worktreeWithSubmodule, 'libs', 'library');
+    expect(await createGroupResolver().resolve(checkout)).toEqual({ key: checkout, kind: 'git' });
+  });
+
+  it('still keys the superproject and its worktree by the superproject', async () => {
+    const groups = createGroupResolver();
+    expect(await groups.resolve(main)).toEqual({ key: main, kind: 'git' });
+    expect(await groups.resolve(worktreeWithSubmodule)).toEqual({ key: main, kind: 'git' });
   });
 
   it('falls back to the directory when it is not a repo', async () => {
@@ -108,6 +143,30 @@ describe('createGroupResolver with a fake git', () => {
     });
   });
 
+  it('asks for the top-level directory when the common dir is a submodule git dir', async () => {
+    const calls: string[][] = [];
+    const run: RunFile = async (_file, args) => {
+      calls.push([...args]);
+      return args.includes('--show-toplevel') ? '/repos/super/libs/ui\n' : '/repos/super/.git/modules/libs/ui\n';
+    };
+    expect(await createGroupResolver({ run, realpath: async (p) => p }).resolve('/repos/super/libs/ui/src')).toEqual({
+      key: '/repos/super/libs/ui',
+      kind: 'git',
+    });
+    expect(calls).toEqual([
+      ['-C', '/repos/super/libs/ui/src', 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      ['-C', '/repos/super/libs/ui/src', 'rev-parse', '--path-format=absolute', '--show-toplevel'],
+    ]);
+  });
+
+  it('falls back to the directory when the top-level directory of a submodule is unavailable', async () => {
+    const run: RunFile = async (_file, args) => {
+      if (args.includes('--show-toplevel')) throw new Error('fatal: not a work tree');
+      return '/repos/super/.git/modules/ui\n';
+    };
+    expect(await createGroupResolver({ run }).resolve('/repos/super/ui')).toEqual({ key: '/repos/super/ui', kind: 'directory' });
+  });
+
   it('falls back to the directory for empty or relative output', async () => {
     for (const output of ['', '.git\n']) {
       const { run } = counting(output);
@@ -146,6 +205,22 @@ describe('createGroupResolver with a fake git', () => {
     groups.prune();
     await groups.resolve('/plain');
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe('isSubmoduleGitDir', () => {
+  it('is true under a modules directory inside .git, including in a linked worktree', () => {
+    expect(isSubmoduleGitDir('/repo/.git/modules/ui')).toBe(true);
+    expect(isSubmoduleGitDir('/repo/.git/modules/libs/ui')).toBe(true);
+    expect(isSubmoduleGitDir('/repo/.git/modules/a/modules/b')).toBe(true);
+    expect(isSubmoduleGitDir('/repo/.git/worktrees/feature/modules/ui')).toBe(true);
+  });
+
+  it('is false for a repo, a bare repo, or a directory merely named modules', () => {
+    expect(isSubmoduleGitDir('/repo/.git')).toBe(false);
+    expect(isSubmoduleGitDir('/repos/b.git')).toBe(false);
+    expect(isSubmoduleGitDir('/repo/.git/modules')).toBe(false);
+    expect(isSubmoduleGitDir('/src/modules/ui/.git')).toBe(false);
   });
 });
 

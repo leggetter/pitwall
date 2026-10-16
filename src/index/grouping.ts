@@ -1,5 +1,7 @@
 // D6: group sessions by `git rev-parse --git-common-dir`, so worktrees sit
-// under their main repo, falling back to the working directory.
+// under their main repo, falling back to the working directory. A submodule's
+// common dir is inside the superproject's `.git/modules/`, so a submodule is
+// keyed by its own top-level directory instead.
 
 import { realpath as fsRealpath } from 'node:fs/promises';
 import os from 'node:os';
@@ -49,20 +51,30 @@ export function createGroupResolver(options: GroupResolverOptions = {}): GroupRe
   const env = { ...process.env };
   for (const name of GIT_REPO_ENV) delete env[name];
 
-  async function lookup(cwd: string): Promise<GroupKey> {
-    const directory: GroupKey = { key: cwd, kind: 'directory' };
+  /** The absolute path git prints for `rev-parse <flag>` in `cwd`, or undefined. */
+  async function revParse(cwd: string, flag: string): Promise<string | undefined> {
     let stdout: string;
     try {
-      stdout = await run(gitBin, ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
-        timeoutMs,
-        env,
-      });
+      stdout = await run(gitBin, ['-C', cwd, 'rev-parse', '--path-format=absolute', flag], { timeoutMs, env });
     } catch {
-      return directory;
+      return undefined;
     }
-    const commonDir = stdout.trim();
-    if (commonDir === '' || !path.isAbsolute(commonDir)) return directory;
-    const key = path.basename(commonDir) === '.git' ? path.dirname(commonDir) : commonDir;
+    const value = stdout.trim();
+    return value !== '' && path.isAbsolute(value) ? value : undefined;
+  }
+
+  async function lookup(cwd: string): Promise<GroupKey> {
+    const directory: GroupKey = { key: cwd, kind: 'directory' };
+    const commonDir = await revParse(cwd, '--git-common-dir');
+    if (commonDir === undefined) return directory;
+    let key: string;
+    if (isSubmoduleGitDir(commonDir)) {
+      const topLevel = await revParse(cwd, '--show-toplevel');
+      if (topLevel === undefined) return directory;
+      key = topLevel;
+    } else {
+      key = path.basename(commonDir) === '.git' ? path.dirname(commonDir) : commonDir;
+    }
     try {
       return { key: await realpath(key), kind: 'git' };
     } catch {
@@ -84,6 +96,20 @@ export function createGroupResolver(options: GroupResolverOptions = {}): GroupRe
       for (const [cwd, entry] of cache) if (entry.expiresAt <= at) cache.delete(cwd);
     },
   };
+}
+
+/**
+ * True for a git dir under a `modules` directory inside a `.git` directory,
+ * where git keeps a submodule's repository: `/repo/.git/modules/libs/ui`, or
+ * `/repo/.git/worktrees/<name>/modules/libs/ui` for a submodule checked out in
+ * a linked worktree of the superproject.
+ */
+export function isSubmoduleGitDir(gitDir: string): boolean {
+  const parts = gitDir.split(path.sep);
+  const dotGit = parts.indexOf('.git');
+  if (dotGit === -1) return false;
+  const modules = parts.indexOf('modules', dotGit + 1);
+  return modules !== -1 && modules < parts.length - 1;
 }
 
 /**
