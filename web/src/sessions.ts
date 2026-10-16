@@ -50,6 +50,16 @@ export function attachCommand(session: SessionSummary): string | undefined {
   return `claude attach ${session.shortId}`;
 }
 
+/**
+ * A group's identity on the screen: its root and its key. The key alone isn't
+ * unique: a worktree under one root whose main repo is under another gives two
+ * groups with the same key, one under each root.
+ */
+export function groupId(group: Pick<SessionGroup, 'root' | 'key'>): string {
+  // Paths can't contain NUL, so the two parts can't run together ambiguously.
+  return `${group.root}\0${group.key}`;
+}
+
 export interface Filters {
   /** Matched case-insensitively against session names, group labels and cwds. */
   text: string;
