@@ -90,6 +90,9 @@ export function childEnvironment(env: NodeJS.ProcessEnv, token: string): Record<
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined) continue;
     if (name.toUpperCase().startsWith('PITWALL_')) continue;
+    // When pitwall itself runs inside a Claude Code session, don't hand that
+    // session's inbox credentials or job directory to the processes it starts.
+    if (/^CLAUDE_CODE_MESSAGING_/i.test(name) || name === 'CLAUDE_JOB_DIR') continue;
     if (value.includes(token)) continue;
     result[name] = value;
   }
