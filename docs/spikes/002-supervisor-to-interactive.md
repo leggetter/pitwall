@@ -27,14 +27,26 @@ Run on 2026-10-16 against Claude Code v2.1.301 on macOS. It closes the two S4 ga
 - **The receiver applies its own rules.** Before replying, the target checked the repo's `AGENTS.md` rules (never touch a real session; spike sessions are named `pitwall-test-*`). A relayed request is only acted on if the receiving session's own instructions and permissions allow it. That's good for safety, and it means the supervisor can ask but never force.
 - **What the transcript looks like on an interactive receiver:** a `queue-operation` entry (`enqueue`), then a `user` entry with `isMeta: true`. Its content starts `Another Claude session sent a message:` and wraps `<cross-session-message from="..." from-name="..." from-mode="...">`.
 
+## What the target's terminal showed
+
+From Phil's screenshot of the target session in Warp:
+
+- **The message preview:** a dim italic line, `› Message from @pitwall-test-supervi…: pitwall spike 002: test message from pitwall-test-supervisor. Please reply to this session using SendMessage with the s… (ctrl+o to expand)`. This matches the docs.
+- **The idle subscription is visible:** a notice reading "A process claiming the address uds:/tmp/cc-socks/24011.sock asked to be told when this session is next idle…". It names a raw socket address, not the supervisor's session name.
+- **The reply is visible as a tool call:** `"Reply pong to pitwall spike 002 test" → uds:/tmp/cc-socks/24011.sock`.
+- **The reply ran on the session's own model:** the target's header shows Opus 5.5 at xhigh effort. A relayed message costs a full turn on whatever model and effort the receiving session uses.
+- **The receiver talks to the user about it:** the target ended its turn with next steps for Phil, including removing the supervisor as `AGENTS.md` requires.
+
 ## Not tested
 
 - A message to a target that is mid-turn. The docs say it's read between tool calls.
 - A target in the other permission class, bypassing permissions. The docs say the message is held for approval in a dialog.
-- What the Warp terminal showed for the target. The docs describe a dim one-line preview.
 
 ## What changes in the plan
 
 - **D4:** settled. The supervisor is a background Claude Code session.
 - **M3:** no longer needs to start with this test.
 - **M1 transcript adapter:** classify a cross-session entry by `isMeta: true` and its `Another Claude session sent a message:` prefix.
+- **M3 supervisor behavior:**
+  - Get status from pitwall's index, not by messaging sessions, because each relayed message costs a turn on the receiver's model.
+  - Don't subscribe to idle notices broadly: each subscription prints a raw-address notice in the watched session's terminal. Pitwall's polling of `claude agents --json` already sees busy-to-idle changes without touching the session.

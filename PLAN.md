@@ -125,6 +125,8 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
   - Show the `Workspace not trusted` error with the command to run. Never grant trust for me.
 - **M3 - Supervisor.** Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions.
   - Label relayed messages in the UI as coming from the supervisor, because that's how the receiving session sees them.
+  - Get status from pitwall's index (D1 polling and transcripts), not by messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
+  - Don't subscribe to idle notices broadly. Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
 - **M4 - Triage.** Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using PR and CI state from `gh`.
 
 ## Open questions
