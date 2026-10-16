@@ -171,8 +171,8 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Done; findings below |
 | W5a | Fixes from W5: "asked you" heuristic, stale rule, markdown stripping, missing directories | `m1/followups` | Sub-agent | Merged ([#5](https://github.com/leggetter/pitwall/pull/5)) |
 | W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Done: approve with follow-ups |
-| W6a | Fixes from the W6 review, plus groups collapsed by default with their state saved (W7 feedback) | `m1/review-fixes` | Sub-agent | In progress |
-| W7a | W7 feedback: full replies on expand, change-only pushes with a heartbeat, a 5 s default poll with `--interval`, and Claude Code's session titles | `m1/w7-feedback` | Sub-agent | Waiting on W6a |
+| W6a | Fixes from the W6 review, plus groups collapsed by default with their state saved (W7 feedback) | `m1/review-fixes` | Sub-agent | Merged ([#7](https://github.com/leggetter/pitwall/pull/7)) |
+| W7a | W7 feedback: full replies on expand, change-only pushes with a heartbeat, a 5 s default poll with `--interval`, and Claude Code's session titles | `m1/w7-feedback` | Sub-agent | In progress |
 | W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
 
 ### W5 findings (2026-10-16)
@@ -247,7 +247,8 @@ web/                     W4. Vite + React app, built to dist/web and served by t
   - Static assets need no token. `Host` is checked on every request, and `Origin` on every API request and WebSocket upgrade.
 - **No Vite dev server in M1.** `npm run dev` rebuilds the UI on change and the pitwall server serves it, so the UI is always same-origin and the security checks never need a dev exception.
 - **Dev token:** `npm run dev` generates one token per run and passes it as `PITWALL_TOKEN`, which must be at least 32 base64url characters. It also uses a fixed port, 4517, and opens the browser once. The CLI removes `PITWALL_TOKEN` from its environment, so processes it starts don't inherit it.
-- **CSP:** `connect-src` names the WebSocket origins explicitly (`ws://127.0.0.1:<port> ws://localhost:<port>`), because older Safari may not match `ws:` against `'self'`.
+- **CSP:** `connect-src` names the WebSocket origin explicitly (`ws://127.0.0.1:<port>`), because older Safari may not match `ws:` against `'self'`.
+- **Only `127.0.0.1` is trusted,** for `Host`, `Origin` and the CSP, never `localhost`. The server listens on 127.0.0.1 only, and `localhost` can resolve to `::1`, where another local user could listen (W6 finding 9).
 - **No `node-pty` in M1.** It arrives with attach in M2, so CI doesn't build a native module yet.
 - **Merges:** the coordinator merges W1 into `main`, and W2-W4 into `m1/integration`, once CI is green and the coordinator has reviewed the diff. The integration PR into `main` gets the W6 review and needs Phil's approval.
 - **Tests use synthetic fixtures only:** never real transcripts or real `claude agents` output. A live test against the real `claude agents --json` runs only when `PITWALL_LIVE=1` is set, and it's read-only.
