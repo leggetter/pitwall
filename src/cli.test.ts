@@ -1,11 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, statSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { browserCommand, parseCliArgs, resolveRoots, resolveToken, resolveWebRoot, USAGE, UsageError } from './cli.js';
+import { browserCommand, claimOpenMarker, parseCliArgs, resolveRoots, resolveToken, resolveWebRoot, USAGE, UsageError } from './cli.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
 describe('parseCliArgs', () => {
@@ -165,12 +167,35 @@ describe('resolveWebRoot', () => {
 });
 
 describe('browserCommand', () => {
-  const url = 'http://127.0.0.1:4517/#token=abc';
+  const file = '/home/someone/.pitwall/launch-4517-0123456789abcdef01234567.html';
 
-  it('uses open, xdg-open or cmd /c start', () => {
-    expect(browserCommand(url, 'darwin')).toEqual(['open', [url]]);
-    expect(browserCommand(url, 'linux')).toEqual(['xdg-open', [url]]);
-    expect(browserCommand(url, 'win32')).toEqual(['cmd', ['/c', 'start', '', url]]);
+  it('opens a file with open, xdg-open or cmd /c start', () => {
+    expect(browserCommand(file, 'darwin')).toEqual(['open', [file]]);
+    expect(browserCommand(file, 'linux')).toEqual(['xdg-open', [file]]);
+    expect(browserCommand(file, 'win32')).toEqual(['cmd', ['/c', 'start', '', file]]);
+  });
+});
+
+describe('claimOpenMarker', () => {
+  let tmp: string;
+
+  beforeAll(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
+  });
+
+  afterAll(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it('creates the marker once: the first call claims it, later calls do not', () => {
+    const marker = join(tmp, 'opened');
+    expect(claimOpenMarker(marker)).toBe(true);
+    expect(existsSync(marker)).toBe(true);
+    expect(claimOpenMarker(marker)).toBe(false);
+  });
+
+  it('does not claim a marker it cannot create', () => {
+    expect(claimOpenMarker(join(tmp, 'missing', 'opened'))).toBe(false);
   });
 });
 
@@ -185,26 +210,92 @@ echo call >> "$(dirname "$0")/calls"
 echo '[]'
 `;
 
+/**
+ * Stand-ins for `open` (macOS) and `xdg-open` (Linux), first on the CLI's PATH
+ * so no test ever opens a real browser. Each call appends its argument count
+ * and then each argument, one per line, to $PITWALL_TEST_OPEN_LOG.
+ */
+const FAKE_OPENER = `#!/bin/sh
+printf '%s\\n' "$#" "$@" >> "\${PITWALL_TEST_OPEN_LOG:?}"
+`;
+
+/** Each recorded call of the fake opener, as its list of arguments. */
+async function openerCalls(log: string): Promise<string[][]> {
+  const lines = (await readFile(log, 'utf8').catch(() => '')).split('\n');
+  const calls: string[][] = [];
+  for (let i = 0; i < lines.length && lines[i] !== ''; ) {
+    const count = Number(lines[i]);
+    calls.push(lines.slice(i + 1, i + 1 + count));
+    i += 1 + count;
+  }
+  return calls;
+}
+
+async function waitUntil(condition: () => Promise<boolean> | boolean, ms = 15_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error('timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/** Holds a free port on 127.0.0.1, as a process squatting on pitwall's port would. */
+async function squat(): Promise<{ port: number; close(): Promise<void> }> {
+  const squatter = createNetServer((socket) => socket.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'));
+  squatter.listen(0, '127.0.0.1');
+  await once(squatter, 'listening');
+  return {
+    port: (squatter.address() as AddressInfo).port,
+    close: () => new Promise((resolve) => squatter.close(() => resolve())),
+  };
+}
+
+/** A port that was free a moment ago. */
+async function freePort(): Promise<number> {
+  const probe = await squat();
+  await probe.close();
+  return probe.port;
+}
+
 describe('pitwall (the process)', () => {
   const cli = fileURLToPath(new URL('./cli.ts', import.meta.url));
   const token = 'pitwall-test-token-0123456789abcdefghij';
   let tmp: string;
   let bin: string;
 
+  let n = 0;
+
   beforeAll(async () => {
     tmp = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
+    await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
   });
 
   afterAll(async () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
+  /** A fresh path under the temp directory, for a PITWALL_HOME, an opener log or a marker. */
+  const fresh = (name: string) => join(tmp, `${name}-${++n}`);
+
+  /**
+   * Runs the CLI with the fake claude and the fake openers first on PATH. It
+   * doesn't open a browser unless the test sets PITWALL_NO_OPEN to 0, and its
+   * PITWALL_HOME is always a temp directory, never the real ~/.pitwall.
+   */
   function run(args: string[], env: NodeJS.ProcessEnv = {}): ChildProcessWithoutNullStreams {
     return spawn(process.execPath, ['--import', 'tsx', cli, ...args], {
-      env: { ...process.env, PITWALL_NO_OPEN: '1', PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`, ...env },
+      env: {
+        ...process.env,
+        PITWALL_NO_OPEN: '1',
+        PITWALL_HOME: fresh('home'),
+        PITWALL_TEST_OPEN_LOG: fresh('opened'),
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
+        ...env,
+      },
     });
   }
 
@@ -218,8 +309,8 @@ describe('pitwall (the process)', () => {
   }
 
   /** Starts the CLI on a free port and waits for it to print its URL and roots. */
-  async function start(args: string[] = []) {
-    const child = run(['--port', '0', ...args, tmp], { PITWALL_TOKEN: token });
+  async function start(args: string[] = [], env: NodeJS.ProcessEnv = {}) {
+    const child = run(['--port', '0', ...args, tmp], { PITWALL_TOKEN: token, ...env });
     const result = exited(child);
     let stdout = '';
     const [, url, printedToken] = await new Promise<RegExpExecArray>((resolve, reject) => {
@@ -322,4 +413,304 @@ describe('pitwall (the process)', () => {
     child.kill('SIGTERM');
     expect((await result).code).toBe(0);
   }, 30_000);
+
+  describe('opening the browser through a launch file', () => {
+    /** Starts the CLI with opening on, and waits for the fake opener's first call. */
+    async function startOpening(env: NodeJS.ProcessEnv = {}) {
+      const home = fresh('home');
+      const log = fresh('opened');
+      const started = await start([], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log, ...env });
+      await waitUntil(async () => (await openerCalls(log)).length > 0);
+      return { ...started, home, log };
+    }
+
+    it('gives the opener a launch file path with no token in it, and the file sends the browser on', async () => {
+      const { child, result, url, home, log, stdout } = await startOpening();
+      const calls = await openerCalls(log);
+      expect(calls).toHaveLength(1);
+      const [args] = calls;
+      expect(args).toHaveLength(1);
+      const file = args![0]!;
+      const port = new URL(url).port;
+      expect(file).toMatch(new RegExp(`^${home}/launch-${port}-[0-9a-f]{24}\\.html$`));
+      expect(file).not.toContain(token);
+
+      // Only this user can read it, in a directory only this user can enter.
+      expect(statSync(home).mode & 0o777).toBe(0o700);
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      const page = await readFile(file, 'utf8');
+      expect(page).toContain(`location.replace("${url}/#token=${token}")`);
+      expect(page).toContain(`<meta http-equiv="refresh" content="0; url=${url}/#token=${token}">`);
+      // stdout, the user's own terminal, still has the URL.
+      expect(stdout).toContain(`running at ${url}/#token=${token}`);
+
+      child.kill('SIGTERM');
+      expect((await result).code).toBe(0);
+      expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    it('deletes the launch file on SIGINT too', async () => {
+      const { child, result, log } = await startOpening();
+      const file = (await openerCalls(log))[0]![0]!;
+      expect(existsSync(file)).toBe(true);
+      child.kill('SIGINT');
+      expect((await result).code).toBe(0);
+      expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    it('deletes launch files more than 24 hours old when it starts, and keeps newer ones', async () => {
+      const home = fresh('home');
+      await mkdir(home, { mode: 0o700 });
+      const old = join(home, 'launch-4517-aaaaaaaaaaaaaaaaaaaaaaaa.html');
+      const recent = join(home, 'launch-4517-bbbbbbbbbbbbbbbbbbbbbbbb.html');
+      await writeFile(old, 'old');
+      await writeFile(recent, 'recent');
+      const twoDaysAgo = (Date.now() - 48 * 3600_000) / 1000;
+      await utimes(old, twoDaysAgo, twoDaysAgo);
+
+      const { child, result } = await startOpening({ PITWALL_HOME: home });
+      expect(existsSync(old)).toBe(false);
+      expect(existsSync(recent)).toBe(true);
+      child.kill('SIGTERM');
+      await result;
+    }, 30_000);
+
+    it.skipIf(process.platform === 'win32')('refuses a symlinked PITWALL_HOME: exit 1 before listening, nothing opened', async () => {
+      const target = fresh('target');
+      await mkdir(target, { mode: 0o700 });
+      const link = fresh('link');
+      await symlink(target, link);
+      const log = fresh('opened');
+      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: link, PITWALL_TEST_OPEN_LOG: log }));
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`pitwall: ${link} is a symbolic link.`);
+      expect(result.stdout).not.toContain('running at');
+      expect(await openerCalls(log)).toEqual([]);
+    }, 30_000);
+
+    it.skipIf(process.platform === 'win32')('refuses a PITWALL_HOME with mode 0755, and leaves its mode alone', async () => {
+      const home = fresh('home');
+      await mkdir(home);
+      await chmod(home, 0o755);
+      const log = fresh('opened');
+      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log }));
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`pitwall: ${home} can be read or entered by other users (mode 755). Run chmod 700 ${home}`);
+      expect(result.stdout).not.toContain('running at');
+      expect(statSync(home).mode & 0o777).toBe(0o755);
+      expect(await openerCalls(log)).toEqual([]);
+    }, 30_000);
+
+    it('leaves PITWALL_HOME alone with --no-open', async () => {
+      const home = fresh('home');
+      const { child, result } = await start(['--no-open'], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home });
+      expect(existsSync(home)).toBe(false);
+      child.kill('SIGTERM');
+      expect((await result).code).toBe(0);
+    }, 30_000);
+  });
+
+  describe('dev readiness: PITWALL_OPEN_MARKER', () => {
+    it('opens once per marker: a restart with the same marker opens nothing', async () => {
+      const marker = fresh('marker');
+      const log = fresh('opened');
+      const home = fresh('home');
+      const env = { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log, PITWALL_OPEN_MARKER: marker };
+
+      const first = await start([], env);
+      await waitUntil(async () => (await openerCalls(log)).length > 0);
+      expect(existsSync(marker)).toBe(true);
+      first.child.kill('SIGTERM');
+      expect((await first.result).code).toBe(0);
+
+      // What tsx watch does on a change: the same command and environment, a new process.
+      const second = await start([], env);
+      expect((await firstSnapshot(second.url)).status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      second.child.kill('SIGTERM');
+      expect((await second.result).code).toBe(0);
+
+      const calls = await openerCalls(log);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toHaveLength(1);
+      expect(calls[0]![0]).not.toContain(token);
+    }, 30_000);
+
+    it('opens nothing when a squatter holds the port: the CLI exits 1 and leaves the marker for a real start', async () => {
+      const squatter = await squat();
+      try {
+        const marker = fresh('marker');
+        const log = fresh('opened');
+        const result = await exited(
+          run(['--port', String(squatter.port), tmp], {
+            PITWALL_TOKEN: token,
+            PITWALL_NO_OPEN: '0',
+            PITWALL_TEST_OPEN_LOG: log,
+            PITWALL_OPEN_MARKER: marker,
+          }),
+        );
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain(`port ${squatter.port} on 127.0.0.1 is already in use`);
+        expect(existsSync(marker)).toBe(false);
+        expect(await openerCalls(log)).toEqual([]);
+      } finally {
+        await squatter.close();
+      }
+    }, 30_000);
+  });
+});
+
+/**
+ * Stand-ins for the two watchers `npm run dev` starts, first on its PATH.
+ * - `vite` waits to be stopped.
+ * - `tsx` does what `tsx watch src/cli.ts ...` does on one file change: runs
+ *   the real CLI, then stops it and runs it again. It logs to
+ *   $PITWALL_TEST_DEV_LOG its arguments, the marker it was given, and when the
+ *   restarted CLI is up.
+ * Both also stop if dev.ts goes away without stopping them, so a failed test
+ * leaves nothing running.
+ */
+const FAKE_VITE = `#!${process.execPath}
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
+const parent = process.ppid;
+setInterval(() => { if (process.ppid !== parent) process.exit(0); }, 200);
+`;
+
+const FAKE_TSX = `#!${process.execPath}
+const { spawn } = require('node:child_process');
+const { appendFileSync, existsSync } = require('node:fs');
+const log = (line) => appendFileSync(process.env.PITWALL_TEST_DEV_LOG, line + '\\n');
+const args = process.argv.slice(2);
+log('args ' + JSON.stringify(args));
+log('marker ' + process.env.PITWALL_OPEN_MARKER);
+const cliArgs = args.filter((arg) => arg !== 'watch' && !arg.startsWith('--clear-screen'));
+let child;
+function startCli() {
+  child = spawn(process.execPath, ['--import', 'tsx', ...cliArgs], { stdio: ['ignore', 'pipe', 'inherit'] });
+  return new Promise((resolve, reject) => {
+    let out = '';
+    child.stdout.on('data', (chunk) => {
+      out += chunk;
+      if (out.includes('Watching')) resolve();
+    });
+    child.on('exit', (code) => reject(new Error('the CLI exited with ' + code + ': ' + out)));
+  });
+}
+const stopCli = () => new Promise((resolve) => {
+  if (child.exitCode !== null || child.signalCode !== null) return resolve();
+  child.removeAllListeners('exit');
+  child.once('exit', resolve);
+  child.kill('SIGTERM');
+});
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => stopCli().then(() => process.exit(0)));
+const parent = process.ppid;
+setInterval(() => { if (process.ppid !== parent) stopCli().then(() => process.exit(0)); }, 200);
+(async () => {
+  await startCli();
+  for (let i = 0; i < 200 && !existsSync(process.env.PITWALL_OPEN_MARKER); i++) await sleep(25);
+  await stopCli();
+  log('restarting');
+  await startCli();
+  log('restarted');
+})().catch((error) => {
+  log('failed ' + error.message);
+  process.exit(1);
+});
+`;
+
+describe('npm run dev (scripts/dev.ts)', () => {
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  const devScript = join(repo, 'scripts', 'dev.ts');
+  let tmp: string;
+  let bin: string;
+
+  beforeAll(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
+    bin = join(tmp, 'bin');
+    await mkdir(bin);
+    await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
+    await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
+    await writeFile(join(bin, 'vite'), FAKE_VITE, { mode: 0o755 });
+    await writeFile(join(bin, 'tsx'), FAKE_TSX, { mode: 0o755 });
+  });
+
+  afterAll(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  function dev(port: number, files: { log: string; devLog: string; home: string }): ChildProcessWithoutNullStreams {
+    return spawn(process.execPath, ['--import', 'tsx', devScript, tmp], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
+        PITWALL_DEV_PORT: String(port),
+        PITWALL_NO_OPEN: '0',
+        PITWALL_HOME: files.home,
+        PITWALL_TEST_OPEN_LOG: files.log,
+        PITWALL_TEST_DEV_LOG: files.devLog,
+      },
+    });
+  }
+
+  const files = (name: string) => ({ log: join(tmp, `${name}-opened`), devLog: join(tmp, `${name}-dev.log`), home: join(tmp, `${name}-home`) });
+
+  it('with a squatter already on the port, exits 1 and opens nothing', async () => {
+    const squatter = await squat();
+    try {
+      const paths = files('squatted');
+      const child = dev(squatter.port, paths);
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      const [code] = (await once(child, 'exit')) as [number | null];
+      expect(code).toBe(1);
+      expect(stderr).toContain(`pitwall dev: port ${squatter.port} on 127.0.0.1 is already in use`);
+      // Neither watcher started, so no CLI ran, and nothing was opened.
+      expect(existsSync(paths.devLog)).toBe(false);
+      expect(await openerCalls(paths.log)).toEqual([]);
+    } finally {
+      await squatter.close();
+    }
+  }, 30_000);
+
+  it('opens the browser exactly once across a restart, through a launch file, with the token kept off the command line', async () => {
+    const port = await freePort();
+    const paths = files('normal');
+    const child = dev(port, paths);
+    const devLog = async () => readFile(paths.devLog, 'utf8').catch(() => '');
+    try {
+      await waitUntil(async () => /^(restarted|failed)/m.test(await devLog()), 45_000);
+      expect(await devLog()).not.toMatch(/^failed/m);
+      // Give the restarted CLI time to open a second tab, if it were going to.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const calls = await openerCalls(paths.log);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toHaveLength(1);
+      expect(calls[0]![0]).toMatch(new RegExp(`^${paths.home}/launch-${port}-[0-9a-f]{24}\\.html$`));
+
+      const log = await devLog();
+      const args = JSON.parse(/^args (.*)$/m.exec(log)![1]!) as string[];
+      expect(args).toEqual(['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(port), tmp]);
+      const marker = /^marker (.*)$/m.exec(log)![1]!;
+      expect(existsSync(marker)).toBe(true);
+
+      child.kill('SIGTERM');
+      const [code] = (await once(child, 'exit')) as [number | null];
+      expect(code).toBe(0);
+      // The marker's private directory goes with the dev run.
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      // On a failure, stop it the way Ctrl-C would, so it still removes its temp directory.
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM');
+        const killer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+        await once(child, 'exit');
+        clearTimeout(killer);
+      }
+    }
+  }, 60_000);
 });

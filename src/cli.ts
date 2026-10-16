@@ -2,14 +2,21 @@
 
 // The `pitwall` command: parse the roots, start the indexer and the server,
 // print the URL and open the browser.
+//
+// The browser is opened through a launch file (D7, src/server/launch.ts), never
+// with the token URL on a command line, because `ps` shows every process's
+// arguments to every user. The token is printed to stdout, the user's own
+// terminal, and passed in from `npm run dev` through the environment, which
+// other users can't read.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
 import { DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
+import { LaunchDirError, pitwallHome, prepareLaunchDir, removeOnExit, writeLaunchFile } from './server/launch.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
@@ -30,10 +37,17 @@ Options:
   -h, --help            Show this help.
   -v, --version         Show the version.
 
+The browser is opened through a launch file in ~/.pitwall (mode 0600, in a
+0700 directory, deleted on exit), so the token never appears in a command line.
+
 Environment:
-  PITWALL_TOKEN    Use this token instead of a random one. At least 32
-                   characters from A-Z, a-z, 0-9, "-" and "_".
-  PITWALL_NO_OPEN  Set to 1 to skip opening the browser.`;
+  PITWALL_TOKEN        Use this token instead of a random one. At least 32
+                       characters from A-Z, a-z, 0-9, "-" and "_".
+  PITWALL_NO_OPEN      Set to 1 to skip opening the browser.
+  PITWALL_HOME         Where launch files go, instead of ~/.pitwall.
+  PITWALL_OPEN_MARKER  A file path. Open the browser only if it doesn't exist
+                       yet, then create it. npm run dev sets it, so the browser
+                       opens once per dev run, not on every restart.`;
 
 /** A problem with the command line or environment. Printed with a `pitwall:` prefix, exit 1. */
 export class UsageError extends Error {
@@ -142,21 +156,41 @@ export function resolveWebRoot(cliFile: string = fileURLToPath(import.meta.url))
   return existsSync(sibling) ? sibling : resolve(here, '..', 'dist', 'web');
 }
 
-/** The command that opens a URL in the default browser. */
-export function browserCommand(url: string, platform: NodeJS.Platform = process.platform): [string, string[]] {
-  if (platform === 'darwin') return ['open', [url]];
-  // The empty argument is start's window title; without it, a quoted URL would become the title.
-  if (platform === 'win32') return ['cmd', ['/c', 'start', '', url]];
-  return ['xdg-open', [url]];
+/**
+ * The command that opens a file in the default browser. pitwall passes the
+ * launch file's path, never a URL with the token in it: the command's
+ * arguments are visible to every user through `ps`.
+ */
+export function browserCommand(file: string, platform: NodeJS.Platform = process.platform): [string, string[]] {
+  if (platform === 'darwin') return ['open', [file]];
+  // The empty argument is start's window title; without it, a quoted path would become the title.
+  if (platform === 'win32') return ['cmd', ['/c', 'start', '', file]];
+  return ['xdg-open', [file]];
 }
 
-/** Opens the URL with execFile, so no shell parses it. A failure is reported, not fatal. */
-export function openBrowser(url: string): void {
-  const [command, args] = browserCommand(url);
+/** Opens the file with execFile, so no shell parses it. A failure is reported, not fatal. */
+export function openBrowser(file: string): void {
+  const [command, args] = browserCommand(file);
   const child = execFile(command, args, (error) => {
     if (error) console.error(`pitwall: couldn't open a browser (${error.message}). Open the URL above instead.`);
   });
   child.unref();
+}
+
+/**
+ * Claims the right to open the browser for this dev run: creates `marker`
+ * if it doesn't exist yet, atomically, and says whether this call created it.
+ */
+export function claimOpenMarker(marker: string): boolean {
+  try {
+    closeSync(openSync(marker, 'wx', 0o600));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      console.error(`pitwall: couldn't create ${marker} (${(error as Error).message}), so not opening a browser.`);
+    }
+    return false;
+  }
 }
 
 function readVersion(): string {
@@ -168,6 +202,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   let command: CliCommand;
   let roots: string[];
   let token: string;
+  // Where the launch file goes, when this run opens the browser.
+  let launchDir: string | undefined;
+  const marker = process.env.PITWALL_OPEN_MARKER || undefined;
   try {
     command = parseCliArgs(argv);
     if (command.kind === 'help') {
@@ -185,9 +222,23 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     console.error(`pitwall: ${error.message}\nRun pitwall --help for usage.`);
     return 1;
   }
+  // Under npm run dev, a restart finds the marker the first run created, and
+  // doesn't open another tab.
+  if (command.open && !(marker !== undefined && existsSync(marker))) {
+    launchDir = pitwallHome();
+    try {
+      // Before anything listens: an unsafe directory stops pitwall here.
+      prepareLaunchDir(launchDir);
+    } catch (error) {
+      if (!(error instanceof LaunchDirError)) throw error;
+      console.error(`pitwall: ${error.message}`);
+      return 1;
+    }
+  }
   // Keep the token out of child processes: the indexer runs `claude`, and
   // later milestones start sessions that shouldn't be able to drive pitwall.
   delete process.env.PITWALL_TOKEN;
+  delete process.env.PITWALL_OPEN_MARKER;
 
   const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const indexer = startIndexer({ roots, intervalMs });
@@ -211,14 +262,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 1;
   }
 
-  const url = `${server.url}/#token=${token}`;
-  if (command.port === undefined && server.port !== DEFAULT_PORT) {
-    console.log(`pitwall: port ${DEFAULT_PORT} is busy, so using ${server.port}.`);
-  }
-  console.log(`pitwall is running at ${url}`);
-  console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}, polling every ${intervalMs / 1000}s`);
-  if (command.open) openBrowser(url);
-
+  // Before anything is printed or opened: a signal that arrived with no
+  // handler yet would kill the process outright, skipping the exit hook that
+  // deletes the launch file.
   let stopping = false;
   const shutdown = () => {
     if (stopping) return;
@@ -241,7 +287,32 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  const url = `${server.url}/#token=${token}`;
+  if (command.port === undefined && server.port !== DEFAULT_PORT) {
+    console.log(`pitwall: port ${DEFAULT_PORT} is busy, so using ${server.port}.`);
+  }
+  console.log(`pitwall is running at ${url}`);
+  console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}, polling every ${intervalMs / 1000}s`);
+  // Only now that this process's own server is listening, so the browser is
+  // never sent to whatever else holds the port.
+  if (launchDir !== undefined && (marker === undefined || claimOpenMarker(marker))) {
+    openThroughLaunchFile(launchDir, server.port, url);
+  }
   return 0;
+}
+
+/** Writes the launch file, deleted when this process exits, and opens it. A failure is reported, not fatal. */
+function openThroughLaunchFile(dir: string, port: number, url: string): void {
+  let file: string;
+  try {
+    file = writeLaunchFile(dir, port, url);
+  } catch (error) {
+    console.error(`pitwall: couldn't write the launch file in ${dir} (${(error as Error).message}). Open the URL above instead.`);
+    return;
+  }
+  removeOnExit(file);
+  openBrowser(file);
 }
 
 /** True when this file is the program being run, not a module imported by tests or scripts/dev.ts. */

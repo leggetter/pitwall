@@ -1,48 +1,60 @@
 // `npm run dev [-- root...]`: rebuilds the web UI on change (`vite build --watch`)
 // and restarts the server on change (`tsx watch src/cli.ts`), passing the roots
-// through. There is no Vite dev server in M1: the pitwall server serves dist/web,
-// so the UI is always same-origin.
+// through. There is no Vite dev server: the pitwall server serves dist/web, so
+// the UI is always same-origin.
 //
 // tsx watch restarts the CLI on every change. So that a restart doesn't mint a
 // new token and open another browser tab, this script generates one random
-// token per `npm run dev` run, passes it to the CLI as PITWALL_TOKEN, pins the
-// port, and opens the browser itself, once. Every security check stays on; the
-// web UI reconnects after each restart with the token it already has.
+// token per `npm run dev` run, passes it to the CLI as PITWALL_TOKEN (the
+// environment, which other users can't read, never the command line), and pins
+// the port. Every security check stays on. After each restart the web UI
+// reconnects, answers a fresh challenge with the token it already has, and
+// gets the new server's apiKey.
+//
+// The browser is opened once per dev run, by the CLI child itself, through its
+// launch file, and only after that child's own server is listening on the
+// port. This script passes it PITWALL_OPEN_MARKER, a path in a private temp
+// directory: the first CLI to listen creates the marker and opens the browser,
+// and later restarts find the marker and don't. A process squatting on the
+// port never gets a browser pointed at it, because the CLI can't listen there
+// and so never opens anything.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { openBrowser } from '../src/cli.js';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const PORT = 4517;
-const origin = `http://127.0.0.1:${PORT}`;
+const DEFAULT_DEV_PORT = 4517;
+
+// PITWALL_DEV_PORT exists for the npm run dev tests in src/cli.test.ts, so they never need 4517.
+const PORT = devPort(process.env.PITWALL_DEV_PORT);
 const roots = process.argv.slice(2);
 const token = randomBytes(32).toString('base64url');
 
-// With a fixed port, a busy one would make every restart fail, and the browser
-// would open on whatever else holds the port. Check before starting.
+// With a fixed port, a busy one would make every restart fail. Check before starting.
 if (!(await portIsFree(PORT))) {
   console.error(`pitwall dev: port ${PORT} on 127.0.0.1 is already in use. Stop whatever holds it, then run npm run dev again.`);
   process.exit(1);
 }
 
-let stopping = false;
+// mkdtemp makes the directory 0700, so no one else can create the marker first.
+const markerDir = mkdtempSync(join(tmpdir(), 'pitwall-dev-'));
+process.on('exit', () => rmSync(markerDir, { recursive: true, force: true }));
 
 const children: ChildProcess[] = [
   run('vite', ['build', '--watch'], process.env),
   run('tsx', ['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(PORT), ...roots], {
     ...process.env,
     PITWALL_TOKEN: token,
-    PITWALL_NO_OPEN: '1',
+    PITWALL_OPEN_MARKER: join(markerDir, 'opened'),
   }),
 ];
-
-if (process.env.PITWALL_NO_OPEN !== '1') void openWhenReady();
 
 // When either process exits, stop the other, and exit with the first one's code.
 function run(command: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess {
   const child = spawn(command, args, { stdio: 'inherit', env });
   child.on('exit', (code, signal) => {
-    stopping = true;
     process.exitCode ??= code ?? (signal ? 1 : 0);
     for (const other of children) {
       if (other !== child && other.exitCode === null && other.signalCode === null) other.kill('SIGTERM');
@@ -57,7 +69,6 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv): ChildProc
 // later, as when the signal was sent to this process alone.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    stopping = true;
     setTimeout(() => {
       for (const child of children) {
         if (child.exitCode === null && child.signalCode === null) child.kill(signal);
@@ -66,21 +77,14 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
-/** Opens the browser once the server answers `/` with the built UI, so the first page isn't the 503. */
-async function openWhenReady(): Promise<void> {
-  while (!stopping) {
-    try {
-      const res = await fetch(`${origin}/`, { signal: AbortSignal.timeout(1000) });
-      await res.body?.cancel();
-      if (res.ok) {
-        openBrowser(`${origin}/#token=${token}`);
-        return;
-      }
-    } catch {
-      // Not listening yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+function devPort(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_DEV_PORT;
+  const port = /^\d{1,5}$/.test(raw) ? Number(raw) : NaN;
+  if (!(port >= 1 && port <= 65535)) {
+    console.error(`pitwall dev: PITWALL_DEV_PORT must be a port from 1 to 65535, not "${raw}"`);
+    process.exit(1);
   }
+  return port;
 }
 
 function portIsFree(port: number): Promise<boolean> {
