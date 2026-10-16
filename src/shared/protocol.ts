@@ -136,13 +136,26 @@ export interface IndexSnapshot {
 }
 
 /**
+ * WebSocket protocol version. Version 2 (M2) replaced M1's raw-token auth with
+ * challenge-response, so the raw token never travels over the socket.
+ */
+export const PROTOCOL_VERSION = 2;
+
+/**
  * Server → client WebSocket messages.
- * - 'snapshot': sent right after auth, and again whenever anything other than
- *   generatedAt changed.
+ * - 'challenge': the first message on every connection. `nonce` is 32 random
+ *   bytes, base64url, never reused.
+ * - 'authenticated': sent after a valid `auth` proof. `apiKey` authorizes HTTP
+ *   API calls. It's random per server process, so it stops working when the
+ *   process exits, and a server squatting on the port never sees the token.
+ * - 'snapshot': sent right after 'authenticated', and again whenever anything
+ *   other than generatedAt changed.
  * - 'heartbeat': sent after every poll that didn't change the snapshot, so the
  *   UI can show the index is alive without receiving the whole snapshot again.
  */
 export type ServerMessage =
+  | { type: 'challenge'; version: number; nonce: string }
+  | { type: 'authenticated'; apiKey: string }
   | { type: 'snapshot'; snapshot: IndexSnapshot }
   | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
   | { type: 'error'; error: string };
@@ -163,24 +176,43 @@ export interface LastMessage {
 }
 
 /**
- * Client → server WebSocket messages. The first message on a connection must
- * be `auth`, within 5 seconds, or the server closes it with code 4401.
+ * Client → server WebSocket messages. The client's first message must be
+ * `auth`, within 5 seconds of the challenge, or the server closes the
+ * connection with code 4401.
+ *
+ * `proof` is base64url(HMAC-SHA256(key = the token as UTF-8, message = the
+ * challenge's nonce as UTF-8)). The browser computes it with WebCrypto. The
+ * server compares it in constant time, and accepts each nonce only once.
  */
-export type ClientMessage = { type: 'auth'; token: string };
+export type ClientMessage = { type: 'auth'; proof: string } | LegacyClientAuth;
 
-/** WebSocket close code for a missing or wrong token. */
+/**
+ * M1's raw-token auth, kept only while M2 is in progress. W8 removes it,
+ * switching the server and the client to `proof` in the same change.
+ */
+export type LegacyClientAuth = { type: 'auth'; token: string };
+
+/**
+ * WebSocket close code for a missing or wrong proof, an expired challenge, or
+ * a protocol version the server doesn't speak.
+ */
 export const WS_CLOSE_UNAUTHORIZED = 4401;
 
 /** WebSocket path served by the pitwall server. */
 export const WS_PATH = '/ws';
 
-/** HTTP path that returns the latest IndexSnapshot as JSON. Requires `Authorization: Bearer <token>`. */
+/**
+ * HTTP API authorization, for every path under /api/: `Authorization: Bearer
+ * <apiKey>`, from the 'authenticated' message. The raw token is also accepted,
+ * for scripts such as curl, but the web UI never sends it.
+ */
+
+/** HTTP path that returns the latest IndexSnapshot as JSON. */
 export const SNAPSHOT_PATH = '/api/snapshot';
 
 /**
- * HTTP path that returns one session's LastMessage as JSON. Requires
- * `Authorization: Bearer <token>`. Only sessions in the current snapshot (under
- * the roots) are served: any other id gets 404.
+ * HTTP path that returns one session's LastMessage as JSON. Only sessions in
+ * the current snapshot (under the roots) are served: any other id gets 404.
  */
 // For clients. A server building a route pattern from this must decode it,
 // because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
@@ -190,3 +222,61 @@ export function lastMessagePath(sessionId: string): string {
 
 /** Default poll interval for the index, in milliseconds. `pitwall --interval <seconds>` overrides it. */
 export const DEFAULT_POLL_INTERVAL_MS = 5000;
+
+/** What a conversation entry is. */
+export type ConversationEntryKind =
+  /** A prompt the user typed. */
+  | 'user'
+  /** Assistant text, without thinking blocks. */
+  | 'assistant'
+  /** One tool call and its result, collapsed into a single entry. */
+  | 'tool'
+  /** A message from another Claude session. */
+  | 'cross-session'
+  /** Anything else worth showing: a compaction summary, a task notification, a command's output. */
+  | 'notice';
+
+export interface ConversationEntry {
+  kind: ConversationEntryKind;
+  /** ISO 8601, when known. */
+  at?: string;
+  /**
+   * Plain text, with markdown syntax stripped. For 'tool', a one-line summary
+   * of the call, such as `Bash: npm test` or `Edit: src/cli.ts`. At most 8 KiB.
+   */
+  text: string;
+  /** For 'tool': the tool's name. */
+  toolName?: string;
+  /** For 'tool': whether the result was an error. */
+  toolError?: boolean;
+  /** For 'cross-session': the sender's name, as the receiving session saw it. */
+  from?: string;
+  /** True when `text` was cut to the limit. */
+  truncated?: boolean;
+}
+
+/**
+ * One page of a session's conversation, read from the end of the transcript
+ * backwards. Read-only, and served only for sessions in the current snapshot.
+ */
+export interface ConversationPage {
+  sessionId: string;
+  /** Oldest first within the page. At most 50 entries. */
+  entries: ConversationEntry[];
+  /**
+   * Opaque. Pass it as `before` to get the previous, older page. Absent when
+   * the page reaches the start of the transcript.
+   */
+  before?: string;
+}
+
+/**
+ * HTTP path that returns a ConversationPage as JSON: the newest page, or the
+ * page before the `before` cursor. Same rules as lastMessagePath(): only
+ * sessions in the current snapshot, and a server building a route pattern
+ * from this must decode it.
+ */
+export function conversationPath(sessionId: string, before?: string): string {
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
+  return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
+}

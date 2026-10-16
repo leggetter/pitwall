@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is next. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Phil confirms the M2 breakdown and decisions D7-D9<br>- M2 starts with the security gate (W8) and the session view (W9), in parallel |
+| **Next steps** | - W8 (security gate) and W9 (session view), in parallel<br>- Then W10-W12 |
 
 ## Who is this for
 
@@ -108,7 +108,7 @@ A local web UI that can type into agents running in auto mode is a local remote-
 - Generate a random token per run, pass it in the URL the CLI opens, and require it on every HTTP and WebSocket request.
 - Check `Host` and `Origin` on every request, to block DNS rebinding.
 - No CORS.
-- Don't write the token or session content anywhere outside `~/.claude`.
+- Don't write the token or session content anywhere outside `~/.claude`, except the launch file (D7): one HTML file at 0600 in `~/.pitwall/` at 0700, deleted on exit.
 
 ## M0: spike (done)
 
@@ -229,14 +229,14 @@ Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeepin
 - **Age is a signal.** In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
 - **PRs and sessions together,** for example: "CI is failing on your PR, and the session that opened it is idle."
 
-## M2 work breakdown (proposed)
+## M2 work breakdown
 
 Same way of working as M1. The coordinator owns the contract and the docs, sub-agents build in their own worktrees, a reviewer checks the integrated change, and Phil approves the merge. The rules for M1 below still apply.
 
 | Item | What | Branch | Owner | Status |
 | --- | --- | --- | --- | --- |
-| W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | Proposed |
-| W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | Proposed; can run alongside W8, because it adds no input path |
+| W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | In progress |
+| W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | In progress, alongside W8: it adds no input path |
 | W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | After W8 |
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | After W8 |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | After W8 |
@@ -246,14 +246,20 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 
 ### Decisions for M2
 
-Each has a lean, waiting on Phil.
+All three decided by Phil on 2026-10-16. The reasoning is in `README.md`. Phil's Mac has only his account, so the gate is defense in depth rather than an urgent fix.
+
+**Contract changes (W0 for M2), already on `m2/integration`:**
+- **The handshake:** a `challenge` with `PROTOCOL_VERSION` 2, an `auth` proof (an HMAC of the nonce) and an `authenticated` reply carrying a per-process `apiKey`.
+- **HTTP API calls** use the `apiKey`. The raw token is accepted only for scripts.
+- **Session view types:** `ConversationEntry`, `ConversationPage` and `conversationPath()`.
+- **Transition:** `LegacyClientAuth` keeps M1's raw-token auth compiling until W8 removes it.
 
 - **D7 - Keep the token out of process arguments.**
   - (a) The CLI writes a page that sends the browser to the token URL, in a file only my user can read (0600, in a 0700 `~/.pitwall/` directory, removed on exit), and opens that file. This is the approach Jupyter takes.
   - (b) The CLI opens a URL with a single-use launch code, which the server swaps for the token once. The code is still visible in `ps` for a moment, so another user who wins the race gets the token and the real browser fails.
-  - **Lean: (a).** It changes the "don't write the token outside `~/.claude`" rule to allow `~/.pitwall/` at 0700.
-- **D8 - The relay:** one background session named `pitwall-relay`, on Haiku, allowed only `ListAgents` and `SendMessage`, started on first use. Claude Code stops idle background processes after about an hour, so pitwall restarts it when needed. **Lean: as described.** The M4 supervisor replaces it.
-- **D9 - Attach limits:** one PTY per open session view, at most 4 at once, and closing the view or the tab detaches. Attaching to a background session that isn't running asks first, because `claude attach` restarts it. **Lean: as described.**
+  - **Decided: (a).** The token rule now allows `~/.pitwall/` at 0700 (see Security).
+- **D8 - The relay:** one background session named `pitwall-relay`, on Haiku, allowed only `ListAgents` and `SendMessage`, started on first use. Claude Code stops idle background processes after about an hour, so pitwall restarts it when needed. **Decided: as described.** The M4 supervisor replaces it.
+- **D9 - Attach limits:** one PTY per open session view, at most 4 at once, and closing the view or the tab detaches. Attaching to a background session that isn't running asks first, because `claude attach` restarts it. **Decided: as described.**
 
 ## M1 work breakdown
 
