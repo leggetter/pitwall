@@ -15,7 +15,7 @@ import {
   type ServerMessage,
 } from '../shared/protocol.js';
 import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from './index.js';
-import { SECURITY_HEADERS } from './security.js';
+import { securityHeaders } from './security.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
 
@@ -227,7 +227,11 @@ describe('startServer', () => {
         running.push(server);
         expect(server.port).not.toBe(blocker.port);
         expect(server.url).toBe(`http://127.0.0.1:${server.port}`);
-        expect((await get(server.port, '/')).status).toBe(200);
+        const res = await get(server.port, '/');
+        expect(res.status).toBe(200);
+        // The CSP names the port actually in use, not the busy one.
+        expect(res.headers['content-security-policy']).toContain(`ws://127.0.0.1:${server.port} ws://localhost:${server.port};`);
+        expect(res.headers['content-security-policy']).not.toContain(String(blocker.port));
       } finally {
         await blocker.close();
       }
@@ -533,16 +537,16 @@ describe('startServer', () => {
       expect(res.body).toBe('<!doctype html><title>pitwall</title>');
       expect(res.headers['content-type']).toBe('text/html; charset=utf-8');
       expect(res.headers['cache-control']).toBe('no-store');
-      for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+      for (const [name, value] of Object.entries(securityHeaders(server.port))) {
         expect(res.headers[name.toLowerCase()]).toBe(value);
       }
     });
 
-    it('sends the exact CSP, nosniff and no-referrer', async () => {
+    it('sends the exact CSP, naming the WebSocket origins on the real port, plus nosniff and no-referrer', async () => {
       const server = await start();
       const res = await get(server.port, '/');
       expect(res.headers['content-security-policy']).toBe(
-        "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+        `default-src 'self'; connect-src 'self' ws://127.0.0.1:${server.port} ws://localhost:${server.port}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
       );
       expect(res.headers['x-content-type-options']).toBe('nosniff');
       expect(res.headers['referrer-policy']).toBe('no-referrer');
@@ -556,14 +560,14 @@ describe('startServer', () => {
       expect(res.headers['content-type']).toBe('text/javascript; charset=utf-8');
       expect(res.headers['cache-control']).toBeUndefined();
       expect(res.headers['x-content-type-options']).toBe('nosniff');
-      expect(res.headers['content-security-policy']).toBe(SECURITY_HEADERS['Content-Security-Policy']);
+      expect(res.headers['content-security-policy']).toBe(securityHeaders(server.port)['Content-Security-Policy']);
     });
 
     it('sends the security headers on errors too', async () => {
       const server = await start();
       for (const res of [await get(server.port, '/missing'), await get(server.port, SNAPSHOT_PATH)]) {
         expect(res.headers['x-content-type-options']).toBe('nosniff');
-        expect(res.headers['content-security-policy']).toBe(SECURITY_HEADERS['Content-Security-Policy']);
+        expect(res.headers['content-security-policy']).toBe(securityHeaders(server.port)['Content-Security-Policy']);
       }
     });
 

@@ -6,14 +6,31 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 /** The only address the server listens on. */
 export const LOOPBACK_HOST = '127.0.0.1';
 
+/**
+ * The CSP for a server on `port`. connect-src names the WebSocket origins as
+ * well as 'self', because older Safari doesn't match ws: against 'self'.
+ */
+export function contentSecurityPolicy(port: number): string {
+  return [
+    "default-src 'self'",
+    `connect-src 'self' ws://${LOOPBACK_HOST}:${port} ws://localhost:${port}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; ');
+}
+
 /** Sent on every HTTP response. Never add CORS headers here or anywhere else. */
-export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
-  'Content-Security-Policy':
-    "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'Cross-Origin-Resource-Policy': 'same-origin',
-};
+export function securityHeaders(port: number): Readonly<Record<string, string>> {
+  return {
+    'Content-Security-Policy': contentSecurityPolicy(port),
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+  };
+}
 
 /** The shortest token the server accepts. The CLI's random token is 43 characters. */
 export const MIN_TOKEN_LENGTH = 32;
