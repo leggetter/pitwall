@@ -1,0 +1,169 @@
+/* Spawn, stop and remove (W12): the New session dialog and the session view's actions. Uses the tokens in styles.css. */
+
+.button.primary {
+  background: var(--focus);
+  border-color: var(--focus);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.button.primary:hover {
+  background: var(--focus);
+  filter: brightness(1.08);
+}
+
+.button.danger {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+}
+
+.button.danger:hover {
+  background: var(--error-bg);
+  filter: brightness(0.97);
+}
+
+.modal .button:disabled,
+.session-actions .button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The New session dialog */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 16px;
+  overflow-y: auto;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.modal {
+  width: min(620px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px 20px;
+}
+
+.modal-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.field-optional {
+  margin-left: 4px;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.8rem;
+}
+
+.field select,
+.field-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.field-prompt {
+  min-height: 7.5em;
+  resize: vertical;
+  font-family: var(--font-sans);
+  line-height: 1.4;
+}
+
+.field-input[aria-invalid='true'],
+.field select[aria-invalid='true'] {
+  border-color: var(--error-border);
+}
+
+.field-hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.field-problem {
+  color: var(--failed-text);
+  font-size: 0.85rem;
+}
+
+.spawn-failure {
+  flex-direction: column;
+  align-items: stretch;
+  margin-top: 0;
+}
+
+.spawn-failure .copy-command {
+  margin-left: 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Stop and Remove in the session view */
+
+.session-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-actions-buttons,
+.session-confirm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--error-border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+}
+
+.action-result {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.action-result.failed {
+  color: var(--failed-text);
+}
