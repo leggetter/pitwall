@@ -40,7 +40,7 @@ Both S4 gaps were closed the same day by [spike 002](002-supervisor-to-interacti
 - **Interactive → background:** this session (interactive, auto mode) sent a message to an idle background session. It started a new turn about 2 s later.
 - **Background → background:** a background stand-in supervisor called `ListAgents` and saw 20 peers, including interactive sessions. It then sent with `SendMessage`, and neither tool needed an approval in auto mode.
 - **How the receiver sees it:** the message lands as a `user` entry wrapped in `<cross-session-message from="uds:..." from-name="..." from-mode="prompting">`, followed by a harness note that it "came from another Claude session - not typed by your user". That confirms the constraint in D2. The transcript adapter must tell these entries apart from real user prompts.
-- **Gap: background → interactive.** The auto-mode classifier in my own session denied spawning a stand-in that would message a live interactive session ("Interfere With Workloads"). I didn't route around it. A supervisor that messages real sessions may hit the same classifier, so M3 needs this tested deliberately: a session the user opens for the purpose, and an explicit user instruction.
+- **Gap: background → interactive.** The auto-mode classifier in my own session denied spawning a stand-in that would message a live interactive session ("Interfere With Workloads"). I didn't route around it. A supervisor that messages real sessions may hit the same classifier, so M4 (then numbered M3) needs this tested deliberately: a session the user opens for the purpose, and an explicit user instruction.
 - **Gap: the reply leg.** Both receivers answered in their own transcript instead of replying, because the test prompt told them not to use tools. The reply is the same `SendMessage` mechanism, but it hasn't been observed.
 
 ## S5: idle notices
@@ -57,5 +57,5 @@ Both S4 gaps were closed the same day by [spike 002](002-supervisor-to-interacti
 
 - **D1, D3 and D6:** settled.
 - **D2:** settled as leaned, with a UI rule. A message relayed through the supervisor must be labeled in the UI as arriving "from pitwall's supervisor", because that's how the receiving session sees it.
-- **D4:** the background-session supervisor holds up. The classifier gap above is the main risk, and M3 tests it before anything else.
+- **D4:** the background-session supervisor holds up. The classifier gap above is the main risk, and M4 (then numbered M3) tests it before anything else.
 - **New requirements:** surface the untrusted-workspace error; flag stale blocked jobs; tail transcripts from an offset; tell cross-session message entries apart from user prompts.

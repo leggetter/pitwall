@@ -45,8 +45,8 @@ From Phil's screenshot of the target session in Warp:
 ## What changes in the plan
 
 - **D4:** settled. The supervisor is a background Claude Code session.
-- **M3:** no longer needs to start with this test.
+- **M4 (then numbered M3):** no longer needs to start with this test.
 - **M1 transcript adapter:** classify a cross-session entry by `isMeta: true` and its `Another Claude session sent a message:` prefix.
-- **M3 supervisor behavior:**
+- **M4 (then numbered M3) supervisor behavior:**
   - Get status from pitwall's index, not by messaging sessions, because each relayed message costs a turn on the receiver's model.
   - Don't subscribe to idle notices broadly: each subscription prints a raw-address notice in the watched session's terminal. Pitwall's polling of `claude agents --json` already sees busy-to-idle changes without touching the session.
