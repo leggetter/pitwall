@@ -1,5 +1,6 @@
 // The live connection to the pitwall server: authenticate, keep the latest
-// snapshot, and reconnect with backoff unless the token was rejected.
+// snapshot and the latest poll's time and health, and reconnect with backoff
+// unless the token was rejected.
 
 import { useEffect, useState } from 'react';
 import {
@@ -8,11 +9,12 @@ import {
   type ClientMessage,
   type IndexSnapshot,
   type ServerMessage,
+  type SourceHealth,
 } from '../../src/shared/protocol.js';
 
 /**
  * - `connecting`: the first attempt, until the first snapshot arrives.
- * - `live`: a snapshot has arrived on the current socket.
+ * - `live`: a snapshot or a heartbeat has arrived on the current socket.
  * - `reconnecting`: the socket closed and a new attempt is pending or underway.
  * - `unauthorized`: the server closed with 4401. Pitwall stops trying.
  */
@@ -32,9 +34,21 @@ export type SocketFactory = (url: string) => SocketLike;
 
 export const defaultSocketFactory: SocketFactory = (url) => new WebSocket(url);
 
+/** When the index last polled, and whether `claude agents --json` worked then. */
+export interface PollStatus {
+  generatedAt: string;
+  source: SourceHealth;
+}
+
 export interface ConnectionView {
   state: ConnectionState;
   snapshot?: IndexSnapshot;
+  /**
+   * The newest poll the server reported, by a snapshot or a heartbeat. A
+   * heartbeat updates this and leaves the snapshot as it is, because nothing
+   * else changed.
+   */
+  lastPoll?: PollStatus;
   /** The newest `{ type: 'error' }` message from the server. */
   serverError?: string;
 }
@@ -81,10 +95,22 @@ export function parseServerMessage(data: unknown): ServerMessage | undefined {
     }
     return undefined;
   }
+  if (candidate.type === 'heartbeat') {
+    if (typeof candidate.generatedAt === 'string' && isSourceHealth(candidate.source)) {
+      return { type: 'heartbeat', generatedAt: candidate.generatedAt, source: candidate.source };
+    }
+    return undefined;
+  }
   if (candidate.type === 'error' && typeof candidate.error === 'string') {
     return { type: 'error', error: candidate.error };
   }
   return undefined;
+}
+
+function isSourceHealth(value: unknown): value is SourceHealth {
+  if (typeof value !== 'object' || value === null) return false;
+  const { ok, error } = value as Record<string, unknown>;
+  return ok === true || (ok === false && typeof error === 'string');
 }
 
 export function createConnection(options: ConnectionOptions): Connection {
@@ -135,11 +161,15 @@ export function createConnection(options: ConnectionOptions): Connection {
       if (!message) return;
       if (message.type === 'snapshot') {
         attempt = 0;
-        update({ state: 'live', snapshot: message.snapshot });
+        const { generatedAt, source } = message.snapshot;
+        update({ state: 'live', snapshot: message.snapshot, lastPoll: { generatedAt, source } });
+      } else if (message.type === 'heartbeat') {
+        // The index is alive and nothing changed: the snapshot stays as it is.
+        attempt = 0;
+        update({ state: 'live', lastPoll: { generatedAt: message.generatedAt, source: message.source } });
       } else if (message.type === 'error') {
         update({ serverError: message.error });
       }
-      // 'heartbeat' is ignored until W7a uses it for "updated Ns ago".
     };
 
     // A failed connection fires `error` and then `close`; the close handler decides.

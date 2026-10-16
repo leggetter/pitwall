@@ -56,6 +56,26 @@ describe('App', () => {
     expect(screen.getByText('demo-docs')).toBeTruthy();
   });
 
+  it('keeps the sessions on a heartbeat, and shows its source warning', () => {
+    window.sessionStorage.setItem(TOKEN_STORAGE_KEY, 'stored');
+    const fake = fakeSockets();
+    const { container } = render(<App createSocket={fake.factory} />);
+    act(() => {
+      fake.last.open();
+      fake.last.receive({ type: 'snapshot', snapshot: mixedSnapshot() });
+    });
+    const heading = container.querySelector('.group-label');
+
+    act(() =>
+      fake.last.receive({ type: 'heartbeat', generatedAt: new Date().toISOString(), source: { ok: false, error: 'timed out' } }),
+    );
+
+    expect(screen.getByText('Live')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('failed on the latest poll: timed out');
+    expect(container.querySelector('.group-label')).toBe(heading);
+    expect(screen.getByText('updated 0s ago')).toBeTruthy();
+  });
+
   it('on 4401, says the token was rejected and stops reconnecting', () => {
     window.sessionStorage.setItem(TOKEN_STORAGE_KEY, 'wrong');
     const fake = fakeSockets();
