@@ -26,9 +26,20 @@ function timed(fn: () => unknown): number {
  */
 const FAST_MS = 200;
 
-/** The best of three runs of `fn`, in milliseconds, so one slow run on a busy machine doesn't decide. */
+/**
+ * The CPU time `fn` takes, in milliseconds: the best of three runs. CPU time,
+ * so other processes on a busy machine don't count, and the best run, so a
+ * garbage collection doesn't either. Test files run in their own processes.
+ */
 function bestOf3(fn: () => unknown): number {
-  return Math.min(timed(fn), timed(fn), timed(fn));
+  let best = Number.POSITIVE_INFINITY;
+  for (let run = 0; run < 3; run++) {
+    const start = process.cpuUsage();
+    fn();
+    const used = process.cpuUsage(start);
+    best = Math.min(best, (used.user + used.system) / 1000);
+  }
+  return best;
 }
 
 /** The W6 review's hostile inputs, each about 64 KiB, as stripMarkdown's and detectAskedYou's tests use them. */
