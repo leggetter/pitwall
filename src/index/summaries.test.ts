@@ -190,6 +190,39 @@ describe('compareSessions', () => {
     ]);
   });
 
+  it('puts a blocked background job first, as Claude Code reports it: blocked and idle', () => {
+    const sessions = [
+      session('busy', { status: 'busy', lastActivityAt: iso(NOW - 5000) }),
+      session('idle-newer', { status: 'idle', lastActivityAt: iso(NOW - 1000) }),
+      session('blocked', { kind: 'background', shortId: 'bg1', status: 'idle', state: 'blocked', lastActivityAt: iso(NOW - 60_000) }),
+    ];
+    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual(['blocked', 'busy', 'idle-newer']);
+  });
+
+  it('ranks a blocked job with waiting sessions, by activity, ahead of asked you', () => {
+    const asked: AskedYou = { reason: 'question', excerpt: 'Ship it?' };
+    const sessions = [
+      session('asked', { status: 'idle', askedYou: asked, lastActivityAt: iso(NOW - 100) }),
+      session('waiting-old', { status: 'waiting', lastActivityAt: iso(NOW - 50_000) }),
+      session('blocked-no-process', { kind: 'background', alive: false, state: 'blocked', lastActivityAt: iso(NOW - 20_000) }),
+      session('blocked-new', { kind: 'background', status: 'idle', state: 'blocked', lastActivityAt: iso(NOW - 1000) }),
+    ];
+    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual([
+      'blocked-new',
+      'blocked-no-process',
+      'waiting-old',
+      'asked',
+    ]);
+  });
+
+  it('keeps a stale blocked job last', () => {
+    const sessions = [
+      session('stale-blocked', { kind: 'background', status: 'idle', state: 'blocked', stale: true, lastActivityAt: iso(NOW) }),
+      session('idle', { status: 'idle', lastActivityAt: iso(NOW - 9 * DAY) }),
+    ];
+    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual(['idle', 'stale-blocked']);
+  });
+
   it('falls back to startedAt when there is no lastActivityAt', () => {
     const sessions = [
       session('older-start', { startedAt: iso(NOW - 2 * DAY) }),

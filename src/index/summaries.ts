@@ -73,14 +73,21 @@ export function activityMs(session: SessionSummary): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+/**
+ * Claude Code reports a live blocked background job as `state: 'blocked'`
+ * with `status: 'idle'`, so the state is checked as well as the status.
+ */
 function statusRank(session: SessionSummary): number {
-  if (session.status === 'waiting') return 0;
+  if (session.status === 'waiting' || (session.state === 'blocked' && !session.stale)) return 0;
   if (session.askedYou !== undefined) return 1;
   if (session.status === 'busy') return 2;
   return 3;
 }
 
-/** Stale sessions last; otherwise waiting, then asked you, then busy, then most recently active first. */
+/**
+ * Stale sessions last; otherwise waiting or blocked, then asked you, then
+ * busy, then most recently active first.
+ */
 export function compareSessions(a: SessionSummary, b: SessionSummary): number {
   return (
     Number(a.stale) - Number(b.stale) ||
