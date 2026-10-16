@@ -1,0 +1,680 @@
+// Spawn, stop and remove, through the real HTTP server and its /api/* checks,
+// with a fake command runner, so no test ever runs `claude`. Made-up sessions
+// only.
+import { execFile } from 'node:child_process';
+import { createHmac } from 'node:crypto';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { WebSocket } from 'ws';
+import type { Indexer } from '../index/index.js';
+import {
+  removePath,
+  SPAWN_PATH,
+  stopPath,
+  WS_PATH,
+  type IndexSnapshot,
+  type ServerMessage,
+  type SessionSummary,
+} from '../shared/protocol.js';
+import {
+  firstLine,
+  MAX_PROMPT_LENGTH,
+  parseBackgrounded,
+  shellQuote,
+  spawnArgs,
+  SpawnLimiter,
+  trustHint,
+  type ActionOptions,
+} from './actions.js';
+import type { CommandOptions, CommandResult, RunCommand } from './command.js';
+import type { RunningServer } from './index.js';
+import { startServerWithInternals } from './server.js';
+
+const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
+
+// ---------------------------------------------------------------- fixtures
+
+let tmp: string;
+/** The root pitwall watches, as a realpath, as the snapshot carries it. */
+let root: string;
+let repo: string;
+let outside: string;
+let webRoot: string;
+
+beforeAll(async () => {
+  tmp = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-test-actions-')));
+  root = join(tmp, 'root');
+  repo = join(root, 'repo');
+  outside = join(tmp, 'outside');
+  webRoot = join(tmp, 'web');
+  await mkdir(join(repo, 'packages', 'worker'), { recursive: true });
+  await mkdir(join(root, "it's a dir"), { recursive: true });
+  await mkdir(outside, { recursive: true });
+  await mkdir(webRoot, { recursive: true });
+  await writeFile(join(webRoot, 'index.html'), '<!doctype html><title>pitwall</title>');
+  await writeFile(join(repo, 'README.md'), 'not a directory');
+  await symlink(outside, join(root, 'escape'));
+  await symlink(join(repo, 'packages'), join(root, 'alias'));
+});
+
+afterAll(async () => {
+  await rm(tmp, { recursive: true, force: true });
+});
+
+const BG_ID = '11111111-1111-4111-8111-111111111111';
+const INTERACTIVE_ID = '22222222-2222-4222-8222-222222222222';
+const NO_SHORT_ID = '33333333-3333-4333-8333-333333333333';
+const BAD_SHORT_ID = '44444444-4444-4444-8444-444444444444';
+
+function session(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sessionId'>): SessionSummary {
+  return {
+    name: 'pitwall-test-a',
+    kind: 'background',
+    cwd: repo,
+    alive: true,
+    startedAt: '2026-10-16T00:00:00.000Z',
+    stale: false,
+    transcript: 'missing',
+    ...overrides,
+  };
+}
+
+function snapshot(): IndexSnapshot {
+  return {
+    generatedAt: '2026-10-16T00:00:00.000Z',
+    roots: [root],
+    groups: [
+      {
+        key: repo,
+        label: 'repo',
+        kind: 'git',
+        root,
+        sessions: [
+          session({ sessionId: BG_ID, shortId: 'b3899da0', name: 'pitwall-test-bg' }),
+          session({ sessionId: INTERACTIVE_ID, kind: 'interactive', name: 'pitwall-test-interactive', pid: 4242 }),
+          session({ sessionId: NO_SHORT_ID, name: 'pitwall-test-no-short-id' }),
+          session({ sessionId: BAD_SHORT_ID, shortId: '-h', name: 'pitwall-test-bad-short-id' }),
+        ],
+      },
+    ],
+    source: { ok: true },
+  };
+}
+
+/** An index holding `latest`; `null` for one that hasn't finished its first poll. */
+function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
+  return {
+    latest: () => latest ?? undefined,
+    subscribe: () => () => {},
+    lastMessage: () => undefined,
+    conversation: async () => undefined,
+    stop: () => {},
+  };
+}
+
+interface Call {
+  file: string;
+  args: readonly string[];
+  options: CommandOptions;
+}
+
+/** A runner that records each call and answers with `answer`, or the next of `answers`. */
+function fakeRunner(...answers: CommandResult[]): RunCommand & { calls: Call[] } {
+  const calls: Call[] = [];
+  let next = 0;
+  const run = vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+    calls.push({ file, args, options });
+    const answer = answers[Math.min(next, answers.length - 1)];
+    next += 1;
+    if (!answer) throw new Error('no answer');
+    return answer;
+  });
+  return Object.assign(run, { calls });
+}
+
+const exited = (code: number, stdout = '', stderr = ''): CommandResult => ({ kind: 'exited', code, stdout, stderr });
+const backgrounded = (id = 'c0ffee12', name = 'pitwall-test-spawn') => exited(0, `backgrounded · ${id} · ${name}\n`);
+
+// ---------------------------------------------------------------- clients
+
+const running: RunningServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.close()));
+});
+
+interface Started {
+  server: RunningServer;
+  apiKey: string;
+  run: ReturnType<typeof fakeRunner>;
+}
+
+async function start(run = fakeRunner(backgrounded()), actions: ActionOptions = {}, indexer: Indexer = fakeIndexer()): Promise<Started> {
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { actions: { run, env: {}, ...actions } });
+  running.push(server);
+  return { server, apiKey: await apiKeyOf(server.port), run };
+}
+
+interface HttpResult {
+  status: number;
+  headers: IncomingHttpHeaders;
+  body: string;
+  json: unknown;
+}
+
+function post(port: number, path: string, body: string | undefined, headers: Record<string, string>): Promise<HttpResult> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers, agent: false }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => (text += chunk));
+      res.on('end', () => {
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = undefined;
+        }
+        resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text, json });
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+const origin = (port: number) => `http://127.0.0.1:${port}`;
+
+/** POSTs as the web UI does: the apiKey, this server's Origin and a JSON body. */
+function postAsPage(started: Started, path: string, body?: unknown): Promise<HttpResult> {
+  return post(started.server.port, path, body === undefined ? undefined : JSON.stringify(body), {
+    authorization: `Bearer ${started.apiKey}`,
+    origin: origin(started.server.port),
+    ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+  });
+}
+
+const spawnAsPage = (started: Started, body: unknown) => postAsPage(started, SPAWN_PATH, body);
+
+/** The apiKey, from W8's challenge-response handshake. */
+async function apiKeyOf(port: number): Promise<string> {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${WS_PATH}`, { origin: origin(port) });
+  const messages: ServerMessage[] = [];
+  const waiters: ((message: ServerMessage) => void)[] = [];
+  ws.on('message', (data) => {
+    const message = JSON.parse(String(data)) as ServerMessage;
+    const waiter = waiters.shift();
+    if (waiter) waiter(message);
+    else messages.push(message);
+  });
+  const next = () => {
+    const queued = messages.shift();
+    return queued ? Promise.resolve(queued) : new Promise<ServerMessage>((resolve) => waiters.push(resolve));
+  };
+  const challenge = await next();
+  if (challenge.type !== 'challenge') throw new Error(`expected a challenge, got ${challenge.type}`);
+  const proof = createHmac('sha256', Buffer.from(TOKEN, 'utf8')).update(challenge.nonce, 'utf8').digest('base64url');
+  ws.send(JSON.stringify({ type: 'auth', proof }));
+  const reply = await next();
+  ws.close();
+  if (reply.type !== 'authenticated') throw new Error(`expected authenticated, got ${reply.type}`);
+  return reply.apiKey;
+}
+
+const valid = () => ({ cwd: repo, prompt: 'Reply with: ready', name: 'pitwall-test-spawn', model: 'haiku' });
+
+// ---------------------------------------------------------------- tests
+
+describe('the action routes: credentials', () => {
+  const paths = () => [SPAWN_PATH, stopPath(BG_ID), removePath(BG_ID)];
+
+  it('refuse the raw token, even from this Origin, without running anything', async () => {
+    const started = await start();
+    for (const path of paths()) {
+      const res = await post(started.server.port, path, JSON.stringify(valid()), {
+        authorization: `Bearer ${TOKEN}`,
+        origin: origin(started.server.port),
+        'content-type': 'application/json',
+      });
+      expect(res.status, path).toBe(403);
+    }
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('refuse the apiKey without this Origin, or with another one', async () => {
+    const started = await start();
+    for (const path of paths()) {
+      for (const value of [undefined, 'http://evil.example', `http://localhost:${started.server.port}`]) {
+        const headers: Record<string, string> = { authorization: `Bearer ${started.apiKey}`, 'content-type': 'application/json' };
+        if (value !== undefined) headers.origin = value;
+        expect((await post(started.server.port, path, JSON.stringify(valid()), headers)).status, `${path} ${value}`).toBe(403);
+      }
+    }
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('refuse no credential, or a wrong one, with 401', async () => {
+    const started = await start();
+    for (const path of paths()) {
+      for (const authorization of [undefined, 'Bearer wrong']) {
+        const headers: Record<string, string> = { origin: origin(started.server.port), 'content-type': 'application/json' };
+        if (authorization) headers.authorization = authorization;
+        expect((await post(started.server.port, path, JSON.stringify(valid()), headers)).status).toBe(401);
+      }
+    }
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('let the apiKey with this Origin through', async () => {
+    const started = await start(fakeRunner(backgrounded(), exited(0), exited(0)));
+    expect((await spawnAsPage(started, valid())).status).toBe(201);
+    expect((await postAsPage(started, stopPath(BG_ID))).status).toBe(200);
+    expect((await postAsPage(started, removePath(BG_ID))).status).toBe(200);
+    expect(started.run.calls).toHaveLength(3);
+  });
+});
+
+describe('spawn: validation', () => {
+  async function expect400(body: unknown, error?: RegExp) {
+    const started = await start();
+    const res = await spawnAsPage(started, body);
+    expect(res.status, JSON.stringify(body)).toBe(400);
+    expect(res.json).toMatchObject({ ok: false, error: expect.any(String) });
+    if (error) expect((res.json as { error: string }).error).toMatch(error);
+    expect(started.run.calls).toEqual([]);
+  }
+
+  it('refuses a body that is not a JSON object', async () => {
+    for (const body of [null, [], 'text', 42]) await expect400(body, /JSON object/);
+  });
+
+  it('refuses invalid JSON with 400, a body that is not JSON with 415, and a huge body with 413', async () => {
+    const started = await start();
+    const headers = { authorization: `Bearer ${started.apiKey}`, origin: origin(started.server.port) };
+    const bad = await post(started.server.port, SPAWN_PATH, '{"cwd":', { ...headers, 'content-type': 'application/json' });
+    expect([bad.status, bad.json]).toEqual([400, { ok: false, error: "The body isn't valid JSON." }]);
+    const text = await post(started.server.port, SPAWN_PATH, JSON.stringify(valid()), { ...headers, 'content-type': 'text/plain' });
+    expect(text.status).toBe(415);
+    const form = await post(started.server.port, SPAWN_PATH, 'cwd=/', { ...headers, 'content-type': 'application/x-www-form-urlencoded' });
+    expect(form.status).toBe(415);
+    const huge = await post(started.server.port, SPAWN_PATH, JSON.stringify({ ...valid(), prompt: 'x'.repeat(200_000) }), {
+      ...headers,
+      'content-type': 'application/json',
+    });
+    expect(huge.status).toBe(413);
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('requires a prompt of 1 to 16,384 characters that is not blank and has no NUL', async () => {
+    const { prompt: _, ...noPrompt } = valid();
+    await expect400(noPrompt, /prompt is required/);
+    await expect400({ ...valid(), prompt: '' }, /prompt is required/);
+    await expect400({ ...valid(), prompt: '  \n\t ' }, /prompt is required/);
+    await expect400({ ...valid(), prompt: 42 }, /prompt is required/);
+    await expect400({ ...valid(), prompt: 'x'.repeat(MAX_PROMPT_LENGTH + 1) }, /at most 16384/);
+    await expect400({ ...valid(), prompt: 'a\u0000b' }, /NUL/);
+
+    const started = await start();
+    expect((await spawnAsPage(started, { ...valid(), prompt: 'x'.repeat(MAX_PROMPT_LENGTH) })).status).toBe(201);
+  });
+
+  it("refuses a name outside the contract's characters, over 64, or that could read as an option", async () => {
+    for (const name of ['a;b', 'a/b', 'a$b', 'naïve', 'tab\there', 'x'.repeat(65), '-h', '--bg', ' leading', 'trailing ', '', 42, null]) {
+      await expect400({ ...valid(), name }, /name/);
+    }
+  });
+
+  it('accepts a name with letters, digits, spaces, ".", "_" and "-", up to 64', async () => {
+    for (const name of ['pitwall-test-spawn', 'Fix the docs 2.0', '_private', '.dot', 'x'.repeat(64), 'a']) {
+      const started = await start();
+      const res = await spawnAsPage(started, { ...valid(), name });
+      expect(res.status, name).toBe(201);
+      expect(started.run.calls[0]?.args).toContain(name);
+    }
+  });
+
+  it('refuses a model that is not a short alias', async () => {
+    for (const model of ['opus 4', '-x', 'sonnet[1m]', 'a/b', 'x'.repeat(41), '', 7]) await expect400({ ...valid(), model }, /model/);
+  });
+
+  it('accepts short aliases and full model names', async () => {
+    for (const model of ['haiku', 'sonnet', 'opus', 'claude-haiku-4-5', 'x'.repeat(40)]) {
+      const started = await start();
+      expect((await spawnAsPage(started, { ...valid(), model })).status, model).toBe(201);
+    }
+  });
+
+  it('requires an absolute cwd with no control characters', async () => {
+    const { cwd: _, ...noCwd } = valid();
+    await expect400(noCwd, /directory is required/);
+    await expect400({ ...valid(), cwd: '' }, /directory is required/);
+    await expect400({ ...valid(), cwd: 42 }, /directory is required/);
+    await expect400({ ...valid(), cwd: 'root/repo' }, /absolute/);
+    await expect400({ ...valid(), cwd: `${repo}\n` }, /control characters/);
+    await expect400({ ...valid(), cwd: `/${'a'.repeat(5000)}` }, /too long/);
+  });
+
+  it("refuses a cwd that doesn't exist, or isn't a directory", async () => {
+    await expect400({ ...valid(), cwd: join(repo, 'missing') }, /doesn't exist/);
+    await expect400({ ...valid(), cwd: join(repo, 'README.md', 'below') }, /doesn't exist/);
+    await expect400({ ...valid(), cwd: join(repo, 'README.md') }, /isn't a directory/);
+  });
+
+  it('refuses a cwd outside the roots, including through .. and through a symlink under a root', async () => {
+    await expect400({ ...valid(), cwd: outside }, /isn't under the root/);
+    await expect400({ ...valid(), cwd: tmp }, /isn't under the root/);
+    await expect400({ ...valid(), cwd: join(root, '..', 'outside') }, /isn't under the root/);
+    await expect400({ ...valid(), cwd: join(root, 'escape') }, /isn't under the root/);
+    await expect400({ ...valid(), cwd: `${root}-sibling` }, /doesn't exist|isn't under/);
+  });
+
+  it('runs in the realpath: the root itself, a subdirectory, or a symlink that stays under the root', async () => {
+    const cases: [string, string][] = [
+      [root, root],
+      [join(repo, 'packages', 'worker'), join(repo, 'packages', 'worker')],
+      [join(root, 'alias', 'worker'), join(repo, 'packages', 'worker')],
+      [`${repo}/`, repo],
+    ];
+    for (const [cwd, real] of cases) {
+      const started = await start();
+      expect((await spawnAsPage(started, { ...valid(), cwd })).status, cwd).toBe(201);
+      expect(started.run.calls[0]?.options.cwd).toBe(real);
+    }
+  });
+
+  it('answers 503 before the first snapshot, since the roots are not known yet', async () => {
+    const started = await start(fakeRunner(backgrounded()), {}, fakeIndexer(null));
+    const res = await spawnAsPage(started, valid());
+    expect(res.status).toBe(503);
+    expect(started.run.calls).toEqual([]);
+  });
+});
+
+describe('spawn: running claude --bg', () => {
+  it('runs claude --bg with the name, the model and the prompt after --, in the directory', async () => {
+    const started = await start();
+    await spawnAsPage(started, valid());
+    expect(started.run.calls).toHaveLength(1);
+    const [call] = started.run.calls;
+    expect(call?.file).toBe('claude');
+    expect(call?.args).toEqual(['--bg', '--name', 'pitwall-test-spawn', '--model', 'haiku', '--', 'Reply with: ready']);
+    expect(call?.options.cwd).toBe(repo);
+    expect(call?.options.timeoutMs).toBe(30_000);
+  });
+
+  it('leaves out the name and model when they are not given, and keeps a prompt that starts with - as the prompt', async () => {
+    const started = await start();
+    await spawnAsPage(started, { cwd: repo, prompt: '--dangerously-skip-permissions' });
+    expect(started.run.calls[0]?.args).toEqual(['--bg', '--', '--dangerously-skip-permissions']);
+  });
+
+  it('uses the configured claude binary', async () => {
+    const started = await start(fakeRunner(backgrounded()), { claudeBin: '/opt/claude/bin/claude' });
+    await spawnAsPage(started, valid());
+    expect(started.run.calls[0]?.file).toBe('/opt/claude/bin/claude');
+  });
+
+  it('answers 201 with the short id and name from the backgrounded line', async () => {
+    const started = await start(fakeRunner(backgrounded('b3899da0', 'pitwall-test-spawn')));
+    const res = await spawnAsPage(started, valid());
+    expect(res.status).toBe(201);
+    expect(res.json).toEqual({ ok: true, shortId: 'b3899da0', name: 'pitwall-test-spawn' });
+    expect(res.headers['cache-control']).toBe('no-store');
+  });
+
+  it('scrubs the environment: no PITWALL_* and no npm variables reach claude', async () => {
+    const env = { PATH: '/usr/bin', HOME: '/Users/example', PITWALL_TOKEN: TOKEN, PITWALL_HOME: '/tmp/p', npm_config_save_exact: 'true', INIT_CWD: '/x' };
+    const started = await start(fakeRunner(backgrounded(), exited(0), exited(0)), { env });
+    await spawnAsPage(started, valid());
+    await postAsPage(started, stopPath(BG_ID));
+    await postAsPage(started, removePath(BG_ID));
+    for (const call of started.run.calls) expect(call.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example' });
+  });
+
+  it("answers 422 with Claude Code's message and a hint for an untrusted workspace, and never trusts it", async () => {
+    const message = `Workspace not trusted. Run \`claude\` in ${repo} once and accept the trust prompt, then retry.\n`;
+    const started = await start(fakeRunner(exited(1, '', message)));
+    const res = await spawnAsPage(started, valid());
+    expect(res.status).toBe(422);
+    expect(res.json).toEqual({ ok: false, error: message.trim(), hint: `cd ${repo} && claude` });
+    // One call, and it was the spawn: nothing ran to accept the trust prompt.
+    expect(started.run.calls.map((call) => call.args[0])).toEqual(['--bg']);
+  });
+
+  it('quotes the hint so a shell runs it in exactly that directory', async () => {
+    const dir = join(root, "it's a dir");
+    const started = await start(fakeRunner(exited(1, '', `Workspace not trusted. Run \`claude\` in ${dir} once.`)));
+    const res = await spawnAsPage(started, { ...valid(), cwd: dir });
+    const { hint } = res.json as { hint: string };
+    expect(hint).toBe(`cd '${dir.replace("'", `'\\''`)}' && claude`);
+    // The hint's cd, run by a real shell with pwd in place of claude.
+    const { stdout } = await promisify(execFile)('/bin/sh', ['-c', hint.replace(/ && claude$/, ' && pwd')]);
+    expect(stdout.trim()).toBe(dir);
+  });
+
+  it("answers 502 with Claude Code's first error line for any other failure", async () => {
+    const started = await start(
+      fakeRunner(
+        exited(1, '', '\u001b[31mError: model "nope" not found\u001b[0m\n    at somewhere\n'),
+        exited(2, 'Something went wrong on stdout\n', ''),
+        exited(3),
+      ),
+    );
+    const first = await spawnAsPage(started, valid());
+    expect([first.status, first.json]).toEqual([502, { ok: false, error: 'Error: model "nope" not found' }]);
+    const second = await spawnAsPage(started, valid());
+    expect(second.json).toEqual({ ok: false, error: 'Something went wrong on stdout' });
+    const third = await spawnAsPage(started, valid());
+    expect(third.json).toEqual({ ok: false, error: 'claude --bg exited with code 3.' });
+  });
+
+  it('answers 502 when claude exits 0 without a backgrounded line, or with an id that is not safe', async () => {
+    const started = await start(fakeRunner(exited(0, 'Started something\n'), exited(0, 'backgrounded · -rf · x\n')));
+    const first = await spawnAsPage(started, valid());
+    expect(first.status).toBe(502);
+    expect((first.json as { error: string }).error).toMatch(/didn't report the new session's id: Started something/);
+    expect((await spawnAsPage(started, valid())).status).toBe(502);
+  });
+
+  it("answers 502 when claude can't be run, and 504 when it times out", async () => {
+    const started = await start(
+      fakeRunner(
+        { kind: 'failed', reason: 'not-found', message: 'claude was not found' },
+        { kind: 'failed', reason: 'timeout', message: "didn't finish within 30s" },
+      ),
+    );
+    const missing = await spawnAsPage(started, valid());
+    expect([missing.status, missing.json]).toEqual([502, { ok: false, error: "Couldn't run claude: claude was not found." }]);
+    const slow = await spawnAsPage(started, valid());
+    expect(slow.status).toBe(504);
+    expect((slow.json as { error: string }).error).toMatch(/may still appear/);
+  });
+});
+
+describe('spawn: limits', () => {
+  it('runs one spawn at a time, and answers 429 with Retry-After to another meanwhile', async () => {
+    let release: (result: CommandResult) => void = () => {};
+    const run = fakeRunner(backgrounded());
+    const blocking: RunCommand & { calls: Call[] } = Object.assign(
+      vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+        blocking.calls.push({ file, args, options });
+        if (blocking.calls.length === 1) return new Promise<CommandResult>((resolve) => (release = resolve));
+        return run(file, args, options);
+      }),
+      { calls: [] as Call[] },
+    );
+    const started = await start(blocking);
+
+    const first = spawnAsPage(started, valid());
+    await vi.waitFor(() => expect(blocking.calls).toHaveLength(1));
+    const second = await spawnAsPage(started, valid());
+    expect(second.status).toBe(429);
+    expect(second.headers['retry-after']).toBe('1');
+    expect((second.json as { error: string }).error).toMatch(/still starting/);
+
+    release(backgrounded('aaaa1111'));
+    expect((await first).status).toBe(201);
+    expect((await spawnAsPage(started, valid())).status).toBe(201);
+    expect(blocking.calls).toHaveLength(2);
+  });
+
+  it('frees the slot when the runner fails', async () => {
+    const started = await start(fakeRunner({ kind: 'failed', reason: 'timeout', message: 'x' }, backgrounded()));
+    expect((await spawnAsPage(started, valid())).status).toBe(504);
+    expect((await spawnAsPage(started, valid())).status).toBe(201);
+  });
+
+  it('starts at most 5 a minute by default, and not counting refused requests', async () => {
+    let now = 1_000_000;
+    const started = await start(fakeRunner(backgrounded()), { now: () => now });
+    for (let i = 0; i < 3; i++) expect((await spawnAsPage(started, { ...valid(), name: 'bad;name' })).status).toBe(400);
+    for (let i = 0; i < 5; i++) expect((await spawnAsPage(started, valid())).status, `spawn ${i}`).toBe(201);
+    now += 20_000;
+    const limited = await spawnAsPage(started, valid());
+    expect(limited.status).toBe(429);
+    expect(limited.headers['retry-after']).toBe('40');
+    expect((limited.json as { error: string }).error).toMatch(/at most 5 sessions every 60 seconds/);
+    expect(started.run.calls).toHaveLength(5);
+    now += 40_000;
+    expect((await spawnAsPage(started, valid())).status).toBe(201);
+  });
+});
+
+describe('stop and remove', () => {
+  it("stops a background session with claude stop and the resolved short id, in the temp directory", async () => {
+    const started = await start(fakeRunner(exited(0)));
+    const res = await postAsPage(started, stopPath(BG_ID));
+    expect([res.status, res.json]).toEqual([200, { ok: true }]);
+    expect(started.run.calls).toHaveLength(1);
+    expect(started.run.calls[0]?.file).toBe('claude');
+    expect(started.run.calls[0]?.args).toEqual(['stop', 'b3899da0']);
+    expect(started.run.calls[0]?.options.cwd).toBe(tmpdir());
+  });
+
+  it('removes a background session with claude rm and the short id only, never a discard or force flag', async () => {
+    const started = await start(fakeRunner(exited(0)));
+    const res = await postAsPage(started, removePath(BG_ID), { discardUnpushed: 'abc@wt', force: true });
+    expect([res.status, res.json]).toEqual([200, { ok: true }]);
+    expect(started.run.calls[0]?.args).toEqual(['rm', 'b3899da0']);
+  });
+
+  it("passes Claude Code's refusal through: claude rm keeps a worktree with unpushed commits", async () => {
+    const refusal = [
+      'Kept the worktree pitwall-test-wt: it has 2 unpushed commits.',
+      "To discard them, run 'claude rm b3899da0 --discard-unpushed 1a2b3c@pitwall-test-wt'.",
+    ].join('\n');
+    const started = await start(fakeRunner(exited(1, '', `${refusal}\n`)));
+    const res = await postAsPage(started, removePath(BG_ID));
+    expect([res.status, res.json]).toEqual([409, { ok: false, error: refusal }]);
+    expect(started.run.calls).toHaveLength(1);
+  });
+
+  it("passes claude stop's error through, or says how it exited", async () => {
+    const started = await start(fakeRunner(exited(1, '', "No job matching 'b3899da0'.\n"), exited(1)));
+    expect((await postAsPage(started, stopPath(BG_ID))).json).toEqual({ ok: false, error: "No job matching 'b3899da0'." });
+    expect((await postAsPage(started, stopPath(BG_ID))).json).toEqual({ ok: false, error: 'claude stop exited with code 1.' });
+  });
+
+  it("answers 409 for an interactive session, and for a background one without a safe short id, without running anything", async () => {
+    const started = await start();
+    for (const id of [INTERACTIVE_ID, NO_SHORT_ID, BAD_SHORT_ID]) {
+      for (const path of [stopPath(id), removePath(id)]) {
+        const res = await postAsPage(started, path);
+        expect(res.status, path).toBe(409);
+        expect(res.json).toMatchObject({ ok: false, error: expect.any(String) });
+      }
+    }
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it("answers 404 for a session that isn't listed, 400 for an unsafe id and 503 before the first snapshot, as JSON", async () => {
+    const started = await start();
+    const unknown = await postAsPage(started, stopPath('55555555-5555-4555-8555-555555555555'));
+    expect([unknown.status, (unknown.json as { ok: boolean }).ok]).toEqual([404, false]);
+    const unsafe = await postAsPage(started, removePath('../../etc'));
+    expect(unsafe.status).toBe(400);
+    expect(unsafe.json).toMatchObject({ ok: false });
+    const early = await start(fakeRunner(exited(0)), {}, fakeIndexer(null));
+    expect((await postAsPage(early, stopPath(BG_ID))).status).toBe(503);
+    expect(started.run.calls).toEqual([]);
+    expect(early.run.calls).toEqual([]);
+  });
+
+  it("answers 502 when claude can't be run, and 504 when it times out", async () => {
+    const started = await start(
+      fakeRunner({ kind: 'failed', reason: 'not-found', message: 'claude was not found' }, { kind: 'failed', reason: 'timeout', message: "didn't finish within 30s" }),
+    );
+    expect((await postAsPage(started, stopPath(BG_ID))).status).toBe(502);
+    const slow = await postAsPage(started, removePath(BG_ID));
+    expect([slow.status, slow.json]).toEqual([504, { ok: false, error: "claude rm didn't finish within 30s." }]);
+  });
+
+  it('only answers POST', async () => {
+    const started = await start();
+    const res = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        { host: '127.0.0.1', port: started.server.port, path: stopPath(BG_ID), method: 'GET', headers: { authorization: `Bearer ${started.apiKey}` }, agent: false },
+        (r) => {
+          r.resume();
+          resolve(r.statusCode ?? 0);
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(res).toBe(404);
+    expect(started.run.calls).toEqual([]);
+  });
+});
+
+describe('helpers', () => {
+  it('parseBackgrounded reads the id and name, ignoring other lines and terminal escapes', () => {
+    expect(parseBackgrounded('backgrounded · b3899da0 · pitwall-test-a\n')).toEqual({ shortId: 'b3899da0', name: 'pitwall-test-a' });
+    expect(parseBackgrounded('Starting background service…\r\n\u001b[2mbackgrounded · b3899da0 · Fix the docs 2.0\u001b[0m\n')).toEqual({
+      shortId: 'b3899da0',
+      name: 'Fix the docs 2.0',
+    });
+    expect(parseBackgrounded('backgrounded · b3899da0\n')).toEqual({ shortId: 'b3899da0' });
+    expect(parseBackgrounded('started b3899da0\n')).toBeUndefined();
+    expect(parseBackgrounded('backgrounded · -h · x')).toBeUndefined();
+    expect(parseBackgrounded('')).toBeUndefined();
+  });
+
+  it('shellQuote leaves plain words alone and single-quotes everything else', () => {
+    expect(shellQuote('/Users/example/code/demo-app')).toBe('/Users/example/code/demo-app');
+    expect(shellQuote('/tmp/with space')).toBe("'/tmp/with space'");
+    expect(shellQuote("/tmp/it's")).toBe("'/tmp/it'\\''s'");
+    expect(shellQuote('/tmp/$HOME/`id`;rm')).toBe("'/tmp/$HOME/`id`;rm'");
+    expect(shellQuote('~/code')).toBe("'~/code'");
+    expect(shellQuote('')).toBe("''");
+    expect(trustHint('/tmp/a b')).toBe("cd '/tmp/a b' && claude");
+  });
+
+  it('firstLine skips blank lines and strips escapes', () => {
+    expect(firstLine('\n\n  \u001b[31mError: x\u001b[0m  \nmore')).toBe('Error: x');
+    expect(firstLine('  \n ')).toBeUndefined();
+  });
+
+  it('spawnArgs always ends the options before the prompt', () => {
+    expect(spawnArgs({ cwd: '/x', prompt: '-p' })).toEqual(['--bg', '--', '-p']);
+    expect(spawnArgs({ cwd: '/x', prompt: 'p', name: 'n', model: 'm' })).toEqual(['--bg', '--name', 'n', '--model', 'm', '--', 'p']);
+  });
+
+  it('SpawnLimiter releases a slot once, however often release is called', () => {
+    const limiter = new SpawnLimiter(1, { max: 10, windowMs: 1000 }, () => 0);
+    const first = limiter.acquire();
+    expect(first.ok).toBe(true);
+    expect(limiter.acquire().ok).toBe(false);
+    if (first.ok) {
+      first.release();
+      first.release();
+    }
+    const second = limiter.acquire();
+    expect(second.ok).toBe(true);
+    expect(limiter.acquire().ok).toBe(false);
+  });
+});
