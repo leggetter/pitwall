@@ -10,7 +10,7 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 ## Status
 
-M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read-only index, is in progress. The scaffold (W1) is in place; the index, server and web UI are still stubs.
+M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read-only index, is in integration on `m1/integration`: the index, server, CLI and web UI are built, with W5's fixes in progress. See "M1 work breakdown" in `PLAN.md`.
 
 ## Rules
 
@@ -30,7 +30,8 @@ Use Node 22 (CI runs 22.x) and npm.
 ```
 npm ci                   install exactly what package-lock.json records
 npm run build            server with tsc to dist/, web UI with Vite to dist/web
-npm run dev -- [root...] rebuild the web UI and restart the server on change
+npm run dev -- [root...] rebuild the web UI and restart the server on change. Uses port 4517
+                         and one token per run, and refuses to start if 4517 is busy
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js
