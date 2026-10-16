@@ -10,7 +10,7 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 ## Status
 
-M1, the read-only index, is built and in review on `m1/integration` ([PR #6](https://github.com/leggetter/pitwall/pull/6)), waiting for Phil's approval. M2, interacting with sessions, is next. See "Milestones" in `PLAN.md`.
+M1, the read-only index, is merged into `main` ([PR #6](https://github.com/leggetter/pitwall/pull/6)). M2, interacting with sessions from the web UI, is next. See "M2 work breakdown" in `PLAN.md`.
 
 ## Rules
 
