@@ -7,7 +7,20 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Spawns new sessions** in any directory under the root.
 - **Has a supervisor session** you can talk to instead of visiting each session. It knows what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, is built and in review. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, is done. M2, interacting with sessions from the web UI, is next. See [`PLAN.md`](PLAN.md).
+
+## Use
+
+```
+npm ci && npm run build
+node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
+```
+
+- **Roots:** a directory, or several. The default is the current directory. Sessions whose working directory is under a root are listed.
+- **Opening it:** the CLI opens your browser at `http://127.0.0.1:<port>/#token=...`. The token is per run, and the page moves it out of the address bar.
+- **Port:** the default is 4517, falling back to a free port if it's busy. An explicit `--port` fails instead.
+- **Interval:** `--interval` sets the poll, in seconds (default 5).
+- **Read-only:** M1 never messages, attaches to or stops a session.
 
 ## Decisions
 

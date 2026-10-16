@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 done on 2026-10-16. Spikes [001](docs/spikes/001-session-control.md) and [002](docs/spikes/002-supervisor-to-interactive.md) pass, including a background supervisor messaging an interactive session and getting a reply. M1, a read-only index, is built and in review in [PR #6](https://github.com/leggetter/pitwall/pull/6). |
+| **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is next. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Phil tries M1 and approves the merge (W7)<br>- Then M2, starting with its security gate |
+| **Next steps** | - Phil confirms the M2 breakdown and decisions D7-D9<br>- M2 starts with the security gate (W8) and the session view (W9), in parallel |
 
 ## Who is this for
 
@@ -131,9 +131,9 @@ In the order they'll be built. Each starts when the one before it has merged int
 
 Spikes 001 and 002 confirmed every interface pitwall relies on. See "M0: spike" above.
 
-### M1 - Read-only index (in progress)
+### M1 - Read-only index (done)
 
-`pitwall [root...]` starts the server and opens the UI. Sessions are grouped by repo, with kind, state, waiting reason, last activity and the last assistant message, refreshing on their own. The work items are in "M1 work breakdown" below; only W7a and Phil's merge approval (W7) remain.
+`pitwall [root...]` starts the server and opens the UI. Sessions are grouped by repo, with kind, state, waiting reason, last activity and the last assistant message, refreshing on their own. Merged on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). The work items are in "M1 work breakdown" below.
 
 - **Stale jobs:** flag those blocked with no activity for 7 days, process or not.
 - **`askedYou`:** flag sessions that finished their turn by asking me something, as a heuristic over the transcript.
@@ -229,6 +229,32 @@ Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeepin
 - **Age is a signal.** In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
 - **PRs and sessions together,** for example: "CI is failing on your PR, and the session that opened it is idle."
 
+## M2 work breakdown (proposed)
+
+Same way of working as M1. The coordinator owns the contract and the docs, sub-agents build in their own worktrees, a reviewer checks the integrated change, and Phil approves the merge. The rules for M1 below still apply.
+
+| Item | What | Branch | Owner | Status |
+| --- | --- | --- | --- | --- |
+| W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | Proposed |
+| W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | Proposed; can run alongside W8, because it adds no input path |
+| W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | After W8 |
+| W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | After W8 |
+| W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | After W8 |
+| W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | After W9-W12 |
+| W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | After W13 |
+| W15 | Try it, and approve the merge | - | Phil | After W14 |
+
+### Decisions for M2
+
+Each has a lean, waiting on Phil.
+
+- **D7 - Keep the token out of process arguments.**
+  - (a) The CLI writes a page that sends the browser to the token URL, in a file only my user can read (0600, in a 0700 `~/.pitwall/` directory, removed on exit), and opens that file. This is the approach Jupyter takes.
+  - (b) The CLI opens a URL with a single-use launch code, which the server swaps for the token once. The code is still visible in `ps` for a moment, so another user who wins the race gets the token and the real browser fails.
+  - **Lean: (a).** It changes the "don't write the token outside `~/.claude`" rule to allow `~/.pitwall/` at 0700.
+- **D8 - The relay:** one background session named `pitwall-relay`, on Haiku, allowed only `ListAgents` and `SendMessage`, started on first use. Claude Code stops idle background processes after about an hour, so pitwall restarts it when needed. **Lean: as described.** The M4 supervisor replaces it.
+- **D9 - Attach limits:** one PTY per open session view, at most 4 at once, and closing the view or the tab detaches. Attaching to a background session that isn't running asks first, because `claude attach` restarts it. **Lean: as described.**
+
 ## M1 work breakdown
 
 The coordinator, a Claude Code session working with Phil, owns `src/shared/protocol.ts`, the contract the pieces are built against. Sub-agents build W1-W4 and review in W6. Phil tries the result and approves merges.
@@ -245,7 +271,7 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Done: approve with follow-ups |
 | W6a | Fixes from the W6 review, plus groups collapsed by default with their state saved (W7 feedback) | `m1/review-fixes` | Sub-agent | Merged ([#7](https://github.com/leggetter/pitwall/pull/7)) |
 | W7a | W7 feedback: full replies on expand, change-only pushes with a heartbeat, a 5 s default poll with `--interval`, and Claude Code's session titles | `m1/w7-feedback` | Sub-agent | Merged ([#8](https://github.com/leggetter/pitwall/pull/8)) |
-| W7 | Try it, and approve the merge | - | Phil | Ready |
+| W7 | Try it, and approve the merge | - | Phil | Approved; merged in [#6](https://github.com/leggetter/pitwall/pull/6) |
 
 ### W5 findings (2026-10-16)
 
@@ -338,7 +364,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] Spike 002: a background supervisor messaging an interactive session
 - [x] Settle D1-D4 and D6
 - [x] Confirm D5, the stack (Phil)
-- [ ] Build M1 (W7a, then Phil's approval)
+- [x] Build M1 (merged in #6)
 - [ ] M2: interact with sessions, security gate first
 - [ ] M3: my open pull requests
 - [ ] M4: supervisor
