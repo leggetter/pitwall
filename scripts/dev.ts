@@ -51,10 +51,18 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv): ChildProc
   return child;
 }
 
+// A Ctrl-C in the terminal already reaches the children, which share its process
+// group. Forwarding it as well makes tsx watch see a second signal and SIGKILL
+// the CLI before it closes. So forward only to children still running a moment
+// later, as when the signal was sent to this process alone.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     stopping = true;
-    for (const child of children) child.kill(signal);
+    setTimeout(() => {
+      for (const child of children) {
+        if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      }
+    }, 1000).unref();
   });
 }
 
