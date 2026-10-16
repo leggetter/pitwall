@@ -39,6 +39,9 @@ export interface DashboardProps {
 
 export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   const { state, snapshot, serverError } = view;
+  // A heartbeat brings a newer poll than the snapshot, with nothing else changed.
+  const updatedAt = view.lastPoll?.generatedAt ?? snapshot?.generatedAt;
+  const source = view.lastPoll?.source ?? snapshot?.source;
   const now = useNow();
   const [filters, setFilters] = useState<Filters>({ text: '', attentionOnly: false });
   // Groups start collapsed; the ones opened are remembered across reloads.
@@ -79,9 +82,9 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
           )}
           <div className="masthead-status">
             <ConnectionBadge state={state} />
-            {snapshot && (
-              <time className="updated" dateTime={snapshot.generatedAt}>
-                {updatedAgo(snapshot.generatedAt, now)}
+            {snapshot && updatedAt && (
+              <time className="updated" dateTime={updatedAt}>
+                {updatedAgo(updatedAt, now)}
               </time>
             )}
           </div>
@@ -127,9 +130,9 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
         )}
       </header>
 
-      {snapshot && !snapshot.source.ok && (
+      {snapshot && source && !source.ok && (
         <div className="banner warning" role="alert">
-          <code>claude agents --json</code> failed on the latest poll: {plainText(snapshot.source.error)}
+          <code>claude agents --json</code> failed on the latest poll: {plainText(source.error)}
         </div>
       )}
       {showError && (
