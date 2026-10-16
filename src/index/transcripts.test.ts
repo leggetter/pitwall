@@ -466,6 +466,32 @@ describe('createTranscriptReader', () => {
     });
   });
 
+  describe('transcriptFile', () => {
+    it('is the file the last read found, without reading anything', async () => {
+      await writeFile(file, jsonl(user('go')));
+      const r = reader();
+      expect(r.transcriptFile(SID)).toBeUndefined();
+      await r.read(SID, [CWD]);
+      expect(r.transcriptFile(SID)).toBe(file);
+      await rm(file);
+      // Still the remembered path; reading it is the caller's business, and fails soft.
+      expect(r.transcriptFile(SID)).toBe(file);
+    });
+
+    it('is undefined for a session with no transcript, an unsafe id, or one no longer retained', async () => {
+      const r = reader();
+      await r.read(SID, [CWD]);
+      expect(r.transcriptFile(SID)).toBeUndefined();
+      expect(r.transcriptFile('../escape')).toBeUndefined();
+      await writeFile(file, jsonl(user('go')));
+      now += 60_000;
+      await r.read(SID, [CWD]);
+      expect(r.transcriptFile(SID)).toBe(file);
+      r.retain(new Set());
+      expect(r.transcriptFile(SID)).toBeUndefined();
+    });
+  });
+
   describe('lastMessage', () => {
     const stripped = vi.mocked(stripMarkdownBounded);
 

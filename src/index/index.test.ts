@@ -34,6 +34,8 @@ function harness() {
     retained: [] as string[][],
     transcripts: new Map<string, TranscriptInfo>(),
     messages: new Map<string, LastMessage>(),
+    /** What transcriptFile() answers, by session id. */
+    files: new Map<string, string>(),
     /** When set, list() waits for this before answering. */
     gate: undefined as Promise<void> | undefined,
   };
@@ -58,6 +60,9 @@ function harness() {
       },
       lastMessage(sessionId) {
         return state.messages.get(sessionId);
+      },
+      transcriptFile(sessionId) {
+        return state.files.get(sessionId);
       },
       retain(ids) {
         state.retained.push([...ids].sort());
@@ -154,6 +159,37 @@ describe('createIndexer', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(indexer.lastMessage('in')).toEqual(message('in'));
     indexer.stop();
+  });
+
+  it('answers conversation only for sessions in the latest snapshot that have a transcript', async () => {
+    vi.useRealTimers();
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-conversation-'));
+    try {
+      const { state, deps } = harness();
+      const file = path.join(dir, 'in.jsonl');
+      await writeFile(file, `${JSON.stringify({ type: 'user', timestamp: new Date(NOW).toISOString(), message: { content: 'a prompt' } })}\n`);
+      for (const id of ['in', 'out']) state.files.set(id, file);
+      state.result = { ok: true, rows: [row('in', '/work/repo/a'), row('out', '/elsewhere/b'), row('no-file', '/work/repo/c')] };
+      const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+      expect(await indexer.conversation('in')).toBeUndefined();
+      await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+
+      expect(await indexer.conversation('in')).toEqual({
+        sessionId: 'in',
+        entries: [{ kind: 'user', at: new Date(NOW).toISOString(), text: 'a prompt' }],
+      });
+      // Outside the roots: the reader knows its file, but the index never serves it.
+      expect(await indexer.conversation('out')).toBeUndefined();
+      expect(await indexer.conversation('no-file')).toBeUndefined();
+      expect(await indexer.conversation('never-listed')).toBeUndefined();
+      await expect(indexer.conversation('in', 'not a cursor')).rejects.toMatchObject({ reason: 'invalid' });
+      // A file that has gone is no transcript.
+      await rm(file);
+      expect(await indexer.conversation('in')).toBeUndefined();
+      indexer.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('notifies after every completed poll, changed or not, with a fresh generatedAt', async () => {

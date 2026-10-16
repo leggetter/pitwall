@@ -1,6 +1,13 @@
 import os from 'node:os';
-import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage, type SourceHealth } from '../shared/protocol.js';
+import {
+  DEFAULT_POLL_INTERVAL_MS,
+  type ConversationPage,
+  type IndexSnapshot,
+  type LastMessage,
+  type SourceHealth,
+} from '../shared/protocol.js';
 import { createAgentsSource, type AgentsSource } from './agents.js';
+import { ConversationCursorError, readConversationPage } from './conversation.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, type GroupResolver } from './grouping.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
@@ -8,6 +15,7 @@ import { buildGroups, toSessionSummary, type PlacedSession } from './summaries.j
 import { createTranscriptReader, type TranscriptReader } from './transcripts.js';
 
 export { isSafeSessionId } from './transcripts.js';
+export { ConversationCursorError, isWellFormedCursor } from './conversation.js';
 
 export interface IndexerOptions {
   /** Absolute paths. The indexer resolves them with realpath. */
@@ -30,6 +38,15 @@ export interface Indexer {
    * change of message, in time bounded however hostile the text is.
    */
   lastMessage(sessionId: string): LastMessage | undefined;
+  /**
+   * One page of a session's conversation, read from its transcript backwards:
+   * the newest page, or the one before the `before` cursor. Undefined for a
+   * session not in the latest snapshot, and for one with no transcript. Reads
+   * at most about 2 MiB per page. Rejects with ConversationCursorError for a
+   * cursor that's malformed ('invalid') or made for another version of the
+   * file ('stale'), and never for anything else.
+   */
+  conversation(sessionId: string, before?: string): Promise<ConversationPage | undefined>;
   stop(): void;
 }
 
@@ -124,6 +141,21 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
     lastMessage(sessionId) {
       if (!current.has(sessionId)) return undefined;
       return deps.transcripts.lastMessage(sessionId);
+    },
+    async conversation(sessionId, before) {
+      if (!current.has(sessionId)) return undefined;
+      const file = deps.transcripts.transcriptFile(sessionId);
+      if (file === undefined) return undefined;
+      // The newest page is tried twice, in case the file shrank while it was read.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return (await readConversationPage(file, sessionId, before))?.page;
+        } catch (err) {
+          if (err instanceof ConversationCursorError) throw err;
+          if (before !== undefined) return undefined;
+        }
+      }
+      return undefined;
     },
     stop() {
       stopped = true;
