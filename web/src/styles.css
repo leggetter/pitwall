@@ -592,9 +592,19 @@ input {
 
 .clamp-text.expanded {
   display: block;
+  /* A full reply can be 64 KiB: it scrolls inside the row rather than pushing the list away. */
+  max-height: 70vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   white-space: pre-wrap;
   -webkit-line-clamp: unset;
   line-clamp: none;
+}
+
+.reply-note {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
 }
 
 .transcript-note {

@@ -1,8 +1,8 @@
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, cwdWithinGroup, plainText, relativeTime } from '../format.js';
 import { attachCommand, needsAttention, statusPill } from '../sessions.js';
-import { ClampedText } from './ClampedText.js';
 import { CopyCommand } from './CopyCommand.js';
+import { Reply } from './Reply.js';
 
 const STALE_HINT =
   'Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters.';
@@ -47,7 +47,7 @@ export function SessionRow({ session, groupKey, now }: { session: SessionSummary
               <span className="asked-label">Asked:</span> {plainText(session.askedYou.excerpt)}
             </p>
           )}
-          {session.lastAssistantText && <ClampedText className="reply" text={plainText(session.lastAssistantText)} />}
+          {session.lastAssistantText && <Reply session={session} />}
         </>
       ) : (
         <p className="transcript-note">Transcript {session.transcript === 'missing' ? 'not found' : 'unreadable'}</p>
