@@ -60,6 +60,11 @@ export interface TranscriptReader {
    * last `read` kept, and strips it once per change of message. Never throws.
    */
   lastMessage(sessionId: string): LastMessage | undefined;
+  /**
+   * The transcript file `read` last found for a session, for the session
+   * view to page through. Undefined when there's none. Reads no files.
+   */
+  transcriptFile(sessionId: string): string | undefined;
   /** Forgets every session not in `sessionIds`. */
   retain(sessionIds: ReadonlySet<string>): void;
 }
@@ -235,6 +240,9 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
       } catch {
         return undefined;
       }
+    },
+    transcriptFile(sessionId) {
+      return isSafeSessionId(sessionId) ? located.get(sessionId) : undefined;
     },
     retain(sessionIds) {
       for (const map of [files, located, missingUntil]) {
