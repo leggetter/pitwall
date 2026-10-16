@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { ApiContext, createApiClient, defaultFetch, type FetchLike } from './api.js';
+import { AttachContext, type AttachEnv } from './attach.js';
 import { Dashboard } from './components/Dashboard.js';
 import { defaultSocketFactory, useConnection, type SocketFactory } from './connection.js';
 import { createReplyLoader, ReplyLoaderContext } from './lastMessage.js';
@@ -27,6 +28,8 @@ function Connected({ token, createSocket, fetch }: { token: string; createSocket
   const api = useMemo(() => createApiClient({ fetch }), [fetch]);
   const view = useConnection(token, { createSocket, keys: api.keys });
   const loader = useMemo(() => createReplyLoader({ api }), [api]);
+  // Attach sockets answer their own challenge with the same token (W10).
+  const attach = useMemo<AttachEnv>(() => ({ token, createSocket, host: window.location.host }), [token, createSocket]);
   // Only a 4401 on the WebSocket means the token is no good. An HTTP 401 means
   // the apiKey is stale, after a server restart: the client reconnects for a
   // new one and retries, so it never shows this.
@@ -36,7 +39,9 @@ function Connected({ token, createSocket, fetch }: { token: string; createSocket
   return (
     <ApiContext.Provider value={api}>
       <ReplyLoaderContext.Provider value={loader}>
-        <Dashboard view={view} />
+        <AttachContext.Provider value={attach}>
+          <Dashboard view={view} />
+        </AttachContext.Provider>
       </ReplyLoaderContext.Provider>
     </ApiContext.Provider>
   );
