@@ -1,5 +1,7 @@
-// One WebSocket client: authenticate with the first message, then stream
-// snapshots. `Host` and `Origin` are checked before the upgrade, in server.ts.
+// One WebSocket client: authenticate with the first message, then get the
+// latest snapshot, and after every poll either the new snapshot, when it
+// changed, or a heartbeat. `Host` and `Origin` are checked before the upgrade,
+// in server.ts.
 import type { RawData, WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
 import { WS_CLOSE_UNAUTHORIZED, type IndexSnapshot, type ServerMessage } from '../shared/protocol.js';
@@ -28,8 +30,19 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
   };
   const timer = setTimeout(reject, context.authTimeoutMs);
 
+  // What the last snapshot sent to this client held, without generatedAt.
+  // Kept per client, so one that joined late is compared with what it got.
+  let lastSent: string | undefined;
+
   const send = (snapshot: IndexSnapshot) => {
-    if (ws.readyState === ws.OPEN) ws.send(serialiseSnapshot(snapshot));
+    if (ws.readyState !== ws.OPEN) return;
+    const content = snapshotContent(snapshot);
+    if (content === lastSent) {
+      ws.send(serialiseHeartbeat(snapshot));
+      return;
+    }
+    ws.send(serialiseSnapshot(snapshot));
+    lastSent = content;
   };
 
   ws.on('message', (data, isBinary) => {
@@ -60,8 +73,34 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
   ws.on('error', () => {});
 }
 
+// Every client is sent the same snapshot objects, so each is serialised once.
+const contents = new WeakMap<IndexSnapshot, string>();
+const snapshotMessages = new WeakMap<IndexSnapshot, string>();
+
+/** Everything in the snapshot but generatedAt, as JSON, to tell whether anything changed. */
+export function snapshotContent(snapshot: IndexSnapshot): string {
+  let content = contents.get(snapshot);
+  if (content === undefined) {
+    const { generatedAt: _generatedAt, ...rest } = snapshot;
+    content = JSON.stringify(rest);
+    contents.set(snapshot, content);
+  }
+  return content;
+}
+
 export function serialiseSnapshot(snapshot: IndexSnapshot): string {
-  const message: ServerMessage = { type: 'snapshot', snapshot };
+  let serialised = snapshotMessages.get(snapshot);
+  if (serialised === undefined) {
+    const message: ServerMessage = { type: 'snapshot', snapshot };
+    serialised = JSON.stringify(message);
+    snapshotMessages.set(snapshot, serialised);
+  }
+  return serialised;
+}
+
+/** The poll happened and found nothing new: when, and whether the session source worked. */
+export function serialiseHeartbeat(snapshot: IndexSnapshot): string {
+  const message: ServerMessage = { type: 'heartbeat', generatedAt: snapshot.generatedAt, source: snapshot.source };
   return JSON.stringify(message);
 }
 
