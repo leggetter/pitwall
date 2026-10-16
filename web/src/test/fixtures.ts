@@ -1,0 +1,167 @@
+// Made-up fixtures for the web UI tests. Nothing here comes from a real session.
+
+import type { IndexSnapshot, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
+import type { SocketFactory, SocketLike } from '../connection.js';
+
+export const NOW = Date.parse('2026-03-02T12:00:00.000Z');
+
+export function minutesAgo(minutes: number): string {
+  return new Date(NOW - minutes * 60_000).toISOString();
+}
+
+let counter = 0;
+
+/** A session. Overrides set to `undefined` remove the field, as JSON would. */
+export function session(overrides: Partial<SessionSummary> = {}): SessionSummary {
+  counter += 1;
+  const merged: SessionSummary = {
+    sessionId: `00000000-0000-4000-8000-${String(counter).padStart(12, '0')}`,
+    name: `pitwall-test-${counter}`,
+    kind: 'interactive',
+    cwd: '/Users/example/code/demo-app',
+    pid: 40_000 + counter,
+    alive: true,
+    status: 'idle',
+    startedAt: minutesAgo(120),
+    stale: false,
+    lastActivityAt: minutesAgo(5),
+    lastAssistantText: 'Done. The tests pass.',
+    lastUserPrompt: 'run the tests',
+    transcript: 'ok',
+    ...overrides,
+  };
+  for (const key of Object.keys(merged) as (keyof SessionSummary)[]) {
+    if (merged[key] === undefined) delete merged[key];
+  }
+  return merged;
+}
+
+export function group(overrides: Partial<SessionGroup> & Pick<SessionGroup, 'sessions'>): SessionGroup {
+  return {
+    key: '/Users/example/code/demo-app',
+    label: 'demo-app',
+    kind: 'git',
+    root: '/Users/example/code',
+    ...overrides,
+  };
+}
+
+export function snapshot(groups: SessionGroup[], overrides: Partial<IndexSnapshot> = {}): IndexSnapshot {
+  return {
+    generatedAt: new Date(NOW - 3_000).toISOString(),
+    roots: ['/Users/example/code'],
+    groups,
+    source: { ok: true },
+    ...overrides,
+  };
+}
+
+/** Three groups covering the states the screen distinguishes. */
+export function mixedSnapshot(): IndexSnapshot {
+  return snapshot([
+    group({
+      key: '/Users/example/code/demo-app',
+      label: 'demo-app',
+      kind: 'git',
+      sessions: [
+        session({
+          name: 'demo-docs',
+          status: 'waiting',
+          waitingFor: 'permission prompt',
+          lastUserPrompt: 'update the getting started guide',
+          lastAssistantText: 'I need permission to edit docs/quickstart.md.',
+        }),
+        session({
+          name: 'demo-worker',
+          kind: 'background',
+          shortId: 'bg7f3a',
+          state: 'blocked',
+          status: 'idle',
+          cwd: '/Users/example/code/demo-app/packages/worker',
+          lastAssistantText: 'Which queue should the retry go to?',
+        }),
+        session({ name: 'demo-api', status: 'busy', lastActivityAt: minutesAgo(0.5) }),
+      ],
+    }),
+    group({
+      key: '/Users/example/code/notes',
+      label: 'notes',
+      kind: 'directory',
+      sessions: [session({ name: 'notes-tidy', cwd: '/Users/example/code/notes', status: 'idle' })],
+    }),
+    group({
+      key: '/Users/example/code/legacy',
+      label: 'legacy',
+      kind: 'git',
+      sessions: [
+        session({
+          name: 'legacy-migration',
+          kind: 'background',
+          shortId: 'bg0001',
+          cwd: '/Users/example/code/legacy',
+          alive: false,
+          pid: undefined,
+          status: undefined,
+          state: 'blocked',
+          stale: true,
+          startedAt: minutesAgo(60 * 24 * 30),
+          lastActivityAt: minutesAgo(60 * 24 * 29),
+        }),
+      ],
+    }),
+  ]);
+}
+
+/** A WebSocket stand-in the tests drive by hand. */
+export class FakeSocket implements SocketLike {
+  sent: string[] = [];
+  closedByClient = false;
+  onopen: SocketLike['onopen'] = null;
+  onmessage: SocketLike['onmessage'] = null;
+  onclose: SocketLike['onclose'] = null;
+  onerror: SocketLike['onerror'] = null;
+
+  constructor(readonly url: string) {}
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {
+    this.closedByClient = true;
+  }
+
+  /** The server accepted the connection. */
+  open(): void {
+    this.onopen?.(new Event('open'));
+  }
+
+  /** The server sent a message. Objects are JSON-encoded; strings are sent as they are. */
+  receive(message: unknown): void {
+    this.onmessage?.(new MessageEvent('message', { data: typeof message === 'string' ? message : JSON.stringify(message) }));
+  }
+
+  /** The server or the network closed the connection. */
+  serverClose(code = 1006): void {
+    this.onerror?.(new Event('error'));
+    this.onclose?.(new CloseEvent('close', { code }));
+  }
+}
+
+export function fakeSockets() {
+  const sockets: FakeSocket[] = [];
+  const factory: SocketFactory = (url) => {
+    const socket = new FakeSocket(url);
+    sockets.push(socket);
+    return socket;
+  };
+  return {
+    sockets,
+    factory,
+    get last(): FakeSocket {
+      const socket = sockets.at(-1);
+      if (!socket) throw new Error('no socket opened yet');
+      return socket;
+    },
+  };
+}

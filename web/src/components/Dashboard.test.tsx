@@ -1,0 +1,399 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { IndexSnapshot } from '../../../src/shared/protocol.js';
+import type { ConnectionView } from '../connection.js';
+import { group, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
+import { Dashboard } from './Dashboard.js';
+
+function renderDashboard(snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}) {
+  const view: ConnectionView = { state: 'live', snapshot: snap, ...overrides };
+  return render(<Dashboard view={view} />);
+}
+
+function row(name: string): HTMLElement {
+  const item = screen.getByRole('heading', { level: 3, name }).closest('li');
+  if (!item) throw new Error(`no row for ${name}`);
+  return item;
+}
+
+function groupSection(label: string): HTMLElement {
+  const toggle = screen.getAllByRole('button', { expanded: true }).concat(screen.queryAllByRole('button', { expanded: false }))
+    .find((button) => within(button).queryByText(label, { selector: '.group-label' }));
+  const section = toggle?.closest('section');
+  if (!section) throw new Error(`no group ${label}`);
+  return section;
+}
+
+function visibleRowNames(): string[] {
+  return screen.queryAllByRole('heading', { level: 3 }).map((heading) => heading.textContent ?? '');
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+  vi.setSystemTime(NOW);
+});
+
+describe('Dashboard header', () => {
+  it('shows the roots with the home directory shortened, the connection state and the update age', () => {
+    renderDashboard(snapshot([], { roots: ['/Users/example/code', '/srv/projects'] }));
+
+    expect(screen.getByText('~/code, /srv/projects')).toBeTruthy();
+    expect(screen.getByText('Live')).toBeTruthy();
+    expect(screen.getByText('updated 3s ago')).toBeTruthy();
+
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(screen.getByText('updated 5s ago')).toBeTruthy();
+  });
+
+  it('shows the reconnecting state and a note that the list may be out of date', () => {
+    renderDashboard(mixedSnapshot(), { state: 'reconnecting' });
+
+    expect(screen.getByText('Reconnecting')).toBeTruthy();
+    expect(screen.getByText(/Reconnecting; this list may be out of date/)).toBeTruthy();
+  });
+
+  it('warns when the session source failed', () => {
+    renderDashboard(snapshot([], { source: { ok: false, error: 'claude: command not found' } }));
+
+    expect(screen.getByRole('alert').textContent).toBe('claude agents --json failed on the latest poll: claude: command not found');
+  });
+
+  it('shows server error messages until dismissed', () => {
+    renderDashboard(mixedSnapshot(), { serverError: 'index crashed' });
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('index crashed');
+    fireEvent.click(within(alert).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('counts sessions that need attention, in the page and the tab title', () => {
+    renderDashboard(mixedSnapshot());
+
+    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
+    expect(document.title).toBe('(2) pitwall');
+  });
+});
+
+describe('Dashboard states', () => {
+  it('says it is connecting before the first snapshot', () => {
+    renderDashboard(undefined, { state: 'connecting' });
+
+    expect(screen.getByText('Connecting to pitwall…')).toBeTruthy();
+  });
+
+  it('shows the empty state with the roots', () => {
+    renderDashboard(snapshot([], { roots: ['/Users/example/code'] }));
+
+    expect(screen.getByText('No Claude Code sessions under ~/code')).toBeTruthy();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+  });
+});
+
+describe('groups', () => {
+  it('renders one section per group in the order given, with marker, count and attention count', () => {
+    renderDashboard(mixedSnapshot());
+
+    const toggles = screen.getAllByRole('button', { expanded: true });
+    expect(toggles.map((button) => button.textContent)).toEqual([
+      'git repodemo-app3 sessions2 need you',
+      'directorynotes1 session',
+      'git repolegacy1 session',
+    ]);
+  });
+
+  it('collapses and expands a group', () => {
+    renderDashboard(mixedSnapshot());
+    const section = groupSection('demo-app');
+    const toggle = within(section).getByRole('button', { expanded: true });
+    const list = section.querySelector('ul')!;
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(list.hidden).toBe(true);
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(list.hidden).toBe(false);
+  });
+
+  it('shows which root a group is under when there are several roots', () => {
+    const snap = mixedSnapshot();
+    snap.roots = ['/Users/example/code', '/Users/example/other'];
+    renderDashboard(snap);
+
+    expect(within(groupSection('notes')).getByText('in ~/code')).toBeTruthy();
+  });
+});
+
+describe('session rows', () => {
+  it('renders sessions in the order given', () => {
+    renderDashboard(mixedSnapshot());
+
+    expect(visibleRowNames()).toEqual(['demo-docs', 'demo-worker', 'demo-api', 'notes-tidy', 'legacy-migration']);
+  });
+
+  it('marks waiting and blocked sessions as needing attention, but not stale ones', () => {
+    renderDashboard(mixedSnapshot());
+
+    expect(row('demo-docs').dataset.attention).toBe('true');
+    expect(within(row('demo-docs')).getByText('waiting: permission prompt').className).toContain('tone-attention');
+    expect(row('demo-worker').dataset.attention).toBe('true');
+    expect(within(row('demo-worker')).getByText('blocked').className).toContain('tone-attention');
+
+    expect(row('demo-api').dataset.attention).toBeUndefined();
+    expect(row('legacy-migration').dataset.attention).toBeUndefined();
+    expect(within(row('legacy-migration')).getByText('blocked').className).not.toContain('tone-attention');
+  });
+
+  it('shows the stale marker only on stale sessions', () => {
+    renderDashboard(mixedSnapshot());
+
+    expect(within(row('legacy-migration')).getByText('stale').getAttribute('title')).toMatch(/more than 7 days ago/);
+    expect(within(row('demo-worker')).queryByText('stale')).toBeNull();
+  });
+
+  it('shows kind, status pill text for each state, and not running', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          sessions: [
+            session({ name: 'a', status: 'busy' }),
+            session({ name: 'b', status: 'idle' }),
+            session({ name: 'c', kind: 'background', shortId: 'c1', state: 'done', alive: false, status: undefined }),
+            session({ name: 'd', kind: 'background', shortId: 'd1', state: 'failed', alive: false, status: undefined }),
+            session({ name: 'e', kind: 'background', shortId: 'e1', state: 'stopped', alive: false, status: undefined }),
+            session({ name: 'f', alive: false, status: undefined }),
+            session({ name: 'g', status: 'waiting', waitingFor: 'a brand new reason' }),
+          ],
+        }),
+      ]),
+    );
+
+    const pill = (name: string) => row(name).querySelector('.pill')?.textContent;
+    expect(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(pill)).toEqual([
+      'busy',
+      'idle',
+      'done',
+      'failed',
+      'stopped',
+      'not running',
+      'waiting: a brand new reason',
+    ]);
+    expect(within(row('a')).getByText('interactive')).toBeTruthy();
+    expect(within(row('c')).getByText('background')).toBeTruthy();
+  });
+
+  it('shows last activity as relative time with the absolute time on hover', () => {
+    renderDashboard(mixedSnapshot());
+
+    const time = within(row('demo-docs')).getByText('5m ago');
+    expect(time.tagName).toBe('TIME');
+    expect(time.getAttribute('dateTime')).toBe('2026-03-02T11:55:00.000Z');
+    expect(time.getAttribute('title')).toMatch(/2026/);
+  });
+
+  it('shows the last prompt and the last assistant text', () => {
+    renderDashboard(mixedSnapshot());
+
+    const docs = row('demo-docs');
+    expect(within(docs).getByText('update the getting started guide')).toBeTruthy();
+    expect(within(docs).getByText('I need permission to edit docs/quickstart.md.')).toBeTruthy();
+  });
+
+  it('expands long assistant text', () => {
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120);
+    const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(40);
+    renderDashboard(mixedSnapshot());
+
+    const docs = row('demo-docs');
+    const more = within(docs).getByRole('button', { name: 'Show more' });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    expect(within(docs).getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
+    expect(within(docs).getByText(/I need permission/).className).toContain('expanded');
+
+    scrollHeight.mockRestore();
+    clientHeight.mockRestore();
+  });
+
+  it('offers no expand toggle when the text fits', () => {
+    renderDashboard(mixedSnapshot());
+
+    expect(within(row('demo-docs')).queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('shows the cwd relative to the group when it is a subdirectory, and the full path when outside it', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          key: '/Users/example/code/demo-app',
+          sessions: [
+            session({ name: 'at-root', cwd: '/Users/example/code/demo-app' }),
+            session({ name: 'nested', cwd: '/Users/example/code/demo-app/packages/worker' }),
+            session({ name: 'worktree', cwd: '/Users/example/code/demo-app-worktrees/feature' }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(row('at-root').querySelector('.cwd')).toBeNull();
+    expect(row('nested').querySelector('.cwd')?.textContent).toBe('packages/worker');
+    expect(row('worktree').querySelector('.cwd')?.textContent).toBe('~/code/demo-app-worktrees/feature');
+  });
+
+  it('shows a missing or unreadable transcript quietly instead of the text fields', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          sessions: [
+            session({ name: 'gone', transcript: 'missing', lastUserPrompt: 'old prompt', lastAssistantText: 'old reply' }),
+            session({ name: 'garbled', transcript: 'unreadable', lastActivityAt: undefined }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(within(row('gone')).getByText('Transcript not found')).toBeTruthy();
+    expect(within(row('gone')).queryByText('old prompt')).toBeNull();
+    expect(within(row('gone')).queryByText('old reply')).toBeNull();
+    expect(within(row('garbled')).getByText('Transcript unreadable')).toBeTruthy();
+  });
+});
+
+describe('copy command', () => {
+  it('is offered for background sessions only', () => {
+    renderDashboard(mixedSnapshot());
+
+    expect(within(row('demo-worker')).getByText('claude attach bg7f3a').tagName).toBe('CODE');
+    expect(within(row('demo-worker')).getByRole('button', { name: 'Copy' })).toBeTruthy();
+    for (const name of ['demo-docs', 'demo-api', 'notes-tidy']) {
+      expect(within(row(name)).queryByRole('button', { name: 'Copy' })).toBeNull();
+      expect(row(name).textContent).not.toMatch(/claude (attach|--resume)/);
+    }
+  });
+
+  it('copies the attach command to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    renderDashboard(mixedSnapshot());
+
+    await act(async () => {
+      fireEvent.click(within(row('demo-worker')).getByRole('button', { name: 'Copy' }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith('claude attach bg7f3a');
+    expect(within(row('demo-worker')).getByText('Copied')).toBeTruthy();
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(within(row('demo-worker')).queryByText('Copied')).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('is not offered when the short id looks unsafe to paste into a shell', () => {
+    renderDashboard(
+      snapshot([group({ sessions: [session({ name: 'odd', kind: 'background', shortId: 'x; rm -rf ~', state: 'working' })] })]),
+    );
+
+    expect(within(row('odd')).queryByRole('button', { name: 'Copy' })).toBeNull();
+  });
+});
+
+describe('filters', () => {
+  it('matches session names, group labels and cwds, case-insensitively', () => {
+    renderDashboard(mixedSnapshot());
+    const filter = screen.getByRole('searchbox', { name: 'Filter sessions' });
+
+    fireEvent.change(filter, { target: { value: 'API' } });
+    expect(visibleRowNames()).toEqual(['demo-api']);
+
+    fireEvent.change(filter, { target: { value: 'legacy' } });
+    expect(visibleRowNames()).toEqual(['legacy-migration']);
+
+    fireEvent.change(filter, { target: { value: 'packages/worker' } });
+    expect(visibleRowNames()).toEqual(['demo-worker']);
+
+    fireEvent.change(filter, { target: { value: 'notes' } });
+    expect(visibleRowNames()).toEqual(['notes-tidy']);
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1);
+  });
+
+  it('shows "x of y" when the filter hides some of a group', () => {
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'demo-api' } });
+
+    expect(within(groupSection('demo-app')).getByText('1 of 3 sessions')).toBeTruthy();
+  });
+
+  it('says so when nothing matches', () => {
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'zzz' } });
+
+    expect(visibleRowNames()).toEqual([]);
+    expect(screen.getByText('No sessions match the filter.')).toBeTruthy();
+  });
+
+  it('"needs attention only" keeps waiting and blocked sessions and drops stale ones', () => {
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    expect(visibleRowNames()).toEqual(['demo-docs', 'demo-worker']);
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'worker' } });
+    expect(visibleRowNames()).toEqual(['demo-worker']);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(visibleRowNames()).toHaveLength(5);
+  });
+
+  it('says nothing needs you when the toggle is on and nothing does', () => {
+    renderDashboard(snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+
+    expect(screen.getByText('Nothing needs you right now.')).toBeTruthy();
+  });
+});
+
+describe('untrusted session text', () => {
+  it('renders HTML in session text as text, not markup', () => {
+    const hostile = '<img src=x onerror="alert(1)"><script>alert(2)</script><b>bold</b>';
+    const { container } = renderDashboard(
+      snapshot([
+        group({
+          label: '<i>label</i>',
+          sessions: [
+            session({
+              name: '<a href="javascript:alert(3)">name</a>',
+              status: 'waiting',
+              waitingFor: '<u>reason</u>',
+              lastUserPrompt: hostile,
+              lastAssistantText: `${hostile}\n\n# heading\n**markdown**`,
+            }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(container.querySelector('img, script, b, a, i, u')).toBeNull();
+    expect(container.textContent).toContain('<a href="javascript:alert(3)">name</a>');
+    expect(container.textContent).toContain('<i>label</i>');
+    expect(container.textContent).toContain('waiting: <u>reason</u>');
+    expect(container.textContent).toContain('<script>alert(2)</script><b>bold</b>');
+    expect(container.textContent).toContain('**markdown**');
+  });
+
+  it('drops terminal escapes and control characters', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          sessions: [session({ name: 'esc', lastAssistantText: '\u001b[31mred\u001b[0m and \u001b]0;title\u0007plain‮' })],
+        }),
+      ]),
+    );
+
+    expect(within(row('esc')).getByText('red and plain')).toBeTruthy();
+  });
+});
