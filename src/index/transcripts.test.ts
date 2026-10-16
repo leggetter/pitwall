@@ -555,13 +555,16 @@ describe('createTranscriptReader', () => {
       for (const hostile of ['['.repeat(N), `[a](${'x '.repeat(N / 2 - 4)}`, '*a\\* '.repeat(N / 5), '\\*\n'.repeat(N / 3)]) {
         await writeFile(file, jsonl(assistant([text(hostile)])));
         let best = Number.POSITIVE_INFINITY;
-        // Best of three readers, each stripping afresh, so a busy machine doesn't fail it.
+        // CPU time, the best of three readers each stripping afresh, so other
+        // processes and a garbage collection on a busy machine don't fail it.
         for (let attempt = 0; attempt < 3; attempt++) {
           const r = reader();
           await r.read(SID, [CWD]);
-          const started = performance.now();
-          expect(r.lastMessage(SID)?.text.length).toBeGreaterThan(0);
-          best = Math.min(best, performance.now() - started);
+          const start = process.cpuUsage();
+          const length = r.lastMessage(SID)?.text.length;
+          const used = process.cpuUsage(start);
+          expect(length).toBeGreaterThan(0);
+          best = Math.min(best, (used.user + used.system) / 1000);
         }
         expect(best, hostile.slice(0, 10)).toBeLessThan(50);
       }
