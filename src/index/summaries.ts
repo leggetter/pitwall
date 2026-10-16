@@ -3,7 +3,7 @@
 import type { SessionGroup, SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
 import { groupLabel, type GroupKey } from './grouping.js';
-import type { TranscriptInfo } from './transcripts.js';
+import { titleText, type TranscriptInfo } from './transcripts.js';
 
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -61,7 +61,21 @@ export function toSessionSummary(
   if (transcript.lastAssistantText !== undefined) summary.lastAssistantText = transcript.lastAssistantText;
   if (transcript.lastUserPrompt !== undefined) summary.lastUserPrompt = transcript.lastUserPrompt;
   if (transcript.askedYou !== undefined && turnIsOver(row, stale)) summary.askedYou = transcript.askedYou;
+  if (transcript.aiTitle !== undefined && !sameTitle(transcript.aiTitle, row.name)) {
+    summary.title = transcript.aiTitle;
+    summary.titleSource = 'claude-code';
+  }
   return summary;
+}
+
+/**
+ * Whether Claude Code's title says nothing the name doesn't: empty, or the
+ * same text ignoring case and spacing. A background session's name is usually
+ * its generated title already, so showing both would repeat it.
+ */
+function sameTitle(title: string, name: string): boolean {
+  const shown = titleText(title).toLowerCase();
+  return shown === '' || shown === titleText(name).toLowerCase();
 }
 
 /**

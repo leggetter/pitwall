@@ -432,7 +432,9 @@ describe('the indexer against temporary directories', () => {
       { type: 'user', timestamp: '2026-10-16T11:00:00.000Z', message: { content: 'build the feature' } },
     ]);
     await transcript(repo, ids.asked, [
+      { type: 'ai-title', aiTitle: 'Tidy the docs', sessionId: ids.asked },
       { type: 'user', timestamp: '2026-10-16T11:50:00.000Z', message: { content: 'tidy the docs' } },
+      { type: 'ai-title', aiTitle: 'Tidy the docs folder', sessionId: ids.asked },
       {
         type: 'assistant',
         timestamp: '2026-10-16T11:51:00.000Z',
@@ -528,7 +530,10 @@ describe('the indexer against temporary directories', () => {
     expect(byId(ids.asked)).toMatchObject({
       askedYou: { reason: 'open-questions', excerpt: 'Should I push it?' },
       lastAssistantText: 'Done\n\nOpen questions:\n- Should I push it?\n\nNext steps:\n1. You review.',
+      title: 'Tidy the docs folder',
+      titleSource: 'claude-code',
     });
+    expect(sessions.filter((s) => s.title !== undefined).map((s) => s.sessionId)).toEqual([ids.asked]);
     // Blocked, so not "asked you" even though its last message is a question.
     expect(byId(ids.staleAlive)).not.toHaveProperty('askedYou');
     expect(byId(ids.gone)?.cwdMissing).toBe(true);
