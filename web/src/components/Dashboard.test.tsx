@@ -2,12 +2,25 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IndexSnapshot } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
+import { GROUP_STATE_KEY, type StorageSource } from '../groupState.js';
 import { group, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
 import { Dashboard } from './Dashboard.js';
 
-function renderDashboard(snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}) {
+interface RenderOptions {
+  /** Open every group after rendering, as most tests look at rows. Default true. */
+  expand?: boolean;
+  storage?: StorageSource;
+}
+
+function renderDashboard(snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}, options: RenderOptions = {}) {
   const view: ConnectionView = { state: 'live', snapshot: snap, ...overrides };
-  return render(<Dashboard view={view} />);
+  const result = render(<Dashboard view={view} {...(options.storage ? { storage: options.storage } : {})} />);
+  if (options.expand !== false) {
+    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) {
+      fireEvent.click(toggle);
+    }
+  }
+  return result;
 }
 
 function row(name: string): HTMLElement {
@@ -17,7 +30,9 @@ function row(name: string): HTMLElement {
 }
 
 function groupSection(label: string): HTMLElement {
-  const toggle = screen.getAllByRole('button', { expanded: true }).concat(screen.queryAllByRole('button', { expanded: false }))
+  const toggle = screen
+    .queryAllByRole('button', { expanded: true })
+    .concat(screen.queryAllByRole('button', { expanded: false }))
     .find((button) => within(button).queryByText(label, { selector: '.group-label' }));
   const section = toggle?.closest('section');
   if (!section) throw new Error(`no group ${label}`);
@@ -151,6 +166,104 @@ describe('groups', () => {
     renderDashboard(snap);
 
     expect(within(groupSection('notes')).getByText('in ~/code')).toBeTruthy();
+  });
+});
+
+describe('group open state', () => {
+  const ROOT = '/Users/example/code';
+  /** The stored id of a group in mixedSnapshot(): root and key. */
+  const id = (name: string) => `${ROOT}\0${ROOT}/${name}`;
+  const stored = () => JSON.parse(window.localStorage.getItem(GROUP_STATE_KEY) ?? 'null') as unknown;
+  const isOpen = (label: string) => !groupSection(label).querySelector('ul')!.hidden;
+
+  it('starts every group collapsed, still showing the label, the count and the attention badge', () => {
+    renderDashboard(mixedSnapshot(), {}, { expand: false });
+
+    expect(screen.queryAllByRole('button', { expanded: true })).toHaveLength(0);
+    expect(screen.getAllByRole('button', { expanded: false }).map((button) => button.textContent)).toEqual([
+      'git repodemo-app3 sessions2 need you',
+      'directorynotes1 session',
+      'git repolegacy1 session',
+    ]);
+    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, false, false]);
+    expect(visibleRowNames()).toEqual([]);
+    expect(window.localStorage.getItem(GROUP_STATE_KEY)).toBeNull();
+  });
+
+  it('remembers a group opened or closed, across a reload', () => {
+    const first = renderDashboard(mixedSnapshot(), {}, { expand: false });
+    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: false }));
+    expect(stored()).toEqual({ [id('notes')]: true });
+    first.unmount();
+
+    const second = renderDashboard(mixedSnapshot(), {}, { expand: false });
+    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, true, false]);
+    expect(visibleRowNames()).toEqual(['notes-tidy']);
+
+    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: true }));
+    expect(stored()).toEqual({ [id('notes')]: false });
+    second.unmount();
+
+    renderDashboard(mixedSnapshot(), {}, { expand: false });
+    expect(isOpen('notes')).toBe(false);
+  });
+
+  it('restores the state from storage', () => {
+    window.localStorage.setItem(GROUP_STATE_KEY, JSON.stringify({ [id('legacy')]: true, [id('notes')]: false }));
+
+    renderDashboard(mixedSnapshot(), {}, { expand: false });
+
+    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, false, true]);
+  });
+
+  it('starts collapsed, and still toggles, when storage throws', () => {
+    const denied = () => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    };
+    const throwing: StorageSource = () => ({ getItem: denied, setItem: denied });
+    const first = renderDashboard(mixedSnapshot(), {}, { expand: false, storage: throwing });
+    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, false, false]);
+    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: false }));
+    expect(isOpen('notes')).toBe(true);
+    first.unmount();
+
+    // Some browsers throw on reading window.localStorage itself.
+    renderDashboard(mixedSnapshot(), {}, { expand: false, storage: denied });
+    expect(isOpen('demo-app')).toBe(false);
+    fireEvent.click(within(groupSection('demo-app')).getByRole('button', { expanded: false }));
+    expect(isOpen('demo-app')).toBe(true);
+  });
+
+  it('starts collapsed when the stored data is not the expected shape', () => {
+    for (const raw of ['not json', '[]', 'null', '7', JSON.stringify({ [id('notes')]: 'yes' })]) {
+      window.localStorage.setItem(GROUP_STATE_KEY, raw);
+      const { unmount } = renderDashboard(mixedSnapshot(), {}, { expand: false });
+      expect(['demo-app', 'notes', 'legacy'].map(isOpen), raw).toEqual([false, false, false]);
+      unmount();
+    }
+  });
+
+  it('drops entries for groups that are not in the snapshot when it writes', () => {
+    window.localStorage.setItem(
+      GROUP_STATE_KEY,
+      JSON.stringify({ [id('removed-worktree')]: true, [id('notes')]: true, [`/other/root\0${ROOT}/notes`]: false }),
+    );
+
+    renderDashboard(mixedSnapshot(), {}, { expand: false });
+    fireEvent.click(within(groupSection('legacy')).getByRole('button', { expanded: false }));
+
+    expect(stored()).toEqual({ [id('notes')]: true, [id('legacy')]: true });
+  });
+
+  it('keeps a group open while a filter hides it, since it is still in the snapshot', () => {
+    renderDashboard(mixedSnapshot(), {}, { expand: false });
+    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: false }));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'legacy' } });
+    fireEvent.click(within(groupSection('legacy')).getByRole('button', { expanded: false }));
+
+    expect(stored()).toEqual({ [id('notes')]: true, [id('legacy')]: true });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, true, true]);
   });
 });
 
