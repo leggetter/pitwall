@@ -25,6 +25,7 @@ import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
 import { CONVERSATION_STALE_STATUS, conversationPath, lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
+import { registerActions, type ActionOptions } from './actions.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import {
   bearerToken,
@@ -84,6 +85,8 @@ export interface ServerInternals {
    * W10-W12's input routes will be. Tests use it for a state-changing route.
    */
   routes?: (app: Hono) => void;
+  /** Spawn, stop and remove (W12, actions.ts): tests pass a fake command runner and limits. */
+  actions?: ActionOptions;
 }
 
 export async function startServerWithInternals(
@@ -106,7 +109,12 @@ export async function startServerWithInternals(
   let headers: [string, string][] = [];
   let closing = false;
 
-  const app = createApp({ indexer, token, apiKey, webRoot, port: () => port ?? -1, routes: internals.routes });
+  // The input routes: spawn, stop and remove (W12), then any a test adds.
+  const routes = (app: Hono) => {
+    registerActions(app, indexer, internals.actions);
+    internals.routes?.(app);
+  };
+  const app = createApp({ indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
