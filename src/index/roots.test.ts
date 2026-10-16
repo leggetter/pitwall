@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { isWithin, matchRoot, resolveCwd, resolveRoots } from './roots.js';
+import { inspectCwd, isWithin, matchRoot, resolveCwd, resolveRoots } from './roots.js';
 
 describe('isWithin', () => {
   it('matches the directory itself and anything below it', () => {
@@ -81,6 +81,15 @@ describe('resolveRoots and resolveCwd', () => {
   it('resolves a cwd that exists, and keeps one that does not as given', async () => {
     expect(await resolveCwd(path.join(dir, 'link', 'repo'))).toBe(path.join(dir, 'real', 'repo'));
     expect(await resolveCwd(path.join(dir, 'link', 'gone'))).toBe(path.join(dir, 'link', 'gone'));
+  });
+
+  it('says a cwd is missing only when realpath fails with ENOENT', async () => {
+    expect(await inspectCwd(path.join(dir, 'link', 'repo'))).toEqual({ path: path.join(dir, 'real', 'repo'), missing: false });
+    expect(await inspectCwd(path.join(dir, 'gone'))).toEqual({ path: path.join(dir, 'gone'), missing: true });
+
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    expect(await inspectCwd('/work/locked', () => Promise.reject(denied))).toEqual({ path: '/work/locked', missing: false });
+    expect(await inspectCwd('/work/odd', () => Promise.reject('not an error'))).toEqual({ path: '/work/odd', missing: false });
   });
 
   it('matches a session reached through a symlink to the real root', async () => {

@@ -17,8 +17,8 @@ const live = process.env.PITWALL_LIVE === '1';
 const root = process.env.PITWALL_LIVE_ROOT || os.homedir();
 
 const SESSION_KEYS = new Set([
-  'sessionId', 'shortId', 'name', 'kind', 'cwd', 'pid', 'alive', 'status', 'state', 'waitingFor',
-  'startedAt', 'stale', 'lastActivityAt', 'lastAssistantText', 'lastUserPrompt', 'transcript',
+  'sessionId', 'shortId', 'name', 'kind', 'cwd', 'cwdMissing', 'pid', 'alive', 'status', 'state', 'waitingFor',
+  'startedAt', 'stale', 'askedYou', 'lastActivityAt', 'lastAssistantText', 'lastUserPrompt', 'transcript',
 ]);
 const GROUP_KEYS = new Set(['key', 'label', 'kind', 'root', 'sessions']);
 
@@ -38,6 +38,7 @@ function sessionProblems(s: SessionSummary, at: string): string[] {
   check(typeof s.name === 'string' && s.name !== '', 'name');
   check(oneOf(s.kind, ['interactive', 'background']), 'kind');
   check(isAbsolute(s.cwd), 'cwd');
+  check(optional(s.cwdMissing, (v) => v === true), 'cwdMissing');
   check(optional(s.pid, (v) => Number.isInteger(v) && (v as number) > 0), 'pid');
   check(s.alive === (s.pid !== undefined), 'alive');
   check(optional(s.status, (v) => oneOf(v, ['busy', 'waiting', 'idle'])), 'status');
@@ -45,14 +46,36 @@ function sessionProblems(s: SessionSummary, at: string): string[] {
   check(optional(s.waitingFor, (v) => typeof v === 'string'), 'waitingFor');
   check(isIso(s.startedAt), 'startedAt');
   check(typeof s.stale === 'boolean', 'stale');
-  check(!s.stale || (s.kind === 'background' && s.state === 'blocked' && !s.alive), 'stale (conditions)');
+  check(!s.stale || (s.kind === 'background' && s.state === 'blocked'), 'stale (conditions)');
+  check(
+    optional(s.askedYou, (v) => {
+      const asked = v as SessionSummary['askedYou'];
+      return (
+        asked !== undefined &&
+        oneOf(asked.reason, ['open-questions', 'question']) &&
+        typeof asked.excerpt === 'string' &&
+        asked.excerpt.length > 0 &&
+        asked.excerpt.length <= 200 &&
+        !asked.excerpt.includes('\n')
+      );
+    }),
+    'askedYou',
+  );
+  check(
+    s.askedYou === undefined ||
+      (!s.stale && s.transcript === 'ok' && !oneOf(s.status, ['busy', 'waiting']) && !oneOf(s.state, ['working', 'blocked'])),
+    'askedYou (conditions)',
+  );
   check(oneOf(s.transcript, ['ok', 'missing', 'unreadable']), 'transcript');
   check(optional(s.lastActivityAt, isIso), 'lastActivityAt');
   check(optional(s.lastAssistantText, (v) => typeof v === 'string' && v.length > 0 && v.length <= 500), 'lastAssistantText');
   check(optional(s.lastUserPrompt, (v) => typeof v === 'string' && v.length > 0 && v.length <= 300), 'lastUserPrompt');
   check(optional(s.lastUserPrompt, (v) => !(v as string).includes('<cross-session-message')), 'lastUserPrompt (cross-session)');
   if (s.transcript !== 'ok') {
-    check(s.lastActivityAt === undefined && s.lastAssistantText === undefined && s.lastUserPrompt === undefined, 'transcript fields without ok');
+    check(
+      s.lastActivityAt === undefined && s.lastAssistantText === undefined && s.lastUserPrompt === undefined && s.askedYou === undefined,
+      'transcript fields without ok',
+    );
   }
   return problems;
 }

@@ -3,7 +3,7 @@ import type { IndexSnapshot, SourceHealth } from '../shared/protocol.js';
 import { createAgentsSource, type AgentsSource } from './agents.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, type GroupResolver } from './grouping.js';
-import { matchRoot, resolveCwd, resolveRoots, type Realpath } from './roots.js';
+import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
 import { buildGroups, toSessionSummary, type PlacedSession } from './summaries.js';
 import { createTranscriptReader, type TranscriptReader } from './transcripts.js';
 
@@ -135,14 +135,15 @@ async function poll(
   }
 
   const placed = await mapLimit(result.rows, deps.concurrency, async (row): Promise<PlacedSession | undefined> => {
-    const cwd = await resolveCwd(row.cwd, deps.realpath);
+    const { path: cwd, missing } = await inspectCwd(row.cwd, deps.realpath);
     const root = matchRoot(cwd, resolvedRoots);
     if (root === undefined) return undefined;
+    // A cwd that has gone fails `git -C`, so it groups as a plain directory.
     const [group, transcript] = await Promise.all([
       deps.groups.resolve(cwd),
       deps.transcripts.read(row.sessionId, [row.cwd, cwd]),
     ]);
-    return { root, group, summary: toSessionSummary(row, transcript, nowMs) };
+    return { root, group, summary: toSessionSummary(row, transcript, nowMs, { cwdMissing: missing }) };
   });
 
   const kept = placed.filter((p): p is PlacedSession => p !== undefined);
