@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiGet, createApiClient, type FetchLike } from './api.js';
+import { apiGet, apiPost, createApiClient, type FetchLike } from './api.js';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -51,7 +51,78 @@ describe('apiGet', () => {
   );
 });
 
+describe('apiPost', () => {
+  it('sends the body as JSON with only the apiKey as a bearer token, uncached', async () => {
+    const fetch = fakeFetch(() => json({ ok: true }));
+    expect(await apiPost('/api/sessions', 'the-key', { cwd: '/x', prompt: 'hi' }, { fetch })).toEqual({
+      kind: 'ok',
+      status: 200,
+      body: { ok: true },
+    });
+    expect(fetch).toHaveBeenCalledWith('/api/sessions', {
+      headers: { Authorization: 'Bearer the-key', 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      method: 'POST',
+      body: JSON.stringify({ cwd: '/x', prompt: 'hi' }),
+    });
+  });
+
+  it('keeps the JSON body of a failed response, such as an error and a hint', async () => {
+    const fetch = fakeFetch(() => json({ ok: false, error: 'Workspace not trusted', hint: 'claude' }, 400));
+    expect(await apiPost('/api/sessions', 'k', {}, { fetch })).toEqual({
+      kind: 'failed',
+      status: 400,
+      body: { ok: false, error: 'Workspace not trusted', hint: 'claude' },
+    });
+  });
+
+  it('reports a 401 as unauthorized, and a failure without a JSON body without one', async () => {
+    expect(await apiPost('/api/sessions', 'k', {}, { fetch: fakeFetch(() => new Response(null, { status: 401 })) })).toEqual({
+      kind: 'unauthorized',
+    });
+    expect(await apiPost('/api/sessions', 'k', {}, { fetch: fakeFetch(() => new Response(null, { status: 403 })) })).toEqual({
+      kind: 'failed',
+      status: 403,
+    });
+  });
+
+  it.each(['http://evil.example/api/sessions', '//evil.example/api/sessions', '/ws', ''])(
+    'refuses to send the key anywhere but /api/ on this origin: %j',
+    async (path) => {
+      const fetch = fakeFetch(() => json({}));
+      await expect(apiPost(path, 'k', {}, { fetch })).rejects.toThrow(/not an API path/);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe('createApiClient', () => {
+  it('posts with the current key, and retries once with the next key after a 401', async () => {
+    const fetch = fakeFetch(
+      () => new Response(null, { status: 401 }),
+      () => json({ ok: true }),
+    );
+    const api = createApiClient({ fetch });
+    const stale = vi.fn();
+    api.keys.onStale(stale);
+    api.keys.set('old-key');
+    const result = api.post('/api/sessions/s/stop', {});
+    await vi.waitFor(() => expect(stale).toHaveBeenCalledTimes(1));
+    api.keys.set('new-key');
+    expect(await result).toEqual({ kind: 'ok', status: 200, body: { ok: true } });
+    expect(fetch.mock.calls.map(([, init]) => [init.method, (init.headers as Record<string, string>).Authorization])).toEqual([
+      ['POST', 'Bearer old-key'],
+      ['POST', 'Bearer new-key'],
+    ]);
+  });
+
+  it('does not retry a post that failed for any other reason, because the route may have acted', async () => {
+    const fetch = fakeFetch(() => json({ ok: false, error: 'boom' }, 500));
+    const api = createApiClient({ fetch, apiKey: 'k' });
+    expect(await api.post('/api/sessions', {})).toEqual({ kind: 'failed', status: 500, body: { ok: false, error: 'boom' } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('sends straight away, in the same call, when it already has a key', () => {
     const fetch = fakeFetch(() => json({}));
     const api = createApiClient({ fetch, apiKey: 'ready' });

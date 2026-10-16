@@ -285,6 +285,9 @@ export interface ConversationPage {
  * sessions in the current snapshot, and a server building a route pattern
  * from this must decode it.
  */
+/** The status a conversation request gets for a cursor made for another version of the transcript. */
+export const CONVERSATION_STALE_STATUS = 410;
+
 export function conversationPath(sessionId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
   return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;

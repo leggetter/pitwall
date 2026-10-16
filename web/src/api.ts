@@ -38,8 +38,12 @@ export type ApiResult =
    * the app is already showing that the token was rejected.
    */
   | { kind: 'unauthorized' }
-  /** Anything else: a network error, another status, a body that isn't JSON, or an aborted request. */
-  | { kind: 'failed'; status?: number };
+  /**
+   * Anything else: a network error, another status, a body that isn't JSON,
+   * or an aborted request. `body` is the parsed JSON body of a non-2xx
+   * response, when it had one, such as a SpawnResult's error and hint.
+   */
+  | { kind: 'failed'; status?: number; body?: unknown };
 
 export interface ApiGetOptions {
   fetch?: FetchLike;
@@ -51,11 +55,38 @@ export interface ApiGetOptions {
  * with the apiKey as a bearer token and no caching. Never rejects, except
  * for a path outside /api/, which is a bug in the caller.
  */
-export async function apiGet(path: string, apiKey: string, options: ApiGetOptions = {}): Promise<ApiResult> {
+export function apiGet(path: string, apiKey: string, options: ApiGetOptions = {}): Promise<ApiResult> {
+  return apiRequest('GET', path, apiKey, undefined, options);
+}
+
+/**
+ * POSTs `body` as JSON to `path`, which must start with `/api/`, with the
+ * apiKey as a bearer token. The browser adds this page's Origin, which the
+ * server requires on state-changing requests. Never rejects, except for a
+ * path outside /api/.
+ */
+export function apiPost(path: string, apiKey: string, body: unknown, options: ApiGetOptions = {}): Promise<ApiResult> {
+  return apiRequest('POST', path, apiKey, body, options);
+}
+
+async function apiRequest(
+  method: 'GET' | 'POST',
+  path: string,
+  apiKey: string,
+  body: unknown,
+  options: ApiGetOptions,
+): Promise<ApiResult> {
   // A relative /api/ path only, so the key can't be sent to another origin.
-  if (!path.startsWith('/api/')) throw new TypeError(`apiGet: not an API path: ${path}`);
+  if (!path.startsWith('/api/')) throw new TypeError(`api${method === 'GET' ? 'Get' : 'Post'}: not an API path: ${path}`);
   const fetchImpl = options.fetch ?? defaultFetch;
-  const init: RequestInit = { headers: { Authorization: `Bearer ${apiKey}` }, cache: 'no-store' };
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+  // GET is fetch's default, so a GET's init stays exactly as it was before POST existed.
+  const init: RequestInit = { headers, cache: 'no-store' };
+  if (method === 'POST') {
+    init.method = 'POST';
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body ?? {});
+  }
   if (options.signal) init.signal = options.signal;
   let response: Response;
   try {
@@ -64,12 +95,15 @@ export async function apiGet(path: string, apiKey: string, options: ApiGetOption
     return { kind: 'failed' };
   }
   if (response.status === 401) return { kind: 'unauthorized' };
-  if (!response.ok) return { kind: 'failed', status: response.status };
+  let parsed: unknown;
+  let isJson = true;
   try {
-    return { kind: 'ok', status: response.status, body: await response.json() };
+    parsed = await response.json();
   } catch {
-    return { kind: 'failed', status: response.status };
+    isJson = false;
   }
+  if (!response.ok) return isJson ? { kind: 'failed', status: response.status, body: parsed } : { kind: 'failed', status: response.status };
+  return isJson ? { kind: 'ok', status: response.status, body: parsed } : { kind: 'failed', status: response.status };
 }
 
 /** What components use. App provides one per connection, through ApiContext. */
@@ -82,6 +116,13 @@ export interface ApiClient {
    * when `signal` aborts. Never rejects, except for a path outside /api/.
    */
   get(path: string, options?: { signal?: AbortSignal }): Promise<ApiResult>;
+  /**
+   * POSTs `body` as JSON with the current apiKey, with the same waiting and
+   * the same single retry after a 401 as get(). Retrying is safe because the
+   * server refuses a stale key before the route runs. Other failures aren't
+   * retried, because the route may have acted.
+   */
+  post(path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<ApiResult>;
 }
 
 /** The connection's side of an ApiClient: it hands over each apiKey, and hears when one has gone stale. */
@@ -150,25 +191,35 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient & { k
     },
   };
 
+  const request = async (
+    send: (apiKey: string, options: ApiGetOptions) => Promise<ApiResult>,
+    signal: AbortSignal | undefined,
+  ): Promise<ApiResult> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      // With a key in hand, the request goes out in this same call, before any await.
+      const apiKey = state.kind === 'ready' ? state.apiKey : await nextKey(signal);
+      if (apiKey === undefined) return signal?.aborted ? { kind: 'failed' } : { kind: 'unauthorized' };
+      const result = await send(apiKey, { fetch: fetchImpl, ...(signal ? { signal } : {}) });
+      if (result.kind !== 'unauthorized') return result;
+      // Nobody to fetch a new key from: give up rather than wait forever.
+      if (staleListeners.size === 0) return { kind: 'failed', status: 401 };
+      // The key is stale, as after a server restart. Unless another request
+      // has already dropped it, drop it and ask for a fresh handshake.
+      if (state.kind === 'ready' && state.apiKey === apiKey) {
+        state = { kind: 'waiting' };
+        for (const listener of [...staleListeners]) listener();
+      }
+    }
+    return { kind: 'failed', status: 401 };
+  };
+
   return {
     keys,
-    async get(path, { signal } = {}) {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        // With a key in hand, the request goes out in this same call, before any await.
-        const apiKey = state.kind === 'ready' ? state.apiKey : await nextKey(signal);
-        if (apiKey === undefined) return signal?.aborted ? { kind: 'failed' } : { kind: 'unauthorized' };
-        const result = await apiGet(path, apiKey, { fetch: fetchImpl, ...(signal ? { signal } : {}) });
-        if (result.kind !== 'unauthorized') return result;
-        // Nobody to fetch a new key from: give up rather than wait forever.
-        if (staleListeners.size === 0) return { kind: 'failed', status: 401 };
-        // The key is stale, as after a server restart. Unless another request
-        // has already dropped it, drop it and ask for a fresh handshake.
-        if (state.kind === 'ready' && state.apiKey === apiKey) {
-          state = { kind: 'waiting' };
-          for (const listener of [...staleListeners]) listener();
-        }
-      }
-      return { kind: 'failed', status: 401 };
+    get(path, { signal } = {}) {
+      return request((apiKey, options) => apiGet(path, apiKey, options), signal);
+    },
+    post(path, body, { signal } = {}) {
+      return request((apiKey, options) => apiPost(path, apiKey, body, options), signal);
     },
   };
 }
