@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { lastMessagePath, type LastMessage } from '../../src/shared/protocol.js';
-import { createReplyLoader, type FetchLike } from './lastMessage.js';
+import { createApiClient } from './api.js';
+import { createReplyLoader, type FetchLike, type ReplyLoaderOptions } from './lastMessage.js';
 
 const SID = '00000000-0000-4000-8000-0000000000aa';
 const AT = '2026-03-02T11:55:00.000Z';
@@ -23,21 +24,40 @@ function fakeFetch(...responses: (() => Response | Promise<Response>)[]) {
 const json = (body: unknown, status = 200) => () =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
+/** A loader over an API client that already has `apiKey`, as after the handshake. */
+function loaderWith(fetch: FetchLike, apiKey = 'the-key', options: Omit<ReplyLoaderOptions, 'api'> = {}) {
+  return createReplyLoader({ api: createApiClient({ apiKey, fetch }), ...options });
+}
+
 describe('createReplyLoader', () => {
-  it('fetches the last-message path with the token as a bearer token, uncached', async () => {
+  it('fetches the last-message path with the apiKey as a bearer token, uncached', async () => {
     const fetch = fakeFetch(json(reply()));
-    const loader = createReplyLoader({ token: 'the-token', fetch });
+    const loader = loaderWith(fetch, 'the-api-key');
 
     expect(await loader.load(SID, AT)).toEqual({ kind: 'ok', message: reply() });
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, init] = fetch.mock.calls[0]!;
     expect(url).toBe(lastMessagePath(SID));
-    expect(init).toMatchObject({ headers: { Authorization: 'Bearer the-token' }, cache: 'no-store' });
+    expect(init).toEqual({ headers: { Authorization: 'Bearer the-api-key' }, cache: 'no-store' });
+  });
+
+  it('waits for an apiKey while the page is still connecting, then fetches with it', async () => {
+    const fetch = fakeFetch(json(reply()));
+    const api = createApiClient({ fetch });
+    const loader = createReplyLoader({ api });
+
+    const pending = loader.load(SID, AT);
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+
+    api.keys.set('arrived-later');
+    expect(await pending).toEqual({ kind: 'ok', message: reply() });
+    expect(fetch.mock.calls[0]![1]).toMatchObject({ headers: { Authorization: 'Bearer arrived-later' } });
   });
 
   it('caches by session and activity time, so a session that moved on is fetched again', async () => {
     const fetch = fakeFetch(json(reply()), json(reply({ text: 'A newer reply.' })));
-    const loader = createReplyLoader({ token: 't', fetch });
+    const loader = loaderWith(fetch);
 
     expect(loader.cached(SID, AT)).toBeUndefined();
     await loader.load(SID, AT);
@@ -58,24 +78,28 @@ describe('createReplyLoader', () => {
       await gate;
       return json(reply())();
     });
-    const loader = createReplyLoader({ token: 't', fetch });
+    const loader = loaderWith(fetch);
     const both = Promise.all([loader.load(SID, AT), loader.load(SID, AT)]);
     release();
     expect((await both).map((result) => result.kind)).toEqual(['ok', 'ok']);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('reports a 401 as unauthorized, tells its owner, and caches nothing', async () => {
-    const onUnauthorized = vi.fn();
-    const fetch = fakeFetch(() => new Response(null, { status: 401 }));
-    const loader = createReplyLoader({ token: 'old', fetch, onUnauthorized });
+  it('reports unauthorized, and caches nothing, once the connection was refused (4401)', async () => {
+    const fetch = fakeFetch(json(reply()));
+    const api = createApiClient({ fetch });
+    const loader = createReplyLoader({ api });
+    const pending = loader.load(SID, AT);
 
+    api.keys.reject();
+    expect(await pending).toEqual({ kind: 'unauthorized' });
     expect(await loader.load(SID, AT)).toEqual({ kind: 'unauthorized' });
-    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
     expect(loader.cached(SID, AT)).toBeUndefined();
   });
 
   it.each([
+    ['a 401 with no connection to get a new key from', () => new Response(null, { status: 401 })],
     ['a 404', () => new Response(null, { status: 404 })],
     ['a 500', () => new Response(null, { status: 500 })],
     ['a network error', () => Promise.reject(new TypeError('Failed to fetch'))],
@@ -87,13 +111,11 @@ describe('createReplyLoader', () => {
     ['JSON null', json(null)],
   ])('reports %s as failed, and tries again next time', async (_name, response) => {
     const fetch = fakeFetch(response, json(reply()));
-    const onUnauthorized = vi.fn();
-    const loader = createReplyLoader({ token: 't', fetch, onUnauthorized });
+    const loader = loaderWith(fetch);
 
     expect(await loader.load(SID, AT)).toEqual({ kind: 'failed' });
     expect(loader.cached(SID, AT)).toBeUndefined();
     expect(await loader.load(SID, AT)).toEqual({ kind: 'ok', message: reply() });
-    expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
   it('keeps only the most recently used replies', async () => {
@@ -101,7 +123,7 @@ describe('createReplyLoader', () => {
       const id = decodeURIComponent(url.split('/')[3] ?? '');
       return json(reply({ sessionId: id }))();
     });
-    const loader = createReplyLoader({ token: 't', fetch, cacheSize: 2 });
+    const loader = loaderWith(fetch, 'k', { cacheSize: 2 });
     await loader.load('a', AT);
     await loader.load('b', AT);
     loader.cached('a', AT);
@@ -114,7 +136,7 @@ describe('createReplyLoader', () => {
 
   it('keeps a reply without a time as it came', async () => {
     const fetch = fakeFetch(json({ sessionId: SID, text: 'undated', truncated: true }));
-    const loader = createReplyLoader({ token: 't', fetch });
+    const loader = loaderWith(fetch);
     expect(await loader.load(SID, undefined)).toEqual({ kind: 'ok', message: { sessionId: SID, text: 'undated', truncated: true } });
   });
 });

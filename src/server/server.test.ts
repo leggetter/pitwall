@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
@@ -9,6 +10,7 @@ import { WebSocket } from 'ws';
 import { createIndexer, type Indexer } from '../index/index.js';
 import {
   lastMessagePath,
+  PROTOCOL_VERSION,
   SNAPSHOT_PATH,
   WS_CLOSE_UNAUTHORIZED,
   WS_PATH,
@@ -18,6 +20,7 @@ import {
 } from '../shared/protocol.js';
 import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from './index.js';
 import { securityHeaders } from './security.js';
+import { BUILDING_SCRIPT, BUILDING_SCRIPT_PATH } from './static.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
 
@@ -60,7 +63,7 @@ function snapshot(generatedAt: string, overrides: Partial<IndexSnapshot> = {}): 
 }
 
 /** A snapshot whose content differs from snapshot()'s: one group with one session. */
-function withSession(generatedAt: string, name = 'pitwall-test-a'): IndexSnapshot {
+function withSession(generatedAt: string, name = 'pitwall-test-a', sessionId = '99999999-9999-4999-8999-999999999999'): IndexSnapshot {
   return snapshot(generatedAt, {
     groups: [
       {
@@ -70,7 +73,7 @@ function withSession(generatedAt: string, name = 'pitwall-test-a'): IndexSnapsho
         root: '/tmp/pitwall-test-root',
         sessions: [
           {
-            sessionId: '99999999-9999-4999-8999-999999999999',
+            sessionId,
             name,
             kind: 'interactive',
             cwd: '/tmp/pitwall-test-root/repo',
@@ -207,11 +210,38 @@ function upgradeRefusal(client: Client): Promise<number> {
   });
 }
 
-async function authedClient(port: number): Promise<Client> {
+/**
+ * The proof for a nonce, computed here with node:crypto rather than with the
+ * server's own helper, so the test pins the contract: base64url(HMAC-SHA256(
+ * key = token as UTF-8, message = nonce as UTF-8)).
+ */
+function proofFor(nonce: string, token = TOKEN): string {
+  return createHmac('sha256', Buffer.from(token, 'utf8')).update(nonce, 'utf8').digest('base64url');
+}
+
+/** Opens a socket and waits for its challenge. */
+async function challenged(port: number): Promise<{ client: Client; nonce: string }> {
   const client = connectWs(port, { origin: origin(port) });
-  await once(client.ws, 'open');
-  client.ws.send(JSON.stringify({ type: 'auth', token: TOKEN }));
-  return client;
+  const challenge = await client.nextMessage();
+  if (challenge.type !== 'challenge') throw new Error(`expected a challenge, got ${challenge.type}`);
+  return { client, nonce: challenge.nonce };
+}
+
+/** Completes the handshake. The challenge and 'authenticated' are consumed, so nextMessage() gives what follows. */
+async function authedClient(port: number): Promise<Client & { apiKey: string; nonce: string; proof: string }> {
+  const { client, nonce } = await challenged(port);
+  const proof = proofFor(nonce);
+  client.ws.send(JSON.stringify({ type: 'auth', proof }));
+  const reply = await client.nextMessage();
+  if (reply.type !== 'authenticated') throw new Error(`expected authenticated, got ${reply.type}`);
+  return Object.assign(client, { apiKey: reply.apiKey, nonce, proof });
+}
+
+/** The apiKey a client gets from this server, for HTTP tests. */
+async function apiKeyOf(port: number): Promise<string> {
+  const client = await authedClient(port);
+  client.ws.close();
+  return client.apiKey;
 }
 
 async function waitFor(condition: () => boolean, ms = 2000): Promise<void> {
@@ -457,12 +487,93 @@ describe('startServer', () => {
     });
   });
 
+  describe('API credentials', () => {
+    /** A server with a state-changing test route, standing in for W10-W12's input routes. */
+    async function withInputRoute(): Promise<{ server: RunningServer; apiKey: string; hits: string[] }> {
+      const hits: string[] = [];
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), {}, {
+        routes: (app) => {
+          app.on(['POST', 'PUT', 'PATCH', 'DELETE'], '/api/test-input', (c) => {
+            hits.push(c.req.method);
+            return c.json({ ok: true });
+          });
+        },
+      });
+      return { server, apiKey: await apiKeyOf(server.port), hits };
+    }
+
+    it('accepts the apiKey and the raw token for GET and HEAD', async () => {
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const apiKey = await apiKeyOf(server.port);
+      for (const credential of [apiKey, TOKEN]) {
+        for (const headers of [{}, { origin: origin(server.port) }] as Record<string, string>[]) {
+          const authorization = `Bearer ${credential}`;
+          expect((await get(server.port, SNAPSHOT_PATH, { ...headers, authorization })).status).toBe(200);
+          expect((await get(server.port, SNAPSHOT_PATH, { ...headers, authorization }, 'HEAD')).status).toBe(200);
+        }
+      }
+    });
+
+    it("refuses another server's apiKey", async () => {
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const other = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const otherKey = await apiKeyOf(other.port);
+      expect((await get(server.port, SNAPSHOT_PATH, { authorization: `Bearer ${otherKey}` })).status).toBe(401);
+    });
+
+    it('lets a state-changing request through with the apiKey and this Origin', async () => {
+      const { server, apiKey, hits } = await withInputRoute();
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        const res = await get(server.port, '/api/test-input', { authorization: `Bearer ${apiKey}`, origin: origin(server.port) }, method);
+        expect(res.status, method).toBe(200);
+      }
+      expect(hits).toEqual(['POST', 'PUT', 'PATCH', 'DELETE']);
+    });
+
+    it('refuses a state-changing request with the raw token, even from this Origin', async () => {
+      const { server, hits } = await withInputRoute();
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        const res = await get(server.port, '/api/test-input', { authorization: `Bearer ${TOKEN}`, origin: origin(server.port) }, method);
+        expect(res.status, method).toBe(403);
+        expect(res.body).toBe('');
+      }
+      expect(hits).toEqual([]);
+    });
+
+    it('refuses a state-changing request with the apiKey but no Origin, or a bad one', async () => {
+      const { server, apiKey, hits } = await withInputRoute();
+      const authorization = `Bearer ${apiKey}`;
+      expect((await get(server.port, '/api/test-input', { authorization }, 'POST')).status).toBe(403);
+      for (const value of ['http://evil.example', 'null', `http://localhost:${server.port}`, `https://127.0.0.1:${server.port}`]) {
+        expect((await get(server.port, '/api/test-input', { authorization, origin: value }, 'POST')).status, value).toBe(403);
+      }
+      expect(hits).toEqual([]);
+    });
+
+    it('refuses a state-changing request with no credential, or a wrong one, with 401', async () => {
+      const { server, hits } = await withInputRoute();
+      for (const headers of [{}, { authorization: 'Bearer wrong' }, { authorization: `Bearer ${TOKEN}x` }] as Record<string, string>[]) {
+        expect((await get(server.port, '/api/test-input', { ...headers, origin: origin(server.port) }, 'POST')).status).toBe(401);
+      }
+      expect(hits).toEqual([]);
+    });
+
+    it('treats OPTIONS as state-changing too, so a preflight gets nothing', async () => {
+      const { server, apiKey } = await withInputRoute();
+      const preflight = { origin: 'http://evil.example', 'access-control-request-method': 'POST' };
+      expect((await get(server.port, '/api/test-input', preflight, 'OPTIONS')).status).toBe(403);
+      expect((await get(server.port, '/api/test-input', { authorization: `Bearer ${TOKEN}` }, 'OPTIONS')).status).toBe(403);
+      expect((await get(server.port, '/api/test-input', { authorization: `Bearer ${apiKey}` }, 'OPTIONS')).status).toBe(403);
+    });
+  });
+
   describe('the last-message API', () => {
     const SID = '77777777-7777-4777-8777-777777777777';
     const message: LastMessage = { sessionId: SID, text: `Full reply.\n\n${'More detail. '.repeat(100)}`, truncated: false, at: '2026-10-16T00:00:00.000Z' };
 
+    /** SID is in the snapshot, as resolveSession() requires, and the index has its message. */
     function withMessage(): FakeIndexer {
-      const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
+      const indexer = fakeIndexer(withSession('2026-10-16T00:00:00.000Z', 'pitwall-test-reply', SID));
       indexer.messages.set(SID, message);
       return indexer;
     }
@@ -516,6 +627,24 @@ describe('startServer', () => {
       expect(res.status).toBe(404);
       expect(res.body).toBe('');
       expect(res.headers['cache-control']).toBe('no-store');
+    });
+
+    it('returns 404 for a session missing from the snapshot, even when the index would answer, without asking it', async () => {
+      // The guard doesn't rely on the index to refuse: it checks the snapshot itself.
+      const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
+      indexer.messages.set(SID, message);
+      const server = await start(indexer);
+      const res = await get(server.port, lastMessagePath(SID), bearer);
+      expect(res.status).toBe(404);
+      expect(indexer.lastMessage).not.toHaveBeenCalled();
+    });
+
+    it('returns 503 before the first snapshot', async () => {
+      const indexer = fakeIndexer();
+      indexer.messages.set(SID, message);
+      const server = await start(indexer);
+      expect((await get(server.port, lastMessagePath(SID), bearer)).status).toBe(503);
+      expect(indexer.lastMessage).not.toHaveBeenCalled();
     });
 
     it('returns 404 for a session outside the roots, which the index never serves', async () => {
@@ -581,58 +710,171 @@ describe('startServer', () => {
       }
     });
 
-    it('refuses other methods', async () => {
+    it('refuses other methods: 403 with the raw token, 404 with the apiKey and this Origin', async () => {
       const server = await start(withMessage());
-      expect((await get(server.port, lastMessagePath(SID), bearer, 'POST')).status).toBe(404);
+      expect((await get(server.port, lastMessagePath(SID), bearer, 'POST')).status).toBe(403);
+      const apiKey = await apiKeyOf(server.port);
+      const allowed = { authorization: `Bearer ${apiKey}`, origin: origin(server.port) };
+      expect((await get(server.port, lastMessagePath(SID), allowed, 'POST')).status).toBe(404);
+    });
+
+    it('serves the reply with the apiKey too', async () => {
+      const server = await start(withMessage());
+      const apiKey = await apiKeyOf(server.port);
+      const res = await get(server.port, lastMessagePath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) });
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual(message);
     });
   });
 
-  describe('the WebSocket', () => {
-    it('closes with 4401 for a wrong token', async () => {
+  describe('the WebSocket handshake', () => {
+    it('opens with a challenge: protocol version 2 and a fresh 32-byte base64url nonce', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
       const client = connectWs(server.port, { origin: origin(server.port) });
-      await once(client.ws, 'open');
-      client.ws.send(JSON.stringify({ type: 'auth', token: 'wrong' }));
-      expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
-      expect(client.messages).toEqual([]);
+      const challenge = await client.nextMessage();
+      expect(challenge).toEqual({ type: 'challenge', version: PROTOCOL_VERSION, nonce: expect.any(String) });
+      expect(PROTOCOL_VERSION).toBe(2);
+      const { nonce } = challenge as Extract<ServerMessage, { type: 'challenge' }>;
+      expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(Buffer.from(nonce, 'base64url')).toHaveLength(32);
+    });
+
+    it('answers a valid proof with authenticated and the apiKey, then the snapshot', async () => {
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const { client, nonce } = await challenged(server.port);
+      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce) }));
+
+      const authenticated = await client.nextMessage();
+      expect(authenticated).toEqual({ type: 'authenticated', apiKey: expect.any(String) });
+      const { apiKey } = authenticated as Extract<ServerMessage, { type: 'authenticated' }>;
+      expect(apiKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(apiKey).not.toBe(TOKEN);
+      expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: snapshot('2026-10-16T00:00:00.000Z') });
     });
 
     it.each([
-      ['not JSON', 'hello'],
-      ['the wrong type', JSON.stringify({ type: 'hello', token: TOKEN })],
-      ['no token', JSON.stringify({ type: 'auth' })],
-      ['a non-string token', JSON.stringify({ type: 'auth', token: 42 })],
-      ['JSON null', 'null'],
-    ])('closes with 4401 when the first message is %s', async (_name, message) => {
+      ['a proof for another nonce', (nonce: string) => ({ type: 'auth', proof: proofFor(`${nonce}x`) })],
+      ['a proof made with another token', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce, `${TOKEN}x`) })],
+      ['the nonce itself', (nonce: string) => ({ type: 'auth', proof: nonce })],
+      ['an empty proof', () => ({ type: 'auth', proof: '' })],
+      ['a non-string proof', () => ({ type: 'auth', proof: 42 })],
+      ['no proof', () => ({ type: 'auth' })],
+      ["M1's raw token", () => ({ type: 'auth', token: TOKEN })],
+      ['a valid proof that also carries the token', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce), token: TOKEN })],
+      ['a valid proof with a garbage version', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce), version: 'garbage' })],
+      ['a valid proof with version 1', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce), version: 1 })],
+      ['a valid proof with the wrong type', (nonce: string) => ({ type: 'hello', proof: proofFor(nonce) })],
+      ['JSON null', () => null],
+      ['a JSON array', (nonce: string) => ['auth', proofFor(nonce)]],
+    ])('closes with 4401 for %s, and never authenticates', async (_name, build) => {
+      const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
+      const server = await start(indexer);
+      const { client, nonce } = await challenged(server.port);
+      client.ws.send(JSON.stringify(build(nonce)));
+      expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
+      expect(client.messages).toEqual([]);
+      expect(indexer.listenerCount()).toBe(0);
+    });
+
+    it('closes with 4401 for a message that is not JSON', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
-      const client = connectWs(server.port, { origin: origin(server.port) });
-      await once(client.ws, 'open');
-      client.ws.send(message);
+      const { client } = await challenged(server.port);
+      client.ws.send('hello');
       expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
       expect(client.messages).toEqual([]);
     });
 
-    it('closes with 4401 when the first message is binary', async () => {
+    it('closes with 4401 for a binary frame, even one holding a valid proof', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
-      const client = connectWs(server.port, { origin: origin(server.port) });
-      await once(client.ws, 'open');
-      client.ws.send(Buffer.from(JSON.stringify({ type: 'auth', token: TOKEN })));
+      const { client, nonce } = await challenged(server.port);
+      client.ws.send(Buffer.from(JSON.stringify({ type: 'auth', proof: proofFor(nonce) })));
       expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
+      expect(client.messages).toEqual([]);
     });
 
-    it('waits 5 seconds for auth by default', () => {
+    it('allows one attempt: a wrong proof, then the right one, still closes with 4401', async () => {
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const { client, nonce } = await challenged(server.port);
+      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor('not-the-nonce') }));
+      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce) }));
+      expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
+      expect(client.messages).toEqual([]);
+    });
+
+    it('refuses a captured proof replayed on a new connection', async () => {
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const first = await authedClient(server.port);
+      expect((await first.nextMessage()).type).toBe('snapshot');
+
+      // Whoever saw the first connection's proof replays it on a second.
+      const { client: second, nonce } = await challenged(server.port);
+      expect(nonce).not.toBe(first.nonce);
+      second.ws.send(JSON.stringify({ type: 'auth', proof: first.proof }));
+      expect((await second.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
+      expect(second.messages).toEqual([]);
+    });
+
+    it('never reuses a nonce across 1,000 connections', async () => {
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const nonces = new Set<string>();
+      for (let batch = 0; batch < 20; batch++) {
+        const clients = await Promise.all(Array.from({ length: 50 }, () => challenged(server.port)));
+        for (const { client, nonce } of clients) {
+          nonces.add(nonce);
+          client.ws.terminate();
+        }
+      }
+      expect(nonces.size).toBe(1000);
+    }, 30_000);
+
+    it('gives every client of one server the same apiKey, and another server a different one', async () => {
+      const a = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const b = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const [a1, a2, b1] = await Promise.all([apiKeyOf(a.port), apiKeyOf(a.port), apiKeyOf(b.port)]);
+      expect(a1).toBe(a2);
+      expect(b1).not.toBe(a1);
+    });
+
+    it('never sends the token, and ignores whatever an authenticated client sends', async () => {
+      const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
+      const server = await start(indexer);
+      const client = await authedClient(server.port);
+      expect((await client.nextMessage()).type).toBe('snapshot');
+
+      client.ws.send(JSON.stringify({ type: 'auth', proof: client.proof }));
+      client.ws.send('not json');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(client.ws.readyState).toBe(WebSocket.OPEN);
+      expect(client.messages).toEqual([]);
+
+      indexer.push(snapshot('2026-10-16T00:00:05.000Z'));
+      expect((await client.nextMessage()).type).toBe('heartbeat');
+    });
+
+    it('waits 5 seconds for the proof by default', () => {
       expect(DEFAULT_AUTH_TIMEOUT_MS).toBe(5000);
     });
 
-    it('closes with 4401 when no auth arrives in time', async () => {
+    it('closes with 4401 when no proof arrives in time', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), {}, { authTimeoutMs: 50 });
-      const client = connectWs(server.port, { origin: origin(server.port) });
-      await once(client.ws, 'open');
       const started = Date.now();
+      const { client } = await challenged(server.port);
       expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
       expect(Date.now() - started).toBeGreaterThanOrEqual(40);
       expect(client.messages).toEqual([]);
     });
+
+    it('closes with 4401 when a valid proof arrives too late', async () => {
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), {}, { authTimeoutMs: 50 });
+      const { client, nonce } = await challenged(server.port);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce) }));
+      expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
+      expect(client.messages).toEqual([]);
+    });
+  });
+
+  describe('the WebSocket', () => {
 
     it('stays open past the timeout once authenticated', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), {}, { authTimeoutMs: 50 });
@@ -736,8 +978,7 @@ describe('startServer', () => {
     it('does not subscribe before auth', async () => {
       const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
       const server = await start(indexer);
-      const client = connectWs(server.port, { origin: origin(server.port) });
-      await once(client.ws, 'open');
+      const { client } = await challenged(server.port);
       indexer.push(snapshot('2026-10-16T00:00:02.000Z'));
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(indexer.listenerCount()).toBe(0);
@@ -848,6 +1089,20 @@ describe('startServer', () => {
       expect(res.body).toContain('still building');
       expect(res.headers['content-type']).toMatch(/^text\/html/);
       expect(res.headers['x-content-type-options']).toBe('nosniff');
+    });
+
+    it('has the building page reload itself with a same-origin script, which needs no token', async () => {
+      const server = await start(fakeIndexer(), { webRoot: join(tmp, 'not-built-yet') });
+      expect((await get(server.port, '/')).body).toContain(`<script src="${BUILDING_SCRIPT_PATH}"></script>`);
+      const script = await get(server.port, BUILDING_SCRIPT_PATH);
+      expect(script.status).toBe(200);
+      expect(script.body).toBe(BUILDING_SCRIPT);
+      expect(script.body).toContain('location.reload()');
+      expect(script.headers['content-type']).toBe('text/javascript; charset=utf-8');
+      expect(script.headers['cache-control']).toBe('no-store');
+      // The CSP's default-src 'self' covers it; no inline script is allowed.
+      expect(script.headers['content-security-policy']).toBe(securityHeaders(server.port)['Content-Security-Policy']);
+      expect((await get(server.port, BUILDING_SCRIPT_PATH, { host: 'evil.example' })).status).toBe(403);
     });
 
     it('responds 503 while index.html is missing from an emptied webRoot', async () => {

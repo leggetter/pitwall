@@ -31,10 +31,27 @@ export type StaticResult =
   /** webRoot, or its index.html, doesn't exist yet: `vite build --watch` hasn't finished. */
   | { kind: 'building' };
 
-/** A short page for the 503 while the UI builds. No script: the CSP would block it. */
+/**
+ * Where the server serves BUILDING_SCRIPT. Not under webRoot, which may not
+ * exist yet, and outside /api/ so it needs no credential.
+ */
+export const BUILDING_SCRIPT_PATH = '/_pitwall/reload.js';
+
+/**
+ * Reloads the page a second later. location.reload() keeps the URL and its
+ * #token fragment, so the browser the CLI opened while `vite build --watch`
+ * was still running lands on the UI by itself.
+ */
+export const BUILDING_SCRIPT = 'setTimeout(function () { location.reload(); }, 1000);\n';
+
+/**
+ * A short page for the 503 while the UI builds. The CSP blocks inline script,
+ * so it loads BUILDING_SCRIPT from this server instead.
+ */
 export const BUILDING_PAGE =
-  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>pitwall</title></head>' +
-  '<body><p>The pitwall UI is still building. Reload in a moment.</p></body></html>';
+  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>pitwall</title>' +
+  `<script src="${BUILDING_SCRIPT_PATH}"></script></head>` +
+  '<body><p>The pitwall UI is still building. This page reloads when it is ready.</p></body></html>';
 
 const NOT_FOUND: StaticResult = { kind: 'not-found' };
 const BUILDING: StaticResult = { kind: 'building' };

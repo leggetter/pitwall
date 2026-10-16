@@ -1,0 +1,180 @@
+// Every HTTP API call the web UI makes goes through this file, so one place
+// decides what a request carries: `Authorization: Bearer <apiKey>`, the key
+// from the WebSocket's 'authenticated' message. Never the token. The token
+// only ever leaves the page as an HMAC proof (connection.ts), so a process
+// squatting on the port learns nothing it can reuse.
+//
+// The apiKey lives in memory only, in the ApiClient below, never in storage.
+// It belongs to one server process: after a restart (every save under
+// `npm run dev`) the old key gets 401. The client then drops it, the
+// connection reconnects for a fresh challenge and the new key, and the
+// request is retried once with that.
+//
+// For a new API call, such as a conversation page, in a component:
+//
+//   const api = useContext(ApiContext);
+//   const result = await api.get(conversationPath(sessionId, before));
+//   if (result.kind === 'ok') { ...validate result.body, which is unknown JSON... }
+//
+// api.get() waits while there's no key yet (connecting, or reconnecting after
+// a restart), so a component can call it straight away and show its own
+// loading state. With a key already in hand, apiGet(path, apiKey) is the
+// same request without the waiting or the retry.
+
+import { createContext } from 'react';
+
+/** The subset of `fetch` the API calls use. Tests pass a fake. */
+export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
+
+/** The browser's fetch, called on window so it isn't an illegal invocation. */
+export const defaultFetch: FetchLike = (url, init) => window.fetch(url, init);
+
+export type ApiResult =
+  /** A 2xx response, with its body parsed as JSON. Validate it before use. */
+  | { kind: 'ok'; status: number; body: unknown }
+  /**
+   * From apiGet: the server answered 401, so the key is stale. From
+   * ApiClient.get: the connection itself was refused (WebSocket 4401), and
+   * the app is already showing that the token was rejected.
+   */
+  | { kind: 'unauthorized' }
+  /** Anything else: a network error, another status, a body that isn't JSON, or an aborted request. */
+  | { kind: 'failed'; status?: number };
+
+export interface ApiGetOptions {
+  fetch?: FetchLike;
+  signal?: AbortSignal;
+}
+
+/**
+ * GETs `path`, which must start with `/api/`, from this page's own server,
+ * with the apiKey as a bearer token and no caching. Never rejects, except
+ * for a path outside /api/, which is a bug in the caller.
+ */
+export async function apiGet(path: string, apiKey: string, options: ApiGetOptions = {}): Promise<ApiResult> {
+  // A relative /api/ path only, so the key can't be sent to another origin.
+  if (!path.startsWith('/api/')) throw new TypeError(`apiGet: not an API path: ${path}`);
+  const fetchImpl = options.fetch ?? defaultFetch;
+  const init: RequestInit = { headers: { Authorization: `Bearer ${apiKey}` }, cache: 'no-store' };
+  if (options.signal) init.signal = options.signal;
+  let response: Response;
+  try {
+    response = await fetchImpl(path, init);
+  } catch {
+    return { kind: 'failed' };
+  }
+  if (response.status === 401) return { kind: 'unauthorized' };
+  if (!response.ok) return { kind: 'failed', status: response.status };
+  try {
+    return { kind: 'ok', status: response.status, body: await response.json() };
+  } catch {
+    return { kind: 'failed', status: response.status };
+  }
+}
+
+/** What components use. App provides one per connection, through ApiContext. */
+export interface ApiClient {
+  /**
+   * GETs `path` with the current apiKey. Waits while there's none. On a 401
+   * the key is stale: it's dropped, the connection is asked to reconnect,
+   * and the request is retried once with the next key. Resolves
+   * 'unauthorized' only when the connection was refused (4401), and 'failed'
+   * when `signal` aborts. Never rejects, except for a path outside /api/.
+   */
+  get(path: string, options?: { signal?: AbortSignal }): Promise<ApiResult>;
+}
+
+/** The connection's side of an ApiClient: it hands over each apiKey, and hears when one has gone stale. */
+export interface ApiKeys {
+  /** The server sent 'authenticated'. Requests waiting for a key go now. */
+  set(apiKey: string): void;
+  /** The socket closed or is being replaced: requests wait for the next key. */
+  clear(): void;
+  /** The server closed with 4401: waiting and later requests resolve 'unauthorized'. */
+  reject(): void;
+  /** Called when a request got 401 with the current key. Returns an unsubscribe function. */
+  onStale(listener: () => void): () => void;
+}
+
+export interface ApiClientOptions {
+  fetch?: FetchLike;
+  /** Start with this key, as a test or a story would, instead of waiting for a connection's. */
+  apiKey?: string;
+}
+
+type KeyState = { kind: 'waiting' } | { kind: 'ready'; apiKey: string } | { kind: 'rejected' };
+
+export function createApiClient(options: ApiClientOptions = {}): ApiClient & { keys: ApiKeys } {
+  const fetchImpl = options.fetch ?? defaultFetch;
+  let state: KeyState = options.apiKey ? { kind: 'ready', apiKey: options.apiKey } : { kind: 'waiting' };
+  const waiters = new Set<(apiKey: string | undefined) => void>();
+  const staleListeners = new Set<() => void>();
+
+  const settle = (apiKey: string | undefined) => {
+    for (const waiter of [...waiters]) waiter(apiKey);
+  };
+
+  /** The current key, or the next one; undefined once rejected or aborted. */
+  const nextKey = (signal: AbortSignal | undefined): Promise<string | undefined> => {
+    if (state.kind === 'ready') return Promise.resolve(state.apiKey);
+    if (state.kind === 'rejected' || signal?.aborted) return Promise.resolve(undefined);
+    return new Promise((resolve) => {
+      const done = (apiKey: string | undefined) => {
+        waiters.delete(done);
+        signal?.removeEventListener('abort', onAbort);
+        resolve(apiKey);
+      };
+      const onAbort = () => done(undefined);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      waiters.add(done);
+    });
+  };
+
+  const keys: ApiKeys = {
+    set(apiKey) {
+      state = { kind: 'ready', apiKey };
+      settle(apiKey);
+    },
+    clear() {
+      if (state.kind === 'ready') state = { kind: 'waiting' };
+    },
+    reject() {
+      state = { kind: 'rejected' };
+      settle(undefined);
+    },
+    onStale(listener) {
+      staleListeners.add(listener);
+      return () => {
+        staleListeners.delete(listener);
+      };
+    },
+  };
+
+  return {
+    keys,
+    async get(path, { signal } = {}) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        // With a key in hand, the request goes out in this same call, before any await.
+        const apiKey = state.kind === 'ready' ? state.apiKey : await nextKey(signal);
+        if (apiKey === undefined) return signal?.aborted ? { kind: 'failed' } : { kind: 'unauthorized' };
+        const result = await apiGet(path, apiKey, { fetch: fetchImpl, ...(signal ? { signal } : {}) });
+        if (result.kind !== 'unauthorized') return result;
+        // Nobody to fetch a new key from: give up rather than wait forever.
+        if (staleListeners.size === 0) return { kind: 'failed', status: 401 };
+        // The key is stale, as after a server restart. Unless another request
+        // has already dropped it, drop it and ask for a fresh handshake.
+        if (state.kind === 'ready' && state.apiKey === apiKey) {
+          state = { kind: 'waiting' };
+          for (const listener of [...staleListeners]) listener();
+        }
+      }
+      return { kind: 'failed', status: 401 };
+    },
+  };
+}
+
+/**
+ * The ApiClient for the current connection. App provides it; it's undefined
+ * only where a component is rendered without App, as in some tests.
+ */
+export const ApiContext = createContext<ApiClient | undefined>(undefined);
