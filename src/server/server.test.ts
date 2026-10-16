@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import type { Indexer } from '../index/index.js';
+import { createIndexer, type Indexer } from '../index/index.js';
 import {
+  lastMessagePath,
   SNAPSHOT_PATH,
   WS_CLOSE_UNAUTHORIZED,
   WS_PATH,
@@ -425,6 +426,136 @@ describe('startServer', () => {
       const server = await start();
       expect((await get(server.port, '/api/other')).status).toBe(401);
       expect((await get(server.port, '/api/other', bearer)).status).toBe(404);
+    });
+  });
+
+  describe('the last-message API', () => {
+    const SID = '77777777-7777-4777-8777-777777777777';
+    const message: LastMessage = { sessionId: SID, text: `Full reply.\n\n${'More detail. '.repeat(100)}`, truncated: false, at: '2026-10-16T00:00:00.000Z' };
+
+    function withMessage(): FakeIndexer {
+      const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
+      indexer.messages.set(SID, message);
+      return indexer;
+    }
+
+    it('serves the path the contract names', () => {
+      expect(lastMessagePath(SID)).toBe(`/api/sessions/${SID}/last-message`);
+    });
+
+    it('returns 401 with no detail for a missing or wrong token, without asking the index', async () => {
+      const indexer = withMessage();
+      const server = await start(indexer);
+      const attempts: Record<string, string>[] = [{}, { authorization: 'Bearer wrong' }, { authorization: TOKEN }];
+      for (const headers of attempts) {
+        const res = await get(server.port, lastMessagePath(SID), headers);
+        expect(res.status).toBe(401);
+        expect(res.body).toBe('');
+      }
+      expect(indexer.lastMessage).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 for another Origin, even with the token', async () => {
+      const indexer = withMessage();
+      const server = await start(indexer);
+      for (const value of ['http://evil.example', 'null', `http://localhost:${server.port}`]) {
+        const res = await get(server.port, lastMessagePath(SID), { origin: value, ...bearer });
+        expect(res.status).toBe(403);
+        expect(res.body).toBe('');
+      }
+      expect(indexer.lastMessage).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 for another Host', async () => {
+      const server = await start(withMessage());
+      expect((await get(server.port, lastMessagePath(SID), { host: 'evil.example', ...bearer })).status).toBe(403);
+    });
+
+    it("returns a known session's full reply as JSON, uncached", async () => {
+      const server = await start(withMessage());
+      for (const headers of [bearer, { origin: origin(server.port), ...bearer }]) {
+        const res = await get(server.port, lastMessagePath(SID), headers);
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toMatch(/^application\/json/);
+        expect(res.headers['cache-control']).toBe('no-store');
+        expect(JSON.parse(res.body)).toEqual(message);
+      }
+    });
+
+    it('returns 404, uncached, for a session the index has no message for', async () => {
+      const server = await start(withMessage());
+      const res = await get(server.port, lastMessagePath('88888888-8888-4888-8888-888888888888'), bearer);
+      expect(res.status).toBe(404);
+      expect(res.body).toBe('');
+      expect(res.headers['cache-control']).toBe('no-store');
+    });
+
+    it('returns 404 for a session outside the roots, which the index never serves', async () => {
+      const inside = '77777777-7777-4777-8777-000000000001';
+      const outside = '77777777-7777-4777-8777-000000000002';
+      const row = (sessionId: string, cwd: string) => ({
+        sessionId,
+        name: `pitwall-test-${sessionId.slice(-1)}`,
+        kind: 'interactive' as const,
+        cwd,
+        startedAt: '2026-10-16T00:00:00.000Z',
+      });
+      const indexer = createIndexer(
+        { roots: ['/work'], intervalMs: 60_000 },
+        {
+          agents: { list: async () => ({ ok: true, rows: [row(inside, '/work/repo'), row(outside, '/elsewhere/repo')] }) },
+          groups: { resolve: async (cwd) => ({ key: cwd, kind: 'directory' }), prune() {} },
+          // A reader that would answer for either session, as it may hold both.
+          transcripts: {
+            read: async () => ({ transcript: 'ok' }),
+            lastMessage: (sessionId) => ({ sessionId, text: 'a reply', truncated: false }),
+            retain() {},
+          },
+          realpath: async (p) => p,
+          now: () => Date.parse('2026-10-16T00:00:00.000Z'),
+          home: '/home/someone',
+          concurrency: 2,
+        },
+      );
+      try {
+        await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+        const server = await start(indexer);
+        expect((await get(server.port, lastMessagePath(inside), bearer)).status).toBe(200);
+        const res = await get(server.port, lastMessagePath(outside), bearer);
+        expect(res.status).toBe(404);
+        expect(res.body).toBe('');
+      } finally {
+        indexer.stop();
+      }
+    });
+
+    it.each([
+      ['an encoded ..', '/api/sessions/%2e%2e/last-message'],
+      ['an encoded ../..', '/api/sessions/..%2F..%2Fsecret.txt/last-message'],
+      ['an encoded / in the id', '/api/sessions/a%2Fb/last-message'],
+      ['an encoded backslash', '/api/sessions/..%5Csecret.txt/last-message'],
+      ['an encoded NUL', '/api/sessions/a%00b/last-message'],
+      ['a double-encoded ..', '/api/sessions/%252e%252e/last-message'],
+      ['a leading dot', '/api/sessions/.hidden/last-message'],
+      ['a bad escape', '/api/sessions/%E0%A4%A/last-message'],
+      ['a plain ..', '/api/sessions/../last-message'],
+    ])('answers %s with 400 or 404, and never asks the index for an unsafe id', async (_name, path) => {
+      const indexer = withMessage();
+      const server = await start(indexer);
+      const res = await raw(
+        server.port,
+        `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nAuthorization: Bearer ${TOKEN}\r\nConnection: close\r\n\r\n`,
+      );
+      expect([400, 404]).toContain(statusOf(res));
+      expect(res).not.toContain('SECRET');
+      for (const [id] of vi.mocked(indexer.lastMessage).mock.calls) {
+        expect(id).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+      }
+    });
+
+    it('refuses other methods', async () => {
+      const server = await start(withMessage());
+      expect((await get(server.port, lastMessagePath(SID), bearer, 'POST')).status).toBe(404);
     });
   });
 
