@@ -117,6 +117,34 @@ describe('groups', () => {
     expect(list.hidden).toBe(false);
   });
 
+  it('keeps two groups with the same key under different roots apart', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // A worktree under one root whose main repo is under another: both groups
+    // are keyed by the main repo.
+    const key = '/Users/example/code/demo-app';
+    renderDashboard(
+      snapshot(
+        [
+          group({ key, label: 'demo-app', root: '/Users/example/code', sessions: [session({ name: 'in-main' })] }),
+          group({
+            key,
+            label: '~/code/demo-app',
+            root: '/Users/example/worktrees',
+            sessions: [session({ name: 'in-worktree', cwd: '/Users/example/worktrees/demo-app-feature' })],
+          }),
+        ],
+        { roots: ['/Users/example/code', '/Users/example/worktrees'] },
+      ),
+    );
+
+    const main = groupSection('demo-app');
+    const worktree = groupSection('~/code/demo-app');
+    fireEvent.click(within(main).getByRole('button', { name: /demo-app/ }));
+    expect(main.querySelector('ul')!.hidden).toBe(true);
+    expect(worktree.querySelector('ul')!.hidden).toBe(false);
+    expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+  });
+
   it('shows which root a group is under when there are several roots', () => {
     const snap = mixedSnapshot();
     snap.roots = ['/Users/example/code', '/Users/example/other'];
