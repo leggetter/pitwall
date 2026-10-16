@@ -41,11 +41,12 @@ export function statusPill(session: SessionSummary): StatusPill {
 /**
  * The `claude attach` command for a background session, or undefined. The
  * short id is checked against a conservative pattern, because the command goes
- * to the clipboard and from there into a shell.
+ * to the clipboard and from there into a shell. It can't start with `-`, which
+ * `claude` would read as an option, such as `-h`.
  */
 export function attachCommand(session: SessionSummary): string | undefined {
   if (session.kind !== 'background' || !session.shortId) return undefined;
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(session.shortId)) return undefined;
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/.test(session.shortId)) return undefined;
   return `claude attach ${session.shortId}`;
 }
 
