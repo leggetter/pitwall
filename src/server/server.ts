@@ -1,6 +1,6 @@
 // The HTTP and WebSocket server. Which check applies where:
 //
-//   every request and upgrade   Host is 127.0.0.1:<port> or localhost:<port>, else 403
+//   every request and upgrade   Host is 127.0.0.1:<port> (not localhost), else 403
 //   /api/*                      Origin, when present, is this server's origin, else 403;
 //                               then Authorization: Bearer <token>, else 401
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
