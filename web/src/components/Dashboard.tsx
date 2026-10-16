@@ -4,7 +4,9 @@ import type { ConnectionState, ConnectionView } from '../connection.js';
 import { formatRoots, plainText, updatedAgo } from '../format.js';
 import { browserStorage, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
+import { useOpenWhenListed } from '../spawn.js';
 import { GroupSection } from './GroupSection.js';
+import { NewSessionDialog } from './NewSessionDialog.js';
 import { SessionView } from './SessionView.js';
 
 /** The current time, refreshed every second, for relative times. */
@@ -59,6 +61,9 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   const roots = snapshot ? formatRoots(snapshot.roots) : '';
   const listedOpen = opened ? allSessions.find((session) => session.sessionId === opened.sessionId) : undefined;
   const shownOpen = listedOpen ?? opened;
+  // The New session dialog, and the session it started, opened once it's listed.
+  const [newSession, setNewSession] = useState(false);
+  const started = useOpenWhenListed(allSessions, setOpened);
 
   const openSession = useCallback(
     (sessionId: string) => {
@@ -104,6 +109,11 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
             </p>
           )}
           <div className="masthead-status">
+            {snapshot && (
+              <button type="button" className="button small" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
+                New session
+              </button>
+            )}
             <ConnectionBadge state={state} />
             {snapshot && updatedAt && (
               <time className="updated" dateTime={updatedAt}>
@@ -166,6 +176,14 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
           </button>
         </div>
       )}
+      {started.waiting && (
+        <div className="banner muted" role="status">
+          <span>Started {plainText(started.waiting.name)}. Its view opens when it shows up in the list.</span>
+          <button type="button" className="link-button" onClick={started.dismiss}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {snapshot && state === 'reconnecting' && (
         <div className="banner muted">Lost the connection to pitwall. Reconnecting; this list may be out of date.</div>
       )}
@@ -208,6 +226,17 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
           listed={listedOpen !== undefined}
           now={now}
           onClose={closeSession}
+        />
+      )}
+
+      {newSession && snapshot && (
+        <NewSessionDialog
+          snapshot={snapshot}
+          onClose={() => setNewSession(false)}
+          onStarted={(session) => {
+            setNewSession(false);
+            started.wait(session);
+          }}
         />
       )}
     </div>
