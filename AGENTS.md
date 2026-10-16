@@ -19,6 +19,7 @@ M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read
 - **Never touch a real session.** During development and tests, don't message, stop, attach to or remove a session the user didn't name. Spikes and tests use throwaway sessions named `pitwall-test-*`, and remove them afterwards.
 - **Keep the security rules in `PLAN.md`:** localhost only, a token on every request, `Host` and `Origin` checks. Don't weaken them for convenience, including in dev mode.
 - **TypeScript in strict mode,** Node >= 22, npm.
+- **Dependencies are pinned exactly and must be at least 14 days old.** Pick the newest version published 14 or more days ago (`npm view <pkg> time --json`) and install with `npm install <pkg>@<version> --before=<date>`, so transitive dependencies follow the same cutoff. `.npmrc` enforces exact versions. Prefer a few lines of code over a new dependency.
 - **Commits and PRs:** conventional commits for commit messages and PR titles. Keep the PR summary short and put detail in a `<details>` block.
 - **Write as if the repo may go public.** It's private, but don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures.
 

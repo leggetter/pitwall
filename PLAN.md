@@ -137,9 +137,9 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | --- | --- | --- | --- | --- |
 | W0 | The contract: `src/shared/protocol.ts` | `m1/scaffold` | Coordinator | Done |
 | W1 | Scaffold: package, TypeScript, Vitest, Vite, CI, and stubbed module signatures | `m1/scaffold` | Sub-agent | Done |
-| W2 | Index: `claude agents --json` source, root filter, git grouping, transcript adapter, poller | `m1/index` | Sub-agent | Waiting on W1 |
-| W3 | Server and CLI: Hono, `ws`, token, `Host`/`Origin` checks, `pitwall [root...]` | `m1/server` | Sub-agent | Waiting on W1 |
-| W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | Waiting on W1 |
+| W2 | Index: `claude agents --json` source, root filter, git grouping, transcript adapter, poller | `m1/index` | Sub-agent | In progress |
+| W3 | Server and CLI: Hono, `ws`, token, `Host`/`Origin` checks, `pitwall [root...]` | `m1/server` | Sub-agent | In progress |
+| W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | In progress |
 | W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Waiting on W2-W4 |
 | W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Waiting on W5 |
 | W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
@@ -162,6 +162,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
   - Static assets need no token. `Host` is checked on every request, and `Origin` on every API request and WebSocket upgrade.
 - **No Vite dev server in M1.** `npm run dev` rebuilds the UI on change and the pitwall server serves it, so the UI is always same-origin and the security checks never need a dev exception.
 - **No `node-pty` in M1.** It arrives with attach in M2, so CI doesn't build a native module yet.
+- **Merges:** the coordinator merges W1 into `main`, and W2-W4 into `m1/integration`, once CI is green and the coordinator has reviewed the diff. The integration PR into `main` gets the W6 review and needs Phil's approval.
 - **Tests use synthetic fixtures only:** never real transcripts or real `claude agents` output. A live test against the real `claude agents --json` runs only when `PITWALL_LIVE=1` is set, and it's read-only.
 
 ## Open questions
