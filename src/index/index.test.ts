@@ -123,7 +123,7 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
-  it('notifies only when something other than generatedAt changed, but latest() is always the newest', async () => {
+  it('notifies after every completed poll, changed or not, with a fresh generatedAt', async () => {
     const { state, deps } = harness();
     state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
     const indexer = createIndexer({ roots: ['/work'], intervalMs: 1000 }, deps);
@@ -132,37 +132,59 @@ describe('createIndexer', () => {
     await flush();
     expect(received).toHaveLength(1);
 
+    // Nothing changed but the clock: still a notification, so the UI can tell
+    // a quiet index from a stuck one.
     state.now += 1000;
     await vi.advanceTimersByTimeAsync(1000);
-    expect(received).toHaveLength(1);
-    expect(indexer.latest()?.generatedAt).toBe(new Date(NOW + 1000).toISOString());
+    expect(received).toHaveLength(2);
+    expect(received[1]?.generatedAt).toBe(new Date(NOW + 1000).toISOString());
+    expect(received[1]?.groups).toEqual(received[0]?.groups);
+    expect(indexer.latest()).toBe(received[1]);
 
+    state.now += 1000;
     state.transcripts.set('a', { transcript: 'ok', lastActivityAt: new Date(NOW).toISOString(), lastUserPrompt: 'go' });
     await vi.advanceTimersByTimeAsync(1000);
-    expect(received).toHaveLength(2);
-    expect(received[1]?.groups[0]?.sessions[0]?.lastUserPrompt).toBe('go');
-
-    state.result = { ok: true, rows: [row('a', '/work/repo/a', { status: 'busy' })] };
-    await vi.advanceTimersByTimeAsync(1000);
     expect(received).toHaveLength(3);
+    expect(received[2]?.groups[0]?.sessions[0]?.lastUserPrompt).toBe('go');
+    expect(indexer.latest()).toBe(received[2]);
     indexer.stop();
   });
 
-  it('never overlaps polls: a tick during a running poll is skipped', async () => {
+  it('notifies after every failed poll too', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 1000 }, deps);
+    const received: IndexSnapshot[] = [];
+    indexer.subscribe((s) => received.push(s));
+    await flush();
+    state.now += 1000;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(received).toHaveLength(2);
+    expect(received.map((s) => s.source.ok)).toEqual([false, false]);
+    expect(received[1]?.generatedAt).toBe(new Date(NOW + 1000).toISOString());
+    indexer.stop();
+  });
+
+  it('never overlaps polls: a tick during a running poll is skipped and notifies nobody', async () => {
     const { state, deps } = harness();
     let release!: () => void;
     state.gate = new Promise((resolve) => (release = resolve));
     const indexer = createIndexer({ roots: ['/work'], intervalMs: 100 }, deps);
+    const listener = vi.fn();
+    indexer.subscribe(listener);
     await vi.advanceTimersByTimeAsync(1000);
     expect(state.listCalls).toBe(1);
     expect(indexer.latest()).toBeUndefined();
+    expect(listener).not.toHaveBeenCalled();
 
     state.gate = undefined;
     release();
     await flush();
     expect(indexer.latest()).toBeDefined();
+    expect(listener).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(100);
     expect(state.listCalls).toBe(2);
+    expect(listener).toHaveBeenCalledTimes(2);
     indexer.stop();
   });
 
