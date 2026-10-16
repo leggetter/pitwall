@@ -80,6 +80,14 @@ pitwall [root...]  ->  local server (127.0.0.1, per-run token)  ->  web UI
 | A background job's "needs" line | `~/.claude/jobs/<id>/state.json` | **Internal**, and documented as not stable |
 | Posting into a session's inbox socket directly | Unix socket under `/tmp/cc-socks*` | Only the auth line is documented. Don't depend on it |
 
+Observed while building M1 (Claude Code v2.1.301):
+
+- **`claude agents --json` works from an untrusted directory.** The index runs it from the temp directory, so the result doesn't depend on where pitwall was started.
+- **`startedAt` is epoch milliseconds,** not a string.
+- **Transcripts write one content block per line,** and about two thirds of assistant messages are `tool_use` only. Text blocks with the same `message.id` belong together.
+- **Transcripts also carry `origin.kind` and `last-prompt` entries.** Both are internal, but `last-prompt` is a cheaper source for the latest prompt if it's ever needed.
+- **A snapshot is about 20 KB for 20 sessions,** and a poll takes 0.2 to 1.3 s.
+
 ## Decisions
 
 Each open one carries a lean. Settled decisions keep a one-line status here; their reasoning is in `README.md`.
@@ -118,16 +126,24 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
 
 - **M0 - Spike.** Done.
 - **M1 - Read-only index.** `pitwall [root...]` starts the server and opens the UI. Sessions are grouped by repo, with kind, state, waiting reason, last activity and the last assistant message, refreshing on their own.
-  - Flag stale jobs: blocked, no process, old `startedAt`.
+  - Flag stale jobs: blocked with no activity for 7 days, process or not.
+  - Flag sessions that finished their turn by asking me something (`askedYou`), as a heuristic over the transcript.
   - Read transcripts from a byte offset, never whole files (434 KB after two one-word turns).
   - Tell cross-session messages apart from my own prompts. They're `user` entries with `isMeta: true` and content starting `Another Claude session sent a message:`.
 - **M2 - Act.** Session view (transcript, plus attach for background sessions), a spawn dialog, stop and remove.
   - Show the `Workspace not trusted` error with the command to run. Never grant trust for me.
+  - Contract additions suggested during M1:
+    - my home directory in the snapshot, so the UI doesn't guess `~`;
+    - an auth acknowledgement on the WebSocket;
+    - worktree branch names for sessions in worktrees;
+    - a background job's "needs" line from `state.json`, behind the adapter.
+  - Check whether `claude attach` works on a background session that isn't running (done, stopped or failed), and hide the attach command if not.
 - **M3 - Supervisor.** Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions.
   - Label relayed messages in the UI as coming from the supervisor, because that's how the receiving session sees them.
   - Get status from pitwall's index (D1 polling and transcripts), not by messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
   - Don't subscribe to idle notices broadly. Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
 - **M4 - Triage.** Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using PR and CI state from `gh`.
+  - The supervisor refines M1's `askedYou` heuristic: it reads each idle session's latest turns and judges whether it really needs me, and how urgently.
 
 ## M1 work breakdown
 
@@ -137,12 +153,23 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | --- | --- | --- | --- | --- |
 | W0 | The contract: `src/shared/protocol.ts` | `m1/scaffold` | Coordinator | Done |
 | W1 | Scaffold: package, TypeScript, Vitest, Vite, CI, and stubbed module signatures | `m1/scaffold` | Sub-agent | Done |
-| W2 | Index: `claude agents --json` source, root filter, git grouping, transcript adapter, poller | `m1/index` | Sub-agent | In progress |
-| W3 | Server and CLI: Hono, `ws`, token, `Host`/`Origin` checks, `pitwall [root...]` | `m1/server` | Sub-agent | In progress |
-| W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | In progress |
-| W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Waiting on W2-W4 |
-| W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Waiting on W5 |
+| W2 | Index: `claude agents --json` source, root filter, git grouping, transcript adapter, poller | `m1/index` | Sub-agent | Merged ([#4](https://github.com/leggetter/pitwall/pull/4)) |
+| W3 | Server and CLI: Hono, `ws`, token, `Host`/`Origin` checks, `pitwall [root...]` | `m1/server` | Sub-agent | Merged ([#3](https://github.com/leggetter/pitwall/pull/3)) |
+| W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | Merged ([#2](https://github.com/leggetter/pitwall/pull/2)) |
+| W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Done; findings below |
+| W5a | Fixes from W5: "asked you" heuristic, stale rule, markdown stripping, missing directories | `m1/followups` | Sub-agent | In progress |
+| W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Waiting on W5a |
 | W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
+
+### W5 findings (2026-10-16)
+
+Run read-only against `~/hookdeck/git`: 17 of 17 sessions found and grouped by repo, live updates every poll, no console errors, clean shutdown, 315 tests passing.
+
+- **"Needs you" missed most of what needed Phil.** 1 of 17 sessions was flagged, against 10 in the manual sweep that morning. Interactive sessions only report busy or idle, so one that ended its turn with questions looks the same as one that's done.
+  - **Decision (Phil):** option C. Add a transcript heuristic now (`askedYou` in the contract). The M4 supervisor triage refines it later.
+- **Stale missed abandoned jobs that still had a process.** A background job blocked since 24 Sep was flagged as needing Phil. Stale is now 7 days without activity, with or without a process.
+- **Raw markdown made the rows hard to read.** The index now strips markdown syntax before truncating.
+- **A deleted working directory grouped as a plain folder.** Rows now say the directory no longer exists (`cwdMissing`).
 
 ### Module layout
 
@@ -161,6 +188,8 @@ web/                     W4. Vite + React app, built to dist/web and served by t
   - The WebSocket sends `{ "type": "auth", "token": ... }` as its first message.
   - Static assets need no token. `Host` is checked on every request, and `Origin` on every API request and WebSocket upgrade.
 - **No Vite dev server in M1.** `npm run dev` rebuilds the UI on change and the pitwall server serves it, so the UI is always same-origin and the security checks never need a dev exception.
+- **Dev token:** `npm run dev` generates one token per run and passes it as `PITWALL_TOKEN`, which must be at least 32 base64url characters. It also uses a fixed port, 4517, and opens the browser once. The CLI removes `PITWALL_TOKEN` from its environment, so processes it starts don't inherit it.
+- **CSP:** `connect-src` names the WebSocket origins explicitly (`ws://127.0.0.1:<port> ws://localhost:<port>`), because older Safari may not match `ws:` against `'self'`.
 - **No `node-pty` in M1.** It arrives with attach in M2, so CI doesn't build a native module yet.
 - **Merges:** the coordinator merges W1 into `main`, and W2-W4 into `m1/integration`, once CI is green and the coordinator has reviewed the diff. The integration PR into `main` gets the W6 review and needs Phil's approval.
 - **Tests use synthetic fixtures only:** never real transcripts or real `claude agents` output. A live test against the real `claude agents --json` runs only when `PITWALL_LIVE=1` is set, and it's read-only.

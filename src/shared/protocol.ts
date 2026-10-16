@@ -26,6 +26,17 @@ export type WaitingFor =
 /** How much of a session's transcript the index could read. */
 export type TranscriptStatus = 'ok' | 'missing' | 'unreadable';
 
+/**
+ * Why the index thinks a session asked the user something.
+ * - 'open-questions': the message has an "Open questions" section whose content isn't "None".
+ * - 'question': the message's last non-empty line ends with a question mark.
+ */
+export interface AskedYou {
+  reason: 'open-questions' | 'question';
+  /** The question itself, as plain text, at most 200 characters. */
+  excerpt: string;
+}
+
 export interface SessionSummary {
   /** Full session UUID, usable with `claude --resume`. */
   sessionId: string;
@@ -34,8 +45,13 @@ export interface SessionSummary {
   /** Display name: the set name, or Claude Code's default such as `website-98`. */
   name: string;
   kind: SessionKind;
-  /** Absolute working directory. */
+  /**
+   * Absolute working directory, as `claude agents` reports it, not its realpath.
+   * Root matching and grouping use the realpath.
+   */
   cwd: string;
+  /** True when the working directory no longer exists, for example after a worktree was removed. */
+  cwdMissing?: boolean;
   pid?: number;
   /** True while the session's process is running (a pid is present). */
   alive: boolean;
@@ -45,13 +61,24 @@ export interface SessionSummary {
   /** ISO 8601. */
   startedAt: string;
   /**
-   * True for a background session that is blocked, has no process, and started
-   * more than 7 days ago. These are usually waiting on a question that's moot.
+   * True for a background session that is blocked and has had no activity for
+   * more than 7 days, whether or not its process is still running. Activity is
+   * lastActivityAt, or startedAt when the transcript is unavailable. These are
+   * usually waiting on a question that's moot.
    */
   stale: boolean;
+  /**
+   * Set when the session has finished its turn and its newest assistant message
+   * looks like it asked the user something, with no user prompt since. A
+   * heuristic over the transcript, not something Claude Code reports.
+   */
+  askedYou?: AskedYou;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
-  /** The newest assistant text, trimmed and truncated to 500 characters. */
+  /**
+   * The newest assistant text, with markdown syntax stripped to plain text, then
+   * trimmed and truncated to 500 characters.
+   */
   lastAssistantText?: string;
   /**
    * The newest prompt typed by the user, truncated to 300 characters. Messages
@@ -64,12 +91,19 @@ export interface SessionSummary {
 export interface SessionGroup {
   /** Absolute path: the repo's top-level directory for git, otherwise the session's cwd. */
   key: string;
-  /** `key` relative to the configured root it sits under, or the root's basename for the root itself. */
+  /**
+   * `key` relative to the configured root it sits under, or the root's basename
+   * for the root itself. When the key is outside the root (a worktree under the
+   * root whose main repo isn't), the key with the home directory shortened to `~`.
+   */
   label: string;
   kind: 'git' | 'directory';
   /** The configured root this group sits under. */
   root: string;
-  /** Sorted: waiting first, then busy, then by lastActivityAt descending. */
+  /**
+   * Sorted: status 'waiting' first, then askedYou, then busy, then by
+   * lastActivityAt descending (startedAt when there's none). Stale sessions last.
+   */
   sessions: SessionSummary[];
 }
 
