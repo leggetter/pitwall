@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 (spike). No app code yet. |
-| **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything. Full control needs the session moved to the background with `/bg`. See D2. |
-| **Next steps** | - Run S1-S6 and record the results in `docs/spikes/001-session-control.md`<br>- Settle D2-D5, then start M1 |
+| **Status** | M0 (spike) done on 2026-10-16: all six questions pass, with two gaps carried into M3. See [`docs/spikes/001-session-control.md`](docs/spikes/001-session-control.md). No app code yet. |
+| **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything. Full control needs the session moved to the background with `/bg` (D2). A supervisor messaging live sessions may also be blocked by the auto-mode classifier; that's untested (D4). |
+| **Next steps** | - Confirm the stack (D5)<br>- Build M1 |
 
 ## Who is this for
 
@@ -82,23 +82,19 @@ pitwall [root...]  ->  local server (127.0.0.1, per-run token)  ->  web UI
 
 ## Decisions
 
-Each one carries a lean. Once settled, the reasoning moves to `README.md`.
+Each open one carries a lean. Settled decisions keep a one-line status here; their reasoning is in `README.md`.
 
-- **D1 - Session list comes from `claude agents --json`.** Lean: decided. It's documented and it includes interactive sessions. That was observed on v2.1.301; the agent view docs only mention background sessions, so S1 confirms it. Poll every 2 seconds, and revisit if an event stream appears.
-- **D2 - Acting on an interactive session pitwall didn't start.** Options:
-  - (a) relay through the supervisor with `SendMessage`;
-  - (b) ask me to `/bg` the session, then attach to it;
-  - (c) post to its inbox socket directly.
-
-  Lean: (a) for messages, (b) for anything that needs full control, such as permission prompts. A cross-session message can't approve anything, and the receiver treats it as coming from another session rather than from me, so (a) alone isn't enough. (c) is rejected because its wire format is undocumented.
-- **D3 - Direct interaction with background sessions: xterm.js over a PTY running `claude attach <id>`.** Lean: decided if S3 passes. It handles permission prompts and dialogs without pitwall having to model them. The alternative, a custom chat UI over the transcript plus `claude --resume <id> --bg "prompt"`, is nicer to look at but can't answer dialogs.
-- **D4 - Supervisor runtime: a background Claude Code session (`claude --bg`), not the Agent SDK.** Lean: background session.
-  - **For it:** it runs on my normal Claude login, shows up in agent view, has `ListAgents`/`SendMessage`, and the web UI can attach to it like any other session.
+- **D1 - Session list comes from `claude agents --json`.** Decided (S1).
+- **D2 - Acting on an interactive session pitwall didn't start:** relay messages through the supervisor, and ask me to `/bg` the session for anything that needs full control. Decided (S4).
+- **D3 - Direct interaction with background sessions: xterm.js over a PTY running `claude attach <id>`.** Decided (S3).
+- **D4 - Supervisor runtime: a background Claude Code session (`claude --bg`), not the Agent SDK.** Lean: background session, and S4 supports it. A background session called `ListAgents` and `SendMessage` with no approval needed in auto mode.
+  - **For it:** it runs on my normal Claude login, shows up in agent view, and the web UI can attach to it like any other session.
   - **The SDK:** gives a structured message stream, which would make a better chat UI. But it raises auth and parity questions, such as whether an SDK session binds an inbox socket (bare mode doesn't).
+  - **Open risk:** a background session messaging a live interactive session is untested. The auto-mode classifier blocked my attempt to set that up during the spike. M3 starts by testing it with a session I open for the purpose.
 
   Revisit if chatting with the supervisor through a terminal is too crude.
-- **D5 - Stack: TypeScript on Node >= 22, npm, Hono and `ws` on the server, React and Vite for the UI, `node-pty`, xterm.js.** Lean: proposed. Package `@leggetter/pitwall`, binary `pitwall`.
-- **D6 - Grouping by `git rev-parse --git-common-dir`,** so worktrees sit under their repo, falling back to the working directory. Lean: decided.
+- **D5 - Stack: TypeScript on Node >= 22, npm, Hono and `ws` on the server, React and Vite for the UI, `node-pty`, xterm.js.** Lean: proposed, waiting on Phil. `node-pty@1.0.0` works on Node 25.1.0 (S3). Package `@leggetter/pitwall`, binary `pitwall`.
+- **D6 - Grouping by `git rev-parse --git-common-dir`,** so worktrees sit under their repo, falling back to the working directory. Decided.
 
 ## Security
 
@@ -110,9 +106,9 @@ A local web UI that can type into agents running in auto mode is a local remote-
 - No CORS.
 - Don't write the token or session content anywhere outside `~/.claude`.
 
-## M0: spike
+## M0: spike (done)
 
-Confirm the interfaces above before writing app code. Results go in `docs/spikes/001-session-control.md`.
+Confirm the interfaces above before writing app code. All six passed on 2026-10-16; the results and the two gaps are in [`docs/spikes/001-session-control.md`](docs/spikes/001-session-control.md).
 
 | # | Question | Passes when |
 | --- | --- | --- |
@@ -125,10 +121,16 @@ Confirm the interfaces above before writing app code. Results go in `docs/spikes
 
 ## Milestones
 
-- **M0 - Spike.** S1-S6 answered and the decisions updated.
+- **M0 - Spike.** Done.
 - **M1 - Read-only index.** `pitwall [root...]` starts the server and opens the UI. Sessions are grouped by repo, with kind, state, waiting reason, last activity and the last assistant message, refreshing on their own.
+  - Flag stale jobs: blocked, no process, old `startedAt`.
+  - Read transcripts from a byte offset, never whole files (434 KB after two one-word turns).
+  - Tell `<cross-session-message>` entries apart from my own prompts.
 - **M2 - Act.** Session view (transcript, plus attach for background sessions), a spawn dialog, stop and remove.
+  - Show the `Workspace not trusted` error with the command to run. Never grant trust for me.
 - **M3 - Supervisor.** Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions.
+  - First, test the two spike gaps with a session I open for the purpose: a background supervisor messaging an interactive session, and the reply coming back.
+  - Label relayed messages in the UI as coming from the supervisor, because that's how the receiving session sees them.
 - **M4 - Triage.** Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using PR and CI state from `gh`.
 
 ## Open questions
@@ -140,8 +142,9 @@ Confirm the interfaces above before writing app code. Results go in `docs/spikes
 ## Suggested actions
 
 - [x] Create the repo and this plan
-- [ ] Run S1-S6
-- [ ] Settle D2-D5
+- [x] Run S1-S6
+- [x] Settle D1-D3 and D6
+- [ ] Confirm D5, the stack (Phil)
 - [ ] Build M1
 
 ---
