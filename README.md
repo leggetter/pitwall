@@ -7,8 +7,29 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Spawns new sessions** in any directory under the root.
 - **Has a supervisor session** you can talk to instead of visiting each session. It knows what each one is waiting on and what's urgent.
 
-**Status:** planning and spike. See [`PLAN.md`](PLAN.md).
+**Status:** spike done, app not started. See [`PLAN.md`](PLAN.md).
 
 ## Decisions
 
-Settled decisions move here from `PLAN.md`, with their reasoning. None yet.
+Settled decisions move here from `PLAN.md`, with their reasoning. The evidence is in [`docs/spikes/001-session-control.md`](docs/spikes/001-session-control.md).
+
+### D1 - The session list comes from `claude agents --json`
+
+- **Why:** it's a documented interface and returns in about 0.2 s with 20 sessions. It includes interactive sessions started in any terminal or IDE, not just background ones. Third-party session managers only see sessions they launch themselves, which is why pitwall exists.
+- **Caveat:** interactive rows aren't in the agent view docs, which describe background sessions only. If they disappear in a later Claude Code release, pitwall loses most of its value, so watch the changelog.
+- **How:** poll every 2 s. Interactive rows give `status` (busy/idle) only; background rows add `state` and, when waiting, `waitingFor`.
+
+### D2 - Interactive sessions: relay through the supervisor, or `/bg` for full control
+
+- **Why:** an interactive session in Warp or Cursor belongs to that terminal. The only documented way in from outside is cross-session messaging. The receiving session sees such a message as coming from another session, "not typed by your user", so it can't approve a permission prompt or change configuration.
+- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
+- **Rejected:** posting to a session's inbox socket directly. Only the socket's auth line is documented, not the message format.
+
+### D3 - Background sessions are driven through a PTY running `claude attach <id>`, shown with xterm.js
+
+- **Why:** it gives the full Claude Code interface, including permission prompts and dialogs, without pitwall modeling any of it. `node-pty` works on Node 25. Closing the PTY detaches without stopping the session.
+- **Rejected:** a custom chat UI over the transcript plus `claude --resume <id> --bg "prompt"`. It would look better but can't answer dialogs. It may come back later as a read-only view.
+
+### D6 - Group sessions by `git rev-parse --git-common-dir`
+
+- **Why:** worktrees sit under the repo they belong to. A directory that isn't a git repo groups as itself.
