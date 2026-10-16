@@ -1,0 +1,61 @@
+import type { SessionSummary } from '../../../src/shared/protocol.js';
+import { absoluteTime, cwdWithinGroup, plainText, relativeTime } from '../format.js';
+import { attachCommand, needsAttention, statusPill } from '../sessions.js';
+import { ClampedText } from './ClampedText.js';
+import { CopyCommand } from './CopyCommand.js';
+
+const STALE_HINT = 'Blocked, no process, and started more than 7 days ago. Usually waiting on a question that no longer matters.';
+
+export function SessionRow({ session, groupKey, now }: { session: SessionSummary; groupKey: string; now: number }) {
+  const attention = needsAttention(session);
+  const pill = statusPill(session);
+  const where = cwdWithinGroup(session.cwd, groupKey);
+  const command = attachCommand(session);
+  const name = plainText(session.name);
+
+  return (
+    <li className={attention ? 'session attention' : 'session'} data-attention={attention || undefined}>
+      <div className="session-head">
+        <h3 className="session-name" title={`Session ${session.sessionId}, started ${absoluteTime(session.startedAt)}`}>
+          {name}
+        </h3>
+        <span className="kind">{session.kind}</span>
+        <span className={`pill tone-${pill.tone}`}>{plainText(pill.label)}</span>
+        {session.stale && (
+          <span className="stale" title={STALE_HINT}>
+            stale
+          </span>
+        )}
+        {session.lastActivityAt && (
+          <time className="activity" dateTime={session.lastActivityAt} title={absoluteTime(session.lastActivityAt)}>
+            {relativeTime(session.lastActivityAt, now)}
+          </time>
+        )}
+      </div>
+
+      {session.transcript === 'ok' ? (
+        <>
+          {session.lastUserPrompt && (
+            <p className="prompt" title={plainText(session.lastUserPrompt)}>
+              <span className="who">You</span> {plainText(session.lastUserPrompt)}
+            </p>
+          )}
+          {session.lastAssistantText && <ClampedText className="reply" text={plainText(session.lastAssistantText)} />}
+        </>
+      ) : (
+        <p className="transcript-note">Transcript {session.transcript === 'missing' ? 'not found' : 'unreadable'}</p>
+      )}
+
+      {(where || command) && (
+        <div className="session-foot">
+          {where && (
+            <span className="cwd" title={plainText(session.cwd)}>
+              {plainText(where)}
+            </span>
+          )}
+          {command && <CopyCommand command={command} />}
+        </div>
+      )}
+    </li>
+  );
+}

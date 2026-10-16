@@ -1,12 +1,38 @@
-import { WS_PATH, type IndexSnapshot } from '../../src/shared/protocol.js';
+import type { ReactNode } from 'react';
+import { Dashboard } from './components/Dashboard.js';
+import { defaultSocketFactory, useConnection, type SocketFactory } from './connection.js';
+import { useToken } from './token.js';
 
-// W1 placeholder, replaced by W4. It imports a type and a value from the shared
-// contract to prove the web build can reach src/shared.
-export function App({ snapshot }: { snapshot?: IndexSnapshot }) {
+export interface AppProps {
+  /** Opens the WebSocket. Tests pass a fake; the browser's `WebSocket` otherwise. */
+  createSocket?: SocketFactory;
+}
+
+function Notice({ children }: { children: ReactNode }) {
   return (
-    <main>
-      <h1>pitwall</h1>
-      <p>{snapshot ? `${snapshot.groups.length} groups` : `Not connected to ${WS_PATH} yet.`}</p>
+    <main className="notice">
+      <h1 className="brand">pitwall</h1>
+      <p>{children}</p>
     </main>
   );
+}
+
+function Connected({ token, createSocket }: { token: string; createSocket: SocketFactory }) {
+  const view = useConnection(token, createSocket);
+  if (view.state === 'unauthorized') {
+    return <Notice>Token rejected; reopen pitwall from the URL the command printed.</Notice>;
+  }
+  return <Dashboard view={view} />;
+}
+
+export function App({ createSocket = defaultSocketFactory }: AppProps) {
+  const token = useToken();
+  if (!token) {
+    return (
+      <Notice>
+        Open pitwall from the URL the <code>pitwall</code> command printed.
+      </Notice>
+    );
+  }
+  return <Connected token={token} createSocket={createSocket} />;
 }
