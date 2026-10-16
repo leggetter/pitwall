@@ -52,6 +52,15 @@ function jsonl(...entries: unknown[]): string {
   return entries.map((e) => `${JSON.stringify(e)}\n`).join('');
 }
 
+function timed(fn: () => unknown): number {
+  const start = performance.now();
+  fn();
+  return performance.now() - start;
+}
+
+/** A few milliseconds is typical; the margin is for slow CI. The quadratic versions took seconds. */
+const FAST_MS = 200;
+
 function fieldsOf(...entries: unknown[]): Fields {
   const fields: Fields = {};
   for (const entry of entries) applyEntry(fields, entry);
@@ -241,6 +250,25 @@ describe('stripSystemReminders', () => {
   it('removes every reminder block, across lines', () => {
     expect(stripSystemReminders('a<system-reminder>1\n2</system-reminder>b<system-reminder>3</system-reminder>c')).toBe('abc');
   });
+
+  it('removes from an opening tag to the first closing tag after it', () => {
+    expect(stripSystemReminders('<system-reminder>a<system-reminder>b</system-reminder>c</system-reminder>d')).toBe(
+      'c</system-reminder>d',
+    );
+  });
+
+  it('leaves an opening tag with no closing tag after it, and text with no tags, as they are', () => {
+    expect(stripSystemReminders('keep <system-reminder>unclosed')).toBe('keep <system-reminder>unclosed');
+    expect(stripSystemReminders('a<system-reminder>x</system-reminder>b<system-reminder>c')).toBe('ab<system-reminder>c');
+    expect(stripSystemReminders('</system-reminder>a<system-reminder>')).toBe('</system-reminder>a<system-reminder>');
+    expect(stripSystemReminders('plain')).toBe('plain');
+  });
+
+  it('runs in linear time on a prompt full of unclosed tags', () => {
+    const text = '<system-reminder>'.repeat(64 * 1024);
+    expect(timed(() => stripSystemReminders(text))).toBeLessThan(FAST_MS);
+    expect(timed(() => userPromptOf(user(text)))).toBeLessThan(FAST_MS);
+  });
 });
 
 describe('defaultConfigDir and encodeProjectDir', () => {
@@ -301,6 +329,20 @@ describe('createTranscriptReader', () => {
     const code = `\`\`\`\n${'x'.repeat(2000)}\n\`\`\``;
     await writeFile(file, jsonl(assistant([text(`## Result\n\n${code}\n\n**All** tests \`pass\`.`)])));
     expect((await reader().read(SID, [CWD])).lastAssistantText).toBe('Result\n\n[code]\n\nAll tests pass.');
+  });
+
+  it('shows the prose after a long code block at the start', async () => {
+    const code = `\`\`\`diff\n${'+ added line\n'.repeat(2000)}\`\`\``;
+    await writeFile(file, jsonl(assistant([text(`${code}\n\nShould I apply this?`)])));
+    expect((await reader().read(SID, [CWD])).lastAssistantText).toBe('[code]\n\nShould I apply this?');
+  });
+
+  it('strips a hostile 64 KiB message quickly, reading only the start it shows', async () => {
+    await writeFile(file, jsonl(assistant([text('['.repeat(ASSISTANT_TEXT_KEEP))])));
+    const started = performance.now();
+    const info = await reader().read(SID, [CWD]);
+    expect(performance.now() - started).toBeLessThan(FAST_MS);
+    expect(info.lastAssistantText).toBe(`${'['.repeat(499)}…`);
   });
 
   it('drops assistant text that is only markdown syntax', async () => {
