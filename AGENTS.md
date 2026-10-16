@@ -10,7 +10,7 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 ## Status
 
-M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read-only index, is next. There is no app code yet.
+M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read-only index, is in progress. The scaffold (W1) is in place; the index, server and web UI are still stubs.
 
 ## Rules
 
@@ -22,10 +22,37 @@ M0 (the spikes) is done and every decision in `PLAN.md` is settled. M1, the read
 - **Commits and PRs:** conventional commits for commit messages and PR titles. Keep the PR summary short and put detail in a `<details>` block.
 - **Write as if the repo may go public.** It's private, but don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures.
 
+## Commands
+
+Use Node 22 (CI runs 22.x) and npm.
+
+```
+npm ci                   install exactly what package-lock.json records
+npm run build            server with tsc to dist/, web UI with Vite to dist/web
+npm run dev -- [root...] rebuild the web UI and restart the server on change
+npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
+npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
+npm start -- [root...]   run the built CLI, node dist/cli.js
+```
+
+There is no Vite dev server. `npm run dev` runs `vite build --watch` and `tsx watch src/cli.ts`, and the pitwall server serves `dist/web`.
+
 ## Layout
 
 ```
 PLAN.md                  the living plan: status, decisions, milestones
 README.md                what pitwall is, and settled decisions with reasons
 docs/spikes/             spike write-ups, one file per spike
+src/shared/protocol.ts   the M1 contract between the index, the server and the web UI
+src/index/               the session index. Entry point index.ts: startIndexer()
+src/server/              the local HTTP and WebSocket server. Entry point index.ts: startServer()
+src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
+web/                     the React web UI, built by Vite to dist/web
+scripts/dev.ts           runs the two watchers behind `npm run dev`
+tsconfig.json            server typecheck: src/ with tests, scripts/, config files
+tsconfig.build.json      server build: src/ to dist/, without tests
+web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)
+vite.config.ts           web UI build
+vitest.config.ts         test runner config
+.github/workflows/ci.yml CI: npm ci, typecheck, test, build on Node 22.x
 ```

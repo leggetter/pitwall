@@ -136,7 +136,7 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | Item | What | Branch | Owner | Status |
 | --- | --- | --- | --- | --- |
 | W0 | The contract: `src/shared/protocol.ts` | `m1/scaffold` | Coordinator | Done |
-| W1 | Scaffold: package, TypeScript, Vitest, Vite, CI, and stubbed module signatures | `m1/scaffold` | Sub-agent | In progress |
+| W1 | Scaffold: package, TypeScript, Vitest, Vite, CI, and stubbed module signatures | `m1/scaffold` | Sub-agent | Done |
 | W2 | Index: `claude agents --json` source, root filter, git grouping, transcript adapter, poller | `m1/index` | Sub-agent | Waiting on W1 |
 | W3 | Server and CLI: Hono, `ws`, token, `Host`/`Origin` checks, `pitwall [root...]` | `m1/server` | Sub-agent | Waiting on W1 |
 | W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | Waiting on W1 |
