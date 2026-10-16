@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionSummary } from '../shared/protocol.js';
+import type { AskedYou, SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
 import { buildGroups, compareSessions, isStale, toSessionSummary, type PlacedSession } from './summaries.js';
+import type { TranscriptInfo } from './transcripts.js';
 
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -35,19 +36,30 @@ function session(id: string, overrides: Partial<SessionSummary> = {}): SessionSu
 }
 
 describe('isStale', () => {
-  const oldBlocked = row({ kind: 'background', state: 'blocked', pid: undefined, status: undefined, startedAt: iso(NOW - 8 * DAY) });
+  const oldBlocked = row({ kind: 'background', state: 'blocked', pid: undefined, status: undefined, startedAt: iso(NOW - 30 * DAY) });
 
-  it('flags a blocked background session with no process that started over 7 days ago', () => {
-    expect(isStale(oldBlocked, NOW)).toBe(true);
+  it('flags a blocked background session with no activity for more than 7 days, with or without a process', () => {
+    expect(isStale(oldBlocked, iso(NOW - 8 * DAY), NOW)).toBe(true);
+    expect(isStale({ ...oldBlocked, pid: 123, status: 'idle' }, iso(NOW - 8 * DAY), NOW)).toBe(true);
   });
 
-  it('does not flag it when any one condition is missing', () => {
-    expect(isStale({ ...oldBlocked, kind: 'interactive' }, NOW)).toBe(false);
-    expect(isStale({ ...oldBlocked, state: 'working' }, NOW)).toBe(false);
-    expect(isStale({ ...oldBlocked, state: 'done' }, NOW)).toBe(false);
-    expect(isStale({ ...oldBlocked, pid: 123 }, NOW)).toBe(false);
-    expect(isStale({ ...oldBlocked, startedAt: iso(NOW - 6 * DAY) }, NOW)).toBe(false);
-    expect(isStale({ ...oldBlocked, startedAt: iso(NOW - 7 * DAY) }, NOW)).toBe(false);
+  it('uses startedAt when there is no activity from the transcript', () => {
+    expect(isStale(oldBlocked, undefined, NOW)).toBe(true);
+    expect(isStale({ ...oldBlocked, startedAt: iso(NOW - 6 * DAY) }, undefined, NOW)).toBe(false);
+  });
+
+  it('goes by the latest activity, not by when the session started', () => {
+    expect(isStale(oldBlocked, iso(NOW - 6 * DAY), NOW)).toBe(false);
+    expect(isStale(oldBlocked, iso(NOW - 7 * DAY), NOW)).toBe(false);
+    expect(isStale(oldBlocked, iso(NOW - 7 * DAY - 1), NOW)).toBe(true);
+  });
+
+  it('flags only blocked background sessions', () => {
+    const old = iso(NOW - 30 * DAY);
+    expect(isStale({ ...oldBlocked, kind: 'interactive' }, old, NOW)).toBe(false);
+    expect(isStale({ ...oldBlocked, state: 'working' }, old, NOW)).toBe(false);
+    expect(isStale({ ...oldBlocked, state: 'done' }, old, NOW)).toBe(false);
+    expect(isStale({ ...oldBlocked, state: undefined }, old, NOW)).toBe(false);
   });
 });
 
@@ -95,9 +107,70 @@ describe('toSessionSummary', () => {
       transcript: 'missing',
     });
   });
+
+  it('sets cwdMissing only when the directory has gone', () => {
+    expect(toSessionSummary(row(), { transcript: 'ok' }, NOW, { cwdMissing: true }).cwdMissing).toBe(true);
+    expect(toSessionSummary(row(), { transcript: 'ok' }, NOW, { cwdMissing: false })).not.toHaveProperty('cwdMissing');
+    expect(toSessionSummary(row(), { transcript: 'ok' }, NOW)).not.toHaveProperty('cwdMissing');
+  });
+
+  describe('askedYou', () => {
+    const asked: AskedYou = { reason: 'question', excerpt: 'Should I push it?' };
+    const transcript: TranscriptInfo = { transcript: 'ok', lastActivityAt: iso(NOW - 1000), askedYou: asked };
+    const background = (overrides: Partial<AgentRow>) =>
+      row({ kind: 'background', shortId: 'ab12', status: undefined, pid: undefined, ...overrides });
+
+    it('is kept for a session that has finished its turn', () => {
+      expect(toSessionSummary(row({ status: 'idle' }), transcript, NOW).askedYou).toEqual(asked);
+      expect(toSessionSummary(row({ status: undefined, pid: undefined }), transcript, NOW).askedYou).toEqual(asked);
+      for (const state of ['done', 'failed', 'stopped'] as const) {
+        expect(toSessionSummary(background({ state }), transcript, NOW).askedYou, state).toEqual(asked);
+      }
+    });
+
+    it('is dropped while the session is busy, waiting, working or blocked', () => {
+      expect(toSessionSummary(row({ status: 'busy' }), transcript, NOW)).not.toHaveProperty('askedYou');
+      expect(toSessionSummary(row({ status: 'waiting' }), transcript, NOW)).not.toHaveProperty('askedYou');
+      expect(toSessionSummary(background({ state: 'working' }), transcript, NOW)).not.toHaveProperty('askedYou');
+      expect(toSessionSummary(background({ state: 'blocked' }), transcript, NOW)).not.toHaveProperty('askedYou');
+      expect(toSessionSummary(background({ state: 'done', status: 'busy', pid: 9 }), transcript, NOW)).not.toHaveProperty(
+        'askedYou',
+      );
+    });
+
+    it('is dropped for a stale session', () => {
+      const summary = toSessionSummary(background({ state: 'blocked' }), { ...transcript, lastActivityAt: iso(NOW - 9 * DAY) }, NOW);
+      expect(summary.stale).toBe(true);
+      expect(summary).not.toHaveProperty('askedYou');
+    });
+
+    it('is absent when the transcript did not ask', () => {
+      expect(toSessionSummary(row(), { transcript: 'ok' }, NOW)).not.toHaveProperty('askedYou');
+    });
+  });
 });
 
 describe('compareSessions', () => {
+  it('puts waiting first, then asked you, then busy, then the most recently active, with stale sessions last', () => {
+    const asked: AskedYou = { reason: 'question', excerpt: 'Ship it?' };
+    const sessions = [
+      session('idle', { status: 'idle', lastActivityAt: iso(NOW - 1000) }),
+      session('busy', { status: 'busy', lastActivityAt: iso(NOW - 500) }),
+      session('asked-old', { status: 'idle', askedYou: asked, lastActivityAt: iso(NOW - 90_000) }),
+      session('stale', { alive: false, stale: true, kind: 'background', state: 'blocked', lastActivityAt: iso(NOW) }),
+      session('asked-new', { status: 'idle', askedYou: asked, lastActivityAt: iso(NOW - 10_000) }),
+      session('waiting', { status: 'waiting', lastActivityAt: iso(NOW - 99_000) }),
+    ];
+    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual([
+      'waiting',
+      'asked-new',
+      'asked-old',
+      'busy',
+      'idle',
+      'stale',
+    ]);
+  });
+
   it('puts waiting first, then busy, then the most recently active, with stale sessions last', () => {
     const sessions = [
       session('idle-old', { status: 'idle', lastActivityAt: iso(NOW - 5000) }),

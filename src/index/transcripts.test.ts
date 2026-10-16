@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyEntry,
   applyLine,
+  ASSISTANT_TEXT_KEEP,
   assistantTextOf,
   createTranscriptReader,
   defaultConfigDir,
   encodeProjectDir,
   stripSystemReminders,
-  truncate,
   userPromptOf,
   type Fields,
   type TranscriptReaderOptions,
@@ -190,6 +190,30 @@ describe('applyEntry', () => {
     expect(fields.assistantText).toBe('part one\npart two');
   });
 
+  it('records whether a prompt came after the newest assistant text, in file order', () => {
+    expect(fieldsOf(user('go'), assistant([text('Should I push?')])).promptAfterText).toBe(false);
+    expect(fieldsOf(assistant([text('Should I push?')]), user('yes')).promptAfterText).toBe(true);
+    expect(fieldsOf(user('a'), assistant([text('q?')], 'm1'), user('b'), assistant([text('r')], 'm2')).promptAfterText).toBe(
+      false,
+    );
+    // Neither a tool result nor a cross-session message is a prompt.
+    const notPrompts = fieldsOf(
+      assistant([text('Should I push?')]),
+      user([toolResult('output')]),
+      user('Another Claude session sent a message:\n<cross-session-message from="x">hi</cross-session-message>', {
+        isMeta: true,
+        origin: { kind: 'peer' },
+      }),
+    );
+    expect(notPrompts.promptAfterText).toBe(false);
+  });
+
+  it('keeps the whole raw text of the newest message, up to 64 KiB', () => {
+    const fields = fieldsOf(assistant([text(`**${'a'.repeat(3000)}**`)], 'm1'), assistant([text('b'.repeat(70_000))], 'm1'));
+    expect(fields.assistantText?.startsWith(`**${'a'.repeat(3000)}**\nbbb`)).toBe(true);
+    expect(fields.assistantText).toHaveLength(ASSISTANT_TEXT_KEEP);
+  });
+
   it('keeps the newest real prompt, skipping cross-session messages and tool results after it', () => {
     const fields = fieldsOf(
       user('first prompt'),
@@ -210,23 +234,6 @@ describe('applyLine', () => {
     applyLine(fields, 'not json at all "user"');
     applyLine(fields, JSON.stringify(user('valid')));
     expect(fields.userPrompt).toBe('valid');
-  });
-});
-
-describe('truncate', () => {
-  it('leaves short text alone', () => {
-    expect(truncate('short', 10)).toBe('short');
-    expect(truncate('x'.repeat(10), 10)).toBe('x'.repeat(10));
-  });
-
-  it('cuts to the limit with an ellipsis', () => {
-    expect(truncate('abcdefghijkl', 5)).toBe('abcd…');
-  });
-
-  it('does not split a surrogate pair', () => {
-    const result = truncate(`abc🎉${'x'.repeat(10)}`, 5);
-    expect(result).toBe('abc…');
-    expect(result.length).toBeLessThanOrEqual(5);
   });
 });
 
@@ -288,6 +295,88 @@ describe('createTranscriptReader', () => {
     const info = await reader().read(SID, [CWD]);
     expect(info.lastAssistantText).toHaveLength(500);
     expect(info.lastAssistantText?.endsWith('…')).toBe(true);
+  });
+
+  it('strips markdown from the assistant text before truncating it', async () => {
+    const code = `\`\`\`\n${'x'.repeat(2000)}\n\`\`\``;
+    await writeFile(file, jsonl(assistant([text(`## Result\n\n${code}\n\n**All** tests \`pass\`.`)])));
+    expect((await reader().read(SID, [CWD])).lastAssistantText).toBe('Result\n\n[code]\n\nAll tests pass.');
+  });
+
+  it('drops assistant text that is only markdown syntax', async () => {
+    await writeFile(file, jsonl(assistant([text('---')])));
+    expect(await reader().read(SID, [CWD])).toEqual({ transcript: 'ok', lastActivityAt: expect.any(String) });
+  });
+
+  describe('askedYou', () => {
+    const crossSession = () =>
+      user('Another Claude session sent a message:\n<cross-session-message from="x">status?</cross-session-message>', {
+        isMeta: true,
+        origin: { kind: 'peer' },
+      });
+
+    it('is set when the newest assistant text asks and no prompt came since', async () => {
+      await writeFile(file, jsonl(user('fix it'), assistant([text('Fixed.\n\n**Open questions:**\n- Should I push it?')])));
+      expect((await reader().read(SID, [CWD])).askedYou).toEqual({ reason: 'open-questions', excerpt: 'Should I push it?' });
+    });
+
+    it('reads the question from the whole message, not the 500 characters shown', async () => {
+      const long = `${'Long report line.\n'.repeat(100)}\nWant me to open the PR?`;
+      await writeFile(file, jsonl(user('report'), assistant([text(long)])));
+      const info = await reader().read(SID, [CWD]);
+      expect(info.lastAssistantText?.length).toBe(500);
+      expect(info.askedYou).toEqual({ reason: 'question', excerpt: 'Want me to open the PR?' });
+    });
+
+    it('joins the text blocks of the message, so a question in a later block counts', async () => {
+      await writeFile(
+        file,
+        jsonl(user('go'), assistant([text('Ran the tests.')], 'm1'), assistant([toolUse('Bash')], 'm1'), assistant([text('Merge now?')], 'm1')),
+      );
+      expect((await reader().read(SID, [CWD])).askedYou?.excerpt).toBe('Merge now?');
+    });
+
+    it('is not set once the user has replied', async () => {
+      await writeFile(file, jsonl(assistant([text('Should I push it?')]), user('yes, push')));
+      expect((await reader().read(SID, [CWD])).askedYou).toBeUndefined();
+    });
+
+    it('is still set after a cross-session message or a tool result, which are not the user replying', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text('Should I push it?')]), crossSession(), user([toolResult('ok')])));
+      expect((await reader().read(SID, [CWD])).askedYou).toEqual({ reason: 'question', excerpt: 'Should I push it?' });
+    });
+
+    it('is not set when the message ends with a statement or says None', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text('Should I push it?\n\nPushed anyway.')])));
+      expect((await reader().read(SID, [CWD])).askedYou).toBeUndefined();
+
+      const r = reader();
+      await writeFile(file, jsonl(user('go'), assistant([text('Done.\n\n**Open questions:** None')])));
+      expect((await r.read(SID, [CWD])).askedYou).toBeUndefined();
+    });
+
+    it('follows new lines: a question, then a reply, then a new question', async () => {
+      const r = reader();
+      await writeFile(file, jsonl(user('go'), assistant([text('Push it?')], 'm1')));
+      expect((await r.read(SID, [CWD])).askedYou?.excerpt).toBe('Push it?');
+
+      await appendFile(file, jsonl(user('yes')));
+      expect((await r.read(SID, [CWD])).askedYou).toBeUndefined();
+
+      await appendFile(file, jsonl(assistant([text('Pushed. Tag a release too?')], 'm2')));
+      expect((await r.read(SID, [CWD])).askedYou?.excerpt).toBe('Pushed. Tag a release too?');
+
+      await appendFile(file, jsonl(crossSession()));
+      expect((await r.read(SID, [CWD])).askedYou?.excerpt).toBe('Pushed. Tag a release too?');
+    });
+
+    it('counts a question whose prompt is outside the window as unanswered', async () => {
+      const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 1024 });
+      await writeFile(file, jsonl(user('far back'), filler(3000), assistant([text('Ship it?')])));
+      const info = await r.read(SID, [CWD]);
+      expect(info.lastUserPrompt).toBeUndefined();
+      expect(info.askedYou?.excerpt).toBe('Ship it?');
+    });
   });
 
   it('is ok with no fields for an empty file', async () => {
