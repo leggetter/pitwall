@@ -129,6 +129,41 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
   - Don't subscribe to idle notices broadly. Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
 - **M4 - Triage.** Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using PR and CI state from `gh`.
 
+## M1 work breakdown
+
+The coordinator, a Claude Code session working with Phil, owns `src/shared/protocol.ts`, the contract the pieces are built against. Sub-agents build W1-W4 and review in W6. Phil tries the result and approves merges.
+
+| Item | What | Branch | Owner | Status |
+| --- | --- | --- | --- | --- |
+| W0 | The contract: `src/shared/protocol.ts` | `m1/scaffold` | Coordinator | Done |
+| W1 | Scaffold: package, TypeScript, Vitest, Vite, CI, and stubbed module signatures | `m1/scaffold` | Sub-agent | In progress |
+| W2 | Index: `claude agents --json` source, root filter, git grouping, transcript adapter, poller | `m1/index` | Sub-agent | Waiting on W1 |
+| W3 | Server and CLI: Hono, `ws`, token, `Host`/`Origin` checks, `pitwall [root...]` | `m1/server` | Sub-agent | Waiting on W1 |
+| W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | Waiting on W1 |
+| W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Waiting on W2-W4 |
+| W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Waiting on W5 |
+| W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
+
+### Module layout
+
+```
+src/shared/protocol.ts   the contract (W0)
+src/index/               W2. Entry point index.ts: startIndexer(options) -> Indexer
+src/server/              W3. Entry point index.ts: startServer(options) -> running server
+src/cli.ts               W3. Parses arguments, starts the indexer and the server, opens the browser
+web/                     W4. Vite + React app, built to dist/web and served by the server
+```
+
+### Rules for M1
+
+- **Token transport:** the CLI opens `http://127.0.0.1:<port>/#token=<token>`. The UI reads the token from the fragment, keeps it in `sessionStorage`, and removes it from the address bar.
+  - HTTP API calls send `Authorization: Bearer <token>`.
+  - The WebSocket sends `{ "type": "auth", "token": ... }` as its first message.
+  - Static assets need no token. `Host` is checked on every request, and `Origin` on every API request and WebSocket upgrade.
+- **No Vite dev server in M1.** `npm run dev` rebuilds the UI on change and the pitwall server serves it, so the UI is always same-origin and the security checks never need a dev exception.
+- **No `node-pty` in M1.** It arrives with attach in M2, so CI doesn't build a native module yet.
+- **Tests use synthetic fixtures only:** never real transcripts or real `claude agents` output. A live test against the real `claude agents --json` runs only when `PITWALL_LIVE=1` is set, and it's read-only.
+
 ## Open questions
 
 - **Several roots at once** (`pitwall ~/hookdeck/git ~/leggetter/git`)? Lean: yes. It costs little to support.
