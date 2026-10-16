@@ -7,7 +7,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Spawns new sessions** in any directory under the root.
 - **Has a supervisor session** you can talk to instead of visiting each session. It knows what each one is waiting on and what's urgent.
 
-**Status:** spike done, app not started. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, is built and in review. See [`PLAN.md`](PLAN.md).
 
 ## Decisions
 

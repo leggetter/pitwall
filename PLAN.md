@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 done on 2026-10-16. Spikes [001](docs/spikes/001-session-control.md) and [002](docs/spikes/002-supervisor-to-interactive.md) pass, including a background supervisor messaging an interactive session and getting a reply. No app code yet. |
+| **Status** | M0 done on 2026-10-16. Spikes [001](docs/spikes/001-session-control.md) and [002](docs/spikes/002-supervisor-to-interactive.md) pass, including a background supervisor messaging an interactive session and getting a reply. M1, a read-only index, is built and in review in [PR #6](https://github.com/leggetter/pitwall/pull/6). |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Build M1 |
+| **Next steps** | - Fix the W6 review findings (W6a)<br>- Phil tries M1 and approves the merge (W7) |
 
 ## Who is this for
 
@@ -55,7 +55,7 @@ Agent view (`claude agents`) does much of the per-session work well. But it's a 
 
 kandev only manages agents it starts from its own cards. I start most sessions by hand, so it never saw most of my work. Pitwall adopts the sessions that already exist.
 
-## Architecture (proposed, pending the spike)
+## Architecture
 
 ```
 pitwall [root...]  ->  local server (127.0.0.1, per-run token)  ->  web UI
@@ -138,6 +138,11 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
     - worktree branch names for sessions in worktrees;
     - a background job's "needs" line from `state.json`, behind the adapter.
   - Check whether `claude attach` works on a background session that isn't running (done, stopped or failed), and hide the attach command if not.
+  - **Security gate: none of these ships before any input path does** (W6 finding 1). Another local user can currently learn the token, which is harmless while pitwall is read-only.
+    - **WebSocket auth by challenge-response:** the server sends a nonce and the client answers with HMAC(token, nonce), so the raw token never leaves the page. A squatter on the port then learns nothing it can reuse.
+    - **Dev readiness:** `npm run dev` opens the browser only after the CLI child reports it is listening, not when anything answers on 4517.
+    - **No token in process arguments:** `ps` shows other users the `open <url#token>` command line. Use a 0600 redirect file or a single-use launch code instead.
+  - Detect a transcript rewritten in place within one poll (W6 finding 7), if Claude Code ever does that.
 - **M3 - Supervisor.** Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions.
   - Label relayed messages in the UI as coming from the supervisor, because that's how the receiving session sees them.
   - Get status from pitwall's index (D1 polling and transcripts), not by messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
@@ -159,7 +164,8 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | Merged ([#2](https://github.com/leggetter/pitwall/pull/2)) |
 | W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Done; findings below |
 | W5a | Fixes from W5: "asked you" heuristic, stale rule, markdown stripping, missing directories | `m1/followups` | Sub-agent | Merged ([#5](https://github.com/leggetter/pitwall/pull/5)) |
-| W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | In progress |
+| W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Done: approve with follow-ups |
+| W6a | Fixes from the W6 review, before the merge | `m1/review-fixes` | Sub-agent | In progress |
 | W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
 
 ### W5 findings (2026-10-16)
@@ -172,13 +178,34 @@ Run read-only against `~/hookdeck/git`: 17 of 17 sessions found and grouped by r
 - **Raw markdown made the rows hard to read.** The index now strips markdown syntax before truncating.
 - **A deleted working directory grouped as a plain folder.** Rows now say the directory no longer exists (`cwdMissing`).
 - **Calibration after W5a:** 12 of 17 sessions flagged (11 asked you, 1 blocked).
-  - **Matched the morning sweep:** every session it rated as waiting that still was, with git-76, git-c1, git-51, n8n-nodes-hookdeck-8a, mcp-events-bridge-demo-dd, hookdeck-demos-34 and core-1a among them.
-  - **Correctly cleared:** sessions that had moved on, such as website-98 and terraform-provider-hookdeck-d9.
-  - **Extra flags:** small or moot questions the morning sweep rated as housekeeping or closeable, such as git-4d, whose question went moot when its PR merged.
+  - **Matched the morning sweep:** every session it had rated as waiting that still was, 7 sessions.
+  - **Correctly cleared:** two sessions that had moved on since the morning.
+  - **Extra flags:** small or moot questions the morning sweep had rated as housekeeping or closeable, including one whose question went moot when its PR merged.
   - **What that means:** the heuristic finds what's waiting; judging urgency and spotting moot questions is M4's job.
 - **Heuristic rules decided:**
   - **An "Open questions: None" section decides,** even if a later line ends in a question mark. That matches how Phil's sessions write.
   - **Ranking older questions lower is left for M4.**
+
+### W6 review findings (2026-10-16)
+
+Verdict: approve with follow-ups. The reviewer probed the built CLI and found these hold:
+- **Host, Origin and token checks,** including DNS rebinding, absolute-form targets and encoded-path bypasses.
+- **Static-file containment.**
+- **The token kept out of child processes.**
+- **No code path that acts on a session.**
+- **A transcript reader that survives hostile files.**
+
+- **Fixed before the merge (W6a):**
+  - blocked background jobs sorting to the bottom of their group (#2);
+  - text patterns that can block the event loop for about 20 s on pathological output (#3);
+  - a CLI test that ran the real `claude` (#4);
+  - submodule grouping (#6);
+  - attach ids starting with `-` (#8);
+  - trusting `localhost` when the server only listens on 127.0.0.1 (#9);
+  - a duplicate React key (#10);
+  - and the missing tests (#12).
+- **Fixed by the coordinator:** stale status lines (#5) and real session names in this file (#11).
+- **Moved to M2:** the token exposure to other local users (#1), as a security gate before any input path, and in-place transcript rewrites (#7).
 
 ### Module layout
 
