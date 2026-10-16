@@ -11,6 +11,10 @@
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
 //                               then the challenge-response handshake within 5 seconds, else 4401
 //                               (websocket.ts)
+//   WebSocket upgrade at /attach
+//                               the same Origin rule and handshake, then attach.ts: at most 4
+//                               sockets past the handshake, else 4429, and only a background
+//                               session that resolveSession() finds
 //   static files                Host only. They are the public build output.
 //
 // The token can read the API, for scripts. The apiKey, which only a client
@@ -24,8 +28,9 @@ import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
-import { CONVERSATION_STALE_STATUS, conversationPath, lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
+import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
 import { registerActions, type ActionOptions } from './actions.js';
+import { createAttachServer, type AttachOptions } from './attach.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import {
   bearerToken,
@@ -38,6 +43,7 @@ import {
   randomSecret,
   securityHeaders,
 } from './security.js';
+import { spawnPty } from './pty.js';
 import { resolveSession } from './sessions.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
@@ -87,6 +93,8 @@ export interface ServerInternals {
   routes?: (app: Hono) => void;
   /** Spawn, stop and remove (W12, actions.ts): tests pass a fake command runner and limits. */
   actions?: ActionOptions;
+  /** For the attach socket. Tests pass a fake PTY spawner, so they never run `claude`. */
+  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env'>>;
 }
 
 export async function startServerWithInternals(
@@ -129,15 +137,18 @@ export async function startServerWithInternals(
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES, perMessageDeflate: false });
   const authTimeoutMs = internals.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
+  const attach = createAttachServer({ indexer, token, authTimeoutMs, spawnPty, ...internals.attach });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => socket.destroy());
     if (closing) return rejectUpgrade(socket, 503);
     const status = gateStatus(req, port);
     if (status !== undefined) return rejectUpgrade(socket, status);
-    if (req.url?.split('?')[0] !== WS_PATH) return rejectUpgrade(socket, 404);
+    const path = req.url?.split('?')[0];
+    if (path !== WS_PATH && path !== ATTACH_PATH) return rejectUpgrade(socket, 404);
     // Browsers always send Origin on a WebSocket upgrade, so a missing one is refused.
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
+    if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) => handleClient(ws, { indexer, token, apiKey, authTimeoutMs }));
   });
 
@@ -156,9 +167,12 @@ export async function startServerWithInternals(
     url: `http://${LOOPBACK_HOST}:${port}`,
     port,
     close() {
-      closed ??= closeAll(server, wss, () => {
-        closing = true;
-      });
+      closed ??= Promise.all([
+        closeAll(server, wss, () => {
+          closing = true;
+        }),
+        attach.close(),
+      ]).then(() => undefined);
       return closed;
     },
   };
@@ -246,8 +260,9 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
 
   app.all('/api/*', (c) => c.body(null, 404));
 
-  // A plain request to the WebSocket path, without an upgrade.
+  // A plain request to a WebSocket path, without an upgrade.
   app.all(WS_PATH, (c) => c.body(null, 426));
+  app.all(ATTACH_PATH, (c) => c.body(null, 426));
 
   // Loaded by the "still building" page so it reloads itself, keeping the URL
   // and its #token fragment. Served from here because webRoot doesn't exist yet.
