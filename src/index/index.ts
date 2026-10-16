@@ -42,7 +42,7 @@ export interface Indexer {
    * One page of a session's conversation, read from its transcript backwards:
    * the newest page, or the one before the `before` cursor. Undefined for a
    * session not in the latest snapshot, and for one with no transcript. Reads
-   * at most about 2 MiB per page. Rejects with ConversationCursorError for a
+   * at most about 8 MiB per page. Rejects with ConversationCursorError for a
    * cursor that's malformed ('invalid') or made for another version of the
    * file ('stale'), and never for anything else.
    */
