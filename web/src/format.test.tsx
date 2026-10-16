@@ -61,12 +61,40 @@ describe('plainText', () => {
 });
 
 describe('session helpers', () => {
-  it('needsAttention covers waiting and blocked, never stale', () => {
+  it('needsAttention covers waiting, blocked and asked you, never stale', () => {
     expect(needsAttention(session({ status: 'waiting' }))).toBe(true);
     expect(needsAttention(session({ kind: 'background', state: 'blocked' }))).toBe(true);
+    expect(needsAttention(session({ status: 'idle', askedYou: { reason: 'question', excerpt: 'Ship it?' } }))).toBe(true);
     expect(needsAttention(session({ kind: 'background', state: 'blocked', stale: true, alive: false }))).toBe(false);
+    expect(
+      needsAttention(session({ stale: true, askedYou: { reason: 'question', excerpt: 'Ship it?' } })),
+    ).toBe(false);
     expect(needsAttention(session({ status: 'busy' }))).toBe(false);
     expect(needsAttention(session({ kind: 'background', state: 'failed' }))).toBe(false);
+  });
+
+  it('statusPill puts waiting first, then blocked unless stale, then asked you, then the rest', () => {
+    const asked = { reason: 'open-questions' as const, excerpt: 'Should I push it?' };
+    const label = (overrides: Parameters<typeof session>[0]) => statusPill(session(overrides));
+    expect(label({ status: 'waiting', waitingFor: 'input needed', askedYou: asked })).toEqual({
+      label: 'waiting: input needed',
+      tone: 'attention',
+    });
+    expect(label({ kind: 'background', state: 'blocked', askedYou: asked })).toEqual({ label: 'blocked', tone: 'attention' });
+    expect(label({ status: 'idle', askedYou: asked })).toEqual({ label: 'asked you', tone: 'asked' });
+    expect(label({ kind: 'background', state: 'done', alive: false, status: undefined, askedYou: asked })).toEqual({
+      label: 'asked you',
+      tone: 'asked',
+    });
+    expect(label({ kind: 'background', state: 'blocked', stale: true, alive: false })).toEqual({
+      label: 'blocked',
+      tone: 'offline',
+    });
+    expect(label({ kind: 'background', state: 'blocked', stale: true, askedYou: asked })).toEqual({
+      label: 'blocked',
+      tone: 'offline',
+    });
+    expect(label({ status: 'idle' })).toEqual({ label: 'idle', tone: 'idle' });
   });
 
   it('statusPill includes the blocked reason when there is one', () => {

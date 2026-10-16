@@ -149,7 +149,9 @@ describe('session rows', () => {
   it('shows the stale marker only on stale sessions', () => {
     renderDashboard(mixedSnapshot());
 
-    expect(within(row('legacy-migration')).getByText('stale').getAttribute('title')).toMatch(/more than 7 days ago/);
+    expect(within(row('legacy-migration')).getByText('stale').getAttribute('title')).toMatch(
+      /no activity for more than 7 days, whether or not its process is running/,
+    );
     expect(within(row('demo-worker')).queryByText('stale')).toBeNull();
   });
 
@@ -258,6 +260,125 @@ describe('session rows', () => {
     expect(within(row('gone')).queryByText('old prompt')).toBeNull();
     expect(within(row('gone')).queryByText('old reply')).toBeNull();
     expect(within(row('garbled')).getByText('Transcript unreadable')).toBeTruthy();
+  });
+});
+
+describe('sessions that asked you something', () => {
+  const asked = (excerpt: string, reason: 'open-questions' | 'question' = 'open-questions') => ({ reason, excerpt });
+
+  function askedSnapshot(): IndexSnapshot {
+    return snapshot([
+      group({
+        sessions: [
+          session({ name: 'waits', status: 'waiting', waitingFor: 'permission prompt' }),
+          session({
+            name: 'asks',
+            status: 'idle',
+            askedYou: asked('Should I push it?'),
+            lastAssistantText: 'Fixed the test. Open questions: - Should I push it?',
+          }),
+          session({ name: 'calm', status: 'idle' }),
+        ],
+      }),
+      group({
+        key: '/Users/example/code/docs',
+        label: 'docs',
+        sessions: [
+          session({
+            name: 'docs-done',
+            kind: 'background',
+            shortId: 'bg42',
+            state: 'done',
+            alive: false,
+            pid: undefined,
+            status: undefined,
+            cwd: '/Users/example/code/docs',
+            askedYou: asked('Want me to open the PR?', 'question'),
+          }),
+        ],
+      }),
+    ]);
+  }
+
+  it('shows an "asked you" pill, distinct from waiting, on an attention row', () => {
+    renderDashboard(askedSnapshot());
+
+    const asks = row('asks');
+    expect(asks.dataset.attention).toBe('true');
+    expect(asks.className).toContain('attention');
+    const pill = within(asks).getByText('asked you');
+    expect(pill.className).toContain('pill');
+    expect(pill.className).toContain('tone-asked');
+    expect(pill.className).not.toContain('tone-attention');
+    expect(within(row('waits')).getByText('waiting: permission prompt').className).toContain('tone-attention');
+    expect(row('calm').dataset.attention).toBeUndefined();
+  });
+
+  it('shows the excerpt above the last reply', () => {
+    renderDashboard(askedSnapshot());
+
+    const asks = row('asks');
+    const line = asks.querySelector('.asked');
+    expect(line?.textContent).toBe('Asked: Should I push it?');
+    const reply = within(asks).getByText(/Fixed the test/);
+    expect(line && line.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row('docs-done').querySelector('.asked')?.textContent).toBe('Asked: Want me to open the PR?');
+    expect(row('calm').querySelector('.asked')).toBeNull();
+    expect(row('waits').querySelector('.asked')).toBeNull();
+  });
+
+  it('counts them in the group badges, the header and the tab title', () => {
+    renderDashboard(askedSnapshot());
+
+    expect(within(groupSection('demo-app')).getByText('2 need you')).toBeTruthy();
+    expect(within(groupSection('docs')).getByText('1 needs you')).toBeTruthy();
+    expect(screen.getByText('3 need you', { selector: '.summary-attention' })).toBeTruthy();
+    expect(document.title).toBe('(3) pitwall');
+  });
+
+  it('keeps them under "needs attention only"', () => {
+    renderDashboard(askedSnapshot());
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+
+    expect(visibleRowNames()).toEqual(['waits', 'asks', 'docs-done']);
+  });
+
+  it('renders the excerpt as text, not markup', () => {
+    const { container } = renderDashboard(
+      snapshot([
+        group({
+          sessions: [session({ name: 'html', askedYou: asked('<img src=x onerror="alert(1)"> keep <b>this</b>?') })],
+        }),
+      ]),
+    );
+
+    expect(container.querySelector('img, b')).toBeNull();
+    expect(row('html').querySelector('.asked')?.textContent).toBe('Asked: <img src=x onerror="alert(1)"> keep <b>this</b>?');
+  });
+});
+
+describe('missing working directory', () => {
+  it('shows a quiet marker on the row, even when the cwd is the group directory', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          key: '/Users/example/code/demo-app-worktrees/old',
+          label: 'demo-app-worktrees/old',
+          kind: 'directory',
+          sessions: [
+            session({ name: 'gone', cwd: '/Users/example/code/demo-app-worktrees/old', cwdMissing: true }),
+            session({ name: 'here', cwd: '/Users/example/code/demo-app-worktrees/old' }),
+          ],
+        }),
+      ]),
+    );
+
+    const marker = within(row('gone')).getByText('directory no longer exists');
+    expect(marker.className).toBe('cwd-missing');
+    expect(marker.getAttribute('title')).toMatch(/no longer exists/);
+    expect(row('gone').dataset.attention).toBeUndefined();
+    expect(within(row('here')).queryByText('directory no longer exists')).toBeNull();
   });
 });
 

@@ -4,7 +4,9 @@ import { attachCommand, needsAttention, statusPill } from '../sessions.js';
 import { ClampedText } from './ClampedText.js';
 import { CopyCommand } from './CopyCommand.js';
 
-const STALE_HINT = 'Blocked, no process, and started more than 7 days ago. Usually waiting on a question that no longer matters.';
+const STALE_HINT =
+  'Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters.';
+const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
 
 export function SessionRow({ session, groupKey, now }: { session: SessionSummary; groupKey: string; now: number }) {
   const attention = needsAttention(session);
@@ -40,17 +42,27 @@ export function SessionRow({ session, groupKey, now }: { session: SessionSummary
               <span className="who">You</span> {plainText(session.lastUserPrompt)}
             </p>
           )}
+          {session.askedYou && (
+            <p className="asked">
+              <span className="asked-label">Asked:</span> {plainText(session.askedYou.excerpt)}
+            </p>
+          )}
           {session.lastAssistantText && <ClampedText className="reply" text={plainText(session.lastAssistantText)} />}
         </>
       ) : (
         <p className="transcript-note">Transcript {session.transcript === 'missing' ? 'not found' : 'unreadable'}</p>
       )}
 
-      {(where || command) && (
+      {(where || session.cwdMissing || command) && (
         <div className="session-foot">
           {where && (
             <span className="cwd" title={plainText(session.cwd)}>
               {plainText(where)}
+            </span>
+          )}
+          {session.cwdMissing && (
+            <span className="cwd-missing" title={CWD_MISSING_HINT}>
+              directory no longer exists
             </span>
           )}
           {command && <CopyCommand command={command} />}

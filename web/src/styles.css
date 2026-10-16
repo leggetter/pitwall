@@ -492,6 +492,13 @@ input {
   font-weight: 700;
 }
 
+.tone-asked {
+  background: var(--surface);
+  border-color: var(--attention);
+  color: var(--attention-strong);
+  font-weight: 700;
+}
+
 .tone-busy {
   background: var(--busy-bg);
   color: var(--busy-text);
@@ -554,6 +561,17 @@ input {
   letter-spacing: 0.04em;
 }
 
+.asked {
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.asked-label {
+  margin-right: 2px;
+  color: var(--attention-strong);
+}
+
 .reply {
   display: flex;
   flex-direction: column;
@@ -599,6 +617,13 @@ input {
   font-family: var(--font-mono);
   font-size: 0.8rem;
   overflow-wrap: anywhere;
+}
+
+.cwd-missing {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  cursor: help;
 }
 
 .copy-command {
