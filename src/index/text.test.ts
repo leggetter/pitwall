@@ -375,18 +375,18 @@ describe('stripMarkdownBounded', () => {
   });
 
   describe('hostile input', () => {
-    it.each([...HOSTILE, ...EMPHASIS_LINES])('strips %s in under 50 ms', (_name, text) => {
-      expect(bestOf3(() => stripMarkdownBounded(text))).toBeLessThan(50);
+    it.each([...HOSTILE, ...EMPHASIS_LINES])('strips %s quickly', (_name, text) => {
+      expect(bestOf3(() => stripMarkdownBounded(text))).toBeLessThan(FAST_MS);
     });
 
     it.each([
       ['lines of 1024 characters', 1024],
       ['lines of 200 characters', 200],
       ['lines just over the piece length', LINE_PIECE_LENGTH + 1],
-    ])('strips 64 KiB of hostile %s in under 50 ms', (_name, length) => {
+    ])('strips 64 KiB of hostile %s quickly', (_name, length) => {
       const line = '*\\\\ '.repeat(length / 4).slice(0, length);
       const text = Array.from({ length: Math.floor(N / (length + 1)) }, () => line).join('\n');
-      expect(bestOf3(() => stripMarkdownBounded(text))).toBeLessThan(50);
+      expect(bestOf3(() => stripMarkdownBounded(text))).toBeLessThan(FAST_MS);
     });
 
     it.each([
@@ -396,8 +396,8 @@ describe('stripMarkdownBounded', () => {
       ['escaped characters', '\\*\n'.repeat(N / 3)],
       ['unclosed emphasis', '*a\n'.repeat(N / 3)],
       ['code spans', '`a`\n'.repeat(N / 4)],
-    ])('strips 64 KiB of %s in under 50 ms', (_name, text) => {
-      expect(bestOf3(() => stripMarkdownBounded(text))).toBeLessThan(50);
+    ])('strips 64 KiB of %s quickly', (_name, text) => {
+      expect(bestOf3(() => stripMarkdownBounded(text))).toBeLessThan(FAST_MS);
     });
   });
 });

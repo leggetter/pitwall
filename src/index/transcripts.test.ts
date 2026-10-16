@@ -550,7 +550,7 @@ describe('createTranscriptReader', () => {
       expect(stripped).toHaveBeenCalledTimes(2);
     });
 
-    it('strips a hostile 64 KiB message in under 50 ms', async () => {
+    it('strips a hostile 64 KiB message quickly', async () => {
       const N = ASSISTANT_TEXT_KEEP;
       for (const hostile of ['['.repeat(N), `[a](${'x '.repeat(N / 2 - 4)}`, '*a\\* '.repeat(N / 5), '\\*\n'.repeat(N / 3)]) {
         await writeFile(file, jsonl(assistant([text(hostile)])));
@@ -566,7 +566,7 @@ describe('createTranscriptReader', () => {
           expect(length).toBeGreaterThan(0);
           best = Math.min(best, (used.user + used.system) / 1000);
         }
-        expect(best, hostile.slice(0, 10)).toBeLessThan(50);
+        expect(best, hostile.slice(0, 10)).toBeLessThan(FAST_MS);
       }
     });
   });
