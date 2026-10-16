@@ -13,6 +13,8 @@ Run on 2026-10-16 against Claude Code v2.1.301 on macOS, Node 25.1.0. It covers 
 | S5 | **Pass** | The idle notice arrived 4 s after the session went idle, with its one-line status |
 | S6 | **Pass** | The transcript gained lines within ~0.5 s of a prompt (the poll interval, so possibly sooner) |
 
+Both S4 gaps were closed the same day by [spike 002](002-supervisor-to-interactive.md).
+
 ## S1: `claude agents --json`
 
 - **Interactive rows** have `pid`, `cwd`, `kind`, `startedAt`, `sessionId`, `name` and `status` (`busy` or `idle`). They have no `state` and no `waitingFor`. The agent view docs only describe background sessions, so interactive rows in the JSON are observed behavior, not a documented promise.
