@@ -144,6 +144,7 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
   - Don't subscribe to idle notices broadly. Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
 - **M4 - Triage.** Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using PR and CI state from `gh`.
   - The supervisor refines M1's `askedYou` heuristic: it reads each idle session's latest turns and judges whether it really needs me, and how urgently.
+  - Use age as a signal. In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
 
 ## M1 work breakdown
 
@@ -157,8 +158,8 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 | W3 | Server and CLI: Hono, `ws`, token, `Host`/`Origin` checks, `pitwall [root...]` | `m1/server` | Sub-agent | Merged ([#3](https://github.com/leggetter/pitwall/pull/3)) |
 | W4 | Web UI: grouped session list, live updates over the WebSocket | `m1/web` | Sub-agent | Merged ([#2](https://github.com/leggetter/pitwall/pull/2)) |
 | W5 | Integration and a read-only run against real roots | `m1/integration` | Coordinator | Done; findings below |
-| W5a | Fixes from W5: "asked you" heuristic, stale rule, markdown stripping, missing directories | `m1/followups` | Sub-agent | In progress |
-| W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | Waiting on W5a |
+| W5a | Fixes from W5: "asked you" heuristic, stale rule, markdown stripping, missing directories | `m1/followups` | Sub-agent | Merged ([#5](https://github.com/leggetter/pitwall/pull/5)) |
+| W6 | Review of the integrated change, with the `role-reviewer` skill | - | Sub-agent | In progress |
 | W7 | Try it, and approve the merge | - | Phil | Waiting on W6 |
 
 ### W5 findings (2026-10-16)
@@ -170,6 +171,14 @@ Run read-only against `~/hookdeck/git`: 17 of 17 sessions found and grouped by r
 - **Stale missed abandoned jobs that still had a process.** A background job blocked since 24 Sep was flagged as needing Phil. Stale is now 7 days without activity, with or without a process.
 - **Raw markdown made the rows hard to read.** The index now strips markdown syntax before truncating.
 - **A deleted working directory grouped as a plain folder.** Rows now say the directory no longer exists (`cwdMissing`).
+- **Calibration after W5a:** 12 of 17 sessions flagged (11 asked you, 1 blocked).
+  - **Matched the morning sweep:** every session it rated as waiting that still was, with git-76, git-c1, git-51, n8n-nodes-hookdeck-8a, mcp-events-bridge-demo-dd, hookdeck-demos-34 and core-1a among them.
+  - **Correctly cleared:** sessions that had moved on, such as website-98 and terraform-provider-hookdeck-d9.
+  - **Extra flags:** small or moot questions the morning sweep rated as housekeeping or closeable, such as git-4d, whose question went moot when its PR merged.
+  - **What that means:** the heuristic finds what's waiting; judging urgency and spotting moot questions is M4's job.
+- **Heuristic rules decided:**
+  - **An "Open questions: None" section decides,** even if a later line ends in a question mark. That matches how Phil's sessions write.
+  - **Ranking older questions lower is left for M4.**
 
 ### Module layout
 
