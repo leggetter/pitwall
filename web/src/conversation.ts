@@ -3,6 +3,7 @@
 // pages on screen merged without duplicating an entry.
 
 import {
+  CONVERSATION_STALE_STATUS,
   conversationPath,
   type ConversationEntry,
   type ConversationEntryKind,
@@ -11,7 +12,7 @@ import {
 import type { ApiClient } from './api.js';
 
 /** The status the server answers for a cursor made for another version of the transcript. */
-export const STALE_CURSOR_STATUS = 410;
+export const STALE_CURSOR_STATUS = CONVERSATION_STALE_STATUS;
 
 export type ConversationResult =
   | { kind: 'ok'; page: ConversationPage }

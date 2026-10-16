@@ -24,7 +24,7 @@ import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
-import { conversationPath, lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
+import { CONVERSATION_STALE_STATUS, conversationPath, lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import {
   bearerToken,
@@ -58,7 +58,7 @@ const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
  * transcript: it was replaced, rotated, truncated or rewritten since. The UI
  * reloads the newest page.
  */
-export const STALE_CURSOR_STATUS = 410;
+export const STALE_CURSOR_STATUS = CONVERSATION_STALE_STATUS;
 
 /** How long close() waits for WebSocket clients to finish the close handshake. */
 const CLOSE_GRACE_MS = 250;

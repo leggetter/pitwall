@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is next. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - W8 (security gate) and W9 (session view), in parallel<br>- Then W10-W12 |
+| **Next steps** | - W10 (attach), W11 (relay) and W12 (spawn, stop, remove), in parallel<br>- Then integration (W13) and review (W14) |
 
 ## Who is this for
 
@@ -236,10 +236,10 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | Item | What | Branch | Owner | Status |
 | --- | --- | --- | --- | --- |
 | W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | Merged ([#11](https://github.com/leggetter/pitwall/pull/11)) |
-| W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | In review ([#10](https://github.com/leggetter/pitwall/pull/10)), rebasing onto W8 |
-| W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | After W8 |
-| W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | After W8 |
-| W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | After W8 |
+| W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | Merged ([#10](https://github.com/leggetter/pitwall/pull/10)) |
+| W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | In progress |
+| W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | In progress |
+| W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | In progress |
 | W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | After W9-W12 |
 | W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | After W13 |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
