@@ -43,9 +43,9 @@ export interface IndexerDeps {
  * Polls `claude agents --json` every `intervalMs`, keeps the sessions whose
  * cwd is under a root, groups them by repo and adds what their transcripts
  * say. The first poll starts straight away. Polls never overlap: a tick that
- * comes while one is still running is skipped. `latest()` always returns the
- * newest snapshot, but listeners hear only about snapshots that differ from
- * the previous one in more than `generatedAt`.
+ * comes while one is still running is skipped. Listeners hear about every
+ * completed poll, changed or not, including one whose source failed, so a
+ * quiet but healthy index can be told apart from a stuck one by `generatedAt`.
  */
 export function startIndexer(options: IndexerOptions): Indexer {
   const now = Date.now;
@@ -64,7 +64,6 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const intervalMs = options.intervalMs ?? 2000;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   let latest: IndexSnapshot | undefined;
-  let latestKey: string | undefined;
   let running = false;
   let stopped = false;
 
@@ -87,9 +86,6 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       }
       if (stopped) return;
       latest = snapshot;
-      const key = contentKey(snapshot);
-      if (key === latestKey) return;
-      latestKey = key;
       for (const listener of [...listeners]) {
         try {
           listener(snapshot);
@@ -154,11 +150,6 @@ async function poll(
   deps.groups.prune();
 
   return { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } };
-}
-
-/** Everything except `generatedAt`. Key order is fixed by how snapshots are built. */
-function contentKey(snapshot: IndexSnapshot): string {
-  return JSON.stringify([snapshot.roots, snapshot.groups, snapshot.source]);
 }
 
 async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
