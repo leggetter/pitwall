@@ -26,6 +26,7 @@ Stop losing track of Claude Code sessions: one place to see every session under 
 - **Group by directory.** Sessions sit under their git repo, with worktrees under the main repo, and fall back to the plain directory when it isn't a repo.
 - **Act on a session.** Open it, read its conversation, reply, answer its prompts.
 - **Spawn sessions.** Start a new session in any directory under the root.
+- **See my open pull requests,** grouped by org, then repo, with review and CI state, next to the sessions working on them.
 - **Talk to a supervisor.** One conversation that knows about every session: what's waiting, what's urgent and why. It can message or spawn sessions on my behalf. Going to a session directly stays possible.
 
 ## Non-goals, for now
@@ -130,6 +131,20 @@ Confirm the interfaces above before writing app code. All six passed on 2026-10-
   - Flag sessions that finished their turn by asking me something (`askedYou`), as a heuristic over the transcript.
   - Read transcripts from a byte offset, never whole files (434 KB after two one-word turns).
   - Tell cross-session messages apart from my own prompts. They're `user` entries with `isMeta: true` and content starting `Another Claude session sent a message:`.
+- **M1b - My open pull requests.** Read-only and separate from the session index. It adds no input path, so the M2 security gate doesn't block it. Requested by Phil on 2026-10-16.
+  - **Source:** one GraphQL search through `gh api graphql` (`is:pr is:open author:@me archived:false`), run with `execFile` and no shell, so the GitHub token stays inside `gh`.
+    - One query returns the repo, number, title, draft, `reviewDecision`, `mergeable`, the latest commit's `statusCheckRollup` and `updatedAt`.
+    - Measured on 2026-10-16: 44 PRs, 1 rate-limit point of 5,000 an hour, about 8 s.
+    - `gh search prs` takes 2.6 s but has no CI or review state.
+  - **Cadence:** its own poller, every 3 minutes by default, plus a refresh button. Never tied to the 5 s session poll.
+  - **Grouping:** org, then repo, then PR, with the same collapsed-by-default groups and saved state as sessions.
+    - Highlight failing CI, merge conflicts and changes requested.
+    - Show draft and approved as quieter states.
+  - **Noise:** 45 open PRs across 12 orgs on 2026-10-16, many of them years-old PRs to other people's repos. Default to PRs updated in the last 90 days, with a count of the hidden ones and a toggle to show them. Consider an org allowlist flag later.
+  - **Linking to sessions:** the index already reads transcripts. A PR whose URL appears in a session's recent turns shows that session's name on the PR row, and the session row gets a PR badge. Agent view does something similar for background sessions.
+  - **Contract:** a separate `prs` message type and `GET /api/prs`, both behind the existing token and `Origin` checks. PR titles from private repos are as sensitive as session data.
+  - **Fails soft:** if `gh` is missing or not logged in, the panel says so, and the sessions view is unaffected.
+  - **Feeds M4:** triage can then say things like "CI is failing on your PR, and the session that opened it is idle".
 - **M2 - Act.** Session view (transcript, plus attach for background sessions), a spawn dialog, stop and remove.
   - Show the `Workspace not trusted` error with the command to run. Never grant trust for me.
   - Contract additions suggested during M1:
