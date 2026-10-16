@@ -237,7 +237,7 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | --- | --- | --- | --- | --- |
 | W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | Merged ([#11](https://github.com/leggetter/pitwall/pull/11)) |
 | W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | Merged ([#10](https://github.com/leggetter/pitwall/pull/10)) |
-| W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | In progress |
+| W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | Merged ([#13](https://github.com/leggetter/pitwall/pull/13)) |
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Spike done ([003](docs/spikes/003-relay.md) on `m2/relay`); waiting on Phil: design B or D |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
 | W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | After W9-W12 |
@@ -260,6 +260,9 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 
 - **Stopped background sessions left the list** (W12). After `claude stop`, a session has no process and appears only in `claude agents --json --all`, so it couldn't be removed, or attached to restart it.
   - **Decision (coordinator):** the index lists with `--all`, and the UI shows done, stopped and failed background sessions muted, like agent view's Completed group. Built at integration (W13).
+- **"Done" isn't "not running"** (W10). A background session can be `done` with its process still alive and idle. Attaching to it doesn't restart anything, so pitwall asks before attaching only when there's no live process.
+- **Inherited inbox credentials** (W10). When pitwall itself runs inside a Claude Code session, the processes it starts would inherit that session's `CLAUDE_CODE_MESSAGING_*` credentials and `CLAUDE_JOB_DIR`. They're now scrubbed, for attach and for spawn, stop and remove.
+- **`node-pty` 1.1.0 on macOS** ships `spawn-helper` without its execute bit, so pitwall sets it on first use. On Linux with npm 11, the install script needs `npm install-scripts approve node-pty`. CI uses npm 10, which runs it.
 - **The relay can't be a prompted `--bg` session without a terminal** (W11, spike 003). A running background session can't be given a new prompt over plain pipes: `--resume <id> --bg` starts a copy per message. The options are B (prompt a background relay through a PTY, which needs a one-time trust step) or D (pitwall runs the relay itself as a `claude -p` stream-json process). Waiting on Phil.
 
 ### Decisions for M2
