@@ -44,6 +44,20 @@ export interface SessionSummary {
   shortId?: string;
   /** Display name: the set name, or Claude Code's default such as `website-98`. */
   name: string;
+  /**
+   * A short description of what the session is about, shown after the name, as
+   * in `website-98 · Standard Webhooks destination auth review`. Omitted when
+   * there's none, or when it equals `name`, as with background sessions, whose
+   * name is already the generated title.
+   */
+  title?: string;
+  /**
+   * Where `title` came from.
+   * - 'claude-code': the title Claude Code generated from the session's first
+   *   prompt. It isn't updated as the session moves on.
+   * - 'pitwall': a title pitwall generated from the session's recent turns (M3).
+   */
+  titleSource?: 'claude-code' | 'pitwall';
   kind: SessionKind;
   /**
    * Absolute working directory, as `claude agents` reports it, not its realpath.
@@ -121,10 +135,32 @@ export interface IndexSnapshot {
   source: SourceHealth;
 }
 
-/** Server → client WebSocket messages. */
+/**
+ * Server → client WebSocket messages.
+ * - 'snapshot': sent right after auth, and again whenever anything other than
+ *   generatedAt changed.
+ * - 'heartbeat': sent after every poll that didn't change the snapshot, so the
+ *   UI can show the index is alive without receiving the whole snapshot again.
+ */
 export type ServerMessage =
   | { type: 'snapshot'; snapshot: IndexSnapshot }
+  | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
   | { type: 'error'; error: string };
+
+/**
+ * The full newest assistant message of one session, fetched on demand when the
+ * user expands a row. Same plain-text treatment as lastAssistantText, without
+ * the 500-character limit.
+ */
+export interface LastMessage {
+  sessionId: string;
+  /** Markdown syntax stripped to plain text. At most 64 KiB of source text. */
+  text: string;
+  /** True when the source message was longer than the 64 KiB the index keeps. */
+  truncated: boolean;
+  /** ISO 8601 timestamp of the message, when known. */
+  at?: string;
+}
 
 /**
  * Client → server WebSocket messages. The first message on a connection must
@@ -140,3 +176,15 @@ export const WS_PATH = '/ws';
 
 /** HTTP path that returns the latest IndexSnapshot as JSON. Requires `Authorization: Bearer <token>`. */
 export const SNAPSHOT_PATH = '/api/snapshot';
+
+/**
+ * HTTP path that returns one session's LastMessage as JSON. Requires
+ * `Authorization: Bearer <token>`. Only sessions in the current snapshot (under
+ * the roots) are served: any other id gets 404.
+ */
+export function lastMessagePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/last-message`;
+}
+
+/** Default poll interval for the index, in milliseconds. `pitwall --interval <seconds>` overrides it. */
+export const DEFAULT_POLL_INTERVAL_MS = 5000;
