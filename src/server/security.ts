@@ -7,13 +7,13 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 export const LOOPBACK_HOST = '127.0.0.1';
 
 /**
- * The CSP for a server on `port`. connect-src names the WebSocket origins as
+ * The CSP for a server on `port`. connect-src names the WebSocket origin as
  * well as 'self', because older Safari doesn't match ws: against 'self'.
  */
 export function contentSecurityPolicy(port: number): string {
   return [
     "default-src 'self'",
-    `connect-src 'self' ws://${LOOPBACK_HOST}:${port} ws://localhost:${port}`,
+    `connect-src 'self' ws://${LOOPBACK_HOST}:${port}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "frame-ancestors 'none'",
@@ -36,17 +36,21 @@ export function securityHeaders(port: number): Readonly<Record<string, string>> 
 export const MIN_TOKEN_LENGTH = 32;
 
 /**
- * True when `Host` is exactly `127.0.0.1:<port>` or `localhost:<port>`. This is
- * what blocks DNS rebinding: a page on evil.example that rebinds its name to
- * 127.0.0.1 still sends `Host: evil.example:<port>`.
+ * True when `Host` is exactly `127.0.0.1:<port>`. This is what blocks DNS
+ * rebinding: a page on evil.example that rebinds its name to 127.0.0.1 still
+ * sends `Host: evil.example:<port>`.
+ *
+ * `localhost` isn't trusted. The server listens on 127.0.0.1 only, and
+ * `localhost` can resolve to `::1` first, where another local user could
+ * listen on the same port and serve a page with a trusted origin.
  */
 export function isAllowedHost(host: string | undefined, port: number): boolean {
-  return host === `${LOOPBACK_HOST}:${port}` || host === `localhost:${port}`;
+  return host === `${LOOPBACK_HOST}:${port}`;
 }
 
-/** True when `Origin` is exactly `http://127.0.0.1:<port>` or `http://localhost:<port>`. */
+/** True when `Origin` is exactly `http://127.0.0.1:<port>`. Not `localhost`: see isAllowedHost. */
 export function isAllowedOrigin(origin: string | undefined, port: number): boolean {
-  return origin === `http://${LOOPBACK_HOST}:${port}` || origin === `http://localhost:${port}`;
+  return origin === `http://${LOOPBACK_HOST}:${port}`;
 }
 
 /** The token from `Authorization: Bearer <token>`, or undefined for any other shape. */

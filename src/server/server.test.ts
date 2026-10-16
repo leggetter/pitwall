@@ -230,7 +230,7 @@ describe('startServer', () => {
         const res = await get(server.port, '/');
         expect(res.status).toBe(200);
         // The CSP names the port actually in use, not the busy one.
-        expect(res.headers['content-security-policy']).toContain(`ws://127.0.0.1:${server.port} ws://localhost:${server.port};`);
+        expect(res.headers['content-security-policy']).toContain(`ws://127.0.0.1:${server.port};`);
         expect(res.headers['content-security-policy']).not.toContain(String(blocker.port));
       } finally {
         await blocker.close();
@@ -257,6 +257,7 @@ describe('startServer', () => {
       ['no port', '127.0.0.1'],
       ['the wrong port', '127.0.0.1:1'],
       ['an IPv6 loopback', '[::1]:PORT'],
+      ['localhost', 'localhost:PORT'],
       ['upper case', 'LOCALHOST:PORT'],
     ])('rejects %s with 403 and no detail', async (_name, host) => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
@@ -274,10 +275,9 @@ describe('startServer', () => {
       expect(statusOf(res)).toBe(403);
     });
 
-    it('accepts 127.0.0.1:<port> and localhost:<port>', async () => {
+    it('accepts 127.0.0.1:<port>', async () => {
       const server = await start();
       expect((await get(server.port, '/', { host: `127.0.0.1:${server.port}` })).status).toBe(200);
-      expect((await get(server.port, '/', { host: `localhost:${server.port}` })).status).toBe(200);
     });
 
     it('rejects an absolute-form request target', async () => {
@@ -303,6 +303,8 @@ describe('startServer', () => {
       ['https on the right host', 'https://127.0.0.1:PORT'],
       ['the wrong port', 'http://127.0.0.1:1'],
       ['a trailing slash', 'http://127.0.0.1:PORT/'],
+      ['localhost', 'http://localhost:PORT'],
+      ['an IPv6 loopback', 'http://[::1]:PORT'],
     ])('rejects an API request from %s with 403, even with the token', async (_name, value) => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
       const res = await get(server.port, SNAPSHOT_PATH, { origin: value.replace('PORT', String(server.port)), ...bearer });
@@ -312,9 +314,7 @@ describe('startServer', () => {
 
     it('allows an API request from this origin, or with no Origin, with the token', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
-      for (const value of [origin(server.port), `http://localhost:${server.port}`]) {
-        expect((await get(server.port, SNAPSHOT_PATH, { origin: value, ...bearer })).status).toBe(200);
-      }
+      expect((await get(server.port, SNAPSHOT_PATH, { origin: origin(server.port), ...bearer })).status).toBe(200);
       expect((await get(server.port, SNAPSHOT_PATH, bearer)).status).toBe(200);
     });
 
@@ -331,6 +331,15 @@ describe('startServer', () => {
     it('rejects a WebSocket upgrade from another origin', async () => {
       const server = await start();
       expect(await upgradeRefusal(connectWs(server.port, { origin: 'http://evil.example' }))).toBe(403);
+    });
+
+    it('rejects a WebSocket upgrade from http://localhost:<port>, or with Host localhost:<port>', async () => {
+      const server = await start();
+      const localhost = `localhost:${server.port}`;
+      expect(await upgradeRefusal(connectWs(server.port, { origin: `http://${localhost}` }))).toBe(403);
+      expect(
+        await upgradeRefusal(connectWs(server.port, { origin: `http://${localhost}`, headers: { host: localhost } })),
+      ).toBe(403);
     });
 
     it('rejects an upgrade on any path but the WebSocket path', async () => {
@@ -542,11 +551,11 @@ describe('startServer', () => {
       }
     });
 
-    it('sends the exact CSP, naming the WebSocket origins on the real port, plus nosniff and no-referrer', async () => {
+    it('sends the exact CSP, naming the WebSocket origin on the real port, plus nosniff and no-referrer', async () => {
       const server = await start();
       const res = await get(server.port, '/');
       expect(res.headers['content-security-policy']).toBe(
-        `default-src 'self'; connect-src 'self' ws://127.0.0.1:${server.port} ws://localhost:${server.port}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+        `default-src 'self'; connect-src 'self' ws://127.0.0.1:${server.port}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
       );
       expect(res.headers['x-content-type-options']).toBe('nosniff');
       expect(res.headers['referrer-policy']).toBe('no-referrer');
