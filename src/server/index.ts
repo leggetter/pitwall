@@ -1,4 +1,7 @@
 import type { Indexer } from '../index/index.js';
+import { startServerWithInternals } from './server.js';
+
+export { DEFAULT_PORT, PortInUseError } from './server.js';
 
 export interface ServerOptions {
   indexer: Indexer;
@@ -16,8 +19,12 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
-/** W1 stub, replaced by W3. */
+/**
+ * Serves the index on 127.0.0.1. With no port, tries 4517 and falls back to a
+ * free port if it's busy; an explicit port that's busy rejects with
+ * PortInUseError. `url` is `http://127.0.0.1:<port>`, the real port.
+ * close() closes WebSocket clients and the HTTP server, but not the indexer.
+ */
 export function startServer(options: ServerOptions): Promise<RunningServer> {
-  void options;
-  throw new Error('not implemented: W3');
+  return startServerWithInternals(options);
 }
