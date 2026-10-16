@@ -220,22 +220,33 @@ const LINK_TARGET = new RegExp(
   'y',
 );
 const WORD = String.raw`\p{L}\p{N}_`;
-const EMPHASIS = [
-  new RegExp(String.raw`(?<![${WORD}])\*\*(?=\S)(.*?\S)\*\*(?![${WORD}])`, 'gu'),
-  new RegExp(String.raw`(?<![${WORD}])__(?=\S)(.*?\S)__(?![${WORD}])`, 'gu'),
-  new RegExp(String.raw`(?<![${WORD}*])\*(?=[^\s*])(.*?[^\s*])\*(?![${WORD}*])`, 'gu'),
-  new RegExp(String.raw`(?<![${WORD}])_(?=[^\s_])(.*?[^\s_])_(?![${WORD}])`, 'gu'),
+/** Each pattern with the character it can't match without. */
+const EMPHASIS: readonly (readonly [string, RegExp])[] = [
+  ['*', new RegExp(String.raw`(?<![${WORD}])\*\*(?=\S)(.*?\S)\*\*(?![${WORD}])`, 'gu')],
+  ['_', new RegExp(String.raw`(?<![${WORD}])__(?=\S)(.*?\S)__(?![${WORD}])`, 'gu')],
+  ['*', new RegExp(String.raw`(?<![${WORD}*])\*(?=[^\s*])(.*?[^\s*])\*(?![${WORD}*])`, 'gu')],
+  ['_', new RegExp(String.raw`(?<![${WORD}])_(?=[^\s_])(.*?[^\s_])_(?![${WORD}])`, 'gu')],
 ];
 const PLACEHOLDER = /(\d+)/g;
 
+/** A character that every inline pattern needs. Text without one is returned as it is. */
+const INLINE_SYNTAX = /[`\\[*_]/;
+
+/**
+ * Each pattern runs only when the text holds the character it needs, so a
+ * line of plain prose costs one test rather than nine replacements. That
+ * matters for a message of thousands of short lines.
+ */
 function stripInline(text: string): string {
+  if (!INLINE_SYNTAX.test(text)) return text;
   const kept: string[] = [];
   const keep = (value: string) => `${kept.push(value) - 1}`;
-  let out = text
-    .replace(CODE_SPAN, (_match, _ticks: string, code: string) => keep(trimCodeSpan(code)))
-    .replace(ESCAPE, (_match, char: string) => keep(char));
-  out = replaceLinks(replaceLinks(out, '!['), '[');
-  for (const pattern of EMPHASIS) out = out.replace(pattern, '$1');
+  let out = text;
+  if (out.includes('`')) out = out.replace(CODE_SPAN, (_match, _ticks: string, code: string) => keep(trimCodeSpan(code)));
+  if (out.includes('\\')) out = out.replace(ESCAPE, (_match, char: string) => keep(char));
+  if (out.includes('[')) out = replaceLinks(replaceLinks(out, '!['), '[');
+  for (const [char, pattern] of EMPHASIS) if (out.includes(char)) out = out.replace(pattern, '$1');
+  if (kept.length === 0) return out;
   return out.replace(PLACEHOLDER, (match, index: string) => kept[Number(index)] ?? match);
 }
 
@@ -273,4 +284,96 @@ function replaceLinks(text: string, opener: '![' | '['): string {
 /** CommonMark drops one space from each end of a code span that has both, so `` ` `a` ` `` can be written. */
 function trimCodeSpan(code: string): string {
   return code.length > 2 && code.startsWith(' ') && code.endsWith(' ') && code.trim() !== '' ? code.slice(1, -1) : code;
+}
+
+// --- Whole messages ------------------------------------------------------------
+
+/**
+ * How much inline work a whole message may cost before its long lines are
+ * stripped in pieces. A line's work is its length times how many characters
+ * on it can open inline syntax (`` ` ``, `\`, `[`, `*` and `_`): on hostile
+ * input, the inline patterns take time that grows with that product. Real
+ * messages use a small fraction of this; the W6 inputs use it up at once.
+ */
+export const MESSAGE_WORK_MAX = 4 * 1024 * 1024;
+/** The length of the pieces a line is stripped in once the work runs out. */
+export const LINE_PIECE_LENGTH = 128;
+
+/**
+ * `stripMarkdown` for a whole message, in time bounded however hostile the
+ * text is, for showing a message in full.
+ *
+ * Lines are stripped as `stripMarkdown` strips them while the work budget
+ * lasts. After that, a line longer than `pieceLength` is stripped
+ * `pieceLength` characters at a time, which can leave syntax that spans two
+ * pieces as it is. Lines shorter than that are always stripped whole, so the
+ * total work is at most the budget plus the text's length times `pieceLength`.
+ */
+export function stripMarkdownBounded(
+  markdown: string,
+  workMax: number = MESSAGE_WORK_MAX,
+  pieceLength: number = LINE_PIECE_LENGTH,
+): string {
+  const out: string[] = [];
+  // Consecutive lines stripped whole, together, so tables and fences keep
+  // their context. A run never splits a fence: only a line outside one ends it.
+  let run: string[] = [];
+  let work = workMax;
+  const flush = () => {
+    if (run.length > 0) out.push(stripMarkdown(run.join('\n')));
+    run = [];
+  };
+  for (const line of markFences(markdown)) {
+    if (line.code || line.text.length <= pieceLength) {
+      run.push(line.text);
+      continue;
+    }
+    const cost = line.text.length * syntaxCount(line.text);
+    if (cost <= work) {
+      work -= cost;
+      run.push(line.text);
+      continue;
+    }
+    work = 0;
+    flush();
+    out.push(stripPieces(line.text, pieceLength));
+  }
+  flush();
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
+/** How many characters of `text` can open inline syntax. */
+function syntaxCount(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    // ` \ [ * _
+    if (code === 0x60 || code === 0x5c || code === 0x5b || code === 0x2a || code === 0x5f) count++;
+  }
+  return count;
+}
+
+/**
+ * Not whitespace, not a word character and not markdown, so a piece that
+ * starts with it isn't read as a heading, list item, quote, rule, fence or
+ * table row, and emphasis next to it reads as it does next to a space.
+ */
+const PIECE_START = '​';
+
+/** One line, stripped a piece at a time. Every piece after the first is stripped as the middle of a line. */
+function stripPieces(line: string, pieceLength: number): string {
+  let out = '';
+  for (let start = 0; start < line.length; ) {
+    let end = Math.min(start + pieceLength, line.length);
+    if (end < line.length && end - 1 > start && isHighSurrogate(line.charCodeAt(end - 1))) end -= 1;
+    const piece = line.slice(start, end);
+    if (start === 0) {
+      out += stripMarkdown(piece);
+    } else {
+      const stripped = stripMarkdown(PIECE_START + piece);
+      out += stripped.startsWith(PIECE_START) ? stripped.slice(PIECE_START.length) : stripped;
+    }
+    start = end;
+  }
+  return out;
 }

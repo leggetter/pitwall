@@ -5,10 +5,10 @@
 import { open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { AskedYou, TranscriptStatus } from '../shared/protocol.js';
+import type { AskedYou, LastMessage, TranscriptStatus } from '../shared/protocol.js';
 import { detectAskedYou } from './asked.js';
 import { isRecord } from './guards.js';
-import { cap, stripMarkdown, truncate } from './text.js';
+import { cap, stripMarkdown, stripMarkdownBounded, truncate } from './text.js';
 
 export interface TranscriptInfo {
   transcript: TranscriptStatus;
@@ -48,6 +48,13 @@ export interface TranscriptReader {
    * the cwd `claude agents` reported and its realpath. Never rejects.
    */
   read(sessionId: string, cwds: readonly string[]): Promise<TranscriptInfo>;
+  /**
+   * The newest assistant message of a session `read` has seen, in full: the
+   * text kept from the transcript, markdown stripped without the 500-character
+   * limit. Undefined when there's none. Reads no files: it works from what the
+   * last `read` kept, and strips it once per change of message. Never throws.
+   */
+  lastMessage(sessionId: string): LastMessage | undefined;
   /** Forgets every session not in `sessionIds`. */
   retain(sessionIds: ReadonlySet<string>): void;
 }
@@ -74,6 +81,14 @@ const NEWLINE = 0x0a;
 const EMPTY = Buffer.alloc(0);
 /** Session ids become file names, so anything that could escape the projects directory is refused. */
 const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * True for a session id that is safe to use in a file name or a URL path: a
+ * letter or digit, then letters, digits, `.`, `_` and `-`. No `/`, `..` or NUL.
+ */
+export function isSafeSessionId(sessionId: string): boolean {
+  return SAFE_SESSION_ID.test(sessionId);
+}
 
 export function defaultConfigDir(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string {
   const fromEnv = env.CLAUDE_CONFIG_DIR;
@@ -180,7 +195,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
   return {
     async read(sessionId, cwds) {
       try {
-        if (!SAFE_SESSION_ID.test(sessionId)) return { transcript: 'missing' };
+        if (!isSafeSessionId(sessionId)) return { transcript: 'missing' };
         for (let attempt = 0; attempt < 2; attempt++) {
           const file = await locate(sessionId, cwds);
           if (file === undefined) break;
@@ -194,6 +209,24 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
         return { transcript: 'missing' };
       } catch {
         return { transcript: 'unreadable' };
+      }
+    },
+    lastMessage(sessionId) {
+      try {
+        const state = files.get(sessionId);
+        if (state === undefined) return undefined;
+        const { fields } = state;
+        const source = fields.assistantText;
+        if (source === undefined) return undefined;
+        if (state.full?.source !== source) {
+          state.full = { source, text: stripMarkdownBounded(source).trim() };
+        }
+        if (state.full.text === '') return undefined;
+        const message: LastMessage = { sessionId, text: state.full.text, truncated: fields.assistantTextTruncated === true };
+        if (fields.assistantAtMs !== undefined) message.at = new Date(fields.assistantAtMs).toISOString();
+        return message;
+      } catch {
+        return undefined;
       }
     },
     retain(sessionIds) {
@@ -219,6 +252,8 @@ interface FileState {
   fields: Fields;
   /** What was worked out from `fields.assistantText`, kept until the text changes. */
   derived?: Derived;
+  /** The full stripped text of `fields.assistantText`, made on request and kept until the text changes. */
+  full?: { source: string; text: string };
 }
 
 interface Derived {
@@ -312,6 +347,10 @@ export interface Fields {
   assistantMessageId?: string;
   /** The newest assistant message's raw text, its text blocks joined, capped at 64 KiB. */
   assistantText?: string;
+  /** True when the newest assistant message's text was longer than the 64 KiB kept. */
+  assistantTextTruncated?: boolean;
+  /** When the newest assistant message's latest text block was written. */
+  assistantAtMs?: number;
   userPrompt?: string;
   /** True when a prompt came after the newest assistant text, in file order. */
   promptAfterText?: boolean;
@@ -335,22 +374,26 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   const type = entry.type;
   if (type !== 'user' && type !== 'assistant') return;
 
-  if (typeof entry.timestamp === 'string') {
-    const ms = Date.parse(entry.timestamp);
-    if (Number.isFinite(ms) && (fields.lastActivityMs === undefined || ms > fields.lastActivityMs)) {
-      fields.lastActivityMs = ms;
-    }
+  const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+  const at = Number.isFinite(ms) ? ms : undefined;
+  if (at !== undefined && (fields.lastActivityMs === undefined || at > fields.lastActivityMs)) {
+    fields.lastActivityMs = at;
   }
 
   if (type === 'assistant') {
     const text = assistantTextOf(entry);
     if (text === undefined) return;
-    if (text.id !== undefined && text.id === fields.assistantMessageId && fields.assistantText !== undefined) {
-      fields.assistantText = cap(`${fields.assistantText}\n${text.text}`, ASSISTANT_TEXT_KEEP);
-    } else {
+    const sameMessage =
+      text.id !== undefined && text.id === fields.assistantMessageId && fields.assistantText !== undefined;
+    const joined = sameMessage ? `${fields.assistantText}\n${text.text}` : text.text;
+    if (!sameMessage) {
       fields.assistantMessageId = text.id;
-      fields.assistantText = cap(text.text, ASSISTANT_TEXT_KEEP);
+      fields.assistantAtMs = undefined;
     }
+    fields.assistantText = cap(joined, ASSISTANT_TEXT_KEEP);
+    // Once cut, every later block makes the join longer still, so this stays true.
+    fields.assistantTextTruncated = joined.length > ASSISTANT_TEXT_KEEP;
+    if (at !== undefined) fields.assistantAtMs = at;
     fields.promptAfterText = false;
     return;
   }
