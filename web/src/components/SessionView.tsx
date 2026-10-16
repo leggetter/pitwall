@@ -5,6 +5,7 @@ import { entryKeys, getConversation, mergeNewest, prependOlder, type Conversatio
 import { absoluteTime, plainText, relativeTime, shortenHome } from '../format.js';
 import { statusPill } from '../sessions.js';
 import { SessionActions } from './SessionActions.js';
+import { SessionTerminal, useAttachToggle } from './Terminal.js';
 
 /**
  * - `loading`: the first page hasn't arrived.
@@ -211,6 +212,8 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
     [api, sessionId],
   );
   const { state, loadEarlier, retry, scroller, onScroll } = useConversation(session.lastActivityAt, loader);
+  // Background sessions can be attached (W10). The terminal takes the conversation's place until it's closed.
+  const attach = useAttachToggle(session.kind);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -248,6 +251,11 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
               </>
             )}
           </h2>
+          {attach.available && !attach.open && (
+            <button ref={attach.buttonRef} type="button" className="button small" onClick={attach.show}>
+              Attach
+            </button>
+          )}
           <button ref={closeRef} type="button" className="button small" onClick={onClose}>
             Close
           </button>
@@ -274,7 +282,8 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
         {!listed && <p className="session-view-note">This session is no longer listed, so this is what it showed last.</p>}
       </header>
 
-      <div className="session-view-body" ref={scroller} onScroll={onScroll}>
+      {attach.open && <SessionTerminal sessionId={sessionId} onClose={attach.hide} />}
+      <div className="session-view-body" ref={scroller} onScroll={onScroll} hidden={attach.open}>
         {state.before !== undefined && (
           <button
             type="button"
