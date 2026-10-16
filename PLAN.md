@@ -235,14 +235,26 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 
 | Item | What | Branch | Owner | Status |
 | --- | --- | --- | --- | --- |
-| W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | In progress |
-| W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | In progress, alongside W8: it adds no input path |
+| W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | Merged ([#11](https://github.com/leggetter/pitwall/pull/11)) |
+| W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | In review ([#10](https://github.com/leggetter/pitwall/pull/10)), rebasing onto W8 |
 | W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | After W8 |
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | After W8 |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | After W8 |
 | W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | After W9-W12 |
 | W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | After W13 |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
+
+### Security gate as built (W8, 2026-10-16)
+
+| Credential | Where it lives | Can |
+| --- | --- | --- |
+| Token | Printed to stdout, in the 0600 launch file while pitwall runs, and in the page's `sessionStorage` | Prove itself over the WebSocket through an HMAC, never sent. Authorize HTTP GETs, for scripts |
+| `apiKey` | Server memory, and the page's API client only | Authorize every HTTP API call. State-changing calls (any method other than GET or HEAD) also need `Origin: http://127.0.0.1:<port>`, otherwise 403 |
+
+- **Input routes:** every route that takes a session id resolves it with `resolveSession()` (`src/server/sessions.ts`), and builds commands from the returned summary, never from the raw parameter. Register input routes inside `createApp`, before the `/api/*` catch-all.
+- **Web:** HTTP calls go through `ApiContext`/`api.get` in `web/src/api.ts`. A 401 means a stale `apiKey`, so the client reconnects; the page never sends the raw token.
+- **Environment:** `PITWALL_HOME` overrides `~/.pitwall`. `PITWALL_OPEN_MARKER` is set by `npm run dev`, so the CLI child opens the browser once, after it's listening.
+- **Residual risk, found by W8:** a relay attack. A squatter that could also reach a live pitwall using the *same* token could pass the challenge to the page and the proof back to the server. Per-run tokens and the fixed dev port rule this out today. Protocol v3 could close it by putting the origin into the HMAC. Low priority on a single-user Mac.
 
 ### Decisions for M2
 
@@ -345,7 +357,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 
 ### Rules for M1
 
-- **Token transport:** the CLI opens `http://127.0.0.1:<port>/#token=<token>`. The UI reads the token from the fragment, keeps it in `sessionStorage`, and removes it from the address bar.
+- **Token transport** (M1; superseded in M2 by the challenge-response handshake, the `apiKey` and the launch file, under "Security gate as built"): the CLI opens `http://127.0.0.1:<port>/#token=<token>`. The UI reads the token from the fragment, keeps it in `sessionStorage`, and removes it from the address bar.
   - HTTP API calls send `Authorization: Bearer <token>`.
   - The WebSocket sends `{ "type": "auth", "token": ... }` as its first message.
   - Static assets need no token. `Host` is checked on every request, and `Origin` on every API request and WebSocket upgrade.

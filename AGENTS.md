@@ -31,7 +31,8 @@ Use Node 22 (CI runs 22.x) and npm.
 npm ci                   install exactly what package-lock.json records
 npm run build            server with tsc to dist/, web UI with Vite to dist/web
 npm run dev -- [root...] rebuild the web UI and restart the server on change. Uses port 4517
-                         and one token per run, and refuses to start if 4517 is busy
+                         and one token per run, refuses to start if 4517 is busy, and opens
+                         the browser once, through the launch file, after the server listens
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5)
