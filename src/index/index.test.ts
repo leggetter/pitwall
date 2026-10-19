@@ -591,7 +591,7 @@ describe('startIndexer', () => {
     indexer.stop();
     expect(snapshot.source).toEqual({
       ok: false,
-      error: 'claude agents --json failed: pitwall-test-no-such-claude was not found',
+      error: 'claude agents --json --all failed: pitwall-test-no-such-claude was not found',
     });
     expect(snapshot.groups).toEqual([]);
     expect(snapshot.roots).toEqual([await realpath(os.tmpdir())]);
