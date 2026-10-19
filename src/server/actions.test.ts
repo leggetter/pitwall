@@ -323,6 +323,16 @@ describe('spawn: validation', () => {
     expect((await spawnAsPage(started, { ...valid(), prompt: 'x'.repeat(MAX_PROMPT_LENGTH) })).status).toBe(201);
   });
 
+  // Never with a real claude: these prompts are exactly the ones that could run `claude update` or `claude logout`.
+  it('refuses a prompt that is just the name of a claude command, without running anything', async () => {
+    for (const prompt of ['logout', 'update', ' Upgrade\n', 'purge', 'rm', 'agents', 'rc']) {
+      await expect400({ ...valid(), prompt }, /that's the name of a claude command/);
+    }
+    const started = await start();
+    expect((await spawnAsPage(started, { ...valid(), prompt: 'update the README' })).status).toBe(201);
+    expect(started.run.calls.at(-1)?.args.at(-1)).toBe('update the README');
+  });
+
   it("refuses a name outside the contract's characters, over 64, or that could read as an option", async () => {
     for (const name of ['a;b', 'a/b', 'a$b', 'naïve', 'tab\there', 'x'.repeat(65), '-h', '--bg', ' leading', 'trailing ', '', 42, null]) {
       await expect400({ ...valid(), name }, /name/);
