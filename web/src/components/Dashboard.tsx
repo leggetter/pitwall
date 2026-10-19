@@ -10,6 +10,7 @@ import {
   type GroupState,
   type StorageSource,
 } from '../groupState.js';
+import { relayAlertText } from '../relay.js';
 import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { GroupSection } from './GroupSection.js';
@@ -60,6 +61,8 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   // Each group's "Finished" sub-list starts collapsed too, and is remembered the same way.
   const [finishedOpen, setFinishedOpen] = useState<GroupState>(() => readGroupState(storage, FINISHED_STATE_KEY));
   const [dismissedError, setDismissedError] = useState<string>();
+  // The relay alert dismissed, by its time and count: a later one shows again.
+  const [dismissedAlert, setDismissedAlert] = useState<string>();
   // The session whose view is open, as it was when opened. While it's listed, the live summary is shown.
   const [opened, setOpened] = useState<SessionSummary>();
 
@@ -113,6 +116,9 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   };
 
   const showError = serverError !== undefined && serverError !== dismissedError;
+  const relayAlert = snapshot?.relayAlert;
+  const relayAlertKey = relayAlert ? `${relayAlert.at}#${relayAlert.count}` : undefined;
+  const alertText = relayAlert && relayAlertKey !== dismissedAlert ? relayAlertText(relayAlert) : undefined;
 
   return (
     <div className="app">
@@ -182,6 +188,16 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
       {snapshot && source && !source.ok && (
         <div className="banner warning" role="alert">
           <code>claude agents --json --all</code> failed on the latest poll: {plainText(source.error)}
+        </div>
+      )}
+      {relayAlert && alertText && (
+        <div className={relayAlert.blocked ? 'banner warning relay-alert' : 'banner error relay-alert'} role="alert">
+          <span>
+            {alertText.summary} {alertText.count} Latest: {plainText(relayAlert.detail)}
+          </span>
+          <button type="button" className="link-button" onClick={() => setDismissedAlert(relayAlertKey)}>
+            Dismiss
+          </button>
         </div>
       )}
       {showError && (
