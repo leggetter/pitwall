@@ -88,24 +88,93 @@ describe('runCommand', () => {
 });
 
 describe('childEnvironment', () => {
-  it("drops pitwall's own variables and npm's, and keeps everything else", () => {
-    const env = childEnvironment({
-      PATH: '/usr/bin',
-      HOME: '/Users/example',
-      PITWALL_TOKEN: 'secret',
-      PITWALL_HOME: '/tmp/x',
-      PITWALL_OPEN_MARKER: '/tmp/marker',
-      pitwall_lowercase: 'x',
-      npm_config_save_exact: 'true',
-      npm_lifecycle_event: 'start',
-      npm_package_name: '@leggetter/pitwall',
-      INIT_CWD: '/Users/example/pitwall',
-      ANTHROPIC_MODEL: 'kept',
-      CLAUDE_CODE_MESSAGING_SOCKET: 'uds:/tmp/cc-socks/1.sock',
-      CLAUDE_CODE_MESSAGING_TOKEN: 'inbox-secret',
-      CLAUDE_JOB_DIR: '/Users/example/.claude/jobs/abc',
-      UNSET: undefined,
-    });
-    expect(env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', ANTHROPIC_MODEL: 'kept' });
+  const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
+  const KEPT_BASE = { PATH: '/usr/bin', HOME: '/Users/example' };
+
+  /** Every variable dropped by prefix, with a few spellings each. */
+  const BY_PREFIX = {
+    PITWALL_TOKEN: 'secret',
+    PITWALL_HOME: '/tmp/x',
+    PITWALL_OPEN_MARKER: '/tmp/marker',
+    PITWALL_ANYTHING_LATER: '1',
+    pitwall_lowercase: 'x',
+    npm_config_save_exact: 'true',
+    npm_lifecycle_event: 'start',
+    npm_package_name: '@leggetter/pitwall',
+    NPM_CONFIG_UPPER: 'x',
+    CLAUDE_CODE_MESSAGING_SOCKET: 'uds:/tmp/cc-socks/1.sock',
+    CLAUDE_CODE_MESSAGING_TOKEN: 'inbox-secret',
+  };
+
+  /** Every variable dropped by exact name: npm's INIT_CWD, and the identity of the session pitwall runs inside. */
+  const BY_NAME = {
+    INIT_CWD: '/Users/example/pitwall',
+    CLAUDECODE: '1',
+    CLAUDE_CODE_CHILD_SESSION: '1',
+    CLAUDE_CODE_SESSION_ID: '99999999-9999-4999-8999-999999999999',
+    CLAUDE_CODE_SESSION_ATTENDED: '1',
+    CLAUDE_PID: '4242',
+    CLAUDE_EFFORT: 'xhigh',
+    AI_AGENT: 'claude-code',
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CLAUDE_CODE_EXECPATH: '/Users/example/.local/share/claude/versions/2.1.303',
+    CLAUDE_CODE_BRIDGE_SESSION_ID: 'bridge-1',
+    CLAUDE_JOB_DIR: '/Users/example/.claude/jobs/abc',
+    TRACEPARENT: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+    TRACESTATE: 'vendor=value',
+  };
+
+  /** The user's own configuration, which every child keeps. */
+  const USER_CONFIG = {
+    ANTHROPIC_MODEL: 'claude-haiku',
+    ANTHROPIC_BASE_URL: 'https://gateway.example',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_USE_VERTEX: '1',
+    CLAUDE_CONFIG_DIR: '/Users/example/.claude-work',
+    CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
+    CLAUDE_CODE_EFFORT_LEVEL: 'high',
+    CLAUDE_CODE_SAFE_MODE: '1',
+  };
+
+  it('drops every variable with a dropped prefix, in any case', () => {
+    for (const [name, value] of Object.entries(BY_PREFIX)) {
+      expect(childEnvironment({ ...KEPT_BASE, [name]: value }), name).toEqual(KEPT_BASE);
+    }
+  });
+
+  it('drops each dropped name, exactly, in any case', () => {
+    for (const [name, value] of Object.entries(BY_NAME)) {
+      expect(childEnvironment({ ...KEPT_BASE, [name]: value }), name).toEqual(KEPT_BASE);
+      expect(childEnvironment({ ...KEPT_BASE, [name.toLowerCase()]: value }), name.toLowerCase()).toEqual(KEPT_BASE);
+    }
+  });
+
+  it('drops only the exact names, not others that start the same way', () => {
+    const lookalikes = Object.fromEntries(Object.keys(BY_NAME).map((name) => [`${name}_OTHER`, 'kept']));
+    expect(childEnvironment({ ...KEPT_BASE, ...lookalikes })).toEqual({ ...KEPT_BASE, ...lookalikes });
+  });
+
+  it("keeps the user's own configuration, CLAUDE_CODE_SAFE_MODE included", () => {
+    expect(childEnvironment({ ...KEPT_BASE, ...USER_CONFIG, ...BY_PREFIX, ...BY_NAME }, TOKEN)).toEqual({ ...KEPT_BASE, ...USER_CONFIG });
+  });
+
+  it('drops any variable whose value contains the token, whatever its name', () => {
+    const env = {
+      ...KEPT_BASE,
+      COPIED: TOKEN,
+      HEADER: `Bearer ${TOKEN}`,
+      ANTHROPIC_CUSTOM_HEADERS: `x-pitwall: ${TOKEN}`,
+      ALMOST: TOKEN.slice(1),
+    };
+    expect(childEnvironment(env, TOKEN)).toEqual({ ...KEPT_BASE, ALMOST: TOKEN.slice(1) });
+  });
+
+  it('has no token check without a token, and an empty token matches nothing', () => {
+    expect(childEnvironment({ ...KEPT_BASE, COPIED: TOKEN })).toEqual({ ...KEPT_BASE, COPIED: TOKEN });
+    expect(childEnvironment({ ...KEPT_BASE, COPIED: TOKEN }, '')).toEqual({ ...KEPT_BASE, COPIED: TOKEN });
+  });
+
+  it('drops undefined values and keeps the rest exactly as they are', () => {
+    expect(childEnvironment({ ...KEPT_BASE, UNSET: undefined, SPACED: ' a b ', EMPTY: '' })).toEqual({ ...KEPT_BASE, SPACED: ' a b ', EMPTY: '' });
   });
 });

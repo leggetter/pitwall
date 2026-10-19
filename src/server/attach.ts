@@ -17,7 +17,8 @@
 // Anything malformed or out of order gets `error` and close 1008. The session
 // is resolved with resolveSession(), and the command is built from the
 // resolved summary's shortId, never from the client's id. The PTY gets the
-// server's environment without PITWALL_* or the token.
+// server's environment through childEnvironment() (command.ts), the scrubber
+// every child of pitwall goes through.
 //
 // Closing the socket kills the PTY, which ends `claude attach` and detaches:
 // the session keeps running (spike S3). close() does the same for every PTY.
@@ -35,7 +36,8 @@ import {
   type SessionSummary,
 } from '../shared/protocol.js';
 import { parseJsonObject, startHandshake } from './handshake.js';
-import { childEnvironment, type PtyProcess, type PtySpawner } from './pty.js';
+import { childEnvironment } from './command.js';
+import type { PtyProcess, PtySpawner } from './pty.js';
 import { resolveSession } from './sessions.js';
 
 /**

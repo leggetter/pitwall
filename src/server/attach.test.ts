@@ -17,7 +17,7 @@ import {
 } from '../shared/protocol.js';
 import { ATTACH_MAX_PAYLOAD_BYTES, COLS_RANGE, needsRestart, ROWS_RANGE, WS_CLOSE_POLICY } from './attach.js';
 import type { RunningServer } from './index.js';
-import { childEnvironment, spawnPty, type PtyProcess, type PtySpawnOptions } from './pty.js';
+import { spawnPty, type PtyProcess, type PtySpawnOptions } from './pty.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
 // Made-up sessions only. No test here runs `claude`: every PTY is a FakePty,
@@ -661,29 +661,28 @@ describe('the attach socket', () => {
   });
 
   describe('the environment', () => {
-    it('gives the PTY the environment without PITWALL_* or anything holding the token', async () => {
+    // The scrubber itself, name by name, is tested in command.test.ts.
+    it("gives the PTY the environment through the shared scrubber: no PITWALL_*, npm's, the session's identity or anything holding the token", async () => {
       const env = {
         ...ENV,
         PITWALL_TOKEN: TOKEN,
         PITWALL_HOME: '/Users/example/.pitwall',
         pitwall_open_marker: '/tmp/marker',
         COPIED: `Bearer ${TOKEN}`,
+        npm_config_save_exact: 'true',
+        INIT_CWD: '/Users/example/pitwall',
+        CLAUDECODE: '1',
+        CLAUDE_CODE_SESSION_ID: '99999999-9999-4999-8999-999999999999',
+        CLAUDE_CODE_CHILD_SESSION: '1',
+        CLAUDE_CODE_MESSAGING_TOKEN: 'inbox',
+        CLAUDE_JOB_DIR: '/j',
+        UNSET: undefined,
       };
       const { server, spawner } = await start({ env });
       await attached(server.port);
       const childEnv = spawner.last.options.env;
       expect(childEnv).toEqual(ENV);
       expect(JSON.stringify(childEnv)).not.toContain(TOKEN);
-    });
-
-    it('childEnvironment drops undefined values and keeps the rest as they are', () => {
-      expect(childEnvironment({ A: '1', B: undefined, PITWALL_X: '2' }, TOKEN)).toEqual({ A: '1' });
-      expect(
-        childEnvironment(
-          { A: '1', CLAUDE_CODE_MESSAGING_SOCKET: 'uds:/tmp/x.sock', CLAUDE_CODE_MESSAGING_TOKEN: 'inbox', CLAUDE_JOB_DIR: '/j' },
-          TOKEN,
-        ),
-      ).toEqual({ A: '1' });
     });
   });
 });
