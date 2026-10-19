@@ -78,6 +78,7 @@ function session(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sess
     alive: true,
     startedAt: '2026-10-16T00:00:00.000Z',
     stale: false,
+    finished: false,
     transcript: 'missing',
     ...overrides,
   };
