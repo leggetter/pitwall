@@ -345,12 +345,12 @@ describe('SessionView: the conversation', () => {
   });
 });
 
-describe('SessionView: the read-only note', () => {
-  it('tells an interactive session how /bg will let pitwall drive it', async () => {
+describe('SessionView: the /bg note', () => {
+  it('tells an interactive session how /bg will let pitwall drive it fully', async () => {
     renderDashboard(fakeServer(ok([])));
-    const note = within(await openView()).getByText(/Read-only/);
+    const note = within(await openView()).getByText(/moves it to the background/);
     expect(note.textContent).toBe(
-      "Read-only. Typing /bg in this session's terminal moves it to the background, which will let pitwall drive it from here.",
+      "Typing /bg in this session's terminal moves it to the background, which will let pitwall drive it fully from here.",
     );
     expect(note.querySelector('code')?.textContent).toBe('/bg');
   });
@@ -358,7 +358,7 @@ describe('SessionView: the read-only note', () => {
   it('is not shown for a background session', async () => {
     renderDashboard(fakeServer(ok([])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
     const view = await openView();
-    expect(within(view).queryByText(/Read-only/)).toBeNull();
+    expect(within(view).queryByText(/moves it to the background/)).toBeNull();
     expect(within(view).getByText('Nothing to show yet.')).toBeTruthy();
   });
 });

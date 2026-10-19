@@ -4,6 +4,7 @@ import { ApiContext } from '../api.js';
 import { entryKeys, getConversation, mergeNewest, prependOlder, type ConversationResult } from '../conversation.js';
 import { absoluteTime, plainText, relativeTime, shortenHome } from '../format.js';
 import { statusPill } from '../sessions.js';
+import { RelayBox } from './RelayBox.js';
 import { SessionActions } from './SessionActions.js';
 import { SessionTerminal, useAttachToggle } from './Terminal.js';
 
@@ -273,10 +274,11 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
           {plainText(shortenHome(session.cwd))}
         </p>
         {session.kind === 'background' && listed && <SessionActions session={session} onRemoved={onClose} />}
+        {session.kind === 'interactive' && listed && <RelayBox session={session} now={now} />}
         {session.kind === 'interactive' && (
           <p className="session-view-note">
-            Read-only. Typing <code>/bg</code> in this session&apos;s terminal moves it to the background, which will let
-            pitwall drive it from here.
+            Typing <code>/bg</code> in this session&apos;s terminal moves it to the background, which will let pitwall
+            drive it fully from here.
           </p>
         )}
         {!listed && <p className="session-view-note">This session is no longer listed, so this is what it showed last.</p>}

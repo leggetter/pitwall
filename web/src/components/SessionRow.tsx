@@ -1,8 +1,10 @@
 import type { MouseEvent } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, cwdWithinGroup, plainText, relativeTime } from '../format.js';
+import { canMessage, requestRelayFocus } from '../relay.js';
 import { attachCommand, needsAttention, statusPill } from '../sessions.js';
 import { CopyCommand } from './CopyCommand.js';
+import { RelayExchangeNote } from './RelayBox.js';
 import { Reply } from './Reply.js';
 
 const STALE_HINT =
@@ -41,6 +43,8 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
   const command = attachCommand(session);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
+  // The quick action opens the session view, where the message box is (W11).
+  const messageable = onOpen !== undefined && canMessage(session);
 
   const openFromRow = (event: MouseEvent<HTMLLIElement>) => {
     if (!onOpen) return;
@@ -121,7 +125,9 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
         <p className="transcript-note">Transcript {session.transcript === 'missing' ? 'not found' : 'unreadable'}</p>
       )}
 
-      {(where || session.cwdMissing || command) && (
+      {session.relay && <RelayExchangeNote exchange={session.relay} now={now} compact />}
+
+      {(where || session.cwdMissing || command || messageable) && (
         <div className="session-foot">
           {where && (
             <span className="cwd" title={plainText(session.cwd)}>
@@ -134,6 +140,18 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
             </span>
           )}
           {command && <CopyCommand command={command} />}
+          {messageable && (
+            <button
+              type="button"
+              className="button small"
+              onClick={() => {
+                requestRelayFocus(session.sessionId);
+                onOpen?.(session.sessionId);
+              }}
+            >
+              Message
+            </button>
+          )}
         </div>
       )}
     </li>
