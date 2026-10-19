@@ -1,7 +1,9 @@
 import type { Indexer } from '../index/index.js';
+import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
 
 export { DEFAULT_PORT, PortInUseError } from './server.js';
+export { createRelayManager, type RelayManager } from './relay.js';
 
 export interface ServerOptions {
   indexer: Indexer;
@@ -11,6 +13,12 @@ export interface ServerOptions {
   token: string;
   /** Directory of the built web UI. */
   webRoot: string;
+  /**
+   * The relay for messaging interactive sessions (W11, D8). The CLI makes it,
+   * so the indexer can hide the relay's own session. Default: a new one. The
+   * server stops it on close().
+   */
+  relay?: RelayManager;
 }
 
 export interface RunningServer {
