@@ -437,7 +437,10 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     const why = p.error ?? (code !== null ? `exit code ${code}` : `signal ${signal ?? 'unknown'}`);
     lastError = said === undefined ? why : `${why}: ${said}`;
     if (!p.stopping) log(`it stopped (${lastError}).`);
-    if (current !== undefined && current.phase !== 'waiting') {
+    if (current !== undefined && current.phase === 'grace') {
+      // SendMessage had already delivered it; only the wait for a notice was cut short.
+      finish(current, { status: 'delivered' }, false);
+    } else if (current !== undefined && current.phase !== 'waiting') {
       const detail = p.stopping
         ? 'The relay was restarted before it answered.'
         : p.error !== undefined
