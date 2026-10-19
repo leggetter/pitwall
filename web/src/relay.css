@@ -1,0 +1,125 @@
+/* Messaging an interactive session through the relay (W11): the session view's box and the row's note. Uses the tokens in styles.css. */
+
+.relay-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.relay-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.relay-note {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.relay-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.relay-text {
+  width: 100%;
+  min-height: 4.5em;
+  padding: 6px 8px;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.relay-text[aria-invalid='true'] {
+  border-color: var(--error-border);
+}
+
+.relay-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.relay-count {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.relay-count.over {
+  color: var(--failed-text);
+}
+
+.relay-box .button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.relay-result {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.relay-result.tone-ok {
+  background: var(--done-bg);
+  color: var(--done-text);
+  border-color: transparent;
+}
+
+.relay-result.tone-waiting {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+}
+
+.relay-result.tone-failed {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+}
+
+.relay-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.85rem;
+}
+
+.relay-exchange-line {
+  color: var(--text-muted);
+}
+
+.relay-exchange-line.tone-waiting {
+  color: var(--attention-strong);
+}
+
+.relay-exchange-line.tone-failed {
+  color: var(--failed-text);
+}
+
+.relay-exchange-label {
+  font-weight: 600;
+}
+
+.relay-reply {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.relay-exchange.compact .relay-reply {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+}
