@@ -241,7 +241,7 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Merged ([#15](https://github.com/leggetter/pitwall/pull/15)): design D, decided by Phil on 2026-10-19 after spike [003](docs/spikes/003-relay.md) |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
 | W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: finished sessions listed muted, merged ([#14](https://github.com/leggetter/pitwall/pull/14)); the live check of the integrated branch passed on 2026-10-19 |
-| W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | Done 2026-10-19: changes requested, one medium finding. Fixes merged in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17); the reviewer re-checks them |
+| W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | Done 2026-10-19: changes requested, one medium finding. Fixes merged in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17). Re-check at `97e4664`: approved; follow-ups in `m2/gate-followups` |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
 
 ### Security gate as built (W8, 2026-10-16)
@@ -297,6 +297,11 @@ Changes requested: one medium finding blocks the merge, and the rest are low or 
   - the proof wasn't bound to the origin (L6; protocol v3);
   - SIGHUP left the launch file behind (L7; it's also deleted after the first handshake, or after 60 s).
   - **Nits:** xterm links limited to http(s), and concurrency caps.
+- **Re-check of the fixes** (`97e4664`): **approved for `main`.** M1 and L1 to L7 are fixed. What remains: one Haiku turn between the last name check and the send (L1); a `claude` command added after 2.1.303 is caught only when the `claude --help` test runs (L5); and the dev-mode token case (L6). New lows, being fixed in `m2/gate-followups` before the merge:
+  - **N1:** a denial relied on the hook's stdout being pure JSON, which a printing `NODE_OPTIONS` preload breaks. Denials move to exit 2, and `NODE_OPTIONS` is dropped from the relay.
+  - **N2:** each blocked call restarted the relay, so a peer could hit the restart cap and take it down for 10 minutes.
+  - **N3:** nothing checks for Claude Code 2.1.295, which `onFailure` needs.
+  - **Nits:** an allowlist of `SendMessage` input fields, and non-JSON tool errors classified as `uncertain` unless they're the gate's.
 - **Inbox sockets take same-user posts without auth.** On macOS and Linux the auth line is optional, as the cross-session messaging docs say, so any process running as me can post into any session's inbox, the relay's included. That's Claude Code's design, not pitwall's; the gate covers the relay.
 - **Checked and sound:** the Host, Origin and credential gate (19 crafted requests), the handshake, CSP and headers, the launch file, `resolveSession()` on every route, attach limits and cleanup, the relay's framing and lifetime, index exclusion, web rendering, and repo hygiene.
 
