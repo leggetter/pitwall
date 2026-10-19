@@ -140,8 +140,8 @@ export interface SessionGroup {
    * Sorted: sessions that need the user first (status 'waiting', or a background
    * job that is blocked and not stale), then askedYou, then busy, then by
    * lastActivityAt descending (startedAt when there's none). Stale sessions
-   * next, and finished sessions (`finished`) last. Finished sessions are sorted by activity
-   * alone, so an askedYou doesn't lift one.
+   * next, and finished sessions (`finished`) last. Finished sessions are
+   * sorted by activity alone, so an askedYou doesn't lift one.
    */
   sessions: SessionSummary[];
 }
