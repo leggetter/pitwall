@@ -1,7 +1,7 @@
 // One attach socket (W10, D3, D9): a background session's `claude attach`,
 // driven from the page. The handshake is the index connection's (proof.ts):
 // the server sends a challenge, and the page answers with an HMAC of its
-// nonce. The token itself is never sent.
+// nonce and the page's origin. The token itself is never sent.
 //
 //   server  challenge        page  auth { proof }
 //   server  ready            page  open { sessionId, cols, rows }

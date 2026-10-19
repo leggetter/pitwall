@@ -42,7 +42,11 @@ The browser is opened through a launch file in ~/.pitwall (mode 0600, in a
 
 Environment:
   PITWALL_TOKEN        Use this token instead of a random one. At least 32
-                       characters from A-Z, a-z, 0-9, "-" and "_".
+                       characters from A-Z, a-z, 0-9, "-" and "_". Reusing
+                       it keeps one token alive across runs: any page or
+                       script that ever saw it can drive every later run
+                       that uses it. Leave it unset to get a new token on
+                       every run.
   PITWALL_NO_OPEN      Set to 1 to skip opening the browser.
   PITWALL_HOME         Where launch files go, instead of ~/.pitwall.
   PITWALL_OPEN_MARKER  A file path. Open the browser only if it doesn't exist

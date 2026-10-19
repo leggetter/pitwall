@@ -82,6 +82,10 @@ describe('parseCliArgs', () => {
     expect(USAGE).toMatch(/--interval <seconds> +How often to poll claude agents, in whole seconds\n +from 1 to 300\. Default 5\./);
   });
 
+  it('warns in the help that reusing PITWALL_TOKEN keeps one token alive across runs', () => {
+    expect(USAGE.replace(/\s+/g, ' ')).toContain('Reusing it keeps one token alive across runs');
+  });
+
   it('rejects unknown options', () => {
     expect(() => parseCliArgs(['--host', '0.0.0.0'], {})).toThrow(UsageError);
     expect(() => parseCliArgs(['--token', 'x'], {})).toThrow(UsageError);

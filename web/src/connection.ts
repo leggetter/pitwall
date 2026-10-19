@@ -2,9 +2,10 @@
 // apiKey to the API client, keep the latest snapshot and the latest poll's
 // time and health, and reconnect with backoff unless the token was rejected.
 //
-// The handshake (src/shared/protocol.ts, PROTOCOL_VERSION 2): the server sends
+// The handshake (src/shared/protocol.ts, PROTOCOL_VERSION 3): the server sends
 // a challenge with a nonce, and the page answers with base64url(HMAC-SHA256(
-// token, nonce)), computed with WebCrypto. The token itself is never sent, on
+// token, nonce + "\n" + location.origin)), computed with WebCrypto (proof.ts).
+// The token itself is never sent, on
 // the socket or anywhere else. Every connection, including each reconnect,
 // answers a fresh challenge and gets the server's current apiKey, so after a
 // restart the page has the new key without doing anything.

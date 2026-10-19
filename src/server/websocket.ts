@@ -19,6 +19,8 @@ export const MAX_PAYLOAD_BYTES = 1024;
 export interface ClientContext {
   indexer: Indexer;
   token: string;
+  /** The server's one allowed origin, which the proof is bound to. */
+  origin: string;
   /** Sent in 'authenticated'. One per server process, made in startServer. */
   apiKey: string;
   authTimeoutMs: number;
@@ -49,6 +51,7 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
 
   startHandshake(ws, {
     token: context.token,
+    origin: context.origin,
     timeoutMs: context.authTimeoutMs,
     onAuthenticated: () => {
       sendMessage(ws, { type: 'authenticated', apiKey: context.apiKey });

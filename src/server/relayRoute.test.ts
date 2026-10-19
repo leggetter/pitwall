@@ -171,7 +171,7 @@ async function apiKeyOf(port: number): Promise<string> {
   };
   const challenge = await next();
   if (challenge.type !== 'challenge') throw new Error(`expected a challenge, got ${challenge.type}`);
-  const proof = createHmac('sha256', Buffer.from(TOKEN, 'utf8')).update(challenge.nonce, 'utf8').digest('base64url');
+  const proof = createHmac('sha256', Buffer.from(TOKEN, 'utf8')).update(`${challenge.nonce}\n${origin(port)}`, 'utf8').digest('base64url');
   ws.send(JSON.stringify({ type: 'auth', proof }));
   const reply = await next();
   ws.close();

@@ -2,7 +2,6 @@
 // with a fake command runner, so no test ever runs `claude`. Made-up sessions
 // only.
 import { execFile } from 'node:child_process';
-import { createHmac } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -33,6 +32,7 @@ import {
 import type { CommandOptions, CommandResult, RunCommand } from './command.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
+import { pitwallOrigin, proofFor } from '../test/proof.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 
@@ -218,7 +218,7 @@ async function apiKeyOf(port: number): Promise<string> {
   };
   const challenge = await next();
   if (challenge.type !== 'challenge') throw new Error(`expected a challenge, got ${challenge.type}`);
-  const proof = createHmac('sha256', Buffer.from(TOKEN, 'utf8')).update(challenge.nonce, 'utf8').digest('base64url');
+  const proof = proofFor(TOKEN, challenge.nonce, pitwallOrigin(port));
   ws.send(JSON.stringify({ type: 'auth', proof }));
   const reply = await next();
   ws.close();
