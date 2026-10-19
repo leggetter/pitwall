@@ -24,6 +24,8 @@ export interface ClientContext {
   /** Sent in 'authenticated'. One per server process, made in startServer. */
   apiKey: string;
   authTimeoutMs: number;
+  /** Called after a valid proof, before anything is sent. */
+  onAuthenticated?: () => void;
 }
 
 export function handleClient(ws: WebSocket, context: ClientContext): void {
@@ -54,6 +56,7 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
     origin: context.origin,
     timeoutMs: context.authTimeoutMs,
     onAuthenticated: () => {
+      context.onAuthenticated?.();
       sendMessage(ws, { type: 'authenticated', apiKey: context.apiKey });
       // The first snapshot may have arrived before this client connected, so send
       // it now. Reading it and subscribing happen in the same tick, so no

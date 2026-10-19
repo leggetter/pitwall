@@ -19,6 +19,12 @@ export interface ServerOptions {
    * server stops it on close().
    */
   relay?: RelayManager;
+  /**
+   * Called each time a WebSocket client, on WS_PATH or ATTACH_PATH, answers
+   * its challenge with a valid proof. The CLI deletes the launch file at the
+   * first. A hook that throws is ignored.
+   */
+  onAuthenticated?: () => void;
 }
 
 export interface RunningServer {

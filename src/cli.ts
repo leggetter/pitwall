@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
-import { LaunchDirError, pitwallHome, prepareLaunchDir, removeOnExit, writeLaunchFile } from './server/launch.js';
+import { LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
@@ -38,7 +38,8 @@ Options:
   -v, --version         Show the version.
 
 The browser is opened through a launch file in ~/.pitwall (mode 0600, in a
-0700 directory, deleted on exit), so the token never appears in a command line.
+0700 directory), so the token never appears in a command line. The file is
+deleted once the page connects, after 60 seconds, or on exit, whichever is first.
 
 Environment:
   PITWALL_TOKEN        Use this token instead of a random one. At least 32
@@ -272,12 +273,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     exclude: (row) => relay.isRelay(row),
     relayExchange: (sessionId) => relay.exchange(sessionId),
   });
+  // Set once the launch file is written. The first page to authenticate has
+  // read it, so it's deleted then, rather than left holding the token.
+  let launchFileUsed: (() => void) | undefined;
   let server;
   try {
     server = await startServer({
       indexer,
       token,
       relay,
+      onAuthenticated: () => launchFileUsed?.(),
       webRoot: resolveWebRoot(),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
@@ -295,7 +300,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   // Before anything is printed or opened: a signal that arrived with no
   // handler yet would kill the process outright, skipping the exit hook that
-  // deletes the launch file.
+  // deletes the launch file. SIGHUP comes when the terminal closes.
   let stopping = false;
   const shutdown = () => {
     if (stopping) return;
@@ -318,6 +323,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  process.on('SIGHUP', shutdown);
 
   const url = `${server.url}/#token=${token}`;
   if (command.port === undefined && server.port !== DEFAULT_PORT) {
@@ -328,22 +334,27 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   // Only now that this process's own server is listening, so the browser is
   // never sent to whatever else holds the port.
   if (launchDir !== undefined && (marker === undefined || claimOpenMarker(marker))) {
-    openThroughLaunchFile(launchDir, server.port, url);
+    launchFileUsed = openThroughLaunchFile(launchDir, server.port, url);
   }
   return 0;
 }
 
-/** Writes the launch file, deleted when this process exits, and opens it. A failure is reported, not fatal. */
-function openThroughLaunchFile(dir: string, port: number, url: string): void {
+/**
+ * Writes the launch file and opens it. The file is deleted when the returned
+ * function is called, 60 seconds after it was written, or when this process
+ * exits, whichever comes first. A failure is reported, not fatal.
+ */
+function openThroughLaunchFile(dir: string, port: number, url: string): (() => void) | undefined {
   let file: string;
   try {
     file = writeLaunchFile(dir, port, url);
   } catch (error) {
     console.error(`pitwall: couldn't write the launch file in ${dir} (${(error as Error).message}). Open the URL above instead.`);
-    return;
+    return undefined;
   }
-  removeOnExit(file);
+  const used = removeWhenUsed(file);
   openBrowser(file);
+  return used;
 }
 
 /** True when this file is the program being run, not a module imported by tests or scripts/dev.ts. */

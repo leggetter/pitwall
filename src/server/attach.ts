@@ -77,6 +77,8 @@ export interface AttachOptions {
   claudeBin?: string;
   /** The environment the PTY's is made from. Default process.env. */
   env?: NodeJS.ProcessEnv;
+  /** Called after a valid proof, whether or not the socket then gets a place. */
+  onAuthenticated?: () => void;
 }
 
 export interface AttachServer {
@@ -215,6 +217,7 @@ export function createAttachServer(options: AttachOptions): AttachServer {
       origin: options.origin(),
       timeoutMs: authTimeoutMs,
       onAuthenticated: () => {
+        options.onAuthenticated?.();
         if (closing) return end(1001);
         // Counted only after the handshake, so a client without the token
         // can't take a place, or learn how many are taken.
