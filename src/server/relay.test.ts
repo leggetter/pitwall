@@ -568,6 +568,18 @@ describe('the relay: its process', () => {
     expect(h.logs.some((line) => line.includes('it stopped (exit code 1'))).toBe(true);
   });
 
+  it('still answers delivered when the relay stops after SendMessage succeeded', async () => {
+    const h = harness({ noticeGraceMs: 200, noticePollMs: 20 });
+    h.behaviour = (request, child) => {
+      child.init();
+      const id = child.toolUse('SendMessage', { to: request.to, message: request.text });
+      child.toolResult(id, { success: true, msg_id: MSG_ID });
+      setTimeout(() => child.exit(1), 30);
+    };
+    await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
+    expect(h.relay.exchange(TARGET.sessionId)?.status).toBe('delivered');
+  });
+
   it('stops restarting after too many starts, and says so', async () => {
     const h = harness();
     h.behaviour = (_request, child) => child.exit(1);
