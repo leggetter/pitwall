@@ -3,7 +3,8 @@
 // the apiKey (never the raw token) and this server's Origin, because it's a
 // POST. Then:
 //
-//   200  the relay's outcome: delivered, held, refused, or failed with why
+//   200  the relay's outcome: delivered, held, refused, failed (nothing was
+//        sent) with why, or uncertain (it may have been sent) with why
 //   400  the body isn't a RelayRequest: `text` must be 1 to 8,192 characters,
 //        not only whitespace, with no NUL. Or resolveSession(): not a safe id
 //   404  resolveSession(): not in the current snapshot
