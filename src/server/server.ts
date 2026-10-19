@@ -123,7 +123,7 @@ export async function startServerWithInternals(
   const relay = options.relay ?? createRelayManager();
   // The input routes: spawn, stop and remove (W12), the relay (W11), then any a test adds.
   const routes = (app: Hono) => {
-    registerActions(app, indexer, internals.actions);
+    registerActions(app, indexer, { token, ...internals.actions });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };

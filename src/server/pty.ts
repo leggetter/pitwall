@@ -79,22 +79,3 @@ function makeSpawnHelperExecutable(require: NodeRequire): void {
     return;
   }
 }
-
-/**
- * The environment for a process pitwall starts: its own, without anything
- * pitwall-specific (`PITWALL_*`) and without any variable whose value holds
- * the token, so the process can't drive pitwall.
- */
-export function childEnvironment(env: NodeJS.ProcessEnv, token: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined) continue;
-    if (name.toUpperCase().startsWith('PITWALL_')) continue;
-    // When pitwall itself runs inside a Claude Code session, don't hand that
-    // session's inbox credentials or job directory to the processes it starts.
-    if (/^CLAUDE_CODE_MESSAGING_/i.test(name) || name === 'CLAUDE_JOB_DIR') continue;
-    if (value.includes(token)) continue;
-    result[name] = value;
-  }
-  return result;
-}

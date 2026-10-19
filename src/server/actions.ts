@@ -46,6 +46,8 @@ export interface ActionOptions {
   claudeBin?: string;
   /** The environment children start from, before childEnvironment() scrubs it. Default process.env, read per call. */
   env?: NodeJS.ProcessEnv;
+  /** The server's token. Any variable whose value contains it is left out of a child's environment. */
+  token?: string;
   /** Milliseconds since the epoch, for the rate limit. Default Date.now. */
   now?: () => number;
   /** Default 30 seconds, for each of `claude --bg`, `claude stop` and `claude rm`. */
@@ -285,7 +287,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
   const run = options.run ?? runCommand;
   const claudeBin = options.claudeBin ?? 'claude';
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
-  const env = () => childEnvironment(options.env ?? process.env);
+  const env = () => childEnvironment(options.env ?? process.env, options.token);
   const limiter = new SpawnLimiter(
     options.maxConcurrentSpawns ?? DEFAULT_MAX_CONCURRENT_SPAWNS,
     options.spawnRate ?? DEFAULT_SPAWN_RATE,

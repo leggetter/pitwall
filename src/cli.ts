@@ -147,6 +147,22 @@ export function resolveToken(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * Deletes from `env` every variable whose value contains `token`:
+ * PITWALL_TOKEN, and any copy of it, such as an `Authorization` header a
+ * wrapper exported. Returns the names it deleted.
+ */
+export function removeTokenVariables(env: NodeJS.ProcessEnv, token: string): string[] {
+  const removed: string[] = [];
+  if (token === '') return removed;
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || !value.includes(token)) continue;
+    delete env[name];
+    removed.push(name);
+  }
+  return removed;
+}
+
+/**
  * `<dir of cli.js>/web` when it exists: the built dist/cli.js next to dist/web.
  * Otherwise `<repo>/dist/web`, for `tsx src/cli.ts`.
  */
@@ -235,9 +251,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 1;
     }
   }
-  // Keep the token out of child processes: the indexer runs `claude`, and
-  // later milestones start sessions that shouldn't be able to drive pitwall.
-  delete process.env.PITWALL_TOKEN;
+  // Keep the token out of child processes, before anything that starts one
+  // exists: the indexer runs `claude`, and the sessions, PTYs and relay pitwall
+  // starts mustn't be able to drive it. childEnvironment() (server/command.ts)
+  // scrubs again for every child; this also covers the indexer, which doesn't
+  // use it, and the relay, which has no token to pass it.
+  removeTokenVariables(process.env, token);
   delete process.env.PITWALL_OPEN_MARKER;
 
   const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;

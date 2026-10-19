@@ -427,8 +427,20 @@ describe('spawn: running claude --bg', () => {
     expect(res.headers['cache-control']).toBe('no-store');
   });
 
-  it('scrubs the environment: no PITWALL_* and no npm variables reach claude', async () => {
-    const env = { PATH: '/usr/bin', HOME: '/Users/example', PITWALL_TOKEN: TOKEN, PITWALL_HOME: '/tmp/p', npm_config_save_exact: 'true', INIT_CWD: '/x' };
+  // The scrubber itself, name by name, is tested in command.test.ts.
+  it("scrubs the environment through the shared scrubber: no PITWALL_*, npm's, the session's identity or the token reach claude", async () => {
+    const env = {
+      PATH: '/usr/bin',
+      HOME: '/Users/example',
+      PITWALL_TOKEN: TOKEN,
+      PITWALL_HOME: '/tmp/p',
+      npm_config_save_exact: 'true',
+      INIT_CWD: '/x',
+      CLAUDECODE: '1',
+      CLAUDE_CODE_SESSION_ID: '99999999-9999-4999-8999-999999999999',
+      CLAUDE_CODE_CHILD_SESSION: '1',
+      COPIED: `Bearer ${TOKEN}`,
+    };
     const started = await start(fakeRunner(backgrounded(), exited(0), exited(0)), { env });
     await spawnAsPage(started, valid());
     await postAsPage(started, stopPath(BG_ID));
