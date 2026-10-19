@@ -79,7 +79,7 @@ describe('parseCliArgs', () => {
 
   it('mentions --interval and its default in the help', () => {
     expect(USAGE).toContain('[--interval <seconds>]');
-    expect(USAGE).toMatch(/--interval <seconds> +How often to poll claude agents --json, in whole seconds\n +from 1 to 300\. Default 5\./);
+    expect(USAGE).toMatch(/--interval <seconds> +How often to poll claude agents, in whole seconds\n +from 1 to 300\. Default 5\./);
   });
 
   it('rejects unknown options', () => {

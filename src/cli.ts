@@ -31,7 +31,7 @@ The roots default to the current directory.
 Options:
   --port <n>            Port on 127.0.0.1. Default ${DEFAULT_PORT}, or a free port if
                         ${DEFAULT_PORT} is busy. 0 always picks a free port.
-  --interval <seconds>  How often to poll claude agents --json, in whole seconds
+  --interval <seconds>  How often to poll claude agents, in whole seconds
                         from ${INTERVAL_MIN_SECONDS} to ${INTERVAL_MAX_SECONDS}. Default ${DEFAULT_POLL_INTERVAL_MS / 1000}.
   --no-open             Don't open the browser.
   -h, --help            Show this help.
