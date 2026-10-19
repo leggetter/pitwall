@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is in progress on `m2/integration`: the security gate, session view, attach, and spawn, stop and remove, finished sessions and the relay are merged. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - The live check of the integrated branch, with throwaway sessions (W13)<br>- Then a security-first review (W14), and Phil's try-out (W15) |
+| **Next steps** | - The security-first review (W14), and its fixes<br>- Then Phil's try-out (W15) |
 
 ## Who is this for
 
@@ -240,7 +240,7 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | Merged ([#13](https://github.com/leggetter/pitwall/pull/13)) |
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Merged ([#15](https://github.com/leggetter/pitwall/pull/15)): design D, decided by Phil on 2026-10-19 after spike [003](docs/spikes/003-relay.md) |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
-| W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: finished sessions listed muted, merged ([#14](https://github.com/leggetter/pitwall/pull/14)); the live check of the integrated branch (sub-agent) |
+| W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: finished sessions listed muted, merged ([#14](https://github.com/leggetter/pitwall/pull/14)); the live check of the integrated branch passed on 2026-10-19 |
 | W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | After W13 |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
 
@@ -262,6 +262,13 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
   - **Decision (coordinator):** the index lists with `--all`, and the UI shows done, stopped and failed background sessions muted, like agent view's Completed group. Built at integration (W13) in [#14](https://github.com/leggetter/pitwall/pull/14): a `SessionSummary.finished` field, a muted, collapsed "Finished (n)" list per group that also counts the questions inside it, and group order that ignores finished sessions.
 - **`--all` costs nothing measurable** (W13). 15 alternating runs of each form on Claude Code 2.1.302, with 16 sessions, or 18 with `--all`: a median of 0.14 s wall time, 0.145 s of CPU and about 150 MB at peak, either way.
 - **A slow window in `claude agents --json`** (W13). For about 8 minutes on 2026-10-19, both forms took 18 to 34 s, about 4 s of CPU and 320 to 415 MB. It didn't reproduce, and the cause is unknown. During a window like that, pitwall's 10 s timeout fails every poll and shows the failure banner. Watch for it in the live check.
+- **The live check of the integrated branch passed** (W13, `07f43c2`, 2026-10-19). 11 checks against the built CLI with throwaway Haiku sessions: the index (finished rows, the relay hidden), spawn (and the untrusted-directory error, with no trust granted), session view paging, attach (and the limit of 4), stop, restart by attaching, remove, the relay (delivered with a reply, 409 for a background session, ambiguous names), the security negatives (`Origin`, the raw token, `Host`, unknown ids, wrong proofs, no token or message text in `ps`), shutdown by SIGTERM and by SIGKILL with no orphans, and a headless UI smoke.
+- **A stopped idle session stays `done`** (W13). Claude Code reports `stopped` only for a session stopped mid-turn. `finished` covers both.
+- **Left for the review's fixes** (W13):
+  - A just-spawned session lists for one poll with no pid, so attaching would ask to restart a session that's still starting.
+  - A relay that fails before sending still records an exchange with `sentAt`.
+  - When pitwall runs inside a Claude Code session, its children inherit `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION` and `CLAUDE_PID`.
+- **Test transcripts stay behind** (W13). `claude rm` keeps a session's transcript, and `-p` sessions can't be removed, so each live check leaves its throwaway transcripts, which show in `claude --resume` in that directory.
 - **"Done" isn't "not running"** (W10). A background session can be `done` with its process still alive and idle. Attaching to it doesn't restart anything, so pitwall asks before attaching only when there's no live process.
 - **Inherited inbox credentials** (W10). When pitwall itself runs inside a Claude Code session, the processes it starts would inherit that session's `CLAUDE_CODE_MESSAGING_*` credentials and `CLAUDE_JOB_DIR`. They're now scrubbed, for attach and for spawn, stop and remove.
 - **`node-pty` 1.1.0 on macOS** ships `spawn-helper` without its execute bit, so pitwall sets it on first use. On Linux with npm 11, the install script needs `npm install-scripts approve node-pty`. CI uses npm 10, which runs it.
