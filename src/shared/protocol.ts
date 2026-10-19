@@ -298,16 +298,17 @@ export interface ConversationPage {
   before?: string;
 }
 
-/**
- * HTTP path that returns a ConversationPage as JSON: the newest page, or the
- * page before the `before` cursor. A cursor for a file that was rotated or
- * rewritten gets 410, and the client should reload the newest page. Same rules as lastMessagePath(): only
- * sessions in the current snapshot, and a server building a route pattern
- * from this must decode it.
- */
 /** The status a conversation request gets for a cursor made for another version of the transcript. */
 export const CONVERSATION_STALE_STATUS = 410;
 
+/**
+ * HTTP path that returns a ConversationPage as JSON: the newest page, or the
+ * page before the `before` cursor. A cursor for a file that was rotated or
+ * rewritten gets 410, and the client should reload the newest page. More than
+ * 4 reads at once get 429 with `Retry-After`. Same rules as lastMessagePath():
+ * only sessions in the current snapshot, and a server building a route
+ * pattern from this must decode it.
+ */
 export function conversationPath(sessionId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
   return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
@@ -358,7 +359,11 @@ export function relayPath(sessionId: string): string {
 export interface SpawnRequest {
   /** An absolute directory at or under one of the roots. */
   cwd: string;
-  /** The first prompt, 1 to 16,384 characters. */
+  /**
+   * The first prompt, 1 to 16,384 characters. Not just the name of a
+   * `claude` command, such as `update` or `purge`, which `claude --bg` would
+   * run as that command: that gets 400.
+   */
   prompt: string;
   /** Optional display name: letters, digits, space, `.`, `_` and `-`, at most 64 characters. */
   name?: string;
@@ -374,7 +379,11 @@ export type SpawnResult =
 /** Start a new background session with `claude --bg`. */
 export const SPAWN_PATH = '/api/sessions';
 
-/** Result of stop and remove. Both apply to background sessions only; others get 409. */
+/**
+ * Result of stop and remove. Both apply to background sessions only; others
+ * get 409. More than 4 stop or remove commands at once get 429 with
+ * `Retry-After`.
+ */
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 /** Stop a background session with `claude stop`. Its conversation is kept. */
@@ -418,11 +427,19 @@ export type AttachClientMessage =
  * Server → client on an attach socket, as JSON text frames. PTY output is sent
  * as binary frames, so it's never parsed as a message.
  * - 'ready': the proof was valid; send `open`.
- * - 'needs-restart': the session isn't running, so attaching would restart
- *   it. Ask the user, then send `open` again with `restart: true`.
+ * - 'needs-restart': attaching would restart the session, because it has
+ *   finished, or its process has exited. The server decides on `open`, from a
+ *   fresh `claude agents --json --all` read when the snapshot's process isn't
+ *   alive. Ask the user, then send `open` again with `restart: true`.
  * - 'attached': output follows as binary frames.
  * - 'exit': `claude attach` ended. Closing the socket detaches; the session
  *   keeps running.
+ * - 'error': followed by a close. A session that is still starting, with no
+ *   process yet and started or spawned moments ago, closes with 1013 (try
+ *   again later).
+ *
+ * A socket beyond 32 pending handshakes, on WS_PATH and ATTACH_PATH
+ * together, is closed with 1013 before any challenge.
  */
 export type AttachServerMessage =
   | { type: 'challenge'; version: number; nonce: string }
