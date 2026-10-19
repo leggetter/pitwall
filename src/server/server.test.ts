@@ -1096,6 +1096,25 @@ describe('startServer', () => {
       expect((await client.nextMessage()).type).toBe('heartbeat');
     });
 
+    it('calls onAuthenticated after each valid proof, never for a wrong one, and survives a hook that throws', async () => {
+      const onAuthenticated = vi.fn(() => {
+        throw new Error('the hook failed');
+      });
+      const server = await startServerWithInternals({ indexer: fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), token: TOKEN, webRoot, port: 0, onAuthenticated });
+      running.push(server);
+
+      const wrong = await challenged(server.port);
+      wrong.client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(`${wrong.nonce}x`, server.port) }));
+      expect((await wrong.client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
+      expect(onAuthenticated).not.toHaveBeenCalled();
+
+      const client = await authedClient(server.port);
+      expect(onAuthenticated).toHaveBeenCalledTimes(1);
+      expect((await client.nextMessage()).type).toBe('snapshot');
+      await authedClient(server.port);
+      expect(onAuthenticated).toHaveBeenCalledTimes(2);
+    });
+
     it('waits 5 seconds for the proof by default', () => {
       expect(DEFAULT_AUTH_TIMEOUT_MS).toBe(5000);
     });

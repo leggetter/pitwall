@@ -143,7 +143,23 @@ export async function startServerWithInternals(
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES, perMessageDeflate: false });
   const authTimeoutMs = internals.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
-  const attach = createAttachServer({ indexer, token, origin: () => serverOrigin(port ?? -1), authTimeoutMs, spawnPty, ...internals.attach });
+  // The CLI's hook, which deletes the launch file. It must never break a handshake.
+  const onAuthenticated = () => {
+    try {
+      options.onAuthenticated?.();
+    } catch {
+      // Ignored, as ServerOptions says.
+    }
+  };
+  const attach = createAttachServer({
+    indexer,
+    token,
+    origin: () => serverOrigin(port ?? -1),
+    authTimeoutMs,
+    spawnPty,
+    onAuthenticated,
+    ...internals.attach,
+  });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => socket.destroy());
@@ -155,7 +171,9 @@ export async function startServerWithInternals(
     // Browsers always send Origin on a WebSocket upgrade, so a missing one is refused.
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
-    wss.handleUpgrade(req, socket, head, (ws) => handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs }));
+    wss.handleUpgrade(req, socket, head, (ws) =>
+      handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated }),
+    );
   });
 
   const requested = options.port ?? internals.defaultPort ?? DEFAULT_PORT;

@@ -7,8 +7,10 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
 import { browserCommand, claimOpenMarker, parseCliArgs, resolveRoots, resolveToken, resolveWebRoot, USAGE, UsageError } from './cli.js';
-import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, WS_PATH } from './shared/protocol.js';
+import { pitwallOrigin, proofFor } from './test/proof.js';
 
 describe('parseCliArgs', () => {
   it('defaults to no roots, the default port and opening the browser', () => {
@@ -460,6 +462,38 @@ describe('pitwall (the process)', () => {
       child.kill('SIGINT');
       expect((await result).code).toBe(0);
       expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    it('deletes the launch file on SIGHUP, when the terminal closes', async () => {
+      const { child, result, log } = await startOpening();
+      const file = (await openerCalls(log))[0]![0]!;
+      expect(existsSync(file)).toBe(true);
+      child.kill('SIGHUP');
+      expect((await result).code).toBe(0);
+      expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    it('deletes the launch file as soon as a page authenticates, while it keeps running', async () => {
+      const { child, result, log, url } = await startOpening();
+      const file = (await openerCalls(log))[0]![0]!;
+      expect(existsSync(file)).toBe(true);
+
+      // What the page does once the launch file has sent it on.
+      const port = Number(new URL(url).port);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${WS_PATH}`, { origin: pitwallOrigin(port) });
+      const replies: { type: string; nonce?: string }[] = [];
+      ws.on('message', (data) => {
+        const message = JSON.parse(String(data)) as { type: string; nonce?: string };
+        replies.push(message);
+        if (message.type === 'challenge') ws.send(JSON.stringify({ type: 'auth', proof: proofFor(token, message.nonce!, pitwallOrigin(port)) }));
+      });
+      await waitUntil(() => replies.some((message) => message.type === 'authenticated'));
+      await waitUntil(() => !existsSync(file));
+      ws.close();
+
+      expect(child.exitCode).toBeNull();
+      child.kill('SIGTERM');
+      expect((await result).code).toBe(0);
     }, 30_000);
 
     it('deletes launch files more than 24 hours old when it starts, and keeps newer ones', async () => {

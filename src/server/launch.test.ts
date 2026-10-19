@@ -4,15 +4,17 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   ensureLaunchDir,
   LAUNCH_FILE_MAX_AGE_MS,
+  LAUNCH_FILE_TTL_MS,
   LaunchDirError,
   launchPage,
   pitwallHome,
   prepareLaunchDir,
   removeStaleLaunchFiles,
+  removeWhenUsed,
   writeLaunchFile,
 } from './launch.js';
 
@@ -226,7 +228,7 @@ describe('removeOnExit', () => {
    * prints the path and then ends the way `how` says. Resolves with the path
    * once the process has gone.
    */
-  async function endsBy(how: 'return' | 'exit' | 'sigterm' | 'sigint' | 'throw'): Promise<string> {
+  async function endsBy(how: 'return' | 'exit' | 'sigterm' | 'sigint' | 'sighup' | 'throw'): Promise<string> {
     const dir = fresh();
     mkdirSync(dir, { mode: 0o700 });
     const script = `
@@ -235,11 +237,11 @@ describe('removeOnExit', () => {
       removeOnExit(file);
       const how = ${JSON.stringify(how)};
       // As the CLI does: a signal handler that calls process.exit().
-      for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
+      for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => process.exit(0));
       console.log(file);
       if (how === 'exit') process.exit(3);
       if (how === 'throw') setTimeout(() => { throw new Error('boom'); }, 10);
-      if (how === 'sigterm' || how === 'sigint') setInterval(() => {}, 1000);
+      if (how.startsWith('sig')) setInterval(() => {}, 1000);
     `;
     const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
     const file = await new Promise<string>((resolve, reject) => {
@@ -251,16 +253,63 @@ describe('removeOnExit', () => {
       child.on('exit', () => reject(new Error(`exited before printing: ${out}`)));
     });
     // Printed after the write, so it existed. A process waiting for a signal still has it.
-    if (how === 'sigterm' || how === 'sigint') {
+    if (how === 'sigterm' || how === 'sigint' || how === 'sighup') {
       expect(existsSync(file)).toBe(true);
-      child.kill(how === 'sigterm' ? 'SIGTERM' : 'SIGINT');
+      child.kill(how.toUpperCase() as NodeJS.Signals);
     }
     if (child.exitCode === null && child.signalCode === null) await once(child, 'exit');
     return file;
   }
 
-  it.each(['return', 'exit', 'sigterm', 'sigint', 'throw'] as const)('deletes the file when the process ends by %s', async (how) => {
+  it.each(['return', 'exit', 'sigterm', 'sigint', 'sighup', 'throw'] as const)('deletes the file when the process ends by %s', async (how) => {
     const file = await endsBy(how);
     expect(lstatSync(file, { throwIfNoEntry: false })).toBeUndefined();
   }, 20_000);
+});
+
+describe('removeWhenUsed', () => {
+  function launchFile(): string {
+    const dir = fresh();
+    mkdirSync(dir, { mode: 0o700 });
+    return writeLaunchFile(dir, 4517, URL_WITH_TOKEN);
+  }
+
+  it('keeps the file for 60 seconds by default', () => {
+    expect(LAUNCH_FILE_TTL_MS).toBe(60_000);
+  });
+
+  it('deletes the file when it has been used, and drops the timer and the exit hook', () => {
+    vi.useFakeTimers();
+    try {
+      const file = launchFile();
+      const exitHooks = process.listenerCount('exit');
+      const used = removeWhenUsed(file, 60_000);
+      expect(process.listenerCount('exit')).toBe(exitHooks + 1);
+      expect(existsSync(file)).toBe(true);
+      used();
+      expect(existsSync(file)).toBe(false);
+      expect(process.listenerCount('exit')).toBe(exitHooks);
+      expect(vi.getTimerCount()).toBe(0);
+      // Using it again does nothing.
+      used();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('deletes the file once the time is up, if nothing used it first', () => {
+    vi.useFakeTimers();
+    try {
+      const file = launchFile();
+      const exitHooks = process.listenerCount('exit');
+      removeWhenUsed(file, 60_000);
+      vi.advanceTimersByTime(59_999);
+      expect(existsSync(file)).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(existsSync(file)).toBe(false);
+      expect(process.listenerCount('exit')).toBe(exitHooks);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
