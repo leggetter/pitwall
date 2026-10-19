@@ -122,6 +122,26 @@ describe('createRelayTranscriptTail', () => {
     expect(await tail.read()).toEqual([expect.objectContaining({ body: 'two' })]);
   });
 
+  it('starts again when the file is rewritten in place, with the same inode and size', async () => {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, enqueue(held));
+    const tail = createRelayTranscriptTail({ sessionId: SESSION, cwd: CWD, configDir: config });
+    expect(await tail.read()).toHaveLength(1);
+    // Same length, different end: writeFile truncates and rewrites the same inode.
+    await writeFile(file, enqueue(held.replace('denial or expiry.', 'DENIAL OR EXPIRY.')));
+    expect(await tail.read()).toEqual([expect.objectContaining({ kind: 'notice', outcome: 'held' })]);
+  });
+
+  it('doesn’t take a short file that grew for a rewritten one', async () => {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, '{}\n');
+    const tail = createRelayTranscriptTail({ sessionId: SESSION, cwd: CWD, configDir: config });
+    expect(await tail.read()).toEqual([]);
+    await appendFile(file, peer('later'));
+    expect(await tail.read()).toEqual([expect.objectContaining({ body: 'later' })]);
+    expect(await tail.read()).toEqual([]);
+  });
+
   it('refuses a session id that could escape the projects directory', async () => {
     const tail = createRelayTranscriptTail({ sessionId: '../../etc/passwd', cwd: CWD, configDir: config });
     expect(await tail.read()).toEqual([]);
