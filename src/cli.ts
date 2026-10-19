@@ -272,6 +272,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     intervalMs,
     exclude: (row) => relay.isRelay(row),
     relayExchange: (sessionId) => relay.exchange(sessionId),
+    relayAlert: () => relay.alert(),
   });
   // Set once the launch file is written. The first page to authenticate has
   // read it, so it's deleted then, rather than left holding the token.
