@@ -84,3 +84,14 @@ D8 describes a background session (`claude --bg`), and the lean for its director
 | Contract | `RelayResult` has no `hint` for the trust command (`SpawnResult` does), so the command would ride in `detail` | No change |
 
 B' (stop and wake for every message) needs no new dependency and matches D8, but it restarts the relay on every message and breaks replies to earlier ones, so it isn't recommended.
+
+## Found while building W11 (2026-10-19)
+
+Design D, as decided by Phil. Claude Code v2.1.301, throwaway `pitwall-test-*` sessions only.
+
+- **The framing's own line breaks leak.** With TEXT on its own lines between the tags, Haiku once kept the line break before the closing tag as part of the message. Pitwall's byte-for-byte check caught it, failed the request and restarted the relay, but the message had still reached the target. TEXT now sits directly between its tags, and the web UI drops blank lines before the text and whitespace after it.
+- **`ListAgents` doesn't show directories, even when two live sessions share a name.** Both rows read `name [ref] · interactive · idle · started 10s ago`. So a name that more than one live session has fails as ambiguous, and the relay is never asked to choose.
+- **`--permission-mode dontAsk` with both tools allowed** works for the relay. It puts the relay in the prompting class whatever the user's default mode is, so targets that prompt deliver its messages.
+- **The relay exits when pitwall is killed with SIGKILL:** its stdin closes, and it ends after finishing its turn. Measured 0.8 to 4.3 s after the parent died, mid-turn.
+- **Nothing is written to the relay's directory.** Its transcript goes under `~/.claude/projects/`, as for any session.
+- **Timings through the built CLI:** the POST answered `delivered` in about 3.9 s, including the name check, the relay's start, its Haiku turn and the 1.5 s wait for a notice. The target's reply was on its row about 7 s after sending.
