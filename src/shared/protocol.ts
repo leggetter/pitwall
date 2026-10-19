@@ -166,9 +166,12 @@ export interface IndexSnapshot {
 
 /**
  * WebSocket protocol version. Version 2 (M2) replaced M1's raw-token auth with
- * challenge-response, so the raw token never travels over the socket.
+ * challenge-response, so the raw token never travels over the socket. Version
+ * 3 binds the proof to the page's origin, so a page on another origin, such as
+ * a server squatting on the port, can't pass a challenge on to a real pitwall
+ * page and use its proof.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /**
  * Server → client WebSocket messages.
@@ -210,8 +213,10 @@ export interface LastMessage {
  * connection with code 4401.
  *
  * `proof` is base64url(HMAC-SHA256(key = the token as UTF-8, message = the
- * challenge's nonce as UTF-8)). The browser computes it with WebCrypto. The
- * server compares it in constant time, and accepts each nonce only once.
+ * challenge's nonce, a line feed, then the page's origin, all as UTF-8)). The
+ * origin is `location.origin`, such as `http://127.0.0.1:4517`; the server uses
+ * the one origin it allows. The browser computes the proof with WebCrypto.
+ * The server compares it in constant time, and accepts each nonce only once.
  */
 export type ClientMessage = { type: 'auth'; proof: string };
 
