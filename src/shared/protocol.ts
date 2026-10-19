@@ -133,7 +133,8 @@ export interface SessionGroup {
    * job that is blocked and not stale), then askedYou, then busy, then by
    * lastActivityAt descending (startedAt when there's none). Stale sessions
    * next, and finished background sessions (no live process, and state 'done',
-   * 'stopped' or 'failed') last.
+   * 'stopped' or 'failed') last. Finished sessions are sorted by activity
+   * alone, so an askedYou doesn't lift one.
    */
   sessions: SessionSummary[];
 }
@@ -145,7 +146,12 @@ export interface IndexSnapshot {
   generatedAt: string;
   /** The absolute, real-path roots pitwall was started with. */
   roots: string[];
-  /** Sorted by the newest lastActivityAt among each group's sessions, descending. */
+  /**
+   * Sorted by the newest activity (lastActivityAt, or startedAt when there's
+   * none) among each group's unfinished sessions, descending. Groups whose
+   * sessions have all finished come after every other group, sorted the same
+   * way by their finished sessions.
+   */
   groups: SessionGroup[];
   /** Whether `claude agents --json --all` succeeded on the latest poll. */
   source: SourceHealth;
