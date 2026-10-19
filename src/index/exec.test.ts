@@ -43,6 +43,42 @@ describe('runFile', () => {
     expect(stdout).toBe('$HOME; echo hi');
   });
 
+  // childEnvironment() itself is tested name by name in src/server/command.test.ts.
+  it("gives the child its environment through childEnvironment(): without the parent session's identity or pitwall's own", async () => {
+    const script = 'process.stdout.write(JSON.stringify(process.env))';
+    const given = {
+      PATH: process.env.PATH ?? '',
+      ANTHROPIC_MODEL: 'kept',
+      CLAUDECODE: '1',
+      CLAUDE_CODE_CHILD_SESSION: '1',
+      CLAUDE_CODE_SESSION_ID: '99999999-9999-4999-8999-999999999999',
+      PITWALL_TOKEN: 'secret',
+      npm_config_registry: 'https://example.invalid',
+    };
+    const seen = JSON.parse(await runFile(node, ['-e', script], { timeoutMs: 10_000, env: given })) as Record<string, string>;
+    expect(seen.ANTHROPIC_MODEL).toBe('kept');
+    for (const name of ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ID', 'PITWALL_TOKEN', 'npm_config_registry']) {
+      expect(seen[name], name).toBeUndefined();
+    }
+  });
+
+  it('scrubs process.env the same way when no environment is given', async () => {
+    const saved = { CLAUDECODE: process.env.CLAUDECODE, CLAUDE_CODE_CHILD_SESSION: process.env.CLAUDE_CODE_CHILD_SESSION };
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_CHILD_SESSION = '1';
+    try {
+      const seen = JSON.parse(await runFile(node, ['-e', 'process.stdout.write(JSON.stringify(process.env))'], { timeoutMs: 10_000 })) as Record<string, string>;
+      expect(seen.CLAUDECODE).toBeUndefined();
+      expect(seen.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
+      expect(seen.PATH).toBe(process.env.PATH);
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   it('closes stdin, so a child that reads it sees EOF', async () => {
     const stdout = await runFile(
       node,
