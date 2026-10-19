@@ -4,6 +4,7 @@ import {
   type ConversationPage,
   type IndexSnapshot,
   type LastMessage,
+  type RelayAlert,
   type RelayExchange,
   type SourceHealth,
 } from '../shared/protocol.js';
@@ -34,6 +35,8 @@ export interface IndexerOptions {
   exclude?: (row: AgentRow) => boolean;
   /** The latest message relayed to a session (W11), shown as its summary's `relay`. A hook that throws adds nothing. */
   relayExchange?: (sessionId: string) => RelayExchange | undefined;
+  /** The latest thing the relay tried that nobody asked for (D8), shown as the snapshot's `relayAlert`. A hook that throws adds nothing. */
+  relayAlert?: () => RelayAlert | undefined;
 }
 
 export interface Indexer {
@@ -123,6 +126,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
         };
       }
       if (stopped) return;
+      const alert = calls(() => options.relayAlert?.(), undefined);
+      if (alert !== undefined) snapshot.relayAlert = alert;
       latest = snapshot;
       current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
       for (const listener of [...listeners]) {
