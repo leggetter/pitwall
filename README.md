@@ -7,7 +7,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Spawns new sessions** in any directory under the root.
 - **Has a supervisor session** you can talk to instead of visiting each session. It knows what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, is done. M2, interacting with sessions from the web UI, is next. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, is done. M2, interacting with sessions from the web UI, is in progress on `m2/integration`. See [`PLAN.md`](PLAN.md).
 
 ## Use
 
@@ -26,11 +26,12 @@ node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 
 Settled decisions move here from `PLAN.md`, with their reasoning. The evidence is in [`docs/spikes/001-session-control.md`](docs/spikes/001-session-control.md).
 
-### D1 - The session list comes from `claude agents --json`
+### D1 - The session list comes from `claude agents --json --all`
 
 - **Why:** it's a documented interface and returns in about 0.2 s with 20 sessions. It includes interactive sessions started in any terminal or IDE, not just background ones. Third-party session managers only see sessions they launch themselves, which is why pitwall exists.
 - **Caveat:** interactive rows aren't in the agent view docs, which describe background sessions only. If they disappear in a later Claude Code release, pitwall loses most of its value, so watch the changelog.
 - **How:** poll every 5 s by default (`pitwall --interval <seconds>`). The full snapshot is pushed only when it changed, with a heartbeat after other polls. Each `claude agents --json` call costs about 0.18 s of CPU, so a 2 s interval used about 9% of a core; that was the M1 behavior until W7a. Interactive rows give `status` (busy/idle) only; background rows add `state` and, when waiting, `waitingFor`.
+- **`--all`, from M2:** background sessions that have finished or been stopped stay listed, muted, so they can still be opened, attached to (which restarts them) or removed. Plain `--json` drops them once their process has gone. It costs nothing measurable.
 
 ### D2 - Interactive sessions: relay through the supervisor, or `/bg` for full control
 
