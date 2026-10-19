@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is in progress on `m2/integration`: the security gate, session view, attach, and spawn, stop and remove, finished sessions and the relay are merged. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Fixes from the security review (W14): the relay gate (`m2/relay-gate`) and hardening (`m2/hardening`)<br>- Then Phil's try-out (W15) |
+| **Next steps** | - Phil's try-out (W15), and the reviewer re-checking the fixes in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17)<br>- Then merge `m2/integration` into `main` |
 
 ## Who is this for
 
@@ -108,7 +108,7 @@ A local web UI that can type into agents running in auto mode is a local remote-
 - Generate a random token per run, pass it in the URL the CLI opens, and require it on every HTTP and WebSocket request.
 - Check `Host` and `Origin` on every request, to block DNS rebinding.
 - No CORS.
-- Don't write the token or session content anywhere outside `~/.claude`, except the launch file (D7): one HTML file at 0600 in `~/.pitwall/` at 0700, deleted once a page has used it, after 60 s, or on exit, whichever comes first.
+- Don't write the token or session content anywhere outside `~/.claude`, except the launch file (D7): one HTML file at 0600 in `~/.pitwall/` at 0700, deleted once a page has used it, after 60 s, or on exit, whichever comes first. The relay gate's expectations (D8) hold a session name and a hash, never message text, in 0600 files in `~/.pitwall/relay-gate/` at 0700, each deleted when its request ends.
 
 ## M0: spike (done)
 
@@ -149,7 +149,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
 | Session kind | In the web UI | How |
 | --- | --- | --- |
 | Background, including sessions pitwall starts | Full interaction: type prompts, answer permission prompts and dialogs | xterm.js over a PTY running `claude attach <id>` (D3, spike S3) |
-| Interactive, in Warp or Cursor | **Send it a message.** The message starts a turn, and the session does the work within its own permissions and rules. It can't take a permission approval from me, and it sees the message as coming from another session (spike 002) | A relay: a headless Claude session (`claude -p`) that pitwall runs, limited to `ListAgents` and `SendMessage` (D2, D8). The M4 supervisor later takes over this role |
+| Interactive, in Warp or Cursor | **Send it a message.** The message starts a turn, and the session does the work within its own permissions and rules. It can't take a permission approval from me, and it sees the message as coming from another session (spike 002) | A relay: a headless Claude session (`claude -p`) that pitwall runs, limited to `SendMessage` behind a gate (D2, D8). The M4 supervisor later takes over this role |
 | Interactive, moved with `/bg` | Full interaction, like any background session. The row explains the route: "Type `/bg` in its terminal to drive it fully from here" | `claude attach`, as above |
 
 **Order of work:**
@@ -165,7 +165,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
    - `node-pty` is the first native dependency, so the build needs its install script approved, and CI builds it.
    - `claude attach` restarts a background session that isn't running (done, stopped or failed). That's an action, so the UI asks first: "This session has finished, or its process has exited. Attaching restarts it." The server decides when the socket opens, re-reading `claude agents --json --all` when the snapshot's process isn't alive. A session that is still starting gets "try again in a moment" instead.
 4. **Message interactive sessions through a relay.**
-   - **The relay:** on first use, pitwall starts one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`. Its tools are limited to `ListAgents` and `SendMessage`, and it's instructed to pass my text on verbatim. Pitwall writes each request to its stdin, so the text never appears in process arguments, and restarts it if it exits (D8).
+   - **The relay:** on first use, pitwall starts one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`. Its only tool is `SendMessage`, behind a gate that allows only the exact message I asked for (D8), and it's instructed to pass my text on verbatim. Pitwall writes each request to its stdin, so the text never appears in process arguments, and restarts it if it exits (D8).
    - **Sending:** a "Message this session" box on interactive rows. The relay reports what `SendMessage` returned (delivered, held for approval, or refused), and pitwall shows it.
    - **Replies:** the target's work shows in its own transcript, in the session view. A reply it sends back reaches the relay, and pitwall shows it on the target's row. The relay stops with pitwall, so a reply that arrives after that shows only in the target's own conversation.
    - **Cost:** one Haiku turn in the relay, plus one turn on the target's own model and effort, which is the same as typing the prompt there.
@@ -241,7 +241,7 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Merged ([#15](https://github.com/leggetter/pitwall/pull/15)): design D, decided by Phil on 2026-10-19 after spike [003](docs/spikes/003-relay.md) |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
 | W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: finished sessions listed muted, merged ([#14](https://github.com/leggetter/pitwall/pull/14)); the live check of the integrated branch passed on 2026-10-19 |
-| W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | Done 2026-10-19: changes requested, one medium finding. Fixes in `m2/relay-gate` and `m2/hardening` (sub-agents) |
+| W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | Done 2026-10-19: changes requested, one medium finding. Fixes merged in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17); the reviewer re-checks them |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
 
 ### Security gate as built (W8, 2026-10-16)
@@ -287,9 +287,9 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 Changes requested: one medium finding blocks the merge, and the rest are low or nits.
 
 - **Medium: the relay could be talked into sending.** Any local session could message the relay, and only Haiku following its instructions stopped it from forwarding a forged request. Pitwall saw the send only afterwards. `crossSessionInbound: accept` made it an escalation: a session that bypasses permissions, whose direct message a prompting target would hold, got it delivered through the relay as `pitwall-relay`.
-  - **Fix (coordinator's call), in `m2/relay-gate`:** drop `accept`. Gate `SendMessage` with a fail-closed `PreToolUse` hook that allows only the exact pending request, one-shot, by hash, never with the text on disk. Remove `ListAgents` from the relay. Show anything the relay tried that nobody asked for as `relayAlert` in the UI.
+  - **Fix (coordinator's call), merged in [#17](https://github.com/leggetter/pitwall/pull/17):** drop `accept`. Gate `SendMessage` with a fail-closed `PreToolUse` hook that allows only the exact pending request, one-shot, by hash, never with the text on disk. Remove `ListAgents` from the relay. Show anything the relay tried that nobody asked for as `relayAlert` in the UI.
   - **My mistake:** D8 recorded that `accept` "only changes messages from sessions that bypass permissions". That's exactly the escalation path.
-- **Low, in `m2/relay-gate`:** the name check ran once, well before the send (L1). A failure before sending overwrote the last delivered exchange and lost its reply, and a failure after the call was reported as not sent (L2; new `uncertain` status).
+- **Low, fixed in [#17](https://github.com/leggetter/pitwall/pull/17):** the name check ran once, well before the send (L1). A failure before sending overwrote the last delivered exchange and lost its reply, and a failure after the call was reported as not sent (L2; new `uncertain` status).
 - **Low, fixed in [#16](https://github.com/leggetter/pitwall/pull/16):**
   - children inherited the parent session's identity variables (L3);
   - the attach restart prompt came from a snapshot up to one poll old (L4);
@@ -297,6 +297,7 @@ Changes requested: one medium finding blocks the merge, and the rest are low or 
   - the proof wasn't bound to the origin (L6; protocol v3);
   - SIGHUP left the launch file behind (L7; it's also deleted after the first handshake, or after 60 s).
   - **Nits:** xterm links limited to http(s), and concurrency caps.
+- **Inbox sockets take same-user posts without auth.** On macOS and Linux the auth line is optional, as the cross-session messaging docs say, so any process running as me can post into any session's inbox, the relay's included. That's Claude Code's design, not pitwall's; the gate covers the relay.
 - **Checked and sound:** the Host, Origin and credential gate (19 crafted requests), the handshake, CSP and headers, the launch file, `resolveSession()` on every route, attach limits and cleanup, the relay's framing and lifetime, index exclusion, web rendering, and repo hygiene.
 
 ### Decisions for M2
@@ -313,9 +314,16 @@ All three decided by Phil on 2026-10-16. D8 was revised on 2026-10-19, after spi
   - (a) The CLI writes a page that sends the browser to the token URL, in a file only my user can read (0600, in a 0700 `~/.pitwall/` directory, removed on exit), and opens that file. This is the approach Jupyter takes.
   - (b) The CLI opens a URL with a single-use launch code, which the server swaps for the token once. The code is still visible in `ps` for a moment, so another user who wins the race gets the token and the real browser fails.
   - **Decided: (a).** The token rule now allows `~/.pitwall/` at 0700 (see Security).
-- **D8 - The relay:** pitwall runs one headless session as its own child process: `claude -p --input-format stream-json --output-format stream-json`, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`, with `--tools` and `--allowed-tools` both `ListAgents,SendMessage`, `--permission-mode dontAsk`, `--strict-mcp-config` and `--safe-mode`. `dontAsk` means nothing can prompt, and keeps the relay in the prompting permission class whatever my default mode is, so targets that prompt deliver rather than hold. It starts on first use, takes one request at a time on stdin, is restarted if it exits, and stops with pitwall.
+- **D8 - The relay:** pitwall runs one headless session as its own child process: `claude -p --input-format stream-json --output-format stream-json`, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`, with `--tools SendMessage`, `--permission-mode dontAsk`, `--setting-sources ""`, `--strict-mcp-config`, `--include-hook-events`, the gate's hooks in `--settings`, and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. `dontAsk` keeps the relay in the prompting permission class whatever my default mode is, so targets that prompt deliver rather than hold. It doesn't gate a local `SendMessage`, which needs no permission. It starts on first use, takes one request at a time on stdin, is restarted if it exits, and stops with pitwall.
   - **Not a background session,** as first decided on 2026-10-16. A running background session can't take a new prompt without a terminal. Prompting it through a PTY (option B in spike 003) works, but it scrapes a screen meant for people, puts the text in `ps`, and needs a one-time trust step.
   - **No `crossSessionInbound: accept`:** first chosen so that replies from targets that bypass permissions wouldn't expire at the relay, then dropped after the W14 review. It let such a session get a message delivered through the relay that the target would otherwise hold. Those replies now expire at the relay; the target holds pitwall's message for my approval anyway, so I read its reply in its own terminal.
+  - **The gate** (W14, [#17](https://github.com/leggetter/pitwall/pull/17)): a `PreToolUse` hook, `src/server/relayGateHook.mjs`, run in exec form (no shell) with `onFailure: "block"`. It allows a `SendMessage` only when it matches the one request pitwall wrote an expectation for: the target's name exactly, the text's SHA-256, unexpired, and only once. Anything else is denied before it runs, and shows as `relayAlert` in the UI.
+    - **Expectations:** they sit in `$PITWALL_HOME/relay-gate/` (0700, files 0600) and never hold the text.
+    - **Readiness:** a SessionStart hook writes a ready marker, and pitwall writes no request until it appears, so a relay whose hooks didn't load is never used.
+    - **A breach:** a call that gets past the gate anyway stops the relay for the rest of the run.
+  - **Not `--safe-mode`:** it disables `--settings` hooks. `--setting-sources ""` with `--strict-mcp-config` loads no user `CLAUDE.md`, settings, hooks or plugins, and no MCP servers, and keeps the inbox socket.
+  - **Not `--restricted`:** it runs hooks too, but binds no inbox socket, so replies and held or refused notices would be lost. With the gate, a session that messages the relay can only cost it a Haiku turn.
+  - **Requires Claude Code 2.1.295 or later,** for `onFailure`.
   - **Trust:** `-p` skips the trust dialog, which guards against a directory's own config running before you agree. The relay's directory is pitwall's own, empty and 0700.
   - **Trade-off:** a reply that arrives after pitwall exits isn't shown in pitwall. The target's conversation still has it.
   - **Decided: D, by Phil on 2026-10-19.** The M4 supervisor replaces it.
