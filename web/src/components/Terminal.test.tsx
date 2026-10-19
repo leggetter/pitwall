@@ -252,6 +252,8 @@ describe('SessionView: attach', () => {
   describe('a session that is not running', () => {
     async function needingRestart() {
       const { fake } = renderDashboard(snap([background({ pid: undefined, alive: false, status: undefined, state: 'done' })]));
+      // A finished session sits in its group's collapsed Finished list, and keeps attach.
+      fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
       const view = await openView('demo-worker');
       const { socket, terminal } = await attach(view, fake);
       await ready(socket);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GROUP_STATE_KEY, readGroupState, writeGroupState, type StorageSource } from './groupState.js';
+import { FINISHED_STATE_KEY, GROUP_STATE_KEY, readGroupState, writeGroupState, type StorageSource } from './groupState.js';
 
 function memory(initial?: string) {
   const items = new Map<string, string>(initial === undefined ? [] : [[GROUP_STATE_KEY, initial]]);
@@ -65,5 +65,22 @@ describe('writeGroupState', () => {
   it('ignores a storage that throws', () => {
     expect(() => writeGroupState(new Map([['a', true]]), new Set(['a']), () => ({ getItem: denied, setItem: denied }))).not.toThrow();
     expect(() => writeGroupState(new Map([['a', true]]), new Set(['a']), denied)).not.toThrow();
+  });
+});
+
+describe('the finished-list key', () => {
+  it('is read and written apart from the group key', () => {
+    const { items, source } = memory(JSON.stringify({ a: true }));
+    expect(readGroupState(source, FINISHED_STATE_KEY)).toEqual(new Map());
+    writeGroupState(new Map([['a', true]]), new Set(['a']), source, FINISHED_STATE_KEY);
+    expect(JSON.parse(items.get(FINISHED_STATE_KEY) ?? 'null')).toEqual({ a: true });
+    expect(readGroupState(source, FINISHED_STATE_KEY)).toEqual(new Map([['a', true]]));
+    expect(items.get(GROUP_STATE_KEY)).toBe(JSON.stringify({ a: true }));
+    expect(FINISHED_STATE_KEY).not.toBe(GROUP_STATE_KEY);
+  });
+
+  it('fails safe to empty, and ignores a failed write, when storage throws', () => {
+    expect(readGroupState(denied, FINISHED_STATE_KEY)).toEqual(new Map());
+    expect(() => writeGroupState(new Map([['a', true]]), new Set(['a']), denied, FINISHED_STATE_KEY)).not.toThrow();
   });
 });

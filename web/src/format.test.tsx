@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cwdWithinGroup, plainText, relativeTime, shortenHome, updatedAgo } from './format.js';
-import { attachCommand, needsAttention, statusPill } from './sessions.js';
+import { attachCommand, isFinished, needsAttention, splitFinished, statusPill } from './sessions.js';
 import { NOW, session } from './test/fixtures.js';
 
 describe('shortenHome', () => {
@@ -73,6 +73,38 @@ describe('session helpers', () => {
     expect(needsAttention(session({ kind: 'background', state: 'failed' }))).toBe(false);
   });
 
+  it('needsAttention never counts a finished session, even one that asked something', () => {
+    const asked = { reason: 'question' as const, excerpt: 'Open a PR?' };
+    for (const state of ['done', 'stopped', 'failed'] as const) {
+      expect(needsAttention(session({ kind: 'background', state, alive: false, pid: undefined, status: undefined, askedYou: asked })), state).toBe(
+        false,
+      );
+    }
+    // Done with its process still alive is idle, not finished, so its question counts.
+    expect(needsAttention(session({ kind: 'background', state: 'done', status: 'idle', askedYou: asked }))).toBe(true);
+  });
+
+  it('isFinished is a background session with no live process that is done, stopped or failed', () => {
+    const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined };
+    for (const state of ['done', 'stopped', 'failed'] as const) expect(isFinished(session({ ...finished, state })), state).toBe(true);
+    expect(isFinished(session({ ...finished, state: 'blocked' }))).toBe(false);
+    expect(isFinished(session({ ...finished, state: 'working' }))).toBe(false);
+    expect(isFinished(session({ ...finished, state: undefined }))).toBe(false);
+    expect(isFinished(session({ kind: 'background', state: 'done', status: 'idle' }))).toBe(false);
+    expect(isFinished(session({ kind: 'interactive', alive: false, pid: undefined, status: undefined }))).toBe(false);
+  });
+
+  it('splitFinished keeps the order within each part', () => {
+    const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, state: 'done' as const };
+    const a = session({ name: 'a' });
+    const b = session({ name: 'b', ...finished });
+    const c = session({ name: 'c' });
+    const d = session({ name: 'd', ...finished, state: 'failed' });
+    const { current, finished: done } = splitFinished([a, b, c, d]);
+    expect(current.map((s) => s.name)).toEqual(['a', 'c']);
+    expect(done.map((s) => s.name)).toEqual(['b', 'd']);
+  });
+
   it('statusPill puts waiting first, then blocked unless stale, then asked you, then the rest', () => {
     const asked = { reason: 'open-questions' as const, excerpt: 'Should I push it?' };
     const label = (overrides: Parameters<typeof session>[0]) => statusPill(session(overrides));
@@ -82,10 +114,17 @@ describe('session helpers', () => {
     });
     expect(label({ kind: 'background', state: 'blocked', askedYou: asked })).toEqual({ label: 'blocked', tone: 'attention' });
     expect(label({ status: 'idle', askedYou: asked })).toEqual({ label: 'asked you', tone: 'asked' });
+    // Finished: the state, not the question, which the row shows apart, muted.
     expect(label({ kind: 'background', state: 'done', alive: false, status: undefined, askedYou: asked })).toEqual({
-      label: 'asked you',
-      tone: 'asked',
+      label: 'done',
+      tone: 'done',
     });
+    expect(label({ kind: 'background', state: 'failed', alive: false, pid: undefined, status: undefined, askedYou: asked })).toEqual({
+      label: 'failed',
+      tone: 'failed',
+    });
+    // Done with a live process is idle, so its question still leads.
+    expect(label({ kind: 'background', state: 'done', status: 'idle', askedYou: asked })).toEqual({ label: 'asked you', tone: 'asked' });
     expect(label({ kind: 'background', state: 'blocked', stale: true, alive: false })).toEqual({
       label: 'blocked',
       tone: 'offline',

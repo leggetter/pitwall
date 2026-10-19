@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionState, ConnectionView } from '../connection.js';
 import { formatRoots, plainText, updatedAgo } from '../format.js';
-import { browserStorage, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
+import {
+  browserStorage,
+  FINISHED_STATE_KEY,
+  readGroupState,
+  writeGroupState,
+  type GroupState,
+  type StorageSource,
+} from '../groupState.js';
 import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { GroupSection } from './GroupSection.js';
@@ -50,6 +57,8 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   const [filters, setFilters] = useState<Filters>({ text: '', attentionOnly: false });
   // Groups start collapsed; the ones opened are remembered across reloads.
   const [open, setOpen] = useState<GroupState>(() => readGroupState(storage));
+  // Each group's "Finished" sub-list starts collapsed too, and is remembered the same way.
+  const [finishedOpen, setFinishedOpen] = useState<GroupState>(() => readGroupState(storage, FINISHED_STATE_KEY));
   const [dismissedError, setDismissedError] = useState<string>();
   // The session whose view is open, as it was when opened. While it's listed, the live summary is shown.
   const [opened, setOpened] = useState<SessionSummary>();
@@ -94,6 +103,13 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
     next.set(id, !(open.get(id) ?? false));
     setOpen(next);
     writeGroupState(next, new Set(groups.map(groupId)), storage);
+  };
+
+  const toggleFinished = (id: string) => {
+    const next = new Map(finishedOpen);
+    next.set(id, !(finishedOpen.get(id) ?? false));
+    setFinishedOpen(next);
+    writeGroupState(next, new Set(groups.map(groupId)), storage, FINISHED_STATE_KEY);
   };
 
   const showError = serverError !== undefined && serverError !== dismissedError;
@@ -165,7 +181,7 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
 
       {snapshot && source && !source.ok && (
         <div className="banner warning" role="alert">
-          <code>claude agents --json</code> failed on the latest poll: {plainText(source.error)}
+          <code>claude agents --json --all</code> failed on the latest poll: {plainText(source.error)}
         </div>
       )}
       {showError && (
@@ -209,6 +225,8 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
                 sessions={sessions}
                 collapsed={!(open.get(id) ?? false)}
                 onToggle={() => toggle(id)}
+                finishedCollapsed={!(finishedOpen.get(id) ?? false)}
+                onToggleFinished={() => toggleFinished(id)}
                 showRoot={snapshot.roots.length > 1}
                 now={now}
                 onOpen={openSession}
