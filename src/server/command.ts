@@ -13,6 +13,11 @@
 // file, so this is a guard, not a fix for something observed.
 import { spawn } from 'node:child_process';
 
+// The scrubber every process pitwall starts goes through. It lives with the
+// index's runner (src/index/exec.ts), which uses it for `claude agents` and
+// `git`, and is exported here too, for spawn, stop, remove, attach and the relay.
+export { childEnvironment } from '../index/exec.js';
+
 export interface CommandOptions {
   /** The working directory. Spawn uses the validated session directory; stop and remove use the temp directory. */
   cwd: string;
@@ -39,80 +44,6 @@ const DRAIN_MS = 500;
 
 /** How long a child gets to exit after SIGTERM before SIGKILL. */
 const KILL_GRACE_MS = 2000;
-
-/**
- * Prefixes of variables a child never gets, compared without regard to case.
- *
- * - `PITWALL_`: the token (the CLI already deletes `PITWALL_TOKEN`, and this
- *   doesn't rely on that), the launch marker and anything added later. A
- *   session pitwall starts must not be able to drive pitwall.
- * - `npm_`: set when pitwall runs through `npm start` or `npm run dev`.
- *   `npm_config_*` would otherwise act as npm configuration for every npm
- *   command the new session runs, in someone else's repo.
- * - `CLAUDE_CODE_MESSAGING_`: the inbox credentials of the Claude Code session
- *   pitwall runs inside, if it does (W10).
- */
-const DROPPED_PREFIXES = ['PITWALL_', 'NPM_', 'CLAUDE_CODE_MESSAGING_'] as const;
-
-/**
- * Variables a child never gets, by exact name, compared without regard to
- * case. When pitwall runs inside a Claude Code session, as it does under an
- * agent, that session's identity would otherwise reach every process pitwall
- * starts. `CLAUDE_CODE_CHILD_SESSION` marks a nested session, which Claude
- * Code leaves out of `--resume`, `--continue`, history and `claude agents`, so
- * a session pitwall spawned could go missing from pitwall's own list.
- */
-const DROPPED_NAMES: ReadonlySet<string> = new Set([
-  // npm's, as for `npm_*` above.
-  'INIT_CWD',
-  // The identity of the Claude Code session pitwall runs inside.
-  'CLAUDECODE',
-  'CLAUDE_CODE_CHILD_SESSION',
-  'CLAUDE_CODE_SESSION_ID',
-  'CLAUDE_CODE_SESSION_ATTENDED',
-  'CLAUDE_CODE_BRIDGE_SESSION_ID',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CLAUDE_CODE_EXECPATH',
-  'CLAUDE_PID',
-  'CLAUDE_EFFORT',
-  'CLAUDE_JOB_DIR',
-  'AI_AGENT',
-  // That session's trace context, so a child doesn't join its trace.
-  'TRACEPARENT',
-  'TRACESTATE',
-]);
-
-// Kept, because they're the user's own configuration rather than a session's
-// identity, and nothing above matches them: ANTHROPIC_*, CLAUDE_CODE_USE_*,
-// CLAUDE_CONFIG_DIR, CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_EFFORT_LEVEL and
-// CLAUDE_CODE_SAFE_MODE. `claude --safe-mode` sets CLAUDE_CODE_SAFE_MODE in
-// the session it starts, so pitwall run from such a session passes it on.
-// That's deliberate (coordinator's decision, 2026-10-19): it's also how a
-// user turns their customizations off, and passing it on fails safe, because
-// a child then runs with fewer customizations (hooks, MCP servers,
-// CLAUDE.md), never more.
-
-/**
- * The environment for every process pitwall starts: spawn, stop and remove
- * (actions.ts), the attach PTY (attach.ts) and the relay (relay.ts). It's `env`
- * without the variables named above, and, when `token` is given, without any
- * variable whose value contains it, so a child can neither drive pitwall nor
- * pass for the Claude Code session pitwall runs inside. The CLI also deletes
- * token-valued variables from process.env when it starts, so a caller with no
- * token to pass, such as the relay, is covered too.
- */
-export function childEnvironment(env: NodeJS.ProcessEnv, token?: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined) continue;
-    const upper = name.toUpperCase();
-    if (DROPPED_PREFIXES.some((prefix) => upper.startsWith(prefix)) || DROPPED_NAMES.has(upper)) continue;
-    // An empty token would match every value.
-    if (token !== undefined && token !== '' && value.includes(token)) continue;
-    result[name] = value;
-  }
-  return result;
-}
 
 /** The real RunCommand. */
 export const runCommand: RunCommand = (file, args, options) =>
