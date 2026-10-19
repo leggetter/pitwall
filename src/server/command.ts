@@ -87,9 +87,10 @@ const DROPPED_NAMES: ReadonlySet<string> = new Set([
 // CLAUDE_CONFIG_DIR, CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_EFFORT_LEVEL and
 // CLAUDE_CODE_SAFE_MODE. `claude --safe-mode` sets CLAUDE_CODE_SAFE_MODE in
 // the session it starts, so pitwall run from such a session passes it on.
-// That's deliberate (Phil, 2026-10-19): it's also how a user turns their
-// customizations off, and passing it on fails safe, because a child then runs
-// with fewer customizations (hooks, MCP servers, CLAUDE.md), never more.
+// That's deliberate (coordinator's decision, 2026-10-19): it's also how a
+// user turns their customizations off, and passing it on fails safe, because
+// a child then runs with fewer customizations (hooks, MCP servers,
+// CLAUDE.md), never more.
 
 /**
  * The environment for every process pitwall starts: spawn, stop and remove
