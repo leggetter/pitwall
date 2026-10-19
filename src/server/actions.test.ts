@@ -20,6 +20,7 @@ import {
   type SessionSummary,
 } from '../shared/protocol.js';
 import {
+  DEFAULT_MAX_CONCURRENT_COMMANDS,
   firstLine,
   MAX_PROMPT_LENGTH,
   parseBackgrounded,
@@ -576,6 +577,38 @@ describe('spawn: limits', () => {
 });
 
 describe('stop and remove', () => {
+  it('runs at most 4 stop and remove commands at once, and answers 429 with Retry-After to more meanwhile', async () => {
+    expect(DEFAULT_MAX_CONCURRENT_COMMANDS).toBe(4);
+    const waiting: (() => void)[] = [];
+    let hold = true;
+    const calls: Call[] = [];
+    const run = Object.assign(
+      vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+        calls.push({ file, args, options });
+        if (hold) await new Promise<void>((resolve) => waiting.push(resolve));
+        return exited(0);
+      }),
+      { calls },
+    );
+    const started = await start(run);
+    const slow = [stopPath(BG_ID), removePath(BG_ID), stopPath(BG_ID), removePath(BG_ID)].map((path) => postAsPage(started, path));
+    await vi.waitFor(() => expect(waiting).toHaveLength(4));
+
+    for (const path of [stopPath(BG_ID), removePath(BG_ID)]) {
+      const refused = await postAsPage(started, path);
+      expect(refused.status).toBe(429);
+      expect(refused.headers['retry-after']).toBe('1');
+      expect((refused.json as { error: string }).error).toMatch(/already running 4 stop or remove commands/);
+    }
+    expect(run.calls).toHaveLength(4);
+
+    hold = false;
+    for (const finish of waiting.splice(0)) finish();
+    for (const res of await Promise.all(slow)) expect(res.status).toBe(200);
+    expect((await postAsPage(started, stopPath(BG_ID))).status).toBe(200);
+    expect(run.calls).toHaveLength(5);
+  });
+
   it("stops a background session with claude stop and the resolved short id, in the temp directory", async () => {
     const started = await start(fakeRunner(exited(0)));
     const res = await postAsPage(started, stopPath(BG_ID));

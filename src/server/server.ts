@@ -7,10 +7,13 @@
 //                               the apiKey, not the token, and an Origin, else 403
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
 //                               snapshot, else 503; the session in it, else 404. Every route that
-//                               takes a session id, and every M2 input path, goes through it
+//                               takes a session id, and every M2 input path, goes through it.
+//                               At most 4 conversation pages are read at once, else 429
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
-//                               then the challenge-response handshake within 5 seconds, with a
-//                               proof bound to this server's origin, else 4401 (handshake.ts)
+//                               at most 32 connections in the handshake at once, on /ws and
+//                               /attach together, else close 1013 with no challenge; then the
+//                               challenge-response handshake within 5 seconds, with a proof
+//                               bound to this server's origin, else 4401 (handshake.ts)
 //   WebSocket upgrade at /attach
 //                               the same Origin rule and handshake, then attach.ts: at most 4
 //                               sockets past the handshake, else 4429, and only a background
@@ -50,6 +53,7 @@ import { spawnPty } from './pty.js';
 import { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
+import { HandshakeSlots } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
 
 export const DEFAULT_PORT = 4517;
@@ -73,6 +77,12 @@ export const STALE_CURSOR_STATUS = CONVERSATION_STALE_STATUS;
 
 /** How long close() waits for WebSocket clients to finish the close handshake. */
 const CLOSE_GRACE_MS = 250;
+
+/**
+ * At most this many conversation pages are read at once, server-wide. Each
+ * read can scan about 8 MiB of transcript; more get 429 with Retry-After.
+ */
+export const MAX_CONVERSATION_READS = 4;
 
 /** Thrown when an explicitly requested port is taken. The default port falls back instead. */
 export class PortInUseError extends Error {
@@ -149,6 +159,8 @@ export async function startServerWithInternals(
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES, perMessageDeflate: false });
   const authTimeoutMs = internals.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
+  // Connections still in the handshake, on /ws and /attach together. Extras close with 1013.
+  const slots = new HandshakeSlots();
   // The CLI's hook, which deletes the launch file. It must never break a handshake.
   const onAuthenticated = () => {
     try {
@@ -165,6 +177,7 @@ export async function startServerWithInternals(
     spawnPty,
     onAuthenticated,
     spawned,
+    slots,
     ...internals.attach,
   });
 
@@ -179,7 +192,7 @@ export async function startServerWithInternals(
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
-      handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated }),
+      handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots }),
     );
   });
 
@@ -231,6 +244,8 @@ interface AppContext {
 
 function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
   const app = new Hono();
+  // Conversation pages being read now.
+  let conversationReads = 0;
 
   app.use('/api/*', async (c, next) => {
     const origin = c.req.header('origin');
@@ -275,6 +290,11 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     if (cursors !== undefined && cursors.length !== 1) return c.body(null, 400);
     const before = cursors?.[0];
     if (before !== undefined && !isWellFormedCursor(before)) return c.body(null, 400);
+    if (conversationReads >= MAX_CONVERSATION_READS) {
+      c.header('Retry-After', '1');
+      return c.body(null, 429);
+    }
+    conversationReads += 1;
     let page;
     try {
       page = await indexer.conversation(lookup.session.sessionId, before);
@@ -283,6 +303,8 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
         return c.body(null, error.reason === 'stale' ? STALE_CURSOR_STATUS : 400);
       }
       throw error;
+    } finally {
+      conversationReads -= 1;
     }
     if (!page) return c.body(null, 404);
     return c.json(page);
