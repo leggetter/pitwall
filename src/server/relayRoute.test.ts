@@ -90,6 +90,7 @@ function fakeRelay(answer: RelaySendOutcome = { status: 'delivered' }): RelayMan
       return answer;
     },
     exchange: () => undefined,
+    alert: () => undefined,
     isRelay: () => false,
     async close() {
       relay.closed = true;

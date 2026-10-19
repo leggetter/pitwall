@@ -18,7 +18,12 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+
+    // For src/server/relayGateHook.mjs, the relay's gate hook: plain JavaScript,
+    // so it runs from src/ under npm run dev, checked through its JSDoc.
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.mjs", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
 }

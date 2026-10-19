@@ -1,11 +1,12 @@
 {
   // Server build: src/ to dist/, without tests or the test helpers in src/test/. `npm run build:server`.
+  // The relay's gate hook, src/server/relayGateHook.mjs, is copied as it is.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.mjs"],
   "exclude": ["src/**/*.test.ts", "src/test/**"]
 }
