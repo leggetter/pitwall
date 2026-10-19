@@ -6,6 +6,13 @@
 /** One versioned key, so a later format can replace this one cleanly. */
 export const GROUP_STATE_KEY = 'pitwall.groups.v1';
 
+/**
+ * Which groups have their "Finished" sub-list open, in the same format, by
+ * group id. Kept apart from GROUP_STATE_KEY so a group's own state and its
+ * finished list's state don't share an entry.
+ */
+export const FINISHED_STATE_KEY = 'pitwall.finished.v1';
+
 /** Group id (see `groupId`) to true when the group is open. A group with no entry is collapsed. */
 export type GroupState = ReadonlyMap<string, boolean>;
 
@@ -17,11 +24,14 @@ export type StorageSource = () => Pick<Storage, 'getItem' | 'setItem'> | null | 
 
 export const browserStorage: StorageSource = () => window.localStorage;
 
-/** The stored state, or an empty one when there is none, it can't be read, or it isn't the expected shape. */
-export function readGroupState(storage: StorageSource = browserStorage): Map<string, boolean> {
+/**
+ * The stored state, or an empty one when there is none, it can't be read, or it
+ * isn't the expected shape. `key` is GROUP_STATE_KEY or FINISHED_STATE_KEY.
+ */
+export function readGroupState(storage: StorageSource = browserStorage, key: string = GROUP_STATE_KEY): Map<string, boolean> {
   const state = new Map<string, boolean>();
   try {
-    const raw = storage()?.getItem(GROUP_STATE_KEY);
+    const raw = storage()?.getItem(key);
     if (!raw) return state;
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return state;
@@ -39,10 +49,15 @@ export function readGroupState(storage: StorageSource = browserStorage): Map<str
  * Entries for any other group are dropped, so the stored data doesn't grow as
  * repos and worktrees come and go. A failure to write is ignored.
  */
-export function writeGroupState(state: GroupState, current: ReadonlySet<string>, storage: StorageSource = browserStorage): void {
+export function writeGroupState(
+  state: GroupState,
+  current: ReadonlySet<string>,
+  storage: StorageSource = browserStorage,
+  key: string = GROUP_STATE_KEY,
+): void {
   const kept = Object.fromEntries([...state].filter(([id]) => current.has(id)));
   try {
-    storage()?.setItem(GROUP_STATE_KEY, JSON.stringify(kept));
+    storage()?.setItem(key, JSON.stringify(kept));
   } catch {
     // Blocked or full: the state lasts until the page reloads.
   }

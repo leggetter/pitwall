@@ -1,13 +1,14 @@
 import type { MouseEvent } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, cwdWithinGroup, plainText, relativeTime } from '../format.js';
-import { attachCommand, needsAttention, statusPill } from '../sessions.js';
+import { attachCommand, isFinished, needsAttention, statusPill } from '../sessions.js';
 import { CopyCommand } from './CopyCommand.js';
 import { Reply } from './Reply.js';
 
 const STALE_HINT =
   'Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters.';
 const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
+const FINISHED_ASKED_HINT = "Its last message asked you something. It has finished, so it isn't counted as needing you.";
 const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = {
   'claude-code': "Claude Code's title, from the session's first prompt",
   pitwall: "pitwall's title, from the session's recent turns",
@@ -34,6 +35,7 @@ export interface SessionRowProps {
 
 export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: SessionRowProps) {
   const attention = needsAttention(session);
+  const finished = isFinished(session);
   const pill = statusPill(session);
   const where = cwdWithinGroup(session.cwd, groupKey);
   const command = attachCommand(session);
@@ -47,7 +49,9 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
     if ((window.getSelection()?.toString() ?? '') !== '') return;
     onOpen(session.sessionId);
   };
-  const className = ['session', attention && 'attention', onOpen && 'openable', isOpen && 'open'].filter(Boolean).join(' ');
+  const className = ['session', attention && 'attention', finished && 'finished', onOpen && 'openable', isOpen && 'open']
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <li className={className} data-attention={attention || undefined} onClick={openFromRow}>
@@ -82,6 +86,11 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
         </div>
         <span className="kind">{session.kind}</span>
         <span className={`pill tone-${pill.tone}`}>{plainText(pill.label)}</span>
+        {finished && session.askedYou && (
+          <span className="pill tone-asked-muted" title={FINISHED_ASKED_HINT}>
+            asked you
+          </span>
+        )}
         {session.stale && (
           <span className="stale" title={STALE_HINT}>
             stale

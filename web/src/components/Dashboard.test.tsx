@@ -3,13 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { lastMessagePath, type IndexSnapshot, type LastMessage, type SessionSummary } from '../../../src/shared/protocol.js';
 import { createApiClient } from '../api.js';
 import type { ConnectionView } from '../connection.js';
-import { GROUP_STATE_KEY, type StorageSource } from '../groupState.js';
+import { FINISHED_STATE_KEY, GROUP_STATE_KEY, type StorageSource } from '../groupState.js';
 import { createReplyLoader, ReplyLoaderContext, type FetchLike } from '../lastMessage.js';
 import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
 import { Dashboard } from './Dashboard.js';
 
 interface RenderOptions {
-  /** Open every group after rendering, as most tests look at rows. Default true. */
+  /** Open every group, and every group's Finished list, after rendering, as most tests look at rows. Default true. */
   expand?: boolean;
   storage?: StorageSource;
 }
@@ -18,7 +18,7 @@ function renderDashboard(snap: IndexSnapshot | undefined, overrides: Partial<Con
   const view: ConnectionView = { state: 'live', snapshot: snap, ...overrides };
   const result = render(<Dashboard view={view} {...(options.storage ? { storage: options.storage } : {})} />);
   if (options.expand !== false) {
-    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) {
+    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"], .finished-toggle[aria-expanded="false"]')) {
       fireEvent.click(toggle);
     }
   }
@@ -74,7 +74,7 @@ describe('Dashboard header', () => {
     const snap = snapshot([group({ sessions: [session({ name: 'kept' })] })]);
     renderDashboard(snap, { lastPoll: { generatedAt: new Date(NOW).toISOString(), source: { ok: false, error: 'timed out' } } });
 
-    expect(screen.getByRole('alert').textContent).toBe('claude agents --json failed on the latest poll: timed out');
+    expect(screen.getByRole('alert').textContent).toBe('claude agents --json --all failed on the latest poll: timed out');
     expect(visibleRowNames()).toEqual(['kept']);
   });
 
@@ -95,7 +95,7 @@ describe('Dashboard header', () => {
   it('warns when the session source failed', () => {
     renderDashboard(snapshot([], { source: { ok: false, error: 'claude: command not found' } }));
 
-    expect(screen.getByRole('alert').textContent).toBe('claude agents --json failed on the latest poll: claude: command not found');
+    expect(screen.getByRole('alert').textContent).toBe('claude agents --json --all failed on the latest poll: claude: command not found');
   });
 
   it('shows server error messages until dismissed', () => {
@@ -555,21 +555,24 @@ describe('sessions that asked you something', () => {
     expect(row('waits').querySelector('.asked')).toBeNull();
   });
 
-  it('counts them in the group badges, the header and the tab title', () => {
+  it('counts them in the group badges, the header and the tab title, except a finished one', () => {
     renderDashboard(askedSnapshot());
 
     expect(within(groupSection('demo-app')).getByText('2 need you')).toBeTruthy();
-    expect(within(groupSection('docs')).getByText('1 needs you')).toBeTruthy();
-    expect(screen.getByText('3 need you', { selector: '.summary-attention' })).toBeTruthy();
-    expect(document.title).toBe('(3) pitwall');
+    // docs-done asked something, but it has finished: muted, and not counted.
+    expect(groupSection('docs').querySelector('.group-attention')).toBeNull();
+    expect(groupSection('docs').className).not.toContain('has-attention');
+    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
+    expect(document.title).toBe('(2) pitwall');
   });
 
-  it('keeps them under "needs attention only"', () => {
+  it('keeps them under "needs attention only", but not a finished one', () => {
     renderDashboard(askedSnapshot());
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
 
-    expect(visibleRowNames()).toEqual(['waits', 'asks', 'docs-done']);
+    expect(visibleRowNames()).toEqual(['waits', 'asks']);
+    expect(screen.queryByRole('button', { name: /^Finished/ })).toBeNull();
   });
 
   it('renders the excerpt as text, not markup', () => {
@@ -583,6 +586,148 @@ describe('sessions that asked you something', () => {
 
     expect(container.querySelector('img, b')).toBeNull();
     expect(row('html').querySelector('.asked')?.textContent).toBe('Asked: <img src=x onerror="alert(1)"> keep <b>this</b>?');
+  });
+});
+
+describe('finished sessions', () => {
+  const ROOT = '/Users/example/code';
+  const id = (name: string) => `${ROOT}\0${ROOT}/${name}`;
+  const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined };
+
+  function finishedSnapshot(): IndexSnapshot {
+    return snapshot([
+      group({
+        key: `${ROOT}/demo-app`,
+        label: 'demo-app',
+        sessions: [
+          session({ name: 'live-one', status: 'busy' }),
+          session({ name: 'idle-done', kind: 'background', shortId: 'bg1', state: 'done', status: 'idle' }),
+          session({ name: 'done-one', ...finished, shortId: 'bg2', state: 'done', askedYou: { reason: 'question', excerpt: 'Open the PR?' } }),
+          session({ name: 'failed-one', ...finished, shortId: 'bg3', state: 'failed' }),
+        ],
+      }),
+      group({
+        key: `${ROOT}/old`,
+        label: 'old',
+        sessions: [session({ name: 'stopped-one', ...finished, shortId: 'bg4', state: 'stopped', cwd: `${ROOT}/old` })],
+      }),
+    ]);
+  }
+
+  /** Opens every group, leaving the Finished lists as they start. */
+  function render(snap = finishedSnapshot(), storage?: StorageSource) {
+    const result = renderDashboard(snap, {}, { expand: false, ...(storage ? { storage } : {}) });
+    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) fireEvent.click(toggle);
+    return result;
+  }
+
+  const finishedToggle = (label: string) => within(groupSection(label)).getByRole('button', { name: /^Finished \(\d+\)$/ });
+  const finishedOpen = (label: string) => finishedToggle(label).getAttribute('aria-expanded') === 'true';
+  const stored = () => JSON.parse(window.localStorage.getItem(FINISHED_STATE_KEY) ?? 'null') as unknown;
+
+  it('lists them in a collapsed "Finished (n)" sub-list at the bottom of their group', () => {
+    render();
+
+    const toggle = finishedToggle('demo-app');
+    expect(toggle.textContent).toBe('Finished (2)');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    const list = document.getElementById(toggle.getAttribute('aria-controls') ?? '')!;
+    expect(list.hidden).toBe(true);
+    // Collapsed, so only the unfinished rows show. A done session with a live process is idle, not finished.
+    expect(visibleRowNames()).toEqual(['live-one', 'idle-done']);
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(list.hidden).toBe(false);
+    expect(within(list).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['done-one', 'failed-one']);
+    // After the group's other rows.
+    const last = groupSection('demo-app').querySelector('ul.sessions')!.lastElementChild;
+    expect(last?.contains(toggle)).toBe(true);
+  });
+
+  it('counts finished sessions in the group total, but never as needing you', () => {
+    render();
+
+    expect(groupSection('demo-app').querySelector('.group-count')?.textContent).toBe('4 sessions');
+    expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
+    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
+    expect(document.title).toBe('pitwall');
+  });
+
+  it('mutes finished rows, with the state as the pill and a muted asked-you badge', () => {
+    render();
+    fireEvent.click(finishedToggle('demo-app'));
+
+    const done = row('done-one');
+    expect(done.className).toContain('finished');
+    expect(done.className).not.toContain('attention');
+    expect(done.dataset.attention).toBeUndefined();
+    const pills = [...done.querySelectorAll('.pill')];
+    expect(pills.map((p) => p.textContent)).toEqual(['done', 'asked you']);
+    expect(pills[1]?.className).toContain('tone-asked-muted');
+    expect(pills[1]?.className).not.toMatch(/tone-asked(\s|$)/);
+    expect(done.querySelector('.asked')?.textContent).toBe('Asked: Open the PR?');
+    expect(row('failed-one').querySelector('.pill')?.textContent).toBe('failed');
+    expect(row('idle-done').className).not.toContain('finished');
+  });
+
+  it('shows a group whose sessions have all finished with only its Finished list', () => {
+    render();
+
+    expect(groupSection('old').querySelector('.group-count')?.textContent).toBe('1 session');
+    expect(finishedToggle('old').textContent).toBe('Finished (1)');
+    fireEvent.click(finishedToggle('old'));
+    expect(row('stopped-one').querySelector('.pill')?.textContent).toBe('stopped');
+  });
+
+  it('opens a finished row in the session view, like any other row', () => {
+    render();
+    fireEvent.click(finishedToggle('old'));
+
+    fireEvent.click(within(row('stopped-one')).getByRole('button', { name: 'stopped-one' }));
+    expect(screen.getByRole('dialog', { name: 'stopped-one' })).toBeTruthy();
+  });
+
+  it('remembers each group\'s Finished list, apart from the group itself, across a reload', () => {
+    const first = render();
+    fireEvent.click(finishedToggle('old'));
+    expect(stored()).toEqual({ [id('old')]: true });
+    expect(JSON.parse(window.localStorage.getItem(GROUP_STATE_KEY) ?? 'null')).toEqual({ [id('demo-app')]: true, [id('old')]: true });
+    first.unmount();
+
+    const second = render();
+    expect([finishedOpen('demo-app'), finishedOpen('old')]).toEqual([false, true]);
+    fireEvent.click(finishedToggle('old'));
+    expect(stored()).toEqual({ [id('old')]: false });
+    second.unmount();
+
+    render();
+    expect(finishedOpen('old')).toBe(false);
+  });
+
+  it('starts collapsed, and still toggles, when storage throws or holds the wrong shape', () => {
+    const denied = () => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    };
+    const first = render(finishedSnapshot(), () => ({ getItem: denied, setItem: denied }));
+    expect(finishedOpen('demo-app')).toBe(false);
+    fireEvent.click(finishedToggle('demo-app'));
+    expect(finishedOpen('demo-app')).toBe(true);
+    first.unmount();
+
+    window.localStorage.setItem(FINISHED_STATE_KEY, '[]');
+    render();
+    expect([finishedOpen('demo-app'), finishedOpen('old')]).toEqual([false, false]);
+  });
+
+  it('keeps a finished session that matches the text filter in its Finished list', () => {
+    render();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'failed-one' } });
+
+    expect(finishedToggle('demo-app').textContent).toBe('Finished (1)');
+    expect(visibleRowNames()).toEqual([]);
+    fireEvent.click(finishedToggle('demo-app'));
+    expect(visibleRowNames()).toEqual(['failed-one']);
   });
 });
 
