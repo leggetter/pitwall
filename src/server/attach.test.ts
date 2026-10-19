@@ -1,20 +1,35 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import type { Indexer } from '../index/index.js';
+import type { AgentRow, Indexer } from '../index/index.js';
+import type { AgentsResult } from '../index/agents.js';
 import {
   ATTACH_PATH,
   MAX_ATTACHED,
   PROTOCOL_VERSION,
+  SPAWN_PATH,
   WS_CLOSE_TOO_MANY,
   WS_CLOSE_UNAUTHORIZED,
+  WS_PATH,
   type AttachServerMessage,
   type IndexSnapshot,
+  type ServerMessage,
   type SessionSummary,
 } from '../shared/protocol.js';
-import { ATTACH_MAX_PAYLOAD_BYTES, COLS_RANGE, needsRestart, ROWS_RANGE, WS_CLOSE_POLICY } from './attach.js';
+import {
+  ATTACH_MAX_PAYLOAD_BYTES,
+  attachDecision,
+  COLS_RANGE,
+  ROWS_RANGE,
+  STARTING_GRACE_MS,
+  STILL_STARTING,
+  WS_CLOSE_POLICY,
+  WS_CLOSE_TRY_AGAIN,
+} from './attach.js';
+import type { CommandResult } from './command.js';
+import { RECENT_SPAWN_MS } from './recentSpawns.js';
 import type { RunningServer } from './index.js';
 import { spawnPty, type PtyProcess, type PtySpawnOptions } from './pty.js';
 import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../test/proof.js';
@@ -170,19 +185,57 @@ afterEach(async () => {
 
 const ENV = { PATH: '/usr/bin:/bin', HOME: '/Users/example' };
 
+/**
+ * A stand-in for `claude agents --json --all`, which attach re-reads on open
+ * when the snapshot shows no live process. It answers `result`, which a test
+ * can change, and counts the reads.
+ */
+function fakeAgents(result: AgentsResult = { ok: true, rows: [] }) {
+  const agents = {
+    result,
+    reads: 0,
+    list: vi.fn(async () => {
+      agents.reads += 1;
+      return agents.result;
+    }),
+  };
+  return agents;
+}
+
+/** A `claude agents` row for a session in SESSIONS. */
+function row(overrides: Partial<AgentRow> & Pick<AgentRow, 'sessionId'>): AgentRow {
+  return { name: 'pitwall-test-attach', kind: 'background', cwd: ROOT, startedAt: '2026-10-16T00:00:00.000Z', ...overrides };
+}
+
 async function start(
-  options: { indexer?: Indexer; spawner?: ReturnType<typeof fakeSpawner>; env?: NodeJS.ProcessEnv } & ServerInternals = {},
+  options: {
+    indexer?: Indexer;
+    spawner?: ReturnType<typeof fakeSpawner>;
+    env?: NodeJS.ProcessEnv;
+    agents?: ReturnType<typeof fakeAgents>;
+    processAlive?: (pid: number) => boolean;
+    now?: () => number;
+  } & ServerInternals = {},
 ) {
   const spawner = options.spawner ?? fakeSpawner();
+  const agents = options.agents ?? fakeAgents();
   const server = await startServerWithInternals(
     { indexer: options.indexer ?? fakeIndexer(), token: TOKEN, webRoot, port: 0 },
     {
       ...(options.authTimeoutMs === undefined ? {} : { authTimeoutMs: options.authTimeoutMs }),
-      attach: { spawnPty: spawner.spawn, env: options.env ?? ENV },
+      ...(options.actions === undefined ? {} : { actions: options.actions }),
+      attach: {
+        spawnPty: spawner.spawn,
+        env: options.env ?? ENV,
+        agents,
+        // The fixtures' pids aren't real processes; a test that wants one gone says so.
+        processAlive: options.processAlive ?? (() => true),
+        ...(options.now === undefined ? {} : { now: options.now }),
+      },
     },
   );
   running.push(server);
-  return { server, spawner };
+  return { server, spawner, agents };
 }
 
 // ---------------------------------------------------------------- clients
@@ -281,6 +334,22 @@ function upgradeStatus(client: Client): Promise<number> {
 }
 
 /** Expects an error message, then the socket closed with `code`. */
+/** The apiKey, from the index socket's handshake, for the spawn route. */
+async function apiKeyOf(port: number): Promise<string> {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${WS_PATH}`, { origin: pitwallOrigin(port) });
+  return new Promise<string>((resolve, reject) => {
+    ws.on('message', (data) => {
+      const message = JSON.parse(String(data)) as ServerMessage;
+      if (message.type === 'challenge') ws.send(JSON.stringify({ type: 'auth', proof: proofFor(message.nonce, port) }));
+      else if (message.type === 'authenticated') {
+        ws.close();
+        resolve(message.apiKey);
+      }
+    });
+    ws.on('close', () => reject(new Error('closed before authenticated')));
+  });
+}
+
 async function expectRefused(client: Client, code = WS_CLOSE_POLICY): Promise<string> {
   const message = await client.next();
   if (message.type !== 'error') throw new Error(`expected an error, got ${message.type}`);
@@ -479,21 +548,178 @@ describe('the attach socket', () => {
       expect(spawner.last.options).toMatchObject({ cols: 90, rows: 30 });
     });
 
-    it('asks to restart only a session with no live process, whatever its state', () => {
-      const base = summary({ sessionId: BG_ID });
-      expect(needsRestart(base)).toBe(false);
-      // A finished session whose process is still alive is attached to as it is.
-      for (const state of ['working', 'blocked', 'done', 'stopped', 'failed'] as const) expect(needsRestart({ ...base, state })).toBe(false);
-      const { pid: _pid, ...noPid } = base;
-      expect(needsRestart({ ...noPid, alive: false })).toBe(true);
-      expect(needsRestart({ ...noPid, alive: false, state: 'done', finished: true })).toBe(true);
-    });
-
     it('asks first for a stopped session (done, with no process)', async () => {
       const { server } = await start();
       const client = await ready(server.port);
       send(client, { type: 'open', sessionId: DONE_ID, cols: 80, rows: 24 });
       expect(await client.next()).toEqual({ type: 'needs-restart' });
+    });
+  });
+
+  describe('deciding on open, from fresh facts, whether attaching restarts the session', () => {
+    const NOW = Date.parse('2026-10-19T12:00:00.000Z');
+    const ago = (ms: number) => new Date(NOW - ms).toISOString();
+    const now = () => NOW;
+    const context = { now: NOW, recentlySpawned: false };
+
+    it('attachDecision: a process means attach, whatever the state', () => {
+      for (const state of [undefined, 'working', 'blocked', 'done', 'stopped', 'failed'] as const) {
+        expect(attachDecision({ pid: 4242, ...(state ? { state } : {}), startedAt: ago(0) }, context), String(state)).toBe('attach');
+      }
+    });
+
+    it('attachDecision: finished with no process means ask, however new', () => {
+      for (const state of ['done', 'stopped', 'failed'] as const) {
+        expect(attachDecision({ state, startedAt: ago(0) }, { now: NOW, recentlySpawned: true }), state).toBe('confirm');
+      }
+    });
+
+    it('attachDecision: working or blocked with no process is starting within 20 s or a recent spawn, and crashed after', () => {
+      expect(STARTING_GRACE_MS).toBe(20_000);
+      expect(RECENT_SPAWN_MS).toBe(30_000);
+      for (const state of ['working', 'blocked'] as const) {
+        expect(attachDecision({ state, startedAt: ago(0) }, context), state).toBe('starting');
+        expect(attachDecision({ state, startedAt: ago(19_999) }, context), state).toBe('starting');
+        // In the future, as a clock step could make it: still starting.
+        expect(attachDecision({ state, startedAt: new Date(NOW + 5_000).toISOString() }, context), state).toBe('starting');
+        expect(attachDecision({ state, startedAt: ago(20_000) }, context), state).toBe('confirm');
+        expect(attachDecision({ state, startedAt: ago(3_600_000) }, { now: NOW, recentlySpawned: true }), state).toBe('starting');
+        expect(attachDecision({ state, startedAt: 'not a date' }, context), state).toBe('confirm');
+      }
+    });
+
+    it('attachDecision: no process and no known state means ask', () => {
+      expect(attachDecision({ startedAt: ago(0) }, { now: NOW, recentlySpawned: true })).toBe('confirm');
+    });
+
+    it("doesn't re-read for a session whose process is still running, and attaches", async () => {
+      const { server, agents } = await start({ now });
+      await attached(server.port);
+      expect(agents.reads).toBe(0);
+    });
+
+    it('attaches with no prompt when the snapshot shows no process but the re-read does', async () => {
+      const agents = fakeAgents({ ok: true, rows: [row({ sessionId: IDLE_ID, shortId: 'bgidle', pid: 5151, state: 'blocked' })] });
+      const { server, spawner } = await start({ agents, now });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      expect(await client.next()).toEqual({ type: 'attached' });
+      expect(agents.reads).toBe(1);
+      expect(spawner.last.args).toEqual(['attach', 'bgidle']);
+    });
+
+    it('asks first when the process died since the last poll, rather than letting claude attach restart it unasked', async () => {
+      const agents = fakeAgents({ ok: true, rows: [row({ sessionId: BG_ID, shortId: 'bg1234', state: 'working', startedAt: ago(3_600_000) })] });
+      const { server, spawner } = await start({ agents, now, processAlive: (pid) => pid !== 4242 });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: BG_ID, cols: 80, rows: 24 });
+      expect(await client.next()).toEqual({ type: 'needs-restart' });
+      expect(agents.reads).toBe(1);
+      expect(spawner.spawn).not.toHaveBeenCalled();
+    });
+
+    it('says a just-spawned session is still starting, without asking, even when told restart: true', async () => {
+      const agents = fakeAgents({ ok: true, rows: [row({ sessionId: IDLE_ID, shortId: 'bgidle', state: 'working', startedAt: ago(5_000) })] });
+      const { server, spawner } = await start({ agents, now });
+      for (const restart of [undefined, true]) {
+        const client = await ready(server.port);
+        send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24, ...(restart ? { restart } : {}) });
+        expect(await expectRefused(client, WS_CLOSE_TRY_AGAIN)).toBe(STILL_STARTING);
+      }
+      expect(spawner.spawn).not.toHaveBeenCalled();
+    });
+
+    it("judges by the fresh row, not the snapshot's: a new row is starting even if the snapshot's is old", async () => {
+      // The snapshot says IDLE_ID started on 2026-10-16; the re-read says 3 s ago.
+      const agents = fakeAgents({ ok: true, rows: [row({ sessionId: IDLE_ID, shortId: 'bgidle', state: 'working', startedAt: ago(3_000) })] });
+      const { server } = await start({ agents, now });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      expect(await expectRefused(client, WS_CLOSE_TRY_AGAIN)).toBe(STILL_STARTING);
+    });
+
+    it('asks first for a working session with no process that started long ago: it crashed', async () => {
+      const agents = fakeAgents({ ok: true, rows: [row({ sessionId: IDLE_ID, shortId: 'bgidle', state: 'working', startedAt: ago(60_000) })] });
+      const { server } = await start({ agents, now });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      expect(await client.next()).toEqual({ type: 'needs-restart' });
+    });
+
+    it("falls back to the snapshot's facts, without its pid, when the re-read fails or no longer lists the session", async () => {
+      for (const result of [{ ok: false, error: 'claude agents --json --all timed out after 5s' }, { ok: true, rows: [] }] as AgentsResult[]) {
+        const agents = fakeAgents(result);
+        const { server } = await start({ agents, now, processAlive: () => false });
+        const client = await ready(server.port);
+        send(client, { type: 'open', sessionId: BG_ID, cols: 80, rows: 24 });
+        expect(await client.next()).toEqual({ type: 'needs-restart' });
+      }
+    });
+
+    it('re-reads once for several sockets that open at the same time', async () => {
+      let answer!: (result: AgentsResult) => void;
+      const agents = fakeAgents();
+      agents.list.mockImplementation(() => {
+        agents.reads += 1;
+        return new Promise<AgentsResult>((resolve) => (answer = resolve));
+      });
+      const { server } = await start({ agents, now });
+      const clients = await Promise.all([ready(server.port), ready(server.port), ready(server.port)]);
+      for (const client of clients) send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      await waitFor(() => agents.reads === 1);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(agents.reads).toBe(1);
+      answer({ ok: true, rows: [] });
+      for (const client of clients) expect(await client.next()).toEqual({ type: 'needs-restart' });
+    });
+
+    it('refuses another message while it decides, and starts nothing for a socket that closed meanwhile', async () => {
+      let answer!: (result: AgentsResult) => void;
+      const agents = fakeAgents();
+      agents.list.mockImplementation(() => new Promise<AgentsResult>((resolve) => (answer = resolve)));
+      const { server, spawner } = await start({ agents, now });
+
+      const impatient = await ready(server.port);
+      send(impatient, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      await waitFor(() => agents.list.mock.calls.length === 1);
+      send(impatient, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24, restart: true });
+      expect(await expectRefused(impatient)).toMatch(/Wait for the answer to open/);
+
+      const gone = await ready(server.port);
+      send(gone, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24, restart: true });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      gone.ws.close();
+      await gone.closed;
+      answer({ ok: true, rows: [row({ sessionId: IDLE_ID, shortId: 'bgidle', pid: 5151, state: 'blocked' })] });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(spawner.spawn).not.toHaveBeenCalled();
+    });
+
+    it('treats a session this pitwall just spawned as starting, through the spawn route', async () => {
+      // A real directory for the root, because spawn checks the cwd's realpath.
+      const root = await realpath(webRoot);
+      const spawnedRow = summary({ sessionId: IDLE_ID, shortId: 'bgnew', cwd: root, pid: undefined, alive: false, status: undefined, state: 'working' });
+      const indexer = fakeIndexer({ ...snapshot([spawnedRow]), roots: [root], groups: [{ key: root, label: 'root', kind: 'directory', root, sessions: [spawnedRow] }] });
+      const run = vi.fn(async (): Promise<CommandResult> => ({ kind: 'exited', code: 0, stdout: 'backgrounded · bgnew · pitwall-test-spawned\n', stderr: '' }));
+      // The fresh row still has no process, and startedAt is an hour old, as for a restarted job.
+      const agents = fakeAgents({ ok: true, rows: [row({ sessionId: IDLE_ID, shortId: 'bgnew', cwd: root, state: 'working', startedAt: ago(3_600_000) })] });
+      const { server } = await start({ indexer, agents, now, actions: { run, env: {} } });
+
+      // Before the spawn, it would be asked about.
+      const before = await ready(server.port);
+      send(before, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      expect(await before.next()).toEqual({ type: 'needs-restart' });
+
+      const response = await fetch(`http://127.0.0.1:${server.port}${SPAWN_PATH}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${await apiKeyOf(server.port)}`, origin: pitwallOrigin(server.port), 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: root, prompt: 'Reply with: ready', name: 'pitwall-test-spawned' }),
+      });
+      expect(response.status).toBe(201);
+
+      const after = await ready(server.port);
+      send(after, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      expect(await expectRefused(after, WS_CLOSE_TRY_AGAIN)).toBe(STILL_STARTING);
     });
   });
 

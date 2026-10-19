@@ -12,7 +12,7 @@ const API_KEY = 'k'.repeat(43);
 const BG = '00000000-0000-4000-8000-0000000000b1';
 const INTERACTIVE = '00000000-0000-4000-8000-0000000000a1';
 
-const STOP_TEXT = 'Stops the session; its conversation is kept, and attaching restarts it.';
+const STOP_TEXT = 'Stops the session; its conversation is kept. Attaching to it later asks before restarting it.';
 const REMOVE_TEXT = 'Removes it from the list. Claude Code keeps a worktree that has unpushed commits.';
 
 function background(overrides: Partial<SessionSummary> = {}): SessionSummary {

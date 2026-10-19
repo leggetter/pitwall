@@ -171,7 +171,7 @@ export function SessionTerminal({ sessionId, onClose }: SessionTerminalProps) {
       </div>
       {status.kind === 'confirm-restart' && (
         <div className="banner warning attach-confirm" role="alertdialog" aria-describedby={confirmId}>
-          <p id={confirmId}>This session isn&apos;t running. Attaching restarts it.</p>
+          <p id={confirmId}>This session has finished, or its process has exited. Attaching restarts it.</p>
           <div className="attach-confirm-actions">
             <button type="button" className="button small" onClick={() => session.current?.confirmRestart()}>
               Restart and attach
