@@ -2,7 +2,7 @@ import { useContext, useEffect, useId, useRef, useState, type FormEvent, type Ke
 import type { RelayExchange, RelayStatus, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { absoluteTime, plainText, relativeTime } from '../format.js';
-import { canMessage, exchangeSummary, MAX_RELAY_TEXT_LENGTH, outgoingText, registerRelayFocus, sendRelay, STATUS_TEXT } from '../relay.js';
+import { canMessage, exchangeSummary, MAX_RELAY_TEXT_LENGTH, outgoingText, registerRelayFocus, sendRelay, STATUS_TEXT, statusTone, type RelayTone } from '../relay.js';
 import '../relay.css';
 
 /** What the box shows after a send. `error` is pitwall's own failure, before the relay answered. */
@@ -70,8 +70,8 @@ export function RelayBox({ session, now }: RelayBoxProps) {
     }
     const { status, detail } = outcome.result;
     setShown(detail === undefined || status === 'delivered' ? { status, text: STATUS_TEXT[status] } : { status, text: STATUS_TEXT[status], detail });
-    // Sent, or set aside by the session: either way it's no longer a draft.
-    if (status !== 'failed') setText('');
+    // Sent, or set aside by the session: either way it's no longer a draft. Kept when it wasn't sent, or may not have been.
+    if (status !== 'failed' && status !== 'uncertain') setText('');
   };
 
   const onSubmit = (event: FormEvent) => {
@@ -138,8 +138,8 @@ export function RelayBox({ session, now }: RelayBoxProps) {
   );
 }
 
-function tone(status: Shown['status']): 'ok' | 'waiting' | 'failed' {
-  return status === 'delivered' ? 'ok' : status === 'held' ? 'waiting' : 'failed';
+function tone(status: Shown['status']): RelayTone {
+  return status === 'error' ? 'failed' : statusTone(status);
 }
 
 export interface RelayExchangeNoteProps {

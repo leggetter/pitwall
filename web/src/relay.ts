@@ -3,7 +3,7 @@
 // the token, and the words the UI uses for each outcome. The server
 // (src/server/relayRoute.ts, relay.ts) is the authority on every check.
 
-import { relayPath, type RelayExchange, type RelayResult, type RelayStatus, type SessionSummary } from '../../src/shared/protocol.js';
+import { relayPath, type RelayAlert, type RelayExchange, type RelayResult, type RelayStatus, type SessionSummary } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 
 /** The server's limit, repeated so the box can say so before sending. */
@@ -17,7 +17,7 @@ export type RelayOutcome =
   /** No answer pitwall understands: a network error, or a response that isn't a RelayResult. */
   | { kind: 'failed'; error: string };
 
-const STATUSES: readonly RelayStatus[] = ['delivered', 'held', 'refused', 'failed'];
+const STATUSES: readonly RelayStatus[] = ['delivered', 'held', 'refused', 'failed', 'uncertain'];
 
 function asRelayResult(body: unknown): RelayResult | undefined {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
@@ -54,12 +54,13 @@ export function canMessage(session: Pick<SessionSummary, 'kind' | 'alive'>): boo
   return session.kind === 'interactive' && session.alive;
 }
 
-/** What an outcome means, in a sentence. */
+/** What an outcome means, in a sentence. 'failed' means nothing was sent; 'uncertain' that pitwall can't tell. */
 export const STATUS_TEXT: Record<RelayStatus, string> = {
   delivered: "Delivered. It's in the session's inbox: it reads it at its next step, or starts a turn if it's idle.",
   held: "Held for approval in that session's own terminal. It isn't delivered until it's approved there.",
   refused: "Refused: that session's settings don't accept messages from other sessions.",
   failed: 'Not sent.',
+  uncertain: 'May have reached the session. Check its conversation before sending again.',
 };
 
 /** A short label for an exchange's status, for a row. */
@@ -68,12 +69,30 @@ export const STATUS_LABEL: Record<RelayStatus, string> = {
   held: 'held for approval in its terminal',
   refused: 'refused',
   failed: 'not sent',
+  uncertain: 'may have reached it: check its conversation',
 };
 
+export type RelayTone = 'ok' | 'waiting' | 'failed';
+
+/** How an outcome looks: delivered is good, held and uncertain need a look, refused and failed weren't delivered. */
+export function statusTone(status: RelayStatus): RelayTone {
+  return status === 'delivered' ? 'ok' : status === 'held' || status === 'uncertain' ? 'waiting' : 'failed';
+}
+
 /** The latest exchange, for a row: when it was sent and what happened. */
-export function exchangeSummary(exchange: RelayExchange): { status: string; tone: 'ok' | 'waiting' | 'failed' } {
-  const tone = exchange.status === 'delivered' ? 'ok' : exchange.status === 'held' ? 'waiting' : 'failed';
-  return { status: STATUS_LABEL[exchange.status], tone };
+export function exchangeSummary(exchange: RelayExchange): { status: string; tone: RelayTone } {
+  return { status: STATUS_LABEL[exchange.status], tone: statusTone(exchange.status) };
+}
+
+/**
+ * The banner for the snapshot's relayAlert: what pitwall's relay tried that
+ * nobody asked for. `detail` is pitwall's own words, never a message's text.
+ */
+export function relayAlertText(alert: RelayAlert): { summary: string; count: string } {
+  const summary = alert.blocked
+    ? "pitwall's relay tried to send a message nobody asked for, and pitwall blocked it. That usually means another session messaged the relay."
+    : "pitwall's relay sent a message nobody asked for, or one pitwall couldn't check, before pitwall could stop it. It may have reached one of your sessions: check their conversations for a message from pitwall-relay. That usually means another session messaged the relay, and pitwall has stopped using it until you restart pitwall.";
+  return { summary, count: alert.count === 1 ? 'Once since pitwall started.' : `${alert.count} times since pitwall started.` };
 }
 
 // The row's "Message" quick action opens the session view, and the view's
