@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
@@ -25,6 +24,7 @@ import { securityHeaders } from './security.js';
 import { BUILDING_SCRIPT, BUILDING_SCRIPT_PATH } from './static.js';
 import { STALE_CURSOR_STATUS, startServerWithInternals, type ServerInternals } from './server.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
+import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../test/proof.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 
@@ -222,13 +222,9 @@ function upgradeRefusal(client: Client): Promise<number> {
   });
 }
 
-/**
- * The proof for a nonce, computed here with node:crypto rather than with the
- * server's own helper, so the test pins the contract: base64url(HMAC-SHA256(
- * key = token as UTF-8, message = nonce as UTF-8)).
- */
-function proofFor(nonce: string, token = TOKEN): string {
-  return createHmac('sha256', Buffer.from(token, 'utf8')).update(nonce, 'utf8').digest('base64url');
+/** The proof for a nonce from the server on `port`, as its own page computes it (src/test/proof.ts). */
+function proofFor(nonce: string, port: number, token = TOKEN): string {
+  return contractProof(token, nonce, pitwallOrigin(port));
 }
 
 /** Opens a socket and waits for its challenge. */
@@ -242,7 +238,7 @@ async function challenged(port: number): Promise<{ client: Client; nonce: string
 /** Completes the handshake. The challenge and 'authenticated' are consumed, so nextMessage() gives what follows. */
 async function authedClient(port: number): Promise<Client & { apiKey: string; nonce: string; proof: string }> {
   const { client, nonce } = await challenged(port);
-  const proof = proofFor(nonce);
+  const proof = proofFor(nonce, port);
   client.ws.send(JSON.stringify({ type: 'auth', proof }));
   const reply = await client.nextMessage();
   if (reply.type !== 'authenticated') throw new Error(`expected authenticated, got ${reply.type}`);
@@ -970,12 +966,12 @@ describe('startServer', () => {
   });
 
   describe('the WebSocket handshake', () => {
-    it('opens with a challenge: protocol version 2 and a fresh 32-byte base64url nonce', async () => {
+    it('opens with a challenge: protocol version 3 and a fresh 32-byte base64url nonce', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
       const client = connectWs(server.port, { origin: origin(server.port) });
       const challenge = await client.nextMessage();
       expect(challenge).toEqual({ type: 'challenge', version: PROTOCOL_VERSION, nonce: expect.any(String) });
-      expect(PROTOCOL_VERSION).toBe(2);
+      expect(PROTOCOL_VERSION).toBe(3);
       const { nonce } = challenge as Extract<ServerMessage, { type: 'challenge' }>;
       expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(Buffer.from(nonce, 'base64url')).toHaveLength(32);
@@ -984,7 +980,7 @@ describe('startServer', () => {
     it('answers a valid proof with authenticated and the apiKey, then the snapshot', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
       const { client, nonce } = await challenged(server.port);
-      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce) }));
+      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce, server.port) }));
 
       const authenticated = await client.nextMessage();
       expect(authenticated).toEqual({ type: 'authenticated', apiKey: expect.any(String) });
@@ -994,25 +990,32 @@ describe('startServer', () => {
       expect(await client.nextMessage()).toEqual({ type: 'snapshot', snapshot: snapshot('2026-10-16T00:00:00.000Z') });
     });
 
-    it.each([
-      ['a proof for another nonce', (nonce: string) => ({ type: 'auth', proof: proofFor(`${nonce}x`) })],
-      ['a proof made with another token', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce, `${TOKEN}x`) })],
-      ['the nonce itself', (nonce: string) => ({ type: 'auth', proof: nonce })],
+    type Build = (nonce: string, port: number) => unknown;
+    it.each<[string, Build]>([
+      ['a proof for another nonce', (nonce, port) => ({ type: 'auth', proof: proofFor(`${nonce}x`, port) })],
+      ['a proof made with another token', (nonce, port) => ({ type: 'auth', proof: proofFor(nonce, port, `${TOKEN}x`) })],
+      ['a version 2 proof, without the origin', (nonce) => ({ type: 'auth', proof: version2ProofFor(TOKEN, nonce) })],
+      ['a proof bound to another port', (nonce, port) => ({ type: 'auth', proof: proofFor(nonce, port + 1) })],
+      ['a proof bound to localhost', (nonce, port) => ({ type: 'auth', proof: contractProof(TOKEN, nonce, `http://localhost:${port}`) })],
+      ['a proof bound to https', (nonce, port) => ({ type: 'auth', proof: contractProof(TOKEN, nonce, `https://127.0.0.1:${port}`) })],
+      ['a proof bound to the origin with a trailing slash', (nonce, port) => ({ type: 'auth', proof: contractProof(TOKEN, nonce, `${pitwallOrigin(port)}/`) })],
+      ['the nonce itself', (nonce) => ({ type: 'auth', proof: nonce })],
       ['an empty proof', () => ({ type: 'auth', proof: '' })],
       ['a non-string proof', () => ({ type: 'auth', proof: 42 })],
       ['no proof', () => ({ type: 'auth' })],
       ["M1's raw token", () => ({ type: 'auth', token: TOKEN })],
-      ['a valid proof that also carries the token', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce), token: TOKEN })],
-      ['a valid proof with a garbage version', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce), version: 'garbage' })],
-      ['a valid proof with version 1', (nonce: string) => ({ type: 'auth', proof: proofFor(nonce), version: 1 })],
-      ['a valid proof with the wrong type', (nonce: string) => ({ type: 'hello', proof: proofFor(nonce) })],
+      ['a valid proof that also carries the token', (nonce, port) => ({ type: 'auth', proof: proofFor(nonce, port), token: TOKEN })],
+      ['a valid proof with a garbage version', (nonce, port) => ({ type: 'auth', proof: proofFor(nonce, port), version: 'garbage' })],
+      ['a valid proof with version 1', (nonce, port) => ({ type: 'auth', proof: proofFor(nonce, port), version: 1 })],
+      ['a valid proof with version 3', (nonce, port) => ({ type: 'auth', proof: proofFor(nonce, port), version: 3 })],
+      ['a valid proof with the wrong type', (nonce, port) => ({ type: 'hello', proof: proofFor(nonce, port) })],
       ['JSON null', () => null],
-      ['a JSON array', (nonce: string) => ['auth', proofFor(nonce)]],
+      ['a JSON array', (nonce, port) => ['auth', proofFor(nonce, port)]],
     ])('closes with 4401 for %s, and never authenticates', async (_name, build) => {
       const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
       const server = await start(indexer);
       const { client, nonce } = await challenged(server.port);
-      client.ws.send(JSON.stringify(build(nonce)));
+      client.ws.send(JSON.stringify(build(nonce, server.port)));
       expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
       expect(client.messages).toEqual([]);
       expect(indexer.listenerCount()).toBe(0);
@@ -1029,7 +1032,7 @@ describe('startServer', () => {
     it('closes with 4401 for a binary frame, even one holding a valid proof', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
       const { client, nonce } = await challenged(server.port);
-      client.ws.send(Buffer.from(JSON.stringify({ type: 'auth', proof: proofFor(nonce) })));
+      client.ws.send(Buffer.from(JSON.stringify({ type: 'auth', proof: proofFor(nonce, server.port) })));
       expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
       expect(client.messages).toEqual([]);
     });
@@ -1037,8 +1040,8 @@ describe('startServer', () => {
     it('allows one attempt: a wrong proof, then the right one, still closes with 4401', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
       const { client, nonce } = await challenged(server.port);
-      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor('not-the-nonce') }));
-      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce) }));
+      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor('not-the-nonce', server.port) }));
+      client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce, server.port) }));
       expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
       expect(client.messages).toEqual([]);
     });
@@ -1110,7 +1113,7 @@ describe('startServer', () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), {}, { authTimeoutMs: 50 });
       const { client, nonce } = await challenged(server.port);
       await new Promise((resolve) => setTimeout(resolve, 100));
-      if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce) }));
+      if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(nonce, server.port) }));
       expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
       expect(client.messages).toEqual([]);
     });

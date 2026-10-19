@@ -69,6 +69,8 @@ const SAFE_SHORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 export interface AttachOptions {
   indexer: Pick<Indexer, 'latest'>;
   token: string;
+  /** The server's one allowed origin, which the proof is bound to. Read at each handshake, because the port is known only once listening. */
+  origin: () => string;
   authTimeoutMs: number;
   spawnPty: PtySpawner;
   /** Default 'claude'. */
@@ -210,6 +212,7 @@ export function createAttachServer(options: AttachOptions): AttachServer {
 
     startHandshake(ws, {
       token,
+      origin: options.origin(),
       timeoutMs: authTimeoutMs,
       onAuthenticated: () => {
         if (closing) return end(1001);

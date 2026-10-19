@@ -2,16 +2,20 @@
 // index socket at WS_PATH (websocket.ts) and the attach socket at ATTACH_PATH
 // (attach.ts). Host and Origin are checked before the upgrade, in server.ts.
 //
-// The handshake (PROTOCOL_VERSION 2, src/shared/protocol.ts):
+// The handshake (PROTOCOL_VERSION 3, src/shared/protocol.ts):
 //   server  { type: 'challenge', version, nonce }   a fresh 32-byte nonce per connection
-//   client  { type: 'auth', proof }                 base64url(HMAC-SHA256(token, nonce))
+//   client  { type: 'auth', proof }                 base64url(HMAC-SHA256(token, nonce + "\n" + origin))
 //   server  what the socket is for: 'authenticated' on WS_PATH, 'ready' on ATTACH_PATH
 //
 // The raw token never crosses the socket, so a process squatting on the port
 // learns nothing it can reuse: a proof is good for one nonce, and each nonce
-// belongs to one connection. Each connection gets one attempt. A wrong proof,
-// no proof within the timeout, M1's `{ type: 'auth', token }`, a binary frame,
-// or any other message closes the connection with 4401.
+// belongs to one connection. The proof is also bound to the page's origin,
+// and the server checks it against its own, http://127.0.0.1:<port>, so a
+// squatter on another port can't pass a challenge to a real pitwall page and
+// relay back the proof. Each connection gets one attempt. A wrong proof, a
+// version 2 proof (no origin), no proof within the timeout, M1's
+// `{ type: 'auth', token }`, a binary frame, or any other message closes the
+// connection with 4401.
 import type { RawData, WebSocket } from 'ws';
 import {
   PROTOCOL_VERSION,
@@ -26,6 +30,8 @@ export const DEFAULT_AUTH_TIMEOUT_MS = 5000;
 
 export interface HandshakeOptions {
   token: string;
+  /** The server's one allowed origin, serverOrigin(port). The proof must be bound to it. */
+  origin: string;
   timeoutMs: number;
   /**
    * Called once, when the proof is valid. The handshake stops listening
@@ -55,7 +61,7 @@ export function startHandshake(ws: WebSocket, options: HandshakeOptions): void {
     // One attempt per connection.
     if (state !== 'pending') return;
     const proof = isBinary ? undefined : parseAuth(data);
-    if (proof === undefined || !proofMatches(proof, options.token, nonce)) {
+    if (proof === undefined || !proofMatches(proof, options.token, nonce, options.origin)) {
       reject();
       return;
     }

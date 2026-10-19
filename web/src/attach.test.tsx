@@ -98,12 +98,15 @@ describe('startAttach', () => {
     expect(attach.socket.sent).toHaveLength(1);
   });
 
-  it('sends no proof to a server on another protocol version', async () => {
+  it.each([PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1])('sends no proof to a server on protocol version %i', async (version) => {
     const attach = begin();
-    attach.socket.receive({ type: 'challenge', version: PROTOCOL_VERSION + 1, nonce: nonce() });
+    attach.socket.receive({ type: 'challenge', version, nonce: nonce() });
     expect(attach.socket.sent).toEqual([]);
     expect(attach.socket.closedByClient).toBe(true);
-    expect(attach.status()).toEqual({ kind: 'ended', end: { kind: 'error', error: expect.stringMatching(/protocol version 3/) } });
+    expect(attach.status()).toEqual({
+      kind: 'ended',
+      end: { kind: 'error', error: expect.stringContaining(`protocol version ${version}, and this page speaks version ${PROTOCOL_VERSION}`) },
+    });
   });
 
   it('ignores ready before the proof, then opens the session at the terminal size, clamped', async () => {

@@ -9,8 +9,8 @@
 //                               snapshot, else 503; the session in it, else 404. Every route that
 //                               takes a session id, and every M2 input path, goes through it
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
-//                               then the challenge-response handshake within 5 seconds, else 4401
-//                               (websocket.ts)
+//                               then the challenge-response handshake within 5 seconds, with a
+//                               proof bound to this server's origin, else 4401 (handshake.ts)
 //   WebSocket upgrade at /attach
 //                               the same Origin rule and handshake, then attach.ts: at most 4
 //                               sockets past the handshake, else 4429, and only a background
@@ -44,6 +44,7 @@ import {
   MIN_TOKEN_LENGTH,
   randomSecret,
   securityHeaders,
+  serverOrigin,
 } from './security.js';
 import { spawnPty } from './pty.js';
 import { resolveSession } from './sessions.js';
@@ -142,7 +143,7 @@ export async function startServerWithInternals(
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES, perMessageDeflate: false });
   const authTimeoutMs = internals.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
-  const attach = createAttachServer({ indexer, token, authTimeoutMs, spawnPty, ...internals.attach });
+  const attach = createAttachServer({ indexer, token, origin: () => serverOrigin(port ?? -1), authTimeoutMs, spawnPty, ...internals.attach });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => socket.destroy());
@@ -154,7 +155,7 @@ export async function startServerWithInternals(
     // Browsers always send Origin on a WebSocket upgrade, so a missing one is refused.
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
-    wss.handleUpgrade(req, socket, head, (ws) => handleClient(ws, { indexer, token, apiKey, authTimeoutMs }));
+    wss.handleUpgrade(req, socket, head, (ws) => handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs }));
   });
 
   const requested = options.port ?? internals.defaultPort ?? DEFAULT_PORT;

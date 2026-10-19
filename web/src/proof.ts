@@ -1,20 +1,24 @@
 // Answering a pitwall WebSocket's challenge, shared by the index connection
 // (connection.ts) and every attach socket (attach.ts). The page proves it
-// holds the token with an HMAC of the server's nonce; the token itself is
-// never sent.
+// holds the token with an HMAC of the server's nonce and the page's own
+// origin; the token itself is never sent.
 
 /** Computes the answer to a challenge. */
 export type Prover = (token: string, nonce: string) => Promise<string>;
 
 /**
- * base64url(HMAC-SHA256(key = token as UTF-8, message = nonce as UTF-8)), the
- * answer to a challenge. WebCrypto is available because pitwall's page is
- * served from http://127.0.0.1, which browsers treat as a secure context.
+ * base64url(HMAC-SHA256(key = token as UTF-8, message = nonce + "\n" + origin
+ * as UTF-8)), the answer to a challenge (PROTOCOL_VERSION 3). `origin` is
+ * this page's own, `location.origin`, so a proof computed here is good only
+ * for the server that served the page: a page on another origin that passed
+ * a challenge on to this one couldn't use the answer. WebCrypto is available
+ * because pitwall's page is served from http://127.0.0.1, which browsers
+ * treat as a secure context.
  */
-export async function computeProof(token: string, nonce: string): Promise<string> {
+export async function computeProof(token: string, nonce: string, origin: string = location.origin): Promise<string> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', encoder.encode(token), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(nonce));
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(`${nonce}\n${origin}`));
   return toBase64Url(new Uint8Array(signature));
 }
 
