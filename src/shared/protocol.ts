@@ -335,9 +335,16 @@ export type RelayStatus =
   | 'refused'
   /**
    * Not sent: no live session answers to the target's name, the name is
-   * ambiguous, or the relay couldn't start.
+   * ambiguous, the relay couldn't start, or pitwall's gate denied the relay's
+   * SendMessage call because it didn't match the request.
    */
-  | 'failed';
+  | 'failed'
+  /**
+   * The relay called SendMessage, but pitwall couldn't confirm what happened,
+   * for example because the relay stopped before the tool's result arrived. It
+   * may have reached the session: check its conversation before sending again.
+   */
+  | 'uncertain';
 
 /** Body of a POST to relayPath(). `text` is 1 to 8,192 characters, sent verbatim. */
 export interface RelayRequest {
