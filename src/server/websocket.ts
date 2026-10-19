@@ -9,7 +9,7 @@
 import type { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
 import type { IndexSnapshot, ServerMessage } from '../shared/protocol.js';
-import { DEFAULT_AUTH_TIMEOUT_MS, startHandshake } from './handshake.js';
+import { DEFAULT_AUTH_TIMEOUT_MS, startHandshake, type HandshakeSlots } from './handshake.js';
 
 export { DEFAULT_AUTH_TIMEOUT_MS };
 
@@ -26,6 +26,8 @@ export interface ClientContext {
   authTimeoutMs: number;
   /** Called after a valid proof, before anything is sent. */
   onAuthenticated?: () => void;
+  /** The server's pending-handshake count, shared with ATTACH_PATH. */
+  slots?: HandshakeSlots;
 }
 
 export function handleClient(ws: WebSocket, context: ClientContext): void {
@@ -55,6 +57,7 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
     token: context.token,
     origin: context.origin,
     timeoutMs: context.authTimeoutMs,
+    ...(context.slots ? { slots: context.slots } : {}),
     onAuthenticated: () => {
       context.onAuthenticated?.();
       sendMessage(ws, { type: 'authenticated', apiKey: context.apiKey });

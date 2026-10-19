@@ -8,6 +8,7 @@ import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest
 import { WebSocket } from 'ws';
 import { ConversationCursorError, createIndexer, type Indexer } from '../index/index.js';
 import {
+  ATTACH_PATH,
   conversationPath,
   lastMessagePath,
   PROTOCOL_VERSION,
@@ -22,7 +23,8 @@ import {
 import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from './index.js';
 import { securityHeaders } from './security.js';
 import { BUILDING_SCRIPT, BUILDING_SCRIPT_PATH } from './static.js';
-import { STALE_CURSOR_STATUS, startServerWithInternals, type ServerInternals } from './server.js';
+import { MAX_CONVERSATION_READS, STALE_CURSOR_STATUS, startServerWithInternals, type ServerInternals } from './server.js';
+import { MAX_PENDING_HANDSHAKES, WS_CLOSE_TRY_AGAIN } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
 import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../test/proof.js';
 
@@ -225,6 +227,52 @@ function upgradeRefusal(client: Client): Promise<number> {
 /** The proof for a nonce from the server on `port`, as its own page computes it (src/test/proof.ts). */
 function proofFor(nonce: string, port: number, token = TOKEN): string {
   return contractProof(token, nonce, pitwallOrigin(port));
+}
+
+/** A socket on ATTACH_PATH, which shares the handshake and its limit. */
+function connectAttach(port: number): Client {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${ATTACH_PATH}`, { origin: origin(port) });
+  const messages: ServerMessage[] = [];
+  const waiters: ((message: ServerMessage) => void)[] = [];
+  ws.on('message', (data) => {
+    const message = JSON.parse(String(data)) as ServerMessage;
+    const waiter = waiters.shift();
+    if (waiter) waiter(message);
+    else messages.push(message);
+  });
+  ws.on('error', () => {});
+  const closed = new Promise<{ code: number }>((resolve) => ws.on('close', (code) => resolve({ code })));
+  return {
+    ws,
+    messages,
+    closed,
+    nextMessage: () => {
+      const queued = messages.shift();
+      return queued ? Promise.resolve(queued) : new Promise((resolve) => waiters.push(resolve));
+    },
+  };
+}
+
+async function challengedAttach(port: number): Promise<{ client: Client; nonce: string }> {
+  const client = connectAttach(port);
+  const challenge = await client.nextMessage();
+  if (challenge.type !== 'challenge') throw new Error(`expected a challenge, got ${challenge.type}`);
+  return { client, nonce: challenge.nonce };
+}
+
+/**
+ * A socket from `connect` that got its challenge, retrying for up to 2 seconds
+ * while the server still refuses new ones with 1013.
+ */
+async function challengedSoon(connect: () => Client): Promise<{ client: Client; nonce: string }> {
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    const client = connect();
+    const first = await Promise.race([client.nextMessage(), client.closed]);
+    if ('type' in first && first.type === 'challenge') return { client, nonce: first.nonce };
+    if (Date.now() > deadline) throw new Error('the server kept refusing new sockets');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 /** Opens a socket and waits for its challenge. */
@@ -791,6 +839,34 @@ describe('startServer', () => {
       expect(indexer.conversation).toHaveBeenCalledWith(SID, CURSOR);
     });
 
+    it('reads at most 4 pages at once, and answers 429 with Retry-After to more meanwhile, without asking the index', async () => {
+      expect(MAX_CONVERSATION_READS).toBe(4);
+      const indexer = withPage();
+      const waiting: (() => void)[] = [];
+      vi.mocked(indexer.conversation).mockImplementation(
+        (_sessionId: string) => new Promise<ConversationPage | undefined>((resolve) => waiting.push(() => resolve(page))),
+      );
+      const server = await start(indexer);
+      const slow = Array.from({ length: MAX_CONVERSATION_READS }, () => get(server.port, conversationPath(SID), bearer));
+      await waitFor(() => waiting.length === MAX_CONVERSATION_READS);
+
+      const refused = await get(server.port, conversationPath(SID), bearer);
+      expect(refused.status).toBe(429);
+      expect(refused.headers['retry-after']).toBe('1');
+      expect(indexer.conversation).toHaveBeenCalledTimes(MAX_CONVERSATION_READS);
+
+      for (const finish of waiting.splice(0)) finish();
+      for (const res of await Promise.all(slow)) expect(res.status).toBe(200);
+      // Each finished read, failed or not, frees its place.
+      vi.mocked(indexer.conversation).mockImplementation(async () => {
+        throw new ConversationCursorError('stale');
+      });
+      expect((await get(server.port, conversationPath(SID), bearer)).status).toBe(STALE_CURSOR_STATUS);
+      vi.mocked(indexer.conversation).mockImplementation(async () => page);
+      const results = await Promise.all(Array.from({ length: MAX_CONVERSATION_READS }, () => get(server.port, conversationPath(SID), bearer)));
+      expect(results.map((res) => res.status)).toEqual([200, 200, 200, 200]);
+    });
+
     it('serves the page with the apiKey too', async () => {
       const server = await start(withPage());
       const apiKey = await apiKeyOf(server.port);
@@ -1062,8 +1138,9 @@ describe('startServer', () => {
     it('never reuses a nonce across 1,000 connections', async () => {
       const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
       const nonces = new Set<string>();
-      for (let batch = 0; batch < 20; batch++) {
-        const clients = await Promise.all(Array.from({ length: 50 }, () => challenged(server.port)));
+      // Batches of 10, well under the 32 that may be in the handshake at once.
+      for (let batch = 0; batch < 100; batch++) {
+        const clients = await Promise.all(Array.from({ length: 10 }, () => challenged(server.port)));
         for (const { client, nonce } of clients) {
           nonces.add(nonce);
           client.ws.terminate();
@@ -1113,6 +1190,30 @@ describe('startServer', () => {
       expect((await client.nextMessage()).type).toBe('snapshot');
       await authedClient(server.port);
       expect(onAuthenticated).toHaveBeenCalledTimes(2);
+    });
+
+    it('lets at most 32 connections wait in the handshake, on /ws and /attach together, and closes extras with 1013 and no challenge', async () => {
+      expect(MAX_PENDING_HANDSHAKES).toBe(32);
+      const server = await start(fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')));
+      const onIndex = await Promise.all(Array.from({ length: 16 }, () => challenged(server.port)));
+      const onAttach = await Promise.all(Array.from({ length: 16 }, () => challengedAttach(server.port)));
+
+      for (const extra of [connectWs(server.port, { origin: origin(server.port) }), connectAttach(server.port)]) {
+        expect((await extra.closed).code).toBe(WS_CLOSE_TRY_AGAIN);
+        expect(extra.messages).toEqual([]);
+      }
+
+      // One that authenticates frees its place at once.
+      const [first, second] = onIndex;
+      first!.client.ws.send(JSON.stringify({ type: 'auth', proof: proofFor(first!.nonce, server.port) }));
+      expect((await first!.client.nextMessage()).type).toBe('authenticated');
+      expect((await challenged(server.port)).nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+      // One that closes frees its place once the server has seen the close, a moment after the client.
+      second!.client.ws.close();
+      onAttach[0]!.client.ws.close();
+      expect((await challengedSoon(() => connectAttach(server.port))).nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect((await challengedSoon(() => connectWs(server.port, { origin: origin(server.port) }))).nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
     });
 
     it('waits 5 seconds for the proof by default', () => {
