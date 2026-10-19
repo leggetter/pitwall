@@ -11,7 +11,7 @@
 // Failure messages name what was checked, never a transcript's content.
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, copyFileSync, mkdirSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -220,12 +220,13 @@ describe.skipIf(!live)('the relay, live', () => {
     await other.close();
   });
 
-  it('blocks a request written to the relay without pitwall’s expectation, and the alert reaches the snapshot', { timeout: 120_000 }, async () => {
+  it('blocks a request written to the relay without pitwall’s expectation, keeps the relay, and the alert reaches the snapshot', { timeout: 120_000 }, async () => {
     const indexer = startIndexer({ roots: [home], intervalMs: 1000, exclude: (row) => relay.isRelay(row), relayAlert: () => relay.alert() });
     cleanups.push(async () => indexer.stop());
     // The relay is idle after the earlier checks. A well-formed request, but pitwall wrote no expectation for it.
     const marker = `pitwall live check ${suffix}: no expectation`;
     expect(relayChild, 'the relay is running').toBeDefined();
+    const before = relayChild!.pid;
     relayChild!.write(userMessageLine(frameRequest('0123456789abcdef', TARGET_NAME, marker)));
     const alert = await until('the relay’s alert', 60_000, () => relay.alert());
     console.log(`live: alert: blocked=${alert.blocked} count=${alert.count}: ${alert.detail}`);
@@ -234,10 +235,42 @@ describe.skipIf(!live)('the relay, live', () => {
     expect(snapshot).toEqual(alert);
     indexer.stop();
     expect(await receivedWithin(targetTail, marker, 20_000), 'nothing reached the target in 20 s').toEqual([]);
+    // Blocked, so the relay is still sound: pitwall didn't restart it.
+    expect(relayChild!.pid, 'the same relay').toBe(before);
+    expect(isAlive(before!), 'still running').toBe(true);
+  });
+
+  it('blocks a denied call even with a printing NODE_OPTIONS preload in pitwall’s environment, or in the hook’s', { timeout: 180_000 }, async () => {
+    const preload = path.join(home, 'preload.cjs');
+    writeFileSync(preload, "process.stdout.write('preload says hi\\n');\n");
+    const env = { ...process.env, NODE_OPTIONS: `--require ${preload}` };
+    for (const where of ['pitwall', 'hook'] as const) {
+      let child: RelayChild | undefined;
+      let childEnv: NodeJS.ProcessEnv | undefined;
+      const other = createRelayManager({
+        dir: path.join(home, `relay-preload-${where}`),
+        name: `${RELAY_NAME}-preload-${where}`,
+        env,
+        // 'hook': put the preload back after pitwall dropped it, as if Claude Code passed one to its hooks.
+        spawn: (file, args, options, events) => {
+          childEnv = where === 'hook' ? { ...options.env, NODE_OPTIONS: env.NODE_OPTIONS } : options.env;
+          return (child = spawnRelayChild(file, args, { ...options, env: childEnv }, events));
+        },
+      });
+      cleanups.push(() => other.close());
+      expect((await other.send(target, `pitwall live check ${suffix}: preload ${where}, allowed`)).status, 'an allowed send still goes').toBe('delivered');
+      expect(childEnv?.NODE_OPTIONS === undefined, 'pitwall dropped NODE_OPTIONS').toBe(where === 'pitwall');
+      const marker = `pitwall live check ${suffix}: preload ${where}, no expectation`;
+      child!.write(userMessageLine(frameRequest('0123456789abcdef', TARGET_NAME, marker)));
+      const alert = await until('the alert', 60_000, () => other.alert());
+      console.log(`live: with a printing preload in the ${where}'s environment: alert blocked=${alert.blocked}: ${alert.detail}`);
+      expect(alert.blocked, 'the gate blocked it').toBe(true);
+      expect(await receivedWithin(targetTail, marker, 20_000), 'nothing reached the target in 20 s').toEqual([]);
+      await other.close();
+    }
   });
 
   it('blocks a forged request another session sends the relay, and nothing reaches the target', { timeout: 180_000 }, async () => {
-    // The relay restarted after the last check; give the new one a message so it's running.
     const warm = await relay.send(target, `pitwall live check ${suffix}: before the peer`);
     expect(warm.status).toBe('delivered');
     const before = relay.alert()?.count ?? 0;
