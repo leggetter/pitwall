@@ -5,8 +5,9 @@
 // The CLI writes a small page to ~/.pitwall/launch-<port>-<random>.html, at
 // 0600 in a 0700 directory, and opens that file. The page sends the browser on
 // to http://127.0.0.1:<port>/#token=<token>. `ps` shows only the file's path.
-// The file is deleted when the CLI exits, and a later run deletes any left
-// behind by one that was killed. Jupyter does the same.
+// The file is deleted as soon as a page authenticates, 60 seconds after it was
+// written if none does, or when the CLI exits, whichever comes first. A later
+// run deletes any left behind by one that was killed. Jupyter does the same.
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
 import os from 'node:os';
@@ -14,6 +15,12 @@ import { join, resolve } from 'node:path';
 
 /** Launch files older than this are left over from a run that was killed, and are deleted on startup. */
 export const LAUNCH_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a launch file waits for a page to authenticate before it's deleted
+ * anyway: long enough for a browser to start cold and read it.
+ */
+export const LAUNCH_FILE_TTL_MS = 60_000;
 
 /** Names the CLI gives launch files. Startup cleanup deletes only these. */
 const LAUNCH_FILE_NAME = /^launch-.*\.html$/;
@@ -178,9 +185,9 @@ export function prepareLaunchDir(dir: string, context: DirCheckContext = {}): vo
 
 /**
  * Deletes `file` when the process exits: a normal exit, process.exit() from a
- * SIGINT or SIGTERM handler, or an uncaught exception. Only SIGKILL and a
- * crash of Node itself skip it, which is what the 24-hour cleanup is for.
- * Returns a function that deletes the file now and drops the exit hook.
+ * SIGINT, SIGTERM or SIGHUP handler, or an uncaught exception. Only SIGKILL
+ * and a crash of Node itself skip it, which is what the 24-hour cleanup is
+ * for. Returns a function that deletes the file now and drops the exit hook.
  */
 export function removeOnExit(file: string): () => void {
   const remove = () => {
@@ -195,4 +202,26 @@ export function removeOnExit(file: string): () => void {
     process.off('exit', remove);
     remove();
   };
+}
+
+/**
+ * Deletes `file` once it has done its job, so the token doesn't sit on disk
+ * for the whole run: when the returned function is called, which the CLI does
+ * when a page first authenticates, or `ttlMs` after this call, whichever comes
+ * first. Until then removeOnExit() still deletes it on exit. Calling the
+ * returned function again does nothing.
+ */
+export function removeWhenUsed(file: string, ttlMs: number = LAUNCH_FILE_TTL_MS): () => void {
+  const remove = removeOnExit(file);
+  let done = false;
+  const used = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    remove();
+  };
+  const timer = setTimeout(used, ttlMs);
+  // Never what keeps the CLI alive.
+  timer.unref();
+  return used;
 }

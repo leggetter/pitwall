@@ -322,6 +322,18 @@ describe('the attach socket', () => {
       expect(await client.next()).toEqual({ type: 'ready' });
     });
 
+    it("calls the server's onAuthenticated after a valid proof", async () => {
+      const onAuthenticated = vi.fn();
+      const spawner = fakeSpawner();
+      const server = await startServerWithInternals(
+        { indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0, onAuthenticated },
+        { attach: { spawnPty: spawner.spawn, env: ENV } },
+      );
+      running.push(server);
+      await ready(server.port);
+      expect(onAuthenticated).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
       ['a version 2 proof, without the origin', (nonce: string) => version2ProofFor(TOKEN, nonce)],
       ['a proof bound to another port', (nonce: string, port: number) => proofFor(nonce, port + 1)],
