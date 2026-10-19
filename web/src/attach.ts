@@ -5,7 +5,9 @@
 //
 //   server  challenge        page  auth { proof }
 //   server  ready            page  open { sessionId, cols, rows }
-//   server  needs-restart    the session isn't running: the user confirms, then open again with restart: true
+//   server  needs-restart    the session has finished or its process has exited: the user confirms, then
+//                            open again with restart: true. A session that's still starting gets `error`
+//                            instead, and is never restarted from here
 //   server  attached         then the PTY's output as binary frames; the page sends input and resize
 //   server  exit / error     then the server closes
 //
@@ -52,7 +54,7 @@ export type AttachEnd =
 
 export type AttachStatus =
   | { kind: 'connecting' }
-  /** The session isn't running: attaching restarts it. Waits for confirmRestart() or detach(). */
+  /** The session has finished or its process has exited: attaching restarts it. Waits for confirmRestart() or detach(). */
   | { kind: 'confirm-restart' }
   | { kind: 'attached' }
   | { kind: 'ended'; end: AttachEnd };

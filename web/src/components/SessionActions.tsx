@@ -7,7 +7,7 @@ import '../actions.css';
 
 const CONFIRM: Record<SessionAction, { text: string; confirm: string; busy: string }> = {
   stop: {
-    text: 'Stops the session; its conversation is kept, and attaching restarts it.',
+    text: 'Stops the session; its conversation is kept. Attaching to it later asks before restarting it.',
     confirm: 'Stop session',
     busy: 'Stopping…',
   },
