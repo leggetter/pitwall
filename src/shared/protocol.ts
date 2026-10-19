@@ -131,7 +131,9 @@ export interface SessionGroup {
   /**
    * Sorted: sessions that need the user first (status 'waiting', or a background
    * job that is blocked and not stale), then askedYou, then busy, then by
-   * lastActivityAt descending (startedAt when there's none). Stale sessions last.
+   * lastActivityAt descending (startedAt when there's none). Stale sessions
+   * next, and finished background sessions (no live process, and state 'done',
+   * 'stopped' or 'failed') last.
    */
   sessions: SessionSummary[];
 }
@@ -145,7 +147,7 @@ export interface IndexSnapshot {
   roots: string[];
   /** Sorted by the newest lastActivityAt among each group's sessions, descending. */
   groups: SessionGroup[];
-  /** Whether `claude agents --json` succeeded on the latest poll. */
+  /** Whether `claude agents --json --all` succeeded on the latest poll. */
   source: SourceHealth;
 }
 
@@ -304,11 +306,18 @@ export function conversationPath(sessionId: string, before?: string): string {
 export type RelayStatus =
   /** In the target's inbox. Its Claude reads it at its next tool round, or starts a turn if idle. */
   | 'delivered'
-  /** Held for approval in the target's own terminal, because it bypasses permission prompts. */
+  /**
+   * Held by the target, undelivered: it bypasses permission prompts and waits
+   * for the user's approval in its own terminal, or its settings hold
+   * cross-session messages.
+   */
   | 'held'
   /** Refused by the target's inbound settings. */
   | 'refused'
-  /** The relay couldn't send it, for example because the relay session isn't running. */
+  /**
+   * Not sent: no live session answers to the target's name, the name is
+   * ambiguous, or the relay couldn't start.
+   */
   | 'failed';
 
 /** Body of a POST to relayPath(). `text` is 1 to 8,192 characters, sent verbatim. */
@@ -322,7 +331,7 @@ export interface RelayResult {
   detail?: string;
 }
 
-/** Relay a message to an interactive session, through the pitwall-relay session. */
+/** Relay a message to an interactive session, through pitwall's headless relay session (D8). */
 export function relayPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/relay`;
 }
