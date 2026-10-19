@@ -108,7 +108,7 @@ A local web UI that can type into agents running in auto mode is a local remote-
 - Generate a random token per run, pass it in the URL the CLI opens, and require it on every HTTP and WebSocket request.
 - Check `Host` and `Origin` on every request, to block DNS rebinding.
 - No CORS.
-- Don't write the token or session content anywhere outside `~/.claude`, except the launch file (D7): one HTML file at 0600 in `~/.pitwall/` at 0700, deleted on exit.
+- Don't write the token or session content anywhere outside `~/.claude`, except the launch file (D7): one HTML file at 0600 in `~/.pitwall/` at 0700, deleted once a page has used it, after 60 s, or on exit, whichever comes first.
 
 ## M0: spike (done)
 
@@ -163,7 +163,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
 3. **Attach for background sessions.**
    - A PTY per open view, running `claude attach <id>` through `node-pty`, shown with xterm.js. It supports resize and input. Closing the view detaches, and the session keeps running.
    - `node-pty` is the first native dependency, so the build needs its install script approved, and CI builds it.
-   - `claude attach` restarts a background session that isn't running (done, stopped or failed). That's an action, so the UI asks first: "This session isn't running. Attaching restarts it."
+   - `claude attach` restarts a background session that isn't running (done, stopped or failed). That's an action, so the UI asks first: "This session has finished, or its process has exited. Attaching restarts it." The server decides when the socket opens, re-reading `claude agents --json --all` when the snapshot's process isn't alive. A session that is still starting gets "try again in a moment" instead.
 4. **Message interactive sessions through a relay.**
    - **The relay:** on first use, pitwall starts one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`. Its tools are limited to `ListAgents` and `SendMessage`, and it's instructed to pass my text on verbatim. Pitwall writes each request to its stdin, so the text never appears in process arguments, and restarts it if it exits (D8).
    - **Sending:** a "Message this session" box on interactive rows. The relay reports what `SendMessage` returned (delivered, held for approval, or refused), and pitwall shows it.
@@ -254,7 +254,9 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 - **Input routes:** every route that takes a session id resolves it with `resolveSession()` (`src/server/sessions.ts`), and builds commands from the returned summary, never from the raw parameter. Register input routes inside `createApp`, before the `/api/*` catch-all.
 - **Web:** HTTP calls go through `ApiContext`/`api.get` in `web/src/api.ts`. A 401 means a stale `apiKey`, so the client reconnects; the page never sends the raw token.
 - **Environment:** `PITWALL_HOME` overrides `~/.pitwall`. `PITWALL_OPEN_MARKER` is set by `npm run dev`, so the CLI child opens the browser once, after it's listening.
-- **Residual risk, found by W8:** a relay attack. A squatter that could also reach a live pitwall using the *same* token could pass the challenge to the page and the proof back to the server. Per-run tokens and the fixed dev port rule this out today. Protocol v3 could close it by putting the origin into the HMAC. Low priority on a single-user Mac.
+- **Residual risk, found by W8: closed by protocol v3** (W14, [#16](https://github.com/leggetter/pitwall/pull/16)). The proof is bound to the page's origin, so a squatter can't pass a challenge to a real pitwall page and use its proof.
+  - **Still open in dev:** `npm run dev` reuses one token across restarts, and the page keeps it in `sessionStorage` for `http://127.0.0.1:<port>`. A process that grabs the port during a restart serves a page on that same origin, reads the token on the tab's next reload, and can use it for later restarts. v3 doesn't help, because the origin is the real one. Low priority on a single-user Mac; noted in `scripts/dev.ts`.
+  - **Reusing `PITWALL_TOKEN`** keeps one token alive across runs, which the usage text now warns about. An old tab can then authenticate first and delete the new run's launch file before the browser reads it.
 
 ### Findings while building M2
 
@@ -264,13 +266,15 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 - **A slow window in `claude agents --json`** (W13). For about 8 minutes on 2026-10-19, both forms took 18 to 34 s, about 4 s of CPU and 320 to 415 MB. It didn't reproduce, and the cause is unknown. During a window like that, pitwall's 10 s timeout fails every poll and shows the failure banner. Watch for it in the live check.
 - **The live check of the integrated branch passed** (W13, `07f43c2`, 2026-10-19). 11 checks against the built CLI with throwaway Haiku sessions: the index (finished rows, the relay hidden), spawn (and the untrusted-directory error, with no trust granted), session view paging, attach (and the limit of 4), stop, restart by attaching, remove, the relay (delivered with a reply, 409 for a background session, ambiguous names), the security negatives (`Origin`, the raw token, `Host`, unknown ids, wrong proofs, no token or message text in `ps`), shutdown by SIGTERM and by SIGKILL with no orphans, and a headless UI smoke.
 - **A stopped idle session stays `done`** (W13). Claude Code reports `stopped` only for a session stopped mid-turn. `finished` covers both.
-- **Left for the review's fixes** (W13):
-  - A just-spawned session lists for one poll with no pid, so attaching would ask to restart a session that's still starting.
+- **Left for the review's fixes** (W13), fixed in [#16](https://github.com/leggetter/pitwall/pull/16) and `m2/relay-gate`:
+  - A just-spawned session lists for one poll with no pid, so attaching would ask to restart a session that's still starting. It didn't reproduce on 2.1.303, where the pid was there when `claude --bg` returned, but attach now decides when the socket opens anyway (L4).
   - A relay that fails before sending still records an exchange with `sentAt`.
   - When pitwall runs inside a Claude Code session, its children inherit `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION` and `CLAUDE_PID`.
+- **`startedAt` is when the job was created** (W14). It matches `createdAt` in the job's internal state, not when the current process started, so a restarted session never looks newly started. Attach also tracks the sessions this pitwall spawned in the last 30 s.
+- **A spawn prompt shows in `ps`** while `claude --bg` starts (W14). `claude --help` documents the prompt only as an argument, and `--input-format` applies to `--print` only. Accepted on a single-user Mac.
 - **Test transcripts stay behind** (W13). `claude rm` keeps a session's transcript, and `-p` sessions can't be removed, so each live check leaves its throwaway transcripts, which show in `claude --resume` in that directory.
 - **"Done" isn't "not running"** (W10). A background session can be `done` with its process still alive and idle. Attaching to it doesn't restart anything, so pitwall asks before attaching only when there's no live process.
-- **Inherited inbox credentials** (W10). When pitwall itself runs inside a Claude Code session, the processes it starts would inherit that session's `CLAUDE_CODE_MESSAGING_*` credentials and `CLAUDE_JOB_DIR`. They're now scrubbed, for attach and for spawn, stop and remove.
+- **Inherited inbox credentials** (W10). When pitwall itself runs inside a Claude Code session, the processes it starts would inherit that session's `CLAUDE_CODE_MESSAGING_*` credentials and `CLAUDE_JOB_DIR`. They're now scrubbed, together with that session's identity variables (W14, L3), for everything pitwall starts, the index's own `claude` and `git` calls included.
 - **`node-pty` 1.1.0 on macOS** ships `spawn-helper` without its execute bit, so pitwall sets it on first use. On Linux with npm 11, the install script needs `npm install-scripts approve node-pty`. CI uses npm 10, which runs it.
 - **The relay can't be a prompted `--bg` session without a terminal** (W11, spike 003). A running background session can't be given a new prompt over plain pipes: `--resume <id> --bg` starts a copy per message. The options are B (prompt a background relay through a PTY, which needs a one-time trust step) or D (pitwall runs the relay itself as a `claude -p` stream-json process). **Decided by Phil on 2026-10-19: D** (see D8).
 - **`ListAgents` shows no directories** (W11). Two running sessions with the same name can't be told apart. So pitwall first checks the name against the unfiltered `claude agents --json --all`: exactly one live session must have it, and it must be the one asked for. Otherwise nothing is sent, and the message fails as an ambiguous name that `/rename` fixes.
@@ -286,7 +290,7 @@ Changes requested: one medium finding blocks the merge, and the rest are low or 
   - **Fix (coordinator's call), in `m2/relay-gate`:** drop `accept`. Gate `SendMessage` with a fail-closed `PreToolUse` hook that allows only the exact pending request, one-shot, by hash, never with the text on disk. Remove `ListAgents` from the relay. Show anything the relay tried that nobody asked for as `relayAlert` in the UI.
   - **My mistake:** D8 recorded that `accept` "only changes messages from sessions that bypass permissions". That's exactly the escalation path.
 - **Low, in `m2/relay-gate`:** the name check ran once, well before the send (L1). A failure before sending overwrote the last delivered exchange and lost its reply, and a failure after the call was reported as not sent (L2; new `uncertain` status).
-- **Low, in `m2/hardening`:**
+- **Low, fixed in [#16](https://github.com/leggetter/pitwall/pull/16):**
   - children inherited the parent session's identity variables (L3);
   - the attach restart prompt came from a snapshot up to one poll old (L4);
   - a one-word spawn prompt naming a subcommand could run it (L5);

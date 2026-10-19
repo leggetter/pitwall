@@ -46,10 +46,11 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch` and `tsx wa
 PLAN.md                  the living plan: status, decisions, milestones
 README.md                what pitwall is, and settled decisions with reasons
 docs/spikes/             spike write-ups, one file per spike
-src/shared/protocol.ts   the M1 contract between the index, the server and the web UI
+src/shared/protocol.ts   the contract between the index, the server and the web UI
 src/index/               the session index. Entry point index.ts: startIndexer()
 src/server/              the local HTTP and WebSocket server. Entry point index.ts: startServer()
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
+src/test/                test helpers shared across test files, such as the v3 proof; not built
 web/                     the React web UI, built by Vite to dist/web
 scripts/dev.ts           runs the two watchers behind `npm run dev`
 tsconfig.json            server typecheck: src/ with tests, scripts/, config files
