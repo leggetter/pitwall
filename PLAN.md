@@ -240,7 +240,7 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | Merged ([#13](https://github.com/leggetter/pitwall/pull/13)) |
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Building design D, decided by Phil on 2026-10-19 after spike [003](docs/spikes/003-relay.md) |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
-| W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: listing finished sessions (`m2/completed`, sub-agent); the live check after the relay merges |
+| W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: finished sessions listed muted, merged ([#14](https://github.com/leggetter/pitwall/pull/14)); the live check after the relay merges |
 | W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | After W13 |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
 
@@ -259,7 +259,9 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 ### Findings while building M2
 
 - **Stopped background sessions left the list** (W12). After `claude stop`, a session has no process and appears only in `claude agents --json --all`, so it couldn't be removed, or attached to restart it.
-  - **Decision (coordinator):** the index lists with `--all`, and the UI shows done, stopped and failed background sessions muted, like agent view's Completed group. Built at integration (W13).
+  - **Decision (coordinator):** the index lists with `--all`, and the UI shows done, stopped and failed background sessions muted, like agent view's Completed group. Built at integration (W13) in [#14](https://github.com/leggetter/pitwall/pull/14): a `SessionSummary.finished` field, a muted, collapsed "Finished (n)" list per group that also counts the questions inside it, and group order that ignores finished sessions.
+- **`--all` costs nothing measurable** (W13). 15 alternating runs of each form on Claude Code 2.1.302, with 16 sessions, or 18 with `--all`: a median of 0.14 s wall time, 0.145 s of CPU and about 150 MB at peak, either way.
+- **A slow window in `claude agents --json`** (W13). For about 8 minutes on 2026-10-19, both forms took 18 to 34 s, about 4 s of CPU and 320 to 415 MB. It didn't reproduce, and the cause is unknown. During a window like that, pitwall's 10 s timeout fails every poll and shows the failure banner. Watch for it in the live check.
 - **"Done" isn't "not running"** (W10). A background session can be `done` with its process still alive and idle. Attaching to it doesn't restart anything, so pitwall asks before attaching only when there's no live process.
 - **Inherited inbox credentials** (W10). When pitwall itself runs inside a Claude Code session, the processes it starts would inherit that session's `CLAUDE_CODE_MESSAGING_*` credentials and `CLAUDE_JOB_DIR`. They're now scrubbed, for attach and for spawn, stop and remove.
 - **`node-pty` 1.1.0 on macOS** ships `spawn-helper` without its execute bit, so pitwall sets it on first use. On Linux with npm 11, the install script needs `npm install-scripts approve node-pty`. CI uses npm 10, which runs it.
