@@ -7,7 +7,8 @@
 //
 //   POST SPAWN_PATH               body: SpawnRequest as JSON           answers: SpawnResult
 //     201  started: { ok: true, shortId, name }
-//     400  the body isn't a valid SpawnRequest, or `cwd` isn't a directory at or under a root
+//     400  the body isn't a valid SpawnRequest, `cwd` isn't a directory at or under a root, or the
+//          prompt is just the name of a claude subcommand, which `claude --bg` could run instead
 //     413  the body is over 128 KiB
 //     415  the body isn't `Content-Type: application/json`
 //     422  Claude Code says the workspace isn't trusted. `hint` is the command that trusts it,
@@ -36,6 +37,7 @@ import { bodyLimit } from 'hono/body-limit';
 import type { Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
 import { removePath, SPAWN_PATH, stopPath, type ActionResult, type SpawnResult } from '../shared/protocol.js';
+import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
@@ -115,6 +117,12 @@ export async function validateSpawnRequest(body: unknown, roots: readonly string
   if (typeof prompt !== 'string' || prompt.trim() === '') return invalid('The first prompt is required.');
   if (prompt.length > MAX_PROMPT_LENGTH) return invalid(`The first prompt can be at most ${MAX_PROMPT_LENGTH} characters.`);
   if (prompt.includes('\u0000')) return invalid('The first prompt contains a NUL character.');
+  // `claude --bg -- update` could run `claude update` rather than start a session (claudeCommands.ts).
+  if (isClaudeCommand(prompt)) {
+    return invalid(
+      `The first prompt can't be just "${prompt.trim().toLowerCase()}": that's the name of a claude command, which claude --bg could run instead of starting a session. Add a few words.`,
+    );
+  }
 
   if (name !== undefined && (typeof name !== 'string' || !NAME_PATTERN.test(name))) {
     return invalid('The name can have letters, digits, spaces, ".", "_" and "-", at most 64, and must start with a letter, digit, "." or "_".');
