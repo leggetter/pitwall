@@ -136,11 +136,20 @@ describe('parseSendResult', () => {
     expect(parseSendResult(block(JSON.stringify({ success: true }), true))).toEqual({ kind: 'not-sent', reason: 'SendMessage failed' });
   });
 
-  it('reads a call denied before it ran: the hook’s reason, or a failed hook, as Claude Code v2.1.303 reports them', () => {
-    const denied = { type: 'tool_result', tool_use_id: 't1', is_error: true, content: "pitwall's relay gate denied this SendMessage: the text isn’t the text pitwall asked for." };
-    expect(parseSendResult(denied)).toEqual({ kind: 'denied', reason: denied.content });
-    const blocked = block('PreToolUse:SendMessage hook error: [/usr/bin/node /x/relayGateHook.mjs]: failed; blocking because onFailure is "block"\nNo stderr output', true);
-    expect(parseSendResult(blocked).kind).toBe('denied');
+  it('reads a call the gate blocked, as Claude Code v2.1.303 reports an exit-2 denial and a failed hook', () => {
+    const command = '[/usr/bin/node /x/relayGateHook.mjs /h/relay-gate 0123456789abcdef0123456789abcdef]';
+    const denial = `pitwall's relay gate denied this SendMessage: pitwall has no request waiting for this message. Don't call SendMessage again for it.`;
+    const exit2 = { type: 'tool_result', tool_use_id: 't1', is_error: true, content: `PreToolUse:SendMessage hook error: ${command}: ${denial}` };
+    expect(parseSendResult(exit2)).toEqual({ kind: 'denied', reason: exit2.content });
+    const failed = block(`PreToolUse:SendMessage hook error: ${command}: failed; blocking because onFailure is "block"\nNo stderr output`, true);
+    expect(parseSendResult(failed).kind).toBe('denied');
+    // The reason alone, as a JSON denial reports it.
+    expect(parseSendResult({ type: 'tool_result', is_error: true, content: denial }).kind).toBe('denied');
+  });
+
+  it('doesn’t take any other error for a denial, because it might come from a SendMessage that ran', () => {
+    expect(parseSendResult(block('Not sent — too many messages', true))).toEqual({ kind: 'unknown', reason: 'SendMessage failed in a way pitwall doesn’t recognize' });
+    expect(parseSendResult(block(`Error: something else mentions pitwall's relay gate denied`, true)).kind).toBe('unknown');
   });
 
   it('can’t tell from an answer it doesn’t recognize, so it may have been sent', () => {
@@ -164,6 +173,10 @@ describe('sendMismatch', () => {
     expect(sendMismatch({ to, message: text, notify_when_idle: false }, to, text)).toBeUndefined();
     // `content` is only a preview of `message`, cut at about 50 characters.
     expect(sendMismatch({ to, message: text, summary: 's', type: 'message', recipient: to, recipient_kind: 'name', content: `${text.slice(0, 49)}…` }, to, text)).toBeUndefined();
+  });
+
+  it('catches a field the gate doesn’t check', () => {
+    expect(sendMismatch({ to, message: text, attachments: [] }, to, text)).toMatch(/a field pitwall doesn't check/);
   });
 
   it('catches a recipient that disagrees with `to`', () => {

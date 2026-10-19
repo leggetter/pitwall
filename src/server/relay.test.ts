@@ -5,7 +5,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import type { RelayTranscriptEvent, RelayTranscriptTail } from '../index/relayTranscript.js';
-import { createRelayManager, REPLY_MAX_BYTES, replyText, type RelayChild, type RelayChildEvents, type RelayManager, type RelayOptions, type RelayTarget } from './relay.js';
+import {
+  checkClaudeVersion,
+  createRelayManager,
+  relayEnvironment,
+  REPLY_MAX_BYTES,
+  replyText,
+  type RelayChild,
+  type RelayChildEvents,
+  type RelayManager,
+  type RelayOptions,
+  type RelayTarget,
+} from './relay.js';
 import type { GateExpectation, RelayGate } from './relayGate.js';
 import { decide, textHash } from './relayGateHook.mjs';
 
@@ -153,9 +164,14 @@ class FakeChild implements RelayChild {
     this.emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: [{ type: 'text', text: JSON.stringify(result) }] }] } });
   }
 
-  /** A denied call's result, as Claude Code v2.1.303 reports one: the hook's reason as plain text. */
+  /** A call the gate denied with exit 2, as Claude Code v2.1.303 reports it: the hook's command line, then its stderr. */
   denied(id: string, reason: string): void {
-    this.emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: reason }] } });
+    this.blocked(id, `PreToolUse:SendMessage hook error: [/usr/bin/node /x/relayGateHook.mjs /h/relay-gate ${this.gateId}]: ${reason}`);
+  }
+
+  /** A tool result that's an error, as plain text. */
+  blocked(id: string, text: string): void {
+    this.emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: text }] } });
   }
 
   /**
@@ -212,6 +228,9 @@ interface Harness {
   /** Applied to each child as it starts. */
   behaviour: Behaviour | undefined;
   spawnError: string | undefined;
+  /** What `claude --version` prints, or an error it fails with. */
+  version: string | Error;
+  versionCalls: number;
 }
 
 const managers: RelayManager[] = [];
@@ -233,6 +252,8 @@ function harness(options: Partial<RelayOptions> = {}): Harness {
     logs: [],
     behaviour: (request, child) => child.relay(request),
     spawnError: undefined,
+    version: '2.1.303 (Claude Code)',
+    versionCalls: 0,
     relay: undefined as unknown as RelayManager,
   };
   const agents: AgentsSource = {
@@ -256,8 +277,15 @@ function harness(options: Partial<RelayOptions> = {}): Harness {
       CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/cc-socks/1.sock',
       CLAUDE_CODE_MESSAGING_TOKEN: 'inbox-token',
       CLAUDE_JOB_DIR: '/tmp/job',
+      NODE_OPTIONS: '--require /tmp/preload.cjs',
+      NODE_EXTRA_CA_CERTS: '/etc/ssl/extra.pem',
     },
     agents,
+    claudeVersion: async () => {
+      h.versionCalls += 1;
+      if (h.version instanceof Error) throw h.version;
+      return h.version;
+    },
     transcript: () => tail,
     prepareDir: (dir) => dir,
     gate: h.gate,
@@ -315,13 +343,18 @@ describe('the relay: a message delivered', () => {
     expect(child.args).not.toContain(text);
   });
 
-  it('starts the relay with its gate’s settings, and a scrubbed environment with auto memory off', async () => {
+  it('starts the relay with its gate’s settings, and a scrubbed environment with no preloads and auto memory off', async () => {
     const h = harness();
     await h.relay.send(TARGET, 'hello');
     const { args } = h.child();
     expect(args[args.indexOf('--settings') + 1]).toBe(h.gate.settings(h.child().gateId));
     expect(args[args.indexOf('--tools') + 1]).toBe('SendMessage');
-    expect(h.child().options.env).toEqual({ HOME: '/Users/pitwall-test', PATH: '/usr/bin', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' });
+    expect(h.child().options.env).toEqual({
+      HOME: '/Users/pitwall-test',
+      PATH: '/usr/bin',
+      NODE_EXTRA_CA_CERTS: '/etc/ssl/extra.pem',
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+    });
   });
 
   it('writes the expectation before the request, without the text, and clears it when the request is done', async () => {
@@ -399,7 +432,7 @@ describe('the relay: its gate', () => {
     h.behaviour = (request, child) => {
       child.init();
       const id = child.toolUse('SendMessage', { to: request.to, message: request.text });
-      child.denied(id, 'PreToolUse:SendMessage hook error: [/usr/bin/node /x/relayGateHook.mjs]: failed; blocking because onFailure is "block"');
+      child.blocked(id, 'PreToolUse:SendMessage hook error: [/usr/bin/node /x/relayGateHook.mjs]: failed; blocking because onFailure is "block"\nNo stderr output');
       child.result();
     };
     expect((await h.relay.send(TARGET, 'hello')).detail).toBe("pitwall's gate couldn't check the relay's send, so it was blocked and nothing was sent.");
@@ -418,8 +451,77 @@ describe('the relay: its gate', () => {
   });
 });
 
+describe('the relay: the Claude Code version', () => {
+  it('checks claude --version once, before the first start', async () => {
+    const h = harness();
+    await h.relay.send(TARGET, 'one');
+    await h.relay.send(TARGET, 'two');
+    expect(h.versionCalls).toBe(1);
+  });
+
+  it.each([
+    ['older than 2.1.295', '2.1.294 (Claude Code)', "pitwall's relay needs Claude Code 2.1.295 or later for its gate, and this is 2.1.294. Update Claude Code, then try again. Nothing was sent."],
+    ['unreadable', 'Claude Code, some new format', "pitwall's relay needs Claude Code 2.1.295 or later for its gate, and pitwall couldn't read which version this is. Update Claude Code, then try again. Nothing was sent."],
+  ])('refuses to start the relay on a version that’s %s', async (_what, version, detail) => {
+    const h = harness();
+    h.version = version;
+    await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'failed', detail });
+    expect(h.children).toHaveLength(0);
+  });
+
+  it('refuses when claude --version can’t run, and checks again next time, so an update needs no restart', async () => {
+    const h = harness();
+    h.version = new Error('claude was not found');
+    expect((await h.relay.send(TARGET, 'hello')).detail).toBe("Couldn't run claude --version to check that its gate will work, so nothing was sent: claude was not found");
+    h.version = '2.1.303 (Claude Code)';
+    await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
+    expect(h.versionCalls).toBe(2);
+  });
+});
+
+describe('checkClaudeVersion', () => {
+  it.each([
+    ['2.1.295 (Claude Code)', true, '2.1.295'],
+    ['2.1.303 (Claude Code)', true, '2.1.303'],
+    ['2.2.0', true, '2.2.0'],
+    ['3.0.0', true, '3.0.0'],
+    ['2.1.294 (Claude Code)', false, '2.1.294'],
+    ['2.0.999', false, '2.0.999'],
+    ['1.9.400', false, '1.9.400'],
+  ])('reads %j as new enough: %s', (output, ok, version) => {
+    expect(checkClaudeVersion(output)).toEqual({ ok, version });
+  });
+
+  it('counts output that doesn’t start with a version as too old', () => {
+    expect(checkClaudeVersion('')).toEqual({ ok: false });
+    expect(checkClaudeVersion('Claude Code 2.1.303')).toEqual({ ok: false });
+  });
+});
+
+describe('relayEnvironment', () => {
+  it('drops what makes node or the linker load other code, and keeps trust settings', () => {
+    const env = relayEnvironment({
+      PATH: '/usr/bin',
+      NODE_OPTIONS: '--require /tmp/x.cjs',
+      node_options: '--import /tmp/y.mjs',
+      NODE_REPL_EXTERNAL_MODULE: '/tmp/z.js',
+      NODE_PATH: '/tmp/modules',
+      NODE_COMPILE_CACHE: '/tmp/cache',
+      OPENSSL_CONF: '/tmp/openssl.cnf',
+      OPENSSL_ENGINES: '/tmp/engines',
+      OPENSSL_MODULES: '/tmp/providers',
+      LD_PRELOAD: '/tmp/x.so',
+      LD_AUDIT: '/tmp/a.so',
+      DYLD_INSERT_LIBRARIES: '/tmp/x.dylib',
+      NODE_EXTRA_CA_CERTS: '/etc/ssl/extra.pem',
+      NODE_TLS_REJECT_UNAUTHORIZED: '1',
+    });
+    expect(env).toEqual({ PATH: '/usr/bin', NODE_EXTRA_CA_CERTS: '/etc/ssl/extra.pem', NODE_TLS_REJECT_UNAUTHORIZED: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' });
+  });
+});
+
 describe('the relay: a message nobody asked for', () => {
-  it('raises a blocked alert when another session talks the relay into sending, and restarts it after that turn', async () => {
+  it('raises a blocked alert when another session talks the relay into sending, and keeps the relay, which is still sound', async () => {
     const h = harness({ now: () => Date.parse('2026-10-19T10:00:00.000Z') });
     await h.relay.send(TARGET, 'hello');
     const child = h.child();
@@ -427,19 +529,43 @@ describe('the relay: a message nobody asked for', () => {
     await wait(10);
     expect(h.relay.alert()).toEqual({
       at: '2026-10-19T10:00:00.000Z',
-      detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it, and pitwall is restarting the relay.",
+      detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it, so nothing was sent.",
       count: 1,
       blocked: true,
     });
-    expect(child.signals).toEqual(['SIGTERM']);
+    expect(child.signals).toEqual([]);
     expect(h.logs.join('\n')).not.toContain('forwarded');
-    // A new relay takes the next message.
-    await wait(20);
+    // The same relay takes the next message.
     await expect(h.relay.send(TARGET, 'again')).resolves.toEqual({ status: 'delivered' });
-    expect(h.children).toHaveLength(2);
+    expect(h.children).toHaveLength(1);
     h.child().peerTurn();
     await wait(10);
     expect(h.relay.alert()?.count).toBe(2);
+  });
+
+  it('can’t be used up by a peer: blocked calls never count toward the restart limit', async () => {
+    const h = harness();
+    await h.relay.send(TARGET, 'hello');
+    // More than the limit of 4 starts in the window, with a send between each.
+    for (let i = 0; i < 6; i++) {
+      h.child().peerTurn();
+      await wait(5);
+      await expect(h.relay.send(TARGET, `message ${i}`)).resolves.toEqual({ status: 'delivered' });
+    }
+    expect(h.children).toHaveLength(1);
+    expect(h.relay.alert()).toMatchObject({ count: 6, blocked: true });
+  });
+
+  it('restarts the relay when a turn ends before a call nobody asked for had its result', async () => {
+    const h = harness();
+    await h.relay.send(TARGET, 'hello');
+    const child = h.child();
+    child.init();
+    child.toolUse('SendMessage', { to: 'pitwall-test-other', message: 'forwarded' });
+    child.result();
+    await wait(10);
+    expect(h.relay.alert()).toMatchObject({ blocked: false, detail: expect.stringMatching(/turn ended before pitwall saw whether its gate blocked it/) });
+    expect(child.signals).toEqual(['SIGTERM']);
   });
 
   it('blocks a second send for one request, and keeps the first one delivered', async () => {
@@ -453,7 +579,7 @@ describe('the relay: a message nobody asked for', () => {
     };
     await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
     expect(h.relay.alert()).toMatchObject({ blocked: true, detail: expect.stringMatching(/^The relay tried to send a second message for one request\./) });
-    expect(h.children[0]!.signals).toEqual(['SIGTERM']);
+    expect(h.children[0]!.signals).toEqual([]);
   });
 
   it('raises an alert that wasn’t blocked, and stops using the relay, when one got past the gate', async () => {
@@ -661,18 +787,16 @@ describe('the relay: checking what it sent', () => {
     const result = await h.relay.send(TARGET, 'secret plan');
     expect(result).toEqual({
       status: 'failed',
-      detail: "pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent. pitwall is restarting the relay.",
+      detail: "pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent.",
     });
     expect(h.relay.alert()).toMatchObject({ blocked: true, detail: "The relay changed the text before sending it. pitwall's gate blocked it, so nothing was sent." });
     expect(h.relay.exchange(TARGET.sessionId)).toBeUndefined();
-    const first = h.children[0]!;
-    expect(first.signals).toEqual(['SIGTERM']);
+    // Blocked, so the relay is kept, and takes the next message.
+    expect(h.children[0]!.signals).toEqual([]);
     expect(h.logs.join('\n')).not.toContain('secret plan');
-    // The next message gets a new relay.
     h.behaviour = (request, child) => child.relay(request);
-    await wait(10);
     await expect(h.relay.send(TARGET, 'again')).resolves.toEqual({ status: 'delivered' });
-    expect(h.children).toHaveLength(2);
+    expect(h.children).toHaveLength(1);
   });
 
   it('blocks a send to another session, or one that subscribes to idle notices', async () => {
@@ -729,6 +853,20 @@ describe('the relay: checking what it sent', () => {
       child.result();
     };
     expect((await h.relay.send(TARGET, 'hello')).detail).toMatch(/didn't see it call SendMessage.*Nothing was sent\./);
+  });
+
+  it('answers uncertain for an error that isn’t the gate’s, because the call may have run', async () => {
+    const h = harness();
+    h.behaviour = (request, child) => {
+      child.init();
+      const id = child.toolUse('SendMessage', { to: request.to, message: request.text });
+      h.gate.check(child.gateId, { to: request.to, message: request.text });
+      child.blocked(id, 'Not sent — too many messages');
+      child.result();
+    };
+    const result = await h.relay.send(TARGET, 'hello');
+    expect(result.status).toBe('uncertain');
+    expect(result.detail).toMatch(/^SendMessage failed in a way pitwall doesn’t recognize\. It may have reached the session/);
   });
 
   it('answers uncertain for an answer from SendMessage it doesn’t recognize', async () => {
