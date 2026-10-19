@@ -165,7 +165,15 @@ function facts(pid: number | undefined, state: BackgroundState | undefined, star
   return result;
 }
 
-/** process.kill(pid, 0): true unless the pid is gone. EPERM means it exists but isn't ours. */
+/**
+ * process.kill(pid, 0): true unless the pid is gone. EPERM means it exists
+ * but isn't ours. It checks the pid, not the process: if the session's
+ * process died and the system gave its pid to another process since the last
+ * poll, the pid reads as alive, attach skips the re-read and the prompt, and
+ * `claude attach` restarts the session unasked. That needs a pid to be reused
+ * within one poll, so it's accepted as rare (coordinator's decision,
+ * 2026-10-19).
+ */
 function defaultProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -187,8 +195,9 @@ export function createAttachServer(options: AttachOptions): AttachServer {
 
   /**
    * The facts attachDecision() works from. The snapshot's when its pid is
-   * still running; otherwise a fresh row, or the snapshot's without the dead
-   * pid when the re-read fails or no longer lists the session.
+   * still running (see defaultProcessAlive for the pid-reuse caveat);
+   * otherwise a fresh row, or the snapshot's without the dead pid when the
+   * re-read fails or no longer lists the session.
    */
   const currentFacts = async (session: SessionSummary): Promise<AttachFacts> => {
     if (session.pid !== undefined && session.alive && processAlive(session.pid)) return facts(session.pid, session.state, session.startedAt);
