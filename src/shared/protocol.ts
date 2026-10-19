@@ -82,6 +82,14 @@ export interface SessionSummary {
    */
   stale: boolean;
   /**
+   * True for a background session that has finished: no live process, and
+   * state 'done', 'stopped' or 'failed'. Plain `claude agents --json` leaves
+   * these out; pitwall lists with `--all` and shows them muted, last in their
+   * group. A 'done' session whose process is still alive is idle, not
+   * finished. Never true together with `stale`.
+   */
+  finished: boolean;
+  /**
    * Set when the session has finished its turn and its newest assistant message
    * looks like it asked the user something, with no user prompt since. A
    * heuristic over the transcript, not something Claude Code reports.
@@ -132,8 +140,7 @@ export interface SessionGroup {
    * Sorted: sessions that need the user first (status 'waiting', or a background
    * job that is blocked and not stale), then askedYou, then busy, then by
    * lastActivityAt descending (startedAt when there's none). Stale sessions
-   * next, and finished background sessions (no live process, and state 'done',
-   * 'stopped' or 'failed') last. Finished sessions are sorted by activity
+   * next, and finished sessions (`finished`) last. Finished sessions are sorted by activity
    * alone, so an askedYou doesn't lift one.
    */
   sessions: SessionSummary[];
