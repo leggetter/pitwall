@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is in progress on `m2/integration`: the security gate, session view, attach, and spawn, stop and remove, finished sessions and the relay are merged. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Phil's try-out (W15), and the reviewer re-checking the fixes in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17)<br>- Then merge `m2/integration` into `main` |
+| **Next steps** | - Phil's try-out and approval (W15)<br>- Then merge `m2/integration` into `main` |
 
 ## Who is this for
 
@@ -241,7 +241,7 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Merged ([#15](https://github.com/leggetter/pitwall/pull/15)): design D, decided by Phil on 2026-10-19 after spike [003](docs/spikes/003-relay.md) |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
 | W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: finished sessions listed muted, merged ([#14](https://github.com/leggetter/pitwall/pull/14)); the live check of the integrated branch passed on 2026-10-19 |
-| W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | Done 2026-10-19: changes requested, one medium finding. Fixes merged in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17). Re-check at `97e4664`: approved; follow-ups in `m2/gate-followups` |
+| W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | Done 2026-10-19: changes requested, one medium finding. Fixes merged in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17). Re-check at `97e4664`: approved; follow-ups merged in [#18](https://github.com/leggetter/pitwall/pull/18) |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
 
 ### Security gate as built (W8, 2026-10-16)
@@ -297,7 +297,7 @@ Changes requested: one medium finding blocks the merge, and the rest are low or 
   - the proof wasn't bound to the origin (L6; protocol v3);
   - SIGHUP left the launch file behind (L7; it's also deleted after the first handshake, or after 60 s).
   - **Nits:** xterm links limited to http(s), and concurrency caps.
-- **Re-check of the fixes** (`97e4664`): **approved for `main`.** M1 and L1 to L7 are fixed. What remains: one Haiku turn between the last name check and the send (L1); a `claude` command added after 2.1.303 is caught only when the `claude --help` test runs (L5); and the dev-mode token case (L6). New lows, being fixed in `m2/gate-followups` before the merge:
+- **Re-check of the fixes** (`97e4664`): **approved for `main`.** M1 and L1 to L7 are fixed. What remains: one Haiku turn between the last name check and the send (L1); a `claude` command added after 2.1.303 is caught only when the `claude --help` test runs (L5); and the dev-mode token case (L6). New lows, fixed in [#18](https://github.com/leggetter/pitwall/pull/18):
   - **N1:** a denial relied on the hook's stdout being pure JSON, which a printing `NODE_OPTIONS` preload breaks. Denials move to exit 2, and `NODE_OPTIONS` is dropped from the relay.
   - **N2:** each blocked call restarted the relay, so a peer could hit the restart cap and take it down for 10 minutes.
   - **N3:** nothing checks for Claude Code 2.1.295, which `onFailure` needs.
@@ -326,9 +326,13 @@ All three decided by Phil on 2026-10-16. D8 was revised on 2026-10-19, after spi
     - **Expectations:** they sit in `$PITWALL_HOME/relay-gate/` (0700, files 0600) and never hold the text.
     - **Readiness:** a SessionStart hook writes a ready marker, and pitwall writes no request until it appears, so a relay whose hooks didn't load is never used.
     - **A breach:** a call that gets past the gate anyway stops the relay for the rest of the run.
+    - **How it answers** ([#18](https://github.com/leggetter/pitwall/pull/18)): a denial exits 2 with its reason on stderr, which blocks the call whatever else is on stdout. Only an allow is JSON on stdout. Live, a printing `NODE_OPTIONS` preload turned the earlier JSON denial into "no decision", and the message was delivered.
+    - **Fields:** a `SendMessage` with any input field outside the eight 2.1.303 sends is denied.
+    - **After a denial:** a stray call nobody asked for raises the alert, and the relay keeps running, so a peer can't use up the restart cap. A denial of one of pitwall's own requests restarts the relay after that turn, because its conversation may have been tampered with.
+    - **Environment:** besides the shared scrub, the relay drops variables that make node or the system load code: `NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `NODE_PATH`, `NODE_COMPILE_CACHE`, `OPENSSL_CONF`, `OPENSSL_ENGINES`, `OPENSSL_MODULES`, `LD_PRELOAD`, `LD_AUDIT` and `DYLD_INSERT_LIBRARIES`.
   - **Not `--safe-mode`:** it disables `--settings` hooks. `--setting-sources ""` with `--strict-mcp-config` loads no user `CLAUDE.md`, settings, hooks or plugins, and no MCP servers, and keeps the inbox socket.
   - **Not `--restricted`:** it runs hooks too, but binds no inbox socket, so replies and held or refused notices would be lost. With the gate, a session that messages the relay can only cost it a Haiku turn.
-  - **Requires Claude Code 2.1.295 or later,** for `onFailure`.
+  - **Requires Claude Code 2.1.295 or later,** for `onFailure`. Pitwall checks `claude --version` before the relay's first start, and refuses an older or unreadable version.
   - **Trust:** `-p` skips the trust dialog, which guards against a directory's own config running before you agree. The relay's directory is pitwall's own, empty and 0700.
   - **Trade-off:** a reply that arrives after pitwall exits isn't shown in pitwall. The target's conversation still has it.
   - **Decided: D, by Phil on 2026-10-19.** The M4 supervisor replaces it.
