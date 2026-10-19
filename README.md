@@ -36,7 +36,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D2 - Interactive sessions: relay through the supervisor, or `/bg` for full control
 
 - **Why:** an interactive session in Warp or Cursor belongs to that terminal. The only documented way in from outside is cross-session messaging. The receiving session sees such a message as coming from another session, "not typed by your user", so it can't approve a permission prompt or change configuration.
-- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a headless session pitwall runs, limited to `ListAgents` and `SendMessage` (D8), which the M4 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
+- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a headless session pitwall runs, limited to `SendMessage` behind a gate (D8), which the M4 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
 - **Rejected:** posting to a session's inbox socket directly. Only the socket's auth line is documented, not the message format.
 
 ### D3 - Background sessions are driven through a PTY running `claude attach <id>`, shown with xterm.js
@@ -67,7 +67,8 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 ### D8 - Messages to interactive sessions go through one headless relay session
 
-- **Why:** only a Claude session can call `SendMessage`, and the socket's message format isn't documented (D2). Pitwall runs one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku and allowed only `ListAgents` and `SendMessage`. It passes your text on verbatim. It starts on first use, takes each message on stdin, so the text never appears in `ps`, and stops with pitwall.
+- **Why:** only a Claude session can call `SendMessage`, and the socket's message format isn't documented (D2). Pitwall runs one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku, with `SendMessage` as its only tool. It passes your text on verbatim. It starts on first use, takes each message on stdin, so the text never appears in `ps`, and stops with pitwall.
+- **The gate:** a `PreToolUse` hook allows each `SendMessage` only when it's the exact message you asked for, to the session you picked, once, and fails closed. The relay loads none of your settings, hooks, plugins or `CLAUDE.md`. Added after the M2 security review found that any local session could talk the relay into sending; anything it tries that you didn't ask for shows as an alert in the UI. Needs Claude Code 2.1.295 or later.
 - **Not a background session:** that was the first decision, on 2026-10-16. Spike 003 found that a running background session can't take a new prompt without a terminal. Driving it through a PTY works, but it scrapes a screen meant for people, puts your text in `ps`, and needs a one-time trust step.
 - **Duplicate names:** `ListAgents` doesn't show directories, so when two running sessions share a name, nothing is sent and pitwall asks you to `/rename` one.
 - **Trade-off:** a reply that arrives after pitwall exits isn't shown in pitwall. The target's own conversation still has it.
