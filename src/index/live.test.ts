@@ -18,7 +18,7 @@ const root = process.env.PITWALL_LIVE_ROOT || os.homedir();
 
 const SESSION_KEYS = new Set([
   'sessionId', 'shortId', 'name', 'title', 'titleSource', 'kind', 'cwd', 'cwdMissing', 'pid', 'alive', 'status', 'state',
-  'waitingFor', 'startedAt', 'stale', 'askedYou', 'lastActivityAt', 'lastAssistantText', 'lastUserPrompt', 'transcript',
+  'waitingFor', 'startedAt', 'stale', 'finished', 'askedYou', 'lastActivityAt', 'lastAssistantText', 'lastUserPrompt', 'transcript',
 ]);
 const GROUP_KEYS = new Set(['key', 'label', 'kind', 'root', 'sessions']);
 
@@ -52,6 +52,12 @@ function sessionProblems(s: SessionSummary, at: string): string[] {
   check(isIso(s.startedAt), 'startedAt');
   check(typeof s.stale === 'boolean', 'stale');
   check(!s.stale || (s.kind === 'background' && s.state === 'blocked'), 'stale (conditions)');
+  check(typeof s.finished === 'boolean', 'finished');
+  check(
+    s.finished === (s.kind === 'background' && !s.alive && oneOf(s.state, ['done', 'stopped', 'failed'])),
+    'finished (conditions)',
+  );
+  check(!(s.finished && s.stale), 'finished (with stale)');
   check(
     optional(s.askedYou, (v) => {
       const asked = v as SessionSummary['askedYou'];

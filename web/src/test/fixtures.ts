@@ -24,6 +24,7 @@ export function session(overrides: Partial<SessionSummary> = {}): SessionSummary
     status: 'idle',
     startedAt: minutesAgo(120),
     stale: false,
+    finished: false,
     lastActivityAt: minutesAgo(5),
     lastAssistantText: 'Done. The tests pass.',
     lastUserPrompt: 'run the tests',

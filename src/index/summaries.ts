@@ -1,6 +1,6 @@
 // Turning validated rows and transcript fields into the contract's sessions and groups.
 
-import type { BackgroundState, SessionGroup, SessionSummary } from '../shared/protocol.js';
+import type { BackgroundState, SessionGroup, SessionKind, SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
 import { groupLabel, type GroupKey } from './grouping.js';
 import { titleText, type TranscriptInfo } from './transcripts.js';
@@ -41,14 +41,16 @@ export function toSessionSummary(
   extras: SummaryExtras = {},
 ): SessionSummary {
   const stale = isStale(row, transcript.lastActivityAt, nowMs);
+  const alive = row.pid !== undefined;
   const summary: SessionSummary = {
     sessionId: row.sessionId,
     name: row.name,
     kind: row.kind,
     cwd: row.cwd,
-    alive: row.pid !== undefined,
+    alive,
     startedAt: row.startedAt,
     stale,
+    finished: isFinished({ kind: row.kind, alive, pid: row.pid, state: row.state }),
     transcript: transcript.transcript,
   };
   if (extras.cwdMissing === true) summary.cwdMissing = true;
@@ -81,12 +83,18 @@ function sameTitle(title: string, name: string): boolean {
 const FINISHED_STATES: readonly BackgroundState[] = ['done', 'stopped', 'failed'];
 
 /**
- * A background session that has finished: no live process, and state 'done',
- * 'stopped' or 'failed'. Plain `claude agents --json` leaves these out; `--all`
- * lists them. A 'done' session whose process is still alive is idle, not
- * finished: attaching to it doesn't restart anything.
+ * The rule behind `SessionSummary.finished`: a background session with no
+ * live process, and state 'done', 'stopped' or 'failed'. Plain
+ * `claude agents --json` leaves these out; `--all` lists them. A 'done'
+ * session whose process is still alive is idle, not finished: attaching to it
+ * doesn't restart anything.
  */
-export function isFinished(session: Pick<SessionSummary, 'kind' | 'alive' | 'pid' | 'state'>): boolean {
+export function isFinished(session: {
+  kind: SessionKind;
+  alive: boolean;
+  pid?: number | undefined;
+  state?: BackgroundState | undefined;
+}): boolean {
   return (
     session.kind === 'background' &&
     (!session.alive || session.pid === undefined) &&
@@ -117,7 +125,7 @@ function statusRank(session: SessionSummary): number {
 
 /** 0 for most sessions, 1 for stale ones, 2 for finished ones. A session is never both. */
 function bucket(session: SessionSummary): number {
-  if (isFinished(session)) return 2;
+  if (session.finished) return 2;
   return session.stale ? 1 : 0;
 }
 
@@ -159,7 +167,7 @@ function groupRank(group: SessionGroup): { finishedOnly: boolean; newest: number
   let newestFinished = 0;
   let unfinished = false;
   for (const session of group.sessions) {
-    if (isFinished(session)) {
+    if (session.finished) {
       newestFinished = Math.max(newestFinished, activityMs(session));
     } else {
       unfinished = true;
