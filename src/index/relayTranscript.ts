@@ -60,6 +60,11 @@ export interface RelayTranscriptTail {
 
 const NOTICE_PREFIX = '[Cross-session delivery notice]';
 const MIB = 1024 * 1024;
+/**
+ * How many bytes before the read offset are remembered, to notice a file
+ * rewritten in place with the same inode, as the conversation reader does.
+ */
+const FINGERPRINT_BYTES = 64;
 /** How often a transcript that hasn't been found is searched for across every project. */
 const SEARCH_EVERY_MS = 2000;
 /** A peer message's body is kept up to this many characters; the relay keeps only 2 KiB of a reply. */
@@ -73,6 +78,8 @@ export function createRelayTranscriptTail(options: RelayTranscriptOptions): Rela
   let searchedAt = -Infinity;
   let offset = 0;
   let ino: number | undefined;
+  /** The bytes just before `offset`, as last read. A file that only grew still has them there. */
+  let fingerprint = Buffer.alloc(0);
   let carry = '';
   let skipToNewline = false;
 
@@ -111,23 +118,32 @@ export function createRelayTranscriptTail(options: RelayTranscriptOptions): Rela
         try {
           const info = await handle.stat();
           if (!info.isFile()) return [];
-          if (ino !== info.ino || info.size < offset) {
+          let rewritten = false;
+          if (fingerprint.length > 0 && info.size >= offset) {
+            const now = Buffer.alloc(fingerprint.length);
+            await handle.read(now, 0, now.length, offset - fingerprint.length);
+            rewritten = !now.equals(fingerprint);
+          }
+          if (ino !== info.ino || info.size < offset || rewritten) {
             // A new or rewritten file: start again from its beginning.
             ino = info.ino;
             offset = 0;
             carry = '';
             skipToNewline = false;
+            fingerprint = Buffer.alloc(0);
           }
           if (info.size === offset) return [];
-          let start = offset;
-          if (info.size - start > maxReadBytes) {
-            start = info.size - maxReadBytes;
+          let from = offset;
+          if (info.size - from > maxReadBytes) {
+            from = info.size - maxReadBytes;
             carry = '';
             skipToNewline = true;
           }
-          const buffer = Buffer.alloc(info.size - start);
-          const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
-          offset = start + bytesRead;
+          const buffer = Buffer.alloc(info.size - from);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, from);
+          offset = from + bytesRead;
+          const kept = Math.min(FINGERPRINT_BYTES, offset);
+          fingerprint = Buffer.from(bytesRead >= kept ? buffer.subarray(bytesRead - kept, bytesRead) : await readAt(handle, offset - kept, kept));
           return consume(buffer.subarray(0, bytesRead).toString('utf8'));
         } finally {
           await handle.close().catch(() => undefined);
@@ -234,6 +250,12 @@ function textOf(content: unknown): string | undefined {
     if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') return block.text;
   }
   return undefined;
+}
+
+async function readAt(handle: FileHandle, position: number, length: number): Promise<Buffer> {
+  const buffer = Buffer.alloc(length);
+  const { bytesRead } = await handle.read(buffer, 0, length, position);
+  return buffer.subarray(0, bytesRead);
 }
 
 async function isFile(file: string): Promise<boolean> {
