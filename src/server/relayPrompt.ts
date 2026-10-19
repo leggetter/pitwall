@@ -22,6 +22,7 @@
 // the stream-json output, against the request.
 import { randomBytes } from 'node:crypto';
 import { isRecord } from '../index/guards.js';
+import { DENIAL_PREFIX, KNOWN_INPUT_FIELDS } from './relayGateHook.mjs';
 
 /** The relay's session name: what a target sees as the sender. */
 export const RELAY_NAME = 'pitwall-relay';
@@ -156,8 +157,10 @@ export function findAnswer(text: string, id: string): RelayAnswer | undefined {
  * What a SendMessage call's result says happened.
  * - 'sent': SendMessage ran and put the message in the target's inbox.
  * - 'not-sent': SendMessage ran and said it couldn't send it.
- * - 'denied': the call never ran. The gate, or Claude Code's permissions, refused it.
- * - 'unknown': an answer pitwall doesn't recognize. It may have been sent.
+ * - 'denied': the call never ran, because pitwall's gate refused it, or
+ *   its hook failed and Claude Code blocked the call.
+ * - 'unknown': an answer pitwall doesn't recognize, including any other
+ *   error. It may have been sent.
  */
 export type SendResult =
   | { kind: 'sent'; msgId?: string }
@@ -165,15 +168,22 @@ export type SendResult =
   | { kind: 'denied'; reason: string }
   | { kind: 'unknown'; reason: string };
 
+/** How Claude Code v2.1.303 starts the result of a call a PreToolUse hook blocked: by exit 2, or by failing with `onFailure: "block"`. */
+const HOOK_BLOCKED = 'PreToolUse:SendMessage hook error: ';
+
 /**
  * Reads a SendMessage tool result. Claude Code v2.1.301 answers with JSON
  * text: `{"success":true,"message":"...","msg_id":"<uuid>"}`, or
  * `{"success":false,"message":"No agent named '...' is reachable. ..."}`.
  *
- * A call that a PreToolUse hook denied, or that a failed hook blocked, gets
- * `is_error: true` and plain text instead: the hook's reason, or
- * `PreToolUse:SendMessage hook error: ...` (v2.1.303). Only Claude Code
- * writes a tool result, so the relay's model can't fake one.
+ * A call the gate denied gets `is_error: true` and plain text instead, as
+ * Claude Code v2.1.303 reports one: `PreToolUse:SendMessage hook error:
+ * [<command>]: ` and then the gate's reason, which starts with
+ * DENIAL_PREFIX, or `failed; blocking because onFailure is "block"` when
+ * the hook couldn't run. A reason on its own, as a JSON denial would give,
+ * counts too. Only Claude Code writes a tool result, so the relay's model
+ * can't fake one. Any other error is 'unknown', never 'denied': it might
+ * come from a SendMessage that ran.
  */
 export function parseSendResult(block: Record<string, unknown>): SendResult {
   const text = toolResultText(block.content);
@@ -191,18 +201,22 @@ export function parseSendResult(block: Record<string, unknown>): SendResult {
     }
     return { kind: 'not-sent', reason: oneLine(message ?? 'SendMessage failed') };
   }
-  if (block.is_error === true) return { kind: 'denied', reason: oneLine(text ?? 'SendMessage was denied') };
+  const start = text?.trimStart() ?? '';
+  // Long enough to keep the gate's reason after the hook's command line.
+  if (block.is_error === true && (start.startsWith(HOOK_BLOCKED) || start.startsWith(DENIAL_PREFIX))) return { kind: 'denied', reason: oneLine(start, 4000) };
+  if (block.is_error === true) return { kind: 'unknown', reason: 'SendMessage failed in a way pitwall doesn’t recognize' };
   return { kind: 'unknown', reason: 'SendMessage gave an answer pitwall doesn’t recognize' };
 }
 
 /**
  * Why a SendMessage call doesn't match the request, or undefined when it
- * does: `to` must be the target's name, `message` must equal the text exactly,
- * and it mustn't subscribe to idle notices, which print a notice in the
- * target's terminal.
+ * does: it has only the fields the gate knows, `to` must be the target's
+ * name, `message` must equal the text exactly, and it mustn't subscribe to
+ * idle notices, which print a notice in the target's terminal.
  */
 export function sendMismatch(input: unknown, to: string, text: string): string | undefined {
   if (!isRecord(input)) return 'The relay called SendMessage without arguments.';
+  if (Object.keys(input).some((field) => !KNOWN_INPUT_FIELDS.has(field))) return "The relay's SendMessage call had a field pitwall doesn't check.";
   // Claude Code reports the input normalized (v2.1.303): `recipient` copies `to`, and `content` is a 50-character preview of `message`.
   if (input.to !== to || (input.recipient !== undefined && input.recipient !== to)) return 'The relay addressed the message to another session.';
   if (input.message !== text) return 'The relay changed the text before sending it.';

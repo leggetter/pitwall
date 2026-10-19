@@ -20,13 +20,19 @@
 //
 // The hook claims the expectation by renaming it, which only one call can do,
 // and then deletes it, so each expectation answers exactly one call, allowed
-// or not. It allows the call only when the expectation hasn't expired, `to`
-// is the expected name exactly, the message hashes to the expected hash, and
-// notify_when_idle is unset or false. Anything else, including any error, is
-// denied, with a reason Claude reads in the tool result. Claude Code treats a
-// hook that exits 0 without a decision as "no decision", and runs the call,
-// so every PreToolUse path here prints one: a crash exits non-zero, which
-// `onFailure: "block"` turns into a denial.
+// or not. It allows the call only when the expectation hasn't expired, the
+// call has no field pitwall doesn't know, `to` is the expected name exactly,
+// the message hashes to the expected hash, and notify_when_idle is unset or
+// false. Anything else, including any error, is denied.
+//
+// A denial exits 2 with its reason on stderr, which Claude reads in the tool
+// result. Exit 2 blocks the call whatever stdout holds. A JSON denial on
+// stdout wouldn't: anything else printed there, such as by a NODE_OPTIONS
+// preload, makes Claude Code read the output as plain text, which is "no
+// decision", and SendMessage, which needs no permission, then runs. Only an
+// allow is JSON on stdout. A crash exits 1, which `onFailure: "block"` turns
+// into a denial. Every PreToolUse path ends in one of these, never in exit 0
+// with nothing printed.
 //
 // For SessionStart, it writes <dir>/<gate id>.ready and prints nothing. pitwall
 // writes no request until that file appears, so a relay whose hooks didn't load
@@ -50,6 +56,14 @@ const MAX_EXPECTATION_BYTES = 4096;
 
 /** Starts every reason the gate gives, so a denial in the relay's output says where it came from. */
 export const DENIAL_PREFIX = "pitwall's relay gate";
+
+/**
+ * The fields of SendMessage's input the gate knows, as Claude Code v2.1.303
+ * passes it: the call's `to`, `message`, `summary` and `notify_when_idle`,
+ * and the `type`, `recipient`, `recipient_kind` and `content` it adds. A call
+ * with any other field is denied, because the gate can't tell what it does.
+ */
+export const KNOWN_INPUT_FIELDS = new Set(['to', 'recipient', 'recipient_kind', 'message', 'content', 'summary', 'type', 'notify_when_idle']);
 
 /**
  * @typedef {{ v: number, request: string, to: string, sha256: string, expiresAt: number }} Expectation
@@ -126,6 +140,7 @@ export function decide(input, expectation, now) {
   if (expectation.expiresAt <= now) return deny("pitwall's request for this message has expired");
   const call = input.tool_input;
   if (!isRecord(call)) return deny('the call has no arguments');
+  if (Object.keys(call).some((field) => !KNOWN_INPUT_FIELDS.has(field))) return deny('the call has a field pitwall doesn’t check');
   if (call.to !== expectation.to || (call.recipient !== undefined && call.recipient !== expectation.to)) {
     return deny('the message is addressed to a session pitwall didn’t ask for');
   }
@@ -144,17 +159,22 @@ function deny(why) {
 }
 
 /**
- * The hook's stdout for a decision: Claude Code's documented PreToolUse output.
- * @param {Decision} decision
+ * @typedef {{ exitCode: 0, stdout: string } | { exitCode: 2, stderr: string }} HookResult
  */
-export function hookOutput(decision) {
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: decision.allow ? 'allow' : 'deny',
-      permissionDecisionReason: decision.reason,
-    },
-  });
+
+/**
+ * How the hook answers a decision. An allow is Claude Code's documented
+ * PreToolUse JSON on stdout, with exit 0. A denial is exit 2 with the reason
+ * on stderr, which blocks the call whatever else is on stdout.
+ * @param {Decision} decision
+ * @returns {HookResult}
+ */
+export function hookResult(decision) {
+  if (!decision.allow) return { exitCode: 2, stderr: decision.reason };
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: decision.reason } }),
+  };
 }
 
 /**
@@ -226,12 +246,12 @@ export function markReady(dir, gateId) {
 
 /**
  * What the hook does with one input: for SessionStart, marks the gate ready
- * and prints nothing; for anything else, decides and returns the output to
- * print. Never throws for PreToolUse: an error is a denial.
+ * and answers nothing; for anything else, decides. Never throws for
+ * PreToolUse: an error is a denial.
  * @param {string[]} args the gate directory and the gate id
  * @param {string | undefined} raw the hook's stdin, or undefined when it was too large
  * @param {number} now
- * @returns {string | undefined} what to print
+ * @returns {HookResult | undefined} how to answer, or undefined for SessionStart
  */
 export function runHook(args, raw, now) {
   const [dir = '', gateId = ''] = args;
@@ -250,14 +270,14 @@ export function runHook(args, raw, now) {
     return undefined;
   }
   try {
-    if (raw === undefined) return hookOutput(deny('the call was too large to check'));
-    if (!GATE_ID_PATTERN.test(gateId)) return hookOutput(deny('it was started without a gate id'));
+    if (raw === undefined) return hookResult(deny('the call was too large to check'));
+    if (!GATE_ID_PATTERN.test(gateId)) return hookResult(deny('it was started without a gate id'));
     checkGateDir(dir);
     // Only a SendMessage call claims the expectation; decide() denies the rest.
     const expectation = isRecord(input) && input.hook_event_name === 'PreToolUse' && input.tool_name === 'SendMessage' ? claimExpectation(dir, gateId) : undefined;
-    return hookOutput(decide(input, expectation, now));
+    return hookResult(decide(input, expectation, now));
   } catch {
-    return hookOutput(deny('it couldn’t check the call'));
+    return hookResult(deny('it couldn’t check the call'));
   }
 }
 
@@ -291,12 +311,20 @@ function isEntryPoint() {
 if (isEntryPoint()) {
   readInput()
     .then((raw) => {
-      const output = runHook(process.argv.slice(2), raw, Date.now());
-      if (output !== undefined) writeSync(1, output);
-      process.exitCode = 0;
+      const result = runHook(process.argv.slice(2), raw, Date.now());
+      if (result === undefined) {
+        process.exitCode = 0;
+      } else if (result.exitCode === 2) {
+        // Set first, so a denial still blocks if stderr can't be written.
+        process.exitCode = 2;
+        writeSync(2, result.stderr);
+      } else {
+        writeSync(1, result.stdout);
+        process.exitCode = 0;
+      }
     })
     .catch(() => {
-      // A SessionStart that failed, or stdout that can't be written. Exit 2 blocks a tool call outright.
+      // A SessionStart that failed, or an answer that couldn't be written. Exit 2 blocks a tool call outright.
       process.exitCode = 2;
     });
 }

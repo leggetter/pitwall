@@ -39,9 +39,13 @@
 // recorded as the session's exchange, so it never replaces one that was.
 //
 // A SendMessage call that wasn't for a request raises the snapshot's
-// relayAlert, and the relay is restarted at the end of that turn. A call
-// that got past the gate when it shouldn't have stops pitwall using the relay
-// until it restarts.
+// relayAlert. A call the gate blocked leaves the relay sound, so it keeps
+// running: restarting it for each one would let any session that can reach
+// it use up the restart limit. A call that got past the gate when it
+// shouldn't have stops pitwall using the relay until pitwall restarts.
+//
+// The gate needs Claude Code 2.1.295 or later, for the hooks' `onFailure`,
+// so pitwall checks `claude --version` before it first starts the relay.
 //
 // Replies and later notices arrive as peer messages. They start a turn on
 // stdout but don't show their text there, so they're read from the relay's
@@ -55,8 +59,10 @@
 // the process it started itself.
 import { spawn as spawnProcess } from 'node:child_process';
 import { realpathSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createAgentsSource, type AgentsSource } from '../index/agents.js';
+import { runFile } from '../index/exec.js';
 import { isRecord } from '../index/guards.js';
 import {
   createRelayTranscriptTail,
@@ -160,6 +166,8 @@ export interface RelayOptions {
   spawn?: RelaySpawner;
   /** The unfiltered session list. Default `claude agents --json --all`. */
   agents?: AgentsSource;
+  /** What `claude --version` prints. Default: runs it. Rejects when it can't. */
+  claudeVersion?: () => Promise<string>;
   /** Reads the relay's transcript. Default createRelayTranscriptTail. */
   transcript?: (options: { sessionId: string; cwd: string }) => RelayTranscriptTail;
   /** Creates the directory if needed, checks it's safe, and returns its realpath. Throws when it isn't safe. */
@@ -233,8 +241,6 @@ interface Proc {
   gateReady: boolean;
   /** SendMessage calls nobody asked for, by tool_use id, waiting for their results. What each was, in pitwall's words. */
   strays: Map<string, string>;
-  /** It did something nobody asked for: restart it when the turn ends. */
-  restartAtTurnEnd: boolean;
   /** Don't start another relay when this one exits; the next request will. */
   noRestart: boolean;
 }
@@ -273,6 +279,9 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   const name = options.name ?? RELAY_NAME;
   const spawn = options.spawn ?? spawnRelayChild;
   const agents = options.agents ?? createAgentsSource(options.claudeBin === undefined ? {} : { claudeBin: options.claudeBin });
+  const claudeVersion =
+    options.claudeVersion ??
+    (() => runFile(claudeBin, ['--version'], { cwd: os.tmpdir(), timeoutMs: 10_000, ...(options.env === undefined ? {} : { env: options.env }) }));
   const openTranscript = options.transcript ?? ((o: { sessionId: string; cwd: string }) => createRelayTranscriptTail(o));
   const prepareDir = options.prepareDir ?? prepareRelayDir;
   const gate = options.gate ?? createRelayGate({ dir: path.join(path.dirname(dir), RELAY_GATE_DIR_NAME) });
@@ -307,6 +316,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   /** Why pitwall stopped using the relay for this run, once its gate let through a call it shouldn't have. */
   let gateBroken: string | undefined;
   let latestAlert: RelayAlert | undefined;
+  /** Set once `claude --version` has said it's new enough. Checked again while it hasn't, so an update needs no restart. */
+  let versionChecked = false;
   let strayIds = 0;
 
   function addRealpath(candidate: string): void {
@@ -497,7 +508,33 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (gateBroken !== undefined) return { ok: false, detail: brokenDetail() };
     if (proc !== undefined && !proc.stopping) return { ok: true };
     if (proc !== undefined) return { ok: false, detail: 'The relay is restarting. Try again in a moment.', retryAfterSeconds: 2 };
+    if (!versionChecked) {
+      const version = await checkVersion();
+      if (!version.ok) return version;
+      if (closed) return { ok: false, detail: 'pitwall is shutting down.' };
+      if (proc !== undefined) return { ok: true };
+    }
     return start();
+  }
+
+  /** Refuses to start the relay on a Claude Code too old for the gate's `onFailure`, or one whose version can't be read. */
+  async function checkVersion(): Promise<{ ok: true } | { ok: false; detail: string }> {
+    let output: string;
+    try {
+      output = await claudeVersion();
+    } catch (error) {
+      return { ok: false, detail: `Couldn't run claude --version to check that its gate will work, so nothing was sent: ${oneLine((error as Error).message)}` };
+    }
+    const checked = checkClaudeVersion(output);
+    if (checked.ok) {
+      versionChecked = true;
+      return { ok: true };
+    }
+    const which = checked.version === undefined ? "pitwall couldn't read which version this is" : `this is ${checked.version}`;
+    return {
+      ok: false,
+      detail: `pitwall's relay needs Claude Code ${MIN_CLAUDE_VERSION} or later for its gate, and ${which}. Update Claude Code, then try again. Nothing was sent.`,
+    };
   }
 
   function start(): { ok: true } | { ok: false; detail: string; retryAfterSeconds?: number } {
@@ -545,7 +582,6 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       ready: Promise.resolve(false),
       gateReady: false,
       strays: new Map(),
-      restartAtTurnEnd: false,
       noRestart: false,
     };
     const events: RelayChildEvents = {
@@ -561,8 +597,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     try {
       p.child = spawn(claudeBin, relayArgs({ name, settings, ...(options.model === undefined ? {} : { model: options.model }) }), {
         cwd: real,
-        // Auto memory would be the only thing loaded from the user's files: --setting-sources "" leaves it on.
-        env: { ...childEnvironment(options.env ?? process.env), CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+        env: relayEnvironment(options.env ?? process.env),
       }, events);
     } catch (error) {
       gate.forget(gateId);
@@ -726,9 +761,12 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     p.tail = openTranscript({ sessionId, cwd });
   }
 
-  /** From --include-hook-events: a gate hook that failed blocked its call. Say so, without its output. */
+  /**
+   * From --include-hook-events: a gate hook that failed blocked its call. Say
+   * so, without its output. Exit 2 is how the gate denies, not a failure.
+   */
   function onHookResponse(event: Record<string, unknown>): void {
-    if (event.hook_event !== 'PreToolUse' || event.outcome !== 'error') return;
+    if (event.hook_event !== 'PreToolUse' || event.outcome !== 'error' || event.exit_code === 2) return;
     const code = typeof event.exit_code === 'number' ? ` (exit code ${event.exit_code})` : '';
     log(`its gate hook failed${code}, so Claude Code blocked the call.`);
   }
@@ -751,7 +789,6 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
         ? 'The relay tried to send a message when pitwall hadn’t asked it to.'
         : 'The relay tried to send a second message for one request.',
     );
-    p.restartAtTurnEnd = true;
   }
 
   function onToolResult(p: Proc, block: Record<string, unknown>): void {
@@ -765,7 +802,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (job === undefined || job.phase !== 'sent') return;
     if (job.toolUseId !== undefined && toolUseId !== job.toolUseId) return;
     const result = parseSendResult(block);
-    if (job.mismatch !== undefined) return onMismatchResult(p, job, job.mismatch, result);
+    if (job.mismatch !== undefined) return onMismatchResult(job, job.mismatch, result);
     switch (result.kind) {
       case 'denied':
         return finish(job, failed(denialDetail(result.reason)));
@@ -800,11 +837,11 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   }
 
   /** The result of the request's call, which didn't match the request: the gate should have denied it. */
-  function onMismatchResult(p: Proc, job: Job, mismatch: string, result: SendResult): void {
-    p.restartAtTurnEnd = true;
+  function onMismatchResult(job: Job, mismatch: string, result: SendResult): void {
     if (result.kind === 'denied') {
+      // Blocked, so the relay is still sound: no restart.
       raiseAlert(`${mismatch} pitwall's gate blocked it, so nothing was sent.`, true);
-      return finish(job, failed(`pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent. pitwall is restarting the relay.`));
+      return finish(job, failed("pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent."));
     }
     raiseAlert(`${mismatch} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}.`, false);
     breakGate('its gate let through a SendMessage call that didn’t match the request.');
@@ -816,7 +853,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
 
   /** The result of a call nobody asked for. */
   function onStrayResult(detail: string, result: SendResult): void {
-    if (result.kind === 'denied') return raiseAlert(`${detail} pitwall's gate blocked it, and pitwall is restarting the relay.`, true);
+    // Blocked, so the relay is still sound: no restart, which a peer could otherwise repeat until the restart limit.
+    if (result.kind === 'denied') return raiseAlert(`${detail} pitwall's gate blocked it, so nothing was sent.`, true);
     raiseAlert(`${detail} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}, so pitwall stopped the relay.`, false);
     breakGate('its gate let through a SendMessage call nobody asked for.');
   }
@@ -833,10 +871,11 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       else if (answer?.kind === 'relayed') anomaly("The relay said it sent the message, but pitwall didn't see it call SendMessage.", job);
       else scheduleRetry(job);
     }
-    if (p.restartAtTurnEnd && proc === p && !p.stopping) {
+    // A call nobody asked for whose result never came: pitwall can't tell what happened, so it starts over.
+    if (p.strays.size > 0 && proc === p && !p.stopping) {
       for (const detail of p.strays.values()) raiseAlert(`${detail} Its turn ended before pitwall saw whether its gate blocked it.`, false);
       p.strays.clear();
-      log('restarting it after a turn that did something nobody asked for.');
+      log('restarting it after a turn that ended before a call nobody asked for had its result.');
       stopProcess('SIGTERM');
       return;
     }
@@ -989,15 +1028,81 @@ const NOTICE_STATUS: Record<NoticeOutcome, RelayStatus | undefined> = {
   other: undefined,
 };
 
-/** A gate denial, in pitwall's words: the hook's own reason, or that the hook couldn't run. */
+/**
+ * A gate denial, in pitwall's words: the gate's own reason, which Claude Code
+ * v2.1.303 puts after `PreToolUse:SendMessage hook error: [<command>]: `, or
+ * that the hook couldn't run. Never the command line, which has paths in it.
+ */
 export function denialDetail(reason: string): string {
   const prefix = `${DENIAL_PREFIX} denied this SendMessage: `;
-  if (reason.startsWith(prefix)) {
-    const why = reason.slice(prefix.length).replace(/\. Don't call SendMessage again for it\.$/, '');
+  const at = reason.indexOf(prefix);
+  if (at !== -1) {
+    const why = reason
+      .slice(at + prefix.length)
+      .replace(/\. Don't call SendMessage again for it\..*$/, '')
+      .replace(/\.$/, '');
     return `pitwall's gate didn't let the relay send it, because ${oneLine(why, 200)}. Nothing was sent.`;
   }
   if (/hook error/i.test(reason)) return "pitwall's gate couldn't check the relay's send, so it was blocked and nothing was sent.";
   return "The relay's send was denied before it ran, so nothing was sent.";
+}
+
+/**
+ * Variables that make a process load code other than the program it was
+ * given: Node.js preloads and loaders (NODE_OPTIONS' --require, --import and
+ * --loader), a module in place of the REPL, extra module search paths, a
+ * compile cache whose code it runs, OpenSSL configuration that can load
+ * engines and providers, and the dynamic linker's preloads. The relay's gate
+ * hook is a node process that inherits the relay's environment, so these
+ * are dropped from it: whatever they'd load would run inside the gate.
+ * NODE_EXTRA_CA_CERTS, NODE_TLS_REJECT_UNAUTHORIZED and the like only
+ * change trust, and stay, because Claude Code may need them to reach its API.
+ */
+export const CODE_LOADING_VARIABLES: ReadonlySet<string> = new Set([
+  'NODE_OPTIONS',
+  'NODE_REPL_EXTERNAL_MODULE',
+  'NODE_PATH',
+  'NODE_COMPILE_CACHE',
+  'OPENSSL_CONF',
+  'OPENSSL_ENGINES',
+  'OPENSSL_MODULES',
+  'LD_PRELOAD',
+  'LD_AUDIT',
+  'DYLD_INSERT_LIBRARIES',
+]);
+
+/**
+ * The relay's environment: childEnvironment(), without CODE_LOADING_VARIABLES,
+ * and with auto memory off, which would otherwise be the only thing loaded
+ * from the user's files, as `--setting-sources ""` leaves it on.
+ */
+export function relayEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
+  const result = childEnvironment(env);
+  for (const name of Object.keys(result)) {
+    if (CODE_LOADING_VARIABLES.has(name.toUpperCase())) delete result[name];
+  }
+  result.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
+  return result;
+}
+
+/** The oldest Claude Code the gate works on: `onFailure` came in 2.1.295. */
+export const MIN_CLAUDE_VERSION = '2.1.295';
+
+/**
+ * Whether `claude --version` output names MIN_CLAUDE_VERSION or later, and
+ * the version it named. Output that doesn't start with a version counts as
+ * too old.
+ */
+export function checkClaudeVersion(output: string): { ok: boolean; version?: string } {
+  const match = /^\s*(\d+)\.(\d+)\.(\d+)/.exec(output);
+  if (match === null) return { ok: false };
+  const version = `${match[1]}.${match[2]}.${match[3]}`;
+  const found = [match[1], match[2], match[3]].map(Number);
+  const min = MIN_CLAUDE_VERSION.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (found[i]! !== min[i]!) return { ok: found[i]! > min[i]!, version };
+  }
+  return { ok: true, version };
 }
 
 function exitedWithin(p: Proc, ms: number): Promise<boolean> {

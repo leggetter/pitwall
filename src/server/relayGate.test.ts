@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRelayGate, gateScriptPath, gateSettings, removeStaleGateFiles } from './relayGate.js';
-import { claimExpectation, decide, DENIAL_PREFIX, expectationPath, hookOutput, readyPath, runHook, textHash } from './relayGateHook.mjs';
+import { claimExpectation, decide, DENIAL_PREFIX, expectationPath, hookResult, KNOWN_INPUT_FIELDS, readyPath, runHook, textHash } from './relayGateHook.mjs';
 
 const ID = '0123456789abcdef0123456789abcdef';
 const REQUEST = 'fedcba9876543210';
@@ -62,6 +62,7 @@ describe('decide', () => {
     ['no text', preToolUse(call({ message: undefined })), expectation(), /isn’t the text/],
     ['an idle subscription', preToolUse(call({ notify_when_idle: true })), expectation(), /idle/],
     ['another kind of call', preToolUse(call({ type: 'subscribe' })), expectation(), /plain message/],
+    ['a field it doesn’t know', preToolUse(call({ attachments: ['/etc/passwd'] })), expectation(), /a field pitwall doesn’t check/],
     ['another tool', preToolUse({ command: 'ls' }, 'Bash'), expectation(), /only use SendMessage/],
     ['another event', { hook_event_name: 'PostToolUse' }, expectation(), /something other than a tool call/],
     ['nothing', undefined, expectation(), /something other than a tool call/],
@@ -77,11 +78,17 @@ describe('decide', () => {
     expect(textHash(TEXT)).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('answers in the documented PreToolUse output', () => {
-    expect(JSON.parse(hookOutput({ allow: false, reason: 'why' }))).toEqual({
-      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'why' },
+  it('knows exactly the fields Claude Code v2.1.303 passes for SendMessage', () => {
+    expect([...KNOWN_INPUT_FIELDS].sort()).toEqual(['content', 'message', 'notify_when_idle', 'recipient', 'recipient_kind', 'summary', 'to', 'type']);
+  });
+
+  it('allows with the documented PreToolUse JSON, and denies with exit 2 and the reason on stderr', () => {
+    expect(hookResult({ allow: false, reason: 'why' })).toEqual({ exitCode: 2, stderr: 'why' });
+    const allowed = hookResult({ allow: true, reason: 'ok' });
+    expect(allowed.exitCode).toBe(0);
+    expect(allowed.exitCode === 0 && JSON.parse(allowed.stdout)).toEqual({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'ok' },
     });
-    expect(JSON.parse(hookOutput({ allow: true, reason: 'ok' })).hookSpecificOutput.permissionDecision).toBe('allow');
   });
 });
 
@@ -171,10 +178,20 @@ describe('gateSettings', () => {
 });
 
 describe('the hook, as Claude Code runs it', () => {
-  /** Runs the script in exec form, as the relay's settings say, with `input` as JSON on stdin. */
-  function hook(dir: string, input: unknown, args: string[] = [dir, ID]) {
-    const result = spawnSync(process.execPath, [gateScriptPath(), ...args], { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8', cwd: os.tmpdir() });
-    return { status: result.status, stdout: result.stdout, decision: result.stdout === '' ? undefined : JSON.parse(result.stdout).hookSpecificOutput };
+  /**
+   * Runs the script in exec form, as the relay's settings say, with `input`
+   * as JSON on stdin. `decision` is what Claude Code makes of it: exit 2 is a
+   * denial whatever stdout holds, and exit 0 with JSON is the JSON's decision.
+   */
+  function hook(dir: string, input: unknown, args: string[] = [dir, ID], env: NodeJS.ProcessEnv = process.env) {
+    const result = spawnSync(process.execPath, [gateScriptPath(), ...args], { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8', cwd: os.tmpdir(), env });
+    const decision =
+      result.status === 2
+        ? { permissionDecision: 'deny', permissionDecisionReason: result.stderr }
+        : result.stdout === ''
+          ? undefined
+          : JSON.parse(result.stdout).hookSpecificOutput;
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, decision };
   }
 
   it('marks the gate ready at SessionStart, and prints nothing', () => {
@@ -191,8 +208,8 @@ describe('the hook, as Claude Code runs it', () => {
     expect(first.status).toBe(0);
     expect(first.decision).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'allow' });
     const second = hook(dir, preToolUse(call()));
-    expect(second.decision).toMatchObject({ permissionDecision: 'deny' });
-    expect(second.decision.permissionDecisionReason).toMatch(/no request waiting/);
+    expect(second).toMatchObject({ status: 2, stdout: '' });
+    expect(second.stderr).toBe(`${DENIAL_PREFIX} denied this SendMessage: pitwall has no request waiting for this message. Don't call SendMessage again for it.`);
   });
 
   it('denies a call that doesn’t match, and that uses up the expectation', () => {
@@ -202,11 +219,11 @@ describe('the hook, as Claude Code runs it', () => {
     expect(hook(dir, preToolUse(call())).decision).toMatchObject({ permissionDecision: 'deny' });
   });
 
-  it('always prints a denial, never nothing, for input it can’t use', () => {
+  it('always denies with exit 2, never exits 0 with nothing, for input it can’t use', () => {
     const dir = gateDir();
     for (const input of ['not json', '', JSON.stringify({ hook_event_name: 'PreToolUse' })]) {
       const result = hook(dir, input);
-      expect(result.status).toBe(0);
+      expect(result.status).toBe(2);
       expect(result.decision).toMatchObject({ permissionDecision: 'deny' });
     }
     expect(hook(dir, preToolUse(call()), [dir, 'not-an-id']).decision).toMatchObject({ permissionDecision: 'deny' });
@@ -223,8 +240,18 @@ describe('the hook, as Claude Code runs it', () => {
     expect(existsSync(readyPath(dir, ID))).toBe(false);
   });
 
+  it('still denies when something node preloads prints to stdout first', () => {
+    const dir = gateDir();
+    const preload = path.join(path.dirname(dir), 'preload.cjs');
+    writeFileSync(preload, "process.stdout.write('preload says hi\\n');\n");
+    const result = hook(dir, preToolUse(call()), [dir, ID], { ...process.env, NODE_OPTIONS: `--require ${preload}` });
+    expect(result.stdout).toBe('preload says hi\n');
+    // Exit 2 blocks the call whatever stdout holds. A JSON denial after this text would read as plain text: no decision.
+    expect(result.status).toBe(2);
+  });
+
   it('runHook decides the same way without a process', () => {
     const dir = gateDir();
-    expect(JSON.parse(runHook([dir, ID], JSON.stringify(preToolUse(call())), Date.now())!).hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(runHook([dir, ID], JSON.stringify(preToolUse(call())), Date.now())).toMatchObject({ exitCode: 2, stderr: expect.stringMatching(/no request waiting/) });
   });
 });
