@@ -39,10 +39,13 @@
 // recorded as the session's exchange, so it never replaces one that was.
 //
 // A SendMessage call that wasn't for a request raises the snapshot's
-// relayAlert. A call the gate blocked leaves the relay sound, so it keeps
-// running: restarting it for each one would let any session that can reach
-// it use up the restart limit. A call that got past the gate when it
-// shouldn't have stops pitwall using the relay until pitwall restarts.
+// relayAlert. A call nobody asked for that the gate blocked leaves the relay
+// sound, so it keeps running: restarting it for each one would let any
+// session that can reach it use up the restart limit. A blocked call for one
+// of pitwall's own requests that didn't match it restarts the relay once its
+// turn ends, because its conversation may have been poisoned. A call that
+// got past the gate when it shouldn't have stops pitwall using the relay
+// until pitwall restarts.
 //
 // The gate needs Claude Code 2.1.295 or later, for the hooks' `onFailure`,
 // so pitwall checks `claude --version` before it first starts the relay.
@@ -241,6 +244,8 @@ interface Proc {
   gateReady: boolean;
   /** SendMessage calls nobody asked for, by tool_use id, waiting for their results. What each was, in pitwall's words. */
   strays: Map<string, string>;
+  /** The gate blocked a call for one of pitwall's requests that didn't match it: start over when the turn ends. */
+  restartAfterTurn: boolean;
   /** Don't start another relay when this one exits; the next request will. */
   noRestart: boolean;
 }
@@ -582,6 +587,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       ready: Promise.resolve(false),
       gateReady: false,
       strays: new Map(),
+      restartAfterTurn: false,
       noRestart: false,
     };
     const events: RelayChildEvents = {
@@ -802,7 +808,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (job === undefined || job.phase !== 'sent') return;
     if (job.toolUseId !== undefined && toolUseId !== job.toolUseId) return;
     const result = parseSendResult(block);
-    if (job.mismatch !== undefined) return onMismatchResult(job, job.mismatch, result);
+    if (job.mismatch !== undefined) return onMismatchResult(p, job, job.mismatch, result);
     switch (result.kind) {
       case 'denied':
         return finish(job, failed(denialDetail(result.reason)));
@@ -837,11 +843,12 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   }
 
   /** The result of the request's call, which didn't match the request: the gate should have denied it. */
-  function onMismatchResult(job: Job, mismatch: string, result: SendResult): void {
+  function onMismatchResult(p: Proc, job: Job, mismatch: string, result: SendResult): void {
     if (result.kind === 'denied') {
-      // Blocked, so the relay is still sound: no restart.
+      // Blocked, but the relay got pitwall's own request wrong: its conversation may have been poisoned, so it starts over.
       raiseAlert(`${mismatch} pitwall's gate blocked it, so nothing was sent.`, true);
-      return finish(job, failed("pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent."));
+      p.restartAfterTurn = true;
+      return finish(job, failed("pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent. pitwall is restarting the relay."));
     }
     raiseAlert(`${mismatch} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}.`, false);
     breakGate('its gate let through a SendMessage call that didn’t match the request.');
@@ -876,6 +883,11 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       for (const detail of p.strays.values()) raiseAlert(`${detail} Its turn ended before pitwall saw whether its gate blocked it.`, false);
       p.strays.clear();
       log('restarting it after a turn that ended before a call nobody asked for had its result.');
+      stopProcess('SIGTERM');
+      return;
+    }
+    if (p.restartAfterTurn && proc === p && !p.stopping) {
+      log("restarting it after it sent something other than pitwall's request, which its gate blocked.");
       stopProcess('SIGTERM');
       return;
     }
