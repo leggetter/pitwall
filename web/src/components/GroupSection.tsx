@@ -42,6 +42,8 @@ export function GroupSection({
   const listId = useId();
   const finishedId = useId();
   const { current, finished } = splitFinished(sessions);
+  // Counted on the Finished line, so a question isn't hidden behind the collapse. Never as "need you".
+  const finishedAsked = finished.reduce((count, session) => count + (session.askedYou ? 1 : 0), 0);
   const total = group.sessions.length;
   // Finished sessions never count here: needsAttention leaves them out.
   const attention = countAttention(group.sessions);
@@ -91,6 +93,7 @@ export function GroupSection({
             >
               <ChevronIcon />
               Finished ({finished.length})
+              {finishedAsked > 0 && <span className="finished-asked"> · {finishedAsked} asked you</span>}
             </button>
             <ul className="sessions finished-sessions" id={finishedId} hidden={finishedCollapsed}>
               {finished.map((session) => (

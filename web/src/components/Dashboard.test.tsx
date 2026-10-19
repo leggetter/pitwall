@@ -328,9 +328,9 @@ describe('session rows', () => {
           sessions: [
             session({ name: 'a', status: 'busy' }),
             session({ name: 'b', status: 'idle' }),
-            session({ name: 'c', kind: 'background', shortId: 'c1', state: 'done', alive: false, status: undefined }),
-            session({ name: 'd', kind: 'background', shortId: 'd1', state: 'failed', alive: false, status: undefined }),
-            session({ name: 'e', kind: 'background', shortId: 'e1', state: 'stopped', alive: false, status: undefined }),
+            session({ name: 'c', kind: 'background', shortId: 'c1', state: 'done', alive: false, status: undefined, finished: true }),
+            session({ name: 'd', kind: 'background', shortId: 'd1', state: 'failed', alive: false, status: undefined, finished: true }),
+            session({ name: 'e', kind: 'background', shortId: 'e1', state: 'stopped', alive: false, status: undefined, finished: true }),
             session({ name: 'f', alive: false, status: undefined }),
             session({ name: 'g', status: 'waiting', waitingFor: 'a brand new reason' }),
           ],
@@ -520,6 +520,7 @@ describe('sessions that asked you something', () => {
             alive: false,
             pid: undefined,
             status: undefined,
+            finished: true,
             cwd: '/Users/example/code/docs',
             askedYou: asked('Want me to open the PR?', 'question'),
           }),
@@ -592,7 +593,7 @@ describe('sessions that asked you something', () => {
 describe('finished sessions', () => {
   const ROOT = '/Users/example/code';
   const id = (name: string) => `${ROOT}\0${ROOT}/${name}`;
-  const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined };
+  const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, finished: true };
 
   function finishedSnapshot(): IndexSnapshot {
     return snapshot([
@@ -621,7 +622,7 @@ describe('finished sessions', () => {
     return result;
   }
 
-  const finishedToggle = (label: string) => within(groupSection(label)).getByRole('button', { name: /^Finished \(\d+\)$/ });
+  const finishedToggle = (label: string) => within(groupSection(label)).getByRole('button', { name: /^Finished \(\d+\)/ });
   const finishedOpen = (label: string) => finishedToggle(label).getAttribute('aria-expanded') === 'true';
   const stored = () => JSON.parse(window.localStorage.getItem(FINISHED_STATE_KEY) ?? 'null') as unknown;
 
@@ -629,7 +630,7 @@ describe('finished sessions', () => {
     render();
 
     const toggle = finishedToggle('demo-app');
-    expect(toggle.textContent).toBe('Finished (2)');
+    expect(toggle.textContent).toBe('Finished (2) · 1 asked you');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     const list = document.getElementById(toggle.getAttribute('aria-controls') ?? '')!;
     expect(list.hidden).toBe(true);
@@ -643,6 +644,41 @@ describe('finished sessions', () => {
     // After the group's other rows.
     const last = groupSection('demo-app').querySelector('ul.sessions')!.lastElementChild;
     expect(last?.contains(toggle)).toBe(true);
+  });
+
+  it('says on the Finished line how many finished sessions asked something, muted, and never as needing you', () => {
+    const asked = { reason: 'question' as const, excerpt: 'Ship it?' };
+    render(
+      snapshot([
+        group({
+          sessions: [
+            session({ name: 'live-one', status: 'idle' }),
+            session({ name: 'f1', ...finished, shortId: 'f1', state: 'done', askedYou: asked }),
+            session({ name: 'f2', ...finished, shortId: 'f2', state: 'stopped' }),
+            session({ name: 'f3', ...finished, shortId: 'f3', state: 'failed', askedYou: asked }),
+          ],
+        }),
+      ]),
+    );
+
+    const toggle = finishedToggle('demo-app');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.textContent).toBe('Finished (3) · 2 asked you');
+    const count = toggle.querySelector('.finished-asked');
+    expect(count?.textContent).toBe(' · 2 asked you');
+    expect(count?.closest('.group-attention, .tone-asked, .attention')).toBeNull();
+    expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
+    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
+    // Stays the same open, so the button's name doesn't change under the user.
+    fireEvent.click(toggle);
+    expect(toggle.textContent).toBe('Finished (3) · 2 asked you');
+  });
+
+  it('leaves the asked count off a Finished line whose sessions asked nothing', () => {
+    render();
+
+    expect(finishedToggle('old').textContent).toBe('Finished (1)');
+    expect(finishedToggle('old').querySelector('.finished-asked')).toBeNull();
   });
 
   it('counts finished sessions in the group total, but never as needing you', () => {
