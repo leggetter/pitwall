@@ -30,6 +30,7 @@ function session(id: string, overrides: Partial<SessionSummary> = {}): SessionSu
     alive: true,
     startedAt: iso(NOW - DAY),
     stale: false,
+    finished: false,
     transcript: 'ok',
     ...overrides,
   };
@@ -91,11 +92,23 @@ describe('isFinished', () => {
     expect(isFinished(finished({ kind: 'interactive', shortId: undefined }))).toBe(false);
   });
 
-  it('agrees with toSessionSummary on what a row from --all becomes', () => {
+  it('is what toSessionSummary sets as finished', () => {
     const fromAll = toSessionSummary(row({ kind: 'background', shortId: 'bg2', pid: undefined, status: undefined, state: 'stopped' }), { transcript: 'ok' }, NOW);
-    expect(isFinished(fromAll)).toBe(true);
+    expect(fromAll.finished).toBe(true);
+    expect(fromAll.alive).toBe(false);
     const idleDone = toSessionSummary(row({ kind: 'background', shortId: 'bg3', pid: 77, status: 'idle', state: 'done' }), { transcript: 'ok' }, NOW);
-    expect(isFinished(idleDone)).toBe(false);
+    expect(idleDone.finished).toBe(false);
+    for (const state of ['done', 'failed'] as const) {
+      expect(toSessionSummary(row({ kind: 'background', pid: undefined, status: undefined, state }), { transcript: 'missing' }, NOW).finished, state).toBe(true);
+    }
+    expect(toSessionSummary(row(), { transcript: 'ok' }, NOW).finished).toBe(false);
+  });
+
+  it('is never set together with stale', () => {
+    const oldBlocked = row({ kind: 'background', pid: undefined, status: undefined, state: 'blocked', startedAt: iso(NOW - 30 * DAY) });
+    const summary = toSessionSummary(oldBlocked, { transcript: 'missing' }, NOW);
+    expect(summary.stale).toBe(true);
+    expect(summary.finished).toBe(false);
   });
 });
 
@@ -116,6 +129,7 @@ describe('toSessionSummary', () => {
       status: 'busy',
       startedAt: iso(NOW - DAY),
       stale: false,
+      finished: false,
       lastActivityAt: iso(NOW - 1000),
       lastAssistantText: 'working on it',
       lastUserPrompt: 'go',
@@ -140,6 +154,7 @@ describe('toSessionSummary', () => {
       waitingFor: 'input needed',
       startedAt: iso(NOW - 30 * DAY),
       stale: true,
+      finished: false,
       transcript: 'missing',
     });
   });
@@ -299,7 +314,7 @@ describe('compareSessions', () => {
 
   it('puts finished sessions last, after stale ones, however recent or waiting-like they look', () => {
     const asked: AskedYou = { reason: 'question', excerpt: 'Open a PR?' };
-    const done = { kind: 'background' as const, alive: false, state: 'done' as const };
+    const done = { kind: 'background' as const, alive: false, state: 'done' as const, finished: true };
     const sessions = [
       session('finished-new', { ...done, lastActivityAt: iso(NOW) }),
       session('stale', { kind: 'background', alive: false, state: 'blocked', stale: true, lastActivityAt: iso(NOW - 30 * DAY) }),
@@ -320,7 +335,7 @@ describe('compareSessions', () => {
 
   it('keeps a done session with a live process among the unfinished ones', () => {
     const sessions = [
-      session('finished', { kind: 'background', alive: false, state: 'done', lastActivityAt: iso(NOW) }),
+      session('finished', { kind: 'background', alive: false, state: 'done', finished: true, lastActivityAt: iso(NOW) }),
       session('done-idle', { kind: 'background', pid: 55, status: 'idle', state: 'done', lastActivityAt: iso(NOW - 60_000) }),
     ];
     expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual(['done-idle', 'finished']);
@@ -363,7 +378,7 @@ describe('buildGroups', () => {
   });
 
   it('orders groups by their unfinished sessions, so a recent finished session does not lift its group', () => {
-    const finished = { kind: 'background' as const, alive: false, state: 'done' as const };
+    const finished = { kind: 'background' as const, alive: false, state: 'done' as const, finished: true };
     const groups = buildGroups(
       [
         placed('quiet-live', `${root}/quiet`, { lastActivityAt: iso(NOW - 60_000) }),
@@ -377,7 +392,7 @@ describe('buildGroups', () => {
   });
 
   it('puts groups with only finished sessions after every other group, newest first', () => {
-    const finished = { kind: 'background' as const, alive: false, state: 'stopped' as const };
+    const finished = { kind: 'background' as const, alive: false, state: 'stopped' as const, finished: true };
     const groups = buildGroups(
       [
         placed('done-new', `${root}/done-new`, { ...finished, lastActivityAt: iso(NOW) }),
@@ -391,7 +406,7 @@ describe('buildGroups', () => {
   });
 
   it('keeps compareGroups consistent with the order buildGroups returns', () => {
-    const finished = { kind: 'background' as const, alive: false, state: 'failed' as const };
+    const finished = { kind: 'background' as const, alive: false, state: 'failed' as const, finished: true };
     const groups = buildGroups(
       [
         placed('a', `${root}/a`, { ...finished, lastActivityAt: iso(NOW) }),

@@ -47,6 +47,7 @@ function summary(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sess
     state: 'working',
     startedAt: '2026-10-16T00:00:00.000Z',
     stale: false,
+    finished: false,
     transcript: 'missing',
     ...overrides,
   };
@@ -60,7 +61,7 @@ const SESSIONS: SessionSummary[] = [
   summary({ sessionId: BG_ID }),
   summary({ sessionId: IDLE_ID, shortId: 'bgidle', pid: undefined, alive: false, status: undefined, state: 'blocked' }),
   // Stopped: `claude stop` leaves a session 'done' with no process.
-  summary({ sessionId: DONE_ID, shortId: 'bgdone', state: 'done', pid: undefined, alive: false, status: undefined }),
+  summary({ sessionId: DONE_ID, shortId: 'bgdone', state: 'done', pid: undefined, alive: false, status: undefined, finished: true }),
   summary({ sessionId: INTERACTIVE_ID, kind: 'interactive', shortId: undefined, state: undefined }),
   summary({ sessionId: NO_SHORT_ID, shortId: undefined }),
   summary({ sessionId: FLAG_SHORT_ID, shortId: '--help' }),
@@ -454,7 +455,7 @@ describe('the attach socket', () => {
       for (const state of ['working', 'blocked', 'done', 'stopped', 'failed'] as const) expect(needsRestart({ ...base, state })).toBe(false);
       const { pid: _pid, ...noPid } = base;
       expect(needsRestart({ ...noPid, alive: false })).toBe(true);
-      expect(needsRestart({ ...noPid, alive: false, state: 'done' })).toBe(true);
+      expect(needsRestart({ ...noPid, alive: false, state: 'done', finished: true })).toBe(true);
     });
 
     it('asks first for a stopped session (done, with no process)', async () => {
