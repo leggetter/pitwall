@@ -1,4 +1,6 @@
-// The session source: `claude agents --json`, a documented interface (D1).
+// The session source: `claude agents --json --all`, a documented interface (D1).
+// `--all` adds background sessions that have finished or been stopped, which
+// plain `--json` leaves out once their process has gone (M2, W12 finding).
 
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +8,7 @@ import type { BackgroundState, ProcessStatus, SessionKind, WaitingFor } from '..
 import { oneLine, RunError, runFile, type RunFile } from './exec.js';
 import { isNonEmptyString, isRecord } from './guards.js';
 
-/** One validated row of `claude agents --json`. */
+/** One validated row of `claude agents --json --all`. */
 export interface AgentRow {
   sessionId: string;
   /** `id` in the JSON. Background sessions only. */
@@ -34,9 +36,10 @@ export interface AgentsSourceOptions {
    *
    * `claude agents --json` works from a directory the user hasn't trusted
    * (checked on Claude Code 2.1.301 from a fresh `mktemp -d`: exit 0, the full
-   * list, nothing printed on stderr, nothing written to the directory). The
-   * temp directory is used so the result never depends on where pitwall was
-   * started, or on project settings in that directory.
+   * list, nothing printed on stderr, nothing written to the directory; checked
+   * again with `--all` on 2.1.302). The temp directory is used so the result
+   * never depends on where pitwall was started, or on project settings in that
+   * directory.
    */
   cwd?: string;
   /** Default 10000. */
@@ -48,7 +51,8 @@ export interface AgentsSource {
   list(): Promise<AgentsResult>;
 }
 
-const COMMAND = 'claude agents --json';
+const ARGS = ['agents', '--json', '--all'] as const;
+const COMMAND = `claude ${ARGS.join(' ')}`;
 
 export function createAgentsSource(options: AgentsSourceOptions = {}): AgentsSource {
   const given = options.claudeBin ?? 'claude';
@@ -64,7 +68,7 @@ export function createAgentsSource(options: AgentsSourceOptions = {}): AgentsSou
     async list() {
       let stdout: string;
       try {
-        stdout = await run(claudeBin, ['agents', '--json'], { cwd, timeoutMs });
+        stdout = await run(claudeBin, ARGS, { cwd, timeoutMs });
       } catch (err) {
         return { ok: false, error: describeRunFailure(err, claudeBin) };
       }
@@ -97,9 +101,10 @@ const STATES: readonly BackgroundState[] = ['working', 'blocked', 'done', 'faile
 /**
  * Validates rows, skipping any that are malformed and ignoring unknown fields.
  * A row needs a `sessionId`, an absolute `cwd`, a known `kind` and a readable
- * `startedAt` (epoch milliseconds, as Claude Code 2.1.301 prints it, or an ISO
- * string). Unknown `status` and `state` values are dropped, because the
- * contract's unions are closed; any `waitingFor` string passes through.
+ * `startedAt` (epoch milliseconds, as Claude Code 2.1.301 and 2.1.302 print it
+ * for every row, finished ones from `--all` included, or an ISO string).
+ * Unknown `status` and `state` values are dropped, because the contract's
+ * unions are closed; any `waitingFor` string passes through.
  * A repeated `sessionId` keeps the first row, or the first one with a process.
  */
 export function parseAgentRows(input: readonly unknown[]): AgentRow[] {

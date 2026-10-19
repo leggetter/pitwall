@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AskedYou, SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
-import { buildGroups, compareSessions, isStale, toSessionSummary, type PlacedSession } from './summaries.js';
+import { buildGroups, compareGroups, compareSessions, isFinished, isStale, toSessionSummary, type PlacedSession } from './summaries.js';
 import { titleText, type TranscriptInfo } from './transcripts.js';
 
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
@@ -60,6 +60,42 @@ describe('isStale', () => {
     expect(isStale({ ...oldBlocked, state: 'working' }, old, NOW)).toBe(false);
     expect(isStale({ ...oldBlocked, state: 'done' }, old, NOW)).toBe(false);
     expect(isStale({ ...oldBlocked, state: undefined }, old, NOW)).toBe(false);
+  });
+});
+
+describe('isFinished', () => {
+  const finished = (overrides: Partial<SessionSummary> = {}) =>
+    session('f', { kind: 'background', shortId: 'bg1', alive: false, pid: undefined, status: undefined, state: 'done', ...overrides });
+
+  it('is true for a background session with no process that is done, stopped or failed', () => {
+    for (const state of ['done', 'stopped', 'failed'] as const) {
+      expect(isFinished(finished({ state })), state).toBe(true);
+    }
+  });
+
+  it('is false for a done session whose process is still alive: that one is idle', () => {
+    expect(isFinished(finished({ alive: true, pid: 4242, status: 'idle' }))).toBe(false);
+  });
+
+  it('treats a missing pid as no live process', () => {
+    expect(isFinished(finished({ alive: true, pid: undefined }))).toBe(true);
+  });
+
+  it('is false for working and blocked sessions, and for one with no state', () => {
+    expect(isFinished(finished({ state: 'working' }))).toBe(false);
+    expect(isFinished(finished({ state: 'blocked' }))).toBe(false);
+    expect(isFinished(finished({ state: undefined }))).toBe(false);
+  });
+
+  it('is false for interactive sessions', () => {
+    expect(isFinished(finished({ kind: 'interactive', shortId: undefined }))).toBe(false);
+  });
+
+  it('agrees with toSessionSummary on what a row from --all becomes', () => {
+    const fromAll = toSessionSummary(row({ kind: 'background', shortId: 'bg2', pid: undefined, status: undefined, state: 'stopped' }), { transcript: 'ok' }, NOW);
+    expect(isFinished(fromAll)).toBe(true);
+    const idleDone = toSessionSummary(row({ kind: 'background', shortId: 'bg3', pid: 77, status: 'idle', state: 'done' }), { transcript: 'ok' }, NOW);
+    expect(isFinished(idleDone)).toBe(false);
   });
 });
 
@@ -261,6 +297,35 @@ describe('compareSessions', () => {
     expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual(['idle', 'stale-blocked']);
   });
 
+  it('puts finished sessions last, after stale ones, however recent or waiting-like they look', () => {
+    const asked: AskedYou = { reason: 'question', excerpt: 'Open a PR?' };
+    const done = { kind: 'background' as const, alive: false, state: 'done' as const };
+    const sessions = [
+      session('finished-new', { ...done, lastActivityAt: iso(NOW) }),
+      session('stale', { kind: 'background', alive: false, state: 'blocked', stale: true, lastActivityAt: iso(NOW - 30 * DAY) }),
+      session('finished-asked', { ...done, askedYou: asked, lastActivityAt: iso(NOW - 5000) }),
+      session('idle-old', { status: 'idle', lastActivityAt: iso(NOW - 9 * DAY) }),
+      session('failed', { ...done, state: 'failed', lastActivityAt: iso(NOW - 1000) }),
+      session('stopped-old', { ...done, state: 'stopped', lastActivityAt: iso(NOW - 2 * DAY) }),
+    ];
+    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual([
+      'idle-old',
+      'stale',
+      'finished-new',
+      'failed',
+      'finished-asked',
+      'stopped-old',
+    ]);
+  });
+
+  it('keeps a done session with a live process among the unfinished ones', () => {
+    const sessions = [
+      session('finished', { kind: 'background', alive: false, state: 'done', lastActivityAt: iso(NOW) }),
+      session('done-idle', { kind: 'background', pid: 55, status: 'idle', state: 'done', lastActivityAt: iso(NOW - 60_000) }),
+    ];
+    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual(['done-idle', 'finished']);
+  });
+
   it('falls back to startedAt when there is no lastActivityAt', () => {
     const sessions = [
       session('older-start', { startedAt: iso(NOW - 2 * DAY) }),
@@ -295,6 +360,51 @@ describe('buildGroups', () => {
       { key: `${root}/main-repo`, label: '~/git/main-repo', kind: 'git', root: `${root}/worktrees`, ids: ['w1'] },
       { key: `${root}/alpha`, label: 'alpha', kind: 'git', root, ids: ['a2', 'a1'] },
     ]);
+  });
+
+  it('orders groups by their unfinished sessions, so a recent finished session does not lift its group', () => {
+    const finished = { kind: 'background' as const, alive: false, state: 'done' as const };
+    const groups = buildGroups(
+      [
+        placed('quiet-live', `${root}/quiet`, { lastActivityAt: iso(NOW - 60_000) }),
+        placed('quiet-finished', `${root}/quiet`, { ...finished, lastActivityAt: iso(NOW) }),
+        placed('busy-live', `${root}/busy`, { lastActivityAt: iso(NOW - 10_000) }),
+      ],
+      home,
+    );
+    expect(groups.map((g) => g.key)).toEqual([`${root}/busy`, `${root}/quiet`]);
+    expect(groups[1]?.sessions.map((s) => s.sessionId)).toEqual(['quiet-live', 'quiet-finished']);
+  });
+
+  it('puts groups with only finished sessions after every other group, newest first', () => {
+    const finished = { kind: 'background' as const, alive: false, state: 'stopped' as const };
+    const groups = buildGroups(
+      [
+        placed('done-new', `${root}/done-new`, { ...finished, lastActivityAt: iso(NOW) }),
+        placed('live-old', `${root}/live-old`, { lastActivityAt: iso(NOW - 20 * DAY) }),
+        placed('done-old', `${root}/done-old`, { ...finished, lastActivityAt: iso(NOW - 3 * DAY) }),
+        placed('stale-only', `${root}/stale-only`, { kind: 'background', alive: false, state: 'blocked', stale: true, lastActivityAt: iso(NOW - 40 * DAY) }),
+      ],
+      home,
+    );
+    expect(groups.map((g) => g.key)).toEqual([`${root}/live-old`, `${root}/stale-only`, `${root}/done-new`, `${root}/done-old`]);
+  });
+
+  it('keeps compareGroups consistent with the order buildGroups returns', () => {
+    const finished = { kind: 'background' as const, alive: false, state: 'failed' as const };
+    const groups = buildGroups(
+      [
+        placed('a', `${root}/a`, { ...finished, lastActivityAt: iso(NOW) }),
+        placed('b', `${root}/b`, { lastActivityAt: iso(NOW - DAY) }),
+        placed('c', `${root}/c`, { ...finished, lastActivityAt: iso(NOW - 1000) }),
+        placed('c2', `${root}/c`, { lastActivityAt: iso(NOW - 2 * DAY) }),
+      ],
+      home,
+    );
+    for (let i = 0; i + 1 < groups.length; i++) {
+      expect(compareGroups(groups[i]!, groups[i + 1]!)).toBeLessThan(0);
+    }
+    expect(groups.map((g) => g.key)).toEqual([`${root}/b`, `${root}/c`, `${root}/a`]);
   });
 
   it('keeps one repo under two roots as two groups', () => {
