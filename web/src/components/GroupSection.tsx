@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText, shortenHome } from '../format.js';
-import { countAttention, needYou } from '../sessions.js';
+import { countAttention, needYou, splitFinished } from '../sessions.js';
 import { ChevronIcon, FolderIcon, GitIcon } from './icons.js';
 import { SessionRow } from './SessionRow.js';
 
@@ -11,6 +11,12 @@ export interface GroupSectionProps {
   sessions: SessionSummary[];
   collapsed: boolean;
   onToggle: () => void;
+  /**
+   * Whether the "Finished" sub-list, of background sessions that are done,
+   * stopped or failed, is closed. Default true.
+   */
+  finishedCollapsed?: boolean;
+  onToggleFinished?: (() => void) | undefined;
   /** Show which root the group sits under, when pitwall watches more than one. */
   showRoot: boolean;
   now: number;
@@ -20,10 +26,24 @@ export interface GroupSectionProps {
   openSessionId?: string | undefined;
 }
 
-export function GroupSection({ group, sessions, collapsed, onToggle, showRoot, now, onOpen, openSessionId }: GroupSectionProps) {
+export function GroupSection({
+  group,
+  sessions,
+  collapsed,
+  onToggle,
+  finishedCollapsed = true,
+  onToggleFinished,
+  showRoot,
+  now,
+  onOpen,
+  openSessionId,
+}: GroupSectionProps) {
   const headingId = useId();
   const listId = useId();
+  const finishedId = useId();
+  const { current, finished } = splitFinished(sessions);
   const total = group.sessions.length;
+  // Finished sessions never count here: needsAttention leaves them out.
   const attention = countAttention(group.sessions);
   const count = sessions.length === total ? `${total} ${total === 1 ? 'session' : 'sessions'}` : `${sessions.length} of ${total} sessions`;
 
@@ -50,7 +70,7 @@ export function GroupSection({ group, sessions, collapsed, onToggle, showRoot, n
         </button>
       </h2>
       <ul className="sessions" id={listId} hidden={collapsed}>
-        {sessions.map((session) => (
+        {current.map((session) => (
           <SessionRow
             key={session.sessionId}
             session={session}
@@ -60,6 +80,32 @@ export function GroupSection({ group, sessions, collapsed, onToggle, showRoot, n
             isOpen={session.sessionId === openSessionId}
           />
         ))}
+        {finished.length > 0 && (
+          <li className="finished-list">
+            <button
+              type="button"
+              className="finished-toggle"
+              aria-expanded={!finishedCollapsed}
+              aria-controls={finishedId}
+              onClick={onToggleFinished}
+            >
+              <ChevronIcon />
+              Finished ({finished.length})
+            </button>
+            <ul className="sessions finished-sessions" id={finishedId} hidden={finishedCollapsed}>
+              {finished.map((session) => (
+                <SessionRow
+                  key={session.sessionId}
+                  session={session}
+                  groupKey={group.key}
+                  now={now}
+                  onOpen={onOpen}
+                  isOpen={session.sessionId === openSessionId}
+                />
+              ))}
+            </ul>
+          </li>
+        )}
       </ul>
     </section>
   );
