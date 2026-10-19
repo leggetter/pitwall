@@ -20,7 +20,7 @@ node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 - **Opening it:** the CLI opens your browser through a launch file in `~/.pitwall/` (D7), which sends it to `http://127.0.0.1:<port>/#token=...`. The token is per run and never appears in a process's arguments. The page moves it out of the address bar, and never sends it to the server: it proves it with an HMAC over the WebSocket. `PITWALL_HOME` overrides `~/.pitwall`.
 - **Port:** the default is 4517, falling back to a free port if it's busy. An explicit `--port` fails instead.
 - **Interval:** `--interval` sets the poll, in seconds (default 5).
-- **Read-only:** M1 never messages, attaches to or stops a session.
+- **Acting on sessions (M2, on `m2/integration` until it merges):** open a session to read its conversation; attach to a background session in a terminal in the page; message an interactive session through the relay (D8); start, stop and remove background sessions. Finished background sessions stay listed, muted.
 
 ## Decisions
 
@@ -69,6 +69,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** only a Claude session can call `SendMessage`, and the socket's message format isn't documented (D2). Pitwall runs one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku and allowed only `ListAgents` and `SendMessage`. It passes your text on verbatim. It starts on first use, takes each message on stdin, so the text never appears in `ps`, and stops with pitwall.
 - **Not a background session:** that was the first decision, on 2026-10-16. Spike 003 found that a running background session can't take a new prompt without a terminal. Driving it through a PTY works, but it scrapes a screen meant for people, puts your text in `ps`, and needs a one-time trust step.
+- **Duplicate names:** `ListAgents` doesn't show directories, so when two running sessions share a name, nothing is sent and pitwall asks you to `/rename` one.
 - **Trade-off:** a reply that arrives after pitwall exits isn't shown in pitwall. The target's own conversation still has it.
 - **Later:** the M4 supervisor replaces it.
 
