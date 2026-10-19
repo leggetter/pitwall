@@ -37,6 +37,7 @@ import type { Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
 import { removePath, SPAWN_PATH, stopPath, type ActionResult, type SpawnResult } from '../shared/protocol.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
+import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
 
 export interface ActionOptions {
@@ -48,6 +49,8 @@ export interface ActionOptions {
   env?: NodeJS.ProcessEnv;
   /** The server's token. Any variable whose value contains it is left out of a child's environment. */
   token?: string;
+  /** Records each short id a spawn reports, so attach knows the session is starting (attach.ts). */
+  spawned?: Pick<RecentSpawns, 'add'>;
   /** Milliseconds since the epoch, for the rate limit. Default Date.now. */
   now?: () => number;
   /** Default 30 seconds, for each of `claude --bg`, `claude stop` and `claude rm`. */
@@ -360,6 +363,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
           502,
         );
       }
+      options.spawned?.add(started.shortId);
       return spawnResult(c, { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId }, 201);
     },
   );

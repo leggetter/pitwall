@@ -264,7 +264,7 @@ describe('SessionView: attach', () => {
     it('asks before restarting it, and sends restart only after the user confirms', async () => {
       const { view, socket } = await needingRestart();
       const confirm = within(view).getByRole('alertdialog');
-      expect(confirm.textContent).toContain("This session isn't running. Attaching restarts it.");
+      expect(confirm.textContent).toContain('This session has finished, or its process has exited. Attaching restarts it.');
       expect(sent(socket).map((message) => message.type)).toEqual(['auth', 'open']);
       expect(sent(socket).some((message) => message.restart !== undefined)).toBe(false);
 
@@ -273,6 +273,19 @@ describe('SessionView: attach', () => {
       expect(within(view).queryByRole('alertdialog')).toBeNull();
       act(() => socket.receive({ type: 'attached' }));
       expect(within(view).getByRole('status').textContent).toBe('Attached');
+    });
+
+    it("says a session that's still starting is starting, never asks to restart it, and can try again", async () => {
+      const { fake } = renderDashboard(snap([background({ pid: undefined, alive: false, status: undefined, state: 'working' })]));
+      const view = await openView('demo-worker');
+      const { socket } = await attach(view, fake);
+      await ready(socket);
+      act(() => socket.receive({ type: 'error', error: 'This session is still starting. Try again in a moment.' }));
+      expect(within(view).queryByRole('alertdialog')).toBeNull();
+      expect(within(view).getByRole('alert').textContent).toBe("Couldn't attach: This session is still starting. Try again in a moment.");
+      expect(sent(socket).some((message) => message.restart !== undefined)).toBe(false);
+      fireEvent.click(within(view).getByRole('button', { name: 'Attach again' }));
+      await waitFor(() => expect(fake.sockets).toHaveLength(2));
     });
 
     it('cancelling closes the socket without restarting, and goes back to the conversation', async () => {

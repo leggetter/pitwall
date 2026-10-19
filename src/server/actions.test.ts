@@ -427,6 +427,14 @@ describe('spawn: running claude --bg', () => {
     expect(res.headers['cache-control']).toBe('no-store');
   });
 
+  it('records the short id it started, for attach, and nothing for a spawn that failed', async () => {
+    const spawned = { add: vi.fn() };
+    const started = await start(fakeRunner(backgrounded('b3899da0', 'pitwall-test-spawn'), exited(1, '', 'boom\n')), { spawned });
+    expect((await spawnAsPage(started, valid())).status).toBe(201);
+    expect((await spawnAsPage(started, valid())).status).toBe(502);
+    expect(spawned.add.mock.calls).toEqual([['b3899da0']]);
+  });
+
   // The scrubber itself, name by name, is tested in command.test.ts.
   it("scrubs the environment through the shared scrubber: no PITWALL_*, npm's, the session's identity or the token reach claude", async () => {
     const env = {

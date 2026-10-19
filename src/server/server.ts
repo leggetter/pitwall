@@ -47,6 +47,7 @@ import {
   serverOrigin,
 } from './security.js';
 import { spawnPty } from './pty.js';
+import { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
@@ -96,8 +97,11 @@ export interface ServerInternals {
   routes?: (app: Hono) => void;
   /** Spawn, stop and remove (W12, actions.ts): tests pass a fake command runner and limits. */
   actions?: ActionOptions;
-  /** For the attach socket. Tests pass a fake PTY spawner, so they never run `claude`. */
-  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env'>>;
+  /**
+   * For the attach socket. Tests pass a fake PTY spawner and agents source,
+   * so they never run `claude`.
+   */
+  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'processAlive' | 'now'>>;
 }
 
 export async function startServerWithInternals(
@@ -122,9 +126,11 @@ export async function startServerWithInternals(
 
   // Messages to interactive sessions (W11, D8). Started on the first one, stopped on close().
   const relay = options.relay ?? createRelayManager();
+  // What spawn started lately, so attach can tell a session that's starting from one that crashed.
+  const spawned = new RecentSpawns();
   // The input routes: spawn, stop and remove (W12), the relay (W11), then any a test adds.
   const routes = (app: Hono) => {
-    registerActions(app, indexer, { token, ...internals.actions });
+    registerActions(app, indexer, { token, spawned, ...internals.actions });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };
@@ -158,6 +164,7 @@ export async function startServerWithInternals(
     authTimeoutMs,
     spawnPty,
     onAuthenticated,
+    spawned,
     ...internals.attach,
   });
 
