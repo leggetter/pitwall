@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is next. |
+| **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is in progress on `m2/integration`: the security gate, session view, attach, and spawn, stop and remove are merged, and the relay is being built. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - W10 (attach), W11 (relay) and W12 (spawn, stop, remove), in parallel<br>- Then integration (W13) and review (W14) |
+| **Next steps** | - The relay (W11), as a headless session pitwall runs (D8)<br>- Integration and the live check (W13), in parallel<br>- Then a security-first review (W14) |
 
 ## Who is this for
 
@@ -149,7 +149,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
 | Session kind | In the web UI | How |
 | --- | --- | --- |
 | Background, including sessions pitwall starts | Full interaction: type prompts, answer permission prompts and dialogs | xterm.js over a PTY running `claude attach <id>` (D3, spike S3) |
-| Interactive, in Warp or Cursor | **Send it a message.** The message starts a turn, and the session does the work within its own permissions and rules. It can't take a permission approval from me, and it sees the message as coming from another session (spike 002) | A relay: a background Claude session pitwall starts, limited to `ListAgents` and `SendMessage` (D2, D4). The M4 supervisor later takes over this role |
+| Interactive, in Warp or Cursor | **Send it a message.** The message starts a turn, and the session does the work within its own permissions and rules. It can't take a permission approval from me, and it sees the message as coming from another session (spike 002) | A relay: a headless Claude session (`claude -p`) that pitwall runs, limited to `ListAgents` and `SendMessage` (D2, D8). The M4 supervisor later takes over this role |
 | Interactive, moved with `/bg` | Full interaction, like any background session. The row explains the route: "Type `/bg` in its terminal to drive it fully from here" | `claude attach`, as above |
 
 **Order of work:**
@@ -165,9 +165,9 @@ Open a session from its row, drive background sessions fully in the browser, sta
    - `node-pty` is the first native dependency, so the build needs its install script approved, and CI builds it.
    - `claude attach` restarts a background session that isn't running (done, stopped or failed). That's an action, so the UI asks first: "This session isn't running. Attaching restarts it."
 4. **Message interactive sessions through a relay.**
-   - **The relay:** on first use, pitwall starts one named background session, `pitwall-relay`, on Haiku. Its tools are limited to `ListAgents` and `SendMessage`, and it's instructed to pass my text on verbatim.
+   - **The relay:** on first use, pitwall starts one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`. Its tools are limited to `ListAgents` and `SendMessage`, and it's instructed to pass my text on verbatim. Pitwall writes each request to its stdin, so the text never appears in process arguments, and restarts it if it exits (D8).
    - **Sending:** a "Message this session" box on interactive rows. The relay reports what `SendMessage` returned (delivered, held for approval, or refused), and pitwall shows it.
-   - **Replies:** the target's work shows in its own transcript, in the session view. A reply it sends back lands in the relay's transcript, and pitwall shows it on the target's row.
+   - **Replies:** the target's work shows in its own transcript, in the session view. A reply it sends back reaches the relay, and pitwall shows it on the target's row. The relay stops with pitwall, so a reply that arrives after that shows only in the target's own conversation.
    - **Cost:** one Haiku turn in the relay, plus one turn on the target's own model and effort, which is the same as typing the prompt there.
    - **Limits:**
      - The message can't approve prompts.
@@ -209,7 +209,7 @@ Read-only, and separate from the session index. Requested by Phil on 2026-10-16,
 
 ### M4 - Supervisor
 
-Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions. It's a background Claude Code session (D4), and it takes over M2's relay.
+Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions. It's a background Claude Code session (D4), and it takes over M2's relay. How pitwall prompts it is decided at the start of M4: a running background session can't take a new prompt without a terminal (spike 003), which is why M2's relay is a headless process instead.
 
 - **First: titles from each session's recent turns** (W7 decision C), replacing Claude Code's first-prompt titles from M1.
   - **Spike first:**
@@ -238,9 +238,9 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | W8 | Security gate: challenge-response WebSocket auth, the token kept out of process arguments (D7), dev readiness, and one guard shared by every input path | `m2/security-gate` | Sub-agent | Merged ([#11](https://github.com/leggetter/pitwall/pull/11)) |
 | W9 | Session view: the conversation read-only, paged from the end, with tool calls collapsed | `m2/session-view` | Sub-agent | Merged ([#10](https://github.com/leggetter/pitwall/pull/10)) |
 | W10 | Attach for background sessions: `node-pty` and xterm.js, asking before attaching restarts a session that isn't running (D9) | `m2/attach` | Sub-agent | Merged ([#13](https://github.com/leggetter/pitwall/pull/13)) |
-| W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Spike done ([003](docs/spikes/003-relay.md) on `m2/relay`); waiting on Phil: design B or D |
+| W11 | Message interactive sessions through the relay (D8) | `m2/relay` | Sub-agent | Building design D, decided by Phil on 2026-10-19 after spike [003](docs/spikes/003-relay.md) |
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
-| W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | After W9-W12 |
+| W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: listing finished sessions (`m2/completed`, sub-agent); the live check after the relay merges |
 | W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | After W13 |
 | W15 | Try it, and approve the merge | - | Phil | After W14 |
 
@@ -263,11 +263,11 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 - **"Done" isn't "not running"** (W10). A background session can be `done` with its process still alive and idle. Attaching to it doesn't restart anything, so pitwall asks before attaching only when there's no live process.
 - **Inherited inbox credentials** (W10). When pitwall itself runs inside a Claude Code session, the processes it starts would inherit that session's `CLAUDE_CODE_MESSAGING_*` credentials and `CLAUDE_JOB_DIR`. They're now scrubbed, for attach and for spawn, stop and remove.
 - **`node-pty` 1.1.0 on macOS** ships `spawn-helper` without its execute bit, so pitwall sets it on first use. On Linux with npm 11, the install script needs `npm install-scripts approve node-pty`. CI uses npm 10, which runs it.
-- **The relay can't be a prompted `--bg` session without a terminal** (W11, spike 003). A running background session can't be given a new prompt over plain pipes: `--resume <id> --bg` starts a copy per message. The options are B (prompt a background relay through a PTY, which needs a one-time trust step) or D (pitwall runs the relay itself as a `claude -p` stream-json process). Waiting on Phil.
+- **The relay can't be a prompted `--bg` session without a terminal** (W11, spike 003). A running background session can't be given a new prompt over plain pipes: `--resume <id> --bg` starts a copy per message. The options are B (prompt a background relay through a PTY, which needs a one-time trust step) or D (pitwall runs the relay itself as a `claude -p` stream-json process). **Decided by Phil on 2026-10-19: D** (see D8).
 
 ### Decisions for M2
 
-All three decided by Phil on 2026-10-16. The reasoning is in `README.md`. Phil's Mac has only his account, so the gate is defense in depth rather than an urgent fix.
+All three decided by Phil on 2026-10-16. D8 was revised on 2026-10-19, after spike 003. The reasoning is in `README.md`. Phil's Mac has only his account, so the gate is defense in depth rather than an urgent fix.
 
 **Contract changes (W0 for M2), already on `m2/integration`:**
 - **The handshake:** a `challenge` with `PROTOCOL_VERSION` 2, an `auth` proof (an HMAC of the nonce) and an `authenticated` reply carrying a per-process `apiKey`.
@@ -279,7 +279,12 @@ All three decided by Phil on 2026-10-16. The reasoning is in `README.md`. Phil's
   - (a) The CLI writes a page that sends the browser to the token URL, in a file only my user can read (0600, in a 0700 `~/.pitwall/` directory, removed on exit), and opens that file. This is the approach Jupyter takes.
   - (b) The CLI opens a URL with a single-use launch code, which the server swaps for the token once. The code is still visible in `ps` for a moment, so another user who wins the race gets the token and the real browser fails.
   - **Decided: (a).** The token rule now allows `~/.pitwall/` at 0700 (see Security).
-- **D8 - The relay:** one background session named `pitwall-relay`, on Haiku, allowed only `ListAgents` and `SendMessage`, started on first use. Claude Code stops idle background processes after about an hour, so pitwall restarts it when needed. **Decided: as described.** The M4 supervisor replaces it.
+- **D8 - The relay:** pitwall runs one headless session as its own child process: `claude -p --input-format stream-json --output-format stream-json`, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`, with `--tools "ListAgents,SendMessage" --strict-mcp-config --safe-mode`. It starts on first use, takes one request at a time on stdin, is restarted if it exits, and stops with pitwall.
+  - **Not a background session,** as first decided on 2026-10-16. A running background session can't take a new prompt without a terminal. Prompting it through a PTY (option B in spike 003) works, but it scrapes a screen meant for people, puts the text in `ps`, and needs a one-time trust step.
+  - **`crossSessionInbound: accept`, in its `--settings`:** a `-p` session can't show an approval dialog, so a message held at the relay, such as a reply from a target that bypasses permissions, expires after 5 minutes. The [docs](https://code.claude.com/docs/en/cross-session-messaging#non-interactive-sessions) advise `accept` for `-p` workers. It only changes messages from sessions that bypass permissions: the default already delivers the rest.
+  - **Trust:** `-p` skips the trust dialog, which guards against a directory's own config running before you agree. The relay's directory is pitwall's own, empty and 0700.
+  - **Trade-off:** a reply that arrives after pitwall exits isn't shown in pitwall. The target's conversation still has it.
+  - **Decided: D, by Phil on 2026-10-19.** The M4 supervisor replaces it.
 - **D9 - Attach limits:** one PTY per open session view, at most 4 at once, and closing the view or the tab detaches. Attaching to a background session that isn't running asks first, because `claude attach` restarts it. **Decided: as described.**
 
 ## M1 work breakdown

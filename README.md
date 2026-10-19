@@ -35,7 +35,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D2 - Interactive sessions: relay through the supervisor, or `/bg` for full control
 
 - **Why:** an interactive session in Warp or Cursor belongs to that terminal. The only documented way in from outside is cross-session messaging. The receiving session sees such a message as coming from another session, "not typed by your user", so it can't approve a permission prompt or change configuration.
-- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a background session limited to `ListAgents` and `SendMessage`, which the M4 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
+- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a headless session pitwall runs, limited to `ListAgents` and `SendMessage` (D8), which the M4 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
 - **Rejected:** posting to a session's inbox socket directly. Only the socket's auth line is documented, not the message format.
 
 ### D3 - Background sessions are driven through a PTY running `claude attach <id>`, shown with xterm.js
@@ -64,9 +64,11 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Rejected:** a single-use launch code in the URL. It's still visible in `ps` briefly, and another user who used it first would get the token while your browser failed.
 - **Context:** W6 review finding 1. It's part of the M2 security gate, together with challenge-response WebSocket auth and dev readiness, because from M2 on the token authorizes typing into agents.
 
-### D8 - Messages to interactive sessions go through one relay session
+### D8 - Messages to interactive sessions go through one headless relay session
 
-- **Why:** only a Claude session can call `SendMessage`, and the socket's message format isn't documented (D2). One background session named `pitwall-relay`, on Haiku and allowed only `ListAgents` and `SendMessage`, passes your text on. It starts on first use and is restarted when Claude Code has stopped it after about an hour idle.
+- **Why:** only a Claude session can call `SendMessage`, and the socket's message format isn't documented (D2). Pitwall runs one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku and allowed only `ListAgents` and `SendMessage`. It passes your text on verbatim. It starts on first use, takes each message on stdin, so the text never appears in `ps`, and stops with pitwall.
+- **Not a background session:** that was the first decision, on 2026-10-16. Spike 003 found that a running background session can't take a new prompt without a terminal. Driving it through a PTY works, but it scrapes a screen meant for people, puts your text in `ps`, and needs a one-time trust step.
+- **Trade-off:** a reply that arrives after pitwall exits isn't shown in pitwall. The target's own conversation still has it.
 - **Later:** the M4 supervisor replaces it.
 
 ### D9 - At most four attached sessions, and a confirmation before restarting one
