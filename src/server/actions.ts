@@ -23,6 +23,7 @@
 //     400, 404, 503  from resolveSession(): not a safe id, not listed, no snapshot yet
 //     409  not a background session with a valid short id, or Claude Code refused, with
 //          its message: `claude rm` keeps a worktree that has unpushed commits and says so
+//     429  4 stop and remove commands are already running. Retry-After is set
 //     502, 504  as for spawn
 //
 // Every command is built from validated values only: the realpath of `cwd`,
@@ -61,11 +62,14 @@ export interface ActionOptions {
   maxConcurrentSpawns?: number;
   /** Spawns allowed per window. Default 5 a minute. */
   spawnRate?: { max: number; windowMs: number };
+  /** Stop and remove commands allowed to run at once, together. Default 4. */
+  maxConcurrentCommands?: number;
 }
 
 export const DEFAULT_ACTION_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_CONCURRENT_SPAWNS = 1;
 export const DEFAULT_SPAWN_RATE = { max: 5, windowMs: 60_000 } as const;
+export const DEFAULT_MAX_CONCURRENT_COMMANDS = 4;
 
 /** The largest spawn body accepted. A 16,384-character prompt is at most about 96 KiB of JSON. */
 export const MAX_SPAWN_BODY_BYTES = 128 * 1024;
@@ -376,9 +380,13 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
     },
   );
 
+  const maxCommands = options.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS;
+  // Stop and remove commands running now.
+  let commands = 0;
+
   const act = async (c: Context, verb: 'stop' | 'rm') => {
     c.header('Cache-Control', 'no-store');
-    const answer = (result: ActionResult, status: 200 | 400 | 404 | 409 | 502 | 503 | 504) => c.json(result, status);
+    const answer = (result: ActionResult, status: 200 | 400 | 404 | 409 | 429 | 502 | 503 | 504) => c.json(result, status);
     const lookup = resolveSession(indexer, c.req.param('sessionId'));
     if (!lookup.ok) return answer({ ok: false, error: LOOKUP_ERRORS[lookup.status] }, lookup.status);
     const { session } = lookup;
@@ -390,7 +398,17 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
     if (shortId === undefined || !SHORT_ID_PATTERN.test(shortId)) {
       return answer({ ok: false, error: "This session has no short id that's safe to act on." }, 409);
     }
-    const result = await run(claudeBin, [verb, shortId], { cwd: os.tmpdir(), env: env(), timeoutMs });
+    if (commands >= maxCommands) {
+      c.header('Retry-After', '1');
+      return answer({ ok: false, error: `pitwall is already running ${maxCommands} stop or remove commands. Try again in a moment.` }, 429);
+    }
+    commands += 1;
+    let result: CommandResult;
+    try {
+      result = await run(claudeBin, [verb, shortId], { cwd: os.tmpdir(), env: env(), timeoutMs });
+    } finally {
+      commands -= 1;
+    }
     if (result.kind === 'failed') {
       if (result.reason === 'timeout') return answer({ ok: false, error: `claude ${verb} ${result.message}.` }, 504);
       return answer({ ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);

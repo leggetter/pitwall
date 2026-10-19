@@ -42,7 +42,7 @@ import {
   type BackgroundState,
   type SessionSummary,
 } from '../shared/protocol.js';
-import { parseJsonObject, startHandshake } from './handshake.js';
+import { parseJsonObject, startHandshake, WS_CLOSE_TRY_AGAIN, type HandshakeSlots } from './handshake.js';
 import { childEnvironment } from './command.js';
 import type { PtyProcess, PtySpawner } from './pty.js';
 import type { RecentSpawns } from './recentSpawns.js';
@@ -87,7 +87,7 @@ export const STARTING_GRACE_MS = 20_000;
 export const REREAD_TIMEOUT_MS = 5_000;
 
 /** Close code for a session that's still starting: the client may try again. */
-export const WS_CLOSE_TRY_AGAIN = 1013;
+export { WS_CLOSE_TRY_AGAIN };
 
 /** The answer to `open` for a session that's starting. */
 export const STILL_STARTING = 'This session is still starting. Try again in a moment.';
@@ -105,6 +105,8 @@ export interface AttachOptions {
   env?: NodeJS.ProcessEnv;
   /** Called after a valid proof, whether or not the socket then gets a place. */
   onAuthenticated?: () => void;
+  /** The server's pending-handshake count, shared with WS_PATH. */
+  slots?: HandshakeSlots;
   /** Re-read on `open` when the snapshot shows no live process. Default createAgentsSource(), the index's own source. */
   agents?: Pick<AgentsSource, 'list'>;
   /** The short ids this pitwall spawned recently (actions.ts). */
@@ -323,6 +325,7 @@ export function createAttachServer(options: AttachOptions): AttachServer {
       token,
       origin: options.origin(),
       timeoutMs: authTimeoutMs,
+      ...(options.slots ? { slots: options.slots } : {}),
       onAuthenticated: () => {
         options.onAuthenticated?.();
         if (closing) return end(1001);

@@ -28,11 +28,51 @@ import { proofMatches, randomSecret } from './security.js';
 /** How long a new connection has to answer the challenge. */
 export const DEFAULT_AUTH_TIMEOUT_MS = 5000;
 
+/** At most this many connections, on WS_PATH and ATTACH_PATH together, wait in the handshake at once. */
+export const MAX_PENDING_HANDSHAKES = 32;
+
+/**
+ * WebSocket close code 1013, Try Again Later: a connection over
+ * MAX_PENDING_HANDSHAKES, which gets no challenge, or an attach to a session
+ * that's still starting (attach.ts).
+ */
+export const WS_CLOSE_TRY_AGAIN = 1013;
+
+/**
+ * Counts connections that haven't finished the handshake, server-wide, so a
+ * flood of connections that never answer can't hold a challenge and a timer
+ * each without limit. Each is counted from its upgrade until it authenticates,
+ * fails or closes.
+ */
+export class HandshakeSlots {
+  private pending = 0;
+
+  constructor(readonly max: number = MAX_PENDING_HANDSHAKES) {}
+
+  /** Takes a slot, or undefined when all are taken. The returned function frees it, once. */
+  take(): (() => void) | undefined {
+    if (this.pending >= this.max) return undefined;
+    this.pending += 1;
+    let freed = false;
+    return () => {
+      if (freed) return;
+      freed = true;
+      this.pending -= 1;
+    };
+  }
+
+  get size(): number {
+    return this.pending;
+  }
+}
+
 export interface HandshakeOptions {
   token: string;
   /** The server's one allowed origin, serverOrigin(port). The proof must be bound to it. */
   origin: string;
   timeoutMs: number;
+  /** The server's pending-handshake count. Without one, nothing is counted. */
+  slots?: HandshakeSlots;
   /**
    * Called once, when the proof is valid. The handshake stops listening
    * first, so a 'message' listener added here gets every later frame.
@@ -45,6 +85,17 @@ export interface HandshakeOptions {
  * 4401 for anything else, or for nothing within `timeoutMs`.
  */
 export function startHandshake(ws: WebSocket, options: HandshakeOptions): void {
+  // Oversized frames and protocol errors land here, followed by 'close'.
+  // Without a listener, ws would throw and take the process down.
+  ws.on('error', () => {});
+
+  const free = options.slots ? options.slots.take() : () => {};
+  if (free === undefined) {
+    // Too many connections are already waiting: no challenge for this one.
+    ws.close(WS_CLOSE_TRY_AGAIN);
+    return;
+  }
+
   let state: 'pending' | 'authed' | 'rejected' = 'pending';
   // Fresh for every connection and never stored anywhere else, so a proof for
   // it can't be replayed on another connection.
@@ -53,6 +104,7 @@ export function startHandshake(ws: WebSocket, options: HandshakeOptions): void {
   const reject = () => {
     state = 'rejected';
     clearTimeout(timer);
+    free();
     ws.close(WS_CLOSE_UNAUTHORIZED);
   };
   const timer = setTimeout(reject, options.timeoutMs);
@@ -67,16 +119,16 @@ export function startHandshake(ws: WebSocket, options: HandshakeOptions): void {
     }
     state = 'authed';
     clearTimeout(timer);
+    free();
     ws.off('message', onMessage);
     options.onAuthenticated();
   };
   ws.on('message', onMessage);
 
-  ws.on('close', () => clearTimeout(timer));
-
-  // Oversized frames and protocol errors land here, followed by 'close'.
-  // Without a listener, ws would throw and take the process down.
-  ws.on('error', () => {});
+  ws.on('close', () => {
+    clearTimeout(timer);
+    free();
+  });
 
   // The same message on both sockets: ServerMessage and AttachServerMessage share it.
   const challenge: ServerMessage & AttachServerMessage = { type: 'challenge', version: PROTOCOL_VERSION, nonce };
