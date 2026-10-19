@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage } from '../shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage, type RelayAlert } from '../shared/protocol.js';
 import type { AgentRow, AgentsResult } from './agents.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
@@ -378,6 +378,36 @@ describe('createIndexer', () => {
     expect(sessions.get('messaged')?.relay).toEqual(exchange);
     expect(sessions.get('quiet')).not.toHaveProperty('relay');
     expect(sessions.get('broken')).not.toHaveProperty('relay');
+    indexer.stop();
+  });
+
+  it('adds the relay’s alert to the snapshot, also when the source fails, and nothing when the hook has none or throws', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
+    let alert: RelayAlert | undefined;
+    let broken = false;
+    const indexer = createIndexer(
+      {
+        roots: ['/work'],
+        intervalMs: 1000,
+        relayAlert: () => {
+          if (broken) throw new Error('broken hook');
+          return alert;
+        },
+      },
+      deps,
+    );
+    await flush();
+    expect(indexer.latest()).not.toHaveProperty('relayAlert');
+    alert = { at: '2026-10-16T11:59:00.000Z', detail: 'The relay tried to send a message when pitwall hadn’t asked it to.', count: 1, blocked: true };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.latest()?.relayAlert).toEqual(alert);
+    state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.latest()?.relayAlert).toEqual(alert);
+    broken = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.latest()).not.toHaveProperty('relayAlert');
     indexer.stop();
   });
 
