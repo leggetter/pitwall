@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createAgentsSource, parseAgentRows } from './agents.js';
 import { RunError, type RunFile } from './exec.js';
 
-// Synthetic rows, shaped like Claude Code 2.1.301's `claude agents --json`.
+// Synthetic rows, shaped like Claude Code 2.1.301's and 2.1.302's `claude agents --json --all`.
 const STARTED_MS = Date.parse('2026-10-01T09:00:00.000Z');
 
 const interactive = {
@@ -38,6 +38,18 @@ const backgroundNoProcess = {
   sessionId: '33333333-3333-4333-8333-333333333333',
   name: 'pitwall-test-old',
   state: 'blocked',
+};
+
+// What `--all` adds: a background session that has finished, with no process,
+// no status and an epoch-millisecond startedAt (Claude Code 2.1.302).
+const backgroundFinished = {
+  id: 'cd90ef12',
+  cwd: '/work/repo-b',
+  kind: 'background',
+  startedAt: STARTED_MS,
+  sessionId: '44444444-4444-4444-8444-444444444444',
+  name: 'pitwall-test-done',
+  state: 'done',
 };
 
 describe('parseAgentRows', () => {
@@ -78,6 +90,23 @@ describe('parseAgentRows', () => {
     expect(row).not.toHaveProperty('pid');
     expect(row).not.toHaveProperty('status');
     expect(row?.state).toBe('blocked');
+  });
+
+  it('maps a finished background row from --all, with an epoch-millisecond startedAt', () => {
+    expect(parseAgentRows([backgroundFinished])).toEqual([
+      {
+        sessionId: backgroundFinished.sessionId,
+        shortId: 'cd90ef12',
+        name: 'pitwall-test-done',
+        kind: 'background',
+        cwd: '/work/repo-b',
+        state: 'done',
+        startedAt: '2026-10-01T09:00:00.000Z',
+      },
+    ]);
+    for (const state of ['stopped', 'failed'] as const) {
+      expect(parseAgentRows([{ ...backgroundFinished, state }])[0]?.state).toBe(state);
+    }
   });
 
   it('skips malformed rows and keeps the rest', () => {
@@ -147,7 +176,7 @@ describe('createAgentsSource', () => {
     return createAgentsSource({ claudeBin: 'claude-test', run, cwd: '/tmp/pitwall-test-cwd', timeoutMs: 1234 });
   }
 
-  it('runs `claude agents --json` from the given directory with the timeout', async () => {
+  it('runs `claude agents --json --all` from the given directory with the timeout', async () => {
     const calls: unknown[] = [];
     const source = sourceWith(async (file, args, options) => {
       calls.push({ file, args, options });
@@ -156,7 +185,7 @@ describe('createAgentsSource', () => {
     const result = await source.list();
     expect(result).toEqual({ ok: true, rows: parseAgentRows([interactive]) });
     expect(calls).toEqual([
-      { file: 'claude-test', args: ['agents', '--json'], options: { cwd: '/tmp/pitwall-test-cwd', timeoutMs: 1234 } },
+      { file: 'claude-test', args: ['agents', '--json', '--all'], options: { cwd: '/tmp/pitwall-test-cwd', timeoutMs: 1234 } },
     ]);
   });
 
@@ -189,12 +218,12 @@ describe('createAgentsSource', () => {
   });
 
   const failures: Array<[string, RunFile, string]> = [
-    ['a missing binary', async () => Promise.reject(new RunError('not-found', 'x')), 'claude agents --json failed: claude-test was not found'],
-    ['a timeout', async () => Promise.reject(new RunError('timeout', 'timed out after 10s')), 'claude agents --json timed out after 10s'],
-    ['a non-zero exit', async () => Promise.reject(new RunError('exit', 'exited with code 1', 1)), 'claude agents --json exited with code 1'],
-    ['an unexpected error', async () => Promise.reject(new Error('boom\nsecond line')), 'claude agents --json failed: boom second line'],
-    ['output that is not JSON', async () => 'Starting background service…', "claude agents --json printed output that isn't JSON"],
-    ['JSON that is not an array', async () => '{"sessions":[]}', "claude agents --json didn't print a JSON array"],
+    ['a missing binary', async () => Promise.reject(new RunError('not-found', 'x')), 'claude agents --json --all failed: claude-test was not found'],
+    ['a timeout', async () => Promise.reject(new RunError('timeout', 'timed out after 10s')), 'claude agents --json --all timed out after 10s'],
+    ['a non-zero exit', async () => Promise.reject(new RunError('exit', 'exited with code 1', 1)), 'claude agents --json --all exited with code 1'],
+    ['an unexpected error', async () => Promise.reject(new Error('boom\nsecond line')), 'claude agents --json --all failed: boom second line'],
+    ['output that is not JSON', async () => 'Starting background service…', "claude agents --json --all printed output that isn't JSON"],
+    ['JSON that is not an array', async () => '{"sessions":[]}', "claude agents --json --all didn't print a JSON array"],
   ];
 
   for (const [what, run, error] of failures) {

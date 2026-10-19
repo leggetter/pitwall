@@ -1,6 +1,6 @@
 // Turning validated rows and transcript fields into the contract's sessions and groups.
 
-import type { SessionGroup, SessionSummary } from '../shared/protocol.js';
+import type { BackgroundState, SessionGroup, SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
 import { groupLabel, type GroupKey } from './grouping.js';
 import { titleText, type TranscriptInfo } from './transcripts.js';
@@ -78,6 +78,23 @@ function sameTitle(title: string, name: string): boolean {
   return shown === '' || shown === titleText(name).toLowerCase();
 }
 
+const FINISHED_STATES: readonly BackgroundState[] = ['done', 'stopped', 'failed'];
+
+/**
+ * A background session that has finished: no live process, and state 'done',
+ * 'stopped' or 'failed'. Plain `claude agents --json` leaves these out; `--all`
+ * lists them. A 'done' session whose process is still alive is idle, not
+ * finished: attaching to it doesn't restart anything.
+ */
+export function isFinished(session: Pick<SessionSummary, 'kind' | 'alive' | 'pid' | 'state'>): boolean {
+  return (
+    session.kind === 'background' &&
+    (!session.alive || session.pid === undefined) &&
+    session.state !== undefined &&
+    FINISHED_STATES.includes(session.state)
+  );
+}
+
 /**
  * When a session was last active, for sorting: its newest transcript entry,
  * or its start time when the transcript had none.
@@ -98,28 +115,58 @@ function statusRank(session: SessionSummary): number {
   return 3;
 }
 
+/** 0 for most sessions, 1 for stale ones, 2 for finished ones. A session is never both. */
+function bucket(session: SessionSummary): number {
+  if (isFinished(session)) return 2;
+  return session.stale ? 1 : 0;
+}
+
 /**
- * Stale sessions last; otherwise waiting or blocked, then asked you, then
- * busy, then most recently active first.
+ * Waiting or blocked first, then asked you, then busy, then most recently
+ * active first. Stale sessions after those, and finished sessions last.
+ * Finished sessions are ordered by activity alone: an askedYou on one is
+ * shown, but doesn't lift it above the others.
  */
 export function compareSessions(a: SessionSummary, b: SessionSummary): number {
+  const ba = bucket(a);
+  const bb = bucket(b);
+  if (ba !== bb) return ba - bb;
   return (
-    Number(a.stale) - Number(b.stale) ||
-    statusRank(a) - statusRank(b) ||
+    (ba === 2 ? 0 : statusRank(a) - statusRank(b)) ||
     activityMs(b) - activityMs(a) ||
     compareText(a.sessionId, b.sessionId)
   );
 }
 
-/** Most recently active group first. */
+/**
+ * Most recently active group first, going by the group's unfinished sessions,
+ * so a session that has finished doesn't lift its group. Groups whose
+ * sessions have all finished come after every other group, newest first.
+ */
 export function compareGroups(a: SessionGroup, b: SessionGroup): number {
-  return newestActivity(b) - newestActivity(a) || compareText(a.root, b.root) || compareText(a.key, b.key);
+  const ra = groupRank(a);
+  const rb = groupRank(b);
+  return (
+    Number(ra.finishedOnly) - Number(rb.finishedOnly) ||
+    rb.newest - ra.newest ||
+    compareText(a.root, b.root) ||
+    compareText(a.key, b.key)
+  );
 }
 
-function newestActivity(group: SessionGroup): number {
+function groupRank(group: SessionGroup): { finishedOnly: boolean; newest: number } {
   let newest = 0;
-  for (const session of group.sessions) newest = Math.max(newest, activityMs(session));
-  return newest;
+  let newestFinished = 0;
+  let unfinished = false;
+  for (const session of group.sessions) {
+    if (isFinished(session)) {
+      newestFinished = Math.max(newestFinished, activityMs(session));
+    } else {
+      unfinished = true;
+      newest = Math.max(newest, activityMs(session));
+    }
+  }
+  return unfinished ? { finishedOnly: false, newest } : { finishedOnly: true, newest: newestFinished };
 }
 
 function compareText(a: string, b: string): number {
