@@ -43,6 +43,7 @@ function session(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sess
     pid: 4242,
     startedAt: '2026-10-19T00:00:00.000Z',
     stale: false,
+    finished: false,
     transcript: 'missing',
     ...overrides,
   };
