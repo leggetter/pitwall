@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalHandle } from './components/Terminal.js';
+import { terminalLinkHandler } from './links.js';
 
 export function createXterm(container: HTMLElement): TerminalHandle {
   const terminal = new Terminal({
@@ -13,6 +14,8 @@ export function createXterm(container: HTMLElement): TerminalHandle {
     fontSize: 13,
     scrollback: 5000,
     theme: { background: '#0e1115', foreground: '#e6e9ee', cursor: '#e6e9ee' },
+    // Only http: and https: links, opened with noopener and noreferrer (links.ts).
+    linkHandler: terminalLinkHandler,
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
