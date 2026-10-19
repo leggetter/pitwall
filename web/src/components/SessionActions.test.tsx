@@ -116,7 +116,7 @@ describe('Stop and Remove', () => {
   });
 
   it("can't stop a session that isn't running, but can remove it", async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }), snap(background({ alive: false, state: 'stopped', pid: undefined })));
+    renderDashboard(fakeServer({ status: 200, body: { ok: true } }), snap(background({ alive: false, state: 'stopped', pid: undefined, finished: true })));
     // Stopped with no process: finished, so it's in the collapsed Finished list, and keeps Remove.
     fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
     const view = await openView('pitwall-test-bg');

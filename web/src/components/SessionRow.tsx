@@ -1,7 +1,7 @@
 import type { MouseEvent } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, cwdWithinGroup, plainText, relativeTime } from '../format.js';
-import { attachCommand, isFinished, needsAttention, statusPill } from '../sessions.js';
+import { attachCommand, needsAttention, statusPill } from '../sessions.js';
 import { CopyCommand } from './CopyCommand.js';
 import { Reply } from './Reply.js';
 
@@ -35,7 +35,7 @@ export interface SessionRowProps {
 
 export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: SessionRowProps) {
   const attention = needsAttention(session);
-  const finished = isFinished(session);
+  const { finished } = session;
   const pill = statusPill(session);
   const where = cwdWithinGroup(session.cwd, groupKey);
   const command = attachCommand(session);

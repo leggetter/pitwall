@@ -4,27 +4,13 @@
 import type { SessionGroup, SessionSummary } from '../../src/shared/protocol.js';
 
 /**
- * A background session that has finished, as the contract defines it for
- * `SessionGroup.sessions`: no live process, and state 'done', 'stopped' or
- * 'failed'. The index sorts these last in each group; the screen mutes them.
- * A 'done' session whose process is still alive is idle, so it isn't one.
- */
-export function isFinished(session: SessionSummary): boolean {
-  return (
-    session.kind === 'background' &&
-    (!session.alive || session.pid === undefined) &&
-    (session.state === 'done' || session.state === 'stopped' || session.state === 'failed')
-  );
-}
-
-/**
  * A session that is waiting on Phil, a background session blocked on him, or
  * one that ended its turn by asking him something. Never a stale or finished
  * one: a finished session's question still shows on its row, muted, but it
  * isn't counted anywhere.
  */
 export function needsAttention(session: SessionSummary): boolean {
-  if (session.stale || isFinished(session)) return false;
+  if (session.stale || session.finished) return false;
   return session.status === 'waiting' || session.state === 'blocked' || session.askedYou !== undefined;
 }
 
@@ -46,7 +32,7 @@ export function statusPill(session: SessionSummary): StatusPill {
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
   if (session.status === 'waiting') return { label: `waiting${reason}`, tone: 'attention' };
   if (session.state === 'blocked' && !session.stale) return { label: `blocked${reason}`, tone: 'attention' };
-  if (session.askedYou && !session.stale && !isFinished(session)) return { label: 'asked you', tone: 'asked' };
+  if (session.askedYou && !session.stale && !session.finished) return { label: 'asked you', tone: 'asked' };
   // A stale blocked job keeps its "blocked" text but loses the attention styling.
   if (session.state === 'blocked') return { label: `blocked${reason}`, tone: 'offline' };
   if (session.state === 'failed') return { label: 'failed', tone: 'failed' };
@@ -113,11 +99,14 @@ export function filterGroups(groups: readonly SessionGroup[], filters: Filters):
   return visible;
 }
 
-/** A group's sessions split into the ones listed normally and the finished ones, each in the order given. */
+/**
+ * A group's sessions split by `finished` into the ones listed normally and the
+ * finished ones, each in the order given.
+ */
 export function splitFinished(sessions: readonly SessionSummary[]): { current: SessionSummary[]; finished: SessionSummary[] } {
   const current: SessionSummary[] = [];
   const finished: SessionSummary[] = [];
-  for (const session of sessions) (isFinished(session) ? finished : current).push(session);
+  for (const session of sessions) (session.finished ? finished : current).push(session);
   return { current, finished };
 }
 
