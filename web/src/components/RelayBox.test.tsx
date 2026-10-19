@@ -145,6 +145,27 @@ describe('the message box', () => {
     expect(textarea(view).value).toBe('hello');
   });
 
+  it('says a message that may have been sent may have reached the session, and keeps the draft', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { status: 'uncertain', detail: 'The relay stopped (exit code 1). It may have reached the session.' } }));
+    const view = await openView();
+    await sendFrom(view, 'hello');
+    const alert = within(view).getByRole('alert');
+    expect(alert.textContent).toBe(
+      'May have reached the session. Check its conversation before sending again. The relay stopped (exit code 1). It may have reached the session.',
+    );
+    expect(alert.className).toContain('tone-waiting');
+    expect(textarea(view).value).toBe('hello');
+  });
+
+  it('shows an uncertain exchange on the session as one to check', async () => {
+    const relay = { sentAt: minutesAgo(3), status: 'uncertain' as const };
+    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
+    const view = await openView();
+    const line = within(box(view)).getByText('Message from pitwall').closest('.relay-exchange-line') as HTMLElement;
+    expect(line.textContent).toBe('Message from pitwall 3m ago: may have reached it: check its conversation');
+    expect(line.className).toContain('tone-waiting');
+  });
+
   it('shows the server’s detail for a refused request, such as 409 or 429', async () => {
     renderDashboard(
       fakeServer(

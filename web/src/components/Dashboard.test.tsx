@@ -107,6 +107,33 @@ describe('Dashboard header', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  it('says when the relay tried to send a message nobody asked for and pitwall blocked it, until dismissed, and again for the next one', () => {
+    const alert = { at: minutesAgo(1), detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it.", count: 1, blocked: true };
+    const view = (relayAlert: typeof alert) => <Dashboard view={{ state: 'live', snapshot: { ...mixedSnapshot(), relayAlert } }} />;
+    const { rerender } = render(view(alert));
+    const banner = screen.getByRole('alert');
+    expect(banner.className).toContain('warning');
+    expect(banner.textContent).toBe(
+      "pitwall's relay tried to send a message nobody asked for, and pitwall blocked it. That usually means another session messaged the relay. Once since pitwall started. Latest: The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it.Dismiss",
+    );
+    fireEvent.click(within(banner).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    rerender(view(alert));
+    expect(screen.queryByRole('alert')).toBeNull();
+    rerender(view({ ...alert, count: 2 }));
+    expect(screen.getByRole('alert').textContent).toContain('2 times since pitwall started.');
+  });
+
+  it('says more when the relay’s message may have been sent', () => {
+    renderDashboard({ ...mixedSnapshot(), relayAlert: { at: minutesAgo(1), detail: "pitwall's gate didn't stop it <b>.", count: 1, blocked: false } });
+    const banner = screen.getByRole('alert');
+    expect(banner.className).toContain('error');
+    expect(banner.textContent).toContain('It may have reached one of your sessions: check their conversations for a message from pitwall-relay.');
+    expect(banner.textContent).toContain('pitwall has stopped using it until you restart pitwall.');
+    expect(banner.textContent).toContain("Latest: pitwall's gate didn't stop it <b>.");
+    expect(banner.querySelector('b')).toBeNull();
+  });
+
   it('counts sessions that need attention, in the page and the tab title', () => {
     renderDashboard(mixedSnapshot());
 
