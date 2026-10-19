@@ -162,6 +162,27 @@ export interface IndexSnapshot {
   groups: SessionGroup[];
   /** Whether `claude agents --json --all` succeeded on the latest poll. */
   source: SourceHealth;
+  /**
+   * Set once pitwall's relay has tried to do something nobody asked for in
+   * this run, such as a SendMessage with no pending request. That usually
+   * means another session messaged the relay. Absent until the first one.
+   */
+  relayAlert?: RelayAlert;
+}
+
+/** The latest thing the relay tried that nobody asked for (W11, D8). */
+export interface RelayAlert {
+  /** ISO 8601, of the latest one. */
+  at: string;
+  /** What the relay tried, in pitwall's words. Never any message text. */
+  detail: string;
+  /** How many since pitwall started. */
+  count: number;
+  /**
+   * True when pitwall's gate denied it before it ran, so nothing was sent.
+   * False when pitwall saw it only afterwards, so it may have been sent.
+   */
+  blocked: boolean;
 }
 
 /**
