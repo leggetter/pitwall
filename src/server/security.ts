@@ -48,9 +48,14 @@ export function isAllowedHost(host: string | undefined, port: number): boolean {
   return host === `${LOOPBACK_HOST}:${port}`;
 }
 
+/** The one origin a server on `port` allows: `http://127.0.0.1:<port>`. The proof is bound to it. */
+export function serverOrigin(port: number): string {
+  return `http://${LOOPBACK_HOST}:${port}`;
+}
+
 /** True when `Origin` is exactly `http://127.0.0.1:<port>`. Not `localhost`: see isAllowedHost. */
 export function isAllowedOrigin(origin: string | undefined, port: number): boolean {
-  return origin === `http://${LOOPBACK_HOST}:${port}`;
+  return origin === serverOrigin(port);
 }
 
 /** The token from `Authorization: Bearer <token>`, or undefined for any other shape. */
@@ -76,17 +81,21 @@ export function randomSecret(): string {
 }
 
 /**
- * The proof that answers a challenge: base64url(HMAC-SHA256(key = the token
- * as UTF-8, message = the nonce as UTF-8)). The web UI computes the same with
- * WebCrypto, so the token itself never travels.
+ * The proof that answers a challenge (PROTOCOL_VERSION 3):
+ * base64url(HMAC-SHA256(key = the token as UTF-8, message = the nonce, a line
+ * feed, then the origin, as UTF-8)). The web UI computes the same with
+ * WebCrypto over `location.origin`, so the token itself never travels. The
+ * server always passes its own origin, serverOrigin(port), so a proof that a
+ * page on any other origin computed, such as one served by a process
+ * squatting on the port and relayed from a real pitwall page, doesn't match.
  */
-export function challengeProof(token: string, nonce: string): string {
-  return createHmac('sha256', Buffer.from(token, 'utf8')).update(nonce, 'utf8').digest('base64url');
+export function challengeProof(token: string, nonce: string, origin: string): string {
+  return createHmac('sha256', Buffer.from(token, 'utf8')).update(`${nonce}\n${origin}`, 'utf8').digest('base64url');
 }
 
-/** Constant-time check of a presented proof against the one this token and nonce call for. */
-export function proofMatches(presented: string, token: string, nonce: string): boolean {
-  return tokensMatch(presented, challengeProof(token, nonce));
+/** Constant-time check of a presented proof against the one this token, nonce and origin call for. */
+export function proofMatches(presented: string, token: string, nonce: string, origin: string): boolean {
+  return tokensMatch(presented, challengeProof(token, nonce, origin));
 }
 
 /**

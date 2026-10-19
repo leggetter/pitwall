@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +17,7 @@ import {
 import { ATTACH_MAX_PAYLOAD_BYTES, COLS_RANGE, needsRestart, ROWS_RANGE, WS_CLOSE_POLICY } from './attach.js';
 import type { RunningServer } from './index.js';
 import { spawnPty, type PtyProcess, type PtySpawnOptions } from './pty.js';
+import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../test/proof.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
 // Made-up sessions only. No test here runs `claude`: every PTY is a FakePty,
@@ -189,6 +189,8 @@ async function start(
 
 interface Client {
   ws: WebSocket;
+  /** The server's port, which the proof is bound to through its origin. */
+  port: number;
   /** Text frames, parsed. */
   messages: AttachServerMessage[];
   /** Binary frames. */
@@ -222,6 +224,7 @@ function connect(port: number, options: { origin?: string | null; host?: string 
   const closed = new Promise<{ code: number }>((resolve) => ws.on('close', (code) => resolve({ code })));
   return {
     ws,
+    port,
     messages,
     output,
     closed,
@@ -233,8 +236,9 @@ function connect(port: number, options: { origin?: string | null; host?: string 
   };
 }
 
-function proofFor(nonce: string, token = TOKEN): string {
-  return createHmac('sha256', Buffer.from(token, 'utf8')).update(nonce, 'utf8').digest('base64url');
+/** The proof for a nonce from the server on `port`, as its own page computes it (src/test/proof.ts). */
+function proofFor(nonce: string, port: number, token = TOKEN): string {
+  return contractProof(token, nonce, pitwallOrigin(port));
 }
 
 const send = (client: Client, message: unknown) => client.ws.send(typeof message === 'string' ? message : JSON.stringify(message));
@@ -243,7 +247,7 @@ const send = (client: Client, message: unknown) => client.ws.send(typeof message
 async function handshake(client: Client, token = TOKEN): Promise<AttachServerMessage | { code: number }> {
   const challenge = await client.next();
   if (challenge.type !== 'challenge') throw new Error(`expected a challenge, got ${challenge.type}`);
-  send(client, { type: 'auth', proof: proofFor(challenge.nonce, token) });
+  send(client, { type: 'auth', proof: proofFor(challenge.nonce, client.port, token) });
   return Promise.race([client.next(), client.closed]);
 }
 
@@ -314,8 +318,23 @@ describe('the attach socket', () => {
       const challenge = await client.next();
       expect(challenge).toEqual({ type: 'challenge', version: PROTOCOL_VERSION, nonce: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
       if (challenge.type !== 'challenge') return;
-      send(client, { type: 'auth', proof: proofFor(challenge.nonce) });
+      send(client, { type: 'auth', proof: proofFor(challenge.nonce, server.port) });
       expect(await client.next()).toEqual({ type: 'ready' });
+    });
+
+    it.each([
+      ['a version 2 proof, without the origin', (nonce: string) => version2ProofFor(TOKEN, nonce)],
+      ['a proof bound to another port', (nonce: string, port: number) => proofFor(nonce, port + 1)],
+      ['a proof bound to localhost', (nonce: string, port: number) => contractProof(TOKEN, nonce, `http://localhost:${port}`)],
+    ])('closes with 4401 for %s', async (_name, build) => {
+      const { server, spawner } = await start();
+      const client = connect(server.port);
+      const challenge = await client.next();
+      if (challenge.type !== 'challenge') throw new Error('expected a challenge');
+      send(client, { type: 'auth', proof: build(challenge.nonce, server.port) });
+      expect((await client.closed).code).toBe(WS_CLOSE_UNAUTHORIZED);
+      expect(client.messages).toEqual([]);
+      expect(spawner.ptys).toHaveLength(0);
     });
 
     it('closes with 4401 for a wrong proof', async () => {
@@ -631,7 +650,7 @@ describe('the attach socket', () => {
       expect(await handshake(connect(server.port))).toEqual({ code: WS_CLOSE_TOO_MANY });
       // The one that hadn't answered yet didn't hold a place, and can't take one now.
       if (challenge.type !== 'challenge') throw new Error('expected a challenge');
-      send(pending, { type: 'auth', proof: proofFor(challenge.nonce) });
+      send(pending, { type: 'auth', proof: proofFor(challenge.nonce, server.port) });
       expect((await pending.closed).code).toBe(WS_CLOSE_TOO_MANY);
     });
   });

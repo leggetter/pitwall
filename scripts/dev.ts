@@ -18,6 +18,18 @@
 // and later restarts find the marker and don't. A process squatting on the
 // port never gets a browser pointed at it, because the CLI can't listen there
 // and so never opens anything.
+//
+// Residual risk, left as it is on purpose: the token outlives each restart.
+// The page keeps it in sessionStorage, which belongs to the origin
+// http://127.0.0.1:<port>. A process that grabs the port in the moment the
+// CLI restarts serves its own page on that same origin, so the tab's next
+// reload (the user's, or the "still building" page's own) loads the
+// squatter's page, which can read sessionStorage. The token it finds still
+// works, because every later restart in this dev run uses it again. The
+// proof's origin binding (protocol v3) doesn't help, because the squatter's
+// origin is the real one. It needs another local process to win a race for
+// the port. Outside npm run dev, each run gets a new token unless
+// PITWALL_TOKEN is set, so a token read that way is already dead.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

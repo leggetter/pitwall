@@ -19,17 +19,29 @@ const KEY_B = 'b'.repeat(43);
 const nonce = (i = 0) => `${'n'.repeat(41)}${String(i).padStart(2, '0')}`;
 
 /**
- * The challenge-proof test vectors. src/server/security.test.ts checks the
- * server's node:crypto implementation against the same two.
+ * The challenge-proof test vectors (PROTOCOL_VERSION 3), computed with
+ * openssl, not WebCrypto or node:crypto:
+ *   printf '%s\n%s' "$nonce" "$origin" | openssl dgst -sha256 -hmac "$token" -binary | base64 | tr '+/' '-_' | tr -d '='
+ * src/server/security.test.ts checks the server's node:crypto implementation
+ * against the same three. The first is for this page's own origin: the test
+ * environment serves it from http://127.0.0.1:4517 (vitest.config.ts).
  */
 const PROOF_VECTORS = [
-  // RFC 4231 test case 2: HMAC-SHA256 5bdcc146...64ec3843, as base64url.
-  { token: 'Jefe', nonce: 'what do ya want for nothing?', proof: 'W9zBRr9gdU5qBCQmCJV1x1oAPwidJzmDnexYuWTsOEM' },
   {
     token: 'pitwall-test-token-0123456789abcdefghijklmnop',
     nonce: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
-    proof: 'It5IfJWj2OciIOPUib9GDD0Q16VZrTBep087XrZVHnI',
+    origin: 'http://127.0.0.1:4517',
+    proof: 'VfgdQHb0QdfmEBEAg8W5N3W6RclVQBVetrxzeG2xnFY',
   },
+  // The same token and nonce from another origin, such as a squatter on another port.
+  {
+    token: 'pitwall-test-token-0123456789abcdefghijklmnop',
+    nonce: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+    origin: 'http://127.0.0.1:4518',
+    proof: 'Xk3hWH6P6KC1u51qPg77f3JuauFOnETYWqncpr6PLjc',
+  },
+  // RFC 4231 test case 2's key, with its data split at the line feed the proof puts between nonce and origin.
+  { token: 'Jefe', nonce: 'what do ya want', origin: 'for nothing?', proof: 'UP-f1VK6b3166pqI6T8uvuKHC_hgz9eits8su-2SoT4' },
 ];
 
 const authorization = (init: RequestInit) => (init.headers as Record<string, string>).Authorization;
@@ -91,8 +103,18 @@ describe('backoffDelay', () => {
 });
 
 describe('computeProof', () => {
-  it.each(PROOF_VECTORS)('is base64url(HMAC-SHA256(token, nonce)) with WebCrypto, for nonce $nonce', async ({ token, nonce: n, proof }) => {
-    expect(await computeProof(token, n)).toBe(proof);
+  it.each(PROOF_VECTORS)(
+    'is base64url(HMAC-SHA256(token, nonce + "\\n" + origin)) with WebCrypto, for origin $origin',
+    async ({ token, nonce: n, origin, proof }) => {
+      expect(await computeProof(token, n, origin)).toBe(proof);
+    },
+  );
+
+  it("binds the proof to this page's own origin, location.origin, by default", async () => {
+    const [here, elsewhere] = PROOF_VECTORS;
+    expect(location.origin).toBe(here!.origin);
+    expect(await computeProof(here!.token, here!.nonce)).toBe(here!.proof);
+    expect(await computeProof(here!.token, here!.nonce)).not.toBe(elsewhere!.proof);
   });
 });
 
@@ -173,7 +195,7 @@ describe('createConnection', () => {
       fake.last.open();
       expect(fake.last.sent).toEqual([]);
 
-      const vector = PROOF_VECTORS[1]!;
+      const vector = PROOF_VECTORS[0]!;
       await challenge(vector.nonce);
       expect(fake.last.sent.map((frame) => JSON.parse(frame))).toEqual([{ type: 'auth', proof: vector.proof }]);
       expect(fake.last.sent.join('')).not.toContain(TOKEN);
@@ -217,17 +239,20 @@ describe('createConnection', () => {
       expect(fake.last.sent).toEqual([]);
     });
 
-    it('does not answer a challenge for another protocol version: it closes, says to reload, and retries later', async () => {
-      const { fake, latest } = start();
-      fake.last.open();
-      fake.last.receive({ type: 'challenge', version: PROTOCOL_VERSION + 1, nonce: nonce() });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(fake.last.sent).toEqual([]);
-      expect(fake.last.closedByClient).toBe(true);
-      expect(latest()).toMatchObject({ state: 'reconnecting', serverError: expect.stringContaining('Reload the page') });
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(fake.sockets).toHaveLength(2);
-    });
+    it.each([PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1])(
+      'does not answer a challenge for protocol version %i: it closes, says to reload, and retries later',
+      async (version) => {
+        const { fake, latest } = start();
+        fake.last.open();
+        fake.last.receive({ type: 'challenge', version, nonce: nonce() });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fake.last.sent).toEqual([]);
+        expect(fake.last.closedByClient).toBe(true);
+        expect(latest()).toMatchObject({ state: 'reconnecting', serverError: expect.stringContaining('Reload the page') });
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(fake.sockets).toHaveLength(2);
+      },
+    );
 
     it('retries with backoff when the browser cannot compute a proof', async () => {
       const { fake, latest } = start({ prove: () => Promise.reject(new Error('no WebCrypto')) });
