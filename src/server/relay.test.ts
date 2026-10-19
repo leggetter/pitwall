@@ -451,6 +451,34 @@ describe('the relay: its gate', () => {
   });
 });
 
+describe('the relay: which blocked calls restart it', () => {
+  it('keeps the relay after a blocked call nobody asked for', async () => {
+    const h = harness();
+    await h.relay.send(TARGET, 'hello');
+    h.child().peerTurn();
+    await wait(10);
+    expect(h.relay.alert()).toMatchObject({ blocked: true });
+    expect(h.child().signals).toEqual([]);
+    expect(h.children).toHaveLength(1);
+  });
+
+  it('restarts the relay once its turn ends, after a blocked call for pitwall’s own request that didn’t match it', async () => {
+    const h = harness();
+    let endTurn: (() => void) | undefined;
+    h.behaviour = (request, child) => {
+      child.init();
+      child.send({ to: request.to, message: request.text, attachments: [] });
+      endTurn = () => child.result();
+    };
+    expect((await h.relay.send(TARGET, 'hello')).status).toBe('failed');
+    expect(h.relay.alert()).toMatchObject({ blocked: true, detail: expect.stringMatching(/^The relay's SendMessage call had a field pitwall doesn't check\./) });
+    // Not mid-turn: only once the turn has ended.
+    expect(h.child().signals).toEqual([]);
+    endTurn!();
+    expect(h.child().signals).toEqual(['SIGTERM']);
+  });
+});
+
 describe('the relay: the Claude Code version', () => {
   it('checks claude --version once, before the first start', async () => {
     const h = harness();
@@ -787,16 +815,16 @@ describe('the relay: checking what it sent', () => {
     const result = await h.relay.send(TARGET, 'secret plan');
     expect(result).toEqual({
       status: 'failed',
-      detail: "pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent.",
+      detail: "pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent. pitwall is restarting the relay.",
     });
     expect(h.relay.alert()).toMatchObject({ blocked: true, detail: "The relay changed the text before sending it. pitwall's gate blocked it, so nothing was sent." });
     expect(h.relay.exchange(TARGET.sessionId)).toBeUndefined();
-    // Blocked, so the relay is kept, and takes the next message.
-    expect(h.children[0]!.signals).toEqual([]);
+    // Its conversation may have been poisoned, so it's restarted once the turn ends, and a new relay takes the next message.
+    expect(h.children[0]!.signals).toEqual(['SIGTERM']);
     expect(h.logs.join('\n')).not.toContain('secret plan');
     h.behaviour = (request, child) => child.relay(request);
     await expect(h.relay.send(TARGET, 'again')).resolves.toEqual({ status: 'delivered' });
-    expect(h.children).toHaveLength(1);
+    expect(h.children).toHaveLength(2);
   });
 
   it('blocks a send to another session, or one that subscribes to idle notices', async () => {
