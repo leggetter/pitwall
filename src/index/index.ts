@@ -4,9 +4,10 @@ import {
   type ConversationPage,
   type IndexSnapshot,
   type LastMessage,
+  type RelayExchange,
   type SourceHealth,
 } from '../shared/protocol.js';
-import { createAgentsSource, type AgentsSource } from './agents.js';
+import { createAgentsSource, type AgentRow, type AgentsSource } from './agents.js';
 import { ConversationCursorError, readConversationPage } from './conversation.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, type GroupResolver } from './grouping.js';
@@ -16,6 +17,7 @@ import { createTranscriptReader, type TranscriptReader } from './transcripts.js'
 
 export { isSafeSessionId } from './transcripts.js';
 export { ConversationCursorError, isWellFormedCursor } from './conversation.js';
+export type { AgentRow } from './agents.js';
 
 export interface IndexerOptions {
   /** Absolute paths. The indexer resolves them with realpath. */
@@ -24,6 +26,14 @@ export interface IndexerOptions {
   intervalMs?: number;
   /** Path or name of the claude binary. Default 'claude'. */
   claudeBin?: string;
+  /**
+   * True for a `claude agents` row to leave out of every snapshot: pitwall's
+   * own relay session (W11, D8), which lists as interactive. A hook that
+   * throws keeps the row.
+   */
+  exclude?: (row: AgentRow) => boolean;
+  /** The latest message relayed to a session (W11), shown as its summary's `relay`. A hook that throws adds nothing. */
+  relayExchange?: (sessionId: string) => RelayExchange | undefined;
 }
 
 export interface Indexer {
@@ -101,7 +111,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
     try {
       let snapshot: IndexSnapshot;
       try {
-        snapshot = await poll(options.roots, deps, latest);
+        snapshot = await poll(options, deps, latest);
       } catch (err) {
         // poll() handles every expected failure itself; this guards against bugs.
         const message = oneLine(err instanceof Error ? err.message : String(err));
@@ -165,12 +175,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   };
 }
 
-async function poll(
-  roots: readonly string[],
-  deps: IndexerDeps,
-  previous: IndexSnapshot | undefined,
-): Promise<IndexSnapshot> {
-  const resolvedRoots = await resolveRoots(roots, deps.realpath);
+async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexSnapshot | undefined): Promise<IndexSnapshot> {
+  const resolvedRoots = await resolveRoots(options.roots, deps.realpath);
   const result = await deps.agents.list();
   const nowMs = deps.now();
   const generatedAt = new Date(nowMs).toISOString();
@@ -182,7 +188,8 @@ async function poll(
     return { generatedAt, roots: resolvedRoots, groups: previous?.groups ?? [], source };
   }
 
-  const placed = await mapLimit(result.rows, deps.concurrency, async (row): Promise<PlacedSession | undefined> => {
+  const rows = result.rows.filter((row) => !calls(() => options.exclude?.(row), false));
+  const placed = await mapLimit(rows, deps.concurrency, async (row): Promise<PlacedSession | undefined> => {
     const { path: cwd, missing } = await inspectCwd(row.cwd, deps.realpath);
     const root = matchRoot(cwd, resolvedRoots);
     if (root === undefined) return undefined;
@@ -191,7 +198,10 @@ async function poll(
       deps.groups.resolve(cwd),
       deps.transcripts.read(row.sessionId, [row.cwd, cwd]),
     ]);
-    return { root, group, summary: toSessionSummary(row, transcript, nowMs, { cwdMissing: missing }) };
+    const summary = toSessionSummary(row, transcript, nowMs, { cwdMissing: missing });
+    const relay = calls(() => options.relayExchange?.(row.sessionId), undefined);
+    if (relay !== undefined) summary.relay = relay;
+    return { root, group, summary };
   });
 
   const kept = placed.filter((p): p is PlacedSession => p !== undefined);
@@ -199,6 +209,15 @@ async function poll(
   deps.groups.prune();
 
   return { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } };
+}
+
+/** A hook's answer, or `fallback` when it throws or answers nothing, so one bad hook can't break a poll. */
+function calls<T>(hook: () => T | undefined, fallback: T): T {
+  try {
+    return hook() ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

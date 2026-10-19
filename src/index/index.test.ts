@@ -320,6 +320,67 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
+  it('leaves out the rows the exclude hook names, such as the relay, without reading their transcripts', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('kept', '/work/repo/x'), row('relay', '/work/.pitwall/relay', { pid: 4321 })] };
+    const seen: string[] = [];
+    const indexer = createIndexer(
+      {
+        roots: ['/work'],
+        exclude: (agent) => {
+          seen.push(agent.sessionId);
+          return agent.pid === 4321;
+        },
+      },
+      deps,
+    );
+    await flush();
+    expect(indexer.latest()?.groups.flatMap((g) => g.sessions.map((s) => s.sessionId))).toEqual(['kept']);
+    expect(seen.sort()).toEqual(['kept', 'relay']);
+    expect(state.reads).toEqual(['kept']);
+    indexer.stop();
+  });
+
+  it('keeps a row when the exclude hook throws', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('kept', '/work/repo/x')] };
+    const indexer = createIndexer(
+      {
+        roots: ['/work'],
+        exclude: () => {
+          throw new Error('broken hook');
+        },
+      },
+      deps,
+    );
+    await flush();
+    expect(indexer.latest()?.source).toEqual({ ok: true });
+    expect(indexer.latest()?.groups.flatMap((g) => g.sessions.map((s) => s.sessionId))).toEqual(['kept']);
+    indexer.stop();
+  });
+
+  it('adds the relay exchange for a session, and nothing when the hook has none or throws', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('messaged', '/work/repo/x'), row('quiet', '/work/repo/y'), row('broken', '/work/repo/z')] };
+    const exchange = { sentAt: '2026-10-16T11:59:00.000Z', status: 'delivered' as const, reply: { at: '2026-10-16T11:59:30.000Z', text: 'done' } };
+    const indexer = createIndexer(
+      {
+        roots: ['/work'],
+        relayExchange: (sessionId) => {
+          if (sessionId === 'broken') throw new Error('broken hook');
+          return sessionId === 'messaged' ? exchange : undefined;
+        },
+      },
+      deps,
+    );
+    await flush();
+    const sessions = new Map(indexer.latest()?.groups.flatMap((g) => g.sessions.map((s) => [s.sessionId, s] as const)));
+    expect(sessions.get('messaged')?.relay).toEqual(exchange);
+    expect(sessions.get('quiet')).not.toHaveProperty('relay');
+    expect(sessions.get('broken')).not.toHaveProperty('relay');
+    indexer.stop();
+  });
+
   it('keeps the last groups and reports the error when the source fails', async () => {
     const { state, deps } = harness();
     state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
