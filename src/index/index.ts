@@ -76,7 +76,7 @@ export interface IndexerDeps {
 }
 
 /**
- * Polls `claude agents --json` every `intervalMs`, keeps the sessions whose
+ * Polls `claude agents --json --all` every `intervalMs`, keeps the sessions whose
  * cwd is under a root, groups them by repo and adds what their transcripts
  * say. The first poll starts straight away. Polls never overlap: a tick that
  * comes while one is still running is skipped. Listeners hear about every

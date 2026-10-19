@@ -46,7 +46,7 @@ export type SocketFactory = (url: string) => SocketLike;
 
 export const defaultSocketFactory: SocketFactory = (url) => new WebSocket(url);
 
-/** When the index last polled, and whether `claude agents --json` worked then. */
+/** When the index last polled, and whether `claude agents --json --all` worked then. */
 export interface PollStatus {
   generatedAt: string;
   source: SourceHealth;

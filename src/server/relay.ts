@@ -7,7 +7,7 @@
 //
 // One request at a time:
 //
-//   1. check the name against the unfiltered `claude agents --json`: exactly
+//   1. check the name against the unfiltered `claude agents --json --all`: exactly
 //      one live session with it, and it's the one asked for. ListAgents
 //      doesn't show directories, so two sessions with one name can't be told
 //      apart, and the request fails as ambiguous rather than guess
@@ -130,7 +130,7 @@ export interface RelayOptions {
   /** What the relay's environment is made from, before childEnvironment() scrubs it. Default process.env, read at each start. */
   env?: NodeJS.ProcessEnv;
   spawn?: RelaySpawner;
-  /** The unfiltered session list. Default `claude agents --json`. */
+  /** The unfiltered session list. Default `claude agents --json --all`. */
   agents?: AgentsSource;
   /** Reads the relay's transcript. Default createRelayTranscriptTail. */
   transcript?: (options: { sessionId: string; cwd: string }) => RelayTranscriptTail;
