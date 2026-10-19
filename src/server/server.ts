@@ -32,6 +32,8 @@ import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, lastMessagePa
 import { registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import type { RunningServer, ServerOptions } from './index.js';
+import { createRelayManager } from './relay.js';
+import { registerRelay } from './relayRoute.js';
 import {
   bearerToken,
   identifyCredential,
@@ -117,9 +119,12 @@ export async function startServerWithInternals(
   let headers: [string, string][] = [];
   let closing = false;
 
-  // The input routes: spawn, stop and remove (W12), then any a test adds.
+  // Messages to interactive sessions (W11, D8). Started on the first one, stopped on close().
+  const relay = options.relay ?? createRelayManager();
+  // The input routes: spawn, stop and remove (W12), the relay (W11), then any a test adds.
   const routes = (app: Hono) => {
     registerActions(app, indexer, internals.actions);
+    registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };
   const app = createApp({ indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
@@ -172,6 +177,7 @@ export async function startServerWithInternals(
           closing = true;
         }),
         attach.close(),
+        relay.close(),
       ]).then(() => undefined);
       return closed;
     },

@@ -15,7 +15,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
-import { DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
+import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { LaunchDirError, pitwallHome, prepareLaunchDir, removeOnExit, writeLaunchFile } from './server/launch.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
@@ -241,12 +241,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   delete process.env.PITWALL_OPEN_MARKER;
 
   const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const indexer = startIndexer({ roots, intervalMs });
+  // The relay (D8) starts on the first message. The index leaves its own session out, and shows its exchanges.
+  const relay = createRelayManager();
+  const indexer = startIndexer({
+    roots,
+    intervalMs,
+    exclude: (row) => relay.isRelay(row),
+    relayExchange: (sessionId) => relay.exchange(sessionId),
+  });
   let server;
   try {
     server = await startServer({
       indexer,
       token,
+      relay,
       webRoot: resolveWebRoot(),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
