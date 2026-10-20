@@ -74,7 +74,7 @@ import {
   type RelayTranscriptTail,
 } from '../index/relayTranscript.js';
 import { isSafeSessionId } from '../index/transcripts.js';
-import type { RelayAlert, RelayExchange, RelayResult, RelayStatus } from '../shared/protocol.js';
+import type { RelayAlert, RelayExchange, RelayOff, RelayResult, RelayStatus } from '../shared/protocol.js';
 import { childEnvironment } from './command.js';
 import { ensureLaunchDir, pitwallHome } from './launch.js';
 import { createRelayGate, RELAY_GATE_DIR_NAME, type RelayGate } from './relayGate.js';
@@ -114,6 +114,8 @@ export interface RelayManager {
   exchange(sessionId: string): RelayExchange | undefined;
   /** The latest thing the relay tried that nobody asked for, for the snapshot. Undefined until the first. */
   alert(): RelayAlert | undefined;
+  /** Why pitwall stopped using the relay for this run, for the snapshot. Undefined while it can be used. */
+  off(): RelayOff | undefined;
   /** True for a `claude agents` row that is the relay itself, by pid, session id or directory. */
   isRelay(row: { sessionId: string; pid?: number | undefined; cwd: string }): boolean;
   /** Fails what's waiting and stops the relay. Resolves within about 2 seconds. */
@@ -320,6 +322,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   let tailReads: Promise<void> = Promise.resolve();
   /** Why pitwall stopped using the relay for this run, once its gate let through a call it shouldn't have. */
   let gateBroken: string | undefined;
+  /** ISO 8601: when gateBroken was set. */
+  let gateBrokenAt: string | undefined;
   let latestAlert: RelayAlert | undefined;
   /** Set once `claude --version` has said it's new enough. Checked again while it hasn't, so an update needs no restart. */
   let versionChecked = false;
@@ -493,6 +497,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   function breakGate(reason: string): void {
     if (gateBroken === undefined) {
       gateBroken = reason;
+      gateBrokenAt = new Date(now()).toISOString();
       log(`pitwall stopped using the relay: ${reason}`);
     }
     if (proc !== undefined) proc.noRestart = true;
@@ -1005,6 +1010,9 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     },
     alert() {
       return latestAlert === undefined ? undefined : { ...latestAlert };
+    },
+    off() {
+      return gateBroken === undefined || gateBrokenAt === undefined ? undefined : { since: gateBrokenAt, reason: gateBroken };
     },
     isRelay,
     async close() {

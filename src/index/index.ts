@@ -6,6 +6,7 @@ import {
   type LastMessage,
   type RelayAlert,
   type RelayExchange,
+  type RelayOff,
   type SourceHealth,
 } from '../shared/protocol.js';
 import { createAgentsSource, type AgentRow, type AgentsSource } from './agents.js';
@@ -37,6 +38,8 @@ export interface IndexerOptions {
   relayExchange?: (sessionId: string) => RelayExchange | undefined;
   /** The latest thing the relay tried that nobody asked for (D8), shown as the snapshot's `relayAlert`. A hook that throws adds nothing. */
   relayAlert?: () => RelayAlert | undefined;
+  /** Why pitwall stopped using its relay for this run (D8), shown as the snapshot's `relayOff`. A hook that throws adds nothing. */
+  relayOff?: () => RelayOff | undefined;
 }
 
 export interface Indexer {
@@ -128,6 +131,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       if (stopped) return;
       const alert = calls(() => options.relayAlert?.(), undefined);
       if (alert !== undefined) snapshot.relayAlert = alert;
+      const off = calls(() => options.relayOff?.(), undefined);
+      if (off !== undefined) snapshot.relayOff = off;
       latest = snapshot;
       current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
       for (const listener of [...listeners]) {
