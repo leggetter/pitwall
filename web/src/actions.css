@@ -4,7 +4,7 @@
   background: var(--pw-accent);
   border-color: var(--pw-accent);
   color: var(--pw-on-accent);
-  font-weight: 600;
+  font-weight: var(--pw-weight-bold);
 }
 
 .button.primary:hover {
@@ -59,8 +59,9 @@
 }
 
 .modal-title {
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
 }
 
 .field {
@@ -70,15 +71,15 @@
 }
 
 .field-label {
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-weight: var(--pw-weight-bold);
+  font-size: var(--pw-text-m);
 }
 
 .field-optional {
   margin-left: 4px;
   color: var(--pw-text-muted);
-  font-weight: 400;
-  font-size: 0.8rem;
+  font-weight: var(--pw-weight-regular);
+  font-size: var(--pw-text-xs);
 }
 
 .field select,
@@ -89,14 +90,13 @@
   color: var(--pw-text);
   border: 1px solid var(--pw-border-input);
   border-radius: 6px;
-  font: inherit;
 }
 
 .field-prompt {
   min-height: 7.5em;
   resize: vertical;
   font-family: var(--pw-font-sans);
-  line-height: 1.4;
+  line-height: var(--pw-leading-m);
 }
 
 .field-input[aria-invalid='true'],
@@ -106,13 +106,13 @@
 
 .field-hint {
   color: var(--pw-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
   overflow-wrap: anywhere;
 }
 
 .field-problem {
   color: var(--pw-danger-fg);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
 }
 
 .spawn-failure {
@@ -155,12 +155,12 @@
   border: 1px solid var(--pw-border);
   border-left: 4px solid var(--pw-danger-solid);
   border-radius: var(--pw-radius-lg);
-  font-size: 0.875rem;
+  font-size: var(--pw-text-m);
 }
 
 .action-result {
   color: var(--pw-text-muted);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

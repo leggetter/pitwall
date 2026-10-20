@@ -9,7 +9,7 @@
 
 .relay-note {
   color: var(--pw-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
 }
 
 .relay-form {
@@ -29,7 +29,7 @@
   flex: 1 1 auto;
   min-width: 0;
   /* Two lines, and never so tall when dragged that it takes the conversation's place. */
-  min-height: calc(2.8em + 14px);
+  min-height: calc(2 * var(--pw-leading-m) + 14px);
   max-height: 30vh;
   padding: 6px 8px;
   resize: vertical;
@@ -37,8 +37,7 @@
   color: var(--pw-text);
   border: 1px solid var(--pw-border-input);
   border-radius: 6px;
-  font: inherit;
-  line-height: 1.4;
+  line-height: var(--pw-leading-m);
 }
 
 .relay-text[aria-invalid='true'] {
@@ -49,6 +48,7 @@
 .relay-count {
   margin-right: 6px;
   color: var(--pw-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .relay-count.over {
@@ -64,7 +64,7 @@
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--pw-border);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-m);
   overflow-wrap: anywhere;
 }
 
@@ -88,7 +88,8 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
+  font-variant-numeric: tabular-nums;
 }
 
 .relay-exchange-line {
@@ -104,7 +105,7 @@
 }
 
 .relay-exchange-label {
-  font-weight: 600;
+  font-weight: var(--pw-weight-bold);
 }
 
 .relay-reply {
@@ -115,18 +116,18 @@
 /* In the session view's footer a long reply scrolls in three lines, two on a short window, so the
    conversation keeps its height. */
 .relay-box .relay-reply {
-  max-height: calc(3 * 1.45em);
+  max-height: calc(3 * var(--pw-leading-s));
   overflow-y: auto;
 }
 
 @media (max-height: 760px) {
   .relay-box .relay-reply {
-    max-height: calc(2 * 1.45em);
+    max-height: calc(2 * var(--pw-leading-s));
   }
 
   .relay-box .relay-result {
     padding: 4px 8px;
-    font-size: 0.8rem;
+    font-size: var(--pw-text-s);
   }
 }
 

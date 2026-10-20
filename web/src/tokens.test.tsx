@@ -1,6 +1,7 @@
 // tokens.css and the stylesheets that use it, read as text (docs/design-system.md, 2.1 and 2.2).
 import { describe, expect, it } from 'vitest';
-import { darkBlock, defaultBlocks, systemDarkBlock, tokens, withoutComments } from './test/css.js';
+import designSystem from '../../docs/design-system.md?raw';
+import { block, darkBlock, defaultBlocks, systemDarkBlock, tokens, withoutComments } from './test/css.js';
 
 /** Every stylesheet under web/src, by path, as text. */
 const stylesheets = import.meta.glob<string>('./**/*.css', { query: '?raw', import: 'default', eager: true });
@@ -31,6 +32,17 @@ describe('tokens.css', () => {
 
   it('only refers to tokens it defines, such as the colours inside the shadows and the state aliases', () => {
     expect(varsIn(tokens).filter((name) => !defined.has(name))).toEqual([]);
+  });
+
+  it('is the token file in docs/design-system.md 2.6, apart from comments and the copy of the dark block', () => {
+    const section = designSystem.slice(designSystem.indexOf('### 2.6 The token file'), designSystem.indexOf('### 2.7 Type'));
+    const documented = /```css\n([\s\S]*?)\n```/.exec(section)?.[1];
+    expect(documented).toBeDefined();
+    const media = /@media\s*\(prefers-color-scheme:\s*dark\)\s*\{/;
+    const copy = `@media (prefers-color-scheme: dark) {${block(tokens, media)}}`;
+    expect(tokens).toContain(copy);
+    const normalise = (css: string) => withoutComments(css).replace(/\s+/g, ' ').trim();
+    expect(normalise(tokens.replace(copy, ''))).toBe(normalise(documented ?? ''));
   });
 
   it('points every state alias at a token, never at a colour of its own', () => {

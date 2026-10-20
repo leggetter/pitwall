@@ -159,13 +159,25 @@ function useFontFiles(): string[] {
   return files;
 }
 
+/** Each font token's stack without its first family, read from the page, so it can't drift from tokens.css. */
+function useFallbacks(): Record<'--pw-font-sans' | '--pw-font-mono', string> {
+  const [stacks, setStacks] = useState({ '--pw-font-sans': 'sans-serif', '--pw-font-mono': 'monospace' });
+  useEffect(() => {
+    const style = getComputedStyle(document.documentElement);
+    const rest = (token: string, generic: string) => style.getPropertyValue(token).split(',').slice(1).join(',').trim() || generic;
+    setStacks({ '--pw-font-sans': rest('--pw-font-sans', 'sans-serif'), '--pw-font-mono': rest('--pw-font-mono', 'monospace') });
+  }, []);
+  return stacks;
+}
+
 export function Type() {
   const files = useFontFiles();
+  const fallbacks = useFallbacks();
   return (
     <>
       <Specimen
         title="Roles"
-        note="Each role at its size, line height and weight, in Inter or JetBrains Mono named on its own, with no fallback in the stack. A serif means the font didn't load. The app itself still uses today's system fonts."
+        note="Each role at its size, line height and weight, in Inter or JetBrains Mono named on its own, with no fallback in the stack. A serif means the font didn't load."
       >
         <table className="uikit-table">
           <thead>
@@ -217,11 +229,25 @@ export function Type() {
         <p style={{ ...role(MONO, '0.8125rem', '1.25rem', 400), fontVariantLigatures: 'none' }}>{'// -> => != === <= >= :: ...'}</p>
         <p style={role(MONO, '0.8125rem', '1.25rem', 400)}>{'// -> => != === <= >= :: ...'}</p>
       </Specimen>
-      <Specimen title="Today's system fonts, for comparison" note="--pw-font-sans and --pw-font-mono as tokens.css sets them now.">
-        <p style={{ fontFamily: 'var(--pw-font-sans)', fontSize: '0.875rem', lineHeight: '1.25rem' }}>
-          The export job retries a failed batch three times, then gives up.
-        </p>
-        <p style={{ fontFamily: 'var(--pw-font-mono)', fontSize: '0.75rem', lineHeight: '1.25rem' }}>~/code/pitwall-test-app/packages/exporter</p>
+      <Specimen
+        title="The font tokens, and their fallbacks"
+        note="--pw-font-sans and --pw-font-mono as the app uses them, then the same stacks without their first family: what shows until the bundled font loads (font-display: swap)."
+      >
+        {(['--pw-font-sans', '--pw-font-mono'] as const).map((token) => {
+          const mono = token === '--pw-font-mono';
+          const size = mono ? { fontSize: 'var(--pw-text-xs)', fontVariantLigatures: 'none' } : { fontSize: 'var(--pw-text-m)' };
+          const sample = mono ? '~/code/pitwall-test-app/packages/exporter' : 'The export job retries a failed batch three times, then gives up.';
+          return (
+            <div key={token}>
+              <p style={{ fontFamily: `var(${token})`, ...size }}>
+                {sample} <span className="uikit-note">{token}</span>
+              </p>
+              <p style={{ fontFamily: fallbacks[token], ...size }}>
+                {sample} <span className="uikit-note">fallback</span>
+              </p>
+            </div>
+          );
+        })}
       </Specimen>
       <Specimen title="Font files" note="document.fonts: every face fonts.css declares, and whether this page has loaded it.">
         <ul className="uikit-token-list" aria-live="polite">

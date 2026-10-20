@@ -18,7 +18,7 @@
 .attach-state {
   flex: 1 1 auto;
   color: var(--pw-text-muted);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
 }
 
 .attach-state.state-attached {
@@ -27,7 +27,7 @@
 
 .attach .banner {
   margin-top: 0;
-  font-size: 0.875rem;
+  font-size: var(--pw-text-m);
 }
 
 .attach-confirm-actions {
