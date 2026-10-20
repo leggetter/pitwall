@@ -176,7 +176,8 @@ describe('SessionView: opening and closing', () => {
       </ApiContext.Provider>,
     );
     const view = await openView();
-    expect(within(view).getByText('Loading the conversation…')).toBeTruthy();
+    // After --pw-delay-spinner.
+    await waitFor(() => expect(within(view).getByText('Loading the conversation…')).toBeTruthy());
 
     fireEvent.click(within(view).getByRole('button', { name: 'Close' }));
     await act(async () => api.keys.set(API_KEY));
@@ -269,7 +270,7 @@ describe('SessionView: the conversation', () => {
     renderDashboard(fakeServer(ok([prompt(3)], 'c'), status(500)));
     const view = await openView();
     await act(async () => fireEvent.click(within(view).getByRole('button', { name: 'Load earlier' })));
-    expect(within(view).getByText("Couldn't load earlier messages.")).toBeTruthy();
+    expect(within(view).getByRole('alert').textContent).toBe("Couldn't load earlier messages (HTTP 500).Try again");
     expect(texts(view)).toEqual(['prompt 3']);
   });
 

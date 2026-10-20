@@ -12,7 +12,16 @@
 // - A fold stays open or closed across refreshes and "Load earlier" while it has a call it had.
 // - Everything is text, never markup (6.1, rule 16).
 //
-// The loading, empty, failed and missing states are W28's, and keep their look here.
+// Its states (4: Empty states and Skeletons and spinners, and 5: Errors):
+// - Waiting for the first page: "Loading the conversation…" after --pw-delay-spinner, and what's
+//   slow after --pw-delay-long. Nothing yet, no transcript, and no API client are status lines too.
+// - A failure is an inline alert with Try again (outline sm, `retry`, busy while it's out): danger
+//   when nothing is shown ("Couldn't load the conversation."), warning when what's shown is kept.
+//   A refresh that fails keeps the entries and says they may be out of date; so does "Couldn't load
+//   earlier messages.", in Load earlier's place. The HTTP status and the server's reason, as text,
+//   follow pitwall's sentence.
+// - A transcript that changed under Load earlier starts again from its newest page, at the top,
+//   under a neutral notice; one that's gone keeps what was shown, with a neutral notice at the end.
 
 import {
   useCallback,
@@ -22,6 +31,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type RefObject,
 } from 'react';
 import type { ConversationEntry } from '../../../src/shared/protocol.js';
@@ -35,12 +45,14 @@ import {
   type ConversationResult,
   type KeyedEntry,
 } from '../conversation.js';
-import { clockTime, plainText } from '../format.js';
+import { clockTime, couldNot, plainText } from '../format.js';
+import { Alert, Detail } from './Alert.js';
 import { Badge } from './Badge.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
+import { useWaiting } from './Waiting.js';
 
 /**
  * - `loading`: the first page hasn't arrived.
@@ -51,6 +63,12 @@ import { Tooltip } from './Tooltip.js';
  */
 type Status = 'loading' | 'ready' | 'missing' | 'failed' | 'unavailable';
 
+/** Why a page didn't load: the HTTP status, when the server answered, and the reason it gave, when it gave one. */
+export interface LoadFailure {
+  status?: number;
+  error?: string;
+}
+
 interface ConversationState {
   status: Status;
   /** Oldest first. */
@@ -58,16 +76,25 @@ interface ConversationState {
   /** The cursor for the page before the oldest entry shown. */
   before?: string;
   earlier: 'idle' | 'loading' | 'failed';
+  /** Why "Load earlier" last failed, until it works: its alert stays, with Try again busy, while it tries again. */
+  earlierFailure?: LoadFailure;
   /** The transcript changed under "Load earlier", so the view started again from the newest page. */
   reloaded: boolean;
   /** How many entries arrived while the reader was scrolled up: the count on "Jump to latest". */
   unseen: number;
+  /**
+   * Why the newest page last failed, until one arrives: the first page (status 'failed', nothing
+   * shown), or a refresh, which keeps what's shown, which may now be out of date.
+   */
+  failure?: LoadFailure;
+  /** Try again on the newest page is out: its button is busy. */
+  retrying: boolean;
 }
 
 /** Fetches one page of the session's conversation: the newest, or the one before `before`. Never rejects. */
 export type PageLoader = (before?: string) => Promise<ConversationResult>;
 
-type ScrollIntent = { kind: 'bottom' } | { kind: 'keep'; height: number; top: number };
+type ScrollIntent = { kind: 'bottom' } | { kind: 'top' } | { kind: 'keep'; height: number; top: number };
 
 /** How close to the bottom counts as at the bottom, for following new entries. */
 export const AT_BOTTOM_PX = 24;
@@ -91,6 +118,20 @@ export function prefersReducedMotion(): boolean {
 function withBefore(state: ConversationState, before: string | undefined): ConversationState {
   const { before: _old, ...rest } = state;
   return before === undefined ? rest : { ...rest, before };
+}
+
+/** `state` with `failure` set to `failure`, or without one. */
+function withFailure(state: ConversationState, key: 'failure' | 'earlierFailure', failure: LoadFailure | undefined): ConversationState {
+  const { [key]: _old, ...rest } = state;
+  return failure === undefined ? rest : { ...rest, [key]: failure };
+}
+
+/** The failure in a result that isn't a page. */
+function failureOf(result: { status?: number; error?: string }): LoadFailure {
+  const failure: LoadFailure = {};
+  if (result.status !== undefined) failure.status = result.status;
+  if (result.error !== undefined) failure.error = result.error;
+  return failure;
 }
 
 /** What `useConversation` gives the view and its panel. */
@@ -121,6 +162,7 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     earlier: 'idle',
     reloaded: false,
     unseen: 0,
+    retrying: false,
   }));
   // The state as last committed, for the async loads to build on.
   const stateRef = useRef(state);
@@ -156,6 +198,16 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     commit({ ...current, unseen: 0 });
   }, [commit]);
 
+  /**
+   * Before an alert goes, as one does once its Try again works: focus on its button moves to the
+   * panel, so the keyboard carries on from there rather than from the page.
+   */
+  const keepFocus = useCallback(() => {
+    const element = scroller.current;
+    const active = document.activeElement;
+    if (element && active instanceof Element && active.closest('.conversation-alert') && element.contains(active)) element.focus({ preventScroll: true });
+  }, []);
+
   const sync = useCallback(() => {
     const element = scroller.current;
     if (!element) return;
@@ -176,32 +228,45 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
       if (!alive.current || request !== newestRequest.current) return;
       const current = stateRef.current;
       if (result.kind === 'ok') {
+        if (current.failure !== undefined) keepFocus();
+        const settled = withFailure({ ...current, retrying: false }, 'failure', undefined);
         const merged = options.replace || current.status !== 'ready' ? undefined : mergeNewest(current.entries, result.page.entries);
         if (merged === undefined) {
           epoch.current += 1;
-          scrollIntent.current = { kind: 'bottom' };
+          // After a stale cursor, the reader was at the top, pressing Load earlier: they stay there, under the notice.
+          scrollIntent.current = { kind: options.reloaded === true ? 'top' : 'bottom' };
           commit(
             withBefore(
-              { status: 'ready', entries: result.page.entries, earlier: 'idle', reloaded: options.reloaded === true, unseen: 0 },
+              { status: 'ready', entries: result.page.entries, earlier: 'idle', reloaded: options.reloaded === true, unseen: 0, retrying: false },
               result.page.before,
             ),
           );
         } else if (atBottom.current) {
           scrollIntent.current = { kind: 'bottom' };
-          commit({ ...current, entries: merged });
+          commit({ ...settled, entries: merged });
         } else {
           // Scrolled up: the place is kept, and what arrived is counted.
-          commit({ ...current, entries: merged, unseen: current.unseen + countAdded(current.entries, merged) });
+          commit({ ...settled, entries: merged, unseen: current.unseen + countAdded(current.entries, merged) });
         }
       } else if (result.kind === 'not-found') {
-        commit({ ...current, status: 'missing' });
-      } else if (result.kind !== 'unauthorized' && current.status !== 'ready') {
-        // A refresh that fails keeps what's on screen; the next change of activity tries again.
-        commit({ ...current, status: 'failed' });
+        // What's shown is kept, with a notice at the end that the transcript has gone.
+        if (atBottom.current && current.entries.length > 0) scrollIntent.current = { kind: 'bottom' };
+        commit(withFailure({ ...current, status: 'missing', retrying: false }, 'failure', undefined));
+      } else if (result.kind === 'failed') {
+        if (current.entries.length > 0) {
+          // A refresh that fails keeps what's on screen, and says it may be out of date, at the end,
+          // where the reader at the bottom sees it. The next change of activity, or Try again, tries again.
+          if (atBottom.current) scrollIntent.current = { kind: 'bottom' };
+          commit(withFailure({ ...current, retrying: false }, 'failure', failureOf(result)));
+        } else {
+          commit(withFailure({ ...current, status: 'failed', retrying: false }, 'failure', failureOf(result)));
+        }
+      } else {
+        // On 'unauthorized' the app has already replaced the dashboard with the token notice.
+        commit({ ...current, retrying: false });
       }
-      // On 'unauthorized' the app has already replaced the dashboard with the token notice.
     },
-    [loader, commit],
+    [loader, commit, keepFocus],
   );
 
   const loadEarlier = useCallback(async () => {
@@ -213,16 +278,23 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     if (!alive.current || started !== epoch.current) return;
     const latest = stateRef.current;
     if (result.kind === 'ok') {
+      if (latest.earlierFailure !== undefined) keepFocus();
       const element = scroller.current;
       if (element) scrollIntent.current = { kind: 'keep', height: element.scrollHeight, top: element.scrollTop };
-      commit(withBefore({ ...latest, entries: prependOlder(result.page.entries, latest.entries), earlier: 'idle' }, result.page.before));
+      const loaded = { ...latest, entries: prependOlder(result.page.entries, latest.entries), earlier: 'idle' as const };
+      commit(withBefore(withFailure(loaded, 'earlierFailure', undefined), result.page.before));
     } else if (result.kind === 'stale') {
-      commit({ ...latest, earlier: 'idle' });
+      if (latest.earlierFailure !== undefined) keepFocus();
+      commit(withFailure({ ...latest, earlier: 'idle' }, 'earlierFailure', undefined));
       await loadNewest({ replace: true, reloaded: true });
+    } else if (result.kind === 'unauthorized') {
+      commit({ ...latest, earlier: 'idle' });
     } else {
-      commit({ ...latest, earlier: result.kind === 'unauthorized' ? 'idle' : 'failed' });
+      // A 404 here means the transcript has gone: it's still a failed read, never "nothing earlier".
+      const failure = result.kind === 'failed' ? failureOf(result) : { status: 404 };
+      commit(withFailure({ ...latest, earlier: 'failed' }, 'earlierFailure', failure));
     }
-  }, [loader, commit, loadNewest]);
+  }, [loader, commit, loadNewest, keepFocus]);
 
   useEffect(() => {
     alive.current = true;
@@ -238,14 +310,16 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
   }, [loadNewest, lastActivityAt]);
 
   // Follow new entries only when already at the bottom; keep the place when older ones arrive above.
+  // A notice or an alert at the end, at the bottom, is followed the same way.
   useLayoutEffect(() => {
     const intent = scrollIntent.current;
     const element = scroller.current;
     scrollIntent.current = undefined;
     if (!intent || !element) return;
-    element.scrollTop = intent.kind === 'bottom' ? element.scrollHeight : intent.top + (element.scrollHeight - intent.height);
+    element.scrollTop =
+      intent.kind === 'bottom' ? element.scrollHeight : intent.kind === 'top' ? 0 : intent.top + (element.scrollHeight - intent.height);
     atBottom.current = isAtBottom(element);
-  }, [state.entries]);
+  }, [state]);
 
   // The scroller changes size without scrolling when the header or the message box below it grows or
   // shrinks (a send's result, a reply arriving, the box resized) and when the window does. Stay at the
@@ -262,9 +336,12 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     return () => observer.disconnect();
   }, [sync]);
 
+  /** Try again, on the newest page: its alert stays, with the button busy, until the page arrives or fails again. */
   const retry = useCallback(() => {
-    commit({ ...stateRef.current, status: 'loading' });
-    void loadNewest({ replace: true });
+    const current = stateRef.current;
+    if (current.retrying) return;
+    commit({ ...current, retrying: true });
+    void loadNewest({ replace: current.entries.length === 0 });
   }, [commit, loadNewest]);
 
   const jumpToLatest = useCallback(() => {
@@ -381,6 +458,51 @@ function Entry({ entry }: { entry: ConversationEntry }) {
   );
 }
 
+/**
+ * pitwall's sentence for a failed load, then the server's reason as text when it gave one, or else
+ * the HTTP status before the full stop, as the session actions do (5: Errors).
+ */
+function failedText(what: string, failure: LoadFailure | undefined, after = ''): ReactNode {
+  const sentence = couldNot(what, failure?.error === undefined ? failure?.status : undefined);
+  return (
+    <>
+      {after === '' ? sentence : `${sentence.slice(0, -1)}${after}`}
+      {failure?.error !== undefined && (
+        <>
+          {' '}
+          <Detail>{plainText(failure.error)}</Detail>
+        </>
+      )}
+    </>
+  );
+}
+
+/** Try again, on an alert: outline sm with the `retry` icon, busy while it's out. */
+function TryAgain({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  return (
+    <Button size="sm" icon="retry" busy={busy} busyLabel="Trying again…" onClick={onClick}>
+      Try again
+    </Button>
+  );
+}
+
+/** The conversation's status line, a role="status" that's always there: what's loading, or why there's nothing. */
+function statusLine(state: ConversationState, shown: boolean): string | undefined {
+  const empty = state.entries.length === 0;
+  switch (state.status) {
+    case 'loading':
+      return shown ? 'Loading the conversation…' : undefined;
+    case 'missing':
+      return empty ? 'No transcript for this session.' : undefined;
+    case 'unavailable':
+      return "The conversation can't be loaded here.";
+    case 'ready':
+      return empty && state.before === undefined ? 'Nothing to show yet.' : undefined;
+    case 'failed':
+      return undefined;
+  }
+}
+
 export interface ConversationPanelProps {
   conversation: ConversationController;
   /** The tab panel's id, which the Conversation tab controls. */
@@ -409,6 +531,9 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
   }, [open, sync]);
 
   const { entries } = state;
+  // The first page: "Loading the conversation…" after --pw-delay-spinner, and what's slow after --pw-delay-long.
+  const waiting = useWaiting(scroller, state.status === 'loading');
+  const line = statusLine(state, waiting.shown);
   return (
     <div
       className="session-view-body"
@@ -425,13 +550,33 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
       onKeyDown={onInput}
       hidden={hidden}
     >
-      {state.before !== undefined && (
-        <Button size="sm" className="load-earlier" busy={state.earlier === 'loading'} busyLabel="Loading earlier…" onClick={() => void loadEarlier()}>
-          Load earlier
-        </Button>
+      {state.status === 'failed' && (
+        <Alert tone="danger" role="alert" className="conversation-alert" actions={<TryAgain busy={state.retrying} onClick={retry} />}>
+          {failedText('load the conversation', state.failure)}
+        </Alert>
       )}
-      {state.earlier === 'failed' && <p className="session-view-status">Couldn&apos;t load earlier messages.</p>}
-      {state.reloaded && <p className="session-view-status">The transcript changed, so this starts again from its newest messages.</p>}
+      {state.reloaded && (
+        <Alert tone="neutral" role="status" className="conversation-alert">
+          The transcript changed, so this starts again from its newest messages.
+        </Alert>
+      )}
+      {state.earlierFailure !== undefined ? (
+        // In Load earlier's place, until it works.
+        <Alert
+          tone="warning"
+          role="alert"
+          className="conversation-alert"
+          actions={<TryAgain busy={state.earlier === 'loading'} onClick={() => void loadEarlier()} />}
+        >
+          {failedText('load earlier messages', state.earlierFailure)}
+        </Alert>
+      ) : (
+        state.before !== undefined && (
+          <Button size="sm" className="load-earlier" busy={state.earlier === 'loading'} busyLabel="Loading earlier…" onClick={() => void loadEarlier()}>
+            Load earlier
+          </Button>
+        )
+      )}
       {rows.length > 0 && (
         <ol className="conversation">
           {rows.map((row) =>
@@ -443,24 +588,21 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
           )}
         </ol>
       )}
-      {state.status === 'loading' && (
-        <p className="session-view-status" role="status">
-          Loading the conversation…
-        </p>
+      {entries.length > 0 && state.failure !== undefined && (
+        // At the end, where new entries would have come: what's shown is kept.
+        <Alert tone="warning" role="alert" className="conversation-alert end" actions={<TryAgain busy={state.retrying} onClick={retry} />}>
+          {failedText('refresh the conversation', state.failure, ', so it may be out of date.')}
+        </Alert>
       )}
-      {state.status === 'failed' && (
-        <p className="session-view-status">
-          Couldn&apos;t load the conversation.{' '}
-          <button type="button" className="link-button" onClick={retry}>
-            Try again
-          </button>
-        </p>
+      {entries.length > 0 && state.status === 'missing' && (
+        <Alert tone="neutral" role="status" className="conversation-alert end">
+          The transcript is no longer available, so this is what it showed last.
+        </Alert>
       )}
-      {state.status === 'missing' && (
-        <p className="session-view-status">{entries.length > 0 ? 'The transcript is no longer available.' : 'No transcript for this session.'}</p>
-      )}
-      {state.status === 'unavailable' && <p className="session-view-status">The conversation can&apos;t be loaded here.</p>}
-      {state.status === 'ready' && entries.length === 0 && state.before === undefined && <p className="session-view-status">Nothing to show yet.</p>}
+      <div className="conversation-status" role="status">
+        {line !== undefined && <p className="status-line">{line}</p>}
+        {state.status === 'loading' && waiting.long && <p className="status-line">Still waiting for the transcript…</p>}
+      </div>
       {state.unseen > 0 && (
         // Sticky at the bottom of the body, taking no room of its own, so nothing moves when it goes.
         <div className="jump-latest">

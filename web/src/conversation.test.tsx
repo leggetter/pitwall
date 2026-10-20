@@ -170,12 +170,23 @@ describe('getConversation', () => {
   it.each([
     [404, 'not-found'],
     [STALE_CURSOR_STATUS, 'stale'],
-    [400, 'failed'],
-    [500, 'failed'],
-    [503, 'failed'],
   ])('reports a %i as %s', async (status, kind) => {
     const { api } = client(() => new Response(null, { status }));
     expect(await getConversation(api, SID)).toEqual({ kind });
+  });
+
+  it.each([400, 429, 500, 503])('reports a %i as failed, with its status for the page to show', async (status) => {
+    const { api } = client(() => new Response(null, { status }));
+    expect(await getConversation(api, SID)).toEqual({ kind: 'failed', status });
+  });
+
+  it('keeps the reason an error body gives, trimmed, for the page to show after its own sentence', async () => {
+    const { api } = client(() => new Response(JSON.stringify({ error: '  A made-up reason.  ' }), { status: 500 }));
+    expect(await getConversation(api, SID)).toEqual({ kind: 'failed', status: 500, error: 'A made-up reason.' });
+    const long = client(() => new Response(JSON.stringify({ error: 'x'.repeat(900) }), { status: 500 }));
+    expect(await getConversation(long.api, SID)).toEqual({ kind: 'failed', status: 500, error: 'x'.repeat(500) });
+    const other = client(() => new Response(JSON.stringify({ error: 42 }), { status: 500 }));
+    expect(await getConversation(other.api, SID)).toEqual({ kind: 'failed', status: 500 });
   });
 
   it('answers 410 for a stale cursor, as the server does', () => {

@@ -257,10 +257,15 @@ describe('Dashboard header', () => {
 });
 
 describe('Dashboard states', () => {
-  it('says it is connecting before the first snapshot', () => {
+  it('says it is connecting before the first snapshot, with skeletons after --pw-delay-spinner (more in States.test.tsx)', () => {
     renderDashboard(undefined, { state: 'connecting' });
 
-    expect(screen.getByText('Connecting to pitwall…')).toBeTruthy();
+    expect(screen.getByText('Connecting…')).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByText('Loading sessions')).toBeTruthy();
+    expect(document.querySelectorAll('.skeleton-row')).toHaveLength(3);
   });
 
   it('shows the empty state with the roots', () => {

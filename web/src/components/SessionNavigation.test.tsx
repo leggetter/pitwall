@@ -218,7 +218,9 @@ describe('the open session in the URL', () => {
   it('waits for the first snapshot before saying a session is not listed', async () => {
     const history = fakeHistory(`?view=all&session=${A}`);
     const { rerender } = render(<Dashboard view={{ state: 'connecting' }} navigation={history.navigation} storage={memory()} />);
-    expect(view()).toBeUndefined();
+    // The waiting state, not the unlisted one (more in States.test.tsx).
+    expect(screen.getByRole('dialog', { name: 'Session' })).toBe(view());
+    expect(screen.queryByText("This session isn't listed under these roots")).toBeNull();
     rerender(<Dashboard view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} storage={memory()} />);
     await settle();
     expect(viewName()).toBe('demo-a');

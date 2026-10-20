@@ -4,6 +4,9 @@
 // the Conversation and Terminal tabs; the body, which is all that scrolls; and, for an interactive
 // session, the message box in the footer.
 //
+// Two more states take the view's place: waiting, while a ?session= from the URL waits for the first
+// snapshot, and unlisted, for one that pitwall doesn't list under its roots (3: Session view).
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
@@ -21,6 +24,7 @@ import { Alert } from './Alert.js';
 import { StatusBadge } from './Badge.js';
 import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
+import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
@@ -32,6 +36,7 @@ import { SessionTerminal, type RestartPhase } from './Terminal.js';
 import { Timestamp } from './Timestamp.js';
 import { useToast } from './Toast.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
+import { SkeletonHeading, SkeletonMeta, WaitingStatus, type Waiting } from './Waiting.js';
 
 const KIND_LABELS: Record<SessionSummary['kind'], string> = { interactive: 'Interactive', background: 'Background' };
 
@@ -464,8 +469,8 @@ export interface UnlistedSessionViewProps {
 
 /**
  * A URL's ?session= that isn't listed under these roots (3: Session view), and wasn't while this page
- * was open: there's nothing to show, so the view says so and offers Close. It never attaches, sends
- * or changes anything.
+ * was open: there's nothing to show, so the view says so, as an empty state whose title is the view's
+ * heading, and offers Close. It never attaches, sends or changes anything.
  */
 export function UnlistedSessionView({ sessionId, roots, onClose, layout = 'overlay', compact = false, headingRef, animate = true }: UnlistedSessionViewProps) {
   const titleId = useId();
@@ -475,16 +480,59 @@ export function UnlistedSessionView({ sessionId, roots, onClose, layout = 'overl
     <Frame layout={layout} animate={animate} titleId={titleId} onEscape={onClose}>
       <header className="session-view-head">
         <Top compact={compact} onClose={onClose}>
-          <h2 className="session-view-title" id={titleId} ref={headingRef} tabIndex={-1}>
-            <span className="session-view-name wrap">This session isn&apos;t listed under these roots</span>
-          </h2>
+          <span className="session-view-spacer" />
         </Top>
       </header>
+      <div className="session-view-body session-view-state">
+        <EmptyState
+          icon="info"
+          heading={{ id: titleId, ref: headingRef }}
+          title="This session isn't listed under these roots"
+          sentence={
+            <>
+              pitwall lists no session with the id <code>{shown}</code> under {plainText(formatRoots(roots))}; it may have been removed, or
+              run outside these roots.
+            </>
+          }
+        />
+      </div>
+    </Frame>
+  );
+}
+
+export interface WaitingSessionViewProps {
+  /** How long the first snapshot has taken (Waiting.tsx), from the dashboard, so it matches the lists. */
+  waiting: Waiting;
+  /** What's slow, after --pw-delay-long: the same line as the session list's. */
+  slow: ReactNode;
+  onClose: () => void;
+  layout?: SessionViewLayout;
+  compact?: boolean;
+  headingRef?: RefObject<HTMLHeadingElement | null>;
+  animate?: boolean;
+}
+
+/**
+ * A URL's ?session= before the first snapshot (3: Session view): the view, with Close, and skeletons
+ * for its header after --pw-delay-spinner, then the line saying what's slow after --pw-delay-long. The
+ * snapshot replaces it with the session, or with the unlisted state. It takes no focus, and never
+ * attaches, sends or changes anything.
+ */
+export function WaitingSessionView({ waiting, slow, onClose, layout = 'overlay', compact = false, headingRef, animate = true }: WaitingSessionViewProps) {
+  const titleId = useId();
+  return (
+    <Frame layout={layout} animate={animate} titleId={titleId} onEscape={onClose}>
+      <header className="session-view-head">
+        <Top compact={compact} onClose={onClose}>
+          <h2 className="session-view-title" id={titleId} ref={headingRef} tabIndex={-1}>
+            <span className="visually-hidden">Session</span>
+            {waiting.shown && <SkeletonHeading />}
+          </h2>
+        </Top>
+        {waiting.shown && <SkeletonMeta />}
+      </header>
       <div className="session-view-body">
-        <p className="session-view-status unlisted">
-          pitwall lists no session with the id <code>{shown}</code> under {plainText(formatRoots(roots))}. It may have been removed,
-          or it may run outside these roots.
-        </p>
+        <WaitingStatus waiting={waiting} label="Loading the session" slow={slow} />
       </div>
     </Frame>
   );

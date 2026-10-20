@@ -1,7 +1,8 @@
 // The motion and timing tokens that JavaScript reads (docs/design-system.md, 2.13): --pw-delay-tooltip,
-// --pw-toast-timeout, --pw-copied-timeout and --pw-duration-base. Each is read from the element it
-// applies to, so a part of the page can set its own, as the #uikit gallery does to keep a toast or a
-// copied icon on screen for its screenshots. Where there's no stylesheet, as in the tests, the
+// --pw-delay-spinner, --pw-delay-long, --pw-toast-timeout, --pw-copied-timeout and --pw-duration-base.
+// Each is read from the element it applies to, so a part of the page can set its own, as the #uikit
+// gallery does to keep a toast or a copied icon on screen for its screenshots, or to show a waiting
+// state's skeletons and long-wait line at once. Where there's no stylesheet, as in the tests, the
 // fallback is the doc's value.
 
 /** A CSS <time> in ms: "300ms", "4s" or "0.5s". Undefined when it isn't one. */
@@ -19,5 +20,9 @@ export function cssTime(element: Element | null | undefined, name: string, fallb
 
 /** The doc's values, for when there's no stylesheet. */
 export const TOOLTIP_DELAY_MS = 300;
+/** Before a skeleton, a spinner or a waiting status line shows, so a fast answer never flashes one. */
+export const SPINNER_DELAY_MS = 500;
+/** Before a waiting state adds the line saying what's slow. */
+export const LONG_DELAY_MS = 10_000;
 export const TOAST_TIMEOUT_MS = 4_000;
 export const COPIED_TIMEOUT_MS = 2_000;

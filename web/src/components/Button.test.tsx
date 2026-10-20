@@ -122,9 +122,17 @@ describe('Button', () => {
 describe('the stylesheets', () => {
   const sheets = { 'styles.css': withoutComments(stylesCss), 'actions.css': withoutComments(actionsCss), 'relay.css': withoutComments(relayCss) };
 
+  /** The sheet without its @keyframes, such as the skeletons' pulse to 0.6, which styles no button. */
+  const withoutKeyframes = (css: string) => css.replace(/@keyframes[^{]*\{(?:[^{}]*\{[^}]*\})*[^{}]*\}/g, '');
+
   it.each(Object.entries(sheets))('%s styles no button by :disabled or opacity: disabled is aria-disabled', (_name, css) => {
     expect(css).not.toMatch(/button[^{]*:disabled/);
-    expect(css).not.toMatch(/opacity:\s*0\.6/);
+    expect(withoutKeyframes(css)).not.toMatch(/opacity:\s*0\.6/);
+  });
+
+  it('leaves the rest of the sheet when it sets the keyframes aside', () => {
+    const css = '@keyframes pw-pulse {\n  50% {\n    opacity: 0.6;\n  }\n}\n.button { opacity: 0.6; }';
+    expect(withoutKeyframes(css)).toBe('\n.button { opacity: 0.6; }');
   });
 
   it('gives disabled buttons --pw-text-disabled on --pw-surface-sunken, with the control edge', () => {

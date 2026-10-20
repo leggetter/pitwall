@@ -7,6 +7,11 @@
 // session open changes how it sits, not the view itself, which keeps its conversation and terminal.
 // The open session is in the URL, as ?session= (openSession.ts).
 //
+// Before the first snapshot, the repo list and the session list show skeletons, and a ?session= from
+// the URL opens the session view in its waiting state, all after --pw-delay-spinner, with a line
+// saying what's slow after --pw-delay-long (Waiting.tsx). Once there's a snapshot, an empty selection
+// shows its empty state in place of the rows (4: Empty states).
+//
 // The app strip goes above the header while the relay is off until restart, and the page alerts sit at
 // the top of the session list (3: App strip and page alerts). The toasts' stack is inside the app, from
 // the first render, so its live region is there before any toast (4: Toasts). Relative times tick on
@@ -44,7 +49,9 @@ import { shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import { AppStrip } from './AppStrip.js';
+import { Button } from './Button.js';
 import { Divider } from './Divider.js';
+import { EmptyState } from './EmptyState.js';
 import { FilterControls } from './Filters.js';
 import { Header } from './Header.js';
 import { HighlightContext } from './Highlight.js';
@@ -53,11 +60,12 @@ import { NewSessionDialog } from './NewSessionDialog.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { SessionList, type SessionListHeading } from './SessionList.js';
-import { SessionView, UnlistedSessionView } from './SessionView.js';
+import { SessionView, UnlistedSessionView, WaitingSessionView } from './SessionView.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { SortSelect } from './SortSelect.js';
 import { ToastContext, ToastRegion, useToastStack } from './Toast.js';
 import { focusQuietly } from './Tooltip.js';
+import { SkeletonRows, useWaiting, WaitingStatus } from './Waiting.js';
 
 /**
  * How many dashboards are on the page: one in the app, and several in the #uikit gallery. A shortcut
@@ -68,14 +76,17 @@ let dashboards = 0;
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
 
-/** A state in place of the session list's rows. Today's look, until W28 restyles the empty states. */
-function Placeholder({ title, sentence, children }: { title: string; sentence?: string; children?: ReactNode }) {
-  return (
-    <div className="placeholder">
-      <p className="placeholder-title">{title}</p>
-      {sentence && <p>{sentence}</p>}
-      {children && <p className="placeholder-actions">{children}</p>}
-    </div>
+/**
+ * What's slow when the first snapshot takes long (4: Skeletons and spinners): the index's first poll,
+ * which runs `claude agents`, or, once the connection has dropped, reaching pitwall at all.
+ */
+export function slowFirstSnapshot(state: ConnectionView['state']): ReactNode {
+  return state === 'reconnecting' ? (
+    'Still trying to reach pitwall…'
+  ) : (
+    <>
+      Still waiting for <code>claude agents</code>…
+    </>
   );
 }
 
@@ -131,6 +142,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Whether the open session's message box has a draft: no shortcut replaces or closes the view then,
   // just as Escape doesn't (6.2).
   const draft = useRef(false);
+
+  // Before the first snapshot: the skeletons after --pw-delay-spinner, and what's slow after --pw-delay-long.
+  const waiting = useWaiting(app, snapshot === undefined);
+  const slow = slowFirstSnapshot(state);
 
   const groups = snapshot?.groups ?? [];
   const roots = snapshot?.roots ?? [];
@@ -453,44 +468,91 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       : { label: name, kind: selectedGroup?.kind, root: roots.length > 1 ? (selectedGroup?.root ?? selection.root) : undefined };
   const total = listed.current.length + listed.finished.length;
   const shown = current.length + finished.length;
+  // The empty states' actions take their button away, so focus goes where the reader carries on: the
+  // filter field after a filter action, the session list's heading otherwise.
+  const focusField = () => filterField.current?.focus();
   const showAll = (
-    <button type="button" className="button" onClick={() => select(ALL_SESSIONS)}>
+    <Button
+      onClick={() => {
+        select(ALL_SESSIONS);
+        listHeading.current?.focus();
+      }}
+    >
       Show all sessions
-    </button>
+    </Button>
   );
 
-  // What takes the rows' place, if anything.
+  // What takes the rows' place, if anything (4: Empty states).
   let empty: ReactNode;
   if (!snapshot) {
-    empty = <p className="placeholder">{state === 'reconnecting' ? 'Reconnecting to pitwall…' : 'Connecting to pitwall…'}</p>;
+    empty = (
+      <div className="list-waiting">
+        {waiting.shown && <SkeletonRows />}
+        <WaitingStatus waiting={waiting} label="Loading sessions" slow={slow} />
+      </div>
+    );
   } else if (allSessions.length === 0) {
-    empty = <p className="placeholder">No Claude Code sessions under {plainText(formatRoots(snapshot.roots))}</p>;
+    empty = (
+      <EmptyState
+        icon="terminal"
+        title={`No Claude Code sessions under ${plainText(formatRoots(snapshot.roots))}`}
+        sentence="Start one here, or start Claude Code in any terminal under these directories and it appears here."
+        actions={
+          <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
+            New session
+          </Button>
+        }
+      />
+    );
   } else if (!scope) {
     empty = (
-      <Placeholder title={`No sessions in ${plainText(name)} now`} sentence="Its sessions are no longer listed under these roots.">
-        {showAll}
-      </Placeholder>
+      <EmptyState
+        icon="directory"
+        title={`No sessions in ${plainText(name)} now`}
+        sentence="Its sessions are no longer listed under these roots."
+        actions={showAll}
+      />
     );
   } else if (scope.kind === 'needs-you' && total === 0) {
     empty = (
-      <Placeholder title="Nothing needs you right now" sentence="Sessions that are waiting for you, or asked you something, show here.">
-        {showAll}
-      </Placeholder>
+      <EmptyState
+        icon="success"
+        title="Nothing needs you right now"
+        sentence="Sessions that are waiting for you, or asked you something, show here."
+        actions={showAll}
+      />
     );
   } else if (shown === 0 && total > 0) {
     const { title, sentence } = noMatchText(filters, plainText(name));
     empty = (
-      <Placeholder title={title} sentence={sentence}>
-        <button type="button" className="button" onClick={() => setFilters(NO_FILTERS)}>
-          Clear filters
-        </button>
-        {scope.kind === 'group' && filters.text.trim() !== '' && (
-          // Keeps the text: the same search, across every group.
-          <button type="button" className="button" onClick={() => select(ALL_SESSIONS)}>
-            Search all sessions
-          </button>
-        )}
-      </Placeholder>
+      <EmptyState
+        icon="search"
+        title={title}
+        sentence={sentence}
+        actions={
+          <>
+            <Button
+              onClick={() => {
+                setFilters(NO_FILTERS);
+                focusField();
+              }}
+            >
+              Clear filters
+            </Button>
+            {scope.kind === 'group' && filters.text.trim() !== '' && (
+              // Keeps the text: the same search, across every group.
+              <Button
+                onClick={() => {
+                  select(ALL_SESSIONS);
+                  focusField();
+                }}
+              >
+                Search all sessions
+              </Button>
+            )}
+          </>
+        }
+      />
     );
   }
 
@@ -501,6 +563,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       selection={selection}
       onSelect={(next) => select(next, from)}
       autoFocus={from === 'drawer'}
+      skeletons={waiting.shown}
     />
   );
 
@@ -526,7 +589,21 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         }}
       />
     );
-  } else if (openId !== undefined && snapshot) {
+  } else if (openId !== undefined && !snapshot) {
+    // A ?session= from the URL, before the first snapshot says what it is.
+    sessionView = (
+      <WaitingSessionView
+        key={`waiting:${openId}`}
+        waiting={waiting}
+        slow={slow}
+        onClose={closeSession}
+        layout={viewLayout}
+        compact={compact}
+        headingRef={viewHeading}
+        animate={animate}
+      />
+    );
+  } else if (openId !== undefined) {
     sessionView = (
       <UnlistedSessionView
         key={`unlisted:${openId}`}
@@ -540,11 +617,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   } else if (layout === 'three-columns') {
-    // With nothing open, the column stays, so the layout doesn't jump. Before the first snapshot, a
-    // ?session= from the URL waits here, blank.
+    // With nothing open, the column stays, so the layout doesn't jump.
     sessionView = (
       <section className="session-view-empty" aria-label="Session">
-        {openId === undefined && <Placeholder title="Select a session" sentence="Its conversation, terminal and actions open here." />}
+        <EmptyState icon="conversation" title="Select a session" sentence="Its conversation, terminal and actions open here." />
       </section>
     );
   }

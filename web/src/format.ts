@@ -18,6 +18,15 @@ export function plainText(text: string): string {
 }
 
 /**
+ * pitwall's own sentence for something that failed (docs/design-system.md, 5: Errors): "Couldn't
+ * stop the session.", with the HTTP status when the server answered, "(HTTP 502)". The server's
+ * reason, when it gave one, goes after it, as text.
+ */
+export function couldNot(what: string, status: number | undefined): string {
+  return `Couldn't ${what}${status === undefined ? '' : ` (HTTP ${status})`}.`;
+}
+
+/**
  * Shortens a home directory to `~` when the path makes it obvious: macOS
  * `/Users/<name>` and Linux `/home/<name>`. The browser can't ask for the real
  * home directory, and the contract doesn't send it.
