@@ -2,9 +2,9 @@
 // UI's components have no `title` attribute on an HTML element, read as text. A component prop called
 // title, such as an Alert's or an empty state's, is fine: those start with a capital.
 //
-// The one exception is the conversation's entries, which W27 rebuilds with speaker lines that show
-// the time and folded tool calls with their own tooltips. The #uikit gallery test checks the same
-// thing at run time, over every component in every state.
+// There are no exceptions: the last ones, the conversation's entries, have had speaker lines with
+// their times and tool calls with their own tooltips since W27. The #uikit gallery test checks the
+// same thing at run time, over every component in every state.
 
 import { describe, expect, it } from 'vitest';
 
@@ -24,19 +24,16 @@ function titledTags(source: string): { tag: string; line: number }[] {
   return found;
 }
 
-/** What may keep `title` for now, and why. */
-const KEPT: Record<string, { tags: string[]; why: string }> = {
-  './components/SessionView.tsx': { tags: ['li', 'li'], why: "The conversation's entries: W27 rebuilds them, with speaker lines and folded tool calls." },
-};
-
 describe('title attributes in the components', () => {
   it('are looked for in every component', () => {
-    expect(sources.map(([path]) => path)).toEqual(expect.arrayContaining(['./components/SessionRow.tsx', './components/Header.tsx', './App.tsx']));
+    expect(sources.map(([path]) => path)).toEqual(
+      expect.arrayContaining(['./components/SessionRow.tsx', './components/Header.tsx', './components/Conversation.tsx', './App.tsx']),
+    );
   });
 
   it.each(sources)('%s has none on an HTML element, where a tooltip should be', (path, source) => {
     const onElements = titledTags(source).filter(({ tag }) => /^[a-z]/.test(tag));
-    expect(onElements.map(({ tag }) => tag)).toEqual(KEPT[path]?.tags ?? []);
+    expect(onElements.map(({ tag, line }) => `${path}:${line} <${tag}>`)).toEqual([]);
   });
 
   it('finds one when there is one', () => {

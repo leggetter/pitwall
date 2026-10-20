@@ -89,8 +89,9 @@ async function openView(name = 'demo-docs'): Promise<HTMLElement> {
   return screen.getByRole('dialog');
 }
 
+/** Each entry's text, and each tool call's line, folded or not, in order. */
 function texts(view: HTMLElement): string[] {
-  return [...view.querySelectorAll('.entry-text, .entry-tool-text')].map((element) => element.textContent ?? '');
+  return [...view.querySelectorAll('.entry-text, .tool-call-text')].map((element) => element.textContent ?? '');
 }
 
 beforeEach(() => {
@@ -200,7 +201,7 @@ describe('SessionView: the conversation', () => {
     expect(text.innerHTML).toContain('&lt;b&gt;');
   });
 
-  it('labels prompts and replies, shows tools as one-liners with an error marker, cross-session messages by sender, and notices muted', async () => {
+  it('labels prompts and replies, folds tool calls in a row, names cross-session senders, and mutes notices (more in Conversation.test.tsx)', async () => {
     renderDashboard(
       fakeServer(
         ok([
@@ -219,20 +220,20 @@ describe('SessionView: the conversation', () => {
 
     expect(items.map((item) => item.className)).toEqual([
       'entry entry-user',
-      'entry entry-tool has-error',
-      'entry entry-tool',
+      'entry entry-fold',
       'entry entry-assistant',
       'entry entry-cross-session',
       'entry entry-cross-session',
       'entry entry-notice',
     ]);
-    expect(within(items[0]!).getByText('You')).toBeTruthy();
-    expect(within(items[1]!).getByText('error').className).toBe('tool-error');
-    expect(within(items[2]!).queryByText('error')).toBeNull();
-    expect(within(items[3]!).getByText('Claude')).toBeTruthy();
-    expect(within(items[4]!).getByText('From pitwall-test-sup')).toBeTruthy();
-    expect(within(items[5]!).getByText('From another session')).toBeTruthy();
-    expect(within(items[6]!).getByText('Cut short.')).toBeTruthy();
+    expect(items[0]!.querySelector('.entry-speaker')?.textContent).toMatch(/^You · /);
+    expect(within(items[1]!).getByRole('button', { name: '2 tool calls, 1 error' }).getAttribute('aria-expanded')).toBe('false');
+    expect(items[2]!.querySelector('.entry-speaker')?.textContent).toMatch(/^Claude · /);
+    expect(items[3]!.querySelector('.entry-speaker')?.textContent).toMatch(/^From pitwall-test-sup · /);
+    expect(items[4]!.querySelector('.entry-speaker')?.textContent).toMatch(/^From another session · /);
+    expect(items[5]!.querySelector('.entry-speaker')).toBeNull();
+    expect(within(items[5]!).getByText('Cut short.')).toBeTruthy();
+    expect(texts(view)).toEqual(['run the tests', 'Bash: npm test', 'Read: /w/a.ts', 'One test fails.', 'Please review PR 4.', 'ping', 'Conversation compacted']);
   });
 
   it('loads earlier pages with the cursor, above the ones shown, until there are none', async () => {
@@ -295,7 +296,7 @@ describe('SessionView: the conversation', () => {
     await settle();
     expect(server).toHaveBeenCalledTimes(2);
     expect(texts(view)).toEqual(['prompt 1', 'Part one.\nPart two.', 'Bash: npm test', 'prompt 4']);
-    expect(view.querySelector('.entry-tool.has-error')).toBeTruthy();
+    expect(within(view.querySelector('.entry-tool.has-error')!).getByText('error').closest('.badge-subtle-danger')).toBeTruthy();
   });
 
   it('replaces the entries when the newest page no longer overlaps them', async () => {
