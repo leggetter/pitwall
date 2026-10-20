@@ -105,10 +105,23 @@ textarea {
   background: var(--pw-bg);
 }
 
+/*
+ * Positioned, so what's absolutely positioned inside, such as a .visually-hidden label, is laid out
+ * against them and clipped by their overflow. Otherwise it's placed on the page, as far down as its
+ * row, and the page itself grows a scrollbar.
+ */
+.app,
+.repo-list,
+.session-list-body {
+  position: relative;
+}
+
 .columns {
   grid-area: columns;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  /* One row, the window's height less the header's, whatever a column holds: the columns scroll instead. */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 

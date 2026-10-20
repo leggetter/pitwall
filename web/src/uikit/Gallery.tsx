@@ -95,6 +95,8 @@ export default function Gallery() {
     void Promise.allSettled(pending.current).then(() => {
       if (!alive) return;
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      // A window wider than the gallery scrolls sideways to whatever took focus; start each at its left edge.
+      for (const stage of document.querySelectorAll<HTMLElement>('.uikit-widths')) stage.scrollLeft = 0;
       showTarget();
       setReady(true);
     });
