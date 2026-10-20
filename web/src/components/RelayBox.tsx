@@ -19,13 +19,16 @@ export interface RelayBoxProps {
   /** An interactive session. */
   session: SessionSummary;
   now: number;
+  /** When the row's Message button asks for the box, before it takes the focus. The session view scrolls to the newest message. */
+  onFocusRequest?: () => void;
 }
 
 /**
- * "Message this session": sends text through pitwall's relay (D8) and shows
- * what happened, then the latest exchange and any reply, as text only.
+ * "Message this session", at the foot of the session view: sends text through
+ * pitwall's relay (D8). The latest exchange and any reply, then what happened
+ * to this send, sit just above the text box, as text only.
  */
-export function RelayBox({ session, now }: RelayBoxProps) {
+export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
   const api = useContext(ApiContext);
   const headingId = useId();
   const textId = useId();
@@ -49,8 +52,19 @@ export function RelayBox({ session, now }: RelayBoxProps) {
     };
   }, []);
 
-  // The row's Message button: the box takes the focus.
-  useEffect(() => registerRelayFocus(sessionId, () => textRef.current?.focus()), [sessionId]);
+  // The row's Message button: the view shows its newest message, and the box takes the focus.
+  const onFocusRequestRef = useRef(onFocusRequest);
+  useEffect(() => {
+    onFocusRequestRef.current = onFocusRequest;
+  }, [onFocusRequest]);
+  useEffect(
+    () =>
+      registerRelayFocus(sessionId, () => {
+        onFocusRequestRef.current?.();
+        textRef.current?.focus();
+      }),
+    [sessionId],
+  );
 
   const messageable = canMessage(session);
   const tooLong = outgoingText(text).length > MAX_RELAY_TEXT_LENGTH;
@@ -91,49 +105,55 @@ export function RelayBox({ session, now }: RelayBoxProps) {
 
   return (
     <section className="relay-box" aria-labelledby={headingId}>
-      <h3 className="relay-title" id={headingId}>
+      {/* Named for assistive technology; on screen the text box and Send say what this is, as in a chat. */}
+      <h3 className="visually-hidden" id={headingId}>
         Message this session
       </h3>
-      <p className="relay-note" id={noteId}>
-        {LIMITS_NOTE}
-      </p>
-      {messageable ? (
-        <form className="relay-form" onSubmit={onSubmit}>
-          <label className="visually-hidden" htmlFor={textId}>
-            Message to {plainText(session.name)}
-          </label>
-          <textarea
-            id={textId}
-            ref={textRef}
-            className="field-input relay-text"
-            rows={3}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={onKeyDown}
-            disabled={sending}
-            aria-describedby={noteId}
-            aria-invalid={tooLong || undefined}
-            spellCheck
-          />
-          <div className="relay-actions">
-            <span className={tooLong ? 'relay-count over' : 'relay-count'}>
-              {tooLong ? `${text.length - MAX_RELAY_TEXT_LENGTH} characters over the ${MAX_RELAY_TEXT_LENGTH} limit` : `${text.length} / ${MAX_RELAY_TEXT_LENGTH}`}
-            </span>
-            <button type="submit" className="button small primary" disabled={!canSend} aria-busy={sending || undefined}>
-              {sending ? 'Sending…' : 'Send'}
-            </button>
-          </div>
-        </form>
-      ) : (
-        <p className="relay-note">It isn&apos;t running, so it can&apos;t be messaged.</p>
-      )}
+      {session.relay && <RelayExchangeNote exchange={session.relay} now={now} />}
       {shown && (
         <p className={`relay-result tone-${tone(shown.status)}`} role={shown.status === 'delivered' ? 'status' : 'alert'}>
           {shown.text}
           {shown.detail !== undefined && <span className="relay-detail"> {plainText(shown.detail)}</span>}
         </p>
       )}
-      {session.relay && <RelayExchangeNote exchange={session.relay} now={now} />}
+      {messageable ? (
+        <form className="relay-form" onSubmit={onSubmit}>
+          <label className="visually-hidden" htmlFor={textId}>
+            Message to {plainText(session.name)}
+          </label>
+          <div className="relay-compose">
+            <textarea
+              id={textId}
+              ref={textRef}
+              className="field-input relay-text"
+              rows={2}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={sending}
+              aria-describedby={noteId}
+              aria-invalid={tooLong || undefined}
+              spellCheck
+            />
+            <button type="submit" className="button small primary" disabled={!canSend} aria-busy={sending || undefined}>
+              {sending ? 'Sending…' : 'Send'}
+            </button>
+          </div>
+          <p className="relay-note">
+            <span className={tooLong ? 'relay-count over' : 'relay-count'}>
+              {tooLong ? `${text.length - MAX_RELAY_TEXT_LENGTH} characters over the ${MAX_RELAY_TEXT_LENGTH} limit` : `${text.length} / ${MAX_RELAY_TEXT_LENGTH}`}
+            </span>{' '}
+            <span id={noteId}>{LIMITS_NOTE}</span>
+          </p>
+        </form>
+      ) : (
+        <>
+          <p className="relay-note">It isn&apos;t running, so it can&apos;t be messaged.</p>
+          <p className="relay-note" id={noteId}>
+            {LIMITS_NOTE}
+          </p>
+        </>
+      )}
     </section>
   );
 }

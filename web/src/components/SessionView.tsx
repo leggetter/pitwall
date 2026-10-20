@@ -147,8 +147,28 @@ function useConversation(lastActivityAt: string | undefined, loader: PageLoader 
     atBottom.current = isAtBottom(element);
   }, [state.entries]);
 
+  // The scroller changes size without scrolling when the header or the message box below it grows or
+  // shrinks (a send's result, a reply arriving, the box resized) and when the window does. Stay at the
+  // bottom if already there; otherwise the place is kept, as the browser leaves scrollTop alone.
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (atBottom.current) element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const onScroll = useCallback(() => {
     if (scroller.current) atBottom.current = isAtBottom(scroller.current);
+  }, []);
+
+  /** To the newest entry, and following new ones from there. */
+  const scrollToBottom = useCallback(() => {
+    atBottom.current = true;
+    const element = scroller.current;
+    if (element) element.scrollTop = element.scrollHeight;
   }, []);
 
   const retry = useCallback(() => {
@@ -156,7 +176,7 @@ function useConversation(lastActivityAt: string | undefined, loader: PageLoader 
     void loadNewest({ replace: true });
   }, [commit, loadNewest]);
 
-  return { state, loadEarlier, retry, scroller, onScroll };
+  return { state, loadEarlier, retry, scroller, onScroll, scrollToBottom };
 }
 
 const TEXT_LABELS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'You', assistant: 'Claude' };
@@ -192,8 +212,10 @@ export interface SessionViewProps {
 }
 
 /**
- * A read-only view of one session's conversation, in a panel over the right
- * of the page. Closes with its button or Escape.
+ * One session's conversation, in a panel over the right of the page: the
+ * header at the top, the conversation scrolling in the middle and, for an
+ * interactive session, the message box pinned below the newest message.
+ * Closes with its button or Escape.
  */
 export function SessionView({ session, listed, now, onClose }: SessionViewProps) {
   const api = useContext(ApiContext);
@@ -212,7 +234,7 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
     () => (api ? (before) => getConversation(api, sessionId, before, requests.current?.signal) : undefined),
     [api, sessionId],
   );
-  const { state, loadEarlier, retry, scroller, onScroll } = useConversation(session.lastActivityAt, loader);
+  const { state, loadEarlier, retry, scroller, onScroll, scrollToBottom } = useConversation(session.lastActivityAt, loader);
   // Background sessions can be attached (W10). The terminal takes the conversation's place until it's closed.
   const attach = useAttachToggle(session.kind);
 
@@ -274,7 +296,6 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
           {plainText(shortenHome(session.cwd))}
         </p>
         {session.kind === 'background' && listed && <SessionActions session={session} onRemoved={onClose} />}
-        {session.kind === 'interactive' && listed && <RelayBox session={session} now={now} />}
         {session.kind === 'interactive' && (
           <p className="session-view-note">
             Typing <code>/bg</code> in this session&apos;s terminal moves it to the background, which will let pitwall
@@ -331,6 +352,12 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
           <p className="session-view-status">Nothing to show yet.</p>
         )}
       </div>
+
+      {session.kind === 'interactive' && listed && (
+        <footer className="session-view-foot">
+          <RelayBox session={session} now={now} onFocusRequest={scrollToBottom} />
+        </footer>
+      )}
     </section>
   );
 }

@@ -363,6 +363,147 @@ describe('SessionView: the /bg note', () => {
   });
 });
 
+describe('SessionView: the message box at the foot', () => {
+  /** Whether `a` comes before `b` in the document. */
+  const precedes = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  /** GETs, the conversation, answer with `entries`; POSTs, the relay, with delivered. */
+  function chatServer(entries: ConversationEntry[]) {
+    return vi.fn<FetchLike>(
+      async (_url, init) =>
+        new Response(JSON.stringify(init.method === 'POST' ? { status: 'delivered' } : { sessionId: SID, entries }), { status: 200 }),
+    );
+  }
+
+  function messageButton(): HTMLElement {
+    const row = screen.getByRole('button', { name: 'demo-docs' }).closest('li')!;
+    return within(row).getByRole('button', { name: 'Message' });
+  }
+
+  it('comes after the conversation, outside the header, with the latest exchange and the send result just above the text box', async () => {
+    const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: 'All three fixed.' } };
+    renderDashboard(chatServer([prompt(1), { kind: 'assistant', at: at(2), text: 'The newest reply.' }]), snap(target({ relay })));
+    const view = await openView();
+    const header = view.querySelector('header')!;
+    const body = view.querySelector<HTMLElement>('.session-view-body')!;
+    const box = within(view).getByRole('region', { name: 'Message this session' });
+    const textbox = within(box).getByRole('textbox', { name: 'Message to demo-docs' });
+
+    expect(header.contains(box)).toBe(false);
+    expect(body.contains(box)).toBe(false);
+    expect(precedes(body, box)).toBe(true);
+    expect(view.lastElementChild).toBe(box.closest('.session-view-foot'));
+    expect(precedes(within(body).getByText('The newest reply.'), textbox)).toBe(true);
+
+    fireEvent.change(textbox, { target: { value: 'hello' } });
+    fireEvent.click(within(box).getByRole('button', { name: 'Send' }));
+    await settle();
+    const exchange = within(box).getByText('Message from pitwall').closest('.relay-exchange')!;
+    const result = within(box).getByRole('status');
+    expect(precedes(exchange, result)).toBe(true);
+    expect(precedes(result, textbox)).toBe(true);
+  });
+
+  it('goes when the session is no longer listed, and is not there for a background session', async () => {
+    const first = renderDashboard(fakeServer(ok([prompt(1)])));
+    const view = await openView();
+    expect(view.querySelector('.session-view-foot')).toBeTruthy();
+    first.update(snapshot([group({ sessions: [session({ name: 'demo-other' })] })]));
+    await settle();
+    expect(view.querySelector('.session-view-foot')).toBeNull();
+    first.unmount();
+
+    renderDashboard(fakeServer(ok([prompt(1)])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
+    expect((await openView()).querySelector('.session-view-foot')).toBeNull();
+  });
+
+  it("the row's Message button opens the view at the newest message, with the text box focused", async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
+    renderDashboard(fakeServer(ok([prompt(1), prompt(2)])));
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] });
+    fireEvent.click(messageButton());
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    await settle();
+    const view = screen.getByRole('dialog');
+    expect(texts(view)).toEqual(['prompt 1', 'prompt 2']);
+    expect(document.activeElement).toBe(within(view).getByRole('textbox', { name: 'Message to demo-docs' }));
+    expect(view.querySelector<HTMLElement>('.session-view-body')!.scrollTop).toBe(1000);
+  });
+
+  it("the row's Message button scrolls an open view back to the newest message and focuses the text box, which then follows new entries", async () => {
+    let scrollHeight = 1000;
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
+    const { update } = renderDashboard(fakeServer(ok([prompt(1)]), ok([prompt(1), prompt(2)])));
+    const view = await openView();
+    const body = view.querySelector<HTMLElement>('.session-view-body')!;
+    const textbox = within(view).getByRole('textbox', { name: 'Message to demo-docs' });
+
+    // Scrolled up to read.
+    body.scrollTop = 100;
+    fireEvent.scroll(body);
+    fireEvent.click(messageButton());
+    expect(document.activeElement).toBe(textbox);
+    expect(body.scrollTop).toBe(1000);
+
+    // Back at the bottom, so new entries are followed.
+    scrollHeight = 1200;
+    update(snap(target({ lastActivityAt: minutesAgo(0) })));
+    await settle();
+    expect(texts(view)).toEqual(['prompt 1', 'prompt 2']);
+    expect(body.scrollTop).toBe(1200);
+  });
+
+  it('stays at the bottom when the box below the conversation grows, and keeps the place when scrolled up', async () => {
+    const observed: { callback: ResizeObserverCallback; target?: Element }[] = [];
+    class FakeResizeObserver {
+      private entry: { callback: ResizeObserverCallback; target?: Element };
+      constructor(callback: ResizeObserverCallback) {
+        this.entry = { callback };
+        observed.push(this.entry);
+      }
+      observe(target: Element) {
+        this.entry.target = target;
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    try {
+      let clientHeight = 400;
+      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1000);
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => clientHeight);
+      renderDashboard(fakeServer(ok([prompt(1)])));
+      const view = await openView();
+      const body = view.querySelector<HTMLElement>('.session-view-body')!;
+      const resized = () =>
+        act(() => {
+          for (const entry of observed) if (entry.target === body) entry.callback([], entry as unknown as ResizeObserver);
+        });
+
+      // At the bottom, as a browser leaves it, when a send's result makes the box taller and the conversation shorter.
+      body.scrollTop = 600;
+      fireEvent.scroll(body);
+      clientHeight = 340;
+      resized();
+      expect(body.scrollTop).toBe(1000);
+
+      // Scrolled up to read: the place is kept.
+      body.scrollTop = 100;
+      fireEvent.scroll(body);
+      clientHeight = 300;
+      resized();
+      expect(body.scrollTop).toBe(100);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('SessionView in the app', () => {
   const TOKEN = 'pitwall-test-token-NEVER-SENT-0123456789abcdef';
   const KEY_A = 'a'.repeat(43);
