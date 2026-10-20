@@ -1,7 +1,7 @@
 // The theme mechanism (docs/design-system.md, 2.2): web/public/theme-init.js, which runs before the
 // first paint, and theme.ts, which keeps data-theme right afterwards. Both against fake storage and a
 // fake prefers-color-scheme query, so nothing here depends on the machine running the tests.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import themeInit from '../public/theme-init.js?raw';
 import type { StorageSource } from './groupState.js';
 import { createThemeStore, DARK_QUERY, parseThemeChoice, readThemeChoice, resolveTheme, THEME_KEY, writeThemeChoice } from './theme.js';
@@ -201,6 +201,104 @@ describe('the theme store', () => {
     unsubscribe();
     store.set('dark');
     expect(told).toBe(0);
+  });
+});
+
+describe('a choice made in another tab', () => {
+  /** The window's `storage` event, which a browser fires in every other tab of the origin. */
+  function fakeEvents() {
+    const listeners = new Set<(event: { key: string | null }) => void>();
+    return {
+      addEventListener(_type: 'storage', listener: (event: { key: string | null }) => void) {
+        listeners.add(listener);
+      },
+      fire(key: string | null) {
+        for (const listener of listeners) listener({ key });
+      },
+    };
+  }
+
+  function twoTabs(stored: Stored = null) {
+    const storage = fakeStorage(stored);
+    const events = fakeEvents();
+    const root = document.createElement('html');
+    const query = fakeQuery(false);
+    const store = createThemeStore({ storage: () => storage, darkQuery: () => query, root: () => root, events });
+    let told = 0;
+    store.subscribe(() => {
+      told += 1;
+    });
+    /** The other tab stores `value` (or clears storage, for null), and the browser tells this one. */
+    const otherTab = (value: string | null, key: string | null = THEME_KEY) => {
+      if (value === null) storage.values.clear();
+      else storage.values.set(key ?? THEME_KEY, value);
+      events.fire(key);
+    };
+    return { store, root, query, storage, otherTab, told: () => told };
+  }
+
+  it('shows the choice another tab stored, and tells subscribers, so every switch on the page follows', () => {
+    const { store, root, otherTab, told } = twoTabs();
+
+    otherTab('dark');
+    expect(store.get()).toEqual({ choice: 'dark', resolved: 'dark' });
+    expect(root.getAttribute('data-theme')).toBe('dark');
+    expect(told()).toBe(1);
+
+    otherTab('system');
+    expect(store.get()).toEqual({ choice: 'system', resolved: 'light' });
+    expect(root.getAttribute('data-theme')).toBe('light');
+  });
+
+  it('follows the system again after another tab chooses System', () => {
+    const { store, root, query, otherTab } = twoTabs('dark');
+
+    otherTab('system');
+    query.flip(true);
+    expect(store.get()).toEqual({ choice: 'system', resolved: 'dark' });
+    expect(root.getAttribute('data-theme')).toBe('dark');
+  });
+
+  it('goes back to System when another tab clears storage, which fires with no key', () => {
+    const { store, otherTab } = twoTabs('dark');
+
+    otherTab(null, null);
+    expect(store.get().choice).toBe('system');
+  });
+
+  it("ignores other keys, and a change that doesn't change the choice", () => {
+    const { store, otherTab, told } = twoTabs('light');
+
+    otherTab('{"x":true}', 'pitwall.groups.v1');
+    otherTab('light');
+    expect(store.get().choice).toBe('light');
+    expect(told()).toBe(0);
+  });
+
+  it("never writes the choice back, so two tabs can't echo it between them", () => {
+    const { storage, otherTab } = twoTabs();
+    const setItem = vi.spyOn(storage, 'setItem');
+
+    otherTab('dark');
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('treats a stored value it can\'t read as System, as on load', () => {
+    const { store, otherTab } = twoTabs('dark');
+
+    otherTab('solarized');
+    expect(store.get().choice).toBe('system');
+  });
+
+  it("listens on the window by default, for the browser's own storage event", () => {
+    const store = createThemeStore({ darkQuery: () => fakeQuery(false) });
+    expect(store.get().choice).toBe('system');
+
+    window.localStorage.setItem(THEME_KEY, 'dark');
+    window.dispatchEvent(new StorageEvent('storage', { key: THEME_KEY }));
+
+    expect(store.get()).toEqual({ choice: 'dark', resolved: 'dark' });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
   });
 });
 
