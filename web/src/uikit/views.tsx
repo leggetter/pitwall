@@ -1,9 +1,10 @@
-// The session view and what's in it (W19, W22, W24): the real SessionView, its actions menu and their
-// inline confirmations, RelayBox in every send state, and the terminal, each given a stub API (stubs.ts) and put into its state
-// by a scenario (kit.tsx), as a person would: opening the menu, choosing an item, opening a tab.
+// The session view and what's in it (W19, W22, W24, W27): the real SessionView, its conversation,
+// its actions menu and their inline confirmations, RelayBox in every send state, and the terminal,
+// each given a stub API (stubs.ts) and put into its state by a scenario (kit.tsx), as a person
+// would: opening the menu, choosing an item, opening a tab, opening a fold, scrolling up.
 // Every fixture is made once, when the gallery loads, so a re-render never changes a session's id.
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
@@ -13,7 +14,7 @@ import { SessionView, UnlistedSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { APP_DIR, background, exchange, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
-import { element, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
+import { element, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
 import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
 const noop = () => {};
@@ -36,7 +37,6 @@ function MaybeScenario({ run, children }: { run: ((root: HTMLElement) => Promise
 }
 
 const GONE = session('view-gone', { title: 'Export retries' });
-const OLDER = session('view-older');
 const MISSING_DIR = background('view-missing-dir', {
   state: 'done',
   cwd: `${APP_DIR}/.claude/worktrees/pitwall-test-export-fix`,
@@ -167,13 +167,6 @@ export function SessionViews() {
           </Scenario>
         </Stubbed>
       </Specimen>
-      <Specimen title="Interactive, with Load earlier" note="Scrolled to the top, where the button is." frame="short">
-        <Stubbed options={{ conversation: 'older' }}>
-          <Scenario run={toTop}>
-            <SessionView session={OLDER} listed onClose={noop} />
-          </Scenario>
-        </Stubbed>
-      </Specimen>
       {CONVERSATION_STATES.map((state) => (
         <Specimen key={state.title} title={state.title} frame="short">
           <Stubbed options={state.options}>
@@ -185,6 +178,120 @@ export function SessionViews() {
         <ApiContext.Provider value={undefined}>
           <SessionView session={NO_API} listed onClose={noop} />
         </ApiContext.Provider>
+      </Specimen>
+    </>
+  );
+}
+
+const CONVERSATION_ALL = background('conversation-all', { state: 'working' });
+const CONVERSATION_OPEN = background('conversation-open', { state: 'working' });
+const CONVERSATION_NARROW = background('conversation-narrow', { state: 'working' });
+const EARLIER = background('conversation-earlier', { state: 'working' });
+const EARLIER_BUSY = background('conversation-earlier-busy', { state: 'working' });
+const JUMP = session('conversation-jump', { title: 'Export retries' });
+
+/** The event that moves a Refreshing session's activity, as the index does when the session does something. */
+const REFRESH = 'uikit-refresh';
+
+/** Renders its session, and moves the session's last activity on a REFRESH event from inside, so the view fetches the newest page again. */
+function Refreshing({ session: initial, children }: { session: SessionSummary; children: (session: SessionSummary) => ReactNode }) {
+  const [current, setCurrent] = useState(initial);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const target = ref.current;
+    if (!target) return;
+    const refresh = () =>
+      setCurrent((shown) => ({ ...shown, lastActivityAt: new Date(Date.parse(shown.lastActivityAt ?? initial.startedAt) + 1_000).toISOString() }));
+    target.addEventListener(REFRESH, refresh);
+    return () => target.removeEventListener(REFRESH, refresh);
+  }, [initial.startedAt]);
+  return (
+    <div ref={ref} className="uikit-refreshing">
+      {children(current)}
+    </div>
+  );
+}
+
+/** The conversation's body, once its entries are there. */
+const conversationBody = (root: HTMLElement) =>
+  until('the conversation', () => root.querySelector('.conversation') && root.querySelector<HTMLElement>('.session-view-body'));
+
+/** Opens every fold, then scrolls back to the top, where the first ones are. */
+async function openFolds(root: HTMLElement): Promise<void> {
+  const body = await conversationBody(root);
+  for (const toggle of body.querySelectorAll<HTMLButtonElement>('.fold-toggle')) toggle.click();
+  await until('the folds to open', () => body.querySelector('.fold-toggle[aria-expanded="true"]'));
+  body.scrollTop = 0;
+}
+
+/** Scrolls up to read, then the session does more: "Jump to latest" appears with the count. */
+async function scrollUpThenMore(root: HTMLElement): Promise<void> {
+  const body = await conversationBody(root);
+  // happy-dom has no layout, so nothing there is ever scrolled up.
+  if (!laidOut(root)) return;
+  body.scrollTop = 0;
+  await until('the scroll', () => body.scrollTop === 0);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  root.querySelector('.uikit-refreshing')?.dispatchEvent(new Event(REFRESH));
+  await element(root, '.jump-latest-button');
+}
+
+export function Conversations() {
+  return (
+    <>
+      <Specimen
+        title="Every kind of entry"
+        note="Your messages, Claude's, one from another session and a notice, each with its speaker line and time; three tool calls folded, with an error; two folded without; one on its own; a reply cut short; a line with no break in it; and markup, shown as text. It opens scrolled to the newest entry."
+        frame="tall"
+      >
+        <Stubbed>
+          <SessionView session={CONVERSATION_ALL} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Folds open" note="Each call on its line, cut with an ellipsis and whole in a tooltip, with its own error badge. Scrolled to the top." frame="tall">
+        <Stubbed>
+          <Scenario run={openFolds}>
+            <SessionView session={CONVERSATION_OPEN} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Folds open, 600 px and narrower" note="The long lines give way; nothing scrolls sideways." frame="view" width={375}>
+        <Stubbed>
+          <Scenario run={openFolds}>
+            <SessionView session={CONVERSATION_NARROW} listed onClose={noop} compact />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Load earlier" note="Outline sm, centred at the top. Scrolled to the top, where the button is." frame="short">
+        <Stubbed options={{ conversation: 'older' }}>
+          <Scenario run={toTop}>
+            <SessionView session={EARLIER} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Loading earlier" note="Busy, with its spinner after half a second, while the older page is on its way." frame="short">
+        <Stubbed options={{ conversation: 'older-loading' }}>
+          <Scenario
+            run={async (root) => {
+              await press(root, 'Load earlier');
+              await element(root, '.load-earlier[aria-busy="true"]');
+              await toTop(root);
+            }}
+          >
+            <SessionView session={EARLIER_BUSY} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Jump to latest"
+        note="Scrolled up when three entries arrived: the place is kept, and the bar sticks to the bottom of the body, 8 px from the footer, until the reader gets there."
+        frame="view"
+      >
+        <Stubbed options={{ conversation: 'growing' }}>
+          <Scenario run={scrollUpThenMore}>
+            <Refreshing session={JUMP}>{(shown) => <SessionView session={shown} listed onClose={noop} />}</Refreshing>
+          </Scenario>
+        </Stubbed>
       </Specimen>
     </>
   );

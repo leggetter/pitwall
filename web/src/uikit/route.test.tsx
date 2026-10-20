@@ -60,9 +60,8 @@ describe('the #uikit route', () => {
     expect([...document.querySelectorAll('main.notice')].every((notice) => notice.closest('.uikit'))).toBe(true);
     expect(document.querySelectorAll('.uikit-problem')).toHaveLength(0);
     expect(fake.sockets).toHaveLength(0);
-    // Every component in every state, and no browser hover text in place of a tooltip (W25), except
-    // on the conversation's entries, which W27 rebuilds.
-    const titled = [...document.querySelectorAll('[title]')].filter((element) => !element.matches('.conversation > li.entry'));
+    // Every component in every state, and no browser hover text in place of a tooltip anywhere (W25, W27).
+    const titled = [...document.querySelectorAll('[title]')];
     expect(titled.map((element) => element.outerHTML.slice(0, 120))).toEqual([]);
   }, 30_000);
 

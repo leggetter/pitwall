@@ -310,7 +310,14 @@ export const VIEW_BACKGROUND_DONE = background('view-background-done', {
   finished: true,
 });
 
-/** The conversation every session view shows: one of each kind of entry. */
+/** A path with no break in it, longer than any line it sits on. */
+const UNBROKEN = `/Users/example/code/pitwall-test-app/packages/exports/src/jobs/retry/${'batches-'.repeat(14)}backoff.test.ts`;
+
+/**
+ * The conversation every session view shows: one of each kind of entry, three tool calls folded with
+ * an error, two folded without, one on its own, a reply cut short, a line with no break in it, and
+ * markup, which shows as the text it is.
+ */
 export const CONVERSATION: ConversationEntry[] = [
   { kind: 'user', at: ago(30), text: 'Add a retry with backoff to the export job. Keep the existing 30 second timeout.' },
   { kind: 'assistant', at: ago(29.5), text: "I'll read how the export job runs a batch before changing it." },
@@ -322,11 +329,22 @@ export const CONVERSATION: ConversationEntry[] = [
     at: ago(27),
     text: 'One test fails before any change: it expects a batch to be written once.\nI kept that, and made a retry replace the batch rather than append to it.',
   },
+  { kind: 'tool', at: ago(26), toolName: 'Edit', text: 'Edit: src/export/job.ts' },
+  { kind: 'tool', at: ago(25.5), toolName: 'Bash', text: `Bash: npx vitest run src/export --reporter=verbose --testNamePattern="retries a failed batch" ${UNBROKEN}` },
   { kind: 'cross-session', at: ago(20), from: 'pitwall-test-reviewer', text: 'Please log each retry at debug level, with the attempt number.' },
   { kind: 'notice', at: ago(18), text: 'Conversation compacted.' },
   { kind: 'assistant', at: ago(10), text: LONG_REPLY, truncated: true },
+  { kind: 'user', at: ago(8), text: `Does the log line escape <b>tags</b> and <script>alert(1)</script> in a batch name? The test file is ${UNBROKEN}` },
+  { kind: 'tool', at: ago(7.5), toolName: 'Bash', text: 'Bash: npm test -- export' },
   { kind: 'user', at: ago(6), text: 'Looks good. Any open questions?' },
   { kind: 'assistant', at: ago(5), text: 'None.' },
+];
+
+/** What arrives after the conversation above, for "Jump to latest". */
+export const NEWER_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(3), text: 'Then open a pull request for it.' },
+  { kind: 'tool', at: ago(2.5), toolName: 'Bash', text: 'Bash: git push -u origin pitwall-test-export-retries' },
+  { kind: 'assistant', at: ago(2), text: 'Pushed. The pull request is open, with the retry tests in its description.' },
 ];
 
 /** An older page, for "Load earlier". */
