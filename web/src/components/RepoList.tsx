@@ -1,7 +1,8 @@
 // The repo list (docs/design-system.md, 3 and 4: Repo list and Repo list items): the Needs you and
 // All sessions views, a divider, then every group, under its root's path when pitwall watches more
 // than one root. Each item is a link to its selection, one count at the right, and the list is one
-// Tab stop: ↓ and ↑ move between items, Home and End jump to the ends, and Enter selects.
+// Tab stop: ↓ and ↑ move between items, Home and End jump to the ends, and Enter selects. Before the
+// first snapshot, four skeleton items stand in for the groups (4: Skeletons and spinners).
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { SessionGroup } from '../../../src/shared/protocol.js';
@@ -11,6 +12,7 @@ import { allFinished, countAttention, groupId, groupLabel, repoListGroups } from
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { Tooltip } from './Tooltip.js';
+import { SkeletonItems } from './Waiting.js';
 
 interface Item {
   id: string;
@@ -45,9 +47,11 @@ export interface RepoListProps {
   onSelect: (selection: Selection) => void;
   /** Focus the list's tab stop when it mounts, as the drawer does when it opens. */
   autoFocus?: boolean;
+  /** Before the first snapshot, once --pw-delay-spinner has passed: four skeleton items below the views. */
+  skeletons?: boolean;
 }
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false }: RepoListProps) {
   const rootId = useId();
   const nav = useRef<HTMLElement>(null);
   const sessions = groups?.flatMap((group) => group.sessions) ?? [];
@@ -132,7 +136,8 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
   return (
     <nav ref={nav} className="repo-list" aria-label="Repos" onKeyDown={onKeyDown}>
       <ul className="repo-items">{views.map(render)}</ul>
-      {sections.length > 0 && <hr className="repo-divider" />}
+      {(sections.length > 0 || (skeletons && !groups)) && <hr className="repo-divider" />}
+      {skeletons && !groups && <SkeletonItems />}
       {sections.map(({ root, items: rootItems }, index) =>
         roots.length > 1 ? (
           <div key={root} className="repo-root-section">

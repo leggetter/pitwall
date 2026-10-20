@@ -95,7 +95,8 @@ describe('App', () => {
     render(<App createSocket={fake.factory} />);
 
     expect(screen.getByText('Connecting…')).toBeTruthy();
-    expect(screen.getByText('Connecting to pitwall…')).toBeTruthy();
+    // The skeletons and their status, after --pw-delay-spinner.
+    await waitFor(() => expect(screen.getByText('Loading sessions')).toBeTruthy());
 
     await handshake(fake.last);
     act(() => fake.last.receive({ type: 'snapshot', snapshot: mixedSnapshot() }));
@@ -142,7 +143,8 @@ describe('App', () => {
     const { fake, open } = await appWithSession(fetch, { authenticate: false });
 
     await act(async () => fireEvent.click(open));
-    expect(screen.getByText('Loading the conversation…')).toBeTruthy();
+    // After --pw-delay-spinner.
+    await waitFor(() => expect(screen.getByText('Loading the conversation…')).toBeTruthy());
     expect(fetch).not.toHaveBeenCalled();
 
     // The page reconnects after its backoff, and the new server accepts its proof.

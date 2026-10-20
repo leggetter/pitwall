@@ -13,7 +13,7 @@ import {
   type SpawnRequest,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
-import { shortenHome } from './format.js';
+import { couldNot, shortenHome } from './format.js';
 
 // The server's rules, repeated so the dialog can say what's wrong before sending.
 
@@ -80,9 +80,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
-function couldNot(what: string, status: number | undefined): string {
-  return `Couldn't ${what}${status === undefined ? '' : ` (HTTP ${status})`}.`;
-}
 
 export interface DirectoryChoice {
   /** Absolute, as the snapshot has it: a real path. */

@@ -22,8 +22,12 @@ export type ConversationResult =
   | { kind: 'not-found' }
   /** The connection was refused (WebSocket 4401). The app is already showing that the token was rejected. */
   | { kind: 'unauthorized' }
-  /** Anything else: a network error, another status, an aborted request, or a body that isn't a ConversationPage. */
-  | { kind: 'failed' };
+  /**
+   * Anything else: a network error, another status, an aborted request, or a body that isn't a
+   * ConversationPage. `status` is the HTTP status, when the server answered, and `error` the reason
+   * it gave, when its body had one, for the page to show after its own sentence (5: Errors).
+   */
+  | { kind: 'failed'; status?: number; error?: string };
 
 /**
  * One page of a session's conversation, through the app's ApiClient: the
@@ -41,10 +45,22 @@ export async function getConversation(
   if (result.kind === 'failed') {
     if (result.status === 404) return { kind: 'not-found' };
     if (result.status === STALE_CURSOR_STATUS) return { kind: 'stale' };
-    return { kind: 'failed' };
+    const failed: Extract<ConversationResult, { kind: 'failed' }> = { kind: 'failed' };
+    // A 2xx whose body isn't JSON is a failure too, but its status says nothing about why.
+    if (result.status !== undefined && (result.status < 200 || result.status >= 300)) failed.status = result.status;
+    const error = reasonIn(result.body);
+    if (error !== undefined) failed.error = error;
+    return failed;
   }
   const page = asConversationPage(result.body, sessionId);
   return page ? { kind: 'ok', page } : { kind: 'failed' };
+}
+
+/** The reason in an error body, `{ error: "…" }`, as other routes send; at most 500 characters. */
+function reasonIn(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const { error } = body as Record<string, unknown>;
+  return typeof error === 'string' && error.trim() !== '' ? error.trim().slice(0, 500) : undefined;
 }
 
 const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 'tool', 'cross-session', 'notice']);

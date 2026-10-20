@@ -802,24 +802,79 @@ textarea {
 
 /* Content */
 
-.placeholder {
-  padding: 48px 16px;
-  color: var(--pw-text-muted);
+/*
+ * Empty states (section 4: Empty states, and EmptyState.tsx): centred in their pane, at most 408 px
+ * wide: the 24 px icon in --pw-text-subtle, the title 8 px below, one sentence 4 px below that, and
+ * the action 16 px below. The session list's rows area and the session view's column centre it both
+ * ways; it fills them, so a short window scrolls it rather than cutting it.
+ */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 408px;
+  margin: auto;
+  padding: var(--pw-space-6) var(--pw-space-4);
   text-align: center;
   overflow-wrap: anywhere;
 }
 
-.placeholder-title {
-  color: var(--pw-text);
-  font-weight: var(--pw-weight-medium);
+.empty-state-icon {
+  color: var(--pw-text-subtle);
 }
 
-.placeholder-actions {
+.empty-state-title {
+  margin-top: var(--pw-space-2);
+  color: var(--pw-text);
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
+}
+
+/* A heading only for the session view's unlisted state, which takes focus from script, with no ring of its own. */
+h2.empty-state-title:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.empty-state-sentence {
+  margin-top: var(--pw-space-1);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.empty-state-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--pw-space-2);
   margin-top: var(--pw-space-4);
+}
+
+/* The rows' area, which centres an empty state in what's left of the column. */
+.session-list-body:has(> .empty-state) {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * A status line (section 4: Skeletons and spinners): pitwall's own waiting and "nothing here" lines,
+ * such as "Loading the conversation…" and "Still waiting for claude agents…": meta, muted, centred.
+ */
+.status-line {
+  margin: var(--pw-space-3) 0;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* The long-wait line under the session list's skeleton rows. */
+.list-waiting .status-line {
+  padding: 0 var(--pw-space-4);
 }
 
 /*
@@ -1002,6 +1057,113 @@ textarea {
   .spinner {
     animation-duration: 2s, 0s;
   }
+}
+
+/*
+ * Skeletons (section 4: Skeletons and spinners, and Waiting.tsx): 12 px bars in --pw-surface-sunken,
+ * --pw-radius-sm, in the shape of what's coming, pulsing (opacity 1 → 0.6 → 1, 1.5 s) only without
+ * reduced motion. They're aria-hidden; a status says what's loading. Waiting.tsx shows them after
+ * --pw-delay-spinner, so the pulse starts as they appear.
+ */
+.skeleton-bar {
+  display: block;
+  flex: none;
+  width: 60%;
+  height: 12px;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  animation: pw-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pw-pulse {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar {
+    animation: none;
+  }
+}
+
+.skeleton-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A session row's box: padding 8 px 16 px, two 20 px lines 2 px apart, a line between rows. */
+.skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-0-5);
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+}
+
+.skeleton-row:first-child {
+  border-top: 0;
+}
+
+/* A 20 px line box, the bar centred in it. */
+.skeleton-line {
+  display: flex;
+  align-items: center;
+  height: var(--pw-leading-m);
+}
+
+.skeleton-bar.identity {
+  width: 40%;
+}
+
+.skeleton-bar.preview {
+  width: 70%;
+}
+
+/* In the repo list: a repo list item's box, 32 px, its label's bar at four widths. */
+.skeleton-item {
+  display: flex;
+  align-items: center;
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+}
+
+.skeleton-item:nth-child(1) .skeleton-bar {
+  width: 70%;
+}
+
+.skeleton-item:nth-child(2) .skeleton-bar {
+  width: 50%;
+}
+
+.skeleton-item:nth-child(3) .skeleton-bar {
+  width: 80%;
+}
+
+.skeleton-item:nth-child(4) .skeleton-bar {
+  width: 45%;
+}
+
+/* On --pw-bg, the sidebar's fill, a sunken bar barely shows; the drawer is a surface, like the rows. */
+.columns > .repo-list .skeleton-bar {
+  background: var(--pw-surface-strong);
+}
+
+/* The session view's header while it waits: a bar for the name in its 24 px line, and one for line 2. */
+.skeleton-heading {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  height: var(--pw-leading-l);
+}
+
+.skeleton-bar.title {
+  width: 40%;
+}
+
+.skeleton-bar.meta {
+  width: 70%;
 }
 
 /* A filter match (Search, in section 4): --pw-text whatever the text around it, the pair 2.5 checks. */
@@ -1657,10 +1819,9 @@ mark.match {
   text-overflow: ellipsis;
 }
 
-/* The unlisted view's heading is a sentence, so it wraps. */
-.session-view-name.wrap {
-  white-space: normal;
-  overflow-wrap: anywhere;
+/* The unlisted view's header has Close alone: its heading is the empty state's title, below. */
+.session-view-spacer {
+  flex: 1 1 auto;
 }
 
 .session-view-subtitle {
@@ -2085,15 +2246,22 @@ mark.match {
   margin: 0 auto var(--pw-space-3);
 }
 
-.session-view-status {
-  margin: 12px 0;
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-m);
-  text-align: center;
+/* The unlisted state's body, which centres its empty state. */
+.session-view-body.session-view-state {
+  display: flex;
+  flex-direction: column;
 }
 
-.session-view-status.unlisted {
-  overflow-wrap: anywhere;
+/*
+ * The conversation's alerts (section 5: Errors): a failure with Try again, or a notice. At the top,
+ * 12 px above Load earlier or the list; at the end ("end"), 12 px below the list.
+ */
+.conversation-alert {
+  margin-bottom: var(--pw-space-3);
+}
+
+.conversation-alert.end {
+  margin: var(--pw-space-3) 0 0;
 }
 
 /*
