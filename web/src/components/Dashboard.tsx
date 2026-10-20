@@ -16,6 +16,7 @@ import { useOpenWhenListed } from '../spawn.js';
 import { GroupSection } from './GroupSection.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
 import { SessionView } from './SessionView.js';
+import { ThemeSwitch } from './ThemeSwitch.js';
 
 /** The current time, refreshed every second, for relative times. */
 function useNow(intervalMs = 1_000): number {
@@ -142,6 +143,7 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
                 {updatedAgo(updatedAt, now)}
               </time>
             )}
+            <ThemeSwitch />
           </div>
         </div>
 

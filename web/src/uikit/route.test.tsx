@@ -1,9 +1,10 @@
 // The #uikit route (W19): the gallery at #uikit, the app everywhere else, the token handling
 // unaffected either way, and no network at all while the gallery shows.
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { fakeSockets } from '../test/fixtures.js';
+import { THEME_KEY } from '../theme.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { isUikitHash } from './route.js';
 
@@ -138,24 +139,26 @@ describe('the #uikit route', () => {
     expect(document.getElementById('uikit/terminal')).not.toBeNull();
   }, 30_000);
 
-  it("switches data-theme on <html> from the toolbar, and puts back what was there when it's left", async () => {
+  it("switches the theme from the app's own switch in its bar, and the app keeps the choice", async () => {
     window.history.replaceState(null, '', '/#uikit');
     render(<App createSocket={fakeSockets().factory} />);
     await settled();
     const root = document.documentElement;
+    const bar = () => within(document.querySelector<HTMLElement>('.uikit-bar') ?? document.body);
 
-    act(() => screen.getByRole('button', { name: 'Dark' }).click());
+    act(() => bar().getByRole('button', { name: 'Dark theme' }).click());
     expect(root.getAttribute('data-theme')).toBe('dark');
-    expect(screen.getByRole('button', { name: 'Dark' }).getAttribute('aria-pressed')).toBe('true');
-    act(() => screen.getByRole('button', { name: 'Light' }).click());
+    expect(bar().getByRole('button', { name: 'Dark theme' }).getAttribute('aria-pressed')).toBe('true');
+    // Every other switch on the page, such as those in the page specimens' headers, shows the same.
+    const switches = screen.getAllByRole('group', { name: 'Theme' }).filter((group) => !group.closest('[data-own-store]'));
+    expect(switches.length).toBeGreaterThan(1);
+    for (const group of switches) expect(within(group).getByRole('button', { name: 'Dark theme' }).getAttribute('aria-pressed')).toBe('true');
+    act(() => bar().getByRole('button', { name: 'Light theme' }).click());
     expect(root.getAttribute('data-theme')).toBe('light');
-    act(() => screen.getByRole('button', { name: 'None (follows the system)' }).click());
-    expect(root.hasAttribute('data-theme')).toBe(false);
+    expect(window.localStorage.getItem(THEME_KEY)).toBe('light');
 
-    act(() => screen.getByRole('button', { name: 'Dark' }).click());
+    // Leaving keeps it: it's the app's choice, not the gallery's.
     go('');
-    expect(root.hasAttribute('data-theme')).toBe(false);
-    // Nothing remembers the choice.
-    expect(window.localStorage.length).toBe(0);
+    expect(root.getAttribute('data-theme')).toBe('light');
   }, 30_000);
 });

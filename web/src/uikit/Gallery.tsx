@@ -5,12 +5,13 @@
 // Dev builds only: App.tsx imports this lazily, and only when Vite's mode is development or test.
 // Every M3 PR adds the components and states it introduces here.
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
+import { ThemeSwitch } from '../components/ThemeSwitch.js';
 import { createReplyLoader, ReplyLoaderContext } from '../lastMessage.js';
-import { Icons, Tokens, Type } from './foundations.js';
-import { SettleContext, ThemeContext, type ThemeChoice } from './kit.js';
+import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
+import { SettleContext } from './kit.js';
 import { GroupSections, SessionRows } from './lists.js';
 import { Dialogs, Notices, Pages } from './pages.js';
 import { scriptedAttach, stubApi } from './stubs.js';
@@ -27,7 +28,8 @@ interface Section {
 const SECTIONS: Section[] = [
   { id: 'tokens', title: 'Tokens', intro: 'Every --pw-* token on :root, for the theme shown.', Content: Tokens },
   { id: 'type', title: 'Type', intro: 'Inter and JetBrains Mono, bundled by fonts.css, at the sizes in 2.7.', Content: Type },
-  { id: 'icons', title: 'Icons', intro: 'The Icon component, which nothing uses yet, and the inline icons it will replace.', Content: Icons },
+  { id: 'icons', title: 'Icons', intro: 'The Icon component, and the inline icons it will replace.', Content: Icons },
+  { id: 'theme-switch', title: 'Theme switch', intro: "ThemeSwitch: System, Light and Dark. It's the real one, so pressing it changes this page's theme.", Content: ThemeSwitches },
   { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, inside the GroupSection it always sits in.', Content: SessionRows },
   { id: 'groups', title: 'Group sections', intro: 'GroupSection: its header, count and Finished list.', Content: GroupSections },
   { id: 'session-view', title: 'Session view', intro: 'SessionView, framed as the window it overlays.', Content: SessionViews },
@@ -50,33 +52,6 @@ const Sections = memo(function Sections() {
   ));
 });
 
-const THEMES: { choice: ThemeChoice; label: string }[] = [
-  { choice: 'light', label: 'Light' },
-  { choice: 'dark', label: 'Dark' },
-  { choice: 'none', label: 'None (follows the system)' },
-];
-
-/** Sets data-theme on <html>, or removes it for `none`, so tokens.css follows the system. */
-function applyTheme(choice: ThemeChoice): void {
-  if (choice === 'none') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.dataset.theme = choice;
-}
-
-const darkQuery = () => (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : undefined);
-
-/** The theme the page shows: the choice, or the system's when the choice is none. */
-function useResolvedTheme(choice: ThemeChoice): 'light' | 'dark' {
-  const [systemDark, setSystemDark] = useState(() => darkQuery()?.matches ?? false);
-  useEffect(() => {
-    const query = darkQuery();
-    if (!query) return;
-    const update = () => setSystemDark(query.matches);
-    query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
-  }, []);
-  return choice === 'none' ? (systemDark ? 'dark' : 'light') : choice;
-}
-
 /** Scrolls to the section the address names (#uikit/<id>), or to the top. */
 function showTarget(): void {
   let id = window.location.hash.slice(1);
@@ -91,21 +66,6 @@ function showTarget(): void {
 }
 
 export default function Gallery() {
-  // The theme is the gallery's alone: nothing stores it, and leaving puts back what was there.
-  const [choice, setChoice] = useState<ThemeChoice>(() => {
-    const current = document.documentElement.dataset.theme;
-    return current === 'light' || current === 'dark' ? current : 'none';
-  });
-  const resolved = useResolvedTheme(choice);
-  const theme = useMemo(() => ({ choice, resolved }), [choice, resolved]);
-  useLayoutEffect(() => {
-    const before = document.documentElement.getAttribute('data-theme');
-    return () => {
-      if (before === null) document.documentElement.removeAttribute('data-theme');
-      else document.documentElement.setAttribute('data-theme', before);
-    };
-  }, []);
-
   // One stub API, reply loader and attach for anything not given its own, such as a session view
   // opened from a row on one of the page specimens.
   const [defaults] = useState(() => {
@@ -138,50 +98,35 @@ export default function Gallery() {
   }, []);
 
   return (
-    <ThemeContext.Provider value={theme}>
-      <SettleContext.Provider value={settle}>
-        <ApiContext.Provider value={defaults.api}>
-          <ReplyLoaderContext.Provider value={defaults.loader}>
-            <AttachContext.Provider value={defaults.attach}>
-              <div className="uikit" data-ready={ready || undefined}>
-                <header className="uikit-bar">
-                  <h1>pitwall UI kit</h1>
-                  <div className="uikit-themes" role="group" aria-label="Theme">
-                    {THEMES.map((option) => (
-                      <button
-                        key={option.choice}
-                        type="button"
-                        aria-pressed={choice === option.choice}
-                        onClick={() => {
-                          applyTheme(option.choice);
-                          setChoice(option.choice);
-                        }}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                  <a href="#">Back to pitwall</a>
-                </header>
-                <p className="uikit-note uikit-intro">
-                  The web UI&apos;s components in every state, from made-up sessions. Dev builds only; nothing here talks to pitwall.
-                  See docs/design-system.md.
-                </p>
-                <nav className="uikit-index" aria-label="Sections">
-                  <ol>
-                    {SECTIONS.map(({ id, title }) => (
-                      <li key={id}>
-                        <a href={`#uikit/${id}`}>{title}</a>
-                      </li>
-                    ))}
-                  </ol>
-                </nav>
-                <Sections />
-              </div>
-            </AttachContext.Provider>
-          </ReplyLoaderContext.Provider>
-        </ApiContext.Provider>
-      </SettleContext.Provider>
-    </ThemeContext.Provider>
+    <SettleContext.Provider value={settle}>
+      <ApiContext.Provider value={defaults.api}>
+        <ReplyLoaderContext.Provider value={defaults.loader}>
+          <AttachContext.Provider value={defaults.attach}>
+            <div className="uikit" data-ready={ready || undefined}>
+              <header className="uikit-bar">
+                <h1>pitwall UI kit</h1>
+                {/* The app's own switch: the gallery shows, and stores, the theme the app uses. */}
+                <ThemeSwitch />
+                <a href="#">Back to pitwall</a>
+              </header>
+              <p className="uikit-note uikit-intro">
+                The web UI&apos;s components in every state, from made-up sessions. Dev builds only; nothing here talks to pitwall.
+                See docs/design-system.md.
+              </p>
+              <nav className="uikit-index" aria-label="Sections">
+                <ol>
+                  {SECTIONS.map(({ id, title }) => (
+                    <li key={id}>
+                      <a href={`#uikit/${id}`}>{title}</a>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+              <Sections />
+            </div>
+          </AttachContext.Provider>
+        </ReplyLoaderContext.Provider>
+      </ApiContext.Provider>
+    </SettleContext.Provider>
   );
 }

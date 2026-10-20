@@ -2,10 +2,10 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** proposed for M3. The web UI doesn't follow it yet. [Mapping from today's CSS](#215-mapping-from-todays-css) lists the renames that move today's styles onto these tokens with no visual change.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
-  - It renders every component the web UI has today, in every state, with a toolbar for light, dark, or no `data-theme` (the system's). Components in section 4 that aren't built yet join it as they're built.
+  - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
   - It uses the real components from `web/src/components/` with made-up fixtures and stubs (`web/src/uikit/`). It doesn't need the token, and makes no API or WebSocket calls.
   - It's in dev builds only: `npm run dev` builds in Vite's development mode, and `npm run build` leaves the gallery out, which `web/src/uikit/build.test.tsx` checks.
   - **Every M3 PR adds the components and states it introduces to the gallery.** Where this doc and the gallery disagree, fix whichever is wrong in the same PR.
@@ -66,6 +66,8 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
   - It reads the stored choice, resolves System, and sets `data-theme`, so the first paint is already in the right mode.
   - It must be a same-origin file, because the CSP (`default-src 'self'`, set in `src/server/security.ts`) blocks inline scripts.
   - It must not throw when `localStorage` is blocked: wrap the read in `try`, and fall back to System.
+  - In a browser with no `matchMedia`, System leaves `data-theme` unset, so the fallback below follows the system.
+- **After the first paint,** `web/src/theme.ts` keeps `data-theme` right: it applies a new choice, and follows the system's `change` event while System is chosen. One store holds the choice, so every switch on the page shows the same one. `web/src/theme.test.tsx` runs `theme-init.js` against the same cases and checks the two agree.
 - **Without JavaScript,** or if the script fails, no `data-theme` is set. Then `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` applies the dark block.
   - That block is a copy of the `:root[data-theme='dark']` block. Keep the copy generated, or add a unit test that parses `tokens.css` and checks the two blocks are identical.
 - **`color-scheme`:** set to `light` or `dark` in each block, so native controls and scrollbars match. Keep `<meta name="color-scheme" content="light dark">` in `web/index.html`.

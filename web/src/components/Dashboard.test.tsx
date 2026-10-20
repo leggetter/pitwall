@@ -62,6 +62,15 @@ describe('Dashboard header', () => {
     expect(screen.getByText('updated 5s ago')).toBeTruthy();
   });
 
+  it('has the theme switch at the right of the masthead, before and after the first snapshot', () => {
+    const { container, rerender } = render(<Dashboard view={{ state: 'connecting', snapshot: undefined }} />);
+    const status = () => container.querySelector('.masthead .masthead-status');
+    expect(within(status() as HTMLElement).getByRole('group', { name: 'Theme' })).toBeTruthy();
+
+    rerender(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
+    expect(status()?.lastElementChild?.getAttribute('aria-label')).toBe('Theme');
+  });
+
   it("shows a heartbeat's time as the update age, newer than the snapshot's", () => {
     const snap = snapshot([group({ sessions: [session({ name: 'kept' })] })]);
     renderDashboard(snap, { lastPoll: { generatedAt: new Date(NOW - 1_000).toISOString(), source: { ok: true } } });
