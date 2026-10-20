@@ -25,20 +25,19 @@ export interface SpecimenProps {
 }
 
 export function Specimen({ title, note, frame, width, children }: SpecimenProps) {
-  const stage = frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : width === undefined ? 'uikit-stage' : 'uikit-stage uikit-widths';
   return (
     <div className="uikit-specimen">
       <h3>{title}</h3>
       {note !== undefined && <p className="uikit-note">{note}</p>}
-      <div className={stage}>
-        {width === undefined ? (
-          children
-        ) : (
-          <div className="uikit-window" style={{ width }}>
+      {width === undefined ? (
+        <div className={frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : 'uikit-stage'}>{children}</div>
+      ) : (
+        <div className="uikit-stage uikit-widths">
+          <div className={frame ? `uikit-window uikit-frame uikit-frame-${frame}` : 'uikit-window'} style={{ width }}>
             {children}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -80,6 +79,15 @@ export async function press(root: ParentNode, label: string): Promise<void> {
     [...root.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === label && !candidate.disabled),
   );
   button.click();
+}
+
+/**
+ * Whether the page has layout, so a frame's width picks the app's columns. The tests' happy-dom has
+ * none: every width there is the window's, so a scenario that needs a narrow or wide frame has nothing
+ * to wait for.
+ */
+export function laidOut(root: HTMLElement): boolean {
+  return root.getBoundingClientRect().width > 0;
 }
 
 /** Text that appears inside `root`. */

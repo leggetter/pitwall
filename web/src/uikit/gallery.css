@@ -113,6 +113,7 @@
 }
 
 .uikit-window {
+  flex: none;
   container: pitwall / inline-size;
   outline: 1px dashed var(--pw-border-strong);
 }
@@ -163,7 +164,7 @@
 
 /* Below 600 px a frame is as wide as the window, as the session view is (min(760px, 100vw)). */
 @media (max-width: 600px) {
-  .uikit-frame {
+  .uikit-stage.uikit-frame {
     margin-inline: -16px;
     border-radius: 0;
   }

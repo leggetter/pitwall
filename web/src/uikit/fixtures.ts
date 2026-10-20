@@ -236,6 +236,15 @@ export const POLL_FAILED_SNAPSHOT = snapshot([NOTES_GROUP], {
   source: { ok: false, error: 'claude exited with code 1: pitwall-test made-up failure' },
 });
 
+/** The root's own directory, which the repo list labels with its path. */
+export const ROOT_GROUP = group('code', [session('in-root', { cwd: ROOT, lastActivityAt: ago(12) })], { key: ROOT, kind: 'directory' });
+
+/** Every kind of repo list item: a need-you badge, counts, the root's own directory, a finished-only group and a long label. */
+export const REPO_LIST_SNAPSHOT = snapshot([APP_GROUP, JOBS_GROUP, NOTES_GROUP, ALL_FINISHED_GROUP, LONG_LABEL_GROUP, ROOT_GROUP]);
+
+/** Two roots, each with groups, for the root headings. */
+export const TWO_ROOTS_LIST_SNAPSHOT = snapshot([APP_GROUP, NOTES_GROUP, SERVICE_GROUP, ROOT_GROUP], { roots: [ROOT, OTHER_ROOT] });
+
 /** Sessions whose names, titles and paths all have "export" in them, for the filter's highlight. */
 const EXPORTS_DIR = `${ROOT}/pitwall-test-exports`;
 export const HIGHLIGHT_SNAPSHOT = snapshot([

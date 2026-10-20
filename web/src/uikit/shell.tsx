@@ -1,14 +1,19 @@
-// The app shell's pieces (W21): the real Header and filters, with fixture props. The header is shown
-// in windows of each breakpoint's width, since the shell's width rules are container queries on the
-// app (docs/design-system.md, 2.12); each set of filters keeps its own, so it can be typed into and
-// clicked.
+// The app shell's pieces (W21): the real Header, RepoList, RepoDrawer, SessionList and filters, with
+// fixture props. The header is shown in windows of each width, since its compact rule is a container
+// query on the app (docs/design-system.md, 2.12). The repo lists and filters keep their own state,
+// so they can be clicked and typed into.
 
 import { useState } from 'react';
-import { Header } from '../components/Header.js';
+import type { IndexSnapshot } from '../../../src/shared/protocol.js';
 import { FilterControls } from '../components/Filters.js';
+import { Header } from '../components/Header.js';
+import { RepoDrawer } from '../components/RepoDrawer.js';
+import { RepoList } from '../components/RepoList.js';
+import { SessionList, type SessionListHeading, type SessionListSummary } from '../components/SessionList.js';
+import { ALL_SESSIONS, groupSelection, NEEDS_YOU, type Selection } from '../selection.js';
 import { NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
-import { ago, LONG_ROOTS, NOW, ROOT } from './fixtures.js';
-import { Specimen } from './kit.js';
+import { ago, APP_GROUP, LONG_ROOTS, NOW, REPO_LIST_SNAPSHOT, ROOT, SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT } from './fixtures.js';
+import { Reopenable, Specimen } from './kit.js';
 
 const noop = () => {};
 const UPDATED = ago(0.05);
@@ -19,12 +24,12 @@ function LiveFilters({ start = NO_FILTERS }: { start?: Filters }) {
   return <FilterControls filters={filters} onChange={setFilters} />;
 }
 
-const filters = (text: string, ...chips: FilterChip[]): Filters => ({ text, chips: new Set(chips), attentionOnly: false });
+const filters = (text: string, ...chips: FilterChip[]): Filters => ({ text, chips: new Set(chips) });
 
 const BREAKPOINTS = [
-  { title: 'From 1,100 px', note: '24 px gutters.', width: 1100 },
-  { title: 'Between 600 and 1,100 px', note: '16 px gutters, on one line.', width: 800 },
-  { title: '600 px and narrower', note: 'The right side wraps under the wordmark, and the header grows to fit.', width: 375 },
+  { title: 'From 900 px', note: 'The repo list is beside the session list, so there is no Repos button.', width: 1100, repos: false },
+  { title: 'Below 900 px', note: 'The Repos button opens the repo list as a drawer.', width: 800, repos: true },
+  { title: '600 px and narrower', note: 'The right side wraps under the wordmark, and the header grows to fit.', width: 375, repos: true },
 ];
 
 export function Headers() {
@@ -32,17 +37,121 @@ export function Headers() {
     <>
       {BREAKPOINTS.map((breakpoint) => (
         <Specimen key={breakpoint.width} title={breakpoint.title} note={breakpoint.note} width={breakpoint.width}>
-          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} now={NOW} onNewSession={noop} />
+          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} now={NOW} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} />
         </Specimen>
       ))}
-      <Specimen title="Before the first snapshot" note="No roots, no New session and no time yet." width={800}>
+      <Specimen title="Before the first snapshot" note="No roots, no New session and no time yet." width={1100}>
         <Header state="connecting" now={NOW} />
       </Specimen>
       <Specimen title="A long roots list" note="The start is cut short with an ellipsis and the last segment stays; the full list is in the hover text." width={800}>
-        <Header state="live" roots={LONG_ROOTS} updatedAt={UPDATED} now={NOW} onNewSession={noop} />
+        <Header state="live" roots={LONG_ROOTS} updatedAt={UPDATED} now={NOW} onNewSession={noop} onRepos={noop} />
       </Specimen>
       <Specimen title="A long roots list, 600 px and narrower" width={375}>
-        <Header state="reconnecting" roots={LONG_ROOTS} updatedAt={ago(0.9)} now={NOW} onNewSession={noop} />
+        <Header state="reconnecting" roots={LONG_ROOTS} updatedAt={ago(0.9)} now={NOW} onNewSession={noop} onRepos={noop} />
+      </Specimen>
+    </>
+  );
+}
+
+/** A repo list with a selection of its own: clicking an item selects it. */
+function LiveRepoList({ snapshot, start = ALL_SESSIONS }: { snapshot: IndexSnapshot | undefined; start?: Selection }) {
+  const [selection, setSelection] = useState(start);
+  return <RepoList groups={snapshot?.groups} roots={snapshot?.roots ?? [ROOT]} selection={selection} onSelect={setSelection} />;
+}
+
+export function RepoLists() {
+  return (
+    <>
+      <Specimen
+        title="One root, All sessions selected"
+        note="A need-you badge, session counts, the root's own directory first and labelled with its path, a group whose sessions have all finished, muted, and a long label cut in the middle."
+        width={240}
+      >
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} />
+      </Specimen>
+      <Specimen title="A group selected" width={240}>
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} start={groupSelection(APP_GROUP, [ROOT])} />
+      </Specimen>
+      <Specimen title="Needs you selected" width={240}>
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} start={NEEDS_YOU} />
+      </Specimen>
+      <Specimen title="Several roots" note="Each root's groups under its path." width={240}>
+        <LiveRepoList snapshot={TWO_ROOTS_LIST_SNAPSHOT} start={groupSelection(SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT.roots)} />
+      </Specimen>
+      <Specimen title="Before the first snapshot" note="The two views, with no counts." width={240}>
+        <LiveRepoList snapshot={undefined} />
+      </Specimen>
+    </>
+  );
+}
+
+/** The drawer, with a selection of its own. */
+function Drawer({ onClose }: { onClose: () => void }) {
+  const [selection, setSelection] = useState<Selection>(ALL_SESSIONS);
+  return (
+    <RepoDrawer onClose={onClose}>
+      <RepoList groups={REPO_LIST_SNAPSHOT.groups} roots={REPO_LIST_SNAPSHOT.roots} selection={selection} onSelect={setSelection} />
+    </RepoDrawer>
+  );
+}
+
+export function RepoDrawers() {
+  return (
+    <Specimen title="Open" note="Below 900 px. Escape or a click on the backdrop closes it here too." frame="view">
+      <Reopenable>{(close) => <Drawer onClose={close} />}</Reopenable>
+    </Specimen>
+  );
+}
+
+interface HeadCase {
+  title: string;
+  heading: SessionListHeading;
+  summary: SessionListSummary;
+  start?: Filters;
+}
+
+const HEADS: HeadCase[] = [
+  { title: 'All sessions', heading: { label: 'All sessions' }, summary: { total: 10, shown: 10, attention: 2 } },
+  { title: 'Needs you', heading: { label: 'Needs you' }, summary: { total: 2, shown: 2, attention: 2 } },
+  { title: 'A group', heading: { label: 'pitwall-test-app', kind: 'git' }, summary: { total: 4, shown: 4, attention: 2 } },
+  { title: 'A directory, with nothing that needs you', heading: { label: 'pitwall-test-notes', kind: 'directory' }, summary: { total: 1, shown: 1, attention: 0 } },
+  { title: 'A group under one of several roots', heading: { label: 'pitwall-test-service', kind: 'git', root: '/Users/example/work' }, summary: { total: 1, shown: 1, attention: 0 } },
+  {
+    title: 'Filtered',
+    heading: { label: 'All sessions' },
+    summary: { total: 10, shown: 3, attention: 2 },
+    start: filters('export', 'background'),
+  },
+];
+
+export function SessionListHeads() {
+  return (
+    <>
+      {HEADS.map((head) => (
+        <Specimen key={head.title} title={head.title}>
+          <SessionList
+            heading={head.heading}
+            summary={head.summary}
+            filters={<LiveFilters start={head.start} />}
+            current={[]}
+            finished={[]}
+            finishedCollapsed
+            onToggleFinished={noop}
+            now={NOW}
+          />
+        </Specimen>
+      ))}
+      <Specimen title="In a narrow window" note="The summary and the filters wrap." width={320}>
+        <SessionList
+          heading={{ label: 'pitwall-test-app/packages/a-package-directory-with-a-long-name', kind: 'git' }}
+          summary={{ total: 4, shown: 4, attention: 2 }}
+          filters={<LiveFilters start={filters('export', 'interactive')} />}
+          current={[]}
+          finished={[]}
+          finishedCollapsed
+          onToggleFinished={noop}
+          now={NOW}
+        />
       </Specimen>
     </>
   );

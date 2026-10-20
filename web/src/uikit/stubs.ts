@@ -14,7 +14,6 @@ import type { ApiClient, ApiResult } from '../api.js';
 import type { AttachEnv } from '../attach.js';
 import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
-import { groupId } from '../sessions.js';
 import { CONVERSATION, fullReply, OLDER_CONVERSATION, sessionById, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
@@ -121,11 +120,6 @@ export function memoryStorage(entries: Record<string, string> = {}): StorageSour
     },
   };
   return () => storage;
-}
-
-/** Stored state in which these groups are open, for memoryStorage(). */
-export function openGroups(groups: readonly { root: string; key: string }[]): string {
-  return JSON.stringify(Object.fromEntries(groups.map((group) => [groupId(group), true])));
 }
 
 /**
