@@ -203,6 +203,7 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
   - The repo list starts with two views, Needs you and All sessions. Needs you replaces the "Needs attention only" checkbox.
   - Rows drop to two lines: name, title, badge and time, then what the session asked or was last asked. The last reply, relay exchange, cwd, attach command and Message button move to the session view (coordinator).
   - Rows that need you lose their yellow tint and keep the bar and the badge (coordinator). Nine of Phil's fifteen sessions needed him on 2026-10-20, and the tint turned most of the list yellow.
+  - The repo list is in alphanumeric order, so it never jumps (Phil, 2026-10-20). The root's own directory comes first.
   - The root's own directory is labelled with its path, not "git". Seven of those fifteen sessions run in `~/hookdeck/git` itself, not in a repo under it.
 - **Idle sessions show no badge in the list** (Phil, 2026-10-20), only "Idle" in the session view, on condition that needs-attention is still inferred. It is: `needsAttention()` comes from waiting, blocked and asked-you, never from the badge.
 - **Sending stays ⌘↵,** and Enter adds a line (Phil, 2026-10-20). Each message starts a turn on the target's model and can't be taken back.

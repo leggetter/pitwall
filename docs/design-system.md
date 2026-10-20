@@ -669,7 +669,10 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   1. Two views: "Needs you", every session that needs you under any root, and "All sessions".
   2. A 1 px `--pw-border` divider, 8 px above and below.
   3. Every group: a git repo, or a directory that isn't in one. With more than one root, each root's groups sit under a heading: the root's path, label style, `--pw-text-subtle`, home as `~`.
-- **Group order:** as the index sorts them: most recently active first, going by unfinished sessions, then groups whose sessions have all finished. As in the session list, a snapshot that would reorder the groups waits while the pointer or focus is in the column.
+- **Group order:** alphanumeric by label, so the column never moves as sessions change (Phil, 2026-10-20).
+  - Case-insensitive, with numbers compared as numbers, so `repo-2` comes before `repo-10` (`Intl.Collator` with `numeric: true`).
+  - Within each root, the root's own directory comes first, then the rest.
+  - A group whose sessions have all finished keeps its place, with its label muted. New groups appear in their place, and removed ones leave it.
 - **The root's own directory** is a group like any other, labelled with its path (`~/git`) rather than its last segment, so it doesn't read as a repo called "git".
 - **Below the sidebar breakpoint (900 px): a drawer.**
   - It slides in from the left with the same content, opened from the header's `menu` button.
