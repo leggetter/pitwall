@@ -1,24 +1,24 @@
-/* Spawn, stop and remove (W12): the New session dialog and the session view's actions. Uses the tokens in styles.css. */
+/* Spawn, stop and remove (W12): the New session dialog and the session view's actions. Uses the tokens in tokens.css. */
 
 .button.primary {
-  background: var(--focus);
-  border-color: var(--focus);
-  color: var(--surface);
+  background: var(--pw-accent);
+  border-color: var(--pw-accent);
+  color: var(--pw-on-accent);
   font-weight: 600;
 }
 
 .button.primary:hover {
-  background: var(--focus);
+  background: var(--pw-accent);
   filter: brightness(1.08);
 }
 
 .button.danger {
-  background: var(--error-bg);
-  border-color: var(--error-border);
+  background: var(--pw-danger-tint);
+  border-color: var(--pw-danger-border);
 }
 
 .button.danger:hover {
-  background: var(--error-bg);
+  background: var(--pw-danger-tint);
   filter: brightness(0.97);
 }
 
@@ -39,15 +39,15 @@
   justify-content: center;
   padding: 48px 16px;
   overflow-y: auto;
-  background: rgb(0 0 0 / 0.35);
+  background: var(--pw-backdrop);
 }
 
 .modal {
   width: min(620px, 100%);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+  background: var(--pw-surface-overlay);
+  border: 1px solid var(--pw-border-control);
+  border-radius: var(--pw-radius-lg);
+  box-shadow: var(--pw-shadow-3);
 }
 
 .modal-form {
@@ -75,7 +75,7 @@
 
 .field-optional {
   margin-left: 4px;
-  color: var(--text-muted);
+  color: var(--pw-text-muted);
   font-weight: 400;
   font-size: 0.8rem;
 }
@@ -84,9 +84,9 @@
 .field-input {
   width: 100%;
   padding: 6px 8px;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border-strong);
+  background: var(--pw-surface);
+  color: var(--pw-text);
+  border: 1px solid var(--pw-border-input);
   border-radius: 6px;
   font: inherit;
 }
@@ -94,23 +94,23 @@
 .field-prompt {
   min-height: 7.5em;
   resize: vertical;
-  font-family: var(--font-sans);
+  font-family: var(--pw-font-sans);
   line-height: 1.4;
 }
 
 .field-input[aria-invalid='true'],
 .field select[aria-invalid='true'] {
-  border-color: var(--error-border);
+  border-color: var(--pw-danger-border);
 }
 
 .field-hint {
-  color: var(--text-muted);
+  color: var(--pw-text-muted);
   font-size: 0.8rem;
   overflow-wrap: anywhere;
 }
 
 .field-problem {
-  color: var(--failed-text);
+  color: var(--pw-state-failed-fg);
   font-size: 0.85rem;
 }
 
@@ -150,20 +150,20 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--error-border);
-  border-radius: var(--radius);
+  background: var(--pw-surface-sunken);
+  border: 1px solid var(--pw-border);
+  border-left: 4px solid var(--pw-danger-border);
+  border-radius: var(--pw-radius-lg);
   font-size: 0.875rem;
 }
 
 .action-result {
-  color: var(--text-muted);
+  color: var(--pw-text-muted);
   font-size: 0.85rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .action-result.failed {
-  color: var(--failed-text);
+  color: var(--pw-state-failed-fg);
 }

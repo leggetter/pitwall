@@ -1,0 +1,188 @@
+/* pitwall design system tokens. Import before any other CSS. See docs/design-system.md. */
+
+/*
+ * For now these are the web UI's values from before the design system, under their new names, so
+ * nothing changes on screen (docs/design-system.md, 2.15). The theme work (W20) sets the design
+ * system's values and adds the tokens that nothing uses yet.
+ */
+
+/* 1. Structure: the same in light and dark */
+:root {
+  /* Today's system stacks. fonts.css bundles Inter and JetBrains Mono, unused until these name them. */
+  --pw-font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --pw-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --pw-radius-lg: 8px;
+  --pw-radius-full: 999px;
+}
+
+/* 2. Light, the default */
+:root {
+  color-scheme: light;
+
+  --pw-bg: #f4f5f7;
+  --pw-surface: #ffffff;
+  --pw-surface-sunken: #f0f2f5;
+  --pw-surface-hover: #f0f2f5;
+  --pw-surface-overlay: #ffffff;
+  --pw-selected-border: #1f5fd6;
+
+  --pw-text: #1b1f24;
+  --pw-text-muted: #555d67;
+
+  --pw-border: #d8dce2;
+  --pw-border-strong: #b9c0c9;
+  --pw-border-control: #b9c0c9;
+  --pw-border-input: #b9c0c9;
+
+  --pw-accent: #1f5fd6;
+  --pw-on-accent: #ffffff;
+  --pw-link: #1f5fd6;
+  --pw-focus: #1f5fd6;
+
+  --pw-warning-fg: #9a5800;
+  --pw-warning-tint: #fff3cd;
+  --pw-warning-border: #d9a400;
+  --pw-danger-tint: #fde2e2;
+  --pw-danger-border: #d14343;
+
+  /* The same in dark, for now. */
+  --pw-backdrop: rgb(0 0 0 / 0.35);
+  --pw-shadow-3: 0 12px 32px rgb(0 0 0 / 0.25);
+  --pw-shadow-overlay: -8px 0 24px rgb(0 0 0 / 0.18);
+
+  /* The terminal is dark in both modes. xterm.ts reads these when it creates a terminal. */
+  --pw-term-bg: #0e1115;
+  --pw-term-fg: #e6e9ee;
+  --pw-term-cursor: #e6e9ee;
+
+  /* pitwall's session states. They hold today's values until W20 points them at the tone tokens. */
+  --pw-state-attention-bg: #f59e0b;
+  --pw-state-attention-fg: #2b1d00;
+  --pw-state-attention-row: #fff6e5;
+  --pw-state-attention-bar: #f59e0b;
+  --pw-state-asked-bg: #ffffff;
+  --pw-state-asked-fg: #9a5800;
+  --pw-state-asked-border: #f59e0b;
+  --pw-state-busy-bg: #dbe8fe;
+  --pw-state-busy-fg: #1d3f99;
+  --pw-state-idle-bg: #eceef1;
+  --pw-state-idle-fg: #474f59;
+  --pw-state-done-bg: #dcf5e4;
+  --pw-state-done-fg: #165c32;
+  --pw-state-failed-bg: #fde2e2;
+  --pw-state-failed-fg: #921c1c;
+  --pw-state-offline-fg: #5a626c;
+  --pw-state-offline-border: #9aa1ab;
+  --pw-live: #16833d;
+  --pw-pending: #b26b00;
+  --pw-broken: #c42b2b;
+}
+
+/*
+ * 3. Dark, twice: when the page sets data-theme="dark", and when it sets no data-theme and the
+ * system is dark, as when JavaScript is off. Keep the two blocks identical: tokens.test.tsx checks.
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --pw-bg: #0e1115;
+  --pw-surface: #161a20;
+  --pw-surface-sunken: #1e232b;
+  --pw-surface-hover: #1e232b;
+  --pw-surface-overlay: #161a20;
+  --pw-selected-border: #7ea8ff;
+
+  --pw-text: #e6e9ee;
+  --pw-text-muted: #9ca5b1;
+
+  --pw-border: #2b323c;
+  --pw-border-strong: #3d4552;
+  --pw-border-control: #3d4552;
+  --pw-border-input: #3d4552;
+
+  --pw-accent: #7ea8ff;
+  --pw-on-accent: #161a20;
+  --pw-link: #7ea8ff;
+  --pw-focus: #7ea8ff;
+
+  --pw-warning-fg: #fcc94a;
+  --pw-warning-tint: #33280a;
+  --pw-warning-border: #a37b00;
+  --pw-danger-tint: #3b1717;
+  --pw-danger-border: #b84040;
+
+  --pw-state-attention-bg: #fbbf24;
+  --pw-state-attention-fg: #1c1300;
+  --pw-state-attention-row: #2a2008;
+  --pw-state-attention-bar: #fbbf24;
+  --pw-state-asked-bg: #161a20;
+  --pw-state-asked-fg: #fcc94a;
+  --pw-state-asked-border: #fbbf24;
+  --pw-state-busy-bg: #18294a;
+  --pw-state-busy-fg: #a9c7ff;
+  --pw-state-idle-bg: #232932;
+  --pw-state-idle-fg: #b7bfc9;
+  --pw-state-done-bg: #12301e;
+  --pw-state-done-fg: #8ee6ac;
+  --pw-state-failed-bg: #3b1717;
+  --pw-state-failed-fg: #ffaaaa;
+  --pw-state-offline-fg: #9ca5b1;
+  --pw-state-offline-border: #535c69;
+  --pw-live: #4ade80;
+  --pw-pending: #fbbf24;
+  --pw-broken: #f87171;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --pw-bg: #0e1115;
+    --pw-surface: #161a20;
+    --pw-surface-sunken: #1e232b;
+    --pw-surface-hover: #1e232b;
+    --pw-surface-overlay: #161a20;
+    --pw-selected-border: #7ea8ff;
+
+    --pw-text: #e6e9ee;
+    --pw-text-muted: #9ca5b1;
+
+    --pw-border: #2b323c;
+    --pw-border-strong: #3d4552;
+    --pw-border-control: #3d4552;
+    --pw-border-input: #3d4552;
+
+    --pw-accent: #7ea8ff;
+    --pw-on-accent: #161a20;
+    --pw-link: #7ea8ff;
+    --pw-focus: #7ea8ff;
+
+    --pw-warning-fg: #fcc94a;
+    --pw-warning-tint: #33280a;
+    --pw-warning-border: #a37b00;
+    --pw-danger-tint: #3b1717;
+    --pw-danger-border: #b84040;
+
+    --pw-state-attention-bg: #fbbf24;
+    --pw-state-attention-fg: #1c1300;
+    --pw-state-attention-row: #2a2008;
+    --pw-state-attention-bar: #fbbf24;
+    --pw-state-asked-bg: #161a20;
+    --pw-state-asked-fg: #fcc94a;
+    --pw-state-asked-border: #fbbf24;
+    --pw-state-busy-bg: #18294a;
+    --pw-state-busy-fg: #a9c7ff;
+    --pw-state-idle-bg: #232932;
+    --pw-state-idle-fg: #b7bfc9;
+    --pw-state-done-bg: #12301e;
+    --pw-state-done-fg: #8ee6ac;
+    --pw-state-failed-bg: #3b1717;
+    --pw-state-failed-fg: #ffaaaa;
+    --pw-state-offline-fg: #9ca5b1;
+    --pw-state-offline-border: #535c69;
+    --pw-live: #4ade80;
+    --pw-pending: #fbbf24;
+    --pw-broken: #f87171;
+  }
+}

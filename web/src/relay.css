@@ -1,4 +1,4 @@
-/* Messaging an interactive session through the relay (W11): the session view's box and the row's note. Uses the tokens in styles.css. */
+/* Messaging an interactive session through the relay (W11): the session view's box and the row's note. Uses the tokens in tokens.css. */
 
 /* The box fills the session view's footer (.session-view-foot), which draws the band around it. */
 .relay-box {
@@ -8,7 +8,7 @@
 }
 
 .relay-note {
-  color: var(--text-muted);
+  color: var(--pw-text-muted);
   font-size: 0.8rem;
 }
 
@@ -33,26 +33,26 @@
   max-height: 30vh;
   padding: 6px 8px;
   resize: vertical;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border-strong);
+  background: var(--pw-surface);
+  color: var(--pw-text);
+  border: 1px solid var(--pw-border-input);
   border-radius: 6px;
   font: inherit;
   line-height: 1.4;
 }
 
 .relay-text[aria-invalid='true'] {
-  border-color: var(--error-border);
+  border-color: var(--pw-danger-border);
 }
 
 /* Under the text box, one small paragraph: the character count, then what a message can and can't do. */
 .relay-count {
   margin-right: 6px;
-  color: var(--text-muted);
+  color: var(--pw-text-muted);
 }
 
 .relay-count.over {
-  color: var(--failed-text);
+  color: var(--pw-state-failed-fg);
 }
 
 .relay-box .button:disabled {
@@ -63,25 +63,25 @@
 .relay-result {
   padding: 6px 8px;
   border-radius: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--pw-border);
   font-size: 0.85rem;
   overflow-wrap: anywhere;
 }
 
 .relay-result.tone-ok {
-  background: var(--done-bg);
-  color: var(--done-text);
+  background: var(--pw-state-done-bg);
+  color: var(--pw-state-done-fg);
   border-color: transparent;
 }
 
 .relay-result.tone-waiting {
-  background: var(--warning-bg);
-  border-color: var(--warning-border);
+  background: var(--pw-warning-tint);
+  border-color: var(--pw-warning-border);
 }
 
 .relay-result.tone-failed {
-  background: var(--error-bg);
-  border-color: var(--error-border);
+  background: var(--pw-danger-tint);
+  border-color: var(--pw-danger-border);
 }
 
 .relay-exchange {
@@ -92,15 +92,15 @@
 }
 
 .relay-exchange-line {
-  color: var(--text-muted);
+  color: var(--pw-text-muted);
 }
 
 .relay-exchange-line.tone-waiting {
-  color: var(--attention-strong);
+  color: var(--pw-warning-fg);
 }
 
 .relay-exchange-line.tone-failed {
-  color: var(--failed-text);
+  color: var(--pw-state-failed-fg);
 }
 
 .relay-exchange-label {

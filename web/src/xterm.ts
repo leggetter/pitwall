@@ -2,10 +2,31 @@
 // first attach, so the dashboard doesn't download it until it's needed.
 
 import { FitAddon } from '@xterm/addon-fit';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalHandle } from './components/Terminal.js';
 import { terminalLinkHandler } from './links.js';
+
+/** xterm.js theme keys, and the custom properties in tokens.css they come from. */
+const THEME_TOKENS = [
+  ['background', '--pw-term-bg'],
+  ['foreground', '--pw-term-fg'],
+  ['cursor', '--pw-term-cursor'],
+] as const satisfies readonly (readonly [keyof ITheme, string])[];
+
+/**
+ * The terminal's colours, read from the --pw-term-* tokens when a terminal is
+ * created. A token that isn't set is left out, so xterm.js uses its default.
+ */
+export function terminalTheme(root: Element = document.documentElement): ITheme {
+  const style = getComputedStyle(root);
+  const theme: ITheme = {};
+  for (const [key, token] of THEME_TOKENS) {
+    const value = style.getPropertyValue(token).trim();
+    if (value !== '') theme[key] = value;
+  }
+  return theme;
+}
 
 export function createXterm(container: HTMLElement): TerminalHandle {
   const terminal = new Terminal({
@@ -13,7 +34,7 @@ export function createXterm(container: HTMLElement): TerminalHandle {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
     fontSize: 13,
     scrollback: 5000,
-    theme: { background: '#0e1115', foreground: '#e6e9ee', cursor: '#e6e9ee' },
+    theme: terminalTheme(),
     // Only http: and https: links, opened with noopener and noreferrer (links.ts).
     linkHandler: terminalLinkHandler,
   });
