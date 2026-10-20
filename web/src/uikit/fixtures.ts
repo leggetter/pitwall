@@ -7,6 +7,7 @@ import type {
   IndexSnapshot,
   RelayAlert,
   RelayExchange,
+  RelayOff,
   SessionGroup,
   SessionSummary,
 } from '../../../src/shared/protocol.js';
@@ -143,7 +144,7 @@ export const FINISHED_ROWS: SessionSummary[] = [
   finished('finished-failed', 'failed', { cwd: JOBS_DIR, lastActivityAt: ago(60 * 26), lastAssistantText: 'npm ci failed: the lock file is out of date.' }),
 ];
 
-function exchange(status: RelayExchange['status'], reply?: string): RelayExchange {
+export function exchange(status: RelayExchange['status'], reply?: string): RelayExchange {
   return reply === undefined ? { sentAt: ago(7), status } : { sentAt: ago(7), status, reply: { at: ago(5), text: reply } };
 }
 
@@ -284,6 +285,15 @@ export const RELAY_ALERT_BLOCKED: RelayAlert = {
   count: 3,
   blocked: true,
 };
+/** The alert that comes with the relay going off: its gate let a call through unchecked. */
+export const RELAY_ALERT_OFF: RelayAlert = {
+  at: ago(2),
+  detail: "The relay's SendMessage ran without pitwall's gate checking it. It was the message you sent, but the relay isn't safe to use.",
+  count: 1,
+  blocked: false,
+};
+/** The relay is off until pitwall restarts: the app strip shows. */
+export const RELAY_OFF: RelayOff = { since: ago(2), reason: "its gate didn't check a SendMessage call." };
 
 // Sessions for the session view, the message box and the terminal.
 

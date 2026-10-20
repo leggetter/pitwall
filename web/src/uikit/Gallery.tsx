@@ -9,6 +9,7 @@ import { memo, useCallback, useEffect, useRef, useState, type ComponentType } fr
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { ThemeSwitch } from '../components/ThemeSwitch.js';
+import { Alerts, Buttons } from './controls.js';
 import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
 import { SettleContext } from './kit.js';
 import { FinishedSections, SessionRows } from './lists.js';
@@ -30,6 +31,7 @@ const SECTIONS: Section[] = [
   { id: 'type', title: 'Type', intro: 'Inter and JetBrains Mono, bundled by fonts.css, at the sizes in 2.7.', Content: Type },
   { id: 'icons', title: 'Icons', intro: 'The Icon component: every icon pitwall uses.', Content: Icons },
   { id: 'theme-switch', title: 'Theme switch', intro: "ThemeSwitch: System, Light and Dark. It's the real one, so pressing it changes this page's theme.", Content: ThemeSwitches },
+  { id: 'buttons', title: 'Buttons', intro: 'Button in each variant, idle, disabled and busy, at each size; the spinner; key caps.', Content: Buttons },
   { id: 'header', title: 'Header', intro: 'Header: the Repos button, the wordmark, the roots, New session, the connection, the update time and the theme switch, at each width.', Content: Headers },
   { id: 'repo-list', title: 'Repo list', intro: 'RepoList: the two views, then every group. Each one keeps its own selection, so click or use ↓, ↑, Home and End.', Content: RepoLists },
   { id: 'repo-drawer', title: 'Repo drawer', intro: 'RepoDrawer: the repo list below 900 px.', Content: RepoDrawers },
@@ -44,9 +46,15 @@ const SECTIONS: Section[] = [
     Content: SessionViews,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use.', Content: Menus },
-  { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer, in each send state.", Content: MessageBoxes },
-  { id: 'confirmations', title: 'Stop and remove', intro: "Stop session and Remove session, from the actions menu, and their confirmations.", Content: Confirmations },
+  { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, and a session that can't be messaged.", Content: MessageBoxes },
+  {
+    id: 'confirmations',
+    title: 'Inline confirmations',
+    intro: 'Stop session and Remove session, from the actions menu, and the restart before attaching, each asking, busy, and with its result.',
+    Content: Confirmations,
+  },
   { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab, attached to a scripted server instead of pitwall.', Content: Terminals },
+  { id: 'alerts', title: 'Alerts and the app strip', intro: 'Alert in each tone, as the page alerts use it, and AppStrip, for while the relay is off until restart.', Content: Alerts },
   { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, empty, filled, with errors and after a failure.', Content: Dialogs },
   { id: 'page-states', title: 'Page states', intro: 'The whole Dashboard in a window 560 px tall, at the gallery\'s width: loading, the selections, alerts, filters and empty states. Each column scrolls.', Content: Pages },
   {

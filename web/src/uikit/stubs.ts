@@ -122,9 +122,11 @@ export function memoryStorage(entries: Record<string, string> = {}): StorageSour
  * How the scripted attach server behaves after the handshake.
  * - `connecting`: never sends its challenge, so the terminal stays at "Attaching…".
  * - `restart`: says the session needs a restart, then attaches once that's confirmed.
+ * - `restart-pending`: says the session needs a restart, then never answers the confirmed open, so
+ *   "Restart and attach" stays busy.
  * - `exit`: attaches, prints, then `claude attach` exits.
  */
-export type AttachScript = 'connecting' | 'attached' | 'restart' | 'exit' | 'error' | 'too-many';
+export type AttachScript = 'connecting' | 'attached' | 'restart' | 'restart-pending' | 'exit' | 'error' | 'too-many';
 
 /** A nonce in the contract's shape: 43 base64url characters. */
 const NONCE = 'pitwalltestnonce'.padEnd(43, '0');
@@ -150,11 +152,12 @@ class ScriptedAttachSocket implements SocketLike {
     if (message.type !== 'open') return;
     switch (this.script) {
       case 'restart':
+      case 'restart-pending':
         if (!message.restart) {
           this.later(() => this.message({ type: 'needs-restart' }));
           return;
         }
-        this.attach();
+        if (this.script === 'restart') this.attach();
         return;
       case 'attached':
         this.attach();

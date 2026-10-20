@@ -185,6 +185,11 @@
   background: var(--pw-surface);
 }
 
+/* A window of a set width whose content isn't a whole page: the stage's padding, inside it. */
+.uikit-window-pad {
+  padding: 16px;
+}
+
 /* The session view's width, for what stands in its footer or header. */
 .uikit-panel-width {
   max-width: 760px;
@@ -375,4 +380,9 @@
 /* A row drawn as the pointer would leave it, for the States specimens. The same fill as styles.css's hover. */
 .uikit-hovered .session {
   background: var(--pw-surface-hover);
+}
+
+/* The Buttons table: a busy button's spinner has no text, so line the cells up by their middles, not their baselines. */
+.uikit-buttons td {
+  vertical-align: middle;
 }

@@ -1,5 +1,5 @@
-// The session view and what's in it (W19, W22): the real SessionView, its actions menu and their
-// confirmations, RelayBox and the terminal, each given a stub API (stubs.ts) and put into its state
+// The session view and what's in it (W19, W22, W24): the real SessionView, its actions menu and their
+// inline confirmations, RelayBox in every send state, and the terminal, each given a stub API (stubs.ts) and put into its state
 // by a scenario (kit.tsx), as a person would: opening the menu, choosing an item, opening a tab.
 // Every fixture is made once, when the gallery loads, so a re-render never changes a session's id.
 
@@ -11,7 +11,7 @@ import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, UnlistedSessionView } from '../components/SessionView.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
-import { APP_DIR, background, NOW, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
+import { APP_DIR, background, exchange, NOW, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
 import { element, press, Scenario, Specimen, text, type, until } from './kit.js';
 import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
@@ -190,6 +190,13 @@ export function SessionViews() {
 }
 
 const MESSAGE = 'Please also log each retry at debug level, with the attempt number.';
+const DRAFT = 'Please also log each retry at debug level.\nInclude the attempt number,\nand the batch id.';
+const LONG_DRAFT = Array.from({ length: 12 }, (_, line) => `Line ${line + 1} of a long draft, to show the box stops growing at eight lines.`).join('\n');
+
+/** Types into the message box. */
+const typeIn = (value: string) => async (root: HTMLElement) => {
+  type(await element<HTMLTextAreaElement>(root, 'textarea'), value);
+};
 
 /** Types a message and presses Send, then waits for what the box shows after. */
 const send = (after: (root: HTMLElement) => Promise<unknown>) => async (root: HTMLElement) => {
@@ -205,26 +212,64 @@ interface Case {
   session: SessionSummary;
   options?: StubOptions;
   run?: (root: HTMLElement) => Promise<unknown>;
+  /** The conversation already shows the reply. */
+  replyShown?: boolean;
 }
 
 const BOX_CASES: Case[] = [
-  { title: 'Empty', session: session('box-empty') },
-  { title: 'With the latest exchange', note: 'The last message from pitwall, and the reply that came back.', session: VIEW_INTERACTIVE },
-  { title: 'Delivered', session: session('box-delivered'), options: { relay: { status: 'delivered' } }, run: send(result) },
+  { title: 'Empty', note: 'One line, Send off until there is something to send.', session: session('box-empty') },
+  { title: 'Typing', note: 'It grows a line at a time; Enter adds a line, ⌘ ↵ sends.', session: session('box-typing'), run: typeIn(DRAFT) },
+  { title: 'A long draft', note: 'Eight lines at most, then it scrolls.', session: session('box-long'), run: typeIn(LONG_DRAFT) },
+  {
+    title: 'Near the limit',
+    note: 'The count shows from 80 % of the limit.',
+    session: session('box-near'),
+    run: async (root) => {
+      await typeIn('Retry each batch three times. '.repeat(240))(root);
+      await text(root, '/ 8,192');
+    },
+  },
+  {
+    title: 'Over the limit',
+    note: `More than ${MAX_RELAY_TEXT_LENGTH.toLocaleString('en')} characters, so Send is off.`,
+    session: session('box-over'),
+    run: async (root) => {
+      await typeIn('Retry each batch three times. '.repeat(280))(root);
+      await text(root, 'over the');
+    },
+  },
+  {
+    title: 'Sending',
+    note: 'Send is busy, with its spinner after half a second, and the text is read-only.',
+    session: session('box-sending'),
+    options: { relay: 'sending' },
+    run: send((root) => text(root, 'Sending…')),
+  },
+  { title: 'Delivered', note: 'A success alert, role="status".', session: session('box-delivered'), options: { relay: { status: 'delivered' } }, run: send(result) },
   {
     title: 'Held for approval',
+    note: 'A warning, role="alert". The server’s detail is in code style.',
     session: session('box-held'),
     options: { relay: { status: 'held', detail: 'pitwall-test-box-held holds messages from other sessions until they are approved.' } },
     run: send(result),
   },
   {
+    title: 'May have arrived',
+    note: 'A warning. The draft stays.',
+    session: session('box-uncertain'),
+    options: { relay: { status: 'uncertain', detail: 'The relay stopped before SendMessage returned.' } },
+    run: send(result),
+  },
+  {
     title: 'Refused',
+    note: 'Danger. The draft clears: it reached the session, which refused it.',
     session: session('box-refused'),
     options: { relay: { status: 'refused', detail: 'pitwall-test-box-refused accepts messages only from sessions it started.' } },
     run: send(result),
   },
   {
     title: 'Not sent',
+    note: 'Danger. The draft stays.',
     session: session('box-failed'),
     options: { relay: { status: 'failed', detail: 'No live session is named pitwall-test-box-failed.' } },
     run: send(result),
@@ -236,23 +281,20 @@ const BOX_CASES: Case[] = [
     options: { relay: 'unreachable' },
     run: send(result),
   },
+  { title: 'With the latest exchange', note: 'The last message from pitwall, and the reply that came back.', session: VIEW_INTERACTIVE },
   {
-    title: 'May have arrived',
-    session: session('box-uncertain'),
-    options: { relay: { status: 'uncertain', detail: 'The relay stopped before SendMessage returned.' } },
-    run: send(result),
+    title: 'The reply already in the conversation',
+    note: 'Shown once: the footer keeps only the status line.',
+    session: session('box-reply-shown', { relay: exchange('delivered', 'Yes: the export job retries now, and the tests pass.') }),
+    replyShown: true,
   },
-  { title: 'Sending', session: session('box-sending'), options: { relay: 'sending' }, run: send((root) => text(root, 'Sending…')) },
+  { title: 'The latest exchange, held', note: 'Its status in --pw-warning-fg.', session: session('box-exchange-held', { relay: exchange('held') }) },
+  { title: 'The latest exchange, not sent', note: 'Its status in --pw-danger-fg, with no band.', session: session('box-exchange-failed', { relay: exchange('failed') }) },
   {
-    title: 'Over the limit',
-    note: `More than ${MAX_RELAY_TEXT_LENGTH.toLocaleString('en')} characters, so Send is off.`,
-    session: session('box-over'),
-    run: async (root) => {
-      type(await element<HTMLTextAreaElement>(root, 'textarea'), 'Retry each batch three times. '.repeat(280));
-      await text(root, 'over the');
-    },
+    title: "Can't be messaged",
+    note: 'It isn’t running: the note alone, without the limits note.',
+    session: session('box-not-running', { alive: false, pid: undefined, status: undefined }),
   },
-  { title: 'Not running', session: session('box-not-running', { alive: false, pid: undefined, status: undefined }) },
 ];
 
 export function MessageBoxes() {
@@ -263,7 +305,7 @@ export function MessageBoxes() {
           <Stubbed options={box.options}>
             <MaybeScenario run={box.run}>
               <footer className="session-view-foot">
-                <RelayBox session={box.session} now={NOW} />
+                <RelayBox session={box.session} now={NOW} replyShown={box.replyShown ?? false} />
               </footer>
             </MaybeScenario>
           </Stubbed>
@@ -276,7 +318,7 @@ export function MessageBoxes() {
 /** Chooses Stop or Remove in the actions menu, and with `then`, confirms it and waits for what follows. */
 const confirm = (action: 'Stop' | 'Remove', then?: (root: HTMLElement) => Promise<unknown>) => async (root: HTMLElement) => {
   await chooseFromMenu(root, `${action} session`);
-  await element(root, '.session-confirm');
+  await element(root, '.inline-confirm');
   if (!then) return;
   await press(root, `${action} session`);
   await then(root);
@@ -284,17 +326,56 @@ const confirm = (action: 'Stop' | 'Remove', then?: (root: HTMLElement) => Promis
 
 const working = (name: string) => background(name, { state: 'working' });
 
-const ACTION_CASES: Case[] = [
-  { title: 'Confirm stop', session: working('actions-confirm-stop'), run: confirm('Stop') },
-  { title: 'Confirm remove', session: working('actions-confirm-remove'), run: confirm('Remove') },
-  { title: 'Stopping', session: working('actions-stopping'), options: { stop: 'busy' }, run: confirm('Stop', (root) => text(root, 'Stopping…')) },
-  { title: 'Removing', session: working('actions-removing'), options: { remove: 'busy' }, run: confirm('Remove', (root) => text(root, 'Removing…')) },
-  { title: 'Stopped', session: working('actions-stopped'), options: { stop: 'done' }, run: confirm('Stop', (root) => element(root, '.action-result')) },
+interface ConfirmCase extends Case {
+  /** For the restart: the attach server's script. */
+  script?: AttachScript;
+}
+
+const ACTION_CASES: ConfirmCase[] = [
+  { title: 'Stop: asking', note: 'Cancel has focus as it opens.', session: working('actions-confirm-stop'), run: confirm('Stop') },
   {
-    title: 'Refused',
+    title: 'Stop: stopping',
+    note: 'Busy: the spinner after half a second, the width kept, Cancel off, Escape ignored.',
+    session: working('actions-stopping'),
+    options: { stop: 'busy' },
+    run: confirm('Stop', (root) => text(root, 'Stopping…')),
+  },
+  { title: 'Stop: stopped', note: 'The result, announced. A toast once toasts exist (W25).', session: working('actions-stopped'), options: { stop: 'done' }, run: confirm('Stop', (root) => text(root, 'Stopped.')) },
+  { title: 'Remove: asking', session: working('actions-confirm-remove'), run: confirm('Remove') },
+  {
+    title: 'Remove: removing',
+    session: working('actions-removing'),
+    options: { remove: 'busy' },
+    run: confirm('Remove', (root) => text(root, 'Removing…')),
+  },
+  {
+    title: 'Remove: refused',
+    note: "pitwall's sentence, then Claude Code's message in code style.",
     session: working('actions-refused'),
     options: { remove: 'refused' },
-    run: confirm('Remove', (root) => element(root, '.action-result.failed')),
+    run: confirm('Remove', (root) => element(root, '.inline-alert.danger')),
+  },
+  {
+    title: 'Restart and attach: asking',
+    note: 'Opening Terminal on a session that isn’t running. Under the terminal’s bar, with the warning bar; role="alertdialog".',
+    session: working('actions-restart'),
+    script: 'restart',
+    run: async (root) => {
+      await openTerminal(root);
+      await element(root, '.inline-confirm');
+    },
+  },
+  {
+    title: 'Restart and attach: restarting',
+    note: 'Busy until the attach has started or failed.',
+    session: working('actions-restarting'),
+    script: 'restart-pending',
+    run: async (root) => {
+      await openTerminal(root);
+      await element(root, '.inline-confirm');
+      await press(root, 'Restart and attach');
+      await text(root, 'Restarting…');
+    },
   },
 ];
 
@@ -302,12 +383,14 @@ export function Confirmations() {
   return (
     <>
       {ACTION_CASES.map((action) => (
-        <Specimen key={action.title} title={action.title} note="Chosen from the actions menu. Its look is today's until W24." frame="short">
-          <Stubbed options={action.options}>
-            <MaybeScenario run={action.run}>
-              <SessionView session={action.session} listed now={NOW} onClose={noop} />
-            </MaybeScenario>
-          </Stubbed>
+        <Specimen key={action.title} title={action.title} note={action.note} frame="short">
+          <Attachable script={action.script ?? 'attached'}>
+            <Stubbed options={action.options}>
+              <MaybeScenario run={action.run}>
+                <SessionView session={action.session} listed now={NOW} onClose={noop} />
+              </MaybeScenario>
+            </Stubbed>
+          </Attachable>
         </Specimen>
       ))}
     </>
