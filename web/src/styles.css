@@ -2082,7 +2082,7 @@ mark.match {
   /* Its own line, centred; still a flex box, so its spinner has its size while it's busy. */
   display: flex;
   width: fit-content;
-  margin: 0 auto 12px;
+  margin: 0 auto var(--pw-space-3);
 }
 
 .session-view-status {
@@ -2208,76 +2208,191 @@ mark.match {
   background: var(--pw-border);
 }
 
+/*
+ * The conversation (section 4: Conversation): an <ol>, oldest first, 12 px between entries. Text
+ * entries have a speaker line; tool calls, two or more in a row, fold into one toggle.
+ */
 .conversation {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--pw-space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.entry-label {
-  margin-bottom: 2px;
+/* "You", "Claude" or "From name", then " · 11:06", always visible: label type, the time subtle. */
+.entry-speaker {
+  margin-bottom: var(--pw-space-0-5);
   color: var(--pw-text-muted);
   font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-bold);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  overflow-wrap: anywhere;
+}
+
+.entry-time {
+  color: var(--pw-text-subtle);
+  font-variant-numeric: tabular-nums;
 }
 
 .entry-text {
   font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .entry-user,
 .entry-cross-session {
-  padding: 8px 10px;
+  padding: var(--pw-space-2) var(--pw-space-3);
   border-radius: var(--pw-radius-md);
   background: var(--pw-surface-sunken);
 }
 
+/* From another session: the info inset at its start edge. */
 .entry-cross-session {
-  border-left: 3px solid var(--pw-info-fg);
-}
-
-.entry-tool {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  color: var(--pw-text-muted);
-  font-family: var(--pw-font-mono);
-  font-size: var(--pw-text-s);
-  font-variant-ligatures: none;
-}
-
-.entry-tool-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-error {
-  flex: none;
-  padding: 0 6px;
-  border-radius: var(--pw-radius-sm);
-  background: var(--pw-danger-tint);
-  color: var(--pw-danger-tint-fg);
-  font-family: var(--pw-font-sans);
-  font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-bold);
+  box-shadow: inset 3px 0 0 var(--pw-info-fg);
 }
 
 .entry-notice .entry-text {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
-  font-style: italic;
+  line-height: var(--pw-leading-s);
 }
 
-.entry-note {
+.entry-cut {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* A tool call: one line of code text, cut with an ellipsis, then its error badge. */
+.entry-tool,
+.tool-call {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+}
+
+.tool-call-text {
+  min-width: 0;
+  overflow: hidden;
   color: var(--pw-text-muted);
-  font-size: var(--pw-text-xs);
-  font-style: italic;
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-ligatures: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-call-error {
+  flex: none;
+}
+
+/*
+ * The fold's toggle: the expand chevron and "n tool calls" in code style, with the error count. It
+ * sits 6 px into the gutter, so its chevron lines up with the text above and below it.
+ */
+.fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  max-width: calc(100% + var(--pw-space-1-5));
+  min-height: var(--pw-control-sm);
+  margin-inline-start: calc(-1 * var(--pw-space-1-5));
+  padding: var(--pw-space-0-5) var(--pw-space-1-5);
+  border: 0;
+  border-radius: var(--pw-radius-sm);
+  background: transparent;
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .fold-toggle:hover {
+    background: var(--pw-surface-hover);
+    color: var(--pw-text);
+  }
+}
+
+.fold-toggle:focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+.fold-toggle .chevron {
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.fold-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.fold-toggle .badge {
+  margin-inline-start: var(--pw-space-0-5);
+  font-family: var(--pw-font-sans);
+}
+
+/* Expanded: one call a line, lined up with the toggle's label. */
+.tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: var(--pw-space-1) 0 0;
+  padding: 0 0 0 calc(var(--pw-icon-sm) + var(--pw-space-1-5));
+  list-style: none;
+}
+
+/*
+ * "n new · Jump to latest" (section 4: Conversation): sticky at the bottom of the body, 8 px from the
+ * footer. The sticky box has no height, so the bar takes no room in the list and nothing moves when it
+ * goes. A sticky box keeps clear of its scroller's padding, so its offset takes the body's 24 px off.
+ */
+.jump-latest {
+  position: sticky;
+  bottom: calc(var(--pw-space-2) - var(--pw-space-6));
+  z-index: var(--pw-z-sticky);
+  height: 0;
+}
+
+.jump-latest-button {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1-5);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-3);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-info-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-info-border);
+  color: var(--pw-info-tint-fg);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .jump-latest-button:hover {
+    box-shadow: inset 0 0 0 1px var(--pw-info-fg);
+  }
+}
+
+.jump-latest-button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--pw-info-border), var(--pw-ring-focus);
 }

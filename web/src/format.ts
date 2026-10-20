@@ -64,6 +64,13 @@ export function absoluteTime(iso: string): string {
   });
 }
 
+/** The time of day alone, in the user's locale ("11:06"), for the conversation's speaker lines. Undefined when it isn't a time. */
+export function clockTime(iso: string): string | undefined {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
 /** Roots for display: home-shortened and comma-separated. */
 export function formatRoots(roots: readonly string[]): string {
   return roots.map(shortenHome).join(', ');

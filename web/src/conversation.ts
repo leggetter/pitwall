@@ -125,3 +125,69 @@ export function entryKeys(entries: readonly ConversationEntry[]): string[] {
     return count === 0 ? key : `${key}\u0000${count}`;
   });
 }
+
+/**
+ * How many of `next`'s entries weren't in `current`: those a newer copy of the newest page added.
+ * An assistant message that grew, or a tool call that got its result, is the same entry, so neither
+ * counts.
+ */
+export function countAdded(current: readonly ConversationEntry[], next: readonly ConversationEntry[]): number {
+  const shown = new Set(entryKeys(current));
+  return entryKeys(next).filter((key) => !shown.has(key)).length;
+}
+
+/** An entry with its stable key (entryKeys). */
+export interface KeyedEntry {
+  key: string;
+  entry: ConversationEntry;
+}
+
+/**
+ * What the conversation shows, one item per line of its list (docs/design-system.md, 4: Conversation):
+ * - `entry`: a message, a notice, or a tool call on its own, which isn't folded;
+ * - `fold`: two or more tool calls in a row, folded into one toggle.
+ */
+export type ConversationRow = ({ kind: 'entry' } & KeyedEntry) | { kind: 'fold'; key: string; calls: KeyedEntry[] };
+
+/** The entries as rows: each run of two or more consecutive tool calls folds into one, keyed by its first call. */
+export function conversationRows(entries: readonly ConversationEntry[]): ConversationRow[] {
+  const keys = entryKeys(entries);
+  const rows: ConversationRow[] = [];
+  let run: KeyedEntry[] = [];
+  const flush = () => {
+    const [first] = run;
+    if (first && run.length === 1) rows.push({ kind: 'entry', ...first });
+    else if (first) rows.push({ kind: 'fold', key: `fold\u0000${first.key}`, calls: run });
+    run = [];
+  };
+  entries.forEach((entry, index) => {
+    const keyed = { key: keys[index] ?? String(index), entry };
+    if (entry.kind === 'tool') {
+      run.push(keyed);
+      return;
+    }
+    flush();
+    rows.push({ kind: 'entry', ...keyed });
+  });
+  flush();
+  return rows;
+}
+
+/**
+ * Whether a fold is open, from the keys of the calls in the folds that were opened. A fold stays
+ * open as long as one of its calls is one that was in an open fold: when a newer call joins it at the
+ * end, after a refresh, and when "Load earlier" adds older calls at its start.
+ */
+export function foldOpen(open: ReadonlySet<string>, calls: readonly KeyedEntry[]): boolean {
+  return calls.some(({ key }) => open.has(key));
+}
+
+/** The open folds' calls after `calls`' fold is toggled: opened by its first call, or closed by all of them. */
+export function toggleFold(open: ReadonlySet<string>, calls: readonly KeyedEntry[]): Set<string> {
+  const next = new Set(open);
+  const wasOpen = foldOpen(open, calls);
+  for (const { key } of calls) next.delete(key);
+  const [first] = calls;
+  if (!wasOpen && first) next.add(first.key);
+  return next;
+}

@@ -1,9 +1,11 @@
 // Timestamps (docs/design-system.md, 4: Timestamps): relative times on one shared clock, a single
-// interval however many there are, the absolute time in a tooltip, and never in a live region.
+// interval however many there are, the time of day for speaker lines, which doesn't tick, the
+// absolute time in a tooltip, and never in a live region.
 
 import { act, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clockState } from '../clock.js';
+import { absoluteTime, clockTime } from '../format.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
 import { tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
@@ -61,6 +63,28 @@ describe('Timestamp', () => {
 
     unmount();
     expect(clockState()).toEqual({ listeners: 0, running: false });
+  });
+
+  it("shows the time of day alone, for the conversation's speaker lines, with the whole date and time in its tooltip, and never ticks", async () => {
+    const at = '2026-03-02T11:06:14.000Z';
+    render(
+      <>
+        {Array.from({ length: 30 }, (_, index) => (
+          <Timestamp key={index} at={at} format="time" />
+        ))}
+        <Timestamp at="not a time" format="time" />
+      </>,
+    );
+    const times = [...document.querySelectorAll('time')];
+    // The bad one shows nothing.
+    expect(times).toHaveLength(30);
+    expect(times[0]?.textContent).toBe(clockTime(at));
+    expect(times[0]?.textContent).toMatch(/^\d{1,2}[:.]\d{2}/);
+    expect(times[0]?.getAttribute('datetime')).toBe(at);
+    expect(clockState()).toEqual({ listeners: 0, running: false });
+    expect(await tooltipText(times[0]!)).toBe(absoluteTime(at));
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(times[0]?.textContent).toBe(clockTime(at));
   });
 
   it("drives every time in the dashboard from that one interval, none of them in a live region", () => {

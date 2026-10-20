@@ -128,7 +128,8 @@ describe('the message box', () => {
     expect(posts(server)).toEqual([{ url: relayPath(INTERACTIVE), body: { text } }]);
     const call = server.mock.calls.find(([, init]) => init.method === 'POST');
     expect((call?.[1].headers as Record<string, string>).Authorization).toBe(`Bearer ${API_KEY}`);
-    expect(within(view).getByRole('status').textContent).toBe(
+    // In the message box: the conversation has a status of its own, for its count of new entries.
+    expect(within(within(view).getByRole('region', { name: 'Message this session' })).getByRole('status').textContent).toBe(
       "Delivered. It's in the session's inbox: it reads it at its next step, or starts a turn if it's idle.",
     );
     expect(textarea(view).value).toBe('');

@@ -3,12 +3,16 @@ import { conversationPath, type ConversationEntry, type ConversationPage } from 
 import { createApiClient, type FetchLike } from './api.js';
 import {
   asConversationPage,
+  conversationRows,
+  countAdded,
   entryKey,
   entryKeys,
+  foldOpen,
   getConversation,
   mergeNewest,
   prependOlder,
   STALE_CURSOR_STATUS,
+  toggleFold,
 } from './conversation.js';
 
 // Made-up entries only.
@@ -78,6 +82,54 @@ describe('entryKeys', () => {
     const keys = entryKeys([userEntry(1), userEntry(1), userEntry(2)]);
     expect(new Set(keys).size).toBe(3);
     expect(keys[0]).toBe(entryKey(userEntry(1)));
+  });
+});
+
+describe('countAdded', () => {
+  it('counts the entries the newer list has that the shown one does not; a grown reply or a tool result is not new', () => {
+    const shown = [userEntry(1), reply(2, 'Part one.'), tool(3)];
+    expect(countAdded(shown, [userEntry(1), reply(2, 'Part one.\nPart two.'), tool(3, true)])).toBe(0);
+    expect(countAdded(shown, [userEntry(1), reply(2, 'Part one.'), tool(3), tool(4), userEntry(5)])).toBe(2);
+    expect(countAdded([], [userEntry(1)])).toBe(1);
+  });
+});
+
+describe('conversationRows', () => {
+  it('folds each run of two or more tool calls, keyed by its first call, and leaves a call on its own as an entry', () => {
+    const entries = [tool(1), userEntry(2), tool(3), tool(4, true), tool(5), reply(6, 'Done.'), tool(7)];
+    const keys = entryKeys(entries);
+    const rows = conversationRows(entries);
+    expect(rows.map((row) => (row.kind === 'fold' ? `fold of ${row.calls.length}` : row.entry.kind))).toEqual(['tool', 'user', 'fold of 3', 'assistant', 'tool']);
+    const fold = rows[2]!;
+    expect(fold.kind === 'fold' && fold.calls.map(({ key }) => key)).toEqual([keys[2], keys[3], keys[4]]);
+    expect(fold.key).toBe(`fold\u0000${keys[2]}`);
+    expect(rows.map((row) => row.key)).toHaveLength(new Set(rows.map((row) => row.key)).size);
+  });
+
+  it('is empty for no entries, and one fold for nothing but calls', () => {
+    expect(conversationRows([])).toEqual([]);
+    expect(conversationRows([tool(1), tool(2)]).map((row) => row.kind)).toEqual(['fold']);
+  });
+});
+
+describe('foldOpen and toggleFold', () => {
+  const calls = (...seconds: number[]) => seconds.map((second) => ({ key: entryKey(tool(second)), entry: tool(second) }));
+
+  it('opens a fold by its first call, and closes it by all of them', () => {
+    const opened = toggleFold(new Set(), calls(1, 2));
+    expect([...opened]).toEqual([entryKey(tool(1))]);
+    expect(foldOpen(opened, calls(1, 2))).toBe(true);
+    expect(toggleFold(opened, calls(1, 2)).size).toBe(0);
+  });
+
+  it('keeps a fold open while it has a call that was in an open fold: a call joining at its end or its start', () => {
+    const opened = toggleFold(new Set(), calls(2, 3));
+    expect(foldOpen(opened, calls(2, 3, 4))).toBe(true);
+    expect(foldOpen(opened, calls(1, 2, 3))).toBe(true);
+    expect(foldOpen(opened, calls(4, 5))).toBe(false);
+    // Closing the grown fold forgets every call in it, so it doesn't open again.
+    const closed = toggleFold(opened, calls(1, 2, 3, 4));
+    expect(foldOpen(closed, calls(1, 2, 3, 4))).toBe(false);
   });
 });
 

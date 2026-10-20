@@ -4,22 +4,22 @@
 // the Conversation and Terminal tabs; the body, which is all that scrolls; and, for an interactive
 // session, the message box in the footer.
 //
-// The conversation's internals are W27's and the terminal's W29's. The message box (RelayBox) and the
-// inline confirmations (SessionActions, and the terminal's restart) are W24's; the tooltips, toasts
-// and copy buttons are W25's.
+// The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
+// W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
+// restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import type { ConversationEntry, SessionSummary } from '../../../src/shared/protocol.js';
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
-import { entryKeys, getConversation, mergeNewest, prependOlder, type ConversationResult } from '../conversation.js';
+import { getConversation } from '../conversation.js';
 import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
-import { absoluteTime, formatRoots, plainText, shortenHome } from '../format.js';
+import { formatRoots, plainText, shortenHome } from '../format.js';
 import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
 import { StatusBadge } from './Badge.js';
-import { Button } from './Button.js';
+import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
@@ -33,200 +33,7 @@ import { Timestamp } from './Timestamp.js';
 import { useToast } from './Toast.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
 
-/**
- * - `loading`: the first page hasn't arrived.
- * - `ready`: a page has arrived.
- * - `missing`: the server has no transcript for the session, or no longer lists it.
- * - `failed`: the first page couldn't be loaded.
- * - `unavailable`: there's no API client, as in tests that render the dashboard alone.
- */
-type Status = 'loading' | 'ready' | 'missing' | 'failed' | 'unavailable';
-
-interface ConversationState {
-  status: Status;
-  /** Oldest first. */
-  entries: ConversationEntry[];
-  /** The cursor for the page before the oldest entry shown. */
-  before?: string;
-  earlier: 'idle' | 'loading' | 'failed';
-  /** The transcript changed under "Load earlier", so the view started again from the newest page. */
-  reloaded: boolean;
-}
-
-/** Fetches one page of the session's conversation: the newest, or the one before `before`. Never rejects. */
-type PageLoader = (before?: string) => Promise<ConversationResult>;
-
-type ScrollIntent = { kind: 'bottom' } | { kind: 'keep'; height: number; top: number };
-
-/** How close to the bottom counts as at the bottom, for following new entries. */
-const AT_BOTTOM_PX = 24;
-
-function isAtBottom(element: HTMLElement): boolean {
-  return element.scrollHeight - element.scrollTop - element.clientHeight <= AT_BOTTOM_PX;
-}
-
-function withBefore(state: ConversationState, before: string | undefined): ConversationState {
-  const { before: _old, ...rest } = state;
-  return before === undefined ? rest : { ...rest, before };
-}
-
-/**
- * A session's conversation: the newest page when the view opens, merged again
- * whenever the session's activity time moves, and older pages on request.
- */
-function useConversation(lastActivityAt: string | undefined, loader: PageLoader | undefined) {
-  const [state, setState] = useState<ConversationState>(() => ({
-    status: loader ? 'loading' : 'unavailable',
-    entries: [],
-    earlier: 'idle',
-    reloaded: false,
-  }));
-  // The state as last committed, for the async loads to build on.
-  const stateRef = useRef(state);
-  // Bumped whenever the entries are replaced, so an older page asked for before then is dropped.
-  const epoch = useRef(0);
-  // Only the latest request for the newest page counts.
-  const newestRequest = useRef(0);
-  const alive = useRef(true);
-  const scroller = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
-  const scrollIntent = useRef<ScrollIntent | undefined>(undefined);
-
-  const commit = useCallback((next: ConversationState) => {
-    stateRef.current = next;
-    setState(next);
-  }, []);
-
-  const loadNewest = useCallback(
-    async (options: { replace: boolean; reloaded?: boolean }) => {
-      if (!loader) return;
-      const request = ++newestRequest.current;
-      const result = await loader();
-      if (!alive.current || request !== newestRequest.current) return;
-      const current = stateRef.current;
-      if (result.kind === 'ok') {
-        const merged = options.replace || current.status !== 'ready' ? undefined : mergeNewest(current.entries, result.page.entries);
-        if (merged === undefined) {
-          epoch.current += 1;
-          scrollIntent.current = { kind: 'bottom' };
-          commit(
-            withBefore(
-              { status: 'ready', entries: result.page.entries, earlier: 'idle', reloaded: options.reloaded === true },
-              result.page.before,
-            ),
-          );
-        } else {
-          if (atBottom.current) scrollIntent.current = { kind: 'bottom' };
-          commit({ ...current, entries: merged });
-        }
-      } else if (result.kind === 'not-found') {
-        commit({ ...current, status: 'missing' });
-      } else if (result.kind !== 'unauthorized' && current.status !== 'ready') {
-        // A refresh that fails keeps what's on screen; the next change of activity tries again.
-        commit({ ...current, status: 'failed' });
-      }
-      // On 'unauthorized' the app has already replaced the dashboard with the token notice.
-    },
-    [loader, commit],
-  );
-
-  const loadEarlier = useCallback(async () => {
-    const current = stateRef.current;
-    if (!loader || current.before === undefined || current.earlier === 'loading') return;
-    const started = epoch.current;
-    commit({ ...current, earlier: 'loading' });
-    const result = await loader(current.before);
-    if (!alive.current || started !== epoch.current) return;
-    const latest = stateRef.current;
-    if (result.kind === 'ok') {
-      const element = scroller.current;
-      if (element) scrollIntent.current = { kind: 'keep', height: element.scrollHeight, top: element.scrollTop };
-      commit(withBefore({ ...latest, entries: prependOlder(result.page.entries, latest.entries), earlier: 'idle' }, result.page.before));
-    } else if (result.kind === 'stale') {
-      commit({ ...latest, earlier: 'idle' });
-      await loadNewest({ replace: true, reloaded: true });
-    } else {
-      commit({ ...latest, earlier: result.kind === 'unauthorized' ? 'idle' : 'failed' });
-    }
-  }, [loader, commit, loadNewest]);
-
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  // The newest page when the view opens, and again whenever the session's activity time moves.
-  useEffect(() => {
-    void loadNewest({ replace: false });
-  }, [loadNewest, lastActivityAt]);
-
-  // Follow new entries only when already at the bottom; keep the place when older ones arrive above.
-  useLayoutEffect(() => {
-    const intent = scrollIntent.current;
-    const element = scroller.current;
-    scrollIntent.current = undefined;
-    if (!intent || !element) return;
-    element.scrollTop = intent.kind === 'bottom' ? element.scrollHeight : intent.top + (element.scrollHeight - intent.height);
-    atBottom.current = isAtBottom(element);
-  }, [state.entries]);
-
-  // The scroller changes size without scrolling when the header or the message box below it grows or
-  // shrinks (a send's result, a reply arriving, the box resized) and when the window does. Stay at the
-  // bottom if already there; otherwise the place is kept, as the browser leaves scrollTop alone.
-  useEffect(() => {
-    const element = scroller.current;
-    if (!element || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
-      if (atBottom.current) element.scrollTop = element.scrollHeight;
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  const onScroll = useCallback(() => {
-    if (scroller.current) atBottom.current = isAtBottom(scroller.current);
-  }, []);
-
-  const retry = useCallback(() => {
-    commit({ ...stateRef.current, status: 'loading' });
-    void loadNewest({ replace: true });
-  }, [commit, loadNewest]);
-
-  return { state, loadEarlier, retry, scroller, onScroll };
-}
-
-const TEXT_LABELS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'You', assistant: 'Claude' };
-
 const KIND_LABELS: Record<SessionSummary['kind'], string> = { interactive: 'Interactive', background: 'Background' };
-
-/**
- * One entry, as text only: never markup. Line breaks are kept by CSS. Its time, and a tool call's
- * whole line, are still the browser's hover text: entries aren't focusable, and W27 rebuilds them,
- * with speaker lines that show the time and folded tool calls with their own tooltips.
- */
-function Entry({ entry }: { entry: ConversationEntry }) {
-  const when = entry.at ? absoluteTime(entry.at) : undefined;
-  const text = plainText(entry.text);
-  if (entry.kind === 'tool') {
-    return (
-      <li className={entry.toolError ? 'entry entry-tool has-error' : 'entry entry-tool'} title={when ? `${text}\n${when}` : text}>
-        <span className="entry-tool-text">{text}</span>
-        {entry.toolError && <span className="tool-error">error</span>}
-      </li>
-    );
-  }
-  const label = entry.kind === 'cross-session' ? `From ${plainText(entry.from ?? 'another session')}` : TEXT_LABELS[entry.kind];
-  return (
-    <li className={`entry entry-${entry.kind}`} title={when}>
-      {label && <p className="entry-label">{label}</p>}
-      <p className="entry-text">{text}</p>
-      {entry.truncated && <p className="entry-note">Cut short.</p>}
-    </li>
-  );
-}
-
 
 /** The interactive session's info icon: what /bg does. */
 export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, so pitwall can drive it fully.';
@@ -375,7 +182,7 @@ export function SessionView({ session, listed, onClose, layout = 'overlay', comp
     () => (api ? (before) => getConversation(api, sessionId, before, requests.current?.signal) : undefined),
     [api, sessionId],
   );
-  const { state, loadEarlier, retry, scroller, onScroll } = useConversation(session.lastActivityAt, loader);
+  const conversation = useConversation(session.lastActivityAt, loader);
   const actions = useSessionActions(session, onClose);
   const [tab, setTab] = useState<Tab>('conversation');
   const [attachStatus, setAttachStatus] = useState<AttachStatus>();
@@ -503,10 +310,9 @@ export function SessionView({ session, listed, onClose, layout = 'overlay', comp
         ]
       : []),
   ];
-  const { entries: conversation } = state;
-  const keys = entryKeys(conversation);
+  const shownEntries = conversation.state.entries;
   // Shown once: the footer leaves out a reply the conversation already has.
-  const replyShown = useMemo(() => (session.relay ? replyInConversation(session.relay, conversation) : false), [session.relay, conversation]);
+  const replyShown = useMemo(() => (session.relay ? replyInConversation(session.relay, shownEntries) : false), [session.relay, shownEntries]);
   const attached = tab === 'terminal' && attachStatus?.kind === 'attached';
 
   return (
@@ -612,56 +418,7 @@ export function SessionView({ session, listed, onClose, layout = 'overlay', comp
         </Tooltip>
       </div>
 
-      <div
-        className="session-view-body"
-        role="tabpanel"
-        id={ids.conversationPanel}
-        aria-labelledby={ids.conversationTab}
-        // A Tab stop, so the conversation can be scrolled from the keyboard.
-        tabIndex={0}
-        ref={scroller}
-        onScroll={onScroll}
-        hidden={tab !== 'conversation'}
-      >
-        {state.before !== undefined && (
-          <Button size="sm" className="load-earlier" busy={state.earlier === 'loading'} busyLabel="Loading earlier…" onClick={() => void loadEarlier()}>
-            Load earlier
-          </Button>
-        )}
-        {state.earlier === 'failed' && <p className="session-view-status">Couldn&apos;t load earlier messages.</p>}
-        {state.reloaded && (
-          <p className="session-view-status">The transcript changed, so this starts again from its newest messages.</p>
-        )}
-        {conversation.length > 0 && (
-          <ol className="conversation">
-            {conversation.map((entry, index) => (
-              <Entry key={keys[index]} entry={entry} />
-            ))}
-          </ol>
-        )}
-        {state.status === 'loading' && (
-          <p className="session-view-status" role="status">
-            Loading the conversation…
-          </p>
-        )}
-        {state.status === 'failed' && (
-          <p className="session-view-status">
-            Couldn&apos;t load the conversation.{' '}
-            <button type="button" className="link-button" onClick={retry}>
-              Try again
-            </button>
-          </p>
-        )}
-        {state.status === 'missing' && (
-          <p className="session-view-status">
-            {conversation.length > 0 ? 'The transcript is no longer available.' : 'No transcript for this session.'}
-          </p>
-        )}
-        {state.status === 'unavailable' && <p className="session-view-status">The conversation can&apos;t be loaded here.</p>}
-        {state.status === 'ready' && conversation.length === 0 && state.before === undefined && (
-          <p className="session-view-status">Nothing to show yet.</p>
-        )}
-      </div>
+      <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation'} />
 
       <div
         className="session-view-terminal"
