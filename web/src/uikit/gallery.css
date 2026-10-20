@@ -1,0 +1,347 @@
+/* The #uikit gallery's own chrome (W19). Plain on purpose: it isn't part of the design system, so it
+   only frames the specimens. It uses the tokens, so it follows the theme like the app does. Dev
+   builds only: it loads with the gallery's chunk. */
+
+.uikit {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 16px 96px;
+}
+
+.uikit-bar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 0;
+  background: var(--pw-bg);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.uikit-bar h1 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.uikit-themes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.uikit-themes button,
+.uikit-reopen button {
+  padding: 2px 10px;
+  border: 1px solid var(--pw-border-control);
+  border-radius: 4px;
+  background: var(--pw-surface);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.uikit-themes button[aria-pressed='true'] {
+  background: var(--pw-text);
+  border-color: var(--pw-text);
+  color: var(--pw-bg);
+}
+
+.uikit-bar a,
+.uikit-index a {
+  color: var(--pw-link);
+  font-size: 0.85rem;
+}
+
+.uikit-intro {
+  margin-top: 12px;
+}
+
+.uikit-index ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uikit-section {
+  margin-top: 48px;
+  /* Clear of the sticky bar when a link jumps here. */
+  scroll-margin-top: 64px;
+}
+
+.uikit-section > h2 {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--pw-border-strong);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.uikit-specimen {
+  margin-top: 24px;
+}
+
+.uikit-specimen > h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.uikit-note {
+  color: var(--pw-text-muted);
+  font-size: 0.8rem;
+}
+
+.uikit-section > .uikit-note {
+  margin-top: 4px;
+}
+
+.uikit-problem {
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  border: 2px dashed var(--pw-broken);
+  font-size: 0.8rem;
+}
+
+/* The stage a specimen stands on: the page background, outlined, so the specimen's own edges show. */
+.uikit-stage {
+  margin-top: 8px;
+  padding: 16px;
+  background: var(--pw-bg);
+  outline: 1px dashed var(--pw-border-strong);
+  border-radius: 4px;
+}
+
+/*
+ * A frame stands in for the window. Its transform makes it the containing block for anything the
+ * app fixes to the window (the session view, a dialog's backdrop), so those stay inside it, and its
+ * overflow makes it the scroller that sticky headers stick to.
+ */
+.uikit-frame {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  transform: translateZ(0);
+}
+
+.uikit-frame-view {
+  height: 640px;
+}
+
+.uikit-frame-short {
+  height: 420px;
+}
+
+.uikit-frame-dialog {
+  height: 920px;
+}
+
+.uikit-frame-page {
+  min-height: 160px;
+}
+
+/* Below 600 px a frame is as wide as the window, as the session view is (min(760px, 100vw)). */
+@media (max-width: 600px) {
+  .uikit-frame {
+    margin-inline: -16px;
+    border-radius: 0;
+  }
+}
+
+.uikit-surface {
+  background: var(--pw-surface);
+}
+
+/* The session view's width, for what stands in its footer or header. */
+.uikit-panel-width {
+  max-width: 760px;
+}
+
+.uikit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+  gap: 0 16px;
+}
+
+.uikit-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.uikit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.uikit-reopen {
+  padding: 24px;
+  text-align: center;
+}
+
+/* Tokens */
+
+.uikit-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uikit-swatches li {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+}
+
+.uikit-swatch {
+  grid-row: span 2;
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  /* An edge, so a swatch the colour of the page still shows. */
+  box-shadow: inset 0 0 0 1px var(--pw-border-strong);
+}
+
+.uikit-swatches code,
+.uikit-token-list code {
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.uikit-value {
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.uikit-token-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+}
+
+.uikit-token-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+
+/* Type */
+
+.uikit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.uikit-table th,
+.uikit-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--pw-border);
+  text-align: left;
+  vertical-align: baseline;
+}
+
+.uikit-table thead th {
+  color: var(--pw-text-muted);
+  font-weight: 600;
+}
+
+.uikit-table tbody th {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.uikit-table td:last-child {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .uikit-table thead {
+    display: none;
+  }
+
+  .uikit-table tr {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    gap: 0 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--pw-border);
+  }
+
+  .uikit-table th,
+  .uikit-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .uikit-table td:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+.uikit-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+}
+
+.uikit-type-grid > div > p:first-child {
+  color: var(--pw-text-muted);
+}
+
+/* Icons */
+
+.uikit-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 12px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uikit-icons li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.uikit-icon-sizes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.uikit-icons code {
+  font-size: 0.75rem;
+}
+
+/* 14 px text, as the design system's body is, with the icon centred on it as a button would. */
+.uikit-icon-line,
+.uikit-icon-compare p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.uikit-icon-compare {
+  display: grid;
+  gap: 8px;
+}

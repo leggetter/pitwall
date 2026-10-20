@@ -34,7 +34,7 @@ const STATE_LABELS: Record<ConnectionState, string> = {
   unauthorized: 'Token rejected',
 };
 
-function ConnectionBadge({ state }: { state: ConnectionState }) {
+export function ConnectionBadge({ state }: { state: ConnectionState }) {
   return (
     <span className={`connection state-${state}`} role="status">
       <span className="dot" aria-hidden="true" />
