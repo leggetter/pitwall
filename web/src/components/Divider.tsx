@@ -89,7 +89,12 @@ export function Divider({ storage }: DividerProps) {
     event.preventDefault();
     event.currentTarget.focus();
     drag.current = { x: event.clientX, width: shown };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    try {
+      // So the drag follows the pointer off the divider. A pointer the browser no longer tracks throws.
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Without capture, the drag still follows while the pointer is over the divider.
+    }
     setDragging(true);
   };
 

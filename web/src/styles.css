@@ -1547,6 +1547,15 @@ mark.match {
   margin: 0 var(--pw-space-1-5);
 }
 
+/*
+ * Stop and Remove's confirmation and result, between the header and the tabs, in the view's 16 px
+ * gutter (section 4: Inline confirmation). Their own look is W12's until W24 restyles them.
+ */
+.session-view > .session-actions {
+  flex: none;
+  padding: var(--pw-space-2) var(--pw-space-4);
+}
+
 /* Line 2: the status badge, the kind, the last activity, and the directory with its copy button, wrapping. */
 .session-view-meta {
   display: flex;
@@ -1578,7 +1587,7 @@ mark.match {
 /* The directory takes the rest of the line, or a line of its own, and gives way in the middle. */
 .session-view-cwd {
   display: inline-flex;
-  flex: 1 1 12em;
+  flex: 1 1 16em;
   align-items: center;
   gap: var(--pw-space-0-5);
   min-width: 0;
@@ -1596,7 +1605,6 @@ mark.match {
 
 .session-view-missing {
   flex: none;
-  margin-left: var(--pw-space-1);
   color: var(--pw-text-muted);
   white-space: nowrap;
   cursor: help;
