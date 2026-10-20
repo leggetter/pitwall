@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -591,7 +591,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `external` | open_in_new | Links that leave pitwall |
 | `latest` | arrow_downward | Jump to latest |
 | `back` | arrow_back | Back to the list on narrow windows |
-| `keyboard` | keyboard | The shortcuts dialog |
+| `keyboard` | keyboard | The header's keyboard shortcuts button, which opens the shortcuts dialog |
 | `theme-system` / `theme-light` / `theme-dark` | computer / light_mode / dark_mode | The theme switch |
 
 ### 2.15 Mapping from today's CSS
@@ -669,7 +669,9 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - Below the sidebar breakpoint (900 px), a ghost md `menu` icon button, "Repos", that opens the [repo list](#repo-list) as a drawer.
   - The wordmark "pitwall" (l 16/24, 600).
   - The roots: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full list in a tooltip.
-- **Right, 12 px apart:** New session (primary, md, `add` icon); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular, a [timestamp](#timestamps) with the absolute time in its tooltip); the theme switch; the keyboard-shortcuts icon button.
+- **Right, 12 px apart:** New session (primary, md, `add` icon, with `n` in its tooltip); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular, a [timestamp](#timestamps) with the absolute time in its tooltip); the theme switch; the keyboard shortcuts button (ghost md `keyboard` [icon button](#icon-buttons), "Keyboard shortcuts", with `?` in its tooltip), which opens the [keyboard shortcuts dialog](#keyboard-shortcuts-dialog).
+  - The shortcuts button is there from the first render, before the first snapshot, and stays while the single-key shortcuts are off, so they can be turned back on.
+  - Each says its key in `aria-keyshortcuts` (`n`, `?`) while the single-key shortcuts are on.
 - **Compact (≤ 600 px):** the right side wraps under the wordmark, and the header grows to fit.
 
 ### Repo list
@@ -826,7 +828,9 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 ### Search
 
 - **The filter field:** height 28 px, at least 200 px wide and growing to fill its line (see [Session list](#session-list)). A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px, and padding-right 32 px once there's text. A placeholder too long for the field ends in an ellipsis.
-- **Right side:** a `/` key cap while it's empty and unfocused; a ghost sm `clear` icon button ("Clear filter"), 2 px from the right edge, once there's text. Clearing with it keeps focus in the field. The browser's own clear button is hidden.
+- **Right side:** a `/` key cap while it's empty and unfocused, 4 px from the right edge and centred, while the single-key shortcuts are on; a ghost sm `clear` icon button ("Clear filter"), 2 px from the right edge, once there's text. Clearing with it keeps focus in the field. The browser's own clear button is hidden.
+  - The key cap is a hint, `aria-hidden`, and clicks go through it to the field. The field says the same in `aria-keyshortcuts="/"`, only while the shortcuts are on.
+  - While the shortcuts are on, the text keeps 32 px clear on the right, focused or not, so the placeholder doesn't move when the key cap goes.
 - **Behaviour:**
   - Filters as you type (pitwall filters in memory); no Enter needed.
   - Escape in the field clears it if it has text, otherwise leaves the field. Escape that clears stops there (it calls `preventDefault()`); Escape that leaves the field goes on to close the session view, as in the [keyboard map](#62-keyboard-map).
@@ -1109,13 +1113,13 @@ For a destructive or surprising action in the session view, without a dialog.
 
 ### Dialogs
 
-- **Component:** `Dialog` (`web/src/components/Dialog.tsx`), with `title`, `subtitle`, `size`, `busy`, `dirty`, `footerMeta`, `actions` and `onSubmit`, which makes the body and footer a form. The New session dialog is built on it, and the keyboard shortcuts dialog (W26) can be.
+- **Component:** `Dialog` (`web/src/components/Dialog.tsx`), with `title`, `subtitle`, `size`, `busy`, `dirty`, `footerMeta`, `actions` and `onSubmit`, which makes the body and footer a form. The New session dialog and the keyboard shortcuts dialog are built on it.
 - **Backdrop:** `--pw-backdrop`, `--pw-z-backdrop`, centring the card with 48 px top and 16 px side margins.
 - **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-lg`, `--pw-dialog-md` (624 px) wide, or `-sm` or `-lg`, never wider than the window less its margins, at most `calc(100dvh - 96px)` tall, `--pw-z-dialog`.
 - **Sections,** divided by 1 px `--pw-border`:
   - **Header:** padding 12 px 16 px; the title (l 16/24, 600); a ghost md `close` icon button at the right, "Close", with Esc's key cap in its tooltip; an optional meta subtitle in `--pw-text-muted`, which describes the dialog (`aria-describedby`).
   - **Body:** padding 16 px, scrolls, fields 16 px apart.
-  - **Footer:** padding 12 px 16 px; optional meta text at the left, in `--pw-text-subtle`; at the right, outline "Cancel" then the primary action, 12 px apart.
+  - **Footer:** padding 12 px 16 px; optional meta text at the left, in `--pw-text-subtle`; at the right, outline "Cancel" then the primary action, 12 px apart. A dialog with nothing to submit, such as the keyboard shortcuts dialog, has no footer: it has neither `actions` nor `footerMeta`.
 - **Behaviour:**
   - `role="dialog"`, `aria-modal="true"`, `aria-labelledby` (the title).
   - Focus moves to the first field on open, Tab and Shift + Tab are trapped inside, and focus returns to the opener on close.
@@ -1152,6 +1156,7 @@ For a destructive or surprising action in the session view, without a dialog.
   - ↑/↓ move, wrapping at the ends; Home and End jump; Enter or Space activates; Escape and Tab close. ↑/↓ on the closed button don't open it, so the session view's header can use them.
   - Focus returns to the button on close, without opening its tooltip, which would only be one more thing for the next Escape. An item runs after that, so one that opens something, such as a confirmation, can move focus on from there. Tab goes on from the button to the next control.
   - A press outside closes it, leaving focus where the press puts it. Escape is handled in the menu, so nothing behind it closes too, and it closes a disabled item's tooltip with the menu.
+  - A [single-key shortcut](#62-keyboard-map) that moves focus elsewhere closes it first (`closeMenus()`), putting focus back on its button as Escape would, so a dialog the shortcut opens gives focus back there. One with nowhere to go, such as `j` on the last session, leaves it open.
 
 ### Toasts
 
@@ -1176,6 +1181,7 @@ For a destructive or surprising action in the session view, without a dialog.
   - It sits above the trigger by default, centred on it and kept 8 px inside the window, and flips below when there's no room above.
   - It's rendered into `document.body`, fixed to the window, so no scrolling pane, overflow or stacking context cuts it off, and it follows its trigger as anything scrolls.
   - Key caps go at the end, 8 px after the text.
+  - While the single-key shortcuts are off, a single character key's caps, such as `n` or `?`, are left out. Esc, F6, ↵, the arrows and ⌘ combinations still show. New session's tooltip would then only repeat its label, so it has none.
 - **Opens** on hover after `--pw-delay-tooltip`, or at once when another is open or has just closed, and on keyboard focus (`:focus-visible`) at once. Not on a click's focus, nor when focus is put back on the trigger as something closes (`focusQuietly`). Touch doesn't hover, so a tap doesn't open it.
 - **Closes** on Escape, blur, pointer leave and a press on its trigger, at once. It stays while the pointer is over the tooltip itself (WCAG 1.4.13): the card's hit area reaches back over the 6 px gap.
   - Escape is the nearest layer (6.2): it closes the tooltip and goes no further. Inside a menu, Escape closes the menu and its tooltip together; inside the terminal, the terminal gets it.
@@ -1268,8 +1274,17 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 
 ### Keyboard shortcuts dialog
 
-- **Opened** by `?` or the header's `keyboard` icon button. A small dialog (`--pw-dialog-sm`) listing the [keyboard map](#62-keyboard-map) with key caps.
-- **The off switch:** a checkbox, "Single-key shortcuts", that turns off `/`, `?`, `n`, `j` and `k`, stored as `pitwall.shortcuts.v1` (WCAG 2.1.4).
+- **Component:** `ShortcutsDialog` (`web/src/components/ShortcutsDialog.tsx`), on `Dialog` with `size="sm"` (`--pw-dialog-sm`, 408 px), titled "Keyboard shortcuts". With nothing to submit, it has no footer; Close and Escape close it, and focus goes back to whatever opened it.
+- **Opened** by `?` or the header's `keyboard` icon button.
+- **The off switch** comes first, and takes focus as the dialog opens: a [checkbox](#inputs-textareas-and-selects), "Single-key shortcuts", that turns off `/`, `?`, `n`, `j` and `k` (WCAG 2.1.4, Character Key Shortcuts), with help text below it, indented to the label, linked with `aria-describedby`: "The keys under Anywhere, which are ignored while you type in a field. While they're off, the keyboard button in the header opens this dialog."
+  - On by default. Stored in `localStorage` as `pitwall.shortcuts.v1`, `on` or `off`; anything else, nothing stored, or storage that's missing or throws reads as on, and a choice that can't be stored lasts until the page reloads.
+  - One store holds it (`web/src/shortcuts.ts`), as the theme's does, so the checkbox, the filter field's key cap and every tooltip agree, and a change made in another tab arrives with the window's `storage` event.
+  - While it's off, the Anywhere heading adds "Off" (meta, `--pw-text-muted`), and the rest of the map still works.
+- **The map:** every row of [6.2](#62-keyboard-map), in five groups, each a `<section>` named by its `<h3>` (s 13/20, 600): Anywhere (the single-key shortcuts), Lists, Session view, Menus and dialogs, and Closing and moving.
+  - Each row is a `<dl>` entry, divided by 1 px `--pw-border` lines, padding 6 px 0: what it does (m 14/20), saying where when the group doesn't, then its [key caps](#key-caps) at the right. When the dialog is too narrow for both, the caps wrap under the text, still at the right.
+  - Alternatives are separated by " / " and sets of them by ", " (`--pw-text-subtle`), each read out as " or " and ", "; each combination's caps have their text alternative, such as "Command Enter".
+  - ⌘ on Apple platforms and Ctrl elsewhere, as Key caps says.
+  - `keyboardMap()` names each row by its Key and Where cells in 6.2, and `ShortcutsDialog.test.tsx` checks the dialog lists exactly the rows the table has.
 
 ---
 
@@ -1368,14 +1383,21 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 
 ### 6.2 Keyboard map
 
-Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only when focus isn't in a text field, a select or the terminal, and only while they're switched on in the shortcuts dialog.
+Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only while they're switched on in the [shortcuts dialog](#keyboard-shortcuts-dialog), and never:
+
+- while focus is in a text field, a textarea, a select, something contenteditable or the terminal (`.xterm`), so typing is typing;
+- with ⌘, Ctrl or Alt held, so the browser's and the system's shortcuts are untouched (Shift is allowed, since `?` needs it on most layouts; `N`, `J` and `K` aren't shortcuts);
+- while a dialog or the repo drawer is open, since both are modal (the session view over the list isn't);
+- for a key that something nearer already handled, or while an input method is composing.
+
+Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're handled in `Dashboard.tsx`, on the document, after every handler inside the app; `web/src/shortcuts.ts` decides which key is which.
 
 | Key | Where | What it does |
 |---|---|---|
-| `/` | Anywhere | Focus the filter field |
+| `/` | Anywhere | Focus the filter field. Below 1,200 px, close the session view first, since it covers the list |
 | `n` | Anywhere | Open the New session dialog |
 | `?` | Anywhere | Open the keyboard shortcuts dialog |
-| `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (opens it if a session is open) |
+| `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (shows it if a session is open) |
 | ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session |
 | ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading |
 | Enter | On a session row | Open the session |
@@ -1389,8 +1411,12 @@ Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only when focus isn't in a t
 | F6 | The terminal | Leave the terminal, to the Terminal tab |
 | Tab / Shift + Tab | Everywhere but the terminal | Header → repo list → session list (header, rows) → session view (header, tabs, body, footer) |
 
-- **"Next" and "previous"** follow the session list's visible order. Rows in a closed Finished section and rows hidden by the filter are skipped, and it stops at either end without wrapping.
+- **"Next" and "previous"** follow the session list's visible order, including an order that's being held while focus or the pointer is in the list. Rows in a closed Finished section and rows hidden by the filter are skipped, and it stops at either end without wrapping.
+- **Where `j` and `k` start:** the focused row; or else the open session; or else, with nothing open, the first row, for either key. An open session the list doesn't show (filtered out, in a collapsed Finished section, or not listed) has no next or previous, so they do nothing.
+- **Where focus goes:** with no session open, to the row. With one open, the view shows that session, replacing the history entry as ↑/↓ do, and focus stays in the list if it was there, stays in the conversation if it was there, and otherwise goes to the new heading.
 - **In the conversation's body,** ↑/↓ scroll it, as in any scrolling region; use `j` / `k` there to change session.
+- **An open menu** closes first when a shortcut moves focus (see [Menus](#menus)).
+- **A draft is never lost to a shortcut:** while the message box has a draft, `j` and `k` do nothing, and so does `/` where it would close the view, just as Escape does nothing then.
 
 ---
 
