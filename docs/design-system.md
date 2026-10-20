@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28), then the terminal: its bar on `Badge`, `KeyCaps` and `Button`, the screen's font and colours from the tokens and its edge, F6 to leave it, its notices as inline alerts, and the conversation's place kept across the Terminal tab (W29). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -442,7 +442,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 
 - **No capitals for emphasis:** labels are sentence case at normal letter spacing, not uppercase with tracking.
 - **Numbers that update or align** (counts, times, character counts) use `font-variant-numeric: tabular-nums`.
-- **Fields and code turn ligatures off** (`font-variant-ligatures: none`), so `//`, `->` and `!=` show as typed.
+- **Fields, code and the terminal turn ligatures off** (`font-variant-ligatures: none`), so `//`, `->` and `!=` show as typed.
 - **Inline `code`** in text: mono s, `--pw-surface-sunken` fill, `--pw-radius-sm`, padding `0 4px`, colour `--pw-text`.
 - **Weights:** 400, 500 and 600 only.
 
@@ -998,7 +998,8 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
   - ← and → (and Home, End) move focus between tabs; Enter or Space opens one.
   - Opening is manual, never on focus, because opening Terminal attaches.
 - **Switching** from Terminal to Conversation detaches, as Detach does. Opening Terminal attaches; for a session that isn't running it first shows the restart confirmation, which the server asks for when the socket opens (D9).
-  - Detach, Back to the conversation and the restart's Cancel go back to Conversation, with focus on the Terminal tab.
+  - Detach, Back to the conversation and the restart's Cancel go back to Conversation, with focus on the Terminal tab. F6 in the terminal moves focus to the Terminal tab too, but leaves the terminal open and attached.
+  - Back on Conversation, the conversation is where it was left: at the bottom if it was there, with what arrived meanwhile; otherwise at the same place, with what arrived counted on the "Jump to latest" bar. Its panel is `hidden` behind the Terminal tab, which leaves it no size and lets the browser drop its scroll position, so nothing counts as the reader moving while it's hidden, and it's put back before it's painted.
   - The view opens on Conversation, so opening a session, from a row or the URL, never attaches.
 
 **Body:** scrolls; padding 12 px 16 px 24 px; `overscroll-behavior: contain`. It holds the [conversation](#conversation) or the [terminal](#terminal), each in its `role="tabpanel"`. The conversation's panel is a Tab stop (`tabindex="0"`, `--pw-ring-focus-inset`), so it can be scrolled from the keyboard.
@@ -1056,6 +1057,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
 - **Loading earlier:** an outline sm "Load earlier" button centred at the top, 12 px above the list ("Loading earlier…" with its spinner while busy, and repeat clicks ignored). The scroll position holds when older entries arrive: what the reader was looking at stays where it was. If it fails, its alert takes the button's place (below).
 - **Following new entries:**
   - At the bottom (within 24 px), new entries keep it at the bottom.
+  - Behind the Terminal tab, entries keep arriving and following works the same; the place is kept for when Conversation opens again (see [Session view](#session-view-header-tabs-and-footer)).
   - Scrolled up, the place is kept, and a "Jump to latest" bar appears, sticky at the bottom of the body, 8 px from the footer (or the view's foot, when there's no footer): `--pw-info-tint`, `--pw-info-tint-fg` text, `inset 0 0 0 1px var(--pw-info-border)` (`--pw-info-fg` on hover), the `latest` icon 6 px before "*n* new · Jump to latest" (m 14/20, 500), centred, full width, at least 32 px tall, `--pw-radius-md`, `--pw-z-sticky`. It's a button.
     - *n* counts the entries that arrived while scrolled up; a message that grew, or a tool call that got its result, isn't new.
     - The sticky box has no height, so the bar covers the entries behind it rather than taking room, and nothing moves when it goes.
@@ -1277,21 +1279,26 @@ For a destructive or surprising action in the session view, without a dialog.
 
 ### Terminal
 
-The Terminal tab's panel, for background sessions: xterm.js over `claude attach`.
+The Terminal tab's panel, for background sessions: xterm.js over `claude attach`. `SessionTerminal` (`web/src/components/Terminal.tsx`) draws the bar, the notices and the screen; `web/src/xterm.ts` makes the terminal.
 
-- **Bar** (36 px, padding 4 px 0, 8 px gaps):
-  - A status badge: "Attaching…" (subtle neutral, spinner), "Attached" (subtle success, dot), "Detached" (subtle neutral), "Not running" (outline).
-  - A meta hint "F6 to leave the terminal" in `--pw-text-subtle`.
-  - At the right: ghost sm "Attach again" (`retry`) once detached, and ghost sm "Detach".
-- **Screen:** fills the rest of the panel; `--pw-term-bg`, `--pw-radius-md`, padding 6 px.
-  - xterm options: `fontFamily` from `--pw-font-mono`, `fontSize` 13, `cursorBlink` true, `scrollback` 5000, `theme` built from the `--pw-term-*` tokens (background, foreground, cursor, selectionBackground, red, green, yellow, blue; xterm's defaults for the rest), and links limited to http and https.
+- **Bar** (36 px, padding 4 px 0, 8 px gaps). It wraps when the panel is too narrow: the buttons go to a line of their own, still at the right.
+  - A status [badge](#badges) (`Badge`), inside a `role="status"` region so each change is announced, as the connection badge's is: "Attaching…" (subtle neutral, spinner), "Attached" (subtle success, dot), "Detached" (subtle neutral), "Not running" (outline, while the restart confirmation asks).
+  - A meta hint, an F6 [key cap](#key-caps) then "to leave the terminal", in `--pw-text-subtle`. It stays after the attach ends, since the screen still takes every key.
+  - At the right, on `Button`: ghost sm "Attach again" (`retry`) once it has ended, then ghost sm "Detach", which reads "Back to the conversation" once it has ended. Both of those go back to Conversation (see [Session view](#session-view-header-tabs-and-footer)).
+- **Screen:** fills the rest of the panel; `--pw-term-bg`, `--pw-radius-md`, padding 6 px, and a 1 px `--pw-border-strong` ring outside it (`box-shadow: 0 0 0 1px`). In the dark theme `--pw-term-bg` is the page's own `--pw-bg`, a shade darker than the view's `--pw-surface`, and the ring is what sets the screen apart; in the light theme the fill does. The ring is decorative (2.5), and ligatures are off (2.7).
+  - xterm options: `fontFamily` from `--pw-font-mono`, `fontSize` 13, `cursorBlink` true, `scrollback` 5000, `theme` built from the `--pw-term-*` tokens (background, foreground, cursor, selectionBackground, red, green, yellow, blue; xterm's defaults for the rest), and links limited to http and https (`links.ts`, which asks first, naming the whole URL). Each is read with `getComputedStyle` when a terminal is created, and a token that isn't set is left to xterm's default. Nothing in the terminal's code names a colour or a font family; `web/src/xterm.test.tsx` checks.
+  - **The font:** xterm.js measures its cells once, as it opens, so the terminal opens only once JetBrains Mono's 400 and 500 faces have loaded (`document.fonts.load()` with `--pw-font-mono`), or after 3 s, whichever is first. Otherwise its cells would be sized for the fallback font. Bold text asks for 700, and gets the 500 face, the heaviest one bundled (2.14).
   - The fit add-on keeps it sized to the panel.
 - **Dark in both themes** for now, because Claude Code's interface is usually set to its dark theme and a light terminal behind it could be unreadable.
   - If it follows the page theme later, rebuild `theme` from the tokens on every theme change.
 - **Keys:**
   - Every key goes to the terminal, Escape included (it interrupts Claude), so Escape never closes the view from here.
-  - F6 moves focus out, to the Terminal tab, so the terminal isn't a keyboard trap (WCAG 2.1.2). Check during the build that Claude Code doesn't use F6; if it does, pick another key and update this doc.
-- **Notices** (ended, error): an inline alert above the screen; neutral when you detached, danger when it failed.
+  - F6 moves focus out, to the Terminal tab, so the terminal isn't a keyboard trap (WCAG 2.1.2). The terminal stays open and attached, and the key never reaches the session: the screen takes it before xterm.js does. F6 with a modifier goes to the terminal like any other key.
+  - Claude Code's documentation binds nothing to F6, or to any function key: its keybindings page names none among the keys a binding can use, and the interactive mode, terminal configuration, agent view (which covers `claude attach`), fullscreen and accessibility pages mention none (checked 2026-10-21). If that changes, pick another key and update this doc, 6.2 and the shortcuts dialog.
+- **Notices** (ended, error): an inline [alert](#alerts-and-banners) (`Alert`) above the screen, its text plain (6.1 rule 16).
+  - Neutral, `role="status"`, when `claude attach` ended cleanly, with exit code 0 or by a signal, as it does when you detach inside it: "claude attach ended.".
+  - Danger, `role="alert"`, when it failed: a non-zero exit, the server refusing or failing ("Couldn't attach: *reason*"), four sessions already attached, the proof refused, or the connection closing.
+  - Attach again clears it and starts over with a new terminal and socket.
 
 ### Theme switch
 
