@@ -7,7 +7,7 @@
 // - Busy: a spinner in the icon's place (or before the label), the progressive label ("Stopping…"),
 //   aria-busy="true", and its idle width kept as its min-width. Activation is ignored meanwhile.
 
-import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type MouseEvent, type ReactNode, type Ref } from 'react';
+import { useCallback, useLayoutEffect, useRef, type ButtonHTMLAttributes, type MouseEvent, type ReactNode, type Ref } from 'react';
 import { Icon, type IconName } from './Icon.js';
 import { Spinner } from './Spinner.js';
 
@@ -49,11 +49,19 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const own = useRef<HTMLButtonElement | null>(null);
-  // The width it had when it last wasn't busy, so the busy label doesn't make it shrink.
+  // The width it had when it last wasn't busy, so the busy label doesn't make it shrink. Measured
+  // only for a button that can be busy, which says so with its busyLabel.
   const idleWidth = useRef(0);
   useLayoutEffect(() => {
-    if (!busy && own.current) idleWidth.current = own.current.getBoundingClientRect().width;
+    if (!busy && busyLabel !== undefined && own.current) idleWidth.current = own.current.getBoundingClientRect().width;
   });
+  const setRefs = useCallback(
+    (element: HTMLButtonElement | null) => {
+      own.current = element;
+      setRef(ref, element);
+    },
+    [ref],
+  );
 
   const inert = disabled || busy;
   const click = (event: MouseEvent<HTMLButtonElement>) => {
@@ -69,10 +77,7 @@ export function Button({
   return (
     <button
       {...rest}
-      ref={(element) => {
-        own.current = element;
-        setRef(ref, element);
-      }}
+      ref={setRefs}
       type={type}
       className={classes}
       aria-disabled={disabled || undefined}
