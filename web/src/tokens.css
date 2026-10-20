@@ -33,9 +33,9 @@
   --pw-icon-sm: 16px;
   --pw-icon-lg: 24px;
   --pw-header-h: 52px;
-  --pw-toolbar-h: 44px;
   --pw-strip-h: 32px;
 
+  --pw-sidebar-w: 240px;
   --pw-list-min-w: 360px;
   --pw-panel-w: 760px;
   --pw-panel-min-w: 560px;

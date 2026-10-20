@@ -5,7 +5,7 @@ import { Icon } from './Icon.js';
 
 /** The semantic names in docs/design-system.md, 2.14. */
 const NAMES = [
-  'close', 'expand', 'select', 'more', 'search', 'clear', 'add', 'copy', 'copied', 'terminal',
+  'close', 'expand', 'select', 'more', 'menu', 'search', 'clear', 'add', 'copy', 'copied', 'terminal',
   'conversation', 'send', 'stop', 'remove', 'restart', 'retry', 'info', 'success', 'warning', 'error',
   'repo', 'directory', 'external', 'latest', 'back', 'keyboard', 'theme-system', 'theme-light', 'theme-dark',
 ];

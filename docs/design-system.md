@@ -223,9 +223,9 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-icon-sm: 16px;
   --pw-icon-lg: 24px;
   --pw-header-h: 52px;
-  --pw-toolbar-h: 44px;
   --pw-strip-h: 32px;
 
+  --pw-sidebar-w: 240px;
   --pw-list-min-w: 360px;
   --pw-panel-w: 760px;
   --pw-panel-min-w: 560px;
@@ -568,6 +568,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `expand` | chevron_right | Group, finished-list and tool-call toggles, rotated 90° when open |
 | `select` | keyboard_arrow_down (formerly expand_more) | The chevron in selects |
 | `more` | more_horiz | The session view's actions menu |
+| `menu` | menu | The header's Repos button, which opens the repo list drawer below 900 px |
 | `search` | search | The filter field |
 | `clear` | cancel | Clearing the filter |
 | `add` | add | New session |
