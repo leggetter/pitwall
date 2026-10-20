@@ -21,6 +21,8 @@ export default defineConfig({
           // The page's origin is pitwall's, so proofs bound to location.origin are shaped like real ones.
           environmentOptions: { happyDOM: { url: 'http://127.0.0.1:4517/' } },
           setupFiles: ['web/src/test/setup.ts'],
+          // Stylesheets are empty in tests, except when imported as text with ?raw, as the token and font tests do.
+          css: { include: [/\.css\?raw$/] },
         },
       },
     ],
