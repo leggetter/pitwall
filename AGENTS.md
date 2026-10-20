@@ -38,7 +38,7 @@ npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5)
 ```
 
-There is no Vite dev server. `npm run dev` runs `vite build --watch` and `tsx watch src/cli.ts`, and the pitwall server serves `dist/web`.
+There is no Vite dev server. `npm run dev` runs `vite build --watch --mode development` and `tsx watch src/cli.ts`, and the pitwall server serves `dist/web`. Development mode adds the design system's gallery at `http://127.0.0.1:4517/#uikit` (`docs/design-system.md`); `npm run build` leaves it out.
 
 ## Layout
 

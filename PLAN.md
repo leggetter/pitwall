@@ -251,8 +251,8 @@ Same way of working as M2, on `m3/integration`. Each item builds from `docs/desi
 | --- | --- | --- | --- | --- |
 | W17 | The design system doc | `m3/design-system` | M | Merged ([#21](https://github.com/leggetter/pitwall/pull/21)) |
 | W18 | Tokens renamed to `--pw-*` with no visual change, plus self-hosted fonts and icons, bundled but not yet applied | `m3/tokens` | M | Merged ([#23](https://github.com/leggetter/pitwall/pull/23)): 36 before/after screenshot pairs byte-identical, no font downloaded. The icon package has only the 48 px optical size; W19's gallery checks it at 16 px |
-| W19 | A dev-only `#uikit` gallery, in both themes | `m3/uikit` | M | In progress |
-| W20 | Apply the theme: the palette, Inter and JetBrains Mono, a 14 px body, radii, shadows and the focus ring; `theme-init.js` and the theme switch | `m3/theme` | M | |
+| W19 | A dev-only `#uikit` gallery, in both themes | `m3/uikit` | M | Merged ([#24](https://github.com/leggetter/pitwall/pull/24)). The 48 px icons are too thin at 16 px, so W20 switches to the 20 and 24 px optical sizes |
+| W20 | Apply the theme: the palette, Inter and JetBrains Mono, a 14 px body, radii, shadows and the focus ring; `theme-init.js` and the theme switch; icons from the 20 and 24 px optical sizes | `m3/theme` | M | In progress |
 | W21 | The app shell: full width, header, toolbar, panes that scroll on their own, the filter field and chips | `m3/shell` | M | |
 | W22 | The session view: beside or over the list, the divider, header and actions menu, Conversation and Terminal tabs, footer, `?session=`, ↑/↓ and focus | `m3/session-view` | L | |
 | W23 | Rows, group headers and badges, the connection badge, and holding row order while I'm in the list | `m3/rows` | M | |
