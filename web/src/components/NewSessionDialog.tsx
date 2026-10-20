@@ -12,6 +12,7 @@ import {
   spawnSession,
   type StartedSession,
 } from '../spawn.js';
+import { Button } from './Button.js';
 import { CopyCommand } from './CopyCommand.js';
 import '../actions.css';
 
@@ -288,12 +289,13 @@ export function NewSessionDialog({ snapshot, onClose, onStarted }: NewSessionDia
           )}
 
           <div className="modal-actions">
-            <button type="button" className="button" onClick={onClose} disabled={submitting}>
+            {/* While the request is out: Start session is busy, and Cancel is aria-disabled (4: Dialogs). */}
+            <Button disabled={submitting} onClick={onClose}>
               Cancel
-            </button>
-            <button type="submit" className="button primary" disabled={submitting} aria-busy={submitting || undefined}>
-              {submitting ? 'Starting…' : 'Start session'}
-            </button>
+            </Button>
+            <Button type="submit" variant="primary" busy={submitting} busyLabel="Starting…">
+              Start session
+            </Button>
           </div>
         </form>
       </div>

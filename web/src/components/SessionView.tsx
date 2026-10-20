@@ -4,8 +4,8 @@
 // the Conversation and Terminal tabs; the body, which is all that scrolls; and, for an interactive
 // session, the message box in the footer.
 //
-// The conversation's internals are W27's and the terminal's W29's; the message box and the inline
-// confirmations keep their look until W24.
+// The conversation's internals are W27's and the terminal's W29's. The message box (RelayBox) and the
+// inline confirmations (SessionActions, and the terminal's restart) are W24's.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { ConversationEntry, SessionSummary } from '../../../src/shared/protocol.js';
@@ -14,15 +14,18 @@ import { AttachContext, type AttachStatus } from '../attach.js';
 import { entryKeys, getConversation, mergeNewest, prependOlder, type ConversationResult } from '../conversation.js';
 import { copyText, selectText } from '../copy.js';
 import { absoluteTime, formatRoots, plainText, relativeTime, shortenHome } from '../format.js';
+import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
+import { Alert } from './Alert.js';
 import { StatusBadge } from './Badge.js';
+import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { SESSION_VIEW_ID } from './SessionRow.js';
-import { SessionTerminal } from './Terminal.js';
+import { SessionTerminal, type RestartPhase } from './Terminal.js';
 
 /**
  * - `loading`: the first page hasn't arrived.
@@ -236,7 +239,7 @@ interface FrameProps {
   /** Slide in, over the list: when it opens, not when it changes from one session to the next. */
   animate: boolean;
   titleId: string;
-  /** Escape that nothing nearer handled: a menu, a confirmation, a dialog, the drawer, the filter, the terminal or a draft. */
+  /** Escape that nothing nearer handled: a menu, a dialog, the drawer, the filter or the terminal. The view decides the rest. */
   onEscape: () => void;
   children: ReactNode;
 }
@@ -370,6 +373,10 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
   const actions = useSessionActions(session, onClose);
   const [tab, setTab] = useState<Tab>('conversation');
   const [attachStatus, setAttachStatus] = useState<AttachStatus>();
+  // The terminal's restart confirmation, open or busy, for Escape's layering.
+  const [restart, setRestart] = useState<RestartPhase>();
+  // Whether the message box has a draft: Escape never closes the view then (6.2).
+  const draft = useRef(false);
   const [copied, setCopied] = useState<Copied>();
 
   // "Copied" for 2 s. A failure stays, with the text selected, until the next copy.
@@ -416,12 +423,17 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
     terminalTab.current?.focus();
   }, []);
 
+  // Escape from anywhere a nearer layer didn't take it (6.2): a confirmation cancels, and a busy one, or
+  // a draft in the message box, keeps the view open. Otherwise the view closes.
   const onEscape = () => {
+    if (actions.running) return;
     if (actions.confirming) {
       actions.cancel();
       menuButton.current?.focus();
-    } else if (tab === 'terminal' && attachStatus?.kind === 'confirm-restart') {
+    } else if (tab === 'terminal' && restart === 'asking') {
       leaveTerminal();
+    } else if ((tab === 'terminal' && restart === 'restarting') || draft.current) {
+      // Nothing to cancel: the restart is out, or there's a draft to keep.
     } else {
       onClose();
     }
@@ -486,6 +498,8 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
   ];
   const { entries: conversation } = state;
   const keys = entryKeys(conversation);
+  // Shown once: the footer leaves out a reply the conversation already has.
+  const replyShown = useMemo(() => (session.relay ? replyInConversation(session.relay, conversation) : false), [session.relay, conversation]);
   const attached = tab === 'terminal' && attachStatus?.kind === 'attached';
 
   return (
@@ -561,14 +575,13 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
           </p>
         )}
         {!listed && (
-          <div className="inline-alert neutral" role="status">
-            <Icon name="info" />
-            <p>This session is no longer listed, so this is what it showed last.</p>
-          </div>
+          <Alert tone="neutral" role="status">
+            This session is no longer listed, so this is what it showed last.
+          </Alert>
         )}
       </header>
 
-      {canAct && <SessionConfirm actions={actions} onCancel={() => menuButton.current?.focus()} />}
+      {canAct && <SessionConfirm actions={actions} onReturnFocus={() => menuButton.current?.focus()} />}
 
       <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
         <button
@@ -628,15 +641,9 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
         hidden={tab !== 'conversation'}
       >
         {state.before !== undefined && (
-          <button
-            type="button"
-            className="button sm load-earlier"
-            onClick={() => void loadEarlier()}
-            disabled={state.earlier === 'loading'}
-            aria-busy={state.earlier === 'loading' || undefined}
-          >
-            {state.earlier === 'loading' ? 'Loading earlier…' : 'Load earlier'}
-          </button>
+          <Button size="sm" className="load-earlier" busy={state.earlier === 'loading'} busyLabel="Loading earlier…" onClick={() => void loadEarlier()}>
+            Load earlier
+          </Button>
         )}
         {state.earlier === 'failed' && <p className="session-view-status">Couldn&apos;t load earlier messages.</p>}
         {state.reloaded && (
@@ -680,12 +687,21 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
         aria-labelledby={ids.terminalTab}
         hidden={tab !== 'terminal'}
       >
-        {tab === 'terminal' && <SessionTerminal sessionId={sessionId} onClose={leaveTerminal} onStatus={setAttachStatus} />}
+        {tab === 'terminal' && (
+          <SessionTerminal sessionId={sessionId} onClose={leaveTerminal} onStatus={setAttachStatus} onRestartChange={setRestart} />
+        )}
       </div>
 
       {session.kind === 'interactive' && listed && (
         <footer className="session-view-foot">
-          <RelayBox session={session} now={now} />
+          <RelayBox
+            session={session}
+            now={now}
+            replyShown={replyShown}
+            onDraftChange={(has) => {
+              draft.current = has;
+            }}
+          />
         </footer>
       )}
     </Frame>

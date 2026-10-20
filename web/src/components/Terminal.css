@@ -30,11 +30,6 @@
   font-size: var(--pw-text-m);
 }
 
-.attach-confirm-actions {
-  display: flex;
-  gap: 8px;
-}
-
 /* The fit addon sizes the terminal to this box, less its padding. */
 .attach-terminal {
   flex: 1 1 auto;

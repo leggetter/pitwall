@@ -404,7 +404,7 @@ describe('SessionView: the message box at the foot', () => {
     fireEvent.change(textbox, { target: { value: 'hello' } });
     fireEvent.click(within(box).getByRole('button', { name: 'Send' }));
     await settle();
-    const exchange = within(box).getByText('Message from pitwall').closest('.relay-exchange')!;
+    const exchange = box.querySelector('.relay-exchange')!;
     const result = within(box).getByRole('status');
     expect(precedes(exchange, result)).toBe(true);
     expect(precedes(result, textbox)).toBe(true);

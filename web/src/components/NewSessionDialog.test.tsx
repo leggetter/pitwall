@@ -214,9 +214,15 @@ describe('New session: starting one', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
 
+    // Busy, and Cancel aria-disabled: both stay focusable, and neither does anything.
     const busy = within(dialog).getByRole('button', { name: 'Starting…' }) as HTMLButtonElement;
-    expect(busy.disabled).toBe(true);
-    expect((within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    expect(busy.disabled).toBe(false);
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
+    expect(cancel.getAttribute('aria-disabled')).toBe('true');
+    expect(cancel.disabled).toBe(false);
+    fireEvent.click(cancel);
+    fireEvent.click(busy);
     fireEvent.keyDown(dialog, { key: 'Escape' });
     fireEvent.submit(dialog.querySelector('form')!);
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
@@ -225,6 +231,13 @@ describe('New session: starting one', () => {
     answer(new Response(JSON.stringify(started.body), { status: 201 }));
     await settle();
     expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
+  });
+
+  it('styles its fields and the first prompt’s textarea with the placeholder rule in actions.css', () => {
+    renderDashboard(fakeServer(started));
+    const dialog = openDialog();
+    expect(within(dialog).getByLabelText('First prompt').classList.contains('field-input')).toBe(true);
+    expect((within(dialog).getByPlaceholderText('Claude Code names it from the prompt') as HTMLInputElement).classList.contains('field-input')).toBe(true);
   });
 
   it('keeps the session view behind it open on Escape', async () => {

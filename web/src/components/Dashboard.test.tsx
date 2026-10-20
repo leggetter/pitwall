@@ -141,9 +141,16 @@ describe('Dashboard header', () => {
 
   it('warns when the latest heartbeat says the source failed, even though the snapshot did not', () => {
     const snap = snapshot([group({ sessions: [session({ name: 'kept' })] })]);
-    renderDashboard(snap, { lastPoll: { generatedAt: new Date(NOW).toISOString(), source: { ok: false, error: 'timed out' } } });
+    const { rerender } = render(<Dashboard view={{ state: 'live', snapshot: snap }} navigation={memoryNavigation()} />);
+    rerender(
+      <Dashboard
+        view={{ state: 'live', snapshot: snap, lastPoll: { generatedAt: new Date(NOW).toISOString(), source: { ok: false, error: 'timed out' } } }}
+        navigation={memoryNavigation()}
+      />,
+    );
 
-    expect(screen.getByRole('alert').textContent).toBe('claude agents --json --all failed on the latest poll: timed out');
+    // Arrived live, so it's announced.
+    expect(screen.getByRole('alert').textContent).toBe("Couldn't list sessionsclaude agents --json --all failed on the latest poll: timed out");
     expect(visibleRowNames()).toEqual(['kept']);
   });
 
@@ -151,7 +158,7 @@ describe('Dashboard header', () => {
     const snap = snapshot([], { source: { ok: false, error: 'timed out' } });
     renderDashboard(snap, { lastPoll: { generatedAt: new Date(NOW).toISOString(), source: { ok: true } } });
 
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.querySelector('.inline-alert')).toBeNull();
   });
 
   it('shows the reconnecting state and a note that the list may be out of date', () => {
@@ -181,46 +188,60 @@ describe('Dashboard header', () => {
     }
   });
 
-  it('warns when the session source failed', () => {
+  it('warns when the session source failed, without announcing a warning that was there on load', () => {
     renderDashboard(snapshot([], { source: { ok: false, error: 'claude: command not found' } }));
 
-    expect(screen.getByRole('alert').textContent).toBe('claude agents --json --all failed on the latest poll: claude: command not found');
+    const alert = document.querySelector('.inline-alert.warning')!;
+    expect(alert.textContent).toBe("Couldn't list sessionsclaude agents --json --all failed on the latest poll: claude: command not found");
+    expect(alert.hasAttribute('role')).toBe(false);
   });
 
   it('shows server error messages until dismissed', () => {
-    renderDashboard(mixedSnapshot(), { serverError: 'index crashed' });
+    const { rerender } = render(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} navigation={memoryNavigation()} />);
+    rerender(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot(), serverError: 'index crashed' }} navigation={memoryNavigation()} />);
 
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('index crashed');
     fireEvent.click(within(alert).getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.querySelector('.inline-alert')).toBeNull();
   });
 
   it('says when the relay tried to send a message nobody asked for and pitwall blocked it, until dismissed, and again for the next one', () => {
     const alert = { at: minutesAgo(1), detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it.", count: 1, blocked: true };
-    const view = (relayAlert: typeof alert) => <Dashboard view={{ state: 'live', snapshot: { ...mixedSnapshot(), relayAlert } }} />;
-    const { rerender } = render(view(alert));
+    const view = (relayAlert?: typeof alert) => <Dashboard view={{ state: 'live', snapshot: { ...mixedSnapshot(), ...(relayAlert ? { relayAlert } : {}) } }} />;
+    const { rerender } = render(view());
+    rerender(view(alert));
     const banner = screen.getByRole('alert');
     expect(banner.className).toContain('warning');
     expect(banner.textContent).toBe(
-      "pitwall's relay tried to send a message nobody asked for, and pitwall blocked it. That usually means another session messaged the relay. Once since pitwall started. Latest: The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it.Dismiss",
+      "pitwall blocked a message you didn't ask forIts relay tried to send it, and pitwall's gate stopped it, so nothing was sent. That usually means another session messaged the relay. Once since pitwall started. Latest: The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it.Dismiss",
     );
     fireEvent.click(within(banner).getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.querySelector('.relay-alert')).toBeNull();
     rerender(view(alert));
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.querySelector('.relay-alert')).toBeNull();
     rerender(view({ ...alert, count: 2 }));
     expect(screen.getByRole('alert').textContent).toContain('2 times since pitwall started.');
   });
 
-  it('says more when the relay’s message may have been sent', () => {
-    renderDashboard({ ...mixedSnapshot(), relayAlert: { at: minutesAgo(1), detail: "pitwall's gate didn't stop it <b>.", count: 1, blocked: false } });
+  it('says more when the relay’s message may have been sent, and that messaging is off only when it is', () => {
+    const relayAlert = { at: minutesAgo(1), detail: "pitwall's gate didn't stop it <b>.", count: 1, blocked: false };
+    const { rerender } = render(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} navigation={memoryNavigation()} />);
+    rerender(<Dashboard view={{ state: 'live', snapshot: { ...mixedSnapshot(), relayAlert } }} navigation={memoryNavigation()} />);
     const banner = screen.getByRole('alert');
-    expect(banner.className).toContain('error');
-    expect(banner.textContent).toContain('It may have reached one of your sessions: check their conversations for a message from pitwall-relay.');
-    expect(banner.textContent).toContain('pitwall has stopped using it until you restart pitwall.');
+    expect(banner.className).toContain('danger');
+    expect(banner.textContent).toContain("pitwall's relay may have sent a message you didn't ask for");
+    expect(banner.textContent).toContain("Check your sessions' conversations for a message from pitwall-relay.");
     expect(banner.textContent).toContain("Latest: pitwall's gate didn't stop it <b>.");
     expect(banner.querySelector('b')).toBeNull();
+    // Some of these only restart the relay: it's off only when the snapshot says so.
+    expect(banner.textContent).not.toContain('Messaging is off');
+    expect(document.querySelector('.app-strip')).toBeNull();
+
+    const relayOff = { since: minutesAgo(1), reason: "its gate didn't check a SendMessage call." };
+    rerender(<Dashboard view={{ state: 'live', snapshot: { ...mixedSnapshot(), relayAlert, relayOff } }} navigation={memoryNavigation()} />);
+    expect(screen.getByRole('alert').textContent).toContain('Messaging is off until you restart pitwall.');
+    expect(document.querySelector('.app-strip')?.textContent).toBe("Messaging is off until you restart pitwall: its gate didn't check a SendMessage call.Details");
   });
 
   it('counts sessions that need attention, in the repo list, the session list and the tab title', () => {
@@ -553,7 +574,7 @@ describe('the session list', () => {
 
     const list = container.querySelector('main.session-list')!;
     expect(list.firstElementChild?.className).toBe('session-list-alerts');
-    expect(within(list.firstElementChild as HTMLElement).getByRole('alert').textContent).toContain('index crashed');
+    expect(list.firstElementChild?.querySelector('.inline-alert.danger')?.textContent).toContain('index crashed');
     expect(list.firstElementChild?.nextElementSibling?.className).toBe('session-list-head');
   });
 });

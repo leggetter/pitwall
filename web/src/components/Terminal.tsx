@@ -2,10 +2,25 @@
 // xterm.js over an attach socket running `claude attach`. Mounting attaches and unmounting
 // detaches, so switching to the Conversation tab, closing the view or closing the browser tab
 // leaves the session running.
+//
+// A session that isn't running asks first, as an inline confirmation under the bar (W24): Cancel
+// takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
+// has started or failed.
 
-import { useContext, useEffect, useId, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { AttachContext, attachSocketUrl, endMessage, startAttach, type AttachSession, type AttachStatus } from '../attach.js';
+import { InlineConfirm } from './InlineConfirm.js';
 import './Terminal.css';
+
+/** The restart confirmation: open, or busy once confirmed, until the attach has started or failed. */
+export type RestartPhase = 'asking' | 'restarting';
+
+export const RESTART = {
+  question: 'Restart and attach?',
+  consequence: 'This session has finished, or its process has exited. Attaching restarts it.',
+  confirm: 'Restart and attach',
+  busy: 'Restarting…',
+} as const;
 
 /** What the view needs from a terminal. createXterm() (xterm.ts) is the real one. */
 export interface TerminalHandle {
@@ -39,9 +54,11 @@ export interface SessionTerminalProps {
   onClose: () => void;
   /** Each status as it changes, for the Terminal tab's dot and Escape's layering in the session view. */
   onStatus?: (status: AttachStatus) => void;
+  /** The restart confirmation's phase as it changes, for Escape's layering in the session view. */
+  onRestartChange?: (phase: RestartPhase | undefined) => void;
 }
 
-export function SessionTerminal({ sessionId, onClose, onStatus }: SessionTerminalProps) {
+export function SessionTerminal({ sessionId, onClose, onStatus, onRestartChange }: SessionTerminalProps) {
   const env = useContext(AttachContext);
   const container = useRef<HTMLDivElement>(null);
   const session = useRef<AttachSession | undefined>(undefined);
@@ -53,7 +70,24 @@ export function SessionTerminal({ sessionId, onClose, onStatus }: SessionTermina
   }, [status]);
   // Bumped by "Attach again", which starts over with a new terminal and socket.
   const [attempt, setAttempt] = useState(0);
-  const confirmId = useId();
+  // Confirmed, and waiting for the attach to start or fail.
+  const [restarting, setRestarting] = useState(false);
+  const attachAgain = useRef<HTMLButtonElement>(null);
+  const phase: RestartPhase | undefined =
+    status.kind === 'confirm-restart' ? 'asking' : restarting && status.kind === 'connecting' ? 'restarting' : undefined;
+  const onRestartRef = useRef(onRestartChange);
+  onRestartRef.current = onRestartChange;
+  useEffect(() => {
+    onRestartRef.current?.(phase);
+  }, [phase]);
+  useEffect(() => () => onRestartRef.current?.(undefined), []);
+  // The restart has started or failed. Attached, the terminal takes focus; ended, Attach again does,
+  // since the busy button that had it has gone.
+  useEffect(() => {
+    if (!restarting || status.kind === 'connecting') return;
+    setRestarting(false);
+    if (status.kind === 'ended') attachAgain.current?.focus();
+  }, [restarting, status]);
 
   useEffect(() => {
     const element = container.current;
@@ -136,7 +170,7 @@ export function SessionTerminal({ sessionId, onClose, onStatus }: SessionTermina
           {env ? STATE_LABELS[status.kind] : 'Attach is unavailable here.'}
         </span>
         {ended && (
-          <button type="button" className="button sm" onClick={() => setAttempt((count) => count + 1)}>
+          <button ref={attachAgain} type="button" className="button sm" onClick={() => setAttempt((count) => count + 1)}>
             Attach again
           </button>
         )}
@@ -144,18 +178,23 @@ export function SessionTerminal({ sessionId, onClose, onStatus }: SessionTermina
           {ended ? 'Back to the conversation' : 'Detach'}
         </button>
       </div>
-      {status.kind === 'confirm-restart' && (
-        <div className="banner warning attach-confirm" role="alertdialog" aria-describedby={confirmId}>
-          <p id={confirmId}>This session has finished, or its process has exited. Attaching restarts it.</p>
-          <div className="attach-confirm-actions">
-            <button type="button" className="button sm" onClick={() => session.current?.confirmRestart()}>
-              Restart and attach
-            </button>
-            <button type="button" className="button sm" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-        </div>
+      {phase && (
+        <InlineConfirm
+          question={RESTART.question}
+          consequence={RESTART.consequence}
+          confirmLabel={RESTART.confirm}
+          busyLabel={RESTART.busy}
+          icon="restart"
+          variant="primary"
+          tone="warning"
+          role="alertdialog"
+          busy={phase === 'restarting'}
+          onConfirm={() => {
+            setRestarting(true);
+            session.current?.confirmRestart();
+          }}
+          onCancel={onClose}
+        />
       )}
       {notice && (
         <p className={failed ? 'banner error attach-notice' : 'banner muted attach-notice'} role="alert">

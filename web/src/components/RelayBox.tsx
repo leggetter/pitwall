@@ -1,37 +1,63 @@
-import { useContext, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { RelayExchange, RelayStatus, SessionSummary } from '../../../src/shared/protocol.js';
+// The message box (docs/design-system.md, 4: Message box): "Message this session", at the foot of an
+// interactive session's view, sending text through pitwall's relay (D8). Top to bottom: the latest
+// exchange and its reply, the result of the last send as an inline alert, the text box beside Send,
+// then the help line with ⌘ ↵, the limits note behind an info icon, and the character count from
+// 80 % of the limit.
+//
+// ⌘/Ctrl + Enter sends and Enter adds a line (Phil, 2026-10-20). Send is aria-disabled while there's
+// nothing to send, it's over the limit or a send is out. After a send, focus stays in the text box,
+// and the draft clears only when the message was delivered, held or refused. Escape never discards a
+// draft: the box tells the view when there is one, and the view then ignores Escape.
+
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import type { RelayExchange, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { absoluteTime, plainText, relativeTime } from '../format.js';
-import { canMessage, exchangeSummary, MAX_RELAY_TEXT_LENGTH, outgoingText, sendRelay, STATUS_TEXT, statusTone, type RelayTone } from '../relay.js';
+import {
+  canMessage,
+  characterCount,
+  exchangeSummary,
+  MAX_RELAY_TEXT_LENGTH,
+  outgoingText,
+  resultLook,
+  sendRelay,
+  STATUS_TEXT,
+  type SendResultStatus,
+} from '../relay.js';
+import { Alert, Detail } from './Alert.js';
+import { Button } from './Button.js';
+import { Icon } from './Icon.js';
+import { KeyCaps, modEnter } from './KeyCaps.js';
 import '../relay.css';
 
 /** What the box shows after a send. `error` is pitwall's own failure, before the relay answered. */
 interface Shown {
-  status: RelayStatus | 'error';
+  status: SendResultStatus;
   text: string;
   detail?: string;
 }
 
-const LIMITS_NOTE =
+export const LIMITS_NOTE =
   "Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts.";
+
+export const NOT_RUNNING_NOTE = "It isn't running, so it can't be messaged.";
 
 export interface RelayBoxProps {
   /** An interactive session. */
   session: SessionSummary;
   now: number;
+  /** The conversation already shows the latest exchange's reply, so the box shows only its status line. */
+  replyShown?: boolean;
+  /** Whether there's a draft, for the view, which ignores Escape while there is one (6.2). */
+  onDraftChange?: (hasDraft: boolean) => void;
 }
 
-/**
- * "Message this session", at the foot of the session view: sends text through
- * pitwall's relay (D8). The latest exchange and any reply, then what happened
- * to this send, sit just above the text box, as text only.
- */
-export function RelayBox({ session, now }: RelayBoxProps) {
+export function RelayBox({ session, now, replyShown = false, onDraftChange }: RelayBoxProps) {
   const api = useContext(ApiContext);
-  const headingId = useId();
-  const textId = useId();
-  const noteId = useId();
+  const ids = { heading: useId(), text: useId(), keys: useId(), count: useId() };
   const alive = useRef(true);
+  const form = useRef<HTMLFormElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
   // Aborted when the box goes, so a request still waiting for an apiKey doesn't outlive it.
   const requests = useRef<AbortController | undefined>(undefined);
   const [text, setText] = useState('');
@@ -50,8 +76,47 @@ export function RelayBox({ session, now }: RelayBoxProps) {
   }, []);
 
   const messageable = canMessage(session);
-  const tooLong = outgoingText(text).length > MAX_RELAY_TEXT_LENGTH;
+  // Only while the text box is there: a session that stopped running shows its note instead.
+  const hasDraft = messageable && text !== '';
+  const onDraftRef = useRef(onDraftChange);
+  onDraftRef.current = onDraftChange;
+  useEffect(() => {
+    onDraftRef.current?.(hasDraft);
+  }, [hasDraft]);
+  useEffect(() => () => onDraftRef.current?.(false), []);
+
+  // From one line to eight, then it scrolls (4: Inputs): its height follows its content, and the CSS
+  // caps it. Measured again when its width changes, since the text wraps differently.
+  const grow = () => {
+    const element = field.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  };
+  useLayoutEffect(grow, [text, messageable]);
+  useEffect(() => {
+    const element = field.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    let width = element.clientWidth;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      // In the next frame: changing its height inside the callback would notify it again in this one.
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(grow);
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [messageable]);
+
+  const length = outgoingText(text).length;
+  const tooLong = length > MAX_RELAY_TEXT_LENGTH;
   const canSend = messageable && !sending && text.trim() !== '' && !tooLong && api !== undefined;
+  const count = characterCount(length);
 
   const send = async () => {
     if (!canSend || !api) return;
@@ -60,6 +125,9 @@ export function RelayBox({ session, now }: RelayBoxProps) {
     const outcome = await sendRelay(api, sessionId, text, requests.current?.signal);
     if (!alive.current) return;
     setSending(false);
+    // Focus stays in the text box, or comes back to it from Send, unless it was moved elsewhere meanwhile.
+    const active = document.activeElement;
+    if (active === null || active === document.body || form.current?.contains(active)) field.current?.focus();
     if (outcome.kind === 'unauthorized') return;
     if (outcome.kind === 'failed') {
       setShown({ status: 'error', text: outcome.error });
@@ -80,91 +148,102 @@ export function RelayBox({ session, now }: RelayBoxProps) {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       void send();
-    } else if (event.key === 'Escape' && text !== '') {
+    } else if (event.key === 'Escape' && hasDraft) {
       // Keep the draft: Escape elsewhere closes the session view.
       event.preventDefault();
     }
   };
 
+  const look = shown ? resultLook(shown.status) : undefined;
+  const keys = modEnter();
+  const describedBy = [ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
+
   return (
-    <section className="relay-box" aria-labelledby={headingId}>
+    <section className="relay-box" aria-labelledby={ids.heading}>
       {/* Named for assistive technology; on screen the text box and Send say what this is, as in a chat. */}
-      <h3 className="visually-hidden" id={headingId}>
+      <h3 className="visually-hidden" id={ids.heading}>
         Message this session
       </h3>
-      {session.relay && <RelayExchangeNote exchange={session.relay} now={now} />}
-      {shown && (
-        <p className={`relay-result tone-${tone(shown.status)}`} role={shown.status === 'delivered' ? 'status' : 'alert'}>
+      {session.relay && <RelayExchangeNote exchange={session.relay} now={now} showReply={!replyShown} />}
+      {shown && look && (
+        <Alert tone={look.tone} role={look.role} className="relay-result">
           {shown.text}
-          {shown.detail !== undefined && <span className="relay-detail"> {plainText(shown.detail)}</span>}
-        </p>
+          {shown.detail !== undefined && (
+            <>
+              {' '}
+              <Detail>{plainText(shown.detail)}</Detail>
+            </>
+          )}
+        </Alert>
       )}
       {messageable ? (
-        <form className="relay-form" onSubmit={onSubmit}>
-          <label className="visually-hidden" htmlFor={textId}>
+        <form className="relay-form" ref={form} onSubmit={onSubmit}>
+          <label className="visually-hidden" htmlFor={ids.text}>
             Message to {plainText(session.name)}
           </label>
           <div className="relay-compose">
             <textarea
-              id={textId}
+              ref={field}
+              id={ids.text}
               className="field-input relay-text"
-              rows={2}
+              rows={1}
               value={text}
               onChange={(event) => setText(event.target.value)}
               onKeyDown={onKeyDown}
-              disabled={sending}
-              aria-describedby={noteId}
+              readOnly={sending}
+              aria-describedby={describedBy}
               aria-invalid={tooLong || undefined}
               spellCheck
             />
-            <button type="submit" className="button primary" disabled={!canSend} aria-busy={sending || undefined}>
-              {sending ? 'Sending…' : 'Send'}
-            </button>
+            <Button type="submit" variant="primary" icon="send" disabled={!canSend} busy={sending} busyLabel="Sending…">
+              Send
+            </Button>
           </div>
-          <p className="relay-note">
-            <span className={tooLong ? 'relay-count over' : 'relay-count'}>
-              {tooLong ? `${text.length - MAX_RELAY_TEXT_LENGTH} characters over the ${MAX_RELAY_TEXT_LENGTH} limit` : `${text.length} / ${MAX_RELAY_TEXT_LENGTH}`}
-            </span>{' '}
-            <span id={noteId}>{LIMITS_NOTE}</span>
-          </p>
+          <div className="relay-help">
+            <p className="relay-help-keys" id={ids.keys}>
+              <KeyCaps keys={keys.keys} label={keys.label} /> to send
+              {/* Until the design system's tooltips exist (W25): the browser's, and the name for screen readers. */}
+              <span className="relay-info" role="img" aria-label={LIMITS_NOTE} title={LIMITS_NOTE}>
+                <Icon name="info" />
+              </span>
+            </p>
+            {count && (
+              <p className={count.over ? 'relay-count over' : 'relay-count'} id={ids.count}>
+                {count.text}
+              </p>
+            )}
+          </div>
         </form>
       ) : (
-        <>
-          <p className="relay-note">It isn&apos;t running, so it can&apos;t be messaged.</p>
-          <p className="relay-note" id={noteId}>
-            {LIMITS_NOTE}
-          </p>
-        </>
+        <p className="relay-note">{NOT_RUNNING_NOTE}</p>
       )}
     </section>
   );
 }
 
-function tone(status: Shown['status']): RelayTone {
-  return status === 'error' ? 'failed' : statusTone(status);
-}
-
 export interface RelayExchangeNoteProps {
   exchange: RelayExchange;
   now: number;
+  /** False when the conversation already shows the reply: then only the status line. */
+  showReply?: boolean;
 }
 
 /** The latest message pitwall relayed to a session, and its reply, as text only. */
-export function RelayExchangeNote({ exchange, now }: RelayExchangeNoteProps) {
+export function RelayExchangeNote({ exchange, now, showReply = true }: RelayExchangeNoteProps) {
   const summary = exchangeSummary(exchange);
-  const reply = exchange.reply ? plainText(exchange.reply.text) : undefined;
+  const reply = showReply && exchange.reply ? exchange.reply : undefined;
   return (
     <div className="relay-exchange">
-      <p className={`relay-exchange-line tone-${summary.tone}`}>
-        <span className="relay-exchange-label">Message from pitwall</span>{' '}
+      <p className="relay-exchange-line">
+        Message from pitwall ·{' '}
         <time dateTime={exchange.sentAt} title={absoluteTime(exchange.sentAt)}>
           {relativeTime(exchange.sentAt, now)}
         </time>
-        : {summary.status}
+        : <span className={`relay-exchange-status tone-${summary.tone}`}>{summary.status}</span>
       </p>
-      {reply !== undefined && exchange.reply && (
-        <p className="relay-reply" title={absoluteTime(exchange.reply.at)}>
-          <span className="who">Reply</span> {reply}
+      {reply && (
+        <p className="relay-reply" title={absoluteTime(reply.at)}>
+          <span className="relay-reply-label">Reply:</span> {plainText(reply.text)}
         </p>
       )}
     </div>

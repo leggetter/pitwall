@@ -82,7 +82,7 @@ textarea {
 
 /*
  * The app shell (docs/design-system.md, 3). The page doesn't scroll: the app is one window tall, a
- * grid of the app strip (W24 fills that row), the header and the columns, and each column scrolls on
+ * grid of the app strip (only while the relay is off), the header and the columns, and each column scrolls on
  * its own. Which columns there are comes from data-layout, which layout.ts sets from the app's width:
  * three-columns from 1,200 px, sidebar from 900 px, and drawer below that. The header's compact rule
  * is a container query on the app, which spans the window; the #uikit gallery's frames give it
@@ -327,16 +327,21 @@ textarea {
   background: var(--pw-surface);
 }
 
+/*
+ * The page alerts, above the header: at most half the column, then they scroll inside themselves, so
+ * the header and some rows always show, as the session view's footer does.
+ */
 .session-list-alerts {
   display: flex;
   flex: none;
   flex-direction: column;
   gap: var(--pw-space-3);
+  max-height: 50%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--pw-space-3) var(--pw-space-4) 0;
-}
-
-.session-list-alerts > .banner {
-  margin-top: 0;
+  /* The alerts' actions wrap under their text when the column is narrow (Alerts, below). */
+  container: page-alerts / inline-size;
 }
 
 .session-list-head {
@@ -705,7 +710,52 @@ textarea {
   }
 }
 
-/* Banners */
+/*
+ * The app strip (section 4: Alerts and banners): above the header, only while the relay is off until
+ * restart. One line, 32 px: a sentence too long for it ends in an ellipsis, with Details still there,
+ * so the session view over the list can start just below it and never hide it. It inverts with the
+ * theme, --pw-text-inverse on --pw-text (2.5), so it never uses a tone colour; its icon and link take
+ * the text's colour.
+ */
+.app-strip {
+  grid-area: strip;
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  height: var(--pw-strip-h);
+  padding: 0 var(--pw-space-4);
+  background: var(--pw-text);
+  color: var(--pw-text-inverse);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.app-strip > svg {
+  flex: none;
+}
+
+.app-strip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Over the list, the session view starts below the strip, so the strip shows in every layout. */
+.app:has(> .app-strip) .session-view.overlay {
+  top: var(--pw-strip-h);
+}
+
+.link-button.app-strip-link {
+  flex: none;
+  color: var(--pw-text-inverse);
+  line-height: var(--pw-leading-s);
+}
+
+/*
+ * The older banners, left on the New session dialog's failure (W25) and the terminal's notices (W29)
+ * until they become inline alerts too. The page alerts and confirmations are inline alerts (W24).
+ */
 
 .banner {
   display: flex;
@@ -719,11 +769,6 @@ textarea {
   border-radius: var(--pw-radius-md);
   background: var(--pw-surface);
   overflow-wrap: anywhere;
-}
-
-.banner.warning {
-  background: var(--pw-warning-tint);
-  border-color: var(--pw-warning-border);
 }
 
 .banner.error {
@@ -889,14 +934,17 @@ textarea {
 }
 
 /*
- * The spinner (section 4: Skeletons and spinners), inline at 12 px: a 2 px ring, a conic gradient
- * from transparent to the text's colour. It waits --pw-delay-spinner before showing, so a fast
- * connection never flashes it, and slows to 2 s a turn under reduced motion.
+ * The spinner (section 4: Skeletons and spinners, and Spinner.tsx): 12 px inline or 16 px in a
+ * button, a 2 px ring with a conic gradient from transparent to --pw-info-fg, or to the text colour
+ * of the badge or button it's in (2.1). It waits --pw-delay-spinner before showing, so a fast answer
+ * never flashes it, and slows to 2 s a turn under reduced motion.
  */
 .spinner {
+  display: inline-block;
   flex: none;
   width: 12px;
   height: 12px;
+  color: var(--pw-info-fg);
   border-radius: var(--pw-radius-full);
   background: conic-gradient(transparent, currentColor);
   mask: radial-gradient(farthest-side, transparent calc(100% - 2px), currentColor calc(100% - 2px));
@@ -918,6 +966,16 @@ textarea {
   to {
     opacity: 1;
   }
+}
+
+.badge > .spinner,
+.button > .spinner {
+  color: inherit;
+}
+
+.spinner.in-button {
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1065,6 +1123,47 @@ mark.match {
 .button.ghost:active,
 .icon-button.ghost:active {
   background: var(--pw-surface-strong);
+}
+
+/*
+ * Disabled (section 4: Buttons): aria-disabled, so the button stays focusable and keeps its focus
+ * ring. --pw-text-disabled on --pw-surface-sunken, or no fill for ghost, with the control edge; WCAG
+ * 1.4.3 exempts inactive controls (2.5). Hover and press change nothing. A busy button is
+ * aria-disabled too where activation must wait (Send), but keeps its variant's look: the spinner and
+ * the label say it's busy.
+ */
+.button[aria-disabled='true']:not([aria-busy='true']),
+.button[aria-disabled='true']:not([aria-busy='true']):hover,
+.button[aria-disabled='true']:not([aria-busy='true']):active {
+  background: var(--pw-surface-sunken);
+  box-shadow: var(--pw-shadow-control);
+  color: var(--pw-text-disabled);
+  filter: none;
+  cursor: not-allowed;
+}
+
+.button.ghost[aria-disabled='true']:not([aria-busy='true']),
+.button.ghost[aria-disabled='true']:not([aria-busy='true']):hover,
+.button.ghost[aria-disabled='true']:not([aria-busy='true']):active {
+  background: none;
+  box-shadow: none;
+}
+
+.button[aria-disabled='true']:not([aria-busy='true']) > svg {
+  color: var(--pw-text-disabled);
+}
+
+.button[aria-disabled='true']:not([aria-busy='true']):focus-visible {
+  box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
+}
+
+.button.ghost[aria-disabled='true']:not([aria-busy='true']):focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+/* Busy: the spinner and the -ing label; Button.tsx keeps its idle width and ignores activation. */
+.button[aria-busy='true'] {
+  cursor: progress;
 }
 
 /* Icon buttons (section 4): square, with a 16 px icon. */
@@ -1547,10 +1646,7 @@ mark.match {
   margin: 0 var(--pw-space-1-5);
 }
 
-/*
- * Stop and Remove's confirmation and result, between the header and the tabs, in the view's 16 px
- * gutter (section 4: Inline confirmation). Their own look is W12's until W24 restyles them.
- */
+/* Stop and Remove's confirmation and result, between the header and the tabs, 8 px 16 px around them (section 4: Inline confirmation). */
 .session-view > .session-actions {
   flex: none;
   padding: var(--pw-space-2) var(--pw-space-4);
@@ -1640,8 +1736,10 @@ mark.match {
 }
 
 /*
- * An inline alert (section 4: Alerts and banners), neutral: the session has left the snapshot. The
- * other tones and the page alerts are W24's.
+ * Inline alerts (section 4: Alerts and banners, and Alert.tsx): a tint, its 1 px edge, the tone's icon
+ * in the tint's -tint-fg (2.1), and --pw-text, which 2.5 checks on every tint. Actions sit at the
+ * right, and wrap under the text at 600 px and narrower. Detail from Claude Code or the server is in
+ * code style.
  */
 .inline-alert {
   display: flex;
@@ -1652,10 +1750,47 @@ mark.match {
   color: var(--pw-text);
   font-size: var(--pw-text-m);
   line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Focused by the app strip's Details. Inset, in place of its edge, since the alerts' area scrolls and
+ * would clip an outer ring; --pw-focus is at least 3:1 on every tint (2.5).
+ */
+.inline-alert.inline-alert:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
 }
 
 .inline-alert > svg {
+  flex: none;
   margin-top: 2px;
+}
+
+.inline-alert-text {
+  /* From nothing, so it stays beside the icon when the actions wrap under it. */
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.inline-alert-title {
+  font-weight: var(--pw-weight-medium);
+}
+
+.inline-alert-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--pw-space-2);
+  /* 24 px buttons, centred on the first 20 px line. */
+  margin: calc(-1 * var(--pw-space-0-5)) 0;
+}
+
+.alert-detail {
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
+  white-space: pre-wrap;
 }
 
 .inline-alert.neutral {
@@ -1663,8 +1798,149 @@ mark.match {
   box-shadow: inset 0 0 0 1px var(--pw-neutral-border);
 }
 
+
 .inline-alert.neutral > svg {
   color: var(--pw-neutral-tint-fg);
+}
+
+.inline-alert.info {
+  background: var(--pw-info-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-info-border);
+}
+
+
+.inline-alert.info > svg {
+  color: var(--pw-info-tint-fg);
+}
+
+.inline-alert.success {
+  background: var(--pw-success-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-success-border);
+}
+
+
+.inline-alert.success > svg {
+  color: var(--pw-success-tint-fg);
+}
+
+.inline-alert.warning {
+  background: var(--pw-warning-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-warning-border);
+}
+
+
+.inline-alert.warning > svg {
+  color: var(--pw-warning-tint-fg);
+}
+
+.inline-alert.danger {
+  background: var(--pw-danger-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-danger-border);
+}
+
+
+.inline-alert.danger > svg {
+  color: var(--pw-danger-tint-fg);
+}
+
+/* Under the text, which starts after the 16 px icon and its 8 px gap: in an app 600 px wide or narrower, or a session list column that is. */
+@container pitwall (max-width: 600px) {
+  .inline-alert {
+    flex-wrap: wrap;
+  }
+
+  .inline-alert-actions {
+    flex-basis: 100%;
+    padding-left: calc(var(--pw-icon-sm) + var(--pw-space-2));
+  }
+}
+
+@container page-alerts (max-width: 600px) {
+  .inline-alert {
+    flex-wrap: wrap;
+  }
+
+  .inline-alert-actions {
+    flex-basis: 100%;
+    padding-left: calc(var(--pw-icon-sm) + var(--pw-space-2));
+  }
+}
+
+/*
+ * Inline confirmations (section 4: Inline confirmation, and InlineConfirm.tsx): the question and its
+ * consequence, then Cancel and the confirm button at the right, wrapping under them when there's no
+ * room. A 3 px bar at the left: --pw-danger-solid, or --pw-warning-indicator for the restart.
+ */
+.inline-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-2) var(--pw-space-3);
+  padding: var(--pw-space-3);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-muted);
+}
+
+.inline-confirm.danger {
+  box-shadow: inset 3px 0 0 var(--pw-danger-solid), inset 0 0 0 1px var(--pw-border-strong);
+}
+
+.inline-confirm.warning {
+  box-shadow: inset 3px 0 0 var(--pw-warning-indicator), inset 0 0 0 1px var(--pw-border-strong);
+}
+
+.inline-confirm-text {
+  flex: 1 1 16em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.inline-confirm-question {
+  font-weight: var(--pw-weight-medium);
+}
+
+.inline-confirm-consequence {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.inline-confirm-buttons {
+  display: flex;
+  flex: none;
+  gap: var(--pw-space-2);
+  margin-left: auto;
+}
+
+/*
+ * Key caps (section 4: Key caps): each key a <kbd>, 20 px tall, 2 px apart, in label type on
+ * --pw-surface with the control edge and a 1 px inner bottom edge.
+ */
+.key-caps,
+.key-caps-keys {
+  display: inline-flex;
+  align-items: center;
+}
+
+.key-caps-keys {
+  gap: var(--pw-space-0-5);
+}
+
+.key-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--pw-space-5);
+  height: var(--pw-space-5);
+  padding: 0 5px;
+  border-radius: var(--pw-radius-xs);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-control), inset 0 -1px 0 var(--pw-border-strong);
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-sans);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
 }
 
 /*
@@ -1781,7 +2057,9 @@ mark.match {
 }
 
 .load-earlier {
-  display: block;
+  /* Its own line, centred; still a flex box, so its spinner has its size while it's busy. */
+  display: flex;
+  width: fit-content;
   margin: 0 auto 12px;
 }
 

@@ -1,4 +1,5 @@
-/* Spawn, stop and remove (W12): the New session dialog and the session view's actions. Uses the tokens in tokens.css. */
+/* Spawn, stop and remove (W12): the New session dialog and the session view's actions. Uses the tokens in tokens.css.
+   Disabled and busy buttons are in styles.css (W24). */
 
 .button.primary {
   background: var(--pw-accent);
@@ -32,12 +33,6 @@
     background: var(--pw-danger-solid);
     filter: brightness(0.92);
   }
-}
-
-.modal .button:disabled,
-.session-actions .button:disabled {
-  cursor: default;
-  opacity: 0.6;
 }
 
 /* The New session dialog */
@@ -103,6 +98,12 @@
   box-shadow: var(--pw-shadow-input);
 }
 
+/* Placeholders are examples, never the only label (section 4: Inputs). The browser's default is fainter. */
+.field-input::placeholder {
+  color: var(--pw-text-subtle);
+  opacity: 1;
+}
+
 .field select:focus-visible,
 .field-input:focus-visible {
   box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
@@ -152,40 +153,10 @@
   gap: 8px;
 }
 
-/* Stop and Remove in the session view */
+/* Stop and Remove in the session view: the confirmation and the result, one at a time (InlineConfirm and Alert in styles.css). */
 
 .session-actions {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.session-actions-buttons,
-.session-confirm-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.session-confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--pw-surface-sunken);
-  border: 1px solid var(--pw-border);
-  border-left: 4px solid var(--pw-danger-solid);
-  border-radius: var(--pw-radius-md);
-  font-size: var(--pw-text-m);
-}
-
-.action-result {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.action-result.failed {
-  color: var(--pw-danger-fg);
 }

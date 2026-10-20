@@ -5,10 +5,11 @@
 import type { ReactNode } from 'react';
 import { plainText } from '../format.js';
 import type { BadgeLook, StatusBadge as StatusBadgeData } from '../sessions.js';
+import { Spinner } from './Spinner.js';
 
 export interface BadgeProps {
   look: BadgeLook;
-  /** Before the label: an 8 px status dot, or a 12 px spinner. Both are aria-hidden; the label says it. */
+  /** Before the label: an 8 px status dot, or the 12 px Spinner, in the badge's text colour. Both are aria-hidden; the label says it. */
   lead?: 'dot' | 'spinner' | undefined;
   /** Hover text, for a badge that isn't focusable. */
   title?: string | undefined;
@@ -28,7 +29,7 @@ function BadgeContent({ lead, children }: { lead?: BadgeProps['lead']; children:
   return (
     <>
       {lead === 'dot' && <span className="status-dot" aria-hidden="true" />}
-      {lead === 'spinner' && <span className="spinner" aria-hidden="true" />}
+      {lead === 'spinner' && <Spinner />}
       {/* Its own box, so a label too long for the row ends in an ellipsis. */}
       <span className="badge-label">{children}</span>
     </>
