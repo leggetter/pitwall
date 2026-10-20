@@ -547,12 +547,13 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
             >
               <Icon name={copied?.ok && copied.label === 'Path' ? 'copied' : 'copy'} />
             </button>
-            {session.cwdMissing && (
-              <span className="session-view-missing" title={CWD_MISSING_HINT}>
-                Directory no longer exists
-              </span>
-            )}
           </span>
+          {session.cwdMissing && (
+            // Its own item, so it wraps to the next line rather than squeezing the path.
+            <span className="session-view-missing" title={CWD_MISSING_HINT}>
+              Directory no longer exists
+            </span>
+          )}
         </div>
         {copied && !copied.ok && !copied.onScreen && (
           <p className="session-view-copy-fallback">

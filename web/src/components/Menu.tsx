@@ -85,7 +85,8 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
       const onScreen = bottom > 0 && top < window.innerHeight;
       setUp(onScreen && window.innerHeight - bottom < height && top >= height);
     }
-    items()[0]?.focus();
+    // Without scrolling: the menu opens where its button already is, in view.
+    items()[0]?.focus({ preventScroll: true });
   }, [open, button]);
 
   // A press outside the button and the menu closes it, leaving focus where the press puts it.

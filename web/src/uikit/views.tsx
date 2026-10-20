@@ -262,7 +262,7 @@ export function MessageBoxes() {
         <Specimen key={box.title} title={box.title} note={box.note}>
           <Stubbed options={box.options}>
             <MaybeScenario run={box.run}>
-              <footer className="session-view-foot uikit-surface">
+              <footer className="session-view-foot">
                 <RelayBox session={box.session} now={NOW} />
               </footer>
             </MaybeScenario>

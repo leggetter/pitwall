@@ -177,6 +177,7 @@
 /* Room below a menu button for its open menu, with the button at the end, as in the session view's header. */
 .uikit-menu-stage {
   display: flex;
+  align-items: flex-start;
   justify-content: flex-end;
   max-width: 320px;
   min-height: 176px;
