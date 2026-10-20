@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -514,6 +514,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 
 - **The shell follows the app's width, not the window's:**
   - `web/src/layout.ts` measures `.app` and sets `data-layout` on it to `three-columns`, `sidebar` or `drawer`, from the three columns and sidebar rows above. The CSS reads `data-layout`, so the columns and the components that change with them (the session view's semantics, the drawer) can't disagree.
+  - It also says whether the app is compact (600 px or narrower), for the session view's markup: Back to sessions takes Close's place there. It changes state only at a breakpoint, so resizing doesn't re-render the app at every pixel.
   - The compact rule is a container query: `.app` is `container: pitwall / inline-size`, and the header uses `@container pitwall (max-width: 600px)`.
   - The app spans the window, so this is the window's width. In the `#uikit` gallery, a frame of a set width gets that width's layout, so each layout can be shown at any window width. The gallery's stages are `pitwall` containers too.
   - The other rows here are still media queries: they belong to components that only ever fill the window.
@@ -522,6 +523,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
   - Repo list: `--pw-sidebar-w` (240 px).
   - Session list: at least `--pw-list-min-w` (360 px).
   - Session view: `--pw-panel-w` (760 px) by default, at least `--pw-panel-min-w` (560 px, about 80 terminal columns), at most the window less the repo list and 360 px. At 1,200 px that's 600 px.
+    - The third column is `auto` in the grid, and takes its pane's width. The pane is 760 px, or the width the divider set, with `max-width: calc(100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w))`, so a narrower window shows less without losing the setting.
   - Dialogs: 408, 624 (the default) or 840 px. Tooltips: at most 344 px. Toasts: 360 px. Menus: at least 192 px.
 - **Reflow:** the UI works at 320 px wide and at 200 % zoom. Only the terminal and code blocks may scroll sideways.
 
@@ -531,7 +533,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 |---|---|---|
 | Hover, colour and chevron rotation | `--pw-duration-fast` 150 ms | `--pw-ease-standard` |
 | Toast in and out (fade and scale from 0.96) | `--pw-duration-base` 220 ms | `--pw-ease-out` |
-| Overlay session view in (slide 16 px and fade) | `--pw-duration-base` 220 ms | `--pw-ease-out` |
+| Overlay session view in (slide 16 px and fade), when it opens; not when the window crosses 1,200 px, or ↑/↓ moves it to another session | `--pw-duration-base` 220 ms | `--pw-ease-out` |
 | Spinner turn | 0.8 s per turn, linear | |
 | Skeleton pulse (opacity 1 → 0.6 → 1) | 1.5 s, starting after 0.5 s | ease-in-out |
 
@@ -723,25 +725,26 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 
 ### Session view
 
+- **One view, wherever it sits.** The view is rendered in the third column's pane in every layout. Below 1,200 px the pane is `display: contents` and the view is fixed over the list from inside it. So crossing 1,200 px with a session open changes how the view sits, not the view: it keeps its conversation, its scroll and its terminal, attached or not.
 - **From 1,200 px: the third column.**
-  - A pane on `--pw-surface`, full height under the header, separated from the session list by a divider.
+  - A pane on `--pw-surface`, full height under the header, separated from the session list by the divider, which draws the line between them.
   - The session list stays interactive and keeps its scroll position.
-  - With nothing open, the column stays and shows the "Select a session" empty state, so the layout doesn't jump.
+  - With nothing open, the column stays and shows the "Select a session" empty state, so the layout doesn't jump. While a `?session=` from the URL waits for the first snapshot, the column is blank.
 - **Below 1,200 px: over the session list.**
-  - Fixed to the right edge, `width: min(var(--pw-panel-w), 100vw)`, `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right.
+  - Fixed to the right edge, `width: min(var(--pw-panel-w), 100cqw)` (`100cqw` is the app's width, which in the app is the window's), `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right when it opens.
   - It's non-modal: no backdrop, and the visible part of the lists stays usable.
   - At ≤ 600 px it's full width, with a "Back to sessions" ghost button (`back` icon) at the start of its header in place of the close icon.
-- **Divider** (three columns only):
-  - An 8 px hit area with a 1 px `--pw-border` line in it; on hover or focus the line becomes 2 px `--pw-focus`.
-  - `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (the panel width in px), `aria-valuemin`, `aria-valuemax`, `aria-label="Resize the session view"`, `tabindex="0"`.
-  - Drag to resize, within the widths in [2.12](#212-breakpoints-and-widths). ← and → move it 16 px, Home and End jump to the minimum and maximum, and a double-click resets to 760 px, or the maximum if that's less.
-  - Save the width in `localStorage` as `pitwall.panel-width.v1`.
-- **The open session is in the URL:** `?session=<sessionId>`, alongside the selection.
-  - Opening a session pushes a history entry; moving with ↑/↓ replaces it; closing pushes one without the parameter.
+- **Divider** (three columns only, with or without a session open):
+  - An 8 px hit area along the view's left edge, with a 1 px `--pw-border` line at the edge; on hover, focus or while dragging the line becomes 2 px `--pw-focus`, which is the focus indicator, so there's no ring. The hit area is on the view's side, over its 16 px gutter, so it never covers the list's scrollbar.
+  - `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (the view's width in px, as shown), `aria-valuemin`, `aria-valuemax`, `aria-label="Resize the session view"`, `tabindex="0"`.
+  - Drag to resize, within the widths in [2.12](#212-breakpoints-and-widths). ← and → move it 16 px (← widens the view, since the divider is its left edge), Home and End jump to the minimum and maximum, and a double-click resets to 760 px, or the maximum if that's less.
+  - Save the width in `localStorage` as `pitwall.panel-width.v1`: on each key, on a double-click, and when a drag ends. A value that isn't a whole number of px from 560 up reads as 760.
+- **The open session is in the URL:** `?session=<sessionId>`, after the selection.
+  - Opening a session pushes a history entry, and opening the one that's open adds none; moving with ↑/↓ replaces it; closing pushes one without the parameter.
   - `popstate` makes the view match the URL.
-  - Loading a URL with a session that isn't in the snapshot opens the view with the state "This session isn't listed under these roots" and a Close button.
-  - Opening from the URL never attaches, sends or changes anything.
-  - Never put the token in the query string.
+  - Loading a URL with a session that isn't in the snapshot, and wasn't while the page was open, opens the view with the state "This session isn't listed under these roots": that heading, a sentence naming the id and the roots, and Close. A session that leaves the snapshot while it's open, or that the back button returns to after it left, shows what it showed last instead, with the "no longer listed" alert.
+  - Opening from the URL or the back button never attaches, sends or changes anything, and takes no focus.
+  - Never put the token in the query string. `web/src/token.ts` takes it out of the fragment before anything else reads the URL.
 - **Inside:** a sticky header, the tabs, the scrolling body and a sticky footer (see [Session view](#session-view-header-tabs-and-footer)).
 
 ### App strip and page alerts
@@ -952,17 +955,22 @@ The spinner and the dot take the badge's text colour. The badge sits in the elem
 **Header** (sticky, `--pw-surface`, a bottom `--pw-border`, padding 12 px 16 px):
 
 1. **Line 1:**
-   - The name (l 16/24, 600), then " · " and the title (l 16/24, 400, `--pw-text-muted`, ellipsis).
-   - At the right: the `more` icon button (md, ghost) opening the actions menu, then the `close` icon button ("Close", Escape in its tooltip).
-   - The heading is the region's label (`aria-labelledby`) and takes focus when the view opens (`tabindex="-1"`, no visible ring on the heading itself).
+   - The name (l 16/24, 600), then " · " and the title (l 16/24, 400, `--pw-text-muted`), on one line: the title gives way first, then the name, each with an ellipsis, and the full title is in a tooltip. The " · " is drawn with the title (`::before`, not read out), so it goes when the title has; screen readers get it from visually hidden text.
+   - At the right: the `more` icon button (md, ghost) opening the actions menu, then the `close` icon button ("Close", Escape in its tooltip). At ≤ 600 px, "Back to sessions" at the start replaces Close.
+   - The heading is the region's label (`aria-labelledby`) and takes focus when the view is opened from a row (`tabindex="-1"`, no visible ring on the heading itself).
+   - Until toasts exist (W25), a copy's result shows just before the `more` button, in meta text: "Copied" for 2 s, or "Couldn't copy; the text is selected" in `--pw-danger-fg`. It's an `aria-live="polite"` region that's always there, so it's announced. When the copied text isn't on screen (the session ID, the attach command), a failure also shows it, selected, below line 2: "Session ID: *id*" in code style.
 2. **Line 2, 8 px gaps, wrapping:**
    - The status badge.
-   - The kind as meta text in `--pw-text-subtle` ("Interactive" or "Background"). An interactive session adds an `info` icon whose tooltip says that typing `/bg` in its terminal moves it to the background, so pitwall can drive it fully.
+   - The kind as meta text in `--pw-text-subtle` ("Interactive" or "Background"). An interactive session adds an `info` icon whose tooltip says that typing `/bg` in its terminal moves it to the background, so pitwall can drive it fully. Until the Tooltip exists (W25) it's `role="img"`, named with that sentence, with the same `title`.
    - "Active 5m ago" (meta, `--pw-text-subtle`, the absolute time in a tooltip).
-   - The cwd (path type, `--pw-text-subtle`, middle ellipsis) with a copy icon button.
-3. **When the session has left the snapshot:** an inline neutral alert: "This session is no longer listed, so this is what it showed last."
+   - The cwd (path type, `--pw-text-subtle`, middle ellipsis, the full path in a tooltip) with a sm copy icon button, "Copy path". It takes the rest of the line, or a line of its own below 16em.
+   - When the directory no longer exists (`cwdMissing`): "Directory no longer exists" (meta, `--pw-text-muted`), its own item so it wraps rather than squeezing the path, with "The working directory no longer exists, for example after a worktree was removed." in a tooltip.
+3. **When the session has left the snapshot:** an inline neutral alert, `role="status"`: "This session is no longer listed, so this is what it showed last."
 
-**Actions menu** (`more`): Copy session ID, Copy attach command, then a separator, then Stop session and Remove session (background sessions; Remove in danger text). Each opens its [inline confirmation](#inline-confirmation).
+**Actions menu** (`more`, "Session actions", a [menu](#menus)): Copy session ID (`copy`), Copy attach command (`terminal`), then a separator, then Stop session (`stop`) and Remove session (`remove`, in danger text).
+
+- **Copy session ID** copies the full session id. **Copy attach command** copies `claude attach <shortId>`, and is there only for a background session whose short id passes `attachCommand()`'s shell-safety check. An interactive session's menu has Copy session ID alone.
+- **Stop session and Remove session** are for background sessions that are still listed. Each opens its [inline confirmation](#inline-confirmation). Stop is `aria-disabled` while the session isn't running, and both are while one of them is in progress, with the reason as hover text.
 
 **Tabs** (a row under the header, sticky, padding 0 16 px, a bottom `--pw-border`, 40 px tall):
 
@@ -970,21 +978,23 @@ The spinner and the dot take the badge's text colour. The badge sits in the elem
   - Inactive: `--pw-text-muted`; hover fill `--pw-surface-hover`, `--pw-radius-lg`.
   - Active: `--pw-text`, with a 2 px `--pw-text` underline on the row's bottom edge, over the border.
 - **"Conversation"** (`conversation`) and **"Terminal"** (`terminal`).
-  - An interactive session's Terminal tab is `aria-disabled`, with a tooltip saying it can't be attached and how `/bg` changes that.
-  - While attached, the Terminal tab shows an 8 px success dot.
+  - An interactive session's Terminal tab is `aria-disabled`, with a tooltip saying it can't be attached and how `/bg` changes that, also linked with `aria-describedby`. So is a background session's when the app can't attach, or once it's no longer listed. Activating a disabled tab does nothing.
+  - While attached, the Terminal tab shows an 8 px `--pw-success-fg` dot after its label, and a visually hidden ", attached".
 - **ARIA:** `role="tablist"` with `aria-label="Session view"`, `role="tab"` with `aria-selected` and `aria-controls`, `role="tabpanel"` with `aria-labelledby`. Roving `tabindex`.
   - ← and → (and Home, End) move focus between tabs; Enter or Space opens one.
   - Opening is manual, never on focus, because opening Terminal attaches.
-- **Switching** from Terminal to Conversation detaches, as Detach does. Opening Terminal attaches; for a session that isn't running it first shows the restart confirmation.
+- **Switching** from Terminal to Conversation detaches, as Detach does. Opening Terminal attaches; for a session that isn't running it first shows the restart confirmation, which the server asks for when the socket opens (D9).
+  - Detach, Back to the conversation and the restart's Cancel go back to Conversation, with focus on the Terminal tab.
+  - The view opens on Conversation, so opening a session, from a row or the URL, never attaches.
 
-**Body:** scrolls; padding 12 px 16 px 24 px; `overscroll-behavior: contain`. It holds the [conversation](#conversation) or the [terminal](#terminal).
+**Body:** scrolls; padding 12 px 16 px 24 px; `overscroll-behavior: contain`. It holds the [conversation](#conversation) or the [terminal](#terminal), each in its `role="tabpanel"`. The conversation's panel is a Tab stop (`tabindex="0"`, `--pw-ring-focus-inset`), so it can be scrolled from the keyboard.
 
 **Footer** (sticky, `--pw-surface-muted`, a top `--pw-border`, padding 12 px 16 px, 8 px 16 px on short windows):
 
 - At most half the view's height; past that, it scrolls inside itself.
 - Interactive sessions: the [message box](#message-box).
 - A session that can't be messaged: a meta note, "It isn't running, so it can't be messaged."
-- Background sessions: no footer.
+- Background sessions, and sessions that are no longer listed: no footer. The header's alert says why for the second.
 
 ### Message box
 
@@ -1072,7 +1082,7 @@ For a destructive or surprising action in the session view, without a dialog.
 | Attach to a session that isn't running | "Restart and attach?" | "This session has finished, or its process has exited. Attaching restarts it." | primary "Restart and attach" |
 
 - **Focus:** Cancel takes focus when the confirmation opens.
-  - Escape cancels it, without closing the view.
+  - Escape cancels it, without closing the view, wherever focus is in the page.
   - On cancel, focus goes back to whatever opened it (the actions menu button, or the Terminal tab).
 - **Semantics:** `role="group"` with `aria-labelledby` (the question) and `aria-describedby` (the consequence). For the restart, `role="alertdialog"`.
 - **Busy:** the confirm button shows the busy state ("Stopping…", "Removing…"). The result shows as a toast ("Stopped. Its conversation is kept."), or as an inline danger alert with Claude Code's message when it refused.
@@ -1107,14 +1117,18 @@ For a destructive or surprising action in the session view, without a dialog.
 
 ### Menus
 
-- **Panel:** `--pw-surface-overlay`, `--pw-shadow-2`, `--pw-radius-md`, padding 4 px, min-width 192 px, `--pw-z-dropdown`. It opens below the button, aligned to its end edge, and flips up when there's no room.
+- **Component:** `MenuButton` (`web/src/components/Menu.tsx`), which takes the button's icon and name and a list of items and separators. The other overlays build on it.
+- **Panel:** `--pw-surface-overlay`, `--pw-shadow-2`, `--pw-radius-md`, padding 4 px, min-width 192 px, `--pw-z-dropdown`. It opens 4 px below the button, aligned to its end edge, and flips up when the button is on screen and there's no room below but there is above.
 - **Items:** 32 px tall, padding 6 px 8 px, `--pw-radius-sm`, m 14/20, a 16 px icon in `--pw-text-muted` 8 px before the label.
-  - Hover and keyboard highlight: `--pw-surface-hover`.
-  - Danger items: `--pw-danger-fg` text and icon, `--pw-danger-tint` highlight.
-- **Separator:** 1 px `--pw-border`, 4 px margin.
-- **Semantics:** a `<button aria-haspopup="menu" aria-expanded>` opening `role="menu"` with `role="menuitem"` items.
-  - ↑/↓ move, Home and End jump, Enter or Space activates, Escape and Tab close.
-  - Focus returns to the button on close.
+  - Hover and keyboard highlight: `--pw-surface-hover`. Keyboard focus also shows `--pw-ring-focus-inset`, since the panel's 4 px padding would clip the outer ring, and a hover fill alone is under 3:1.
+  - Danger items: `--pw-danger-fg` text and icon; highlighted, a `--pw-danger-tint` fill with `--pw-danger-tint-fg` text and icon, the pair 2.5 checks.
+  - Disabled items: `aria-disabled`, `--pw-text-disabled`, no highlight on hover, the reason as hover text. The arrows still reach them, and activating one does nothing and keeps the menu open.
+- **Separator:** `role="separator"`, 1 px `--pw-border`, 4 px above and below.
+- **Semantics:** a `<button aria-haspopup="menu" aria-expanded aria-controls>` (ghost md icon button, `aria-label` and the same tooltip) opening `role="menu"`, named like the button, with `role="menuitem"` items, each `tabindex="-1"`.
+  - Opening, by a click, Enter or Space, focuses the first item, without scrolling the page.
+  - ↑/↓ move, wrapping at the ends; Home and End jump; Enter or Space activates; Escape and Tab close. ↑/↓ on the closed button don't open it, so the session view's header can use them.
+  - Focus returns to the button on close. An item runs after that, so one that opens something, such as a confirmation, can move focus on from there. Tab goes on from the button to the next control.
+  - A press outside closes it, leaving focus where the press puts it. Escape is handled in the menu, so nothing behind it closes too.
 
 ### Toasts
 
@@ -1295,7 +1309,8 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - As the third column, a `<section aria-labelledby>` region.
    - In overlay mode, `role="dialog"` with `aria-modal="false"`, because the list stays usable.
 8. **Focus management:**
-   - Opening a session from a row (click or Enter) moves focus to the view's heading. Closing it returns focus to that session's row button, waiting a frame on narrow windows so the row exists again.
+   - Opening a session from a row (click or Enter) moves focus to the view's heading, and so does opening the open session's row again. Closing it (Close, Back or Escape) returns focus to that session's row button, waiting a frame below 1,200 px so the row exists again, or to the session list's heading when the row isn't shown (filtered out, or in a collapsed Finished section).
+   - Opening from the URL or the back button takes no focus. Closing by the back button returns focus to the row only when it was in the view.
    - Moving between sessions with ↑/↓ while focus is in the list leaves focus in the list.
    - Choosing in the repo list leaves focus there; in the drawer, focus moves to the session list's heading.
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
@@ -1326,10 +1341,10 @@ Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only when focus isn't in a t
 | `?` | Anywhere | Open the keyboard shortcuts dialog |
 | `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (opens it if a session is open) |
 | ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session |
-| ↓ / ↑ | In the session view's header | Show the next / previous session |
+| ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading |
 | Enter | On a session row | Open the session |
 | ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
-| Escape | Layered, nearest first | Close a tooltip or menu → cancel a confirmation → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box |
+| Escape | Layered, nearest first | Close a tooltip or menu → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box |
 | ⌘/Ctrl + Enter | The message box | Send |
 | ⌘/Ctrl + Enter | The New session dialog | Start the session |
 | ← / →, Home / End | The tab list | Move focus between Conversation and Terminal; Enter or Space opens the focused tab |
