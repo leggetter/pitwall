@@ -1,7 +1,7 @@
-// `npm run dev [-- root...]`: rebuilds the web UI on change (`vite build --watch`)
-// and restarts the server on change (`tsx watch src/cli.ts`), passing the roots
-// through. There is no Vite dev server: the pitwall server serves dist/web, so
-// the UI is always same-origin.
+// `npm run dev [-- root...]`: rebuilds the web UI on change (`vite build --watch
+// --mode development`, which adds the #uikit gallery) and restarts the server on
+// change (`tsx watch src/cli.ts`), passing the roots through. There is no Vite
+// dev server: the pitwall server serves dist/web, so the UI is always same-origin.
 //
 // tsx watch restarts the CLI on every change. So that a restart doesn't mint a
 // new token and open another browser tab, this script generates one random
@@ -55,7 +55,9 @@ const markerDir = mkdtempSync(join(tmpdir(), 'pitwall-dev-'));
 process.on('exit', () => rmSync(markerDir, { recursive: true, force: true }));
 
 const children: ChildProcess[] = [
-  run('vite', ['build', '--watch'], process.env),
+  // Development mode builds in the #uikit gallery (web/src/App.tsx). Everything else is the same
+  // build as npm run build's: Vite's mode doesn't change NODE_ENV, so React stays its production build.
+  run('vite', ['build', '--watch', '--mode', 'development'], process.env),
   run('tsx', ['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(PORT), ...roots], {
     ...process.env,
     PITWALL_TOKEN: token,

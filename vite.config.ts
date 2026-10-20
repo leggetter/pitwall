@@ -22,7 +22,8 @@ function thirdPartyNotices(): Plugin {
 }
 
 // Builds the web UI from web/ to dist/web, where the pitwall server serves it.
-// There is no Vite dev server in M1: `npm run dev` runs `vite build --watch`.
+// There is no Vite dev server: `npm run dev` runs `vite build --watch --mode development`,
+// whose only difference is the #uikit gallery (web/src/App.tsx). `npm run build` is the production mode.
 export default defineConfig({
   root: fileURLToPath(new URL('./web', import.meta.url)),
   plugins: [react(), thirdPartyNotices()],
