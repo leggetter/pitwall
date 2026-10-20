@@ -13,7 +13,7 @@ import { SessionList, type SessionListHeading, type SessionListSummary } from '.
 import { SortSelect } from '../components/SortSelect.js';
 import { ALL_SESSIONS, groupSelection, NEEDS_YOU, type Selection } from '../selection.js';
 import { NO_FILTERS, SORT_ORDERS, type FilterChip, type Filters, type SortOrder } from '../sessions.js';
-import { ago, APP_GROUP, LONG_ROOTS, NOW, REPO_LIST_SNAPSHOT, ROOT, SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT } from './fixtures.js';
+import { ago, APP_GROUP, LONG_ROOTS, REPO_LIST_SNAPSHOT, ROOT, SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT } from './fixtures.js';
 import { Reopenable, Specimen } from './kit.js';
 
 const noop = () => {};
@@ -48,17 +48,17 @@ export function Headers() {
     <>
       {BREAKPOINTS.map((breakpoint) => (
         <Specimen key={breakpoint.width} title={breakpoint.title} note={breakpoint.note} width={breakpoint.width}>
-          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} now={NOW} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} />
+          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} />
         </Specimen>
       ))}
       <Specimen title="Before the first snapshot" note="No roots, no New session and no time yet." width={1100}>
-        <Header state="connecting" now={NOW} />
+        <Header state="connecting" />
       </Specimen>
-      <Specimen title="A long roots list" note="The start is cut short with an ellipsis and the last segment stays; the full list is in the hover text." width={800}>
-        <Header state="live" roots={LONG_ROOTS} updatedAt={UPDATED} now={NOW} onNewSession={noop} onRepos={noop} />
+      <Specimen title="A long roots list" note="The start is cut short with an ellipsis and the last segment stays; the full list, home and all, is in a tooltip." width={800}>
+        <Header state="live" roots={LONG_ROOTS} updatedAt={UPDATED} onNewSession={noop} onRepos={noop} />
       </Specimen>
       <Specimen title="A long roots list, 600 px and narrower" width={375}>
-        <Header state="reconnecting" roots={LONG_ROOTS} updatedAt={ago(0.9)} now={NOW} onNewSession={noop} onRepos={noop} />
+        <Header state="reconnecting" roots={LONG_ROOTS} updatedAt={ago(0.9)} onNewSession={noop} onRepos={noop} />
       </Specimen>
     </>
   );
@@ -150,7 +150,6 @@ export function SessionListHeads() {
             finished={[]}
             finishedCollapsed
             onToggleFinished={noop}
-            now={NOW}
           />
         </Specimen>
       ))}
@@ -163,7 +162,6 @@ export function SessionListHeads() {
           finished={[]}
           finishedCollapsed
           onToggleFinished={noop}
-          now={NOW}
         />
       </Specimen>
       <Specimen title="In a narrow window" note="The summary and the filters wrap." width={320}>
@@ -175,7 +173,6 @@ export function SessionListHeads() {
           finished={[]}
           finishedCollapsed
           onToggleFinished={noop}
-          now={NOW}
         />
       </Specimen>
     </>

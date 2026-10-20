@@ -1,7 +1,8 @@
 // The menu button and its menu (docs/design-system.md, 4: Menus): its semantics, keyboard and focus.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { descriptionOf, shownTooltip, tooltipText } from '../test/tooltips.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 
 function setup(overrides: { disabled?: boolean } = {}) {
@@ -26,12 +27,15 @@ function setup(overrides: { disabled?: boolean } = {}) {
 }
 
 describe('MenuButton', () => {
-  it('is an icon button that says it opens a menu, and controls the menu while it is open', () => {
+  it('is an icon button that says it opens a menu, and controls the menu while it is open', async () => {
     const { button } = setup();
     expect(button.getAttribute('aria-haspopup')).toBe('menu');
     expect(button.getAttribute('aria-expanded')).toBe('false');
     expect(button.hasAttribute('aria-controls')).toBe(false);
-    expect(button.getAttribute('title')).toBe('Session actions');
+    // Its name is its tooltip (6.1, item 5), and there's no title.
+    expect(button.getAttribute('aria-label')).toBe('Session actions');
+    expect(await tooltipText(button)).toBe('Session actions');
+    expect(button.hasAttribute('title')).toBe(false);
     expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
 
     fireEvent.click(button);
@@ -81,10 +85,40 @@ describe('MenuButton', () => {
     fireEvent.click(button);
     const stop = screen.getByRole('menuitem', { name: 'Stop session' });
     expect(stop.getAttribute('aria-disabled')).toBe('true');
-    expect(stop.getAttribute('title')).toBe("It isn't running.");
+    // Its reason describes it, and is its tooltip.
+    expect(descriptionOf(stop)).toBe("It isn't running.");
+    expect(stop.hasAttribute('title')).toBe(false);
     fireEvent.click(stop);
     expect(calls).toEqual([]);
     expect(screen.getByRole('menu')).toBeTruthy();
+  });
+
+  it("shows a disabled item's reason when the arrows reach it, and Escape closes the menu and its tooltip together", () => {
+    const { button, items } = setup();
+    fireEvent.click(button);
+    const [first, stop] = items();
+    expect(shownTooltip()).toBeNull();
+    fireEvent.keyDown(first!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(stop);
+    expect(shownTooltip()?.textContent).toBe("It isn't running.");
+
+    fireEvent.keyDown(stop!, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    // The item's tooltip went with the menu, and focus put back on the button doesn't open the button's.
+    expect(shownTooltip()).toBeNull();
+    // Moving focus there from elsewhere does.
+    act(() => screen.getByRole('button', { name: 'Before' }).focus());
+    act(() => button.focus());
+    expect(shownTooltip()?.textContent).toBe('Session actions');
+  });
+
+  it('gives an enabled item no tooltip', () => {
+    const { button, items } = setup({ disabled: false });
+    fireEvent.click(button);
+    fireEvent.keyDown(items()[0]!, { key: 'ArrowDown' });
+    expect(items()[1]?.hasAttribute('aria-describedby')).toBe(false);
+    expect(shownTooltip()).toBeNull();
   });
 
   it('closes on Escape, handled there so nothing behind closes too, and focus goes back to the button', () => {

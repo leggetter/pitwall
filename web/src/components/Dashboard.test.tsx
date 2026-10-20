@@ -6,6 +6,7 @@ import { FINISHED_STATE_KEY, type StorageSource } from '../groupState.js';
 import { memoryNavigation, VIEW_STATE_KEY, type NavigationEnv } from '../selection.js';
 import { SORT_KEY } from '../sort.js';
 import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
+import { cutShort, tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 
 interface RenderOptions {
@@ -768,7 +769,7 @@ describe('session rows', () => {
     expect(row('waits').querySelector('.session-group')).toBeNull();
   });
 
-  it('puts what the session asked on line 2 in place of what it was asked, and shows only the group label with neither', () => {
+  it('puts what the session asked on line 2 in place of what it was asked, and shows only the group label with neither', async () => {
     renderDashboard(
       snapshot([
         group({
@@ -782,7 +783,11 @@ describe('session rows', () => {
 
     expect(line2('asks')).toBe('demo-app · Asked: Ship it?');
     expect(row('asks').querySelector('.asked')?.getAttribute('class')).toBe('asked');
-    expect(row('asks').querySelector('.session-what')?.getAttribute('title')).toBe('Ship it?');
+    // The whole of it in a tooltip, once it's cut short on screen.
+    const what = row('asks').querySelector('.session-what')!;
+    expect(await tooltipText(what)).toBeUndefined();
+    cutShort(what);
+    expect(await tooltipText(what)).toBe('Ship it?');
     expect(row('asks').textContent).not.toContain('fix the test');
     expect(line2('quiet')).toBe('demo-app');
 
@@ -826,11 +831,11 @@ describe('session rows', () => {
     expect(status('legacy-migration')).toBe('blocked-stale');
   });
 
-  it('shows the stale badge only on stale sessions, with its explanation on hover', () => {
+  it('shows the stale badge only on stale sessions, with its explanation on hover', async () => {
     renderDashboard(mixedSnapshot());
 
     expect(badges('legacy-migration')).toEqual(['Blocked', 'Stale']);
-    expect(within(row('legacy-migration')).getByText('Stale').closest('.badge')?.getAttribute('title')).toMatch(
+    expect(await tooltipText(within(row('legacy-migration')).getByText('Stale').closest('.badge')!)).toMatch(
       /no activity for more than 7 days, whether or not its process is running/,
     );
     expect(within(row('demo-worker')).queryByText('Stale')).toBeNull();
@@ -871,13 +876,14 @@ describe('session rows', () => {
     expect(repoItem('Needs you').textContent).toBe('Needs you2 need you');
   });
 
-  it('shows last activity as relative time with the absolute time on hover', () => {
+  it('shows last activity as relative time with the absolute time on hover', async () => {
     renderDashboard(mixedSnapshot());
 
     const time = within(row('demo-docs')).getByText('5m ago');
     expect(time.tagName).toBe('TIME');
     expect(time.getAttribute('dateTime')).toBe('2026-03-02T11:55:00.000Z');
-    expect(time.getAttribute('title')).toMatch(/2026/);
+    expect(await tooltipText(time)).toMatch(/2026/);
+    expect(time.hasAttribute('title')).toBe(false);
   });
 
   it('shows a missing or unreadable transcript quietly on line 2, after the group label', () => {
@@ -942,7 +948,7 @@ describe('row semantics', () => {
 describe('session titles', () => {
   const CLAUDE_CODE_HINT = "Claude Code's title, from the session's first prompt";
 
-  it("shows Claude Code's title after the name, muted, with where it came from on hover", () => {
+  it("shows Claude Code's title after the name, muted, with where it came from on hover", async () => {
     renderDashboard(
       snapshot([group({ sessions: [session({ name: 'git-a0', title: 'Review the auth flow', titleSource: 'claude-code' })] })]),
     );
@@ -952,7 +958,7 @@ describe('session titles', () => {
     expect(head?.textContent).toBe('git-a0Review the auth flow');
     const title = within(row('git-a0')).getByText('Review the auth flow');
     expect(title.className).toBe('session-title');
-    expect(title.getAttribute('title')).toBe(`Review the auth flow\n${CLAUDE_CODE_HINT}`);
+    expect(await tooltipText(title)).toBe(`Review the auth flow\n${CLAUDE_CODE_HINT}`);
     // The heading stays the name alone.
     expect(screen.getByRole('heading', { level: 3, name: 'git-a0' })).toBeTruthy();
   });
@@ -963,13 +969,13 @@ describe('session titles', () => {
     expect(row('untitled').querySelector('.session-title')).toBeNull();
   });
 
-  it('keeps a long title whole in the text and the hover text, for the ellipsis to cut on screen', () => {
+  it('keeps a long title whole in the text and the tooltip, for the ellipsis to cut on screen', async () => {
     const long = `Investigate why ${'the very long session title '.repeat(4)}keeps going`;
     renderDashboard(snapshot([group({ sessions: [session({ name: 'git-b1', title: long, titleSource: 'claude-code' })] })]));
 
     const title = row('git-b1').querySelector('.session-title');
     expect(title?.textContent).toBe(long);
-    expect(title?.getAttribute('title')).toBe(`${long}\n${CLAUDE_CODE_HINT}`);
+    expect(await tooltipText(title!)).toBe(`${long}\n${CLAUDE_CODE_HINT}`);
   });
 
   it('renders the title as text, not markup', () => {
@@ -1195,7 +1201,7 @@ describe('finished sessions', () => {
     expect(document.title).toBe('pitwall');
   });
 
-  it('mutes finished rows, with the state as the badge and an outline asked-you badge', () => {
+  it('mutes finished rows, with the state as the badge and an outline asked-you badge', async () => {
     render();
     fireEvent.click(finishedToggle());
 
@@ -1207,7 +1213,7 @@ describe('finished sessions', () => {
     const asked = within(done).getByText('Asked you').closest('.badge')!;
     expect(asked.className).toContain('badge-outline');
     expect(asked.hasAttribute('data-status')).toBe(false);
-    expect(asked.getAttribute('title')).toMatch(/isn't counted as needing you/);
+    expect(await tooltipText(asked)).toMatch(/isn't counted as needing you/);
     expect(done.querySelector('.asked')?.textContent).toBe('Asked: Open the PR?');
     expect(badges('failed-one')).toEqual(['Failed']);
     expect(row('idle-done').className).not.toContain('finished');
@@ -1626,14 +1632,16 @@ describe('the highlight', () => {
     for (const mark of document.querySelectorAll('mark')) expect(mark.className).toBe('match');
   });
 
-  it("keeps the text whole: a match doesn't change a name, its button's text or a title's hover text", () => {
+  it("keeps the text whole: a match doesn't change a name, its button's text or a title's tooltip", async () => {
     renderDashboard(highlightSnapshot());
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'retry' } });
 
     const retry = row('export-retry');
     expect(retry.querySelector('[data-open-session]')?.textContent).toBe('export-retry');
     expect(retry.querySelector('.session-title')?.textContent).toBe('Retry a failed EXPORT');
-    expect(retry.querySelector('.session-title')?.getAttribute('title')).toBe('Retry a failed EXPORT');
+    const title = retry.querySelector('.session-title')!;
+    cutShort(title);
+    expect(await tooltipText(title)).toBe('Retry a failed EXPORT');
   });
 
   it('marks nothing without text, or with only chips on', () => {
@@ -1662,7 +1670,8 @@ describe('the shell', () => {
     const parts = () => [...container.querySelectorAll('.app > *')].map((part) => part.className);
     const columns = () => [...container.querySelectorAll('.columns > *')].map((part) => part.tagName.toLowerCase() + '.' + part.className);
 
-    expect(parts()).toEqual(['app-header', 'columns']);
+    // Then the toasts' stack, fixed over the page, and there before any toast (4: Toasts).
+    expect(parts()).toEqual(['app-header', 'columns', 'toasts']);
     // The third column's pane is there in every layout, empty below 1,200 px, so the session view never remounts.
     expect(columns()).toEqual(['nav.repo-list', 'main.session-list', 'div.session-pane']);
     expect(screen.queryByRole('search')).toBeNull();
@@ -1689,11 +1698,11 @@ describe('the shell', () => {
     expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('shows the roots in full in the hover text, home-shortened on screen', () => {
+  it('shows the roots in full in a tooltip, home-shortened on screen', async () => {
     renderDashboard(snapshot([], { roots: ['/Users/example/code', '/Users/example/work/projects'] }));
 
     const roots = document.querySelector('.roots')!;
-    expect(roots.getAttribute('title')).toBe('/Users/example/code, /Users/example/work/projects');
+    expect(await tooltipText(roots)).toBe('/Users/example/code, /Users/example/work/projects');
     expect(roots.querySelector('.middle-ellipsis-start')?.textContent).toBe('~/code, ~/work');
     expect(roots.querySelector('.middle-ellipsis-end')?.textContent).toBe('/projects');
   });

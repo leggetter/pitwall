@@ -15,6 +15,7 @@ import { AttachContext, type AttachEnv } from '../attach.js';
 import type { ConnectionView } from '../connection.js';
 import { computeProof } from '../proof.js';
 import { fakeSockets, group, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
+import { descriptionOf } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
 import type { TerminalHandle } from './Terminal.js';
@@ -174,8 +175,9 @@ describe('SessionView: attach, from the Terminal tab', () => {
     let view = await openView('demo-docs');
     const off = tab(view, 'Terminal');
     expect(off.getAttribute('aria-disabled')).toBe('true');
-    expect(off.getAttribute('title')).toMatch(/Typing \/bg in its terminal moves it to the background/);
-    expect(document.getElementById(off.getAttribute('aria-describedby')!)?.textContent).toBe(off.getAttribute('title'));
+    // Why, in a tooltip that describes it, and in the DOM before it shows; no title.
+    expect(descriptionOf(off)).toMatch(/Typing \/bg in its terminal moves it to the background/);
+    expect(off.hasAttribute('title')).toBe(false);
     fireEvent.click(off);
     await settle();
     expect(off.getAttribute('aria-selected')).toBe('false');
@@ -192,7 +194,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
     renderDashboard(snap(), false);
     const view = await openView('demo-worker');
     expect(tab(view, 'Terminal').getAttribute('aria-disabled')).toBe('true');
-    expect(tab(view, 'Terminal').getAttribute('title')).toBe('Attach is unavailable here.');
+    expect(descriptionOf(tab(view, 'Terminal'))).toBe('Attach is unavailable here.');
   });
 
   it('attaches only when Terminal is opened, never when the view opens', async () => {

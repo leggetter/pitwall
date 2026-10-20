@@ -60,6 +60,10 @@ describe('the #uikit route', () => {
     expect([...document.querySelectorAll('main.notice')].every((notice) => notice.closest('.uikit'))).toBe(true);
     expect(document.querySelectorAll('.uikit-problem')).toHaveLength(0);
     expect(fake.sockets).toHaveLength(0);
+    // Every component in every state, and no browser hover text in place of a tooltip (W25), except
+    // on the conversation's entries, which W27 rebuilds.
+    const titled = [...document.querySelectorAll('[title]')].filter((element) => !element.matches('.conversation > li.entry'));
+    expect(titled.map((element) => element.outerHTML.slice(0, 120))).toEqual([]);
   }, 30_000);
 
   it('opens no WebSocket, calls no fetch and never reads the token, with the browser defaults in place', async () => {

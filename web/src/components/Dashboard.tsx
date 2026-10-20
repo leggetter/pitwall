@@ -8,7 +8,9 @@
 // The open session is in the URL, as ?session= (openSession.ts).
 //
 // The app strip goes above the header while the relay is off until restart, and the page alerts sit at
-// the top of the session list (3: App strip and page alerts).
+// the top of the session list (3: App strip and page alerts). The toasts' stack is inside the app, from
+// the first render, so its live region is there before any toast (4: Toasts). Relative times tick on
+// the shared clock (clock.ts), each on its own, so the dashboard doesn't re-render every second.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
@@ -45,16 +47,11 @@ import { RepoList } from './RepoList.js';
 import { SessionList, type SessionListHeading } from './SessionList.js';
 import { SessionView, UnlistedSessionView } from './SessionView.js';
 import { SortSelect } from './SortSelect.js';
+import { ToastContext, ToastRegion, useToastStack } from './Toast.js';
+import { focusQuietly } from './Tooltip.js';
 
-/** The current time, refreshed every second, for relative times. */
-function useNow(intervalMs = 1_000): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(timer);
-  }, [intervalMs]);
-  return now;
-}
+/** The toast once the server has started a session (5: Success). */
+export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
 
 /** A state in place of the session list's rows. Today's look, until W28 restyles the empty states. */
 function Placeholder({ title, sentence, children }: { title: string; sentence?: string; children?: ReactNode }) {
@@ -95,7 +92,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // A heartbeat brings a newer poll than the snapshot, with nothing else changed.
   const updatedAt = view.lastPoll?.generatedAt ?? snapshot?.generatedAt;
   const source = view.lastPoll?.source ?? snapshot?.source;
-  const now = useNow();
+  const toasts = useToastStack();
   const app = useRef<HTMLDivElement>(null);
   const { layout, compact } = useLayout(app);
   const [selection, choose] = useSelection(snapshot, { navigation, storage });
@@ -233,7 +230,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   const closeDrawer = () => {
     setDrawerOpen(false);
-    reposButton.current?.focus();
+    focusQuietly(reposButton.current);
   };
 
   // Choosing in the drawer closes it, and focus goes to the session list's heading (6.1), once the drawer has gone.
@@ -315,11 +312,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           {plainText(serverError)}
         </Alert>
       )}
-      {started.waiting && (
-        <Alert tone="neutral" role="status" onDismiss={dismiss(started.dismiss)}>
-          Started {plainText(started.waiting.name)}. Its view opens when it shows up in the list.
-        </Alert>
-      )}
       {snapshot && state === 'reconnecting' && (
         <Alert tone="neutral" role="status">
           Lost the connection to pitwall. Reconnecting; this list may be out of date.
@@ -327,7 +319,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       )}
     </>
   );
-  const hasAlerts = pollFailed !== undefined || (relayAlert && alertText) || showError || started.waiting || (snapshot && state === 'reconnecting');
+  const hasAlerts = pollFailed !== undefined || (relayAlert && alertText) || showError || (snapshot && state === 'reconnecting');
 
   const name = selectionName(groups, selection);
   const heading: SessionListHeading =
@@ -398,7 +390,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         key={shownOpen.sessionId}
         session={shownOpen}
         listed={listedOpen !== undefined}
-        now={now}
         onClose={closeSession}
         layout={viewLayout}
         compact={compact}
@@ -431,13 +422,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   }
 
   return (
+    <ToastContext.Provider value={toasts.show}>
     <div className="app" ref={app} data-layout={layout}>
       {relayOff && <AppStrip off={relayOff} onDetails={relayAlert ? showRelayAlert : undefined} />}
       <Header
         state={state}
         roots={snapshot?.roots}
         updatedAt={snapshot ? updatedAt : undefined}
-        now={now}
         onNewSession={snapshot ? () => setNewSession(true) : undefined}
         onRepos={layout === 'drawer' ? () => setDrawerOpen(true) : undefined}
         reposOpen={drawerOpen}
@@ -467,7 +458,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             showGroup={scope !== undefined && scope.kind !== 'group'}
             holdOrder={sort !== 'name'}
             orderKey={`${selectionHref(selection)}|${sort}`}
-            now={now}
             onOpen={openSession}
             onStep={stepFromRow}
             openSessionId={openId}
@@ -489,9 +479,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           onStarted={(session) => {
             setNewSession(false);
             started.wait(session);
+            toasts.show({ tone: 'success', message: startedText(session.name) });
           }}
         />
       )}
+
+      {/* Last, so it's above everything; focus that a dismissed toast had goes to the list's heading. */}
+      <ToastRegion {...toasts.region} onFocusLost={() => listHeading.current?.focus()} />
     </div>
+    </ToastContext.Provider>
   );
 }

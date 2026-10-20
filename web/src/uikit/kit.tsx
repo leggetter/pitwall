@@ -2,7 +2,7 @@
 // real component into a state by using it, as a person would: typing, choosing, pressing. That
 // keeps the components unchanged, with no props that exist only for the gallery.
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 /** Collects the scenarios still running, so the gallery knows when every specimen has settled. */
 export const SettleContext = createContext<((work: Promise<unknown>) => void) | undefined>(undefined);
@@ -14,26 +14,37 @@ export interface SpecimenProps {
    * A frame holds what the app positions against the window (the session view, dialogs, whole
    * pages): it becomes their containing block, so they sit inside it. Its height is the window's.
    */
-  frame?: 'view' | 'short' | 'dialog' | 'page' | 'page-short';
+  frame?: 'view' | 'short' | 'dialog' | 'page' | 'page-short' | 'toasts' | 'toasts-tall';
   /**
    * A window this many px wide, for the shell's width rules, which are container queries on the
    * app (docs/design-system.md, 2.12). A stage is as wide as the gallery; this one scrolls sideways
    * when the gallery is narrower than the window it shows.
    */
   width?: number;
+  /**
+   * Toasts and copied icons stay: --pw-toast-timeout and --pw-copied-timeout are an hour inside, so
+   * a result a scenario brought about is still there to see, and for the screenshots.
+   */
+  lasting?: boolean;
   children: ReactNode;
 }
 
-export function Specimen({ title, note, frame, width, children }: SpecimenProps) {
+/** The timing tokens a lasting specimen sets on its stage. Components read them where they are (timing.ts). */
+const LASTING = { '--pw-toast-timeout': '3600s', '--pw-copied-timeout': '3600s' } as CSSProperties;
+
+export function Specimen({ title, note, frame, width, lasting = false, children }: SpecimenProps) {
+  const style = lasting ? LASTING : undefined;
   return (
     <div className="uikit-specimen">
       <h3>{title}</h3>
       {note !== undefined && <p className="uikit-note">{note}</p>}
       {width === undefined ? (
-        <div className={frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : 'uikit-stage'}>{children}</div>
+        <div className={frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : 'uikit-stage'} style={style}>
+          {children}
+        </div>
       ) : (
         <div className="uikit-stage uikit-widths">
-          <div className={frame ? `uikit-window uikit-frame uikit-frame-${frame}` : 'uikit-window'} style={{ width }}>
+          <div className={frame ? `uikit-window uikit-frame uikit-frame-${frame}` : 'uikit-window'} style={{ ...style, width }}>
             {children}
           </div>
         </div>
@@ -56,6 +67,29 @@ export async function until<T>(what: string, find: () => T | null | undefined | 
 /** The element `selector` matches inside `root`, waiting for it to appear. */
 export function element<T extends Element = HTMLElement>(root: ParentNode, selector: string): Promise<T> {
   return until(selector, () => root.querySelector<T>(selector));
+}
+
+/**
+ * Moves a mouse onto `target`, as a person would, so its tooltip opens after --pw-delay-tooltip.
+ * React makes pointer enter from pointerover. Nothing moves it off again, so the tooltip stays.
+ */
+export function hover(target: Element): void {
+  target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+}
+
+/**
+ * Hovers the element `selector` matches inside `root`, and waits for a tooltip to show: one saying
+ * `text`, when it's given, or else the first new one. Its content is plain text, so it's compared as such.
+ */
+export async function hoverFor(root: ParentNode, selector: string, text?: string): Promise<HTMLElement> {
+  const target = await element(root, selector);
+  const before = new Set(document.querySelectorAll('[role="tooltip"]:not([hidden])'));
+  hover(target);
+  return until(`the tooltip on ${selector}`, () =>
+    [...document.querySelectorAll<HTMLElement>('[role="tooltip"]:not([hidden])')].find((tip) =>
+      text === undefined ? !before.has(tip) : tip.querySelector('.tooltip-text')?.textContent === text,
+    ),
+  );
 }
 
 /** Types into a field as a person would, so React sees the change. */
@@ -91,6 +125,11 @@ export async function press(root: ParentNode, label: string): Promise<void> {
  */
 export function laidOut(root: HTMLElement): boolean {
   return root.getBoundingClientRect().width > 0;
+}
+
+/** The whole specimen `root` is in, for what a scenario brings about outside its own element, such as a toast in the stack. */
+export function specimenOf(root: HTMLElement): HTMLElement {
+  return root.closest<HTMLElement>('.uikit-specimen') ?? root;
 }
 
 /** Text that appears inside `root`. */

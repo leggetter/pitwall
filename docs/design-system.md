@@ -254,6 +254,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-delay-spinner: 500ms;  /* read by JavaScript */
   --pw-delay-long: 10s;       /* read by JavaScript */
   --pw-toast-timeout: 4s;     /* read by JavaScript */
+  --pw-copied-timeout: 2s;    /* read by JavaScript */
 }
 
 /* 2. Light, the default */

@@ -6,22 +6,28 @@ import type { ReactNode } from 'react';
 import { plainText } from '../format.js';
 import type { BadgeLook, StatusBadge as StatusBadgeData } from '../sessions.js';
 import { Spinner } from './Spinner.js';
+import { Tooltip } from './Tooltip.js';
 
 export interface BadgeProps {
   look: BadgeLook;
   /** Before the label: an 8 px status dot, or the 12 px Spinner, in the badge's text colour. Both are aria-hidden; the label says it. */
   lead?: 'dot' | 'spinner' | undefined;
-  /** Hover text, for a badge that isn't focusable. */
-  title?: string | undefined;
+  /**
+   * What the badge means, in a tooltip, such as Stale's explanation. Badges aren't focusable, so it
+   * opens on hover only: it explains the label, and never says something the label doesn't.
+   */
+  hint?: string | undefined;
   className?: string | undefined;
   children: ReactNode;
 }
 
-export function Badge({ look, lead, title, className, children }: BadgeProps) {
+export function Badge({ look, lead, hint, className, children }: BadgeProps) {
   return (
-    <span className={['badge', `badge-${look}`, className].filter(Boolean).join(' ')} title={title}>
-      <BadgeContent lead={lead}>{children}</BadgeContent>
-    </span>
+    <Tooltip content={hint} relation="none">
+      <span className={['badge', `badge-${look}`, hint !== undefined && 'has-hint', className].filter(Boolean).join(' ')}>
+        <BadgeContent lead={lead}>{children}</BadgeContent>
+      </span>
+    </Tooltip>
   );
 }
 

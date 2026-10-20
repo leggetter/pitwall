@@ -5,6 +5,7 @@
 import { useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { FILTER_CHIPS, filtering, NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
 import { Icon } from './Icon.js';
+import { Tooltip } from './Tooltip.js';
 
 export const CHIP_LABELS: Readonly<Record<FilterChip, string>> = {
   interactive: 'Interactive',
@@ -57,19 +58,18 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
         onKeyDown={onKeyDown}
       />
       {value !== '' && (
-        <button
-          type="button"
-          className="icon-button ghost sm filter-clear"
-          aria-label="Clear filter"
-          // Until the design system's tooltips exist (W25), the browser's shows the same name.
-          title="Clear filter"
-          onClick={() => {
-            onChange('');
-            input.current?.focus();
-          }}
-        >
-          <Icon name="clear" />
-        </button>
+        <Tooltip content="Clear filter" relation="label">
+          <button
+            type="button"
+            className="icon-button ghost sm filter-clear"
+            onClick={() => {
+              onChange('');
+              input.current?.focus();
+            }}
+          >
+            <Icon name="clear" />
+          </button>
+        </Tooltip>
       )}
     </div>
   );

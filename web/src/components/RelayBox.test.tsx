@@ -4,6 +4,7 @@ import { relayPath, type IndexSnapshot, type SessionSummary } from '../../../src
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
+import { tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import { usesCommandKey } from './KeyCaps.js';
 
@@ -92,9 +93,10 @@ describe('the message box', () => {
   it('is in an interactive session’s view, says what it costs and that it can’t approve prompts', async () => {
     renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
-    // Behind an info icon, with the browser's hover text until W25's tooltips.
-    const info = within(box(view)).getByRole('img', { name: LIMITS });
-    expect(info.getAttribute('title')).toBe(LIMITS);
+    // Behind an info button, so Tab reaches it, whose name is its tooltip.
+    const info = within(box(view)).getByRole('button', { name: LIMITS });
+    expect(info.hasAttribute('title')).toBe(false);
+    expect(await tooltipText(info)).toBe(LIMITS);
     expect(textarea(view)).toBeTruthy();
     expect(textarea(view).getAttribute('rows')).toBe('1');
     // The class the placeholder rule in relay.css styles.

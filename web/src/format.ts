@@ -50,7 +50,7 @@ export function updatedAgo(iso: string, now: number): string {
   return `updated ${relativeTime(iso, now)}`;
 }
 
-/** The absolute local time, for hover text. */
+/** The absolute local time, with seconds, for a timestamp's tooltip. */
 export function absoluteTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;

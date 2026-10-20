@@ -1,18 +1,19 @@
 // The message box (docs/design-system.md, 4: Message box): "Message this session", at the foot of an
 // interactive session's view, sending text through pitwall's relay (D8). Top to bottom: the latest
 // exchange and its reply, the result of the last send as an inline alert, the text box beside Send,
-// then the help line with ⌘ ↵, the limits note behind an info icon, and the character count from
+// then the help line with ⌘ ↵, the limits note behind an info button, and the character count from
 // 80 % of the limit.
 //
 // ⌘/Ctrl + Enter sends and Enter adds a line (Phil, 2026-10-20). Send is aria-disabled while there's
-// nothing to send, it's over the limit or a send is out. After a send, focus stays in the text box,
+// nothing to send, it's over the limit or a send is out, and its tooltip, which describes it, says
+// why, except while it's busy, when its label does. After a send, focus stays in the text box,
 // and the draft clears only when the message was delivered, held or refused. Escape never discards a
 // draft: the box tells the view when there is one, and the view then ignores Escape.
 
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { RelayExchange, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { absoluteTime, plainText, relativeTime } from '../format.js';
+import { absoluteTime, plainText } from '../format.js';
 import {
   canMessage,
   characterCount,
@@ -26,8 +27,10 @@ import {
 } from '../relay.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
-import { Icon } from './Icon.js';
+import { InfoTip } from './InfoTip.js';
 import { KeyCaps, modEnter } from './KeyCaps.js';
+import { Timestamp } from './Timestamp.js';
+import { Tooltip } from './Tooltip.js';
 import '../relay.css';
 
 /** What the box shows after a send. `error` is pitwall's own failure, before the relay answered. */
@@ -42,17 +45,22 @@ export const LIMITS_NOTE =
 
 export const NOT_RUNNING_NOTE = "It isn't running, so it can't be messaged.";
 
+/** Why Send is aria-disabled, for its tooltip. */
+export const SEND_EMPTY = 'Type a message to send it.';
+export const sendTooLong = (over: number) =>
+  `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${MAX_RELAY_TEXT_LENGTH.toLocaleString('en')}.`;
+export const SEND_UNAVAILABLE = "Messages can't be sent from here.";
+
 export interface RelayBoxProps {
   /** An interactive session. */
   session: SessionSummary;
-  now: number;
   /** The conversation already shows the latest exchange's reply, so the box shows only its status line. */
   replyShown?: boolean;
   /** Whether there's a draft, for the view, which ignores Escape while there is one (6.2). */
   onDraftChange?: (hasDraft: boolean) => void;
 }
 
-export function RelayBox({ session, now, replyShown = false, onDraftChange }: RelayBoxProps) {
+export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBoxProps) {
   const api = useContext(ApiContext);
   const ids = { heading: useId(), text: useId(), keys: useId(), count: useId() };
   const alive = useRef(true);
@@ -117,6 +125,16 @@ export function RelayBox({ session, now, replyShown = false, onDraftChange }: Re
   const tooLong = length > MAX_RELAY_TEXT_LENGTH;
   const canSend = messageable && !sending && text.trim() !== '' && !tooLong && api !== undefined;
   const count = characterCount(length);
+  // Why Send does nothing, while it doesn't. Busy says so itself, with its label.
+  const sendOff = sending
+    ? undefined
+    : api === undefined
+      ? SEND_UNAVAILABLE
+      : tooLong
+        ? sendTooLong(length - MAX_RELAY_TEXT_LENGTH)
+        : text.trim() === ''
+          ? SEND_EMPTY
+          : undefined;
 
   const send = async () => {
     if (!canSend || !api) return;
@@ -164,7 +182,7 @@ export function RelayBox({ session, now, replyShown = false, onDraftChange }: Re
       <h3 className="visually-hidden" id={ids.heading}>
         Message this session
       </h3>
-      {session.relay && <RelayExchangeNote exchange={session.relay} now={now} showReply={!replyShown} />}
+      {session.relay && <RelayExchangeNote exchange={session.relay} showReply={!replyShown} />}
       {shown && look && (
         <Alert tone={look.tone} role={look.role} className="relay-result">
           {shown.text}
@@ -195,17 +213,17 @@ export function RelayBox({ session, now, replyShown = false, onDraftChange }: Re
               aria-invalid={tooLong || undefined}
               spellCheck
             />
-            <Button type="submit" variant="primary" icon="send" disabled={!canSend} busy={sending} busyLabel="Sending…">
-              Send
-            </Button>
+            <Tooltip content={sendOff} relation="description">
+              <Button type="submit" variant="primary" icon="send" disabled={!canSend} busy={sending} busyLabel="Sending…">
+                Send
+              </Button>
+            </Tooltip>
           </div>
           <div className="relay-help">
             <p className="relay-help-keys" id={ids.keys}>
               <KeyCaps keys={keys.keys} label={keys.label} /> to send
-              {/* Until the design system's tooltips exist (W25): the browser's, and the name for screen readers. */}
-              <span className="relay-info" role="img" aria-label={LIMITS_NOTE} title={LIMITS_NOTE}>
-                <Icon name="info" />
-              </span>
+              {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. */}
+              <InfoTip text={LIMITS_NOTE} className="relay-info" />
             </p>
             {count && (
               <p className={count.over ? 'relay-count over' : 'relay-count'} id={ids.count}>
@@ -223,28 +241,25 @@ export function RelayBox({ session, now, replyShown = false, onDraftChange }: Re
 
 export interface RelayExchangeNoteProps {
   exchange: RelayExchange;
-  now: number;
   /** False when the conversation already shows the reply: then only the status line. */
   showReply?: boolean;
 }
 
 /** The latest message pitwall relayed to a session, and its reply, as text only. */
-export function RelayExchangeNote({ exchange, now, showReply = true }: RelayExchangeNoteProps) {
+export function RelayExchangeNote({ exchange, showReply = true }: RelayExchangeNoteProps) {
   const summary = exchangeSummary(exchange);
   const reply = showReply && exchange.reply ? exchange.reply : undefined;
   return (
     <div className="relay-exchange">
       <p className="relay-exchange-line">
-        Message from pitwall ·{' '}
-        <time dateTime={exchange.sentAt} title={absoluteTime(exchange.sentAt)}>
-          {relativeTime(exchange.sentAt, now)}
-        </time>
-        : <span className={`relay-exchange-status tone-${summary.tone}`}>{summary.status}</span>
+        Message from pitwall · <Timestamp at={exchange.sentAt} />: <span className={`relay-exchange-status tone-${summary.tone}`}>{summary.status}</span>
       </p>
       {reply && (
-        <p className="relay-reply" title={absoluteTime(reply.at)}>
-          <span className="relay-reply-label">Reply:</span> {plainText(reply.text)}
-        </p>
+        <Tooltip content={`Replied ${absoluteTime(reply.at)}`} relation="none">
+          <p className="relay-reply">
+            <span className="relay-reply-label">Reply:</span> {plainText(reply.text)}
+          </p>
+        </Tooltip>
       )}
     </div>
   );

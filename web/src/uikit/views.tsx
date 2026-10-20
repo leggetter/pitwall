@@ -10,9 +10,10 @@ import { AttachContext } from '../attach.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, UnlistedSessionView } from '../components/SessionView.js';
+import { ToastProvider } from '../components/Toast.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
-import { APP_DIR, background, exchange, NOW, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
-import { element, press, Scenario, Specimen, text, type, until } from './kit.js';
+import { APP_DIR, background, exchange, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
+import { element, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
 import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
 const noop = () => {};
@@ -95,12 +96,12 @@ export function SessionViews() {
         frame="view"
       >
         <Stubbed>
-          <SessionView session={VIEW_INTERACTIVE} listed now={NOW} onClose={noop} />
+          <SessionView session={VIEW_INTERACTIVE} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="Background" note="The actions menu in the header, no message box, and older entries behind Load earlier." frame="view">
         <Stubbed options={{ conversation: 'older' }}>
-          <SessionView session={VIEW_BACKGROUND} listed now={NOW} onClose={noop} />
+          <SessionView session={VIEW_BACKGROUND} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="Background, attached" note="The Terminal tab open, attached to a scripted server, with the success dot on the tab." frame="view">
@@ -112,29 +113,29 @@ export function SessionViews() {
                 await until('the terminal to attach', () => root.querySelector('.session-tab-dot'));
               }}
             >
-              <SessionView session={ATTACHED} listed now={NOW} onClose={noop} />
+              <SessionView session={ATTACHED} listed onClose={noop} />
             </Scenario>
           </Stubbed>
         </Attachable>
       </Specimen>
       <Specimen title="Background, not running" note="It has finished, so Stop is off in the menu, and opening Terminal asks before restarting it." frame="short">
         <Stubbed>
-          <SessionView session={VIEW_BACKGROUND_DONE} listed now={NOW} onClose={noop} />
+          <SessionView session={VIEW_BACKGROUND_DONE} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="No longer listed" note="The session left the snapshot, so the view keeps what it showed, without the message box, the actions or the terminal." frame="short">
         <Stubbed>
-          <SessionView session={GONE} listed={false} now={NOW} onClose={noop} />
+          <SessionView session={GONE} listed={false} onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="Directory gone" note="Its working directory no longer exists, as after a worktree was removed." frame="short">
         <Stubbed>
-          <SessionView session={MISSING_DIR} listed now={NOW} onClose={noop} />
+          <SessionView session={MISSING_DIR} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="A long name and title" note="The title gives way first, then the name, and the directory in the middle." frame="short">
         <Stubbed>
-          <SessionView session={LONG_TITLE} listed now={NOW} onClose={noop} />
+          <SessionView session={LONG_TITLE} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="Not listed under these roots" note="A ?session= in the URL that pitwall doesn't list, with Close." frame="short">
@@ -142,47 +143,47 @@ export function SessionViews() {
       </Specimen>
       <Specimen title="600 px and narrower" note="Full width, with Back to sessions in place of Close." frame="short" width={375}>
         <Stubbed>
-          <SessionView session={COMPACT} listed now={NOW} onClose={noop} compact />
+          <SessionView session={COMPACT} listed onClose={noop} compact />
         </Stubbed>
       </Specimen>
       <Specimen title="Actions menu, background" note="Copy session ID, Copy attach command, then Stop session and Remove session, in danger text." frame="short">
         <Stubbed>
           <Scenario run={openMenu}>
-            <SessionView session={MENU_BACKGROUND} listed now={NOW} onClose={noop} />
+            <SessionView session={MENU_BACKGROUND} listed onClose={noop} />
           </Scenario>
         </Stubbed>
       </Specimen>
       <Specimen title="Actions menu, not running" note="Stop session is off: there's nothing to stop." frame="short">
         <Stubbed>
           <Scenario run={openMenu}>
-            <SessionView session={MENU_DONE} listed now={NOW} onClose={noop} />
+            <SessionView session={MENU_DONE} listed onClose={noop} />
           </Scenario>
         </Stubbed>
       </Specimen>
       <Specimen title="Actions menu, interactive" note="Only Copy session ID: it has no attach command, and can't be stopped or removed from here." frame="short">
         <Stubbed>
           <Scenario run={openMenu}>
-            <SessionView session={MENU_INTERACTIVE} listed now={NOW} onClose={noop} />
+            <SessionView session={MENU_INTERACTIVE} listed onClose={noop} />
           </Scenario>
         </Stubbed>
       </Specimen>
       <Specimen title="Interactive, with Load earlier" note="Scrolled to the top, where the button is." frame="short">
         <Stubbed options={{ conversation: 'older' }}>
           <Scenario run={toTop}>
-            <SessionView session={OLDER} listed now={NOW} onClose={noop} />
+            <SessionView session={OLDER} listed onClose={noop} />
           </Scenario>
         </Stubbed>
       </Specimen>
       {CONVERSATION_STATES.map((state) => (
         <Specimen key={state.title} title={state.title} frame="short">
           <Stubbed options={state.options}>
-            <SessionView session={state.session} listed now={NOW} onClose={noop} />
+            <SessionView session={state.session} listed onClose={noop} />
           </Stubbed>
         </Specimen>
       ))}
       <Specimen title="No API" note="Rendered without an API client, as some tests do." frame="short">
         <ApiContext.Provider value={undefined}>
-          <SessionView session={NO_API} listed now={NOW} onClose={noop} />
+          <SessionView session={NO_API} listed onClose={noop} />
         </ApiContext.Provider>
       </Specimen>
     </>
@@ -305,7 +306,7 @@ export function MessageBoxes() {
           <Stubbed options={box.options}>
             <MaybeScenario run={box.run}>
               <footer className="session-view-foot">
-                <RelayBox session={box.session} now={NOW} replyShown={box.replyShown ?? false} />
+                <RelayBox session={box.session} replyShown={box.replyShown ?? false} />
               </footer>
             </MaybeScenario>
           </Stubbed>
@@ -340,13 +341,26 @@ const ACTION_CASES: ConfirmCase[] = [
     options: { stop: 'busy' },
     run: confirm('Stop', (root) => text(root, 'Stopping…')),
   },
-  { title: 'Stop: stopped', note: 'The result, announced. A toast once toasts exist (W25).', session: working('actions-stopped'), options: { stop: 'done' }, run: confirm('Stop', (root) => text(root, 'Stopped.')) },
+  {
+    title: 'Stop: stopped',
+    note: 'A toast, announced by the stack’s live region, and focus back on the menu button.',
+    session: working('actions-stopped'),
+    options: { stop: 'done' },
+    run: confirm('Stop', (root) => text(specimenOf(root), 'Stopped.')),
+  },
   { title: 'Remove: asking', session: working('actions-confirm-remove'), run: confirm('Remove') },
   {
     title: 'Remove: removing',
     session: working('actions-removing'),
     options: { remove: 'busy' },
     run: confirm('Remove', (root) => text(root, 'Removing…')),
+  },
+  {
+    title: 'Remove: removed',
+    note: 'A toast with its name; in the app, the view closes.',
+    session: working('actions-removed'),
+    options: { remove: 'done' },
+    run: confirm('Remove', (root) => text(specimenOf(root), 'Removed pitwall-test-actions-removed')),
   },
   {
     title: 'Remove: refused',
@@ -383,14 +397,17 @@ export function Confirmations() {
   return (
     <>
       {ACTION_CASES.map((action) => (
-        <Specimen key={action.title} title={action.title} note={action.note} frame="short">
-          <Attachable script={action.script ?? 'attached'}>
-            <Stubbed options={action.options}>
-              <MaybeScenario run={action.run}>
-                <SessionView session={action.session} listed now={NOW} onClose={noop} />
-              </MaybeScenario>
-            </Stubbed>
-          </Attachable>
+        // With a toasts' stack of its own, as the app has, whose toasts stay here.
+        <Specimen key={action.title} title={action.title} note={action.note} frame="short" lasting>
+          <ToastProvider>
+            <Attachable script={action.script ?? 'attached'}>
+              <Stubbed options={action.options}>
+                <MaybeScenario run={action.run}>
+                  <SessionView session={action.session} listed onClose={noop} />
+                </MaybeScenario>
+              </Stubbed>
+            </Attachable>
+          </ToastProvider>
         </Specimen>
       ))}
     </>
@@ -435,7 +452,7 @@ export function Terminals() {
           <Attachable script={terminal.script}>
             <Stubbed>
               <Scenario run={attach(terminal.state)}>
-                <SessionView session={terminal.session} listed now={NOW} onClose={noop} />
+                <SessionView session={terminal.session} listed onClose={noop} />
               </Scenario>
             </Stubbed>
           </Attachable>
@@ -460,14 +477,14 @@ function MenuStage({ children }: { children: ReactNode }) {
 export function Menus() {
   return (
     <>
-      <Specimen title="Closed" note="A ghost md icon button with aria-haspopup=menu.">
+      <Specimen title="Closed" note="A ghost md icon button with aria-haspopup=menu, named by its tooltip.">
         <MenuStage>
           <MenuButton label="Session actions" icon="more" entries={SAMPLE_MENU} />
         </MenuStage>
       </Specimen>
       <Specimen
         title="Open"
-        note="An item, a disabled item (its reason in the hover text), a separator, then a danger item. Below its button, aligned to its end; ↑ ↓ Home End move, Enter or Space activates, Escape or Tab closes."
+        note="An item, a disabled item (its reason in a tooltip, on hover and when ↑ ↓ reach it), a separator, then a danger item. Below its button, aligned to its end; ↑ ↓ Home End move, Enter or Space activates, Escape or Tab closes."
       >
         <Scenario run={async (root) => (await element<HTMLButtonElement>(root, 'button[aria-haspopup="menu"]')).click()}>
           <MenuStage>

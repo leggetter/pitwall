@@ -1,0 +1,103 @@
+/*
+ * Toasts (docs/design-system.md, 4: Toasts): a stack at the bottom right, 24 px from the edges, newest
+ * at the bottom, 12 px apart, at --pw-z-toast; 16 px from the edges and full width in an app 600 px
+ * wide or narrower. The stack is the live region, so it's always there, even with nothing in it,
+ * and only its toasts take the pointer.
+ */
+
+.toasts {
+  position: fixed;
+  right: var(--pw-space-6);
+  bottom: var(--pw-space-6);
+  z-index: var(--pw-z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-3);
+  width: var(--pw-toast-w);
+  max-width: calc(100% - 2 * var(--pw-space-6));
+  pointer-events: none;
+}
+
+@container pitwall (max-width: 600px) {
+  .toasts {
+    right: var(--pw-space-4);
+    bottom: var(--pw-space-4);
+    left: var(--pw-space-4);
+    width: auto;
+    max-width: none;
+  }
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-3);
+  padding: var(--pw-space-2);
+  background: var(--pw-surface-overlay);
+  color: var(--pw-text);
+  border-radius: var(--pw-radius-md);
+  box-shadow: var(--pw-shadow-3);
+  pointer-events: auto;
+  transform-origin: bottom right;
+  animation: toast-in var(--pw-duration-base) var(--pw-ease-out);
+}
+
+.toast.leaving {
+  pointer-events: none;
+  animation: toast-out var(--pw-duration-base) var(--pw-ease-out) forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* A 28 px tile in the tone's tint, its 16 px icon in the tint's text colour (the pairs 2.5 checks). */
+.toast-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--pw-control-md);
+  height: var(--pw-control-md);
+  border-radius: var(--pw-radius-sm);
+}
+
+.toast.success .toast-tile {
+  background: var(--pw-success-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-success-border);
+  color: var(--pw-success-tint-fg);
+}
+
+.toast.info .toast-tile {
+  background: var(--pw-info-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-info-border);
+  color: var(--pw-info-tint-fg);
+}
+
+.toast.error .toast-tile {
+  background: var(--pw-danger-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-danger-border);
+  color: var(--pw-danger-tint-fg);
+}
+
+.toast-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+.toast-dismiss {
+  flex: none;
+}
