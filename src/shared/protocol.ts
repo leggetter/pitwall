@@ -168,6 +168,22 @@ export interface IndexSnapshot {
    * means another session messaged the relay. Absent until the first one.
    */
   relayAlert?: RelayAlert;
+  /**
+   * Set once pitwall has stopped using its relay for the rest of this run,
+   * because its gate let through, or didn't check, a SendMessage call (D8).
+   * Messaging works again only after pitwall restarts. Absent while the relay
+   * can be used. Not every relayAlert with `blocked: false` sets it: some only
+   * restart the relay.
+   */
+  relayOff?: RelayOff;
+}
+
+/** Why pitwall stopped using its relay for this run (D8). */
+export interface RelayOff {
+  /** ISO 8601: when pitwall stopped using it. */
+  since: string;
+  /** Why, in pitwall's words, such as "its gate didn't check a SendMessage call." Never any message text. */
+  reason: string;
 }
 
 /** The latest thing the relay tried that nobody asked for (W11, D8). */

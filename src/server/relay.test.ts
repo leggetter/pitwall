@@ -441,8 +441,10 @@ describe('the relay: its gate', () => {
   it('stops using the relay when a send ran without the gate claiming it', async () => {
     const h = harness();
     h.gate.hookRuns = false;
+    expect(h.relay.off()).toBeUndefined();
     await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
     expect(h.relay.alert()).toMatchObject({ blocked: false, count: 1, detail: expect.stringMatching(/ran without pitwall's gate checking it/) });
+    expect(h.relay.off()).toEqual({ since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), reason: "its gate didn't check a SendMessage call." });
     await wait(20);
     expect(h.children[0]!.signals).toEqual(['SIGTERM']);
     const next = await h.relay.send(TARGET, 'again');
@@ -458,6 +460,7 @@ describe('the relay: which blocked calls restart it', () => {
     h.child().peerTurn();
     await wait(10);
     expect(h.relay.alert()).toMatchObject({ blocked: true });
+    expect(h.relay.off()).toBeUndefined();
     expect(h.child().signals).toEqual([]);
     expect(h.children).toHaveLength(1);
   });
@@ -617,6 +620,7 @@ describe('the relay: a message nobody asked for', () => {
     h.child().peerTurn();
     await wait(10);
     expect(h.relay.alert()).toMatchObject({ blocked: false, detail: expect.stringMatching(/gate didn't stop it, so pitwall stopped the relay/) });
+    expect(h.relay.off()?.reason).toBe('its gate let through a SendMessage call nobody asked for.');
     expect((await h.relay.send(TARGET, 'again')).detail).toMatch(/^pitwall stopped using its relay for this run: its gate let through a SendMessage call nobody asked for\./);
   });
 
@@ -629,6 +633,8 @@ describe('the relay: a message nobody asked for', () => {
     child.exit(1);
     await wait(10);
     expect(h.relay.alert()).toMatchObject({ blocked: false, detail: expect.stringMatching(/stopped before pitwall saw whether its gate blocked it/) });
+    // Not blocked, but the relay is only restarted, not off.
+    expect(h.relay.off()).toBeUndefined();
   });
 
   it('hands out copies of the alert', async () => {

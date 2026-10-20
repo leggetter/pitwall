@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage, type RelayAlert } from '../shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage, type RelayAlert, type RelayOff } from '../shared/protocol.js';
 import type { AgentRow, AgentsResult } from './agents.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
@@ -408,6 +408,36 @@ describe('createIndexer', () => {
     broken = true;
     await vi.advanceTimersByTimeAsync(1000);
     expect(indexer.latest()).not.toHaveProperty('relayAlert');
+    indexer.stop();
+  });
+
+  it('adds why the relay is off to the snapshot, also when the source fails, and nothing when the hook has none or throws', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
+    let off: RelayOff | undefined;
+    let broken = false;
+    const indexer = createIndexer(
+      {
+        roots: ['/work'],
+        intervalMs: 1000,
+        relayOff: () => {
+          if (broken) throw new Error('broken hook');
+          return off;
+        },
+      },
+      deps,
+    );
+    await flush();
+    expect(indexer.latest()).not.toHaveProperty('relayOff');
+    off = { since: '2026-10-20T11:59:00.000Z', reason: "its gate didn't check a SendMessage call." };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.latest()?.relayOff).toEqual(off);
+    state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.latest()?.relayOff).toEqual(off);
+    broken = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(indexer.latest()).not.toHaveProperty('relayOff');
     indexer.stop();
   });
 
