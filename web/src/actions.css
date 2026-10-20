@@ -137,6 +137,31 @@
   line-height: var(--pw-leading-s);
 }
 
+/*
+ * A checkbox (section 4: Inputs, textareas and selects): the native one, 16 px, filled with
+ * --pw-selected-border, and its label 6 px after it, which a click on also toggles it.
+ */
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+}
+
+.checkbox input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--pw-selected-border);
+}
+
+.checkbox label {
+  cursor: pointer;
+}
+
 /* The New session dialog's failure: the trust sentence, then the command chip and its copy button, each on a line of their own. */
 .spawn-trust,
 .spawn-failure .copy-command {

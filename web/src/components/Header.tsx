@@ -1,12 +1,17 @@
 // The app's header (docs/design-system.md, 3): the Repos button below the sidebar breakpoint, the
-// wordmark and the roots on the left; New session, the connection badge, when the list was updated
-// and the theme switch on the right. At 600 px and narrower the right side wraps under the wordmark.
-// The roots show home as ~, with the full paths in a tooltip; the update time ticks on the shared
-// clock, with the absolute time in its tooltip.
+// wordmark and the roots on the left; New session, the connection badge, when the list was updated,
+// the theme switch and the keyboard shortcuts button on the right. At 600 px and narrower the right
+// side wraps under the wordmark. The roots show home as ~, with the full paths in a tooltip; the
+// update time ticks on the shared clock, with the absolute time in its tooltip.
+//
+// New session's tooltip shows its shortcut, `n`, and the shortcuts button's shows `?`. While the
+// single-key shortcuts are off, New session has no tooltip, since it would only repeat its label,
+// and the shortcuts button still opens the dialog, so they can be turned back on.
 
 import type { RefObject } from 'react';
 import type { ConnectionState } from '../connection.js';
 import { formatRoots, plainText } from '../format.js';
+import { SHORTCUT_KEYS, useShortcuts } from '../shortcuts.js';
 import { ConnectionBadge } from './ConnectionBadge.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
@@ -28,9 +33,14 @@ export interface HeaderProps {
   reposOpen?: boolean;
   /** The Repos button, which takes focus back when the drawer closes. */
   reposRef?: RefObject<HTMLButtonElement | null>;
+  /** Opens the keyboard shortcuts dialog. The button shows only when this is given. */
+  onShortcuts?: (() => void) | undefined;
 }
 
-export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef }: HeaderProps) {
+export const SHORTCUTS_LABEL = 'Keyboard shortcuts';
+
+export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts }: HeaderProps) {
+  const shortcuts = useShortcuts();
   return (
     <header className="app-header">
       <div className="app-header-start">
@@ -53,14 +63,36 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
       </div>
       <div className="app-header-end">
         {onNewSession && (
-          <button type="button" className="button primary md" aria-haspopup="dialog" onClick={onNewSession}>
-            <Icon name="add" />
-            New session
-          </button>
+          // Its name is its label, which the tooltip repeats only to show the shortcut.
+          <Tooltip content={shortcuts.on ? 'New session' : undefined} keys={SHORTCUT_KEYS.newSession} relation="label">
+            <button
+              type="button"
+              className="button primary md"
+              aria-haspopup="dialog"
+              aria-keyshortcuts={shortcuts.on ? 'n' : undefined}
+              onClick={onNewSession}
+            >
+              <Icon name="add" />
+              New session
+            </button>
+          </Tooltip>
         )}
         <ConnectionBadge state={state} />
         {updatedAt && <Timestamp className="updated" at={updatedAt} format="updated" />}
         <ThemeSwitch />
+        {onShortcuts && (
+          <Tooltip content={SHORTCUTS_LABEL} keys={SHORTCUT_KEYS.shortcuts} relation="label">
+            <button
+              type="button"
+              className="icon-button ghost md"
+              aria-haspopup="dialog"
+              aria-keyshortcuts={shortcuts.on ? '?' : undefined}
+              onClick={onShortcuts}
+            >
+              <Icon name="keyboard" />
+            </button>
+          </Tooltip>
+        )}
       </div>
     </header>
   );

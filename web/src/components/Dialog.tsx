@@ -1,7 +1,7 @@
 // A modal dialog (docs/design-system.md, 4: Dialogs): a backdrop at --pw-z-backdrop, centring a card
 // at --pw-z-dialog, 48 px from the top and 16 px from the sides. The card has a header (the title, an
 // optional meta subtitle, and Close), a body that scrolls, and a footer: meta text at the left, then
-// Cancel and the primary action at the right.
+// Cancel and the primary action at the right. A dialog with nothing to submit has no footer.
 //
 // - role="dialog", aria-modal, named by its title and described by its subtitle.
 // - Focus moves to the first field on open, Tab and Shift+Tab stay inside, and focus goes back to
@@ -35,8 +35,8 @@ export interface DialogProps {
   dirty?: boolean;
   /** At the footer's left, in meta text. */
   footerMeta?: ReactNode;
-  /** At the footer's right: Cancel, then the primary action. */
-  actions: ReactNode;
+  /** At the footer's right: Cancel, then the primary action. A dialog with neither this nor footerMeta, such as the keyboard shortcuts dialog, has no footer. */
+  actions?: ReactNode;
   /** Makes the body and footer a form, which this submits. Submitting is the caller's: it says when it's busy. */
   onSubmit?: (() => void) | undefined;
   /** Keys inside the dialog, after its own Escape and Tab handling. */
@@ -131,10 +131,12 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
       <div className="dialog-body" ref={body}>
         {children}
       </div>
-      <footer className="dialog-foot">
-        {footerMeta !== undefined && <p className="dialog-foot-meta">{footerMeta}</p>}
-        <div className="dialog-actions">{actions}</div>
-      </footer>
+      {(footerMeta !== undefined || actions !== undefined) && (
+        <footer className="dialog-foot">
+          {footerMeta !== undefined && <p className="dialog-foot-meta">{footerMeta}</p>}
+          <div className="dialog-actions">{actions}</div>
+        </footer>
+      )}
     </>
   );
 

@@ -11,6 +11,12 @@
 // the top of the session list (3: App strip and page alerts). The toasts' stack is inside the app, from
 // the first render, so its live region is there before any toast (4: Toasts). Relative times tick on
 // the shared clock (clock.ts), each on its own, so the dashboard doesn't re-render every second.
+//
+// The single-key shortcuts (6.2) are handled here: `/` focuses the filter field, `n` opens the New
+// session dialog, `?` the keyboard shortcuts dialog, and `j` and `k` move through the session list as
+// shown. shortcuts.ts says which key is which, and when a key isn't one, such as while typing; here,
+// they act only on this dashboard's keys, never over a dialog or the repo drawer, and only while
+// they're on. One that moves focus closes an open menu first.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
@@ -34,6 +40,7 @@ import {
 } from '../selection.js';
 import { countAttention, filterListed, filterNeedle, groupId, listScope, NO_FILTERS, noMatchText, type Filters } from '../sessions.js';
 import { useSort } from '../sort.js';
+import { shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import { AppStrip } from './AppStrip.js';
@@ -41,14 +48,22 @@ import { Divider } from './Divider.js';
 import { FilterControls } from './Filters.js';
 import { Header } from './Header.js';
 import { HighlightContext } from './Highlight.js';
+import { closeMenus } from './Menu.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { SessionList, type SessionListHeading } from './SessionList.js';
 import { SessionView, UnlistedSessionView } from './SessionView.js';
+import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { SortSelect } from './SortSelect.js';
 import { ToastContext, ToastRegion, useToastStack } from './Toast.js';
 import { focusQuietly } from './Tooltip.js';
+
+/**
+ * How many dashboards are on the page: one in the app, and several in the #uikit gallery. A shortcut
+ * pressed with nothing focused belongs to a dashboard only when it's the only one.
+ */
+let dashboards = 0;
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
@@ -110,6 +125,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const [drawerOpen, setDrawerOpen] = useState(false);
   const reposButton = useRef<HTMLButtonElement>(null);
   const listHeading = useRef<HTMLHeadingElement>(null);
+  const filterField = useRef<HTMLInputElement>(null);
+  const shortcuts = useShortcutsStore();
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Whether the open session's message box has a draft: no shortcut replaces or closes the view then,
+  // just as Escape doesn't (6.2).
+  const draft = useRef(false);
 
   const groups = snapshot?.groups ?? [];
   const roots = snapshot?.roots ?? [];
@@ -133,13 +154,16 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const openStarted = useCallback((session: SessionSummary) => opened.open(session.sessionId), [opened.open]);
   const started = useOpenWhenListed(allSessions, openStarted);
 
-  // The view's heading, which takes focus when a session is opened from a row or the view's header.
+  // The view's heading, which takes focus when a session is opened from a row or the view's header;
+  // or its conversation, when `j` or `k` was pressed there, so ↑ and ↓ go on scrolling it.
   const viewHeading = useRef<HTMLHeadingElement>(null);
-  const focusView = useRef<string | undefined>(undefined);
+  const focusView = useRef<{ id: string; on: 'heading' | 'conversation' } | undefined>(undefined);
   useEffect(() => {
-    if (focusView.current === undefined || focusView.current !== openId) return;
+    const target = focusView.current;
+    if (target === undefined || target.id !== openId) return;
     focusView.current = undefined;
-    viewHeading.current?.focus();
+    const conversation = target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('.session-view-body[role="tabpanel"]') : undefined;
+    (conversation ?? viewHeading.current)?.focus();
   });
 
   /** The session list's row buttons, in the order shown, without those in a collapsed Finished section. */
@@ -162,7 +186,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         viewHeading.current?.focus();
         return;
       }
-      focusView.current = sessionId;
+      focusView.current = { id: sessionId, on: 'heading' };
       opened.open(sessionId, 'push');
     },
     [openId, opened.open],
@@ -185,8 +209,42 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const id = next?.dataset.openSession;
     if (!next || id === undefined) return;
     next.scrollIntoView?.({ block: 'nearest' });
-    focusView.current = id;
+    focusView.current = { id, on: 'heading' };
     opened.open(id, 'replace');
+  };
+
+  // `j` and `k`: the next or previous session in the list as shown, from the focused row, or else the
+  // open session, or else the first row. With the view closed, focus moves to that row. With it open,
+  // the view shows that session too: focus stays in the list if it was there, stays in the
+  // conversation if it was there, and otherwise goes to the view's heading, as ↑ and ↓ in its header do.
+  const stepByKey = (root: HTMLElement, by: 1 | -1): boolean => {
+    const buttons = rowButtons();
+    const active = document.activeElement;
+    const onRow = active instanceof HTMLElement && buttons.includes(active) ? active.dataset.openSession : undefined;
+    const from = onRow ?? openId;
+    const at = from === undefined ? -1 : buttons.findIndex((button) => button.dataset.openSession === from);
+    // A session open that the list doesn't show, filtered out or in a collapsed Finished section, has no next.
+    if (from !== undefined && at < 0) return false;
+    const next = from === undefined ? buttons[0] : buttons[at + by];
+    const id = next?.dataset.openSession;
+    if (!next || id === undefined) return false;
+    if (openId === undefined) {
+      closeMenus(root);
+      next.focus();
+      return true;
+    }
+    if (draft.current) return false;
+    const inList = active instanceof Element && active.closest('.session-list') !== null;
+    const inConversation = active instanceof Element && active.closest('.session-view-body') !== null;
+    closeMenus(root);
+    if (inList) {
+      next.focus();
+    } else {
+      next.scrollIntoView?.({ block: 'nearest' });
+      focusView.current = { id, on: inConversation ? 'conversation' : 'heading' };
+    }
+    opened.open(id, 'replace');
+    return true;
   };
 
   // Closing with Close, Back or Escape gives focus back to the session's row (6.1, item 8).
@@ -240,6 +298,70 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     focusHeading.current = false;
     listHeading.current?.focus();
   }, [drawerOpen]);
+
+  // `/`: the filter field. Below 1,200 px the view covers the list and its filter, so it closes first,
+  // as Close would, unless the message box has a draft; focus goes to the field, not the row.
+  const focusFilter = (root: HTMLElement): boolean => {
+    const field = filterField.current;
+    if (!field) return false;
+    const covered = openId !== undefined && layout !== 'three-columns';
+    if (covered && draft.current) return false;
+    closeMenus(root);
+    if (covered) opened.close();
+    field.focus();
+    try {
+      field.setSelectionRange(field.value.length, field.value.length);
+    } catch {
+      // A field that can't place the caret keeps it where the browser put it.
+    }
+    return true;
+  };
+
+  const openNewSession = (root: HTMLElement): boolean => {
+    if (!snapshot) return false;
+    closeMenus(root);
+    setNewSession(true);
+    return true;
+  };
+
+  const openShortcuts = (root: HTMLElement): boolean => {
+    closeMenus(root);
+    setShortcutsOpen(true);
+    return true;
+  };
+
+  // The latest of each, for the one key listener. Each says whether it did anything.
+  const actions = useRef<Record<Shortcut, (root: HTMLElement) => boolean> | undefined>(undefined);
+  actions.current = {
+    filter: focusFilter,
+    'new-session': openNewSession,
+    shortcuts: openShortcuts,
+    next: (root) => stepByKey(root, 1),
+    previous: (root) => stepByKey(root, -1),
+  };
+
+  // On the document, after every handler inside the app, so a key one of them handled isn't a shortcut.
+  useEffect(() => {
+    dashboards += 1;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const shortcut = shortcutFor(event);
+      const root = app.current;
+      if (shortcut === undefined || !root || !shortcuts.get()) return;
+      // A key inside this dashboard, or one with nothing focused when it's the only dashboard on the page.
+      const target = event.target;
+      const nowhere = target === document.body || target === document.documentElement;
+      if (!(target instanceof Node && root.contains(target)) && !(nowhere && dashboards === 1)) return;
+      // Nothing while a dialog or the repo drawer is open: both are modal.
+      if (root.querySelector('[aria-modal="true"]')) return;
+      // Handled, so `/` isn't typed into the field it focuses, and the browser's own `/` (Firefox's quick find) doesn't run.
+      if (actions.current?.[shortcut](root)) event.preventDefault();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      dashboards -= 1;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [shortcuts]);
 
   const select = (next: Selection, from: 'list' | 'drawer' | 'elsewhere' = 'elsewhere') => {
     choose(next);
@@ -396,6 +518,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         headingRef={viewHeading}
         onStep={stepFromView}
         animate={animate}
+        onDraftChange={(has) => {
+          draft.current = has;
+        }}
       />
     );
   } else if (openId !== undefined && snapshot) {
@@ -433,6 +558,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         onRepos={layout === 'drawer' ? () => setDrawerOpen(true) : undefined}
         reposOpen={drawerOpen}
         reposRef={reposButton}
+        onShortcuts={() => setShortcutsOpen(true)}
       />
 
       <div className="columns">
@@ -445,7 +571,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             summary={snapshot && scope ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session)) } : undefined}
             filters={
               allSessions.length > 0 && (
-                <FilterControls filters={filters} onChange={setFilters}>
+                <FilterControls filters={filters} onChange={setFilters} fieldRef={filterField}>
                   <SortSelect value={sort} onChange={setSort} />
                 </FilterControls>
               )
@@ -483,6 +609,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           }}
         />
       )}
+
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 
       {/* Last, so it's above everything; focus that a dismissed toast had goes to the list's heading. */}
       <ToastRegion {...toasts.region} onFocusLost={() => listHeading.current?.focus()} />

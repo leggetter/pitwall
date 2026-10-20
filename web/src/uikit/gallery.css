@@ -142,6 +142,11 @@
   height: 920px;
 }
 
+/* For the keyboard shortcuts dialog, whose whole map shows in a tall enough window. */
+.uikit-frame-dialog-tall {
+  height: 1480px;
+}
+
 /* A window 560 px tall, which the app fills, so its list scrolls inside as it does in the app. Short for a page with no list. */
 .uikit-frame-page {
   height: 560px;

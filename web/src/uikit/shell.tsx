@@ -12,9 +12,11 @@ import { RepoList } from '../components/RepoList.js';
 import { SessionList, type SessionListHeading, type SessionListSummary } from '../components/SessionList.js';
 import { SortSelect } from '../components/SortSelect.js';
 import { ALL_SESSIONS, groupSelection, NEEDS_YOU, type Selection } from '../selection.js';
+import { ShortcutsStoreContext } from '../shortcuts.js';
 import { NO_FILTERS, SORT_ORDERS, type FilterChip, type Filters, type SortOrder } from '../sessions.js';
 import { ago, APP_GROUP, LONG_ROOTS, REPO_LIST_SNAPSHOT, ROOT, SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT } from './fixtures.js';
 import { Reopenable, Specimen } from './kit.js';
+import { memoryShortcuts } from './stubs.js';
 
 const noop = () => {};
 const UPDATED = ago(0.05);
@@ -37,6 +39,9 @@ function LiveFilters({ start = NO_FILTERS, sort }: { start?: Filters; sort?: Sor
 
 const filters = (text: string, ...chips: FilterChip[]): Filters => ({ text, chips: new Set(chips) });
 
+/** The single-key shortcuts off, for the specimens that show what changes. */
+const OFF = memoryShortcuts(false);
+
 const BREAKPOINTS = [
   { title: 'From 900 px', note: 'The repo list is beside the session list, so there is no Repos button.', width: 1100, repos: false },
   { title: 'Below 900 px', note: 'The Repos button opens the repo list as a drawer.', width: 800, repos: true },
@@ -48,17 +53,17 @@ export function Headers() {
     <>
       {BREAKPOINTS.map((breakpoint) => (
         <Specimen key={breakpoint.width} title={breakpoint.title} note={breakpoint.note} width={breakpoint.width}>
-          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} />
+          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} onShortcuts={noop} />
         </Specimen>
       ))}
-      <Specimen title="Before the first snapshot" note="No roots, no New session and no time yet." width={1100}>
-        <Header state="connecting" />
+      <Specimen title="Before the first snapshot" note="No roots, no New session and no time yet; the keyboard shortcuts button is there from the start." width={1100}>
+        <Header state="connecting" onShortcuts={noop} />
       </Specimen>
       <Specimen title="A long roots list" note="The start is cut short with an ellipsis and the last segment stays; the full list, home and all, is in a tooltip." width={800}>
-        <Header state="live" roots={LONG_ROOTS} updatedAt={UPDATED} onNewSession={noop} onRepos={noop} />
+        <Header state="live" roots={LONG_ROOTS} updatedAt={UPDATED} onNewSession={noop} onRepos={noop} onShortcuts={noop} />
       </Specimen>
       <Specimen title="A long roots list, 600 px and narrower" width={375}>
-        <Header state="reconnecting" roots={LONG_ROOTS} updatedAt={ago(0.9)} onNewSession={noop} onRepos={noop} />
+        <Header state="reconnecting" roots={LONG_ROOTS} updatedAt={ago(0.9)} onNewSession={noop} onRepos={noop} onShortcuts={noop} />
       </Specimen>
     </>
   );
@@ -182,8 +187,13 @@ export function SessionListHeads() {
 export function FilterSpecimens() {
   return (
     <>
-      <Specimen title="Empty" note="Type to filter; the chips toggle.">
+      <Specimen title="Empty" note="Type to filter; the chips toggle. The / key cap says how to get here; it goes while the field has focus or text.">
         <LiveFilters />
+      </Specimen>
+      <Specimen title="Empty, with the single-key shortcuts off" note="No / key cap, since / does nothing.">
+        <ShortcutsStoreContext.Provider value={OFF}>
+          <LiveFilters />
+        </ShortcutsStoreContext.Provider>
       </Specimen>
       <Specimen title="With text" note="The clear button shows, and so does Clear filters. Escape clears the text.">
         <LiveFilters start={filters('export')} />

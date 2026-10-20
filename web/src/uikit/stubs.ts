@@ -16,6 +16,7 @@ import type { AttachEnv } from '../attach.js';
 import type { ClipboardLike } from '../copy.js';
 import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
+import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
 import { CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
@@ -128,6 +129,14 @@ export function memoryStorage(entries: Record<string, string> = {}): StorageSour
     },
   };
   return () => storage;
+}
+
+/**
+ * A single-key shortcuts setting of its own, in memory, on or off: the gallery never reads or writes
+ * the app's pitwall.shortcuts.v1, and a specimen's checkbox changes only that specimen.
+ */
+export function memoryShortcuts(on = true): ShortcutsStore {
+  return createShortcutsStore({ storage: memoryStorage(on ? {} : { [SHORTCUTS_KEY]: 'off' }), events: { addEventListener: () => {} } });
 }
 
 /**

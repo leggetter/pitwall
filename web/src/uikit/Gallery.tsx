@@ -10,14 +10,15 @@ import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { ThemeSwitch } from '../components/ThemeSwitch.js';
 import { ClipboardContext } from '../copy.js';
+import { ShortcutsStoreContext } from '../shortcuts.js';
 import { Alerts, Buttons } from './controls.js';
 import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
 import { SettleContext } from './kit.js';
 import { FinishedSections, SessionRows } from './lists.js';
-import { Dialogs, Layouts, Notices, Pages } from './pages.js';
+import { Dialogs, Layouts, Notices, Pages, ShortcutsDialogs } from './pages.js';
 import { CopyButtons, Timestamps, Toasts, Tooltips } from './overlays.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
-import { scriptedAttach, stubApi, stubClipboard } from './stubs.js';
+import { memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
 import { Confirmations, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import './gallery.css';
 
@@ -34,7 +35,7 @@ const SECTIONS: Section[] = [
   { id: 'icons', title: 'Icons', intro: 'The Icon component: every icon pitwall uses.', Content: Icons },
   { id: 'theme-switch', title: 'Theme switch', intro: "ThemeSwitch: System, Light and Dark. It's the real one, so pressing it changes this page's theme.", Content: ThemeSwitches },
   { id: 'buttons', title: 'Buttons', intro: 'Button in each variant, idle, disabled and busy, at each size; the spinner; key caps.', Content: Buttons },
-  { id: 'header', title: 'Header', intro: 'Header: the Repos button, the wordmark, the roots, New session, the connection, the update time and the theme switch, at each width.', Content: Headers },
+  { id: 'header', title: 'Header', intro: 'Header: the Repos button, the wordmark, the roots, New session, the connection, the update time, the theme switch and the keyboard shortcuts button, at each width.', Content: Headers },
   { id: 'repo-list', title: 'Repo list', intro: 'RepoList: the two views, then every group. Each one keeps its own selection, so click or use ↓, ↑, Home and End.', Content: RepoLists },
   { id: 'repo-drawer', title: 'Repo drawer', intro: 'RepoDrawer: the repo list below 900 px.', Content: RepoDrawers },
   { id: 'session-list', title: 'Session list header', intro: "SessionList's header for each selection: its name, its summary, the filters and the Sort setting.", Content: SessionListHeads },
@@ -58,6 +59,12 @@ const SECTIONS: Section[] = [
   { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab, attached to a scripted server instead of pitwall.', Content: Terminals },
   { id: 'alerts', title: 'Alerts and the app strip', intro: 'Alert in each tone, as the page alerts use it, and AppStrip, for while the relay is off until restart.', Content: Alerts },
   { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, on Dialog: empty, filled, with errors, starting, and after a failure.', Content: Dialogs },
+  {
+    id: 'shortcuts',
+    title: 'Keyboard shortcuts dialog',
+    intro: 'ShortcutsDialog, on Dialog: the keyboard map in 6.2 and the off switch for the single-key shortcuts. Each keeps its own setting here; in the app it is one, kept in pitwall.shortcuts.v1.',
+    Content: ShortcutsDialogs,
+  },
   { id: 'tooltips', title: 'Tooltips', intro: 'Tooltip on each kind of control it is on in the app, each opened by hovering it.', Content: Tooltips },
   { id: 'toasts', title: 'Toasts', intro: 'ToastProvider and its stack: a success, an error, three at most, and full width at 600 px and narrower.', Content: Toasts },
   { id: 'copy', title: 'Copy buttons', intro: 'CopyButton idle, copied and refused, against a stub clipboard, and CopyCommand, the command chip.', Content: CopyButtons },
@@ -98,8 +105,9 @@ function showTarget(): void {
 
 export default function Gallery() {
   // One stub API, attach and clipboard for anything not given its own, such as a session view opened
-  // from a row on one of the page specimens. Nothing in the gallery writes to the real clipboard.
-  const [defaults] = useState(() => ({ api: stubApi(), attach: scriptedAttach('attached'), clipboard: stubClipboard('copied') }));
+  // from a row on one of the page specimens. Nothing in the gallery writes to the real clipboard. The
+  // single-key shortcuts are on, in memory, whatever the app's own setting is.
+  const [defaults] = useState(() => ({ api: stubApi(), attach: scriptedAttach('attached'), clipboard: stubClipboard('copied'), shortcuts: memoryShortcuts() }));
 
   // Specimens take focus as they open (a session view's Close button, a dialog's first field),
   // which scrolls the page. Once every scenario has settled, put the page back where the address says.
@@ -129,6 +137,7 @@ export default function Gallery() {
 
   return (
     <SettleContext.Provider value={settle}>
+      <ShortcutsStoreContext.Provider value={defaults.shortcuts}>
       <ClipboardContext.Provider value={defaults.clipboard}>
       <ApiContext.Provider value={defaults.api}>
         <AttachContext.Provider value={defaults.attach}>
@@ -157,6 +166,7 @@ export default function Gallery() {
         </AttachContext.Provider>
       </ApiContext.Provider>
       </ClipboardContext.Provider>
+      </ShortcutsStoreContext.Provider>
     </SettleContext.Provider>
   );
 }
