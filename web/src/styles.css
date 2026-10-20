@@ -145,9 +145,10 @@ textarea {
 .masthead-status {
   display: flex;
   align-items: center;
-  gap: 12px;
   margin-left: auto;
   font-size: var(--pw-text-m);
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 
 .connection {
@@ -155,6 +156,7 @@ textarea {
   align-items: center;
   gap: 6px;
   font-weight: var(--pw-weight-bold);
+  white-space: nowrap;
 }
 
 .connection .dot {
@@ -175,6 +177,7 @@ textarea {
 .updated {
   color: var(--pw-text-muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .controls {
@@ -298,6 +301,7 @@ textarea {
   cursor: pointer;
   border: 0;
   box-shadow: var(--pw-shadow-control);
+  white-space: nowrap;
 }
 
 .button:hover {

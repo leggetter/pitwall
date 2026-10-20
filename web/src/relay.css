@@ -109,8 +109,9 @@
   color: var(--pw-warning-fg);
 }
 
+/* It also takes the failed badge's tint, from the shared .tone-failed class, so its text is that tint's. */
 .relay-exchange-line.tone-failed {
-  color: var(--pw-danger-fg);
+  color: var(--pw-state-failed-fg);
 }
 
 .relay-exchange-label {
