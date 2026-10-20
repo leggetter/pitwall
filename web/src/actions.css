@@ -2,20 +2,27 @@
 
 .button.primary {
   background: var(--pw-accent);
-  border-color: var(--pw-accent);
   color: var(--pw-on-accent);
   font-weight: var(--pw-weight-bold);
+  box-shadow: var(--pw-shadow-accent);
+}
+
+.button.primary:focus-visible {
+  box-shadow: var(--pw-shadow-accent), var(--pw-ring-focus);
 }
 
 .button.primary:hover {
   background: var(--pw-accent-hover);
-  border-color: var(--pw-accent-hover);
 }
 
 .button.danger {
   background: var(--pw-danger-solid);
-  border-color: var(--pw-danger-solid);
   color: var(--pw-on-danger-solid);
+  box-shadow: none;
+}
+
+.button.danger:focus-visible {
+  box-shadow: var(--pw-ring-focus);
 }
 
 .button.danger:hover {
@@ -46,7 +53,6 @@
 .modal {
   width: min(620px, 100%);
   background: var(--pw-surface-overlay);
-  border: 1px solid var(--pw-border-control);
   border-radius: var(--pw-radius-lg);
   box-shadow: var(--pw-shadow-3);
 }
@@ -88,8 +94,14 @@
   padding: 6px 8px;
   background: var(--pw-surface);
   color: var(--pw-text);
-  border: 1px solid var(--pw-border-input);
-  border-radius: 6px;
+  border-radius: var(--pw-radius-md);
+  border: 0;
+  box-shadow: var(--pw-shadow-input);
+}
+
+.field select:focus-visible,
+.field-input:focus-visible {
+  box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
 }
 
 .field-prompt {
@@ -101,7 +113,12 @@
 
 .field-input[aria-invalid='true'],
 .field select[aria-invalid='true'] {
-  border-color: var(--pw-danger-fg);
+  box-shadow: var(--pw-shadow-input-error);
+}
+
+.field-input[aria-invalid='true']:focus-visible,
+.field select[aria-invalid='true']:focus-visible {
+  box-shadow: var(--pw-shadow-input-error), var(--pw-ring-focus);
 }
 
 .field-hint {
@@ -154,7 +171,7 @@
   background: var(--pw-surface-sunken);
   border: 1px solid var(--pw-border);
   border-left: 4px solid var(--pw-danger-solid);
-  border-radius: var(--pw-radius-lg);
+  border-radius: var(--pw-radius-md);
   font-size: var(--pw-text-m);
 }
 

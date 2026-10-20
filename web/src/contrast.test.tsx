@@ -54,7 +54,7 @@ const PAIRS: Pair[] = [
   edge('--pw-term-cursor', ['--pw-term-bg']),
   edge('--pw-border-control', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken']),
   edge('--pw-border-input', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken']),
-  edge('--pw-focus', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken', '--pw-selected']),
+  edge('--pw-focus', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken', '--pw-surface-hover', '--pw-surface-hover-bg', '--pw-selected']),
   edge('--pw-selected-border', ['--pw-surface', '--pw-selected']),
   edge('--pw-warning-indicator', ['--pw-surface', '--pw-bg', '--pw-warning-tint']),
 ];

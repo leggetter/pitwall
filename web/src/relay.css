@@ -35,13 +35,22 @@
   resize: vertical;
   background: var(--pw-surface);
   color: var(--pw-text);
-  border: 1px solid var(--pw-border-input);
-  border-radius: 6px;
+  border-radius: var(--pw-radius-md);
   line-height: var(--pw-leading-m);
+  border: 0;
+  box-shadow: var(--pw-shadow-input);
+}
+
+.relay-text:focus-visible {
+  box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
 }
 
 .relay-text[aria-invalid='true'] {
-  border-color: var(--pw-danger-fg);
+  box-shadow: var(--pw-shadow-input-error);
+}
+
+.relay-text[aria-invalid='true']:focus-visible {
+  box-shadow: var(--pw-shadow-input-error), var(--pw-ring-focus);
 }
 
 /* Under the text box, one small paragraph: the character count, then what a message can and can't do. */
@@ -62,7 +71,7 @@
 
 .relay-result {
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--pw-radius-md);
   border: 1px solid var(--pw-border);
   font-size: var(--pw-text-m);
   overflow-wrap: anywhere;
