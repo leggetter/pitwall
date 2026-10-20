@@ -14,16 +14,30 @@ export interface SpecimenProps {
    * A frame holds what the app positions against the window (the session view, dialogs, whole
    * pages): it becomes their containing block, so they sit inside it. Its height is the window's.
    */
-  frame?: 'view' | 'short' | 'dialog' | 'page';
+  frame?: 'view' | 'short' | 'dialog' | 'page' | 'page-short';
+  /**
+   * A window this many px wide, for the shell's width rules, which are container queries on the
+   * app (docs/design-system.md, 2.12). A stage is as wide as the gallery; this one scrolls sideways
+   * when the gallery is narrower than the window it shows.
+   */
+  width?: number;
   children: ReactNode;
 }
 
-export function Specimen({ title, note, frame, children }: SpecimenProps) {
+export function Specimen({ title, note, frame, width, children }: SpecimenProps) {
   return (
     <div className="uikit-specimen">
       <h3>{title}</h3>
       {note !== undefined && <p className="uikit-note">{note}</p>}
-      <div className={frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : 'uikit-stage'}>{children}</div>
+      {width === undefined ? (
+        <div className={frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : 'uikit-stage'}>{children}</div>
+      ) : (
+        <div className="uikit-stage uikit-widths">
+          <div className={frame ? `uikit-window uikit-frame uikit-frame-${frame}` : 'uikit-window'} style={{ width }}>
+            {children}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -65,6 +79,15 @@ export async function press(root: ParentNode, label: string): Promise<void> {
     [...root.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === label && !candidate.disabled),
   );
   button.click();
+}
+
+/**
+ * Whether the page has layout, so a frame's width picks the app's columns. The tests' happy-dom has
+ * none: every width there is the window's, so a scenario that needs a narrow or wide frame has nothing
+ * to wait for.
+ */
+export function laidOut(root: HTMLElement): boolean {
+  return root.getBoundingClientRect().width > 0;
 }
 
 /** Text that appears inside `root`. */

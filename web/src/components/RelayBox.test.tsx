@@ -57,7 +57,6 @@ function renderDashboard(fetch: FetchLike, first: IndexSnapshot = snap()) {
     );
   };
   const result = render(ui(first));
-  for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) fireEvent.click(toggle);
   return { ...result, update: (next: IndexSnapshot) => result.rerender(ui(next)) };
 }
 

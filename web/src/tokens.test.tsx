@@ -1,6 +1,7 @@
 // tokens.css and the stylesheets that use it, read as text (docs/design-system.md, 2.1 and 2.2).
 import { describe, expect, it } from 'vitest';
 import designSystem from '../../docs/design-system.md?raw';
+import indexHtml from '../index.html?raw';
 import { block, darkBlock, defaultBlocks, systemDarkBlock, tokens, withoutComments } from './test/css.js';
 
 /** Every stylesheet under web/src, by path, as text. */
@@ -79,5 +80,20 @@ describe('the components', () => {
 
   it.each(sources)('%s names only tokens that tokens.css defines', (_path, source) => {
     expect(varsIn(source).filter((name) => name.startsWith('--pw-') && !defined.has(name))).toEqual([]);
+  });
+});
+
+describe('the favicon in index.html', () => {
+  /** The favicon's SVG, decoded from its data: URL. */
+  const icon = decodeURIComponent(/<link\s+rel="icon"\s+href="data:image\/svg\+xml,([^"]+)"/.exec(indexHtml)?.[1] ?? '');
+  const light = new Map(defaultBlocks);
+
+  it('is drawn in the palette: the warning fill and the text that goes on it, as the light theme has them', () => {
+    expect(icon).toContain('<svg');
+    const colours = [...icon.matchAll(/(fill|stroke)='(#[0-9a-f]{3,8})'/gi)].map(([, attribute, value]) => [attribute, value?.toUpperCase()]);
+    expect(colours).toEqual([
+      ['fill', light.get('--pw-warning-solid')],
+      ['stroke', light.get('--pw-on-warning-solid')],
+    ]);
   });
 });

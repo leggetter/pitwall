@@ -43,6 +43,7 @@ const ICONS: Readonly<Record<string, string>> = {
   // The down chevron, which Material Symbols used to call expand_more.
   select: 'keyboard_arrow_down',
   more: 'more_horiz',
+  menu: 'menu',
   search: 'search',
   clear: 'cancel',
   add: 'add',

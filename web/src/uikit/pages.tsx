@@ -1,28 +1,36 @@
-// The New session dialog and whole-page states (W19): the real NewSessionDialog, Dashboard and
-// Notice, with fixture connection views instead of a live connection.
+// The New session dialog and whole-page states (W19, W21): the real NewSessionDialog, Dashboard and
+// Notice, with fixture connection views instead of a live connection. Each page has storage and an
+// address bar of its own, in memory, so its selection never reaches the gallery's URL.
 
+import { useState } from 'react';
 import type { ConnectionState, ConnectionView } from '../connection.js';
-import { ConnectionBadge, Dashboard } from '../components/Dashboard.js';
+import { ConnectionBadge } from '../components/ConnectionBadge.js';
+import { Dashboard } from '../components/Dashboard.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
-import { GROUP_STATE_KEY } from '../groupState.js';
+import { memoryNavigation } from '../selection.js';
 import {
+  APP_DIR,
   CALM_SNAPSHOT,
   DIALOG_SNAPSHOT,
   EMPTY_SNAPSHOT,
+  HIGHLIGHT_SNAPSHOT,
   JOBS_DIR,
   LIST_SNAPSHOT,
   NOTES_GROUP,
+  OTHER_ROOT,
   POLL_FAILED_SNAPSHOT,
   RELAY_ALERT_BLOCKED,
   RELAY_ALERT_SENT,
+  REPO_LIST_SNAPSHOT,
   ROOT,
+  SERVICE_DIR,
   snapshot,
   TWO_ROOTS_SNAPSHOT,
 } from './fixtures.js';
-import { choose, element, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
-import { memoryStorage, openGroups, type StubOptions } from './stubs.js';
+import { choose, element, laidOut, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
+import { memoryStorage, type StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
 
 const PROMPT = 'Add a retry with backoff to the export job. Keep the existing 30 second timeout.';
@@ -131,15 +139,29 @@ export function Dialogs() {
 interface PageCase {
   title: string;
   note?: string;
+  /** A page with no list, shown in a shorter window. */
+  short?: boolean;
+  /** The query string it starts with, such as ?repo=…: a selection of its own, never the gallery's address. */
+  search?: string;
+  /** A window this many px wide, for one layout whatever the gallery's width. Otherwise the gallery's. */
+  width?: number;
   view: ConnectionView;
   run?: (root: HTMLElement) => Promise<unknown>;
 }
 
+const repo = (key: string, root?: string) => `?repo=${key}${root ? `&root=${root}` : ''}`;
+
 const PAGES: PageCase[] = [
-  { title: 'Connecting', note: 'Loading: before the first snapshot.', view: { state: 'connecting' } },
-  { title: 'Reconnecting, before the first list', view: { state: 'reconnecting' } },
-  { title: 'Live', note: 'Groups open, the filter, and the summary. Click a row to open its session view.', view: { state: 'live', snapshot: LIST_SNAPSHOT } },
-  { title: 'Two roots', view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT } },
+  { short: true, title: 'Connecting', note: 'Loading: before the first snapshot.', view: { state: 'connecting' } },
+  { short: true, title: 'Reconnecting, before the first list', view: { state: 'reconnecting' } },
+  {
+    title: 'All sessions',
+    note: 'The first time. Click a row to open its session view, in the third column from 1,200 px or over the list below that.',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  { title: 'A group', search: repo(APP_DIR), view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  { title: 'Needs you', search: '?view=needs-you', view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  { title: 'Two roots', note: 'A group under the second root.', search: repo(SERVICE_DIR, OTHER_ROOT), view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT } },
   { title: 'Connection lost', view: { state: 'reconnecting', snapshot: LIST_SNAPSHOT } },
   { title: 'Poll failed', view: { state: 'live', snapshot: POLL_FAILED_SNAPSHOT } },
   { title: "Relay sent a message nobody asked for", view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_SENT }) } },
@@ -159,21 +181,47 @@ const PAGES: PageCase[] = [
       await text(root, 'Started pitwall-test-started');
     },
   },
-  { title: 'No sessions', view: { state: 'live', snapshot: EMPTY_SNAPSHOT } },
+  { short: true, title: 'No sessions', view: { state: 'live', snapshot: EMPTY_SNAPSHOT } },
   {
-    title: 'The filter matches nothing',
+    title: 'The filter matches nothing in a group',
+    note: 'Search all sessions keeps the text and selects All sessions.',
+    short: true,
+    search: repo(APP_DIR),
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
     run: async (root) => {
-      type(await element<HTMLInputElement>(root, 'input[type="search"]'), 'pitwall-test-matches-nothing');
-      await text(root, 'No sessions match');
+      type(await element<HTMLInputElement>(root, 'input[type="search"]'), 'pitwall-test-notes');
+      await text(root, 'Search all sessions');
     },
   },
   {
     title: 'Nothing needs you',
+    short: true,
+    search: '?view=needs-you',
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
+  },
+  {
+    title: 'A group that has left the snapshot',
+    note: 'It stays selected, and the repo list has no item for it.',
+    short: true,
+    search: repo(`${ROOT}/pitwall-test-gone`),
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'Filtered, with the matches highlighted',
+    note: 'In names, titles and paths. A group whose label matches shows all its sessions.',
+    view: { state: 'live', snapshot: HIGHLIGHT_SNAPSHOT },
     run: async (root) => {
-      (await element<HTMLInputElement>(root, 'input[type="checkbox"]')).click();
-      await text(root, 'Nothing needs you right now');
+      type(await element<HTMLInputElement>(root, 'input[type="search"]'), 'export');
+      await element(root, 'mark.match');
+    },
+  },
+  {
+    title: 'A chip on',
+    note: 'Background: background sessions only. Finished ones stay in the Finished section.',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    run: async (root) => {
+      await press(root, 'Background');
+      await until('background rows only', () => root.querySelector('.session') !== null && ![...root.querySelectorAll('.session .kind')].some((kind) => kind.textContent === 'interactive'));
     },
   },
   {
@@ -183,20 +231,64 @@ const PAGES: PageCase[] = [
   },
 ];
 
-/** Each page with its groups open, in storage of its own. */
-const PAGE_CASES = PAGES.map((page) => ({ ...page, storage: memoryStorage({ [GROUP_STATE_KEY]: openGroups(page.view.snapshot?.groups ?? []) }) }));
+/** One page: the Dashboard with storage and an address bar of its own, so it never touches the gallery's. */
+function Page({ page }: { page: PageCase }) {
+  const [own] = useState(() => ({ storage: memoryStorage(), navigation: memoryNavigation(page.search ?? '') }));
+  const dashboard = <Dashboard view={page.view} storage={own.storage} navigation={own.navigation} />;
+  return <Stubbed>{page.run ? <Scenario run={page.run}>{dashboard}</Scenario> : dashboard}</Stubbed>;
+}
 
 export function Pages() {
   return (
     <>
-      {PAGE_CASES.map((page) => {
-        const dashboard = <Dashboard view={page.view} storage={page.storage} />;
-        return (
-          <Specimen key={page.title} title={page.title} note={page.note} frame="page">
-            <Stubbed>{page.run ? <Scenario run={page.run}>{dashboard}</Scenario> : dashboard}</Stubbed>
-          </Specimen>
-        );
-      })}
+      {PAGES.map((page) => (
+        <Specimen key={page.title} title={page.title} note={page.note} frame={page.short ? 'page-short' : 'page'}>
+          <Page page={page} />
+        </Specimen>
+      ))}
+    </>
+  );
+}
+
+const LAYOUTS: PageCase[] = [
+  {
+    title: 'Three columns, from 1,200 px',
+    note: 'With nothing open, the third column says so, and stays.',
+    width: 1280,
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'Three columns, a session open',
+    width: 1280,
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    run: async (root) => {
+      (await element<HTMLButtonElement>(root, '[data-open-session]')).click();
+      await element(root, laidOut(root) ? '.session-view.in-column' : '.session-view');
+    },
+  },
+  { title: 'Two columns, from 900 px', note: 'An open session overlays the session list.', width: 1000, view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  { title: 'One column, below 900 px', note: 'The repo list is a drawer, opened with Repos.', width: 375, view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  {
+    title: 'The drawer open',
+    width: 375,
+    search: repo(APP_DIR),
+    view: { state: 'live', snapshot: REPO_LIST_SNAPSHOT },
+    run: async (root) => {
+      if (!laidOut(root)) return;
+      (await element<HTMLButtonElement>(root, 'button[aria-label="Repos"]')).click();
+      await element(root, '.repo-drawer');
+    },
+  },
+];
+
+export function Layouts() {
+  return (
+    <>
+      {LAYOUTS.map((page) => (
+        <Specimen key={page.title} title={page.title} note={page.note} frame="page" width={page.width}>
+          <Page page={page} />
+        </Specimen>
+      ))}
     </>
   );
 }

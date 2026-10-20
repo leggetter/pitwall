@@ -83,3 +83,13 @@ export function absoluteTime(iso: string): string {
 export function formatRoots(roots: readonly string[]): string {
   return roots.map(shortenHome).join(', ');
 }
+
+/**
+ * A path, or a list of them, cut in two for a middle ellipsis (docs/design-system.md, 5): the end,
+ * from the last `/`, always shows, and the start is cut short with "…" when there isn't room. With
+ * no `/` after the first character, the end is empty, so the text is only cut at its end.
+ */
+export function middleEllipsisParts(text: string): { start: string; end: string } {
+  const slash = text.lastIndexOf('/');
+  return slash > 0 ? { start: text.slice(0, slash), end: text.slice(slash) } : { start: text, end: '' };
+}

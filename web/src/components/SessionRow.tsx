@@ -4,6 +4,7 @@ import { absoluteTime, cwdWithinGroup, plainText, relativeTime } from '../format
 import { canMessage, requestRelayFocus } from '../relay.js';
 import { attachCommand, needsAttention, statusPill } from '../sessions.js';
 import { CopyCommand } from './CopyCommand.js';
+import { Highlight } from './Highlight.js';
 import { RelayExchangeNote } from './RelayBox.js';
 import { Reply } from './Reply.js';
 
@@ -71,10 +72,10 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
                 aria-current={isOpen || undefined}
                 onClick={() => onOpen(session.sessionId)}
               >
-                {name}
+                <Highlight text={name} />
               </button>
             ) : (
-              name
+              <Highlight text={name} />
             )}
           </h3>
           {title && (
@@ -83,7 +84,7 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
                 ·
               </span>
               <span className="session-title" title={titleHint(title, session.titleSource)}>
-                {title}
+                <Highlight text={title} />
               </span>
             </>
           )}
@@ -131,7 +132,7 @@ export function SessionRow({ session, groupKey, now, onOpen, isOpen = false }: S
         <div className="session-foot">
           {where && (
             <span className="cwd" title={plainText(session.cwd)}>
-              {plainText(where)}
+              <Highlight text={plainText(where)} />
             </span>
           )}
           {session.cwdMissing && (

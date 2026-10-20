@@ -33,7 +33,8 @@ function go(hash: string) {
 
 /** Waits until every specimen's scenario has finished, so nothing is still on its way. */
 async function settled() {
-  await screen.findByRole('heading', { name: 'pitwall UI kit' });
+  // The gallery renders every specimen before its heading shows: under the whole suite's load, that's more than a second.
+  await screen.findByRole('heading', { name: 'pitwall UI kit' }, { timeout: 15_000 });
   await waitFor(() => expect(document.querySelector('.uikit[data-ready]')).not.toBeNull(), { timeout: 15_000 });
 }
 

@@ -1,22 +1,35 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+// The app (docs/design-system.md, 3): the header, then three columns, the repo list, the session list
+// and the session view. The page doesn't scroll; each column does. Below 1,200 px the session view
+// overlays the session list, and below 900 px the repo list is a drawer opened from the header.
+
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
-import type { ConnectionState, ConnectionView } from '../connection.js';
-import { formatRoots, plainText, updatedAgo } from '../format.js';
-import {
-  browserStorage,
-  FINISHED_STATE_KEY,
-  readGroupState,
-  writeGroupState,
-  type GroupState,
-  type StorageSource,
-} from '../groupState.js';
+import type { ConnectionView } from '../connection.js';
+import { formatRoots, plainText } from '../format.js';
+import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
+import { useLayout } from '../layout.js';
 import { relayAlertText } from '../relay.js';
-import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
+import {
+  ALL_SESSIONS,
+  browserNavigation,
+  findGroup,
+  finishedStateId,
+  scopeFor,
+  selectionName,
+  useSelection,
+  type NavigationEnv,
+  type Selection,
+} from '../selection.js';
+import { countAttention, filterListed, filterNeedle, groupId, listScope, NO_FILTERS, noMatchText, type Filters } from '../sessions.js';
 import { useOpenWhenListed } from '../spawn.js';
-import { GroupSection } from './GroupSection.js';
+import { FilterControls } from './Filters.js';
+import { Header } from './Header.js';
+import { HighlightContext } from './Highlight.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
+import { RepoDrawer } from './RepoDrawer.js';
+import { RepoList } from './RepoList.js';
+import { SessionList, type SessionListHeading } from './SessionList.js';
 import { SessionView } from './SessionView.js';
-import { ThemeSwitch } from './ThemeSwitch.js';
 
 /** The current time, refreshed every second, for relative times. */
 function useNow(intervalMs = 1_000): number {
@@ -28,50 +41,55 @@ function useNow(intervalMs = 1_000): number {
   return now;
 }
 
-const STATE_LABELS: Record<ConnectionState, string> = {
-  connecting: 'Connecting',
-  live: 'Live',
-  reconnecting: 'Reconnecting',
-  unauthorized: 'Token rejected',
-};
-
-export function ConnectionBadge({ state }: { state: ConnectionState }) {
+/** A state in place of the session list's rows. Today's look, until W28 restyles the empty states. */
+function Placeholder({ title, sentence, children }: { title: string; sentence?: string; children?: ReactNode }) {
   return (
-    <span className={`connection state-${state}`} role="status">
-      <span className="dot" aria-hidden="true" />
-      {STATE_LABELS[state]}
-    </span>
+    <div className="placeholder">
+      <p className="placeholder-title">{title}</p>
+      {sentence && <p>{sentence}</p>}
+      {children && <p className="placeholder-actions">{children}</p>}
+    </div>
   );
 }
 
 export interface DashboardProps {
   view: ConnectionView;
-  /** Where the open groups are remembered. Tests pass their own; localStorage otherwise. */
+  /** Where the selection and the Finished sections are remembered. Tests pass their own; localStorage otherwise. */
   storage?: StorageSource;
+  /** The address bar and history, for the selection. Tests and the gallery pass their own; the window's otherwise. */
+  navigation?: NavigationEnv;
 }
 
-export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
+export function Dashboard({ view, storage = browserStorage, navigation = browserNavigation }: DashboardProps) {
   const { state, snapshot, serverError } = view;
   // A heartbeat brings a newer poll than the snapshot, with nothing else changed.
   const updatedAt = view.lastPoll?.generatedAt ?? snapshot?.generatedAt;
   const source = view.lastPoll?.source ?? snapshot?.source;
   const now = useNow();
-  const [filters, setFilters] = useState<Filters>({ text: '', attentionOnly: false });
-  // Groups start collapsed; the ones opened are remembered across reloads.
-  const [open, setOpen] = useState<GroupState>(() => readGroupState(storage));
-  // Each group's "Finished" sub-list starts collapsed too, and is remembered the same way.
+  const app = useRef<HTMLDivElement>(null);
+  const layout = useLayout(app);
+  const [selection, choose] = useSelection(snapshot, { navigation, storage });
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  // Each selection's Finished section starts collapsed, and is remembered.
   const [finishedOpen, setFinishedOpen] = useState<GroupState>(() => readGroupState(storage, FINISHED_STATE_KEY));
   const [dismissedError, setDismissedError] = useState<string>();
   // The relay alert dismissed, by its time and count: a later one shows again.
   const [dismissedAlert, setDismissedAlert] = useState<string>();
   // The session whose view is open, as it was when opened. While it's listed, the live summary is shown.
   const [opened, setOpened] = useState<SessionSummary>();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const reposButton = useRef<HTMLButtonElement>(null);
+  const listHeading = useRef<HTMLHeadingElement>(null);
 
   const groups = snapshot?.groups ?? [];
+  const roots = snapshot?.roots ?? [];
   const allSessions = useMemo(() => groups.flatMap((group) => group.sessions), [groups]);
   const attention = countAttention(allSessions);
-  const visible = useMemo(() => filterGroups(groups, filters), [groups, filters]);
-  const roots = snapshot ? formatRoots(snapshot.roots) : '';
+  const selectedGroup = findGroup(groups, selection);
+  const scope = scopeFor(groups, selection);
+  const listed = useMemo(() => (scope ? listScope(groups, scope) : { current: [], finished: [] }), [groups, scope?.kind, selectedGroup]);
+  const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
+  const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
   const listedOpen = opened ? allSessions.find((session) => session.sessionId === opened.sessionId) : undefined;
   const shownOpen = listedOpen ?? opened;
   // The New session dialog, and the session it started, opened once it's listed.
@@ -102,91 +120,47 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
     };
   }, [attention]);
 
-  const toggle = (id: string) => {
-    const next = new Map(open);
-    next.set(id, !(open.get(id) ?? false));
-    setOpen(next);
-    writeGroupState(next, new Set(groups.map(groupId)), storage);
+  // The drawer only exists below the sidebar breakpoint: widening the window closes it.
+  useEffect(() => {
+    if (layout !== 'drawer') setDrawerOpen(false);
+  }, [layout]);
+
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    reposButton.current?.focus();
   };
 
-  const toggleFinished = (id: string) => {
+  // Choosing in the drawer closes it, and focus goes to the session list's heading (6.1), once the drawer has gone.
+  const focusHeading = useRef(false);
+  useEffect(() => {
+    if (drawerOpen || !focusHeading.current) return;
+    focusHeading.current = false;
+    listHeading.current?.focus();
+  }, [drawerOpen]);
+
+  const select = (next: Selection, from: 'list' | 'drawer' | 'elsewhere' = 'elsewhere') => {
+    choose(next);
+    if (from === 'drawer') {
+      focusHeading.current = true;
+      setDrawerOpen(false);
+    }
+  };
+
+  const finishedId = finishedStateId(selection, selectedGroup);
+  const toggleFinished = () => {
+    if (finishedId === undefined) return;
     const next = new Map(finishedOpen);
-    next.set(id, !(finishedOpen.get(id) ?? false));
+    next.set(finishedId, !(finishedOpen.get(finishedId) ?? false));
     setFinishedOpen(next);
-    writeGroupState(next, new Set(groups.map(groupId)), storage, FINISHED_STATE_KEY);
+    writeGroupState(next, new Set([...groups.map(groupId), 'view:all']), storage, FINISHED_STATE_KEY);
   };
 
   const showError = serverError !== undefined && serverError !== dismissedError;
   const relayAlert = snapshot?.relayAlert;
   const relayAlertKey = relayAlert ? `${relayAlert.at}#${relayAlert.count}` : undefined;
   const alertText = relayAlert && relayAlertKey !== dismissedAlert ? relayAlertText(relayAlert) : undefined;
-
-  return (
-    <div className="app">
-      <header className="masthead">
-        <div className="masthead-row">
-          <h1 className="brand">pitwall</h1>
-          {snapshot && (
-            <p className="roots" title={snapshot.roots.join(', ')}>
-              {plainText(roots)}
-            </p>
-          )}
-          <div className="masthead-status">
-            {snapshot && (
-              <button type="button" className="button small" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
-                New session
-              </button>
-            )}
-            <ConnectionBadge state={state} />
-            {snapshot && updatedAt && (
-              <time className="updated" dateTime={updatedAt}>
-                {updatedAgo(updatedAt, now)}
-              </time>
-            )}
-            <ThemeSwitch />
-          </div>
-        </div>
-
-        {snapshot && allSessions.length > 0 && (
-          <div className="masthead-row controls">
-            <form className="filters" role="search" onSubmit={(event) => event.preventDefault()}>
-              <label className="visually-hidden" htmlFor="filter">
-                Filter sessions
-              </label>
-              <input
-                id="filter"
-                type="search"
-                className="filter-input"
-                placeholder="Filter by session, title, repo or directory"
-                autoComplete="off"
-                spellCheck={false}
-                value={filters.text}
-                onChange={(event) => setFilters((current) => ({ ...current, text: event.target.value }))}
-              />
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={filters.attentionOnly}
-                  onChange={(event) => setFilters((current) => ({ ...current, attentionOnly: event.target.checked }))}
-                />
-                Needs attention only
-              </label>
-            </form>
-            <p className="summary">
-              {allSessions.length} {allSessions.length === 1 ? 'session' : 'sessions'}
-              {attention > 0 ? (
-                <>
-                  {' · '}
-                  <strong className="summary-attention">{needYou(attention)}</strong>
-                </>
-              ) : (
-                ' · nothing needs you'
-              )}
-            </p>
-          </div>
-        )}
-      </header>
-
+  const alerts = (
+    <>
       {snapshot && source && !source.ok && (
         <div className="banner warning" role="alert">
           <code>claude agents --json --all</code> failed on the latest poll: {plainText(source.error)}
@@ -221,49 +195,123 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
       {snapshot && state === 'reconnecting' && (
         <div className="banner muted">Lost the connection to pitwall. Reconnecting; this list may be out of date.</div>
       )}
+    </>
+  );
+  const hasAlerts = (snapshot && source && !source.ok) || (relayAlert && alertText) || showError || started.waiting || (snapshot && state === 'reconnecting');
 
-      <main className="content">
-        {!snapshot ? (
-          <p className="placeholder">{state === 'reconnecting' ? 'Reconnecting to pitwall…' : 'Connecting to pitwall…'}</p>
-        ) : allSessions.length === 0 ? (
-          <p className="placeholder">No Claude Code sessions under {plainText(roots)}</p>
-        ) : visible.length === 0 ? (
-          <p className="placeholder">
-            {filters.attentionOnly && attention === 0 && filters.text.trim() === ''
-              ? 'Nothing needs you right now.'
-              : 'No sessions match the filter.'}
-          </p>
-        ) : (
-          visible.map(({ group, sessions }) => {
-            const id = groupId(group);
-            return (
-              <GroupSection
-                key={id}
-                group={group}
-                sessions={sessions}
-                collapsed={!(open.get(id) ?? false)}
-                onToggle={() => toggle(id)}
-                finishedCollapsed={!(finishedOpen.get(id) ?? false)}
-                onToggleFinished={() => toggleFinished(id)}
-                showRoot={snapshot.roots.length > 1}
-                now={now}
-                onOpen={openSession}
-                openSessionId={shownOpen?.sessionId}
-              />
-            );
-          })
+  const name = selectionName(groups, selection);
+  const heading: SessionListHeading =
+    'view' in selection
+      ? { label: name }
+      : { label: name, kind: selectedGroup?.kind, root: roots.length > 1 ? (selectedGroup?.root ?? selection.root) : undefined };
+  const total = listed.current.length + listed.finished.length;
+  const shown = current.length + finished.length;
+  const showAll = (
+    <button type="button" className="button" onClick={() => select(ALL_SESSIONS)}>
+      Show all sessions
+    </button>
+  );
+
+  // What takes the rows' place, if anything.
+  let empty: ReactNode;
+  if (!snapshot) {
+    empty = <p className="placeholder">{state === 'reconnecting' ? 'Reconnecting to pitwall…' : 'Connecting to pitwall…'}</p>;
+  } else if (allSessions.length === 0) {
+    empty = <p className="placeholder">No Claude Code sessions under {plainText(formatRoots(snapshot.roots))}</p>;
+  } else if (!scope) {
+    empty = (
+      <Placeholder title={`No sessions in ${plainText(name)} now`} sentence="Its sessions are no longer listed under these roots.">
+        {showAll}
+      </Placeholder>
+    );
+  } else if (scope.kind === 'needs-you' && total === 0) {
+    empty = (
+      <Placeholder title="Nothing needs you right now" sentence="Sessions that are waiting for you, or asked you something, show here.">
+        {showAll}
+      </Placeholder>
+    );
+  } else if (shown === 0 && total > 0) {
+    const { title, sentence } = noMatchText(filters, plainText(name));
+    empty = (
+      <Placeholder title={title} sentence={sentence}>
+        <button type="button" className="button" onClick={() => setFilters(NO_FILTERS)}>
+          Clear filters
+        </button>
+        {scope.kind === 'group' && filters.text.trim() !== '' && (
+          // Keeps the text: the same search, across every group.
+          <button type="button" className="button" onClick={() => select(ALL_SESSIONS)}>
+            Search all sessions
+          </button>
         )}
-      </main>
+      </Placeholder>
+    );
+  }
 
-      {shownOpen && (
-        <SessionView
-          key={shownOpen.sessionId}
-          session={shownOpen}
-          listed={listedOpen !== undefined}
-          now={now}
-          onClose={closeSession}
-        />
-      )}
+  const repoList = (from: 'list' | 'drawer') => (
+    <RepoList
+      groups={snapshot?.groups}
+      roots={roots}
+      selection={selection}
+      onSelect={(next) => select(next, from)}
+      autoFocus={from === 'drawer'}
+    />
+  );
+
+  const sessionView = (column: boolean) =>
+    shownOpen && (
+      <SessionView
+        key={shownOpen.sessionId}
+        session={shownOpen}
+        listed={listedOpen !== undefined}
+        now={now}
+        onClose={closeSession}
+        layout={column ? 'column' : 'overlay'}
+      />
+    );
+
+  return (
+    <div className="app" ref={app} data-layout={layout}>
+      <Header
+        state={state}
+        roots={snapshot?.roots}
+        updatedAt={snapshot ? updatedAt : undefined}
+        now={now}
+        onNewSession={snapshot ? () => setNewSession(true) : undefined}
+        onRepos={layout === 'drawer' ? () => setDrawerOpen(true) : undefined}
+        reposOpen={drawerOpen}
+        reposRef={reposButton}
+      />
+
+      <div className="columns">
+        {layout !== 'drawer' && repoList('list')}
+        <HighlightContext.Provider value={filterNeedle(filters.text)}>
+          <SessionList
+            alerts={hasAlerts ? alerts : undefined}
+            heading={heading}
+            headingRef={listHeading}
+            summary={snapshot && scope ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session)) } : undefined}
+            filters={allSessions.length > 0 && <FilterControls filters={filters} onChange={setFilters} />}
+            current={current}
+            finished={finished}
+            empty={empty}
+            finishedCollapsed={!(finishedId !== undefined && (finishedOpen.get(finishedId) ?? false))}
+            onToggleFinished={toggleFinished}
+            now={now}
+            onOpen={openSession}
+            openSessionId={shownOpen?.sessionId}
+          />
+        </HighlightContext.Provider>
+        {layout === 'three-columns' &&
+          (sessionView(true) || (
+            <section className="session-view-empty" aria-label="Session">
+              <Placeholder title="Select a session" sentence="Its conversation, terminal and actions open here." />
+            </section>
+          ))}
+      </div>
+
+      {layout !== 'three-columns' && sessionView(false)}
+
+      {layout === 'drawer' && drawerOpen && <RepoDrawer onClose={closeDrawer}>{repoList('drawer')}</RepoDrawer>}
 
       {newSession && snapshot && (
         <NewSessionDialog

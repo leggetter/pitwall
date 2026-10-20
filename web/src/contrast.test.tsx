@@ -47,6 +47,8 @@ const PAIRS: Pair[] = [
   ...TONES.map((tone) => text(`--pw-on-${tone}-solid`, [`--pw-${tone}-solid`])),
   text('--pw-on-accent', ['--pw-accent', '--pw-accent-hover']),
   text('--pw-text', ['--pw-highlight']),
+  // A pressed filter chip's label. --pw-selected has the info tint's value, but the pair is its own.
+  text('--pw-info-tint-fg', ['--pw-selected']),
   text('--pw-text-inverse', ['--pw-text']),
   ...['boolean', 'string', 'number', 'null'].map((kind) => text(`--pw-code-${kind}`, ['--pw-surface', '--pw-surface-muted'])),
   text('--pw-term-fg', ['--pw-term-bg']),
@@ -55,7 +57,8 @@ const PAIRS: Pair[] = [
   edge('--pw-border-control', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken']),
   edge('--pw-border-input', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken']),
   edge('--pw-focus', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken', '--pw-surface-hover', '--pw-surface-hover-bg', '--pw-selected']),
-  edge('--pw-selected-border', ['--pw-surface', '--pw-selected']),
+  // The ring around a selected item, and a checked checkbox's fill, which can sit on any neutral surface.
+  edge('--pw-selected-border', NEUTRAL),
   edge('--pw-warning-indicator', ['--pw-surface', '--pw-bg', '--pw-warning-tint']),
 ];
 

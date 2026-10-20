@@ -131,7 +131,6 @@ function renderDashboard(first: IndexSnapshot = snap(), withAttach = true) {
     </ApiContext.Provider>
   );
   const result = render(ui);
-  for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) fireEvent.click(toggle);
   return { ...result, fake };
 }
 
@@ -377,7 +376,6 @@ describe('App: attach', () => {
     await waitFor(() => expect(index.sent).toHaveLength(1));
     act(() => index.receive({ type: 'authenticated', apiKey: API_KEY }));
     act(() => index.receive({ type: 'snapshot', snapshot: snap() }));
-    fireEvent.click(screen.getByRole('button', { expanded: false, name: /demo-app/ }));
 
     const view = await openView('demo-worker');
     const { socket } = await attach(view, fake);

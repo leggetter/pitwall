@@ -2,8 +2,9 @@
 // as pitwall.theme.v1. What it resolves to is data-theme on <html>, the only thing tokens.css reads.
 //
 // web/public/theme-init.js sets data-theme before the first paint. From then on this module keeps it
-// right: when the choice changes, and while System is chosen, when the system's own setting changes.
-// One store holds the choice, so every theme switch on the page shows the same one.
+// right: when the choice changes, here or in another tab, and while System is chosen, when the
+// system's own setting changes. One store holds the choice, so every theme switch on the page shows
+// the same one.
 
 import { createContext, useContext, useSyncExternalStore } from 'react';
 import { browserStorage, type StorageSource } from './groupState.js';
@@ -66,17 +67,29 @@ export interface DarkQuery {
   addEventListener(type: 'change', listener: () => void): void;
 }
 
+/** Where the store hears of a choice made in another tab: the window's `storage` event. */
+export interface StorageEvents {
+  addEventListener(type: 'storage', listener: (event: Pick<StorageEvent, 'key'>) => void): void;
+}
+
 /** The parts of the page the store uses, so tests can pass their own. */
 export interface ThemeEnv {
   storage?: StorageSource;
   /** matchMedia(DARK_QUERY), or undefined where the browser has no matchMedia. */
   darkQuery?: () => DarkQuery | undefined;
   root?: () => Element;
+  /** Default: window. */
+  events?: StorageEvents;
 }
 
 const defaultDarkQuery = (): DarkQuery | undefined => (typeof window.matchMedia === 'function' ? window.matchMedia(DARK_QUERY) : undefined);
 
-export function createThemeStore({ storage = browserStorage, darkQuery = defaultDarkQuery, root = () => document.documentElement }: ThemeEnv = {}): ThemeStore {
+export function createThemeStore({
+  storage = browserStorage,
+  darkQuery = defaultDarkQuery,
+  root = () => document.documentElement,
+  events = window,
+}: ThemeEnv = {}): ThemeStore {
   const query = darkQuery();
   const listeners = new Set<() => void>();
   const stateFor = (choice: ThemeChoice): ThemeState => ({ choice, resolved: resolveTheme(choice, query?.matches) });
@@ -96,6 +109,14 @@ export function createThemeStore({ storage = browserStorage, darkQuery = default
   // While System is chosen, follow the system as it changes: a schedule, or the user switching.
   query?.addEventListener('change', () => {
     if (state.choice === 'system') show(stateFor('system'));
+  });
+  // A choice made in another of pitwall's tabs. The browser fires `storage` in every other tab of
+  // the origin when the key changes, and with a null key when storage is cleared. Read, never write
+  // back, so two tabs can't echo a change between them.
+  events.addEventListener('storage', (event) => {
+    if (event.key !== THEME_KEY && event.key !== null) return;
+    const choice = readThemeChoice(storage);
+    if (choice !== state.choice) show(stateFor(choice));
   });
   // The same as theme-init.js did before the first paint, and a fallback if it didn't run.
   show(state);

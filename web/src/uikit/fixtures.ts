@@ -236,6 +236,39 @@ export const POLL_FAILED_SNAPSHOT = snapshot([NOTES_GROUP], {
   source: { ok: false, error: 'claude exited with code 1: pitwall-test made-up failure' },
 });
 
+/** The root's own directory, which the repo list labels with its path. */
+export const ROOT_GROUP = group('code', [session('in-root', { cwd: ROOT, lastActivityAt: ago(12) })], { key: ROOT, kind: 'directory' });
+
+/** Every kind of repo list item: a need-you badge, counts, the root's own directory, a finished-only group and a long label. */
+export const REPO_LIST_SNAPSHOT = snapshot([APP_GROUP, JOBS_GROUP, NOTES_GROUP, ALL_FINISHED_GROUP, LONG_LABEL_GROUP, ROOT_GROUP]);
+
+/** Two roots, each with groups, for the root headings. */
+export const TWO_ROOTS_LIST_SNAPSHOT = snapshot([APP_GROUP, NOTES_GROUP, SERVICE_GROUP, ROOT_GROUP], { roots: [ROOT, OTHER_ROOT] });
+
+/** Sessions whose names, titles and paths all have "export" in them, for the filter's highlight. */
+const EXPORTS_DIR = `${ROOT}/pitwall-test-exports`;
+export const HIGHLIGHT_SNAPSHOT = snapshot([
+  group(
+    'pitwall-test-exports',
+    [
+      session('export-retry', { title: 'Retry a failed export batch', titleSource: 'claude-code', cwd: `${EXPORTS_DIR}/packages/export`, status: 'busy' }),
+      background('csv', { title: 'CSV exports for projects', state: 'working', cwd: `${EXPORTS_DIR}/jobs/nightly-export` }),
+      session('docs', { title: 'Document the export format', titleSource: 'pitwall', cwd: `${EXPORTS_DIR}/docs` }),
+      session('unrelated', { title: 'Tidy the README', cwd: `${EXPORTS_DIR}/docs` }),
+    ],
+    { key: EXPORTS_DIR },
+  ),
+  group('pitwall-test-exporter', [session('exporter', { cwd: `${ROOT}/pitwall-test-exporter` })]),
+]);
+
+/** More roots than the header has room for. */
+export const LONG_ROOTS = [
+  ROOT,
+  OTHER_ROOT,
+  '/Users/example/clients/pitwall-test-client-with-a-long-name/repositories',
+  '/srv/pitwall-test/shared/checkouts',
+];
+
 export const RELAY_ALERT_SENT: RelayAlert = {
   at: ago(2),
   detail: 'a SendMessage to pitwall-test-relay-delivered with no request waiting for it',

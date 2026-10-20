@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { FINISHED_STATE_KEY, GROUP_STATE_KEY, readGroupState, writeGroupState, type StorageSource } from './groupState.js';
+import { FINISHED_STATE_KEY, readGroupState, writeGroupState, type StorageSource } from './groupState.js';
 
 function memory(initial?: string) {
-  const items = new Map<string, string>(initial === undefined ? [] : [[GROUP_STATE_KEY, initial]]);
+  const items = new Map<string, string>(initial === undefined ? [] : [[FINISHED_STATE_KEY, initial]]);
   const source: StorageSource = () => ({
     getItem: (key) => items.get(key) ?? null,
     setItem: (key, value) => void items.set(key, value),
@@ -52,7 +52,7 @@ describe('writeGroupState', () => {
       ['gone', true],
     ]);
     writeGroupState(state, new Set(['here', 'also-here', 'new']), source);
-    expect(JSON.parse(items.get(GROUP_STATE_KEY) ?? 'null')).toEqual({ here: true, 'also-here': false });
+    expect(JSON.parse(items.get(FINISHED_STATE_KEY) ?? 'null')).toEqual({ here: true, 'also-here': false });
   });
 
   it('round-trips through readGroupState', () => {
@@ -68,15 +68,15 @@ describe('writeGroupState', () => {
   });
 });
 
-describe('the finished-list key', () => {
-  it('is read and written apart from the group key', () => {
-    const { items, source } = memory(JSON.stringify({ a: true }));
-    expect(readGroupState(source, FINISHED_STATE_KEY)).toEqual(new Map());
-    writeGroupState(new Map([['a', true]]), new Set(['a']), source, FINISHED_STATE_KEY);
-    expect(JSON.parse(items.get(FINISHED_STATE_KEY) ?? 'null')).toEqual({ a: true });
-    expect(readGroupState(source, FINISHED_STATE_KEY)).toEqual(new Map([['a', true]]));
-    expect(items.get(GROUP_STATE_KEY)).toBe(JSON.stringify({ a: true }));
-    expect(FINISHED_STATE_KEY).not.toBe(GROUP_STATE_KEY);
+describe('the key', () => {
+  it('is pitwall.finished.v1, and pitwall.groups.v1 is never read or written', () => {
+    expect(FINISHED_STATE_KEY).toBe('pitwall.finished.v1');
+    const items = new Map<string, string>([['pitwall.groups.v1', JSON.stringify({ a: true })]]);
+    const source: StorageSource = () => ({ getItem: (key) => items.get(key) ?? null, setItem: (key, value) => void items.set(key, value) });
+    expect(readGroupState(source)).toEqual(new Map());
+    writeGroupState(new Map([['a', false]]), new Set(['a']), source);
+    expect([...items.keys()]).toEqual(['pitwall.groups.v1', 'pitwall.finished.v1']);
+    expect(items.get('pitwall.groups.v1')).toBe(JSON.stringify({ a: true }));
   });
 
   it('fails safe to empty, and ignores a failed write, when storage throws', () => {

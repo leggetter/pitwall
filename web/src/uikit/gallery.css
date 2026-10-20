@@ -94,13 +94,28 @@
   font-size: var(--pw-text-s);
 }
 
-/* The stage a specimen stands on: the page background, outlined, so the specimen's own edges show. */
+/*
+ * The stage a specimen stands on: the page background, outlined, so the specimen's own edges show.
+ * It's a container like the app (styles.css), so the shell's width rules follow the stage's width.
+ */
 .uikit-stage {
+  container: pitwall / inline-size;
   margin-top: 8px;
   padding: 16px;
   background: var(--pw-bg);
   outline: 1px dashed var(--pw-border-strong);
   border-radius: var(--pw-radius-sm);
+}
+
+/* A stage holding a window of a set width, which scrolls sideways when the gallery is narrower. */
+.uikit-widths {
+  overflow-x: auto;
+}
+
+.uikit-window {
+  flex: none;
+  container: pitwall / inline-size;
+  outline: 1px dashed var(--pw-border-strong);
 }
 
 /*
@@ -127,13 +142,29 @@
   height: 920px;
 }
 
+/* A window 560 px tall, which the app fills, so its list scrolls inside as it does in the app. Short for a page with no list. */
 .uikit-frame-page {
+  height: 560px;
+}
+
+.uikit-frame-page-short {
+  height: 280px;
+}
+
+:is(.uikit-frame-page, .uikit-frame-page-short) > :is(.app, .uikit-scenario),
+:is(.uikit-frame-page, .uikit-frame-page-short) > .uikit-scenario > .app {
+  height: 100%;
+}
+
+/* The token notices aren't the app shell: they keep their own height. */
+.uikit-frame-page:has(> .notice) {
+  height: auto;
   min-height: 160px;
 }
 
 /* Below 600 px a frame is as wide as the window, as the session view is (min(760px, 100vw)). */
 @media (max-width: 600px) {
-  .uikit-frame {
+  .uikit-stage.uikit-frame {
     margin-inline: -16px;
     border-radius: 0;
   }

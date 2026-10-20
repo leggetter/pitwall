@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -87,7 +87,7 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
 | `--pw-surface-hover-bg` | `#EBEBEB` | `#222220` | Hover on something that sits on `--pw-bg` |
 | `--pw-surface-overlay` | `#FFFFFF` | `#1D1D1B` | Dialogs, menus, tooltips, toasts |
 | `--pw-selected` | `#E5ECFA` | `#001B52` | The open session's row, pressed filter chips |
-| `--pw-selected-border` | `#0044CC` | `#668FE0` | The 1 px ring around a selected item |
+| `--pw-selected-border` | `#0044CC` | `#668FE0` | The 1 px ring around a selected item; a checked checkbox's fill (see [Inputs](#inputs-textareas-and-selects)) |
 | `--pw-highlight` | `#FFEB99` | `#665200` | Filter matches inside text |
 | `--pw-backdrop` | `rgb(0 0 0 / 0.1)` | `rgb(0 0 0 / 0.5)` | Behind a dialog |
 | `--pw-text` | `#141412` | `#F5F5F5` | Body text, names, titles |
@@ -98,9 +98,9 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
 | `--pw-border` | `#EBEBEB` | `#2C2C2A` | Dividers between rows and sections (decorative) |
 | `--pw-border-strong` | `#E0E0E0` | `#3E3E3D` | Card edges where a divider isn't enough (decorative) |
 | `--pw-border-dashed` | `#CCCCCC` | `#3A3A38` | Dashed outlines: not-running badges, placeholders |
-| `--pw-border-control` | `#8C897E` | `#6E6E6C` | The edge of outline buttons, chips, checkboxes, the theme switch |
+| `--pw-border-control` | `#8C897E` | `#6E6E6C` | The edge of outline buttons, chips, the theme switch |
 | `--pw-border-input` | `#8C897E` | `#6E6E6C` | The edge of text fields, textareas and selects |
-| `--pw-accent` | `#0044CC` | `#0044CC` | Primary button fill, checkbox fill |
+| `--pw-accent` | `#0044CC` | `#0044CC` | Primary button fill. Not a checkbox's fill: dark `--pw-accent` is 2.26:1 on `--pw-surface`, under the 3:1 a state indicator needs |
 | `--pw-accent-hover` | `#0036A3` | `#3369D6` | Primary button hover; the primary button's ring |
 | `--pw-on-accent` | `#FFFFFF` | `#FFFFFF` | Text on the accent |
 | `--pw-link` | `#0044CC` | `#668FE0` | Links and link buttons |
@@ -162,6 +162,7 @@ WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test
 | `--pw-on-danger-solid` on `--pw-danger-solid` | 5.50 | 7.05 | 4.5:1 |
 | `--pw-on-accent` on `--pw-accent` and `--pw-accent-hover` | 7.78 (accent) | 5.08 (accent hover) | 4.5:1 |
 | `--pw-text` on `--pw-highlight` | 15.45 | 6.95 | 4.5:1 |
+| `--pw-info-tint-fg` on `--pw-selected` (a pressed filter chip's label) | 6.56 | 7.89 | 4.5:1 |
 | `--pw-text-inverse` on `--pw-text` (the app strip) | 18.44 | 16.92 | 4.5:1 |
 | `--pw-code-boolean` on surface and muted | 9.78 (muted) | 5.28 (muted) | 4.5:1 |
 | `--pw-code-string` on surface and muted | 6.82 (muted) | 6.75 (muted) | 4.5:1 |
@@ -173,7 +174,7 @@ WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test
 | `--pw-border-control` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-border-input` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-focus` on surface, bg, muted, sunken, both hovers and selected | 4.26 (hover-bg) | 4.68 (hover) | 3:1 |
-| `--pw-selected-border` on surface and selected | 6.56 (selected) | 5.14 (selected) | 3:1 |
+| `--pw-selected-border` on neutral surfaces (the selected ring, and a checked checkbox's fill) | 6.53 (hover-bg) | 4.68 (hover) | 3:1 |
 | `--pw-warning-indicator` on surface, bg and warning tint | 3.73 (warning tint) | 6.04 (warning tint) | 3:1 |
 
 - **The one exemption:** `--pw-text-disabled` is 2.62:1 (light) and 2.25:1 (dark) on `--pw-surface`. WCAG 1.4.3 exempts text in inactive controls. Use it only on controls that are `aria-disabled`, never for content.
@@ -222,9 +223,9 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-icon-sm: 16px;
   --pw-icon-lg: 24px;
   --pw-header-h: 52px;
-  --pw-toolbar-h: 44px;
   --pw-strip-h: 32px;
 
+  --pw-sidebar-w: 240px;
   --pw-list-min-w: 360px;
   --pw-panel-w: 760px;
   --pw-panel-min-w: 560px;
@@ -513,6 +514,13 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | **sidebar** | `(min-width: 900px)` | The repo list sits beside the session list. Below it, the repo list is a drawer opened from the header |
 | **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark; the session list's header wraps; the overlay session view is full width, with Back; toasts are full width |
 | **short** | `(max-height: 760px)` | The session view's footer padding tightens and the latest reply shows two lines, not three |
+| **low** | `(max-height: 480px)` | The page scrolls as a whole, header and all, so the lists keep their room on a phone held sideways or at 200 % zoom on a laptop. The session view's column sticks to the top of the window, one window tall |
+
+- **The shell follows the app's width, not the window's:**
+  - `web/src/layout.ts` measures `.app` and sets `data-layout` on it to `three-columns`, `sidebar` or `drawer`, from the three columns and sidebar rows above. The CSS reads `data-layout`, so the columns and the components that change with them (the session view's semantics, the drawer) can't disagree.
+  - The compact rule is a container query: `.app` is `container: pitwall / inline-size`, and the header uses `@container pitwall (max-width: 600px)`.
+  - The app spans the window, so this is the window's width. In the `#uikit` gallery, a frame of a set width gets that width's layout, so each layout can be shown at any window width. The gallery's stages are `pitwall` containers too.
+  - The other rows here are still media queries: they belong to components that only ever fill the window.
 
 - **Fixed widths:**
   - Repo list: `--pw-sidebar-w` (240 px).
@@ -564,6 +572,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `expand` | chevron_right | Group, finished-list and tool-call toggles, rotated 90° when open |
 | `select` | keyboard_arrow_down (formerly expand_more) | The chevron in selects |
 | `more` | more_horiz | The session view's actions menu |
+| `menu` | menu | The header's Repos button, which opens the repo list drawer below 900 px |
 | `search` | search | The filter field |
 | `clear` | cancel | Clearing the filter |
 | `add` | add | New session |
@@ -664,7 +673,8 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ### Repo list
 
 - **Fill and size:** `--pw-bg`, `--pw-sidebar-w` (240 px) wide, a right `1px solid var(--pw-border)`, padding 8 px. It scrolls on its own.
-- **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of [repo list items](#repo-list-items).
+- **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of the two views, an `<hr>` divider, then a `<ul>` of [repo list items](#repo-list-items) for each root's groups.
+  - With more than one root, each root's `<ul>` is labelled by its path (`aria-labelledby`). The path is a label, not a heading element, so the outline stays as [6.1](#61-rules) has it.
 - **Contents, top to bottom:**
   1. Two views: "Needs you", every session that needs you under any root, and "All sessions".
   2. A 1 px `--pw-border` divider, 8 px above and below.
@@ -675,11 +685,12 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - A group whose sessions have all finished keeps its place, with its label muted. New groups appear in their place, and removed ones leave it.
 - **The root's own directory** is a group like any other, labelled with its path (`~/git`) rather than its last segment, so it doesn't read as a repo called "git".
 - **Below the sidebar breakpoint (900 px): a drawer.**
-  - It slides in from the left with the same content, opened from the header's `menu` button.
+  - It slides in from the left with the same content, `--pw-sidebar-w` wide (or the window, if that's narrower), opened from the header's `menu` button.
   - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
   - Choosing an item closes it. Escape, or a click on the backdrop, closes it and returns focus to the menu button.
-- **The selection is in the URL:** `?view=needs-you`, `?view=all`, or `?repo=<group>`.
-  - `<group>` is stable across reloads and readable: the group's key, with its root when pitwall watches more than one. Never the token.
+- **The selection is in the URL:** `?view=needs-you`, `?view=all`, or `?repo=<key>`.
+  - The group's key, plus `&root=<root>` when pitwall watches more than one root, since a worktree's group can share its main repo's key under another root. Stable across reloads, and readable: `/`, `~`, `:`, `@` and `,` aren't escaped. Never the token.
+  - Other parameters, such as `?session=`, are kept as the selection changes.
   - Choosing pushes a history entry; `popstate` makes the columns match the URL.
   - A URL with no selection uses the last one, saved in `localStorage` as `pitwall.view.v1`, or All sessions the first time, and replaces the URL to match.
   - Loading `?session=` with no selection selects that session's group.
@@ -688,13 +699,13 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ### Session list
 
 - **Fill:** `--pw-surface`. Its header stays put; its rows scroll.
-- **Page alerts** come first, above the header, full column width (see [App strip and page alerts](#app-strip-and-page-alerts)).
+- **Page alerts** come first, above the header, full column width, with 12 px 16 px 0 around them and 12 px between them (see [App strip and page alerts](#app-strip-and-page-alerts)).
 - **Header** (padding 12 px 16 px, a bottom `--pw-border`):
   - **Line 1:**
     - The selection's name, as the column's `<h2>` (l 16/24, 600).
       - A group shows its kind icon and label, plus "in *root*" (meta, `--pw-text-subtle`) when pitwall watches more than one root.
       - The views show "Needs you" or "All sessions".
-    - At the right, the summary: "4 sessions", then a solid warning "2 need you" badge, or meta text "Nothing needs you".
+    - At the right, the summary: "4 sessions", or "2 of 4 sessions" while the filter hides some, then a solid warning "2 need you" badge, or " · Nothing needs you" in meta text. The counts are the selection's; Needs you never counts a finished session.
   - **Line 2,** 8 px below, wrapping:
     - the [filter field](#search), at least 200 px wide and growing;
     - then the [filter chips](#filter-chips) and "Clear filters";
@@ -750,7 +761,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 |---|---|---|---|---|---|
 | **Primary** | `--pw-accent` | `--pw-shadow-accent` | `--pw-on-accent` | fill `--pw-accent-hover` | The one main action in a region: New session, Start session, Send |
 | **Outline** | `--pw-surface` | `--pw-shadow-control` | `--pw-text`, icon `--pw-text-muted` | fill `--pw-surface-hover` | Secondary actions: Cancel, Try again, Clear filters |
-| **Ghost** | none | none | `--pw-text-muted`, icon `--pw-text-muted` | fill `--pw-surface-hover`, text `--pw-text`, edge `--pw-shadow-control` | Toolbar and header actions, icon buttons, Dismiss |
+| **Ghost** | none | none | `--pw-text-muted`, icon `--pw-text-muted` | fill `--pw-surface-hover` (`--pw-surface-hover-bg` when it sits on `--pw-bg`, 2.3), text `--pw-text`, edge `--pw-shadow-control` | Toolbar and header actions, icon buttons, Dismiss |
 | **Danger** | `--pw-danger-solid` | none | `--pw-on-danger-solid` | 8 % darker (`filter: brightness(0.92)`) | Confirming a destructive action: Stop session, Remove session |
 
 | Size | Height | Padding | Text |
@@ -798,27 +809,31 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
   - In dialogs: resizable vertically, at least 6 rows.
   - In the message box: auto-grows from one line to eight, then scrolls; no resize handle.
 - **Select:** native `<select>` in the same box, with a 16 px `select` icon at the right in `--pw-text-muted` (`appearance: none`).
+- **Checkbox:** the native `<input type="checkbox">`, 16 px, with `accent-color: var(--pw-selected-border)`, a label after it 6 px away, and the label clickable.
+  - The fill is at least 3:1 on every neutral surface in both themes (2.5).
+  - The browser draws the check and the unchecked edge in its own colours. Measured in Chrome: a white check on the light fill and a `#3B3B3B` check on the dark one (3.50:1), and an unchecked edge of `#767676` on white (4.54:1) and `#858585` on `--pw-surface` dark (4.77:1).
 
 ### Search
 
-- **The filter field:** height 28 px. A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px.
-- **Right side:** a `/` key cap while it's empty and unfocused; a ghost sm `clear` icon button ("Clear filter") once there's text.
+- **The filter field:** height 28 px, at least 200 px wide and growing to fill its line (see [Session list](#session-list)). A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px, and padding-right 32 px once there's text. A placeholder too long for the field ends in an ellipsis.
+- **Right side:** a `/` key cap while it's empty and unfocused; a ghost sm `clear` icon button ("Clear filter"), 2 px from the right edge, once there's text. Clearing with it keeps focus in the field. The browser's own clear button is hidden.
 - **Behaviour:**
   - Filters as you type (pitwall filters in memory); no Enter needed.
-  - Escape in the field clears it if it has text, otherwise leaves the field.
-  - Matches are highlighted in names, titles and paths with `--pw-highlight`.
+  - Escape in the field clears it if it has text, otherwise leaves the field. Escape that clears stops there (it calls `preventDefault()`); Escape that leaves the field goes on to close the session view, as in the [keyboard map](#62-keyboard-map).
+  - Matches are highlighted in session names, titles and paths: each match is a `<mark>` with `--pw-highlight` fill and `--pw-text` text, whatever the colour of the text around it, since that's the pair 2.5 checks. Matching is case-insensitive, on the trimmed text.
   - It filters the session list's selection: one group, Needs you or All sessions. The repo list's counts don't change.
 - **Accessibility:** inside `role="search"`; a visually hidden label "Filter sessions"; placeholder "Filter by session, title, repo or directory".
 
 ### Filter chips
 
 - **Size:** 24 px tall, padding 0 8 px, label style (xs 12/20, 500), `--pw-radius-sm`, an optional count after the label in tabular numbers.
-- **Off:** `--pw-surface`, `--pw-shadow-control`, text `--pw-text-muted`.
-- **On:** `--pw-selected`, `--pw-ring-selected` in place of the control edge, text `--pw-info-tint-fg`, and a 16 px `copied` (check) icon before the label.
-- **Semantics:** `<button aria-pressed>`, in a group with `aria-label="Filters"`, 8 px apart.
+- **Off:** `--pw-surface`, `--pw-shadow-control`, text `--pw-text-muted`. Hover: `--pw-surface-hover`, text `--pw-text`.
+- **On:** `--pw-selected`, `--pw-ring-selected` in place of the control edge, text `--pw-info-tint-fg`, and a 16 px `copied` (check) icon before the label, 4 px from it.
+- **Focus:** `--pw-ring-focus` added to the chip's edge or ring.
+- **Semantics:** `<button aria-pressed>`, in a group with `aria-label="Filters"`, 8 px apart. The check icon is `aria-hidden`, so a chip's name is its label.
 - **The chips:** "Interactive" and "Background", which combine as OR, so either one alone narrows the list and both together show every session.
   - "Needs you" is a view in the [repo list](#repo-list), replacing today's "Needs attention only" checkbox, and finished sessions have their own [section](#finished-section), so neither is a chip.
-  - A ghost sm "Clear filters" button appears after the chips when any chip is on or the field has text.
+  - A ghost sm "Clear filters" button appears after the chips, inside their group so it wraps with them, when any chip is on or the field has text. It clears the text and the chips, and puts focus in the field, since the button itself goes away.
 
 ### Badges
 
@@ -904,14 +919,16 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Item:** a link, `<a href="?repo=…">` (or `?view=…`), in the repo list's `<ul>`, with `aria-current="page"` when it's the selection. The page handles the click, with no reload.
   - At least 32 px tall, padding 6 px 8 px, `--pw-radius-md`, 8 px gaps. It grows with zoom and text spacing.
   - Left to right:
-    1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`, with a visually hidden "git repo" or "directory"). The two views have no icon.
-    2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip.
-    3. At the right, one count:
+    1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`). The two views have no icon.
+    2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip. Then a visually hidden ", git repo" or ", directory", after the label so the link's name starts with what it shows.
+    3. At the right, one count, each with a visually hidden noun so it reads as "2 need you" or "4 sessions":
        - a solid warning badge with how many need you, when any do;
        - otherwise, how many sessions there are (meta, `--pw-text-subtle`, tabular).
        - Needs you shows its badge, or nothing when nothing needs you.
+       - All sessions always shows how many sessions there are, as in the layout above: the badge would only repeat Needs you's, just above it.
+       - Before the first snapshot, the two views show no count.
 - **States:**
-  - Hover: `--pw-surface-hover`.
+  - Hover: `--pw-surface-hover-bg` in the sidebar, which is on `--pw-bg`, and `--pw-surface-hover` in the drawer, which is a surface (2.3).
   - Selected: `--pw-selected` with `--pw-ring-selected`, and the label at 500 in `--pw-text`.
   - A group whose sessions have all finished: the label in `--pw-text-muted`.
 - **Keyboard:** the list is one Tab stop (roving `tabindex`). ↓ and ↑ move between items, Home and End jump to the ends, and Enter selects.
@@ -1137,7 +1154,7 @@ For a destructive or surprising action in the session view, without a dialog.
 | Where | Title | Sentence | Action |
 |---|---|---|---|
 | No sessions under the roots | "No Claude Code sessions under *roots*" | "Start one here, or start Claude Code in any terminal under these directories and it appears here." | primary "New session" |
-| The filter matches nothing | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." | outline "Clear filters"; in a group with text in the field, outline "Search all sessions", which selects All sessions and keeps the text |
+| The filter matches nothing | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." Without a chip on, it ends at "*text*"; with no text, "Nothing in *selection* matches these filters." | outline "Clear filters"; in a group with text in the field, outline "Search all sessions", which selects All sessions and keeps the text |
 | A selected group has left the snapshot | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." | outline "Show all sessions" |
 | Needs you, and nothing does | "Nothing needs you right now" | "Sessions that are waiting for you, or asked you something, show here." | outline "Show all sessions" |
 | The session view column, nothing open | "Select a session" | "Its conversation, terminal and actions open here." | none |
@@ -1219,6 +1236,8 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 - **Progress:** the -ing form with an ellipsis: "Starting…", "Sending…", "Stopping…", "Removing…", "Attaching…", "Loading the conversation…", "Loading earlier…".
 - **Counts:** digits with the noun, singular and plural handled: "1 session", "12 sessions", "1 needs you", "2 need you", "3 tool calls", "2 of 5 sessions".
 - **Paths:** home shortened to `~`, middle ellipsis on screen, the full path in a tooltip.
+  - **Middle ellipsis:** the end of the path, from its last `/`, shows whole, and the text before it ends in "…" when there isn't room. A path with no `/` after its first character is cut at its end. Both parts stay in the DOM, so screen readers, find in page and copying get the whole path.
+    - The start gives way first, down to its first four characters (or fewer, if it's shorter); only then does the end, which ends in "…" too. `MiddleEllipsis` builds it from two spans and flex-shrink factors, since CSS can only cut text at its end.
 
 ### Errors
 
