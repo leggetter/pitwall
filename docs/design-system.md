@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -514,9 +514,13 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | **sidebar** | `(min-width: 900px)` | The repo list sits beside the session list. Below it, the repo list is a drawer opened from the header |
 | **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark; the session list's header wraps; the overlay session view is full width, with Back; toasts are full width |
 | **short** | `(max-height: 760px)` | The session view's footer padding tightens and the latest reply shows two lines, not three |
-| **low** | `(max-height: 480px)` | The page scrolls as a whole, header and all, so the list keeps its room on a phone held sideways or at 200 % zoom on a laptop |
+| **low** | `(max-height: 480px)` | The page scrolls as a whole, header and all, so the lists keep their room on a phone held sideways or at 200 % zoom on a laptop. The session view's column sticks to the top of the window, one window tall |
 
-- **The shell's width rules are container queries,** not media queries: `.app` is `container: pitwall / inline-size`, and the header's rules use `@container pitwall (max-width: 600px)` and `(min-width: 1100px)`. The app spans the window, so they match the window's width, and the `#uikit` gallery can show each width in a frame of that width. The `#uikit` stages are `pitwall` containers too.
+- **The shell follows the app's width, not the window's:**
+  - `web/src/layout.ts` measures `.app` and sets `data-layout` on it to `three-columns`, `sidebar` or `drawer`, from the three columns and sidebar rows above. The CSS reads `data-layout`, so the columns and the components that change with them (the session view's semantics, the drawer) can't disagree.
+  - The compact rule is a container query: `.app` is `container: pitwall / inline-size`, and the header uses `@container pitwall (max-width: 600px)`.
+  - The app spans the window, so this is the window's width. In the `#uikit` gallery, a frame of a set width gets that width's layout, so each layout can be shown at any window width. The gallery's stages are `pitwall` containers too.
+  - The other rows here are still media queries: they belong to components that only ever fill the window.
 
 - **Fixed widths:**
   - Repo list: `--pw-sidebar-w` (240 px).
@@ -669,7 +673,8 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ### Repo list
 
 - **Fill and size:** `--pw-bg`, `--pw-sidebar-w` (240 px) wide, a right `1px solid var(--pw-border)`, padding 8 px. It scrolls on its own.
-- **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of [repo list items](#repo-list-items).
+- **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of the two views, an `<hr>` divider, then a `<ul>` of [repo list items](#repo-list-items) for each root's groups.
+  - With more than one root, each root's `<ul>` is labelled by its path (`aria-labelledby`). The path is a label, not a heading element, so the outline stays as [6.1](#61-rules) has it.
 - **Contents, top to bottom:**
   1. Two views: "Needs you", every session that needs you under any root, and "All sessions".
   2. A 1 px `--pw-border` divider, 8 px above and below.
@@ -680,11 +685,12 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - A group whose sessions have all finished keeps its place, with its label muted. New groups appear in their place, and removed ones leave it.
 - **The root's own directory** is a group like any other, labelled with its path (`~/git`) rather than its last segment, so it doesn't read as a repo called "git".
 - **Below the sidebar breakpoint (900 px): a drawer.**
-  - It slides in from the left with the same content, opened from the header's `menu` button.
+  - It slides in from the left with the same content, `--pw-sidebar-w` wide (or the window, if that's narrower), opened from the header's `menu` button.
   - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
   - Choosing an item closes it. Escape, or a click on the backdrop, closes it and returns focus to the menu button.
-- **The selection is in the URL:** `?view=needs-you`, `?view=all`, or `?repo=<group>`.
-  - `<group>` is stable across reloads and readable: the group's key, with its root when pitwall watches more than one. Never the token.
+- **The selection is in the URL:** `?view=needs-you`, `?view=all`, or `?repo=<key>`.
+  - The group's key, plus `&root=<root>` when pitwall watches more than one root, since a worktree's group can share its main repo's key under another root. Stable across reloads, and readable: `/`, `~`, `:`, `@` and `,` aren't escaped. Never the token.
+  - Other parameters, such as `?session=`, are kept as the selection changes.
   - Choosing pushes a history entry; `popstate` makes the columns match the URL.
   - A URL with no selection uses the last one, saved in `localStorage` as `pitwall.view.v1`, or All sessions the first time, and replaces the URL to match.
   - Loading `?session=` with no selection selects that session's group.
@@ -693,13 +699,13 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ### Session list
 
 - **Fill:** `--pw-surface`. Its header stays put; its rows scroll.
-- **Page alerts** come first, above the header, full column width (see [App strip and page alerts](#app-strip-and-page-alerts)).
+- **Page alerts** come first, above the header, full column width, with 12 px 16 px 0 around them and 12 px between them (see [App strip and page alerts](#app-strip-and-page-alerts)).
 - **Header** (padding 12 px 16 px, a bottom `--pw-border`):
   - **Line 1:**
     - The selection's name, as the column's `<h2>` (l 16/24, 600).
       - A group shows its kind icon and label, plus "in *root*" (meta, `--pw-text-subtle`) when pitwall watches more than one root.
       - The views show "Needs you" or "All sessions".
-    - At the right, the summary: "4 sessions", then a solid warning "2 need you" badge, or meta text "Nothing needs you".
+    - At the right, the summary: "4 sessions", or "2 of 4 sessions" while the filter hides some, then a solid warning "2 need you" badge, or " · Nothing needs you" in meta text. The counts are the selection's; Needs you never counts a finished session.
   - **Line 2,** 8 px below, wrapping:
     - the [filter field](#search), at least 200 px wide and growing;
     - then the [filter chips](#filter-chips) and "Clear filters";
@@ -809,7 +815,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 
 ### Search
 
-- **The filter field:** height 28 px, between 240 and 420 px wide. A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px, and padding-right 32 px once there's text. A placeholder too long for the field ends in an ellipsis.
+- **The filter field:** height 28 px, at least 200 px wide and growing to fill its line (see [Session list](#session-list)). A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px, and padding-right 32 px once there's text. A placeholder too long for the field ends in an ellipsis.
 - **Right side:** a `/` key cap while it's empty and unfocused; a ghost sm `clear` icon button ("Clear filter"), 2 px from the right edge, once there's text. Clearing with it keeps focus in the field. The browser's own clear button is hidden.
 - **Behaviour:**
   - Filters as you type (pitwall filters in memory); no Enter needed.
@@ -913,14 +919,16 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Item:** a link, `<a href="?repo=…">` (or `?view=…`), in the repo list's `<ul>`, with `aria-current="page"` when it's the selection. The page handles the click, with no reload.
   - At least 32 px tall, padding 6 px 8 px, `--pw-radius-md`, 8 px gaps. It grows with zoom and text spacing.
   - Left to right:
-    1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`, with a visually hidden "git repo" or "directory"). The two views have no icon.
-    2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip.
-    3. At the right, one count:
+    1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`). The two views have no icon.
+    2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip. Then a visually hidden ", git repo" or ", directory", after the label so the link's name starts with what it shows.
+    3. At the right, one count, each with a visually hidden noun so it reads as "2 need you" or "4 sessions":
        - a solid warning badge with how many need you, when any do;
        - otherwise, how many sessions there are (meta, `--pw-text-subtle`, tabular).
        - Needs you shows its badge, or nothing when nothing needs you.
+       - All sessions always shows how many sessions there are, as in the layout above: the badge would only repeat Needs you's, just above it.
+       - Before the first snapshot, the two views show no count.
 - **States:**
-  - Hover: `--pw-surface-hover`.
+  - Hover: `--pw-surface-hover-bg` in the sidebar, which is on `--pw-bg`, and `--pw-surface-hover` in the drawer, which is a surface (2.3).
   - Selected: `--pw-selected` with `--pw-ring-selected`, and the label at 500 in `--pw-text`.
   - A group whose sessions have all finished: the label in `--pw-text-muted`.
 - **Keyboard:** the list is one Tab stop (roving `tabindex`). ↓ and ↑ move between items, Home and End jump to the ends, and Enter selects.
@@ -1146,7 +1154,7 @@ For a destructive or surprising action in the session view, without a dialog.
 | Where | Title | Sentence | Action |
 |---|---|---|---|
 | No sessions under the roots | "No Claude Code sessions under *roots*" | "Start one here, or start Claude Code in any terminal under these directories and it appears here." | primary "New session" |
-| The filter matches nothing | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." | outline "Clear filters"; in a group with text in the field, outline "Search all sessions", which selects All sessions and keeps the text |
+| The filter matches nothing | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." Without a chip on, it ends at "*text*"; with no text, "Nothing in *selection* matches these filters." | outline "Clear filters"; in a group with text in the field, outline "Search all sessions", which selects All sessions and keeps the text |
 | A selected group has left the snapshot | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." | outline "Show all sessions" |
 | Needs you, and nothing does | "Nothing needs you right now" | "Sessions that are waiting for you, or asked you something, show here." | outline "Show all sessions" |
 | The session view column, nothing open | "Select a session" | "Its conversation, terminal and actions open here." | none |
@@ -1228,7 +1236,8 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 - **Progress:** the -ing form with an ellipsis: "Starting…", "Sending…", "Stopping…", "Removing…", "Attaching…", "Loading the conversation…", "Loading earlier…".
 - **Counts:** digits with the noun, singular and plural handled: "1 session", "12 sessions", "1 needs you", "2 need you", "3 tool calls", "2 of 5 sessions".
 - **Paths:** home shortened to `~`, middle ellipsis on screen, the full path in a tooltip.
-  - **Middle ellipsis:** the end of the path, from its last `/`, always shows, and the text before it ends in "…" when there isn't room. A path with no `/` after its first character is cut at its end. Both parts stay in the DOM, so screen readers, find in page and copying get the whole path.
+  - **Middle ellipsis:** the end of the path, from its last `/`, shows whole, and the text before it ends in "…" when there isn't room. A path with no `/` after its first character is cut at its end. Both parts stay in the DOM, so screen readers, find in page and copying get the whole path.
+    - The start gives way first, down to its first four characters (or fewer, if it's shorter); only then does the end, which ends in "…" too. `MiddleEllipsis` builds it from two spans and flex-shrink factors, since CSS can only cut text at its end.
 
 ### Errors
 
