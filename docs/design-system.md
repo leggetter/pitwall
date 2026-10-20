@@ -575,7 +575,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `restart` | restart_alt | Restart and attach |
 | `retry` | refresh | Try again, attach again |
 | `info` / `success` / `warning` / `error` | info / check_circle / warning / error | Alerts and toasts |
-| `repo` / `directory` | account_tree / folder | Group kind |
+| `repo` / `directory` | graph_1 / folder | Group kind. graph_1 is a branch, which reads as git at 16 px; account_tree read as a hierarchy |
 | `external` | open_in_new | Links that leave pitwall |
 | `latest` | arrow_downward | Jump to latest |
 | `back` | arrow_back | Back to the list on narrow windows |

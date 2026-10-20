@@ -59,7 +59,8 @@ const ICONS: Readonly<Record<string, string>> = {
   success: 'check_circle',
   warning: 'warning',
   error: 'error',
-  repo: 'account_tree',
+  // A branch: it reads as git at 16 px, as today's inline icon does. account_tree reads as a hierarchy.
+  repo: 'graph_1',
   directory: 'folder',
   external: 'open_in_new',
   latest: 'arrow_downward',
