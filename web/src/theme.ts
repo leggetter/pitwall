@@ -84,8 +84,12 @@ export function createThemeStore({ storage = browserStorage, darkQuery = default
 
   const show = (next: ThemeState) => {
     state = next;
-    if (next.resolved) root().setAttribute('data-theme', next.resolved);
-    else root().removeAttribute('data-theme');
+    const element = root();
+    // Only when it changes: theme-init.js has usually set it already.
+    if (element.getAttribute('data-theme') !== (next.resolved ?? null)) {
+      if (next.resolved) element.setAttribute('data-theme', next.resolved);
+      else element.removeAttribute('data-theme');
+    }
     for (const listener of listeners) listener();
   };
 
@@ -111,15 +115,19 @@ export function createThemeStore({ storage = browserStorage, darkQuery = default
   };
 }
 
-/** The page's store, made the first time something asks for it. Tests can provide their own. */
+/** The page's store. main.tsx starts it, so System follows the system on every page, switch or not. */
 let pageStore: ThemeStore | undefined;
+
+export function pageThemeStore(): ThemeStore {
+  pageStore ??= createThemeStore();
+  return pageStore;
+}
+
+/** Tests can provide a store of their own. */
 export const ThemeStoreContext = createContext<ThemeStore | undefined>(undefined);
 
 export function useThemeStore(): ThemeStore {
-  const provided = useContext(ThemeStoreContext);
-  if (provided) return provided;
-  pageStore ??= createThemeStore();
-  return pageStore;
+  return useContext(ThemeStoreContext) ?? pageThemeStore();
 }
 
 /** The current choice and what it shows, and a way to change it. */

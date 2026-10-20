@@ -179,6 +179,19 @@ describe('the theme store', () => {
     expect(root.getAttribute('data-theme')).toBe('dark');
   });
 
+  it("doesn't rewrite data-theme when it's already right, as after theme-init.js", () => {
+    const root = document.createElement('html');
+    root.setAttribute('data-theme', 'dark');
+    const writes: string[] = [];
+    new MutationObserver((records) => writes.push(...records.map((record) => String(record.attributeName)))).observe(root, { attributes: true });
+    const storage = fakeStorage('dark');
+    createThemeStore({ storage: () => storage, darkQuery: () => fakeQuery(false), root: () => root });
+    return Promise.resolve().then(() => {
+      expect(writes).toEqual([]);
+      expect(root.getAttribute('data-theme')).toBe('dark');
+    });
+  });
+
   it('stops telling a subscriber that unsubscribed', () => {
     const { store } = storeFor(lightSystem);
     let told = 0;
