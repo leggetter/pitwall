@@ -1,7 +1,8 @@
 // @vitest-environment node
 // The gallery is in dev builds only (W19): `npm run build` leaves out its code, its fixtures and its
-// stylesheet, and `npm run dev`'s development mode keeps them. Both builds run in memory with the
-// real vite.config.ts.
+// stylesheet, and `npm run dev`'s development mode keeps them. Both builds also load the theme's
+// pre-paint script first (W20). Both builds run in memory with the real vite.config.ts.
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { build, type Rolldown } from 'vite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -54,4 +55,22 @@ describe('the gallery in the web build', () => {
     const entry = [...files].find(([name]) => /^assets\/index-.*\.js$/.test(name))?.[1] ?? '';
     expect(entry).not.toContain('pitwall-test-');
   }, 60_000);
+});
+
+describe('index.html in the web build', () => {
+  it.each(['production', 'development'] as const)(
+    'loads theme-init.js in %s as a plain blocking script in <head>, before the stylesheet',
+    async (mode) => {
+      const html = (await webBuild(mode)).get('index.html') ?? '';
+      const head = html.slice(0, html.indexOf('</head>'));
+      const script = head.indexOf('<script src="/theme-init.js"></script>');
+      expect(script).toBeGreaterThan(0);
+      expect(head.indexOf('rel="stylesheet"')).toBeGreaterThan(script);
+      // Ahead of the app's module script too, though that one waits for the page to parse anyway.
+      expect(head.indexOf('type="module"')).toBeGreaterThan(script);
+      // Vite copies web/public as it is, so the file the tag names is there, unbundled.
+      expect(existsSync(fileURLToPath(new URL('../../public/theme-init.js', import.meta.url)))).toBe(true);
+    },
+    60_000,
+  );
 });

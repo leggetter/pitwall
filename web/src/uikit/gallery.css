@@ -27,13 +27,6 @@
   line-height: var(--pw-leading-l);
 }
 
-.uikit-themes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.uikit-themes button,
 .uikit-reopen button {
   padding: 2px 10px;
   border: 1px solid var(--pw-border-control);
@@ -41,12 +34,6 @@
   background: var(--pw-surface);
   font-size: var(--pw-text-s);
   cursor: pointer;
-}
-
-.uikit-themes button[aria-pressed='true'] {
-  background: var(--pw-text);
-  border-color: var(--pw-text);
-  color: var(--pw-bg);
 }
 
 .uikit-bar a,

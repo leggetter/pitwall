@@ -7,11 +7,6 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 /** Collects the scenarios still running, so the gallery knows when every specimen has settled. */
 export const SettleContext = createContext<((work: Promise<unknown>) => void) | undefined>(undefined);
 
-export type ThemeChoice = 'light' | 'dark' | 'none';
-
-/** The gallery's theme: what the toolbar chose, and what that resolves to now. */
-export const ThemeContext = createContext<{ choice: ThemeChoice; resolved: 'light' | 'dark' }>({ choice: 'none', resolved: 'light' });
-
 export interface SpecimenProps {
   title: string;
   note?: ReactNode;

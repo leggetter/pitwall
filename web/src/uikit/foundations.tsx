@@ -1,11 +1,14 @@
 // The foundations (W19): the --pw-* tokens as the page has them, the bundled fonts at the type
-// scale's sizes, and every icon.
+// scale's sizes, every icon, and the theme switch (W20).
 
-import { useContext, useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Icon } from '../components/Icon.js';
 import { ChevronIcon, FolderIcon, GitIcon } from '../components/icons.js';
+import { ThemeSwitch } from '../components/ThemeSwitch.js';
 import { ICON_PATHS, type IconName } from '../icons/paths.js';
-import { Specimen, ThemeContext } from './kit.js';
+import type { StorageSource } from '../groupState.js';
+import { createThemeStore, THEME_KEY, ThemeStoreContext, useTheme, type ThemeChoice, type ThemeStore } from '../theme.js';
+import { Specimen } from './kit.js';
 
 interface Token {
   name: string;
@@ -54,7 +57,7 @@ function inDocNotation(value: string, probe: HTMLElement): string {
 
 /** The tokens' values for the theme now on screen, read again whenever the theme changes. */
 function useTokens(): { colours: Token[]; others: Token[] } {
-  const { resolved } = useContext(ThemeContext);
+  const { resolved } = useTheme();
   const [tokens, setTokens] = useState<{ colours: Token[]; others: Token[] }>({ colours: [], others: [] });
   useEffect(() => {
     const style = getComputedStyle(document.documentElement);
@@ -69,7 +72,7 @@ function useTokens(): { colours: Token[]; others: Token[] } {
 
 export function Tokens() {
   const { colours, others } = useTokens();
-  const { resolved } = useContext(ThemeContext);
+  const { resolved } = useTheme();
   return (
     <>
       <Specimen
@@ -303,6 +306,45 @@ export function Icons() {
           </p>
         </div>
       </Specimen>
+    </>
+  );
+}
+
+/** A theme store of its own, holding `choice`, that changes nothing on the page: for a specimen of one state. */
+function specimenStore(choice: ThemeChoice): ThemeStore {
+  const stored = new Map<string, string>([[THEME_KEY, choice]]);
+  const storage: StorageSource = () => ({ getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => void stored.set(key, value) });
+  return createThemeStore({ storage, darkQuery: () => undefined, root: () => document.createElement('div') });
+}
+
+const PRESSED: { choice: ThemeChoice; title: string }[] = [
+  { choice: 'system', title: 'System pressed' },
+  { choice: 'light', title: 'Light pressed' },
+  { choice: 'dark', title: 'Dark pressed' },
+];
+
+export function ThemeSwitches() {
+  const { choice, resolved } = useTheme();
+  const [stores] = useState(() => PRESSED.map(({ choice: pressed }) => specimenStore(pressed)));
+  return (
+    <>
+      <Specimen
+        title="The page's switch"
+        note={`The same store as the bar above and the app's header: it's showing ${choice}, which resolves to ${resolved ?? 'whatever the system says'}. The choice is stored as ${THEME_KEY}.`}
+      >
+        <ThemeSwitch />
+      </Specimen>
+      <div className="uikit-grid">
+        {PRESSED.map(({ title }, index) => (
+          <Specimen key={title} title={title} note="A store of its own, so pressing these doesn't change the page.">
+            <div data-own-store="">
+              <ThemeStoreContext.Provider value={stores[index]}>
+                <ThemeSwitch />
+              </ThemeStoreContext.Provider>
+            </div>
+          </Specimen>
+        ))}
+      </div>
     </>
   );
 }

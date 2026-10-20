@@ -10,6 +10,8 @@ afterEach(() => {
   cleanup();
   window.sessionStorage.clear();
   window.localStorage.clear();
+  // The theme store sets data-theme; each test starts without it.
+  document.documentElement.removeAttribute('data-theme');
   window.history.replaceState(null, '', '/');
   document.title = '';
 });
