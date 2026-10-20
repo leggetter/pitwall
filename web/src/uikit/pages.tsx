@@ -2,7 +2,8 @@
 // Notice, with fixture connection views instead of a live connection.
 
 import type { ConnectionState, ConnectionView } from '../connection.js';
-import { ConnectionBadge, Dashboard } from '../components/Dashboard.js';
+import { ConnectionBadge } from '../components/ConnectionBadge.js';
+import { Dashboard } from '../components/Dashboard.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
@@ -11,6 +12,8 @@ import {
   CALM_SNAPSHOT,
   DIALOG_SNAPSHOT,
   EMPTY_SNAPSHOT,
+  FINISHED_ROWS,
+  HIGHLIGHT_SNAPSHOT,
   JOBS_DIR,
   LIST_SNAPSHOT,
   NOTES_GROUP,
@@ -131,13 +134,15 @@ export function Dialogs() {
 interface PageCase {
   title: string;
   note?: string;
+  /** A page with no list, shown in a shorter window. */
+  short?: boolean;
   view: ConnectionView;
   run?: (root: HTMLElement) => Promise<unknown>;
 }
 
 const PAGES: PageCase[] = [
-  { title: 'Connecting', note: 'Loading: before the first snapshot.', view: { state: 'connecting' } },
-  { title: 'Reconnecting, before the first list', view: { state: 'reconnecting' } },
+  { short: true, title: 'Connecting', note: 'Loading: before the first snapshot.', view: { state: 'connecting' } },
+  { short: true, title: 'Reconnecting, before the first list', view: { state: 'reconnecting' } },
   { title: 'Live', note: 'Groups open, the filter, and the summary. Click a row to open its session view.', view: { state: 'live', snapshot: LIST_SNAPSHOT } },
   { title: 'Two roots', view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT } },
   { title: 'Connection lost', view: { state: 'reconnecting', snapshot: LIST_SNAPSHOT } },
@@ -159,9 +164,10 @@ const PAGES: PageCase[] = [
       await text(root, 'Started pitwall-test-started');
     },
   },
-  { title: 'No sessions', view: { state: 'live', snapshot: EMPTY_SNAPSHOT } },
+  { short: true, title: 'No sessions', view: { state: 'live', snapshot: EMPTY_SNAPSHOT } },
   {
     title: 'The filter matches nothing',
+    short: true,
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
     run: async (root) => {
       type(await element<HTMLInputElement>(root, 'input[type="search"]'), 'pitwall-test-matches-nothing');
@@ -170,10 +176,40 @@ const PAGES: PageCase[] = [
   },
   {
     title: 'Nothing needs you',
+    note: 'The Needs you chip on, with nothing that does.',
+    short: true,
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
     run: async (root) => {
-      (await element<HTMLInputElement>(root, 'input[type="checkbox"]')).click();
+      await press(root, 'Needs you');
       await text(root, 'Nothing needs you right now');
+    },
+  },
+  {
+    title: 'Filtered, with the matches highlighted',
+    note: 'In names, titles, group labels and paths. A group whose label matches shows all its sessions.',
+    view: { state: 'live', snapshot: HIGHLIGHT_SNAPSHOT },
+    run: async (root) => {
+      type(await element<HTMLInputElement>(root, 'input[type="search"]'), 'export');
+      await element(root, 'mark.match');
+    },
+  },
+  {
+    title: 'Chips on',
+    note: 'Needs you and Background: the background sessions that need you.',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    run: async (root) => {
+      await press(root, 'Needs you 2');
+      await press(root, 'Background');
+      await until('one row', () => root.querySelectorAll('.session').length === 1);
+    },
+  },
+  {
+    title: 'The Finished chip on',
+    note: 'Finished sessions are listed with the rest of their group, with no Finished list to open.',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    run: async (root) => {
+      await press(root, 'Finished');
+      await until('the finished rows', () => root.querySelectorAll('.session.finished').length === FINISHED_ROWS.length);
     },
   },
   {
@@ -192,7 +228,7 @@ export function Pages() {
       {PAGE_CASES.map((page) => {
         const dashboard = <Dashboard view={page.view} storage={page.storage} />;
         return (
-          <Specimen key={page.title} title={page.title} note={page.note} frame="page">
+          <Specimen key={page.title} title={page.title} note={page.note} frame={page.short ? 'page-short' : 'page'}>
             <Stubbed>{page.run ? <Scenario run={page.run}>{dashboard}</Scenario> : dashboard}</Stubbed>
           </Specimen>
         );

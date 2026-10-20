@@ -67,10 +67,62 @@ export function groupId(group: Pick<SessionGroup, 'root' | 'key'>): string {
   return `${group.root}\0${group.key}`;
 }
 
+/**
+ * The toolbar's filter chips (docs/design-system.md, Filter chips). Two kinds: the state chips, Needs
+ * you and Finished, and the kind chips, Interactive and Background. Chips of one kind combine as OR,
+ * the two kinds as AND, and a kind with no chip on lets everything through.
+ */
+export type FilterChip = 'needsYou' | 'interactive' | 'background' | 'finished';
+
+/** The chips in the toolbar's order. */
+export const FILTER_CHIPS: readonly FilterChip[] = ['needsYou', 'interactive', 'background', 'finished'];
+
+/** Which chips are state chips and which are kind chips. */
+export const CHIP_KINDS: Readonly<Record<'state' | 'kind', readonly FilterChip[]>> = {
+  state: ['needsYou', 'finished'],
+  kind: ['interactive', 'background'],
+};
+
 export interface Filters {
   /** Matched case-insensitively against session names and titles, group labels and cwds. */
   text: string;
-  attentionOnly: boolean;
+  /** The chips that are on. */
+  chips: ReadonlySet<FilterChip>;
+}
+
+/** No text and no chips: everything shows. */
+export const NO_FILTERS: Filters = { text: '', chips: new Set() };
+
+/** Whether any chip is on or the field has text, which is when "Clear filters" shows. */
+export function filtering(filters: Filters): boolean {
+  return filters.chips.size > 0 || filters.text !== '';
+}
+
+/** The text to match, as filterGroups and the highlight use it: trimmed and lower case. */
+export function filterNeedle(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+/** Whether a session passes one chip. */
+export function matchesChip(session: SessionSummary, chip: FilterChip): boolean {
+  switch (chip) {
+    case 'needsYou':
+      return needsAttention(session);
+    case 'finished':
+      return session.finished;
+    case 'interactive':
+      return session.kind === 'interactive';
+    case 'background':
+      return session.kind === 'background';
+  }
+}
+
+/** Whether a session passes the chips that are on: one chip or more of each kind that has any on. */
+export function matchesChips(session: SessionSummary, chips: ReadonlySet<FilterChip>): boolean {
+  return Object.values(CHIP_KINDS).every((kind) => {
+    const on = kind.filter((chip) => chips.has(chip));
+    return on.length === 0 || on.some((chip) => matchesChip(session, chip));
+  });
 }
 
 export interface VisibleGroup {
@@ -81,12 +133,12 @@ export interface VisibleGroup {
 
 /** Applies the filters, keeping the given order and dropping groups with nothing left to show. */
 export function filterGroups(groups: readonly SessionGroup[], filters: Filters): VisibleGroup[] {
-  const needle = filters.text.trim().toLowerCase();
+  const needle = filterNeedle(filters.text);
   const visible: VisibleGroup[] = [];
   for (const group of groups) {
     const labelMatches = needle !== '' && group.label.toLowerCase().includes(needle);
     const sessions = group.sessions.filter((session) => {
-      if (filters.attentionOnly && !needsAttention(session)) return false;
+      if (!matchesChips(session, filters.chips)) return false;
       if (needle === '' || labelMatches) return true;
       return (
         session.name.toLowerCase().includes(needle) ||
@@ -117,4 +169,39 @@ export function countAttention(sessions: readonly SessionSummary[]): number {
 /** "1 needs you", "3 need you". */
 export function needYou(count: number): string {
   return `${count} ${count === 1 ? 'needs' : 'need'} you`;
+}
+
+/**
+ * What the list says when the filters hide every session (docs/design-system.md, 5 and Empty states).
+ * Needs you on its own, with nothing needing you, is the calm case; anything else didn't match.
+ */
+export function noMatchText(filters: Filters, attention: number): { title: string; sentence: string } {
+  const text = filters.text.trim();
+  if (text === '' && attention === 0 && filters.chips.size === 1 && filters.chips.has('needsYou')) {
+    return { title: 'Nothing needs you right now', sentence: 'Sessions that are waiting for you, or asked you something, show here.' };
+  }
+  if (text === '') return { title: 'No sessions match', sentence: 'Nothing matches these filters.' };
+  const sentence = filters.chips.size > 0 ? `Nothing matches "${text}" with these filters.` : `Nothing matches "${text}".`;
+  return { title: 'No sessions match', sentence };
+}
+
+/** "1 session", "12 sessions". */
+export function sessionCount(count: number): string {
+  return `${count} ${count === 1 ? 'session' : 'sessions'}`;
+}
+
+/**
+ * Where `needle` (from filterNeedle) occurs in `text`, case-insensitively, as [start, end) ranges
+ * that don't overlap, for the filter's highlight. None for an empty needle.
+ */
+export function matchRanges(text: string, needle: string): [number, number][] {
+  if (needle === '') return [];
+  const haystack = text.toLowerCase();
+  // Lower-casing can change a string's length (İ becomes i̇), and then the indexes wouldn't line up.
+  if (haystack.length !== text.length) return [];
+  const ranges: [number, number][] = [];
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + needle.length)) {
+    ranges.push([at, at + needle.length]);
+  }
+  return ranges;
 }

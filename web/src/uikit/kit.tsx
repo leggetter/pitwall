@@ -14,16 +14,31 @@ export interface SpecimenProps {
    * A frame holds what the app positions against the window (the session view, dialogs, whole
    * pages): it becomes their containing block, so they sit inside it. Its height is the window's.
    */
-  frame?: 'view' | 'short' | 'dialog' | 'page';
+  frame?: 'view' | 'short' | 'dialog' | 'page' | 'page-short';
+  /**
+   * A window this many px wide, for the shell's width rules, which are container queries on the
+   * app (docs/design-system.md, 2.12). A stage is as wide as the gallery; this one scrolls sideways
+   * when the gallery is narrower than the window it shows.
+   */
+  width?: number;
   children: ReactNode;
 }
 
-export function Specimen({ title, note, frame, children }: SpecimenProps) {
+export function Specimen({ title, note, frame, width, children }: SpecimenProps) {
+  const stage = frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : width === undefined ? 'uikit-stage' : 'uikit-stage uikit-widths';
   return (
     <div className="uikit-specimen">
       <h3>{title}</h3>
       {note !== undefined && <p className="uikit-note">{note}</p>}
-      <div className={frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : 'uikit-stage'}>{children}</div>
+      <div className={stage}>
+        {width === undefined ? (
+          children
+        ) : (
+          <div className="uikit-window" style={{ width }}>
+            {children}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
 import { SettleContext } from './kit.js';
 import { GroupSections, SessionRows } from './lists.js';
 import { Dialogs, Notices, Pages } from './pages.js';
+import { Headers, Summaries, Toolbars } from './shell.js';
 import { scriptedAttach, stubApi } from './stubs.js';
 import { Confirmations, MessageBoxes, SessionViews, Terminals } from './views.js';
 import './gallery.css';
@@ -30,6 +31,9 @@ const SECTIONS: Section[] = [
   { id: 'type', title: 'Type', intro: 'Inter and JetBrains Mono, bundled by fonts.css, at the sizes in 2.7.', Content: Type },
   { id: 'icons', title: 'Icons', intro: 'The Icon component, and the inline icons it will replace.', Content: Icons },
   { id: 'theme-switch', title: 'Theme switch', intro: "ThemeSwitch: System, Light and Dark. It's the real one, so pressing it changes this page's theme.", Content: ThemeSwitches },
+  { id: 'header', title: 'Header', intro: 'Header: the wordmark, the roots, New session, the connection, the update time and the theme switch, at each width.', Content: Headers },
+  { id: 'toolbar', title: 'Toolbar', intro: 'Toolbar: the filter field, the filter chips, Clear filters and the summary. Each one keeps its own filters.', Content: Toolbars },
+  { id: 'summary', title: 'Summary', intro: "The toolbar's summary, in its two states.", Content: Summaries },
   { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, inside the GroupSection it always sits in.', Content: SessionRows },
   { id: 'groups', title: 'Group sections', intro: 'GroupSection: its header, count and Finished list.', Content: GroupSections },
   { id: 'session-view', title: 'Session view', intro: 'SessionView, framed as the window it overlays.', Content: SessionViews },
@@ -37,7 +41,7 @@ const SECTIONS: Section[] = [
   { id: 'confirmations', title: 'Stop and remove', intro: 'SessionActions and its confirmations.', Content: Confirmations },
   { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab, attached to a scripted server instead of pitwall.', Content: Terminals },
   { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, empty, filled, with errors and after a failure.', Content: Dialogs },
-  { id: 'page-states', title: 'Page states', intro: 'The whole Dashboard: loading, connection, alerts and empty states.', Content: Pages },
+  { id: 'page-states', title: 'Page states', intro: 'The whole Dashboard in a window 560 px tall: loading, connection, alerts, filters and empty states. Only the list scrolls.', Content: Pages },
   { id: 'notices', title: 'Badges and notices', intro: 'The connection badge, and the notices that replace the page.', Content: Notices },
 ];
 

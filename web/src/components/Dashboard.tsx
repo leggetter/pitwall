@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
-import type { ConnectionState, ConnectionView } from '../connection.js';
-import { formatRoots, plainText, updatedAgo } from '../format.js';
+import type { ConnectionView } from '../connection.js';
+import { formatRoots, plainText } from '../format.js';
 import {
   browserStorage,
   FINISHED_STATE_KEY,
@@ -11,12 +11,14 @@ import {
   type StorageSource,
 } from '../groupState.js';
 import { relayAlertText } from '../relay.js';
-import { countAttention, filterGroups, groupId, needYou, type Filters } from '../sessions.js';
+import { countAttention, filterGroups, filterNeedle, groupId, NO_FILTERS, noMatchText, type Filters } from '../sessions.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { GroupSection } from './GroupSection.js';
+import { Header } from './Header.js';
+import { HighlightContext } from './Highlight.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
 import { SessionView } from './SessionView.js';
-import { ThemeSwitch } from './ThemeSwitch.js';
+import { Toolbar } from './Toolbar.js';
 
 /** The current time, refreshed every second, for relative times. */
 function useNow(intervalMs = 1_000): number {
@@ -28,19 +30,14 @@ function useNow(intervalMs = 1_000): number {
   return now;
 }
 
-const STATE_LABELS: Record<ConnectionState, string> = {
-  connecting: 'Connecting',
-  live: 'Live',
-  reconnecting: 'Reconnecting',
-  unauthorized: 'Token rejected',
-};
-
-export function ConnectionBadge({ state }: { state: ConnectionState }) {
+/** What the list pane says when the filters hide every session (docs/design-system.md, Empty states). */
+function NoMatch({ filters, attention }: { filters: Filters; attention: number }) {
+  const { title, sentence } = noMatchText(filters, attention);
   return (
-    <span className={`connection state-${state}`} role="status">
-      <span className="dot" aria-hidden="true" />
-      {STATE_LABELS[state]}
-    </span>
+    <div className="placeholder">
+      <p className="placeholder-title">{title}</p>
+      <p>{sentence}</p>
+    </div>
   );
 }
 
@@ -56,7 +53,7 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
   const updatedAt = view.lastPoll?.generatedAt ?? snapshot?.generatedAt;
   const source = view.lastPoll?.source ?? snapshot?.source;
   const now = useNow();
-  const [filters, setFilters] = useState<Filters>({ text: '', attentionOnly: false });
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   // Groups start collapsed; the ones opened are remembered across reloads.
   const [open, setOpen] = useState<GroupState>(() => readGroupState(storage));
   // Each group's "Finished" sub-list starts collapsed too, and is remembered the same way.
@@ -123,137 +120,86 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
 
   return (
     <div className="app">
-      <header className="masthead">
-        <div className="masthead-row">
-          <h1 className="brand">pitwall</h1>
-          {snapshot && (
-            <p className="roots" title={snapshot.roots.join(', ')}>
-              {plainText(roots)}
-            </p>
+      <Header
+        state={state}
+        roots={snapshot?.roots}
+        updatedAt={snapshot ? updatedAt : undefined}
+        now={now}
+        onNewSession={snapshot ? () => setNewSession(true) : undefined}
+      />
+
+      {snapshot && allSessions.length > 0 && (
+        <Toolbar filters={filters} onChange={setFilters} total={allSessions.length} attention={attention} />
+      )}
+
+      <div className="panes">
+        <main className="list-pane">
+          {snapshot && source && !source.ok && (
+            <div className="banner warning" role="alert">
+              <code>claude agents --json --all</code> failed on the latest poll: {plainText(source.error)}
+            </div>
           )}
-          <div className="masthead-status">
-            {snapshot && (
-              <button type="button" className="button small" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
-                New session
+          {relayAlert && alertText && (
+            <div className={relayAlert.blocked ? 'banner warning relay-alert' : 'banner error relay-alert'} role="alert">
+              <span>
+                {alertText.summary} {alertText.count} Latest: {plainText(relayAlert.detail)}
+              </span>
+              <button type="button" className="link-button" onClick={() => setDismissedAlert(relayAlertKey)}>
+                Dismiss
               </button>
-            )}
-            <ConnectionBadge state={state} />
-            {snapshot && updatedAt && (
-              <time className="updated" dateTime={updatedAt}>
-                {updatedAgo(updatedAt, now)}
-              </time>
-            )}
-            <ThemeSwitch />
-          </div>
-        </div>
+            </div>
+          )}
+          {showError && (
+            <div className="banner error" role="alert">
+              <span>{plainText(serverError)}</span>
+              <button type="button" className="link-button" onClick={() => setDismissedError(serverError)}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {started.waiting && (
+            <div className="banner muted" role="status">
+              <span>Started {plainText(started.waiting.name)}. Its view opens when it shows up in the list.</span>
+              <button type="button" className="link-button" onClick={started.dismiss}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {snapshot && state === 'reconnecting' && (
+            <div className="banner muted">Lost the connection to pitwall. Reconnecting; this list may be out of date.</div>
+          )}
 
-        {snapshot && allSessions.length > 0 && (
-          <div className="masthead-row controls">
-            <form className="filters" role="search" onSubmit={(event) => event.preventDefault()}>
-              <label className="visually-hidden" htmlFor="filter">
-                Filter sessions
-              </label>
-              <input
-                id="filter"
-                type="search"
-                className="filter-input"
-                placeholder="Filter by session, title, repo or directory"
-                autoComplete="off"
-                spellCheck={false}
-                value={filters.text}
-                onChange={(event) => setFilters((current) => ({ ...current, text: event.target.value }))}
-              />
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={filters.attentionOnly}
-                  onChange={(event) => setFilters((current) => ({ ...current, attentionOnly: event.target.checked }))}
-                />
-                Needs attention only
-              </label>
-            </form>
-            <p className="summary">
-              {allSessions.length} {allSessions.length === 1 ? 'session' : 'sessions'}
-              {attention > 0 ? (
-                <>
-                  {' · '}
-                  <strong className="summary-attention">{needYou(attention)}</strong>
-                </>
-              ) : (
-                ' · nothing needs you'
-              )}
-            </p>
-          </div>
-        )}
-      </header>
-
-      {snapshot && source && !source.ok && (
-        <div className="banner warning" role="alert">
-          <code>claude agents --json --all</code> failed on the latest poll: {plainText(source.error)}
-        </div>
-      )}
-      {relayAlert && alertText && (
-        <div className={relayAlert.blocked ? 'banner warning relay-alert' : 'banner error relay-alert'} role="alert">
-          <span>
-            {alertText.summary} {alertText.count} Latest: {plainText(relayAlert.detail)}
-          </span>
-          <button type="button" className="link-button" onClick={() => setDismissedAlert(relayAlertKey)}>
-            Dismiss
-          </button>
-        </div>
-      )}
-      {showError && (
-        <div className="banner error" role="alert">
-          <span>{plainText(serverError)}</span>
-          <button type="button" className="link-button" onClick={() => setDismissedError(serverError)}>
-            Dismiss
-          </button>
-        </div>
-      )}
-      {started.waiting && (
-        <div className="banner muted" role="status">
-          <span>Started {plainText(started.waiting.name)}. Its view opens when it shows up in the list.</span>
-          <button type="button" className="link-button" onClick={started.dismiss}>
-            Dismiss
-          </button>
-        </div>
-      )}
-      {snapshot && state === 'reconnecting' && (
-        <div className="banner muted">Lost the connection to pitwall. Reconnecting; this list may be out of date.</div>
-      )}
-
-      <main className="content">
-        {!snapshot ? (
-          <p className="placeholder">{state === 'reconnecting' ? 'Reconnecting to pitwall…' : 'Connecting to pitwall…'}</p>
-        ) : allSessions.length === 0 ? (
-          <p className="placeholder">No Claude Code sessions under {plainText(roots)}</p>
-        ) : visible.length === 0 ? (
-          <p className="placeholder">
-            {filters.attentionOnly && attention === 0 && filters.text.trim() === ''
-              ? 'Nothing needs you right now.'
-              : 'No sessions match the filter.'}
-          </p>
-        ) : (
-          visible.map(({ group, sessions }) => {
-            const id = groupId(group);
-            return (
-              <GroupSection
-                key={id}
-                group={group}
-                sessions={sessions}
-                collapsed={!(open.get(id) ?? false)}
-                onToggle={() => toggle(id)}
-                finishedCollapsed={!(finishedOpen.get(id) ?? false)}
-                onToggleFinished={() => toggleFinished(id)}
-                showRoot={snapshot.roots.length > 1}
-                now={now}
-                onOpen={openSession}
-                openSessionId={shownOpen?.sessionId}
-              />
-            );
-          })
-        )}
-      </main>
+          {!snapshot ? (
+            <p className="placeholder">{state === 'reconnecting' ? 'Reconnecting to pitwall…' : 'Connecting to pitwall…'}</p>
+          ) : allSessions.length === 0 ? (
+            <p className="placeholder">No Claude Code sessions under {plainText(roots)}</p>
+          ) : visible.length === 0 ? (
+            <NoMatch filters={filters} attention={attention} />
+          ) : (
+            <HighlightContext.Provider value={filterNeedle(filters.text)}>
+              {visible.map(({ group, sessions }) => {
+                const id = groupId(group);
+                return (
+                  <GroupSection
+                    key={id}
+                    group={group}
+                    sessions={sessions}
+                    collapsed={!(open.get(id) ?? false)}
+                    onToggle={() => toggle(id)}
+                    finishedCollapsed={!(finishedOpen.get(id) ?? false)}
+                    onToggleFinished={() => toggleFinished(id)}
+                    listFinished={filters.chips.has('finished')}
+                    showRoot={snapshot.roots.length > 1}
+                    now={now}
+                    onOpen={openSession}
+                    openSessionId={shownOpen?.sessionId}
+                  />
+                );
+              })}
+            </HighlightContext.Provider>
+          )}
+        </main>
+      </div>
 
       {shownOpen && (
         <SessionView

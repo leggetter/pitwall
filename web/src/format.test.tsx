@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cwdWithinGroup, plainText, relativeTime, shortenHome, updatedAgo } from './format.js';
+import { cwdWithinGroup, middleEllipsisParts, plainText, relativeTime, shortenHome, updatedAgo } from './format.js';
 import { attachCommand, needsAttention, splitFinished, statusPill } from './sessions.js';
 import { NOW, session } from './test/fixtures.js';
 
@@ -23,6 +23,25 @@ describe('cwdWithinGroup', () => {
     expect(cwdWithinGroup('/Users/example/repo/', '/Users/example/repo')).toBeUndefined();
     expect(cwdWithinGroup('/Users/example/repo/src/lib', '/Users/example/repo')).toBe('src/lib');
     expect(cwdWithinGroup('/Users/example/repo-worktrees/a', '/Users/example/repo')).toBe('~/repo-worktrees/a');
+  });
+});
+
+describe('middleEllipsisParts', () => {
+  it('keeps the last segment, from its slash, for the end that always shows', () => {
+    expect(middleEllipsisParts('~/code/pitwall/packages/web')).toEqual({ start: '~/code/pitwall/packages', end: '/web' });
+    expect(middleEllipsisParts('~/code, /srv/projects')).toEqual({ start: '~/code, /srv', end: '/projects' });
+  });
+
+  it('has no end when there is no slash after the first character, so the text is only cut at its end', () => {
+    expect(middleEllipsisParts('pitwall')).toEqual({ start: 'pitwall', end: '' });
+    expect(middleEllipsisParts('/srv')).toEqual({ start: '/srv', end: '' });
+  });
+
+  it('puts the two parts back together as the text', () => {
+    for (const text of ['~/a/b', '~/', '/', '', 'a/b/']) {
+      const { start, end } = middleEllipsisParts(text);
+      expect(start + end).toBe(text);
+    }
   });
 });
 

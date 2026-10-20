@@ -26,7 +26,13 @@ function renderDashboard(snap: IndexSnapshot | undefined, overrides: Partial<Con
 }
 
 function row(name: string): HTMLElement {
-  const item = screen.getByRole('heading', { level: 3, name }).closest('li');
+  // By the heading's text rather than its accessible name: happy-dom gives <mark> no display, so
+  // dom-accessibility-api puts spaces around a highlighted match, where a browser, with <mark>
+  // inline, doesn't.
+  const item = screen
+    .getAllByRole('heading', { level: 3 })
+    .find((heading) => heading.textContent === name)
+    ?.closest('li');
   if (!item) throw new Error(`no row for ${name}`);
   return item;
 }
@@ -35,7 +41,8 @@ function groupSection(label: string): HTMLElement {
   const toggle = screen
     .queryAllByRole('button', { expanded: true })
     .concat(screen.queryAllByRole('button', { expanded: false }))
-    .find((button) => within(button).queryByText(label, { selector: '.group-label' }));
+    // By the label's text, which a filter match splits with a <mark>.
+    .find((button) => button.querySelector('.group-label')?.textContent === label);
   const section = toggle?.closest('section');
   if (!section) throw new Error(`no group ${label}`);
   return section;
@@ -54,7 +61,7 @@ describe('Dashboard header', () => {
   it('shows the roots with the home directory shortened, the connection state and the update age', () => {
     renderDashboard(snapshot([], { roots: ['/Users/example/code', '/srv/projects'] }));
 
-    expect(screen.getByText('~/code, /srv/projects')).toBeTruthy();
+    expect(document.querySelector('.roots')?.textContent).toBe('~/code, /srv/projects');
     expect(screen.getByText('Live')).toBeTruthy();
     expect(screen.getByText('updated 3s ago')).toBeTruthy();
 
@@ -62,9 +69,9 @@ describe('Dashboard header', () => {
     expect(screen.getByText('updated 5s ago')).toBeTruthy();
   });
 
-  it('has the theme switch at the right of the masthead, before and after the first snapshot', () => {
+  it('has the theme switch at the right of the header, before and after the first snapshot', () => {
     const { container, rerender } = render(<Dashboard view={{ state: 'connecting', snapshot: undefined }} />);
-    const status = () => container.querySelector('.masthead .masthead-status');
+    const status = () => container.querySelector('header .app-header-end');
     expect(within(status() as HTMLElement).getByRole('group', { name: 'Theme' })).toBeTruthy();
 
     rerender(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
@@ -146,7 +153,7 @@ describe('Dashboard header', () => {
   it('counts sessions that need attention, in the page and the tab title', () => {
     renderDashboard(mixedSnapshot());
 
-    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
+    expect(screen.getByText('2 need you', { selector: '.summary .badge-attention' })).toBeTruthy();
     expect(document.title).toBe('(2) pitwall');
   });
 });
@@ -599,17 +606,17 @@ describe('sessions that asked you something', () => {
     // docs-done asked something, but it has finished: muted, and not counted.
     expect(groupSection('docs').querySelector('.group-attention')).toBeNull();
     expect(groupSection('docs').className).not.toContain('has-attention');
-    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
+    expect(screen.getByText('2 need you', { selector: '.summary .badge-attention' })).toBeTruthy();
     expect(document.title).toBe('(2) pitwall');
   });
 
-  it('keeps them under "needs attention only", but not a finished one', () => {
+  it('keeps them under the Needs you chip, but not a finished one', () => {
     renderDashboard(askedSnapshot());
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Needs you/ }));
 
     expect(visibleRowNames()).toEqual(['waits', 'asks']);
-    expect(screen.queryByRole('button', { name: /^Finished/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Finished \(/ })).toBeNull();
   });
 
   it('renders the excerpt as text, not markup', () => {
@@ -704,7 +711,7 @@ describe('finished sessions', () => {
     expect(count?.textContent).toBe(' · 2 asked you');
     expect(count?.closest('.group-attention, .tone-asked, .attention')).toBeNull();
     expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
-    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
+    expect(screen.getByText('Nothing needs you', { selector: '.summary *' })).toBeTruthy();
     // Stays the same open, so the button's name doesn't change under the user.
     fireEvent.click(toggle);
     expect(toggle.textContent).toBe('Finished (3) · 2 asked you');
@@ -722,7 +729,7 @@ describe('finished sessions', () => {
 
     expect(groupSection('demo-app').querySelector('.group-count')?.textContent).toBe('4 sessions');
     expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
-    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
+    expect(screen.getByText('Nothing needs you', { selector: '.summary *' })).toBeTruthy();
     expect(document.title).toBe('pitwall');
   });
 
@@ -918,29 +925,219 @@ describe('filters', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'zzz' } });
 
     expect(visibleRowNames()).toEqual([]);
-    expect(screen.getByText('No sessions match the filter.')).toBeTruthy();
+    expect(screen.getByText('No sessions match')).toBeTruthy();
+    expect(screen.getByText('Nothing matches "zzz".')).toBeTruthy();
   });
 
-  it('"needs attention only" keeps waiting and blocked sessions and drops stale ones', () => {
+  it('the Needs you chip keeps waiting and blocked sessions and drops stale ones', () => {
     renderDashboard(mixedSnapshot());
+    const needsYou = () => screen.getByRole('button', { name: /^Needs you/ });
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    fireEvent.click(needsYou());
     expect(visibleRowNames()).toEqual(['demo-docs', 'demo-worker']);
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'worker' } });
     expect(visibleRowNames()).toEqual(['demo-worker']);
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    fireEvent.click(needsYou());
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
     expect(visibleRowNames()).toHaveLength(5);
   });
 
-  it('says nothing needs you when the toggle is on and nothing does', () => {
+  it('says nothing needs you when the Needs you chip is on and nothing does', () => {
     renderDashboard(snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]));
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Needs you' }));
 
-    expect(screen.getByText('Nothing needs you right now.')).toBeTruthy();
+    expect(screen.getByText('Nothing needs you right now')).toBeTruthy();
+    expect(screen.getByText('Sessions that are waiting for you, or asked you something, show here.')).toBeTruthy();
+  });
+
+  it('says which text and filters matched nothing', () => {
+    renderDashboard(snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Background' }));
+    expect(screen.getByText('Nothing matches these filters.')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '  calm ' } });
+    expect(screen.getByText('Nothing matches "calm" with these filters.')).toBeTruthy();
+  });
+});
+
+describe('filter chips in the list', () => {
+  const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, finished: true };
+
+  function chipsSnapshot(): IndexSnapshot {
+    return snapshot([
+      group({
+        sessions: [
+          session({ name: 'waits', status: 'waiting', waitingFor: 'permission prompt' }),
+          session({ name: 'blocked-job', kind: 'background', shortId: 'bj1', status: undefined, state: 'blocked' }),
+          session({ name: 'idle-one', status: 'idle' }),
+          session({ name: 'done-job', ...finished, shortId: 'dj1', state: 'done' }),
+          session({ name: 'failed-job', ...finished, shortId: 'fj1', state: 'failed', askedYou: { reason: 'question', excerpt: 'Retry?' } }),
+        ],
+      }),
+    ]);
+  }
+
+  const chip = (name: string | RegExp) => within(screen.getByRole('group', { name: 'Filters' })).getByRole('button', { name });
+  const finishedToggle = () => screen.queryByRole('button', { name: /^Finished \(/ });
+
+  it('shows matching finished sessions under the Finished chip with no extra click, after the group\'s other rows', () => {
+    // The group is open and its Finished list closed, as a group starts once it's been opened.
+    renderDashboard(chipsSnapshot(), {}, { expand: false });
+    fireEvent.click(screen.getByRole('button', { name: /demo-app/, expanded: false }));
+    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(chip('Finished'));
+    expect(visibleRowNames()).toEqual(['done-job', 'failed-job']);
+    expect(finishedToggle()).toBeNull();
+
+    fireEvent.click(chip(/^Needs you/));
+    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'done-job', 'failed-job']);
+
+    // Off again, and the Finished list is back, as closed as it was.
+    fireEvent.click(chip('Finished'));
+    expect(finishedToggle()).toBeNull();
+    fireEvent.click(chip(/^Needs you/));
+    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('false');
+    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one']);
+  });
+
+  it('combines chips of one kind as OR and of different kinds as AND, in the list', () => {
+    renderDashboard(chipsSnapshot());
+
+    fireEvent.click(chip('Interactive'));
+    expect(visibleRowNames()).toEqual(['waits', 'idle-one']);
+    fireEvent.click(chip('Background'));
+    expect(visibleRowNames()).toHaveLength(5);
+    fireEvent.click(chip(/^Needs you/));
+    expect(visibleRowNames()).toEqual(['waits', 'blocked-job']);
+    fireEvent.click(chip('Interactive'));
+    expect(visibleRowNames()).toEqual(['blocked-job']);
+    fireEvent.click(chip('Finished'));
+    expect(visibleRowNames()).toEqual(['blocked-job', 'done-job', 'failed-job']);
+  });
+
+  it('counts the group as "x of y" while chips hide some of it', () => {
+    renderDashboard(chipsSnapshot());
+
+    fireEvent.click(chip('Finished'));
+    expect(within(groupSection('demo-app')).getByText('2 of 5 sessions')).toBeTruthy();
+  });
+
+  it('clears with Clear filters, text and chips together', () => {
+    renderDashboard(chipsSnapshot());
+    fireEvent.click(chip('Finished'));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'done' } });
+    expect(visibleRowNames()).toEqual(['done-job']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one', 'done-job', 'failed-job']);
+    expect(chip('Finished').getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
+describe('the highlight', () => {
+  const marks = (root: ParentNode = document) => [...root.querySelectorAll('mark')].map((mark) => mark.textContent);
+
+  function highlightSnapshot(): IndexSnapshot {
+    return snapshot([
+      group({
+        sessions: [
+          session({ name: 'export-retry', title: 'Retry a failed EXPORT', cwd: '/Users/example/code/demo-app/packages/export' }),
+          session({ name: 'docs', title: 'Tidy the README' }),
+        ],
+      }),
+      group({
+        key: '/Users/example/code/exporter',
+        label: 'exporter',
+        sessions: [session({ name: 'tools', cwd: '/Users/example/code/exporter' })],
+      }),
+    ]);
+  }
+
+  it('marks each match in session names, titles, group labels and paths, case-insensitively', () => {
+    renderDashboard(highlightSnapshot());
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: ' Export ' } });
+
+    expect(visibleRowNames()).toEqual(['export-retry', 'tools']);
+    const retry = row('export-retry');
+    expect(marks(retry.querySelector('.session-name')!)).toEqual(['export']);
+    expect(marks(retry.querySelector('.session-title')!)).toEqual(['EXPORT']);
+    expect(marks(retry.querySelector('.cwd')!)).toEqual(['export']);
+    expect(marks(groupSection('exporter').querySelector('.group-label')!)).toEqual(['export']);
+    for (const mark of document.querySelectorAll('mark')) expect(mark.className).toBe('match');
+  });
+
+  it("keeps the text whole: a match doesn't change a name, its button's text or a title's hover text", () => {
+    renderDashboard(highlightSnapshot());
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'retry' } });
+
+    const retry = row('export-retry');
+    expect(retry.querySelector('[data-open-session]')?.textContent).toBe('export-retry');
+    expect(retry.querySelector('.session-title')?.textContent).toBe('Retry a failed EXPORT');
+    expect(retry.querySelector('.session-title')?.getAttribute('title')).toBe('Retry a failed EXPORT');
+  });
+
+  it('marks nothing without text, or with only chips on', () => {
+    renderDashboard(highlightSnapshot());
+    expect(marks()).toEqual([]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Interactive' }));
+    expect(marks()).toEqual([]);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '   ' } });
+    expect(marks()).toEqual([]);
+  });
+
+  it('renders matched text as text, not markup', () => {
+    const { container } = renderDashboard(snapshot([group({ sessions: [session({ name: '<b>bold</b> name' })] })]));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '<b>' } });
+
+    expect(container.querySelector('.session-name b')).toBeNull();
+    expect(marks()).toEqual(['<b>']);
+    expect(row('<b>bold</b> name').querySelector('.session-name')?.textContent).toBe('<b>bold</b> name');
+  });
+});
+
+describe('the shell', () => {
+  it('is a header, then the toolbar once there are sessions, then the list pane', () => {
+    const { container, rerender } = render(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
+    const parts = () => [...container.querySelectorAll('.app > *')].map((part) => part.className);
+
+    expect(parts()).toEqual(['app-header', 'panes']);
+    expect(screen.queryByRole('search')).toBeNull();
+
+    rerender(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} />);
+    expect(parts()).toEqual(['app-header', 'toolbar', 'panes']);
+    expect(container.querySelector('.panes > main.list-pane')).not.toBeNull();
+  });
+
+  it('puts the page alerts at the top of the list pane, above the groups', () => {
+    const { container } = renderDashboard(mixedSnapshot(), { serverError: 'index crashed' });
+
+    const pane = container.querySelector('main.list-pane')!;
+    expect(pane.firstElementChild?.getAttribute('role')).toBe('alert');
+    expect(pane.firstElementChild?.nextElementSibling?.tagName).toBe('SECTION');
+  });
+
+  it('has one <h1>, the wordmark, and New session as a primary button with the add icon', () => {
+    renderDashboard(mixedSnapshot());
+
+    expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['pitwall']);
+    const button = screen.getByRole('button', { name: 'New session' });
+    expect(button.className).toBe('button primary md');
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('shows the roots in full in the hover text, home-shortened on screen', () => {
+    renderDashboard(snapshot([], { roots: ['/Users/example/code', '/Users/example/work/clients'] }));
+
+    const roots = document.querySelector('.roots')!;
+    expect(roots.getAttribute('title')).toBe('/Users/example/code, /Users/example/work/clients');
+    expect(roots.querySelector('.middle-ellipsis-start')?.textContent).toBe('~/code, ~/work');
+    expect(roots.querySelector('.middle-ellipsis-end')?.textContent).toBe('/clients');
   });
 });
 

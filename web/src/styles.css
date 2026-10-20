@@ -80,12 +80,73 @@ textarea {
   vertical-align: -2px;
 }
 
-/* Layout */
+/*
+ * The app shell (docs/design-system.md, 3). The page doesn't scroll: the app is one window tall, a
+ * grid of the app strip (W24 fills that row), the header, the toolbar and the panes, and only the
+ * list pane scrolls. The shell's width rules are container queries on the app, which spans the
+ * window, so they follow the window's width; the #uikit gallery's frames give them narrower ones.
+ */
 
 .app {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 16px 48px;
+  container: pitwall / inline-size;
+  display: grid;
+  /* One column, never wider than the window, whatever the widest row or badge inside would like. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'strip'
+    'header'
+    'toolbar'
+    'panes';
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--pw-bg);
+}
+
+.panes {
+  grid-area: panes;
+  display: flex;
+  min-height: 0;
+}
+
+.list-pane {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-3);
+  min-width: 0;
+  padding: var(--pw-space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--pw-bg);
+}
+
+/* Cards and alerts keep their height and the pane scrolls, rather than the cards being squashed to fit. */
+.list-pane > * {
+  flex: none;
+}
+
+/* Page alerts sit at the top of the pane, 12 px apart like the cards. */
+.list-pane > .banner {
+  margin-top: 0;
+}
+
+/*
+ * A window too short for the header, the toolbar and a useful list, such as a phone held sideways or
+ * 200 % zoom on a laptop: the page scrolls as a whole, so the list keeps its room.
+ */
+@media (max-height: 480px) {
+  .app {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .list-pane {
+    overflow-y: visible;
+  }
 }
 
 .notice {
@@ -105,50 +166,46 @@ textarea {
 
 /* Header */
 
-.masthead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 14px 0 12px;
+.app-header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2) var(--pw-space-3);
+  min-height: var(--pw-header-h);
+  padding: 0 var(--pw-space-4);
   background: var(--pw-bg);
   border-bottom: 1px solid var(--pw-border);
 }
 
-.masthead-row {
+.app-header-start {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-}
-
-.masthead-row + .masthead-row {
-  margin-top: 10px;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--pw-space-3);
+  min-width: 0;
 }
 
 .brand {
-  font-size: var(--pw-text-xl);
+  flex: none;
+  font-size: var(--pw-text-l);
   font-weight: var(--pw-weight-bold);
-  letter-spacing: -0.01em;
-  line-height: var(--pw-leading-xl);
+  line-height: var(--pw-leading-l);
 }
 
 .roots {
   min-width: 0;
-  flex: 1 1 200px;
-  color: var(--pw-text-muted);
+  color: var(--pw-text-subtle);
   font-family: var(--pw-font-mono);
-  font-size: var(--pw-text-s);
-  overflow-wrap: anywhere;
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
   font-variant-ligatures: none;
 }
 
-.masthead-status {
+.app-header-end {
   display: flex;
+  flex: none;
   align-items: center;
-  margin-left: auto;
-  font-size: var(--pw-text-m);
-  flex-wrap: wrap;
-  gap: 8px 12px;
+  gap: var(--pw-space-2) var(--pw-space-3);
 }
 
 .connection {
@@ -175,32 +232,73 @@ textarea {
 }
 
 .updated {
-  color: var(--pw-text-muted);
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.controls {
-  justify-content: space-between;
-}
+/* Toolbar */
 
-.filters {
+.toolbar {
+  grid-area: toolbar;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
-  flex: 1 1 360px;
+  gap: var(--pw-space-2) var(--pw-space-4);
+  min-height: var(--pw-toolbar-h);
+  padding: var(--pw-space-2) var(--pw-space-4);
+  background: var(--pw-bg);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.toolbar-filters {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-2) var(--pw-space-3);
+  min-width: 0;
+}
+
+/* The filter field (Search, in section 4) */
+
+.filter-field {
+  position: relative;
+  display: flex;
+  flex: 1 1 240px;
+  align-items: center;
+  min-width: min(240px, 100%);
+  max-width: 420px;
+}
+
+.filter-field-icon {
+  position: absolute;
+  left: var(--pw-space-2);
+  color: var(--pw-text-subtle);
+  pointer-events: none;
 }
 
 .filter-input {
-  flex: 1 1 220px;
-  max-width: 420px;
-  min-width: 0;
-  padding: 6px 10px;
-  background: var(--pw-surface);
-  border-radius: var(--pw-radius-md);
+  width: 100%;
+  height: var(--pw-control-md);
+  margin: 0;
+  padding: var(--pw-space-1) var(--pw-space-3) var(--pw-space-1) var(--pw-space-8);
   border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface);
   box-shadow: var(--pw-shadow-input);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  text-overflow: ellipsis;
+  appearance: none;
+}
+
+/* Room for the clear button once there's text. */
+.filter-input:not(:placeholder-shown) {
+  padding-right: var(--pw-space-8);
 }
 
 .filter-input:focus-visible {
@@ -208,33 +306,109 @@ textarea {
 }
 
 .filter-input::placeholder {
-  color: var(--pw-text-muted);
+  color: var(--pw-text-subtle);
   opacity: 1;
 }
 
-.toggle {
+/* The field has a clear button of its own. */
+.filter-input::-webkit-search-cancel-button,
+.filter-input::-webkit-search-decoration {
+  appearance: none;
+}
+
+.filter-clear {
+  position: absolute;
+  right: 2px;
+}
+
+/* Filter chips (section 4) */
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pw-space-2);
+}
+
+.chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.toggle input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--pw-warning-fg);
-}
-
-.summary {
+  gap: var(--pw-space-1);
+  height: var(--pw-control-sm);
+  padding: 0 var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-control);
   color: var(--pw-text-muted);
-  font-size: var(--pw-text-m);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--pw-duration-fast) var(--pw-ease-standard),
+    color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .chip:hover {
+    background: var(--pw-surface-hover);
+    color: var(--pw-text);
+  }
+}
+
+.chip:focus-visible {
+  box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+  color: var(--pw-info-tint-fg);
+}
+
+.chip[aria-pressed='true']:focus-visible {
+  box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+.chip-count {
   font-variant-numeric: tabular-nums;
 }
 
-.summary-attention {
-  color: var(--pw-text);
+/* The summary */
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  margin-left: auto;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The shell's widths: wider gutters from 1,100 px; at 600 px and narrower the header's right side wraps under the wordmark. */
+
+@container pitwall (min-width: 1100px) {
+  .app-header,
+  .toolbar,
+  .list-pane {
+    padding-inline: var(--pw-space-6);
+  }
+}
+
+@container pitwall (max-width: 600px) {
+  .app-header {
+    flex-wrap: wrap;
+    padding-block: var(--pw-space-3);
+  }
+
+  .app-header-end {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
 }
 
 /* Banners */
@@ -269,18 +443,66 @@ textarea {
 
 /* Content */
 
-.content {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-top: 16px;
-}
-
 .placeholder {
   padding: 48px 16px;
   color: var(--pw-text-muted);
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.placeholder-title {
+  color: var(--pw-text);
+  font-weight: var(--pw-weight-medium);
+}
+
+/* A filter match (Search, in section 4): --pw-text whatever the text around it, the pair 2.5 checks. */
+mark.match {
+  background: var(--pw-highlight);
+  color: var(--pw-text);
+}
+
+/* A path cut in the middle: the start ends in an ellipsis, and the last segment stays. */
+.middle-ellipsis {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.middle-ellipsis-start {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.middle-ellipsis-end {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Badges (section 4). Only the summary's for now; W23 moves the rows' and groups' badges onto these. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1);
+  min-width: var(--pw-badge-h);
+  height: var(--pw-badge-h);
+  padding: 0 var(--pw-space-1-5);
+  border-radius: var(--pw-radius-sm);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge-attention {
+  background: var(--pw-state-attention-bg);
+  color: var(--pw-state-attention-fg);
 }
 
 .link-button {
@@ -315,6 +537,84 @@ textarea {
 .button.small {
   padding: 2px 10px;
   font-size: var(--pw-text-s);
+}
+
+/*
+ * The sizes and the ghost variant in section 4's Buttons, used by the shell so far. Later items move
+ * the other buttons onto them, and off .small.
+ */
+.button.sm,
+.button.md {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  font-weight: var(--pw-weight-medium);
+}
+
+.button.sm {
+  height: var(--pw-control-sm);
+  padding: var(--pw-space-0-5) var(--pw-space-2);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.button.md {
+  height: var(--pw-control-md);
+  padding: var(--pw-space-1) var(--pw-space-2);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.button.primary:active {
+  background: var(--pw-accent-hover);
+}
+
+.button.ghost,
+.icon-button.ghost {
+  background: none;
+  box-shadow: none;
+  color: var(--pw-text-muted);
+}
+
+@media (hover: hover) {
+  .button.ghost:hover,
+  .icon-button.ghost:hover {
+    background: var(--pw-surface-hover);
+    box-shadow: var(--pw-shadow-control);
+    color: var(--pw-text);
+  }
+
+  /* On the page background rather than a surface, as in the toolbar (2.3). */
+  .toolbar .button.ghost:hover {
+    background: var(--pw-surface-hover-bg);
+  }
+}
+
+.button.ghost:focus-visible,
+.icon-button.ghost:focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+.button.ghost:active,
+.icon-button.ghost:active {
+  background: var(--pw-surface-strong);
+}
+
+/* Icon buttons (section 4): square, with a 16 px icon. */
+.icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  cursor: pointer;
+}
+
+.icon-button.sm {
+  width: var(--pw-control-sm);
+  height: var(--pw-control-sm);
 }
 
 /* Groups */
@@ -927,14 +1227,6 @@ textarea {
 }
 
 @media (max-width: 600px) {
-  .masthead {
-    position: static;
-  }
-
-  .masthead-status {
-    margin-left: 0;
-  }
-
   .group-count {
     margin-left: 0;
   }
