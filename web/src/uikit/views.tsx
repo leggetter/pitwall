@@ -1,4 +1,4 @@
-// The session view and what's in it (W19, W22, W24, W27): the real SessionView, its conversation,
+// The session view and what's in it (W19, W22, W24, W27, W28): the real SessionView, its conversation,
 // its actions menu and their inline confirmations, RelayBox in every send state, and the terminal,
 // each given a stub API (stubs.ts) and put into its state by a scenario (kit.tsx), as a person
 // would: opening the menu, choosing an item, opening a tab, opening a fold, scrolling up.
@@ -8,9 +8,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
+import { slowFirstSnapshot } from '../components/Dashboard.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
-import { SessionView, UnlistedSessionView } from '../components/SessionView.js';
+import { SessionView, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { APP_DIR, background, exchange, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
@@ -53,12 +54,20 @@ const MENU_INTERACTIVE = session('view-menu-interactive');
 const COMPACT = session('view-compact', { title: 'Export retries' });
 const CONVERSATION_STATES = (
   [
-    ['Loading the conversation', 'loading'],
-    ["Couldn't load it", 'failed'],
-    ['No transcript', 'missing'],
-    ['Nothing yet', 'empty'],
+    ['Loading the conversation', 'loading', 'shown', 'A status line after half a second, so a fast answer never flashes it.'],
+    ['Loading the conversation, after 10 seconds', 'loading', 'long', 'The long-wait line joins it: what the view is waiting for.'],
+    ["Couldn't load it", 'failed', undefined, 'A danger alert, since nothing is shown, with Try again. The HTTP status follows pitwall’s sentence.'],
+    ['No transcript', 'missing', undefined, undefined],
+    ['Nothing yet', 'empty', undefined, undefined],
   ] as const
-).map(([title, conversation]) => ({ title, options: { conversation }, session: background(`view-${conversation}`, { state: 'working' }) }));
+).map(([title, conversation, waited, note]) => ({
+  title,
+  note,
+  waited,
+  options: { conversation },
+  session: background(waited === 'long' ? 'view-loading-long' : `view-${conversation}`, { state: 'working' }),
+}));
+const RETRYING = background('view-failed-retrying', { state: 'working' });
 const NO_API = background('view-no-api', { state: 'working' });
 
 /** Opens the session view's actions menu. */
@@ -138,8 +147,22 @@ export function SessionViews() {
           <SessionView session={LONG_TITLE} listed onClose={noop} />
         </Stubbed>
       </Specimen>
-      <Specimen title="Not listed under these roots" note="A ?session= in the URL that pitwall doesn't list, with Close." frame="short">
+      <Specimen
+        title="Not listed under these roots"
+        note="A ?session= in the URL that pitwall doesn't list: an empty state whose title is the view's heading, with Close in the header."
+        frame="short"
+      >
         <UnlistedSessionView sessionId="00000000-0000-4000-8000-00000000dead" roots={[ROOT]} onClose={noop} />
+      </Specimen>
+      <Specimen
+        title="Waiting for the first snapshot"
+        note="A ?session= in the URL before pitwall has listed anything: Close, and skeletons for the header after half a second, aria-hidden, with a hidden status."
+        frame="short"
+      >
+        <WaitingSessionView waiting={{ shown: true, long: false }} slow={slowFirstSnapshot('connecting')} onClose={noop} />
+      </Specimen>
+      <Specimen title="Waiting for the first snapshot, after 10 seconds" note="The long-wait line, the same as the session list's." frame="short">
+        <WaitingSessionView waiting={{ shown: true, long: true }} slow={slowFirstSnapshot('connecting')} onClose={noop} />
       </Specimen>
       <Specimen title="600 px and narrower" note="Full width, with Back to sessions in place of Close." frame="short" width={375}>
         <Stubbed>
@@ -168,12 +191,24 @@ export function SessionViews() {
         </Stubbed>
       </Specimen>
       {CONVERSATION_STATES.map((state) => (
-        <Specimen key={state.title} title={state.title} frame="short">
+        <Specimen key={state.title} title={state.title} note={state.note} frame="short" {...(state.waited ? { waited: state.waited } : {})}>
           <Stubbed options={state.options}>
             <SessionView session={state.session} listed onClose={noop} />
           </Stubbed>
         </Specimen>
       ))}
+      <Specimen title="Couldn't load it, trying again" note="Try again is busy while its request is out, and the alert stays until the page arrives." frame="short">
+        <Stubbed options={{ conversation: 'failed-retrying' }}>
+          <Scenario
+            run={async (root) => {
+              await press(root, 'Try again');
+              await element(root, '.conversation-alert [aria-busy="true"]');
+            }}
+          >
+            <SessionView session={RETRYING} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
       <Specimen title="No API" note="Rendered without an API client, as some tests do." frame="short">
         <ApiContext.Provider value={undefined}>
           <SessionView session={NO_API} listed onClose={noop} />
@@ -188,6 +223,12 @@ const CONVERSATION_OPEN = background('conversation-open', { state: 'working' });
 const CONVERSATION_NARROW = background('conversation-narrow', { state: 'working' });
 const EARLIER = background('conversation-earlier', { state: 'working' });
 const EARLIER_BUSY = background('conversation-earlier-busy', { state: 'working' });
+const EARLIER_FAILED = background('conversation-earlier-failed', { state: 'working' });
+const EARLIER_RETRYING = background('conversation-earlier-retrying', { state: 'working' });
+const STALE = background('conversation-stale', { state: 'working' });
+const REFRESH_FAILED = background('conversation-refresh-failed', { state: 'working' });
+const REFRESH_RETRYING = background('conversation-refresh-retrying', { state: 'working' });
+const GONE_TRANSCRIPT = background('conversation-gone', { state: 'working' });
 const JUMP = session('conversation-jump', { title: 'Export retries' });
 
 /** The event that moves a Refreshing session's activity, as the index does when the session does something. */
@@ -222,6 +263,21 @@ async function openFolds(root: HTMLElement): Promise<void> {
   for (const toggle of body.querySelectorAll<HTMLButtonElement>('.fold-toggle')) toggle.click();
   await until('the folds to open', () => body.querySelector('.fold-toggle[aria-expanded="true"]'));
   body.scrollTop = 0;
+}
+
+/** The session does something, so the view fetches its newest page again, and `selector` appears. */
+async function refreshUntil(root: HTMLElement, selector: string): Promise<void> {
+  await conversationBody(root);
+  root.querySelector('.uikit-refreshing')?.dispatchEvent(new Event(REFRESH));
+  await element(root, selector);
+}
+
+/** Load earlier, until `selector` appears; then scrolled to the top, where it is. */
+async function earlierUntil(root: HTMLElement, selector: string): Promise<void> {
+  await press(root, 'Load earlier');
+  const found = await element(root, selector);
+  const body = found.closest<HTMLElement>('.session-view-body');
+  if (body) body.scrollTop = 0;
 }
 
 /** Scrolls up to read, then the session does more: "Jump to latest" appears with the count. */
@@ -290,6 +346,68 @@ export function Conversations() {
         <Stubbed options={{ conversation: 'growing' }}>
           <Scenario run={scrollUpThenMore}>
             <Refreshing session={JUMP}>{(shown) => <SessionView session={shown} listed onClose={noop} />}</Refreshing>
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Couldn't load earlier messages" note="A warning alert in Load earlier's place, with Try again: what's shown is kept." frame="short">
+        <Stubbed options={{ conversation: 'older-failed' }}>
+          <Scenario run={(root) => earlierUntil(root, '.conversation-alert.warning')}>
+            <SessionView session={EARLIER_FAILED} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Couldn't load earlier messages, trying again" note="Try again busy, the alert kept until the page arrives." frame="short">
+        <Stubbed options={{ conversation: 'older-failed-retrying' }}>
+          <Scenario
+            run={async (root) => {
+              await earlierUntil(root, '.conversation-alert.warning');
+              await press(root, 'Try again');
+              await element(root, '.conversation-alert [aria-busy="true"]');
+            }}
+          >
+            <SessionView session={EARLIER_RETRYING} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="The transcript changed"
+        note="Load earlier found the transcript replaced, so the view starts again from its newest page, at the top, under a neutral notice."
+        frame="short"
+      >
+        <Stubbed options={{ conversation: 'stale' }}>
+          <Scenario run={(root) => earlierUntil(root, '.conversation-alert.neutral')}>
+            <SessionView session={STALE} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="A refresh failed"
+        note="The session did something and the newest page didn't load: the entries stay, and a warning at the end says they may be out of date."
+        frame="short"
+      >
+        <Stubbed options={{ conversation: 'refresh-failed' }}>
+          <Scenario run={(root) => refreshUntil(root, '.conversation-alert.end.warning')}>
+            <Refreshing session={REFRESH_FAILED}>{(shown) => <SessionView session={shown} listed onClose={noop} />}</Refreshing>
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="A refresh failed, trying again" note="Try again busy; the entries and the alert stay until the page arrives." frame="short">
+        <Stubbed options={{ conversation: 'refresh-failed-retrying' }}>
+          <Scenario
+            run={async (root) => {
+              await refreshUntil(root, '.conversation-alert.end.warning');
+              await press(root, 'Try again');
+              await element(root, '.conversation-alert [aria-busy="true"]');
+            }}
+          >
+            <Refreshing session={REFRESH_RETRYING}>{(shown) => <SessionView session={shown} listed onClose={noop} />}</Refreshing>
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="The transcript has gone" note="A refresh found no transcript: what was shown is kept, with a neutral notice at the end." frame="short">
+        <Stubbed options={{ conversation: 'gone' }}>
+          <Scenario run={(root) => refreshUntil(root, '.conversation-alert.end.neutral')}>
+            <Refreshing session={GONE_TRANSCRIPT}>{(shown) => <SessionView session={shown} listed onClose={noop} />}</Refreshing>
           </Scenario>
         </Stubbed>
       </Specimen>

@@ -30,8 +30,29 @@ export interface StubOptions {
    * The conversation's newest page. `older` adds a page behind "Load earlier", which `older-loading`
    * never answers; `growing` answers every fetch after the first with newer entries too, for "Jump to
    * latest"; `loading` never answers; `missing` is a 404, as for a session with no transcript.
+   *
+   * Failures (W28): `failed` is a 500 every time, and `failed-retrying` a 500, then no answer, so Try
+   * again stays busy. `older-failed` and `older-failed-retrying` do the same to "Load earlier", and
+   * `stale` answers it 410, as when the transcript changed. `refresh-failed` and
+   * `refresh-failed-retrying` answer the first fetch, then fail every refresh (then never answer
+   * Try again); `gone` answers the first, then 404s, as when the transcript has gone.
    */
-  conversation?: 'ok' | 'older' | 'older-loading' | 'growing' | 'empty' | 'loading' | 'failed' | 'missing';
+  conversation?:
+    | 'ok'
+    | 'older'
+    | 'older-loading'
+    | 'growing'
+    | 'empty'
+    | 'loading'
+    | 'failed'
+    | 'failed-retrying'
+    | 'missing'
+    | 'older-failed'
+    | 'older-failed-retrying'
+    | 'stale'
+    | 'refresh-failed'
+    | 'refresh-failed-retrying'
+    | 'gone';
   /** What the relay answers a message with. `sending` never answers; `unreachable` is a network error. */
   relay?: RelayResult | 'sending' | 'unreachable';
   /** What starting a session gets. `trust` is Claude Code refusing an untrusted directory. */
@@ -45,8 +66,9 @@ const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
 
 /** An ApiClient that answers from the fixtures, as `options` say, and never calls fetch. */
 export function stubApi(options: StubOptions = {}): ApiClient {
-  // How many times each session's newest page has been asked for.
+  // How many times each session's newest page, and each one's older page, has been asked for.
   const fetched = new Map<string, number>();
+  const fetchedOlder = new Map<string, number>();
   const answer = (method: 'GET' | 'POST', path: string): Promise<ApiResult> => {
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
     const match = SESSION_PATH.exec(path);
@@ -55,8 +77,9 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     const route = match[2];
     if (method === 'GET' && route === 'conversation') {
       const older = match[3] !== undefined;
-      const times = older ? 0 : (fetched.get(sessionId) ?? 0);
-      if (!older) fetched.set(sessionId, times + 1);
+      const counts = older ? fetchedOlder : fetched;
+      const times = counts.get(sessionId) ?? 0;
+      counts.set(sessionId, times + 1);
       return conversation(sessionId, options.conversation ?? 'ok', older, times);
     }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
@@ -69,13 +92,28 @@ export function stubApi(options: StubOptions = {}): ApiClient {
   };
 }
 
-/** `older` is a "Load earlier" request; `times` is how often the newest page was asked for before this. */
+/** `older` is a "Load earlier" request; `times` is how often that page, the newest or the older one, was asked for before this. */
 function conversation(sessionId: string, kind: NonNullable<StubOptions['conversation']>, older: boolean, times: number): Promise<ApiResult> {
+  const newest = (before?: string) => Promise.resolve(ok(before === undefined ? { sessionId, entries: CONVERSATION } : { sessionId, entries: CONVERSATION, before }));
   switch (kind) {
     case 'loading':
       return forever();
     case 'failed':
       return Promise.resolve(failed(500));
+    case 'failed-retrying':
+      return times === 0 ? Promise.resolve(failed(500)) : forever();
+    case 'older-failed':
+      return older ? Promise.resolve(failed(500)) : newest('pitwall-test-cursor');
+    case 'older-failed-retrying':
+      return older ? (times === 0 ? Promise.resolve(failed(500)) : forever()) : newest('pitwall-test-cursor');
+    case 'stale':
+      return older ? Promise.resolve(failed(410)) : newest(times === 0 ? 'pitwall-test-cursor' : 'pitwall-test-cursor-2');
+    case 'refresh-failed':
+      return times === 0 ? newest() : Promise.resolve(failed(500));
+    case 'refresh-failed-retrying':
+      return times === 0 ? newest() : times === 1 ? Promise.resolve(failed(500)) : forever();
+    case 'gone':
+      return times === 0 ? newest() : Promise.resolve(failed(404));
     case 'missing':
       return Promise.resolve(failed(404));
     case 'empty':
