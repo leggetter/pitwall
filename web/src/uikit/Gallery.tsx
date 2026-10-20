@@ -45,13 +45,15 @@ const SECTIONS: Section[] = [
   {
     id: 'session-view',
     title: 'Session view',
-    intro: 'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state. The Layouts section shows it as the third column.',
+    intro:
+      'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state, including waiting for the first snapshot, unlisted, and the conversation loading, failed (Try again idle and busy), missing and empty. The Layouts section shows it as the third column.',
     Content: SessionViews,
   },
   {
     id: 'conversation',
     title: 'Conversation',
-    intro: "The session view's Conversation tab: every kind of entry, folded tool calls closed and open, Load earlier idle and busy, and Jump to latest.",
+    intro:
+      "The session view's Conversation tab: every kind of entry, folded tool calls closed and open, Load earlier idle and busy, Jump to latest, and its errors and notices: Load earlier failed, the transcript changed, a refresh failed, each Try again idle and busy, and the transcript gone.",
     Content: Conversations,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use.', Content: Menus },
@@ -75,14 +77,25 @@ const SECTIONS: Section[] = [
   { id: 'toasts', title: 'Toasts', intro: 'ToastProvider and its stack: a success, an error, three at most, and full width at 600 px and narrower.', Content: Toasts },
   { id: 'copy', title: 'Copy buttons', intro: 'CopyButton idle, copied and refused, against a stub clipboard, and CopyCommand, the command chip.', Content: CopyButtons },
   { id: 'timestamps', title: 'Timestamps', intro: 'Timestamp, on the one shared clock, with the absolute time in its tooltip.', Content: Timestamps },
-  { id: 'page-states', title: 'Page states', intro: 'The whole Dashboard in a window 560 px tall, at the gallery\'s width: loading, the selections, alerts, filters and empty states. Each column scrolls.', Content: Pages },
+  {
+    id: 'page-states',
+    title: 'Page states',
+    intro:
+      "The whole Dashboard in a window 560 px tall, at the gallery's width: the skeletons and the long-wait line before the first snapshot, the selections, alerts, filters and every empty state. Each column scrolls.",
+    Content: Pages,
+  },
   {
     id: 'layouts',
     title: 'Layouts',
     intro: 'The whole Dashboard in windows of set widths, for one, two and three columns, with the session view in each, and the divider at its limits. A window wider than the gallery scrolls sideways.',
     Content: Layouts,
   },
-  { id: 'notices', title: 'Badges and notices', intro: 'The status badges, the other badges and the connection badge, and the notices that replace the page.', Content: Notices },
+  {
+    id: 'notices',
+    title: 'Badges and notices',
+    intro: 'The status badges, the other badges and the connection badge, with the Spinner while it connects, and the notices that replace the page.',
+    Content: Notices,
+  },
 ];
 
 /** The sections, rendered once: the gallery's own state changing doesn't re-render a specimen. */

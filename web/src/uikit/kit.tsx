@@ -14,7 +14,7 @@ export interface SpecimenProps {
    * A frame holds what the app positions against the window (the session view, dialogs, whole
    * pages): it becomes their containing block, so they sit inside it. Its height is the window's.
    */
-  frame?: 'view' | 'short' | 'tall' | 'dialog' | 'dialog-tall' | 'page' | 'page-short' | 'toasts' | 'toasts-tall';
+  frame?: 'view' | 'short' | 'tall' | 'dialog' | 'dialog-tall' | 'page' | 'toasts' | 'toasts-tall';
   /**
    * A window this many px wide, for the shell's width rules, which are container queries on the
    * app (docs/design-system.md, 2.12). A stage is as wide as the gallery; this one scrolls sideways
@@ -26,14 +26,26 @@ export interface SpecimenProps {
    * a result a scenario brought about is still there to see, and for the screenshots.
    */
   lasting?: boolean;
+  /**
+   * A waiting state shows at once: --pw-delay-spinner is 0 inside, so its skeletons and status are
+   * there, and --pw-delay-long is 0 too for `long`, so the line saying what's slow is, or an hour
+   * otherwise, so it never joins while someone looks.
+   */
+  waited?: 'shown' | 'long';
   children: ReactNode;
 }
 
 /** The timing tokens a lasting specimen sets on its stage. Components read them where they are (timing.ts). */
 const LASTING = { '--pw-toast-timeout': '3600s', '--pw-copied-timeout': '3600s' } as CSSProperties;
 
-export function Specimen({ title, note, frame, width, lasting = false, children }: SpecimenProps) {
-  const style = lasting ? LASTING : undefined;
+/** The waiting delays a waited specimen sets on its stage. */
+const WAITED = {
+  shown: { '--pw-delay-spinner': '0s', '--pw-delay-long': '3600s' },
+  long: { '--pw-delay-spinner': '0s', '--pw-delay-long': '0s' },
+} as Record<'shown' | 'long', CSSProperties>;
+
+export function Specimen({ title, note, frame, width, lasting = false, waited, children }: SpecimenProps) {
+  const style = lasting || waited ? { ...(lasting ? LASTING : {}), ...(waited ? WAITED[waited] : {}) } : undefined;
   return (
     <div className="uikit-specimen">
       <h3>{title}</h3>

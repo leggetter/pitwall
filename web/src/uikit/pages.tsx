@@ -183,8 +183,6 @@ export function ShortcutsDialogs() {
 interface PageCase {
   title: string;
   note?: string;
-  /** A page with no list, shown in a shorter window. */
-  short?: boolean;
   /** The query string it starts with, such as ?repo=…: a selection of its own, never the gallery's address. */
   search?: string;
   /** A window this many px wide, for one layout whatever the gallery's width. Otherwise the gallery's. */
@@ -194,14 +192,32 @@ interface PageCase {
   stored?: Record<string, string>;
   /** Its toasts stay (kit.tsx). */
   lasting?: boolean;
+  /** Its waiting state shows at once, without or with the long-wait line (kit.tsx). */
+  waited?: 'shown' | 'long';
   run?: (root: HTMLElement) => Promise<unknown>;
 }
 
 const repo = (key: string, root?: string) => `?repo=${key}${root ? `&root=${root}` : ''}`;
 
 const PAGES: PageCase[] = [
-  { short: true, title: 'Connecting', note: 'Loading: before the first snapshot.', view: { state: 'connecting' } },
-  { short: true, title: 'Reconnecting, before the first list', view: { state: 'reconnecting' } },
+  {
+    title: 'Connecting',
+    note: 'Before the first snapshot, after half a second: four skeleton items in the repo list and three skeleton rows, aria-hidden, with a hidden "Loading sessions" status. They pulse, except under reduced motion.',
+    view: { state: 'connecting' },
+    waited: 'shown',
+  },
+  {
+    title: 'Connecting, after 10 seconds',
+    note: 'The long-wait line joins the status: the first snapshot waits for the index’s first poll.',
+    view: { state: 'connecting' },
+    waited: 'long',
+  },
+  {
+    title: 'Reconnecting, before the first list, after 10 seconds',
+    note: 'The connection dropped before the first snapshot, so what’s slow is reaching pitwall.',
+    view: { state: 'reconnecting' },
+    waited: 'long',
+  },
   {
     title: 'All sessions',
     note: 'The first time. Click a row to open its session view, in the third column from 1,200 px or over the list below that.',
@@ -244,11 +260,23 @@ const PAGES: PageCase[] = [
       await text(root, 'Started pitwall-test-started');
     },
   },
-  { short: true, title: 'No sessions', view: { state: 'live', snapshot: EMPTY_SNAPSHOT } },
+  {
+    title: 'No sessions',
+    note: 'No sessions under the roots: New session, the region’s one primary action, opens the dialog.',
+    view: { state: 'live', snapshot: EMPTY_SNAPSHOT },
+  },
+  {
+    title: 'The filter matches nothing',
+    note: 'Clear filters clears the text and the chips, and puts focus in the field.',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    run: async (root) => {
+      type(await element<HTMLInputElement>(root, 'input[type="search"]'), 'pitwall-test-nowhere');
+      await text(root, 'No sessions match');
+    },
+  },
   {
     title: 'The filter matches nothing in a group',
     note: 'Search all sessions keeps the text and selects All sessions.',
-    short: true,
     search: repo(APP_DIR),
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
     run: async (root) => {
@@ -258,14 +286,13 @@ const PAGES: PageCase[] = [
   },
   {
     title: 'Nothing needs you',
-    short: true,
+    note: 'Show all sessions selects All sessions, with focus on the session list’s heading.',
     search: '?view=needs-you',
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
   },
   {
     title: 'A group that has left the snapshot',
     note: 'It stays selected, and the repo list has no item for it.',
-    short: true,
     search: repo(`${ROOT}/pitwall-test-gone`),
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
@@ -317,7 +344,14 @@ export function Pages() {
   return (
     <>
       {PAGES.map((page) => (
-        <Specimen key={page.title} title={page.title} note={page.note} frame={page.short ? 'page-short' : 'page'} lasting={page.lasting ?? false}>
+        <Specimen
+          key={page.title}
+          title={page.title}
+          note={page.note}
+          frame="page"
+          lasting={page.lasting ?? false}
+          {...(page.waited ? { waited: page.waited } : {})}
+        >
           <Page page={page} />
         </Specimen>
       ))}
@@ -368,6 +402,14 @@ const LAYOUTS: PageCase[] = [
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   {
+    title: 'Opened from the URL, before the first snapshot',
+    note: 'A ?session= waits in the view, with Close: skeletons for its header after half a second, then the long-wait line after 10 seconds, here at once. It takes no focus.',
+    width: 1280,
+    search: OPEN,
+    view: { state: 'connecting' },
+    waited: 'long',
+  },
+  {
     title: 'A session the URL names that isn’t listed',
     width: 1280,
     search: '?view=all&session=00000000-0000-4000-8000-00000000dead',
@@ -387,6 +429,14 @@ const LAYOUTS: PageCase[] = [
     width: 1000,
     search: OPEN,
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'Two columns, opened from the URL before the first snapshot',
+    note: 'The waiting view over the list, which shows its skeleton rows.',
+    width: 1000,
+    search: OPEN,
+    view: { state: 'connecting' },
+    waited: 'shown',
   },
   { title: 'One column, below 900 px', note: 'The repo list is a drawer, opened with Repos.', width: 375, view: { state: 'live', snapshot: LIST_SNAPSHOT } },
   {
@@ -413,7 +463,7 @@ export function Layouts() {
   return (
     <>
       {LAYOUTS.map((page) => (
-        <Specimen key={page.title} title={page.title} note={page.note} frame="page" width={page.width}>
+        <Specimen key={page.title} title={page.title} note={page.note} frame="page" width={page.width} {...(page.waited ? { waited: page.waited } : {})}>
           <Page page={page} />
         </Specimen>
       ))}
@@ -445,7 +495,7 @@ export function Notices() {
           <span className="badge badge-attention">2 need you</span>
         </p>
       </Specimen>
-      <Specimen title="Connection badges" note="The header's badge, in each connection state: a spinner while connecting, a dot once live.">
+      <Specimen title="Connection badges" note="The header's badge, in each connection state: the Spinner component while connecting or reconnecting, a dot once live.">
         <p className="uikit-row">
           {STATES.map((state) => (
             <ConnectionBadge key={state} state={state} />

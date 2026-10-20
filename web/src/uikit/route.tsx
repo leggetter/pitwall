@@ -34,7 +34,7 @@ export interface UikitRouteProps {
 export function UikitRoute({ gallery: Gallery, children }: UikitRouteProps) {
   if (!useUikitRoute()) return children;
   return (
-    <Suspense fallback={<p className="placeholder">Loading the UI kit…</p>}>
+    <Suspense fallback={<p className="status-line">Loading the UI kit…</p>}>
       <Gallery />
     </Suspense>
   );
