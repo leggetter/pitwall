@@ -242,6 +242,9 @@ export function SessionView({ session, listed, onClose, layout = 'overlay', comp
     terminalTab.current?.focus();
   }, []);
 
+  /** F6 in the terminal: focus moves to the Terminal tab, and the terminal stays open and attached (6.1 rule 14). */
+  const focusTerminalTab = useCallback(() => terminalTab.current?.focus(), []);
+
   // Escape from anywhere a nearer layer didn't take it (6.2): a confirmation cancels, and a busy one, or
   // a draft in the message box, keeps the view open. Otherwise the view closes.
   const onEscape = () => {
@@ -433,7 +436,13 @@ export function SessionView({ session, listed, onClose, layout = 'overlay', comp
         hidden={tab !== 'terminal'}
       >
         {tab === 'terminal' && (
-          <SessionTerminal sessionId={sessionId} onClose={leaveTerminal} onStatus={setAttachStatus} onRestartChange={setRestart} />
+          <SessionTerminal
+            sessionId={sessionId}
+            onClose={leaveTerminal}
+            onLeave={focusTerminalTab}
+            onStatus={setAttachStatus}
+            onRestartChange={setRestart}
+          />
         )}
       </div>
 

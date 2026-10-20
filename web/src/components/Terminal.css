@@ -1,41 +1,65 @@
-/* The attached terminal, in place of the conversation in the session view (W10) */
+/*
+ * The attached terminal, in place of the conversation in the session view (W10; docs/design-system.md,
+ * 4: Terminal). The bar, then the restart confirmation or a notice, then the screen, which fills the
+ * rest of the panel.
+ */
 
 .attach {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--pw-space-2);
   min-height: 0;
-  padding: 8px 12px 12px;
+  padding: var(--pw-space-2) var(--pw-space-3) var(--pw-space-3);
 }
 
+/*
+ * The bar: 36 px, padding 4 px 0, 8 px gaps. The badge and the hint, then the buttons at the right,
+ * which wrap to a line of their own, still at the right, when the panel is too narrow for all three.
+ */
 .attach-bar {
   display: flex;
+  flex: none;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--pw-space-2);
+  min-height: calc(var(--pw-control-md) + 2 * var(--pw-space-1));
+  padding: var(--pw-space-1) 0;
 }
 
-.attach-state {
-  flex: 1 1 auto;
-  color: var(--pw-text-muted);
+.attach-status {
+  display: inline-flex;
+}
+
+/* Meta: s 13/20 in --pw-text-subtle, with the F6 key cap. */
+.attach-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
-.attach-state.state-attached {
-  color: var(--pw-live);
+.attach-actions {
+  display: flex;
+  gap: var(--pw-space-2);
+  margin-left: auto;
 }
 
-.attach .banner {
-  margin-top: 0;
-  font-size: var(--pw-text-m);
-}
-
-/* The fit addon sizes the terminal to this box, less its padding. */
+/*
+ * The screen. The fit addon sizes the terminal to this box, less its padding. Its 1 px edge is what
+ * sets it apart in the dark theme, where --pw-term-bg is the page's own --pw-bg; it's decorative
+ * (2.5), as the fill already shows where the screen is in the light theme. Ligatures are off, so
+ * `->`, `!=` and `//` show as typed (2.7).
+ */
 .attach-terminal {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 6px;
+  padding: var(--pw-space-1-5);
   overflow: hidden;
   border-radius: var(--pw-radius-md);
   background: var(--pw-term-bg);
+  box-shadow: 0 0 0 1px var(--pw-border-strong);
+  font-variant-ligatures: none;
 }

@@ -1,15 +1,30 @@
-// A background session's terminal, the session view's Terminal tab (W10, D3, D9; W22):
+// A background session's terminal, the session view's Terminal tab (W10, D3, D9; W22; W29):
 // xterm.js over an attach socket running `claude attach`. Mounting attaches and unmounting
 // detaches, so switching to the Conversation tab, closing the view or closing the browser tab
 // leaves the session running.
+//
+// docs/design-system.md, 4: Terminal. The bar has the status badge, the "F6 to leave the terminal"
+// hint, and ghost sm "Attach again" and "Detach" buttons. Below it, the screen: xterm.js on
+// --pw-term-bg, its font and colours from the tokens (xterm.ts). A notice for an attach that ended
+// is an inline alert above the screen, neutral when it ended as asked and danger when it failed.
+//
+// Keys: every key goes to the terminal, Escape included (it interrupts Claude), so Escape never
+// closes the view from here. F6 is the one exception: it moves focus to the Terminal tab, so the
+// terminal isn't a keyboard trap (WCAG 2.1.2), and never reaches the session.
 //
 // A session that isn't running asks first, as an inline confirmation under the bar (W24): Cancel
 // takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
 // has started or failed.
 
 import { useContext, useEffect, useRef, useState } from 'react';
-import { AttachContext, attachSocketUrl, endMessage, startAttach, type AttachSession, type AttachStatus } from '../attach.js';
+import { AttachContext, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachSession, type AttachStatus } from '../attach.js';
+import { plainText } from '../format.js';
+import type { BadgeLook } from '../sessions.js';
+import { Alert } from './Alert.js';
+import { Badge, type BadgeProps } from './Badge.js';
+import { Button } from './Button.js';
 import { InlineConfirm } from './InlineConfirm.js';
+import { KeyCaps } from './KeyCaps.js';
 import './Terminal.css';
 
 /** The restart confirmation: open, or busy once confirmed, until the attach has started or failed. */
@@ -21,6 +36,9 @@ export const RESTART = {
   confirm: 'Restart and attach',
   busy: 'Restarting…',
 } as const;
+
+/** The key that leaves the terminal, for the Terminal tab (6.1 rule 14, 6.2). */
+export const LEAVE_KEY = 'F6';
 
 /** What the view needs from a terminal. createXterm() (xterm.ts) is the real one. */
 export interface TerminalHandle {
@@ -41,30 +59,49 @@ async function createTerminal(container: HTMLElement): Promise<TerminalHandle> {
   return (await import('../xterm.js')).createXterm(container);
 }
 
-const STATE_LABELS: Record<AttachStatus['kind'], string> = {
-  connecting: 'Attaching…',
-  'confirm-restart': 'Not running',
-  attached: 'Attached',
-  ended: 'Detached',
+/** The bar's status badge for each attach status (4: Terminal). */
+export const STATUS_BADGES: Record<AttachStatus['kind'], { label: string; look: BadgeLook; lead?: BadgeProps['lead'] }> = {
+  connecting: { label: 'Attaching…', look: 'subtle-neutral', lead: 'spinner' },
+  attached: { label: 'Attached', look: 'subtle-success', lead: 'dot' },
+  ended: { label: 'Detached', look: 'subtle-neutral' },
+  'confirm-restart': { label: 'Not running', look: 'outline' },
 };
+
+/**
+ * A notice's tone: neutral when `claude attach` ended as it should (it exited cleanly, as it does
+ * when you detach inside it), danger when it failed: a non-zero exit, the server refusing or
+ * failing, too many attached, the proof refused, or the connection lost.
+ */
+export function noticeTone(end: AttachEnd): 'neutral' | 'danger' {
+  return end.kind === 'detached' || (end.kind === 'exit' && (end.code === null || end.code === 0)) ? 'neutral' : 'danger';
+}
+
+/** Ignores F6 with a modifier, which goes to the terminal like any other key. */
+function isLeaveKey(event: KeyboardEvent): boolean {
+  return event.key === LEAVE_KEY && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+}
 
 export interface SessionTerminalProps {
   sessionId: string;
   /** Leaves the terminal for the conversation. Unmounting detaches. */
   onClose: () => void;
+  /** F6 in the terminal: focus goes to the Terminal tab, and the terminal stays attached. */
+  onLeave?: () => void;
   /** Each status as it changes, for the Terminal tab's dot and Escape's layering in the session view. */
   onStatus?: (status: AttachStatus) => void;
   /** The restart confirmation's phase as it changes, for Escape's layering in the session view. */
   onRestartChange?: (phase: RestartPhase | undefined) => void;
 }
 
-export function SessionTerminal({ sessionId, onClose, onStatus, onRestartChange }: SessionTerminalProps) {
+export function SessionTerminal({ sessionId, onClose, onLeave, onStatus, onRestartChange }: SessionTerminalProps) {
   const env = useContext(AttachContext);
   const container = useRef<HTMLDivElement>(null);
   const session = useRef<AttachSession | undefined>(undefined);
   const [status, setStatus] = useState<AttachStatus>({ kind: 'connecting' });
   const onStatusRef = useRef(onStatus);
   onStatusRef.current = onStatus;
+  const onLeaveRef = useRef(onLeave);
+  onLeaveRef.current = onLeave;
   useEffect(() => {
     onStatusRef.current?.(status);
   }, [status]);
@@ -148,35 +185,58 @@ export function SessionTerminal({ sessionId, onClose, onStatus, onRestartChange 
     };
   }, [env, sessionId, attempt]);
 
-  // Escape belongs to the terminal (it interrupts Claude), so it doesn't close the view.
   useEffect(() => {
     const element = container.current;
     if (!element) return;
+    // F6, before xterm.js sees it: capturing on the screen runs ahead of xterm.js's own listener on
+    // its textarea, so the key never reaches the session.
+    const onLeaveKey = (event: KeyboardEvent) => {
+      if (!isLeaveKey(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onLeaveRef.current?.();
+    };
+    // Escape belongs to the terminal (it interrupts Claude), so it doesn't close the view.
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') event.preventDefault();
     };
+    element.addEventListener('keydown', onLeaveKey, true);
     element.addEventListener('keydown', onKey);
-    return () => element.removeEventListener('keydown', onKey);
+    return () => {
+      element.removeEventListener('keydown', onLeaveKey, true);
+      element.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   const ended = status.kind === 'ended';
-  const notice = ended ? endMessage(status.end) : undefined;
-  const failed = ended && status.end.kind !== 'exit' && status.end.kind !== 'detached';
+  const notice = !env ? 'Attach is unavailable here.' : ended ? endMessage(status.end) : undefined;
+  const tone = ended ? noticeTone(status.end) : 'neutral';
+  const badge = STATUS_BADGES[status.kind];
 
   return (
     <div className="attach">
       <div className="attach-bar">
-        <span className={`attach-state state-${status.kind}`} role="status">
-          {env ? STATE_LABELS[status.kind] : 'Attach is unavailable here.'}
-        </span>
-        {ended && (
-          <button ref={attachAgain} type="button" className="button sm" onClick={() => setAttempt((count) => count + 1)}>
-            Attach again
-          </button>
+        {env && (
+          // A status region, so each change is announced, as the connection badge's is.
+          <span className="attach-status" data-status={status.kind} role="status">
+            <Badge look={badge.look} lead={badge.lead}>
+              {badge.label}
+            </Badge>
+          </span>
         )}
-        <button type="button" className="button sm" onClick={onClose}>
-          {ended ? 'Back to the conversation' : 'Detach'}
-        </button>
+        <span className="attach-hint">
+          <KeyCaps keys={[LEAVE_KEY]} label={LEAVE_KEY} /> to leave the terminal
+        </span>
+        <span className="attach-actions">
+          {ended && (
+            <Button ref={attachAgain} variant="ghost" size="sm" icon="retry" onClick={() => setAttempt((count) => count + 1)}>
+              Attach again
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            {ended || !env ? 'Back to the conversation' : 'Detach'}
+          </Button>
+        </span>
       </div>
       {phase && (
         <InlineConfirm
@@ -197,9 +257,10 @@ export function SessionTerminal({ sessionId, onClose, onStatus, onRestartChange 
         />
       )}
       {notice && (
-        <p className={failed ? 'banner error attach-notice' : 'banner muted attach-notice'} role="alert">
-          {notice}
-        </p>
+        // It arrives live: an alert when it failed, a status when it ended as asked (4: Alerts and banners).
+        <Alert tone={tone} role={tone === 'danger' ? 'alert' : 'status'} className="attach-notice">
+          {plainText(notice)}
+        </Alert>
       )}
       <div className="attach-terminal" ref={container} />
     </div>

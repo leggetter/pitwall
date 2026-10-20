@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ATTACH_PATH,
@@ -31,12 +31,16 @@ class FakeTerminal implements TerminalHandle {
   written: string[] = [];
   focused = 0;
   disposed = false;
+  /** Every key that reached the screen, as xterm.js's own listener on its textarea would get it. */
+  keys: string[] = [];
+  readonly screen: HTMLTextAreaElement;
   private listeners: ((data: string) => void)[] = [];
 
   constructor(readonly container: HTMLElement) {
-    const screenElement = document.createElement('textarea');
-    screenElement.className = 'fake-terminal';
-    container.append(screenElement);
+    this.screen = document.createElement('textarea');
+    this.screen.className = 'fake-terminal';
+    this.screen.addEventListener('keydown', (event) => this.keys.push(`${event.shiftKey ? 'Shift+' : ''}${event.key}`), true);
+    container.append(this.screen);
   }
   write(data: Uint8Array) {
     this.written.push(new TextDecoder().decode(data));
@@ -49,6 +53,7 @@ class FakeTerminal implements TerminalHandle {
   }
   focus() {
     this.focused += 1;
+    this.screen.focus();
   }
   dispose() {
     this.disposed = true;
@@ -164,6 +169,12 @@ async function ready(socket: FakeSocket, n = nonce()) {
 }
 
 const sent = (socket: FakeSocket) => socket.sent.map((data) => JSON.parse(data) as Record<string, unknown>);
+
+/** The notice above the screen, an inline alert. */
+const notice = (view: HTMLElement) => view.querySelector<HTMLElement>('.attach-notice');
+
+/** The bar's status badge. */
+const statusBadge = (view: HTMLElement) => view.querySelector<HTMLElement>('.attach-bar [role="status"] .badge')!;
 
 function binary(socket: FakeSocket, text: string) {
   act(() => socket.onmessage?.(new MessageEvent('message', { data: new TextEncoder().encode(text).buffer })));
@@ -418,7 +429,8 @@ describe('SessionView: attach, from the Terminal tab', () => {
     await ready(first.socket);
     act(() => first.socket.receive({ type: 'attached' }));
     act(() => first.socket.receive({ type: 'exit', code: 0 }));
-    expect(within(view).getByRole('alert').textContent).toBe('claude attach ended.');
+    expect(notice(view)?.textContent).toBe('claude attach ended.');
+    expect(within(view).queryByRole('alert')).toBeNull();
     expect(within(view).getByRole('button', { name: 'Back to the conversation' })).toBeTruthy();
 
     fireEvent.click(within(view).getByRole('button', { name: 'Attach again' }));
@@ -456,6 +468,169 @@ describe('SessionView: attach, from the Terminal tab', () => {
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(socket.closedByClient).toBe(true);
+  });
+});
+
+describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
+  /** The badge's look, lead and label, and the bar's buttons by name, as each is drawn. */
+  function bar(view: HTMLElement) {
+    const badge = statusBadge(view);
+    const look = [...badge.classList].find((name) => name.startsWith('badge-'));
+    const lead = badge.querySelector('.spinner') ? 'spinner' : badge.querySelector('.status-dot') ? 'dot' : undefined;
+    const buttons = [...view.querySelectorAll<HTMLButtonElement>('.attach-bar button')].map((button) => `${button.textContent} (${button.className})`);
+    return { look, lead, label: badge.querySelector('.badge-label')?.textContent, buttons };
+  }
+
+  it('Attaching…: a subtle neutral badge with a spinner, the F6 hint, and a ghost sm Detach', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    await attach(view, fake);
+    expect(bar(view)).toEqual({ look: 'badge-subtle-neutral', lead: 'spinner', label: 'Attaching…', buttons: ['Detach (button ghost sm)'] });
+    // The badge sits in a status region, so each change is announced.
+    expect(statusBadge(view).closest('[role="status"]')?.closest('.attach-bar')).not.toBeNull();
+    const hint = view.querySelector<HTMLElement>('.attach-hint')!;
+    expect(hint.textContent).toBe('F6F6 to leave the terminal');
+    expect(within(hint).getByText('F6', { selector: 'kbd' }).closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(within(hint).getByText('F6', { selector: '.visually-hidden' })).toBeTruthy();
+    expect(notice(view)).toBeNull();
+  });
+
+  it('Attached: a subtle success badge with a dot, the hint, and Detach', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket } = await attach(view, fake);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    expect(bar(view)).toEqual({ look: 'badge-subtle-success', lead: 'dot', label: 'Attached', buttons: ['Detach (button ghost sm)'] });
+    expect(view.querySelector('.attach-hint')).not.toBeNull();
+  });
+
+  it('Detached: a subtle neutral badge with no lead, then a ghost sm Attach again with the retry icon, and Back to the conversation', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket } = await attach(view, fake);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    act(() => socket.receive({ type: 'exit', code: 0 }));
+    expect(bar(view)).toEqual({
+      look: 'badge-subtle-neutral',
+      lead: undefined,
+      label: 'Detached',
+      buttons: ['Attach again (button ghost sm)', 'Back to the conversation (button ghost sm)'],
+    });
+    const again = within(view).getByRole('button', { name: 'Attach again' });
+    expect(again.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    expect(view.querySelector('.attach-hint')).not.toBeNull();
+  });
+
+  it('Not running: an outline badge while it asks to restart', async () => {
+    const { fake } = renderDashboard(snap([background({ pid: undefined, alive: false, status: undefined, state: 'done', finished: true })]));
+    fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
+    const view = await openView('demo-worker');
+    const { socket } = await attach(view, fake);
+    await ready(socket);
+    act(() => socket.receive({ type: 'needs-restart' }));
+    expect(bar(view)).toEqual({ look: 'badge-outline', lead: undefined, label: 'Not running', buttons: ['Detach (button ghost sm)'] });
+  });
+
+  describe('notices: an inline alert above the screen', () => {
+    async function ended(end: (socket: FakeSocket) => void) {
+      const { fake } = renderDashboard();
+      const view = await openView('demo-worker');
+      const { socket } = await attach(view, fake);
+      await ready(socket);
+      act(() => socket.receive({ type: 'attached' }));
+      act(() => end(socket));
+      return view;
+    }
+
+    /** The notice's tone, role, icon and text, and whether it's above the screen. */
+    function described(view: HTMLElement) {
+      const alert = notice(view)!;
+      const tone = ['neutral', 'danger', 'info', 'success', 'warning'].find((name) => alert.classList.contains(name));
+      const screenElement = view.querySelector('.attach-terminal')!;
+      return {
+        alert: alert.classList.contains('inline-alert'),
+        tone,
+        role: alert.getAttribute('role'),
+        icon: alert.querySelector(':scope > svg') !== null,
+        above: Boolean(alert.compareDocumentPosition(screenElement) & Node.DOCUMENT_POSITION_FOLLOWING),
+        text: alert.textContent,
+      };
+    }
+
+    it('neutral, as a status, when claude attach ended cleanly, as it does when you detach inside it', async () => {
+      const view = await ended((socket) => socket.receive({ type: 'exit', code: 0 }));
+      expect(described(view)).toEqual({ alert: true, tone: 'neutral', role: 'status', icon: true, above: true, text: 'claude attach ended.' });
+      expect(view.querySelector('.banner')).toBeNull();
+    });
+
+    it('danger, as an alert, when it failed: the server refused, it exited with an error, too many attached, or the connection closed', async () => {
+      const cases: [string, (socket: FakeSocket) => void, string][] = [
+        ['refused', (socket) => socket.receive({ type: 'error', error: 'Only background sessions can be attached.' }), "Couldn't attach: Only background sessions can be attached."],
+        ['exit 1', (socket) => socket.receive({ type: 'exit', code: 1 }), 'claude attach ended with exit code 1.'],
+        ['too many', (socket) => socket.serverClose(WS_CLOSE_TOO_MANY), '4 sessions are already attached; detach one first.'],
+        ['closed', (socket) => socket.serverClose(1006), 'The connection to pitwall closed, so this terminal is detached.'],
+      ];
+      for (const [name, end, text] of cases) {
+        const view = await ended(end);
+        expect(described(view), name).toEqual({ alert: true, tone: 'danger', role: 'alert', icon: true, above: true, text });
+        cleanup();
+      }
+    });
+
+    it("shows the server's reason as text, never markup, and without terminal escapes", async () => {
+      const view = await ended((socket) => socket.receive({ type: 'error', error: '<b>made up</b>\u001b[31m reason' }));
+      expect(notice(view)!.textContent).toBe("Couldn't attach: <b>made up</b> reason");
+      expect(notice(view)!.querySelector('b')).toBeNull();
+    });
+  });
+
+  describe('F6 leaves the terminal, and every other key stays in it', () => {
+    async function attached() {
+      const { fake } = renderDashboard();
+      const view = await openView('demo-worker');
+      const { socket, terminal } = await attach(view, fake);
+      await ready(socket);
+      act(() => socket.receive({ type: 'attached' }));
+      expect(document.activeElement).toBe(terminal.screen);
+      return { view, socket, terminal };
+    }
+
+    it('F6 moves focus to the Terminal tab, never reaches the session, and leaves the terminal attached', async () => {
+      const { view, socket, terminal } = await attached();
+      const before = socket.sent.length;
+      const event = fireEvent.keyDown(terminal.screen, { key: 'F6' });
+      expect(event).toBe(false);
+      expect(document.activeElement).toBe(tab(view, 'Terminal'));
+      expect(terminal.keys).toEqual([]);
+      expect(socket.sent).toHaveLength(before);
+      expect(socket.closedByClient).toBe(false);
+      expect(terminal.disposed).toBe(false);
+      expect(tab(view, 'Terminal').getAttribute('aria-selected')).toBe('true');
+      expect(screen.getByRole('dialog')).toBe(view);
+    });
+
+    it('Escape, Tab, letters and F6 with a modifier all reach the terminal, and Escape leaves the view open', async () => {
+      const { view, socket, terminal } = await attached();
+      for (const init of [{ key: 'Escape' }, { key: 'Tab' }, { key: 'j' }, { key: 'k' }, { key: 'F6', shiftKey: true }, { key: 'F5' }]) {
+        fireEvent.keyDown(terminal.screen, init);
+      }
+      expect(terminal.keys).toEqual(['Escape', 'Tab', 'j', 'k', 'Shift+F6', 'F5']);
+      expect(document.activeElement).toBe(terminal.screen);
+      expect(screen.getByRole('dialog')).toBe(view);
+      expect(socket.closedByClient).toBe(false);
+      expect(tab(view, 'Terminal').getAttribute('aria-selected')).toBe('true');
+    });
+
+    it('F6 outside the screen, such as on the bar, does nothing of its own', async () => {
+      const { view, terminal } = await attached();
+      const detach = within(view).getByRole('button', { name: 'Detach' });
+      detach.focus();
+      fireEvent.keyDown(detach, { key: 'F6' });
+      expect(document.activeElement).toBe(detach);
+      expect(terminal.keys).toEqual([]);
+    });
   });
 });
 
