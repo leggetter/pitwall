@@ -11,14 +11,14 @@ import {
   type StorageSource,
 } from '../groupState.js';
 import { relayAlertText } from '../relay.js';
-import { countAttention, filterGroups, filterNeedle, groupId, NO_FILTERS, noMatchText, type Filters } from '../sessions.js';
+import { countAttention, filterGroups, filterNeedle, groupId, NO_FILTERS, needYou, noMatchText, sessionCount, type Filters } from '../sessions.js';
 import { useOpenWhenListed } from '../spawn.js';
+import { FilterControls } from './Filters.js';
 import { GroupSection } from './GroupSection.js';
 import { Header } from './Header.js';
 import { HighlightContext } from './Highlight.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
 import { SessionView } from './SessionView.js';
-import { Toolbar } from './Toolbar.js';
 
 /** The current time, refreshed every second, for relative times. */
 function useNow(intervalMs = 1_000): number {
@@ -129,7 +129,31 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
       />
 
       {snapshot && allSessions.length > 0 && (
-        <Toolbar filters={filters} onChange={setFilters} total={allSessions.length} attention={attention} />
+        // For now, today's controls in a row under the header: the filters, the "Needs attention only"
+        // checkbox and the summary. The three-column layout (W21) gives them their places.
+        <div className="controls">
+          <FilterControls filters={filters} onChange={setFilters}>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={filters.attentionOnly}
+                onChange={(event) => setFilters((current) => ({ ...current, attentionOnly: event.target.checked }))}
+              />
+              Needs attention only
+            </label>
+          </FilterControls>
+          <p className="summary">
+            {sessionCount(allSessions.length)}
+            {attention > 0 ? (
+              <>
+                {' · '}
+                <strong className="summary-attention">{needYou(attention)}</strong>
+              </>
+            ) : (
+              ' · nothing needs you'
+            )}
+          </p>
+        </div>
       )}
 
       <div className="panes">
@@ -188,7 +212,6 @@ export function Dashboard({ view, storage = browserStorage }: DashboardProps) {
                     onToggle={() => toggle(id)}
                     finishedCollapsed={!(finishedOpen.get(id) ?? false)}
                     onToggleFinished={() => toggleFinished(id)}
-                    listFinished={filters.chips.has('finished')}
                     showRoot={snapshot.roots.length > 1}
                     now={now}
                     onOpen={openSession}

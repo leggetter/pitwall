@@ -239,21 +239,52 @@ textarea {
   white-space: nowrap;
 }
 
-/* Toolbar */
+/*
+ * For now, today's controls in the grid's toolbar row: the filters, the "Needs attention only"
+ * checkbox and the summary. The three-column layout (W21) gives them their places.
+ */
 
-.toolbar {
+.controls {
   grid-area: toolbar;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: var(--pw-space-2) var(--pw-space-4);
-  min-height: var(--pw-toolbar-h);
   padding: var(--pw-space-2) var(--pw-space-4);
   background: var(--pw-bg);
   border-bottom: 1px solid var(--pw-border);
 }
 
-.toolbar-filters {
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* A checked checkbox's fill (docs/design-system.md, 2.3): at least 3:1 on every neutral surface. */
+.toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--pw-selected-border);
+}
+
+.summary {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-attention {
+  color: var(--pw-text);
+}
+
+/* The filters: the field, the chips and Clear filters, then any other filter. */
+
+.filter-controls {
   display: flex;
   flex: 1 1 auto;
   flex-wrap: wrap;
@@ -375,25 +406,11 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-/* The summary */
-
-.summary {
-  display: flex;
-  align-items: center;
-  gap: var(--pw-space-2);
-  margin-left: auto;
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  line-height: var(--pw-leading-s);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 /* The shell's widths: wider gutters from 1,100 px; at 600 px and narrower the header's right side wraps under the wordmark. */
 
 @container pitwall (min-width: 1100px) {
   .app-header,
-  .toolbar,
+  .controls,
   .list-pane {
     padding-inline: var(--pw-space-6);
   }
@@ -483,28 +500,6 @@ mark.match {
   text-overflow: ellipsis;
 }
 
-/* Badges (section 4). Only the summary's for now; W23 moves the rows' and groups' badges onto these. */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--pw-space-1);
-  min-width: var(--pw-badge-h);
-  height: var(--pw-badge-h);
-  padding: 0 var(--pw-space-1-5);
-  border-radius: var(--pw-radius-sm);
-  font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-medium);
-  line-height: var(--pw-leading-xs);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.badge-attention {
-  background: var(--pw-state-attention-bg);
-  color: var(--pw-state-attention-fg);
-}
-
 .link-button {
   padding: 0;
   background: none;
@@ -584,8 +579,8 @@ mark.match {
     color: var(--pw-text);
   }
 
-  /* On the page background rather than a surface, as in the toolbar (2.3). */
-  .toolbar .button.ghost:hover {
+  /* On the page background rather than a surface (2.3). */
+  .controls .button.ghost:hover {
     background: var(--pw-surface-hover-bg);
   }
 }

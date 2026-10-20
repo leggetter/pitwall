@@ -18,11 +18,6 @@ export interface GroupSectionProps {
    */
   finishedCollapsed?: boolean;
   onToggleFinished?: (() => void) | undefined;
-  /**
-   * List the finished sessions with the others, after them, with no Finished sub-list: the Finished
-   * filter chip is on, so they're what was asked for. The sub-list's own state is kept for later.
-   */
-  listFinished?: boolean;
   /** Show which root the group sits under, when pitwall watches more than one. */
   showRoot: boolean;
   now: number;
@@ -39,7 +34,6 @@ export function GroupSection({
   onToggle,
   finishedCollapsed = true,
   onToggleFinished,
-  listFinished = false,
   showRoot,
   now,
   onOpen,
@@ -48,10 +42,7 @@ export function GroupSection({
   const headingId = useId();
   const listId = useId();
   const finishedId = useId();
-  const split = splitFinished(sessions);
-  // With the Finished chip on, the finished rows come after the others, in the same list.
-  const current = listFinished ? [...split.current, ...split.finished] : split.current;
-  const finished = listFinished ? [] : split.finished;
+  const { current, finished } = splitFinished(sessions);
   // Counted on the Finished line, so a question isn't hidden behind the collapse. Never as "need you".
   const finishedAsked = finished.reduce((count, session) => count + (session.askedYou ? 1 : 0), 0);
   const total = group.sessions.length;

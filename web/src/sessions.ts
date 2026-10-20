@@ -1,7 +1,7 @@
 // What the screen derives from a session: whether it needs Phil, which status
 // pill it gets, and whether it passes the filters.
 
-import type { SessionGroup, SessionSummary } from '../../src/shared/protocol.js';
+import type { SessionGroup, SessionKind, SessionSummary } from '../../src/shared/protocol.js';
 
 /**
  * A session that is waiting on Phil, a background session blocked on him, or
@@ -68,34 +68,32 @@ export function groupId(group: Pick<SessionGroup, 'root' | 'key'>): string {
 }
 
 /**
- * The toolbar's filter chips (docs/design-system.md, Filter chips). Two kinds: the state chips, Needs
- * you and Finished, and the kind chips, Interactive and Background. Chips of one kind combine as OR,
- * the two kinds as AND, and a kind with no chip on lets everything through.
+ * The filter chips (docs/design-system.md, Filter chips): Interactive and Background, one for each
+ * kind of session. Chips of one kind combine as OR, so with both on, or neither, every kind shows.
  */
-export type FilterChip = 'needsYou' | 'interactive' | 'background' | 'finished';
+export type FilterChip = SessionKind;
 
-/** The chips in the toolbar's order. */
-export const FILTER_CHIPS: readonly FilterChip[] = ['needsYou', 'interactive', 'background', 'finished'];
-
-/** Which chips are state chips and which are kind chips. */
-export const CHIP_KINDS: Readonly<Record<'state' | 'kind', readonly FilterChip[]>> = {
-  state: ['needsYou', 'finished'],
-  kind: ['interactive', 'background'],
-};
+/** The chips in their order on screen. */
+export const FILTER_CHIPS: readonly FilterChip[] = ['interactive', 'background'];
 
 export interface Filters {
   /** Matched case-insensitively against session names and titles, group labels and cwds. */
   text: string;
   /** The chips that are on. */
   chips: ReadonlySet<FilterChip>;
+  /**
+   * Only sessions that need attention: today's "Needs attention only" checkbox, until the layout
+   * that replaces it (W21's three columns).
+   */
+  attentionOnly: boolean;
 }
 
-/** No text and no chips: everything shows. */
-export const NO_FILTERS: Filters = { text: '', chips: new Set() };
+/** No text, no chips and no checkbox: everything shows. */
+export const NO_FILTERS: Filters = { text: '', chips: new Set(), attentionOnly: false };
 
-/** Whether any chip is on or the field has text, which is when "Clear filters" shows. */
+/** Whether the field has text or any other filter is on, which is when "Clear filters" shows. */
 export function filtering(filters: Filters): boolean {
-  return filters.chips.size > 0 || filters.text !== '';
+  return filters.text !== '' || filters.chips.size > 0 || filters.attentionOnly;
 }
 
 /** The text to match, as filterGroups and the highlight use it: trimmed and lower case. */
@@ -103,26 +101,9 @@ export function filterNeedle(text: string): string {
   return text.trim().toLowerCase();
 }
 
-/** Whether a session passes one chip. */
-export function matchesChip(session: SessionSummary, chip: FilterChip): boolean {
-  switch (chip) {
-    case 'needsYou':
-      return needsAttention(session);
-    case 'finished':
-      return session.finished;
-    case 'interactive':
-      return session.kind === 'interactive';
-    case 'background':
-      return session.kind === 'background';
-  }
-}
-
-/** Whether a session passes the chips that are on: one chip or more of each kind that has any on. */
+/** Whether a session passes the chips that are on: any of them, or all sessions when none is. */
 export function matchesChips(session: SessionSummary, chips: ReadonlySet<FilterChip>): boolean {
-  return Object.values(CHIP_KINDS).every((kind) => {
-    const on = kind.filter((chip) => chips.has(chip));
-    return on.length === 0 || on.some((chip) => matchesChip(session, chip));
-  });
+  return chips.size === 0 || chips.has(session.kind);
 }
 
 export interface VisibleGroup {
@@ -138,6 +119,7 @@ export function filterGroups(groups: readonly SessionGroup[], filters: Filters):
   for (const group of groups) {
     const labelMatches = needle !== '' && group.label.toLowerCase().includes(needle);
     const sessions = group.sessions.filter((session) => {
+      if (filters.attentionOnly && !needsAttention(session)) return false;
       if (!matchesChips(session, filters.chips)) return false;
       if (needle === '' || labelMatches) return true;
       return (
@@ -173,16 +155,17 @@ export function needYou(count: number): string {
 
 /**
  * What the list says when the filters hide every session (docs/design-system.md, 5 and Empty states).
- * Needs you on its own, with nothing needing you, is the calm case; anything else didn't match.
+ * "Needs attention only" on its own, with nothing needing you, is the calm case; anything else didn't
+ * match.
  */
 export function noMatchText(filters: Filters, attention: number): { title: string; sentence: string } {
   const text = filters.text.trim();
-  if (text === '' && attention === 0 && filters.chips.size === 1 && filters.chips.has('needsYou')) {
+  if (text === '' && filters.chips.size === 0 && filters.attentionOnly && attention === 0) {
     return { title: 'Nothing needs you right now', sentence: 'Sessions that are waiting for you, or asked you something, show here.' };
   }
+  const filtered = filters.chips.size > 0 || filters.attentionOnly;
   if (text === '') return { title: 'No sessions match', sentence: 'Nothing matches these filters.' };
-  const sentence = filters.chips.size > 0 ? `Nothing matches "${text}" with these filters.` : `Nothing matches "${text}".`;
-  return { title: 'No sessions match', sentence };
+  return { title: 'No sessions match', sentence: filtered ? `Nothing matches "${text}" with these filters.` : `Nothing matches "${text}".` };
 }
 
 /** "1 session", "12 sessions". */

@@ -12,7 +12,6 @@ import {
   CALM_SNAPSHOT,
   DIALOG_SNAPSHOT,
   EMPTY_SNAPSHOT,
-  FINISHED_ROWS,
   HIGHLIGHT_SNAPSHOT,
   JOBS_DIR,
   LIST_SNAPSHOT,
@@ -176,11 +175,11 @@ const PAGES: PageCase[] = [
   },
   {
     title: 'Nothing needs you',
-    note: 'The Needs you chip on, with nothing that does.',
+    note: '"Needs attention only" on, with nothing that does.',
     short: true,
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
     run: async (root) => {
-      await press(root, 'Needs you');
+      (await element<HTMLInputElement>(root, 'input[type="checkbox"]')).click();
       await text(root, 'Nothing needs you right now');
     },
   },
@@ -194,22 +193,12 @@ const PAGES: PageCase[] = [
     },
   },
   {
-    title: 'Chips on',
-    note: 'Needs you and Background: the background sessions that need you.',
+    title: 'A chip on',
+    note: 'Background: background sessions only. Finished ones stay in their Finished list.',
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
     run: async (root) => {
-      await press(root, 'Needs you 2');
       await press(root, 'Background');
-      await until('one row', () => root.querySelectorAll('.session').length === 1);
-    },
-  },
-  {
-    title: 'The Finished chip on',
-    note: 'Finished sessions are listed with the rest of their group, with no Finished list to open.',
-    view: { state: 'live', snapshot: LIST_SNAPSHOT },
-    run: async (root) => {
-      await press(root, 'Finished');
-      await until('the finished rows', () => root.querySelectorAll('.session.finished').length === FINISHED_ROWS.length);
+      await until('background rows only', () => root.querySelector('.session') !== null && ![...root.querySelectorAll('.session .kind')].some((kind) => kind.textContent === 'interactive'));
     },
   },
   {

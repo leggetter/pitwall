@@ -1,11 +1,11 @@
-// The app shell's pieces (W21): the real Header, Toolbar and Summary, with fixture props. The header
-// is shown in windows of each breakpoint's width, since the shell's width rules are container
-// queries on the app (docs/design-system.md, 2.12); the toolbars keep their own filters, so they
-// can be typed into and clicked.
+// The app shell's pieces (W21): the real Header and filters, with fixture props. The header is shown
+// in windows of each breakpoint's width, since the shell's width rules are container queries on the
+// app (docs/design-system.md, 2.12); each set of filters keeps its own, so it can be typed into and
+// clicked.
 
 import { useState } from 'react';
 import { Header } from '../components/Header.js';
-import { Summary, Toolbar } from '../components/Toolbar.js';
+import { FilterControls } from '../components/Filters.js';
 import { NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
 import { ago, LONG_ROOTS, NOW, ROOT } from './fixtures.js';
 import { Specimen } from './kit.js';
@@ -13,13 +13,13 @@ import { Specimen } from './kit.js';
 const noop = () => {};
 const UPDATED = ago(0.05);
 
-/** A toolbar with filters of its own, starting from `start`. */
-function LiveToolbar({ start = NO_FILTERS, total = 12, attention = 2 }: { start?: Filters; total?: number; attention?: number }) {
+/** The filters, with state of their own, starting from `start`. */
+function LiveFilters({ start = NO_FILTERS }: { start?: Filters }) {
   const [filters, setFilters] = useState(start);
-  return <Toolbar filters={filters} onChange={setFilters} total={total} attention={attention} />;
+  return <FilterControls filters={filters} onChange={setFilters} />;
 }
 
-const chips = (...on: FilterChip[]): ReadonlySet<FilterChip> => new Set(on);
+const filters = (text: string, ...chips: FilterChip[]): Filters => ({ text, chips: new Set(chips), attentionOnly: false });
 
 const BREAKPOINTS = [
   { title: 'From 1,100 px', note: '24 px gutters.', width: 1100 },
@@ -48,33 +48,23 @@ export function Headers() {
   );
 }
 
-export function Toolbars() {
+export function FilterSpecimens() {
   return (
     <>
       <Specimen title="Empty" note="Type to filter; the chips toggle.">
-        <LiveToolbar />
+        <LiveFilters />
       </Specimen>
       <Specimen title="With text" note="The clear button shows, and so does Clear filters. Escape clears the text.">
-        <LiveToolbar start={{ text: 'export', chips: chips() }} />
+        <LiveFilters start={filters('export')} />
       </Specimen>
-      <Specimen title="With chips on" note="Needs you and Background: sessions that need you and are background sessions.">
-        <LiveToolbar start={{ text: '', chips: chips('needsYou', 'background') }} />
+      <Specimen title="A chip on" note="Background: background sessions only.">
+        <LiveFilters start={filters('', 'background')} />
       </Specimen>
-      <Specimen title="600 px and narrower" note="The toolbar wraps." width={375}>
-        <LiveToolbar start={{ text: 'export', chips: chips('finished') }} />
+      <Specimen title="Both chips on" note="Interactive or Background: every session, as with neither on.">
+        <LiveFilters start={filters('', 'interactive', 'background')} />
       </Specimen>
-    </>
-  );
-}
-
-export function Summaries() {
-  return (
-    <>
-      <Specimen title="Something needs you">
-        <Summary total={12} attention={2} />
-      </Specimen>
-      <Specimen title="Nothing needs you">
-        <Summary total={1} attention={0} />
+      <Specimen title="In a narrow window" note="The chips and Clear filters wrap under the field." width={320}>
+        <LiveFilters start={filters('export', 'interactive')} />
       </Specimen>
     </>
   );

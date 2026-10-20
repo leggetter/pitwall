@@ -153,7 +153,7 @@ describe('Dashboard header', () => {
   it('counts sessions that need attention, in the page and the tab title', () => {
     renderDashboard(mixedSnapshot());
 
-    expect(screen.getByText('2 need you', { selector: '.summary .badge-attention' })).toBeTruthy();
+    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
     expect(document.title).toBe('(2) pitwall');
   });
 });
@@ -606,14 +606,14 @@ describe('sessions that asked you something', () => {
     // docs-done asked something, but it has finished: muted, and not counted.
     expect(groupSection('docs').querySelector('.group-attention')).toBeNull();
     expect(groupSection('docs').className).not.toContain('has-attention');
-    expect(screen.getByText('2 need you', { selector: '.summary .badge-attention' })).toBeTruthy();
+    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
     expect(document.title).toBe('(2) pitwall');
   });
 
-  it('keeps them under the Needs you chip, but not a finished one', () => {
+  it('keeps them under "needs attention only", but not a finished one', () => {
     renderDashboard(askedSnapshot());
 
-    fireEvent.click(screen.getByRole('button', { name: /^Needs you/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
 
     expect(visibleRowNames()).toEqual(['waits', 'asks']);
     expect(screen.queryByRole('button', { name: /^Finished \(/ })).toBeNull();
@@ -711,7 +711,7 @@ describe('finished sessions', () => {
     expect(count?.textContent).toBe(' · 2 asked you');
     expect(count?.closest('.group-attention, .tone-asked, .attention')).toBeNull();
     expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
-    expect(screen.getByText('Nothing needs you', { selector: '.summary *' })).toBeTruthy();
+    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
     // Stays the same open, so the button's name doesn't change under the user.
     fireEvent.click(toggle);
     expect(toggle.textContent).toBe('Finished (3) · 2 asked you');
@@ -729,7 +729,7 @@ describe('finished sessions', () => {
 
     expect(groupSection('demo-app').querySelector('.group-count')?.textContent).toBe('4 sessions');
     expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
-    expect(screen.getByText('Nothing needs you', { selector: '.summary *' })).toBeTruthy();
+    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
     expect(document.title).toBe('pitwall');
   });
 
@@ -929,9 +929,9 @@ describe('filters', () => {
     expect(screen.getByText('Nothing matches "zzz".')).toBeTruthy();
   });
 
-  it('the Needs you chip keeps waiting and blocked sessions and drops stale ones', () => {
+  it('"needs attention only" keeps waiting and blocked sessions and drops stale ones', () => {
     renderDashboard(mixedSnapshot());
-    const needsYou = () => screen.getByRole('button', { name: /^Needs you/ });
+    const needsYou = () => screen.getByRole('checkbox', { name: 'Needs attention only' });
 
     fireEvent.click(needsYou());
     expect(visibleRowNames()).toEqual(['demo-docs', 'demo-worker']);
@@ -944,10 +944,10 @@ describe('filters', () => {
     expect(visibleRowNames()).toHaveLength(5);
   });
 
-  it('says nothing needs you when the Needs you chip is on and nothing does', () => {
+  it('says nothing needs you when the toggle is on and nothing does', () => {
     renderDashboard(snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Needs you' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
 
     expect(screen.getByText('Nothing needs you right now')).toBeTruthy();
     expect(screen.getByText('Sessions that are waiting for you, or asked you something, show here.')).toBeTruthy();
@@ -975,67 +975,52 @@ describe('filter chips in the list', () => {
           session({ name: 'blocked-job', kind: 'background', shortId: 'bj1', status: undefined, state: 'blocked' }),
           session({ name: 'idle-one', status: 'idle' }),
           session({ name: 'done-job', ...finished, shortId: 'dj1', state: 'done' }),
-          session({ name: 'failed-job', ...finished, shortId: 'fj1', state: 'failed', askedYou: { reason: 'question', excerpt: 'Retry?' } }),
         ],
       }),
     ]);
   }
 
-  const chip = (name: string | RegExp) => within(screen.getByRole('group', { name: 'Filters' })).getByRole('button', { name });
-  const finishedToggle = () => screen.queryByRole('button', { name: /^Finished \(/ });
+  const chip = (name: string) => within(screen.getByRole('group', { name: 'Filters' })).getByRole('button', { name });
 
-  it('shows matching finished sessions under the Finished chip with no extra click, after the group\'s other rows', () => {
-    // The group is open and its Finished list closed, as a group starts once it's been opened.
+  it('shows one kind of session per chip, both kinds with both on, and keeps finished ones in their Finished list', () => {
     renderDashboard(chipsSnapshot(), {}, { expand: false });
     fireEvent.click(screen.getByRole('button', { name: /demo-app/, expanded: false }));
-    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('false');
-
-    fireEvent.click(chip('Finished'));
-    expect(visibleRowNames()).toEqual(['done-job', 'failed-job']);
-    expect(finishedToggle()).toBeNull();
-
-    fireEvent.click(chip(/^Needs you/));
-    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'done-job', 'failed-job']);
-
-    // Off again, and the Finished list is back, as closed as it was.
-    fireEvent.click(chip('Finished'));
-    expect(finishedToggle()).toBeNull();
-    fireEvent.click(chip(/^Needs you/));
-    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('false');
-    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one']);
-  });
-
-  it('combines chips of one kind as OR and of different kinds as AND, in the list', () => {
-    renderDashboard(chipsSnapshot());
 
     fireEvent.click(chip('Interactive'));
     expect(visibleRowNames()).toEqual(['waits', 'idle-one']);
+    expect(screen.queryByRole('button', { name: /^Finished \(/ })).toBeNull();
+
     fireEvent.click(chip('Background'));
-    expect(visibleRowNames()).toHaveLength(5);
-    fireEvent.click(chip(/^Needs you/));
-    expect(visibleRowNames()).toEqual(['waits', 'blocked-job']);
+    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one']);
     fireEvent.click(chip('Interactive'));
     expect(visibleRowNames()).toEqual(['blocked-job']);
-    fireEvent.click(chip('Finished'));
-    expect(visibleRowNames()).toEqual(['blocked-job', 'done-job', 'failed-job']);
+    // A finished background session matches, and stays in the collapsed Finished list.
+    expect(screen.getByRole('button', { name: /^Finished \(1\)/ }).getAttribute('aria-expanded')).toBe('false');
+    expect(within(groupSection('demo-app')).getByText('2 of 4 sessions')).toBeTruthy();
   });
 
-  it('counts the group as "x of y" while chips hide some of it', () => {
+  it('ANDs the chips with "Needs attention only" and the text', () => {
     renderDashboard(chipsSnapshot());
 
-    fireEvent.click(chip('Finished'));
-    expect(within(groupSection('demo-app')).getByText('2 of 5 sessions')).toBeTruthy();
+    fireEvent.click(chip('Background'));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    expect(visibleRowNames()).toEqual(['blocked-job']);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'waits' } });
+    expect(visibleRowNames()).toEqual([]);
+    expect(screen.getByText('Nothing matches "waits" with these filters.')).toBeTruthy();
   });
 
-  it('clears with Clear filters, text and chips together', () => {
+  it('clears with Clear filters: the text, the chips and the checkbox', () => {
     renderDashboard(chipsSnapshot());
-    fireEvent.click(chip('Finished'));
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'done' } });
-    expect(visibleRowNames()).toEqual(['done-job']);
+    fireEvent.click(chip('Interactive'));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'waits' } });
+    expect(visibleRowNames()).toEqual(['waits']);
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one', 'done-job', 'failed-job']);
-    expect(chip('Finished').getAttribute('aria-pressed')).toBe('false');
+    expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one', 'done-job']);
+    expect(chip('Interactive').getAttribute('aria-pressed')).toBe('false');
+    expect((screen.getByRole('checkbox', { name: 'Needs attention only' }) as HTMLInputElement).checked).toBe(false);
   });
 });
 
@@ -1102,7 +1087,7 @@ describe('the highlight', () => {
 });
 
 describe('the shell', () => {
-  it('is a header, then the toolbar once there are sessions, then the list pane', () => {
+  it('is a header, then the controls once there are sessions, then the list pane', () => {
     const { container, rerender } = render(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
     const parts = () => [...container.querySelectorAll('.app > *')].map((part) => part.className);
 
@@ -1110,7 +1095,7 @@ describe('the shell', () => {
     expect(screen.queryByRole('search')).toBeNull();
 
     rerender(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} />);
-    expect(parts()).toEqual(['app-header', 'toolbar', 'panes']);
+    expect(parts()).toEqual(['app-header', 'controls', 'panes']);
     expect(container.querySelector('.panes > main.list-pane')).not.toBeNull();
   });
 

@@ -1,10 +1,8 @@
-// The toolbar's filters (docs/design-system.md, Filter chips): the state chips, Needs you and
-// Finished, OR with each other; the kind chips, Interactive and Background, OR with each other; the
-// two kinds AND, and with the text. No chip on lets everything through.
+// The filters (docs/design-system.md, Filter chips): the Interactive and Background chips combine as
+// OR, and no chip on lets everything through. The text and "Needs attention only" AND with them.
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '../../src/shared/protocol.js';
 import {
-  CHIP_KINDS,
   FILTER_CHIPS,
   filterGroups,
   filtering,
@@ -21,17 +19,13 @@ import { group, session } from './test/fixtures.js';
 
 const done = { kind: 'background', alive: false, pid: undefined, status: undefined, state: 'done', finished: true } as const;
 
-/** One session of each kind and state the chips tell apart, named after it. */
+/** One session of each kind, and of the states the other filters tell apart, named after it. */
 const SESSIONS = {
   'interactive-waiting': session({ name: 'interactive-waiting', status: 'waiting', waitingFor: 'permission prompt' }),
-  'interactive-asked': session({ name: 'interactive-asked', askedYou: { reason: 'question', excerpt: 'Ship it?' } }),
   'interactive-idle': session({ name: 'interactive-idle' }),
   'background-blocked': session({ name: 'background-blocked', kind: 'background', shortId: 'b1', status: undefined, state: 'blocked' }),
   'background-working': session({ name: 'background-working', kind: 'background', shortId: 'b2', status: undefined, state: 'working' }),
-  'background-stale': session({ name: 'background-stale', kind: 'background', shortId: 'b3', status: undefined, state: 'blocked', stale: true }),
   'background-finished': session({ name: 'background-finished', ...done, shortId: 'b4' }),
-  // Finished, and it asked something: shown under Finished, never under Needs you.
-  'background-finished-asked': session({ name: 'background-finished-asked', ...done, shortId: 'b5', askedYou: { reason: 'question', excerpt: 'Open a PR?' } }),
 } satisfies Record<string, SessionSummary>;
 
 type Name = keyof typeof SESSIONS;
@@ -42,90 +36,27 @@ function passing(...chips: FilterChip[]): Name[] {
   return ALL.filter((name) => matchesChips(SESSIONS[name], new Set(chips)));
 }
 
+const filters = (text: string, chips: FilterChip[] = [], attentionOnly = false): Filters => ({ text, chips: new Set(chips), attentionOnly });
+
 describe('the filter chips', () => {
-  it('are Needs you, Interactive, Background and Finished, in that order, of two kinds', () => {
-    expect(FILTER_CHIPS).toEqual(['needsYou', 'interactive', 'background', 'finished']);
-    expect(CHIP_KINDS).toEqual({ state: ['needsYou', 'finished'], kind: ['interactive', 'background'] });
+  it('are Interactive and Background, in that order', () => {
+    expect(FILTER_CHIPS).toEqual(['interactive', 'background']);
   });
 
   it('let everything through when none is on', () => {
     expect(passing()).toEqual(ALL);
   });
 
-  describe('one chip on', () => {
-    it('Needs you: waiting, asked you and blocked, never stale or finished', () => {
-      expect(passing('needsYou')).toEqual(['interactive-waiting', 'interactive-asked', 'background-blocked']);
-    });
-
-    it('Finished: finished sessions, including one that asked something', () => {
-      expect(passing('finished')).toEqual(['background-finished', 'background-finished-asked']);
-    });
-
-    it('Interactive: interactive sessions', () => {
-      expect(passing('interactive')).toEqual(['interactive-waiting', 'interactive-asked', 'interactive-idle']);
-    });
-
-    it('Background: background sessions, finished ones too', () => {
-      expect(passing('background')).toEqual([
-        'background-blocked',
-        'background-working',
-        'background-stale',
-        'background-finished',
-        'background-finished-asked',
-      ]);
-    });
+  it('Interactive: interactive sessions only', () => {
+    expect(passing('interactive')).toEqual(['interactive-waiting', 'interactive-idle']);
   });
 
-  describe('two chips of the same kind: OR', () => {
-    it('Needs you or Finished', () => {
-      expect(passing('needsYou', 'finished')).toEqual([
-        'interactive-waiting',
-        'interactive-asked',
-        'background-blocked',
-        'background-finished',
-        'background-finished-asked',
-      ]);
-    });
-
-    it('Interactive or Background: everything, as with neither on', () => {
-      expect(passing('interactive', 'background')).toEqual(ALL);
-    });
+  it('Background: background sessions only, finished ones too', () => {
+    expect(passing('background')).toEqual(['background-blocked', 'background-working', 'background-finished']);
   });
 
-  describe('chips of different kinds: AND', () => {
-    it('Needs you and Interactive', () => {
-      expect(passing('needsYou', 'interactive')).toEqual(['interactive-waiting', 'interactive-asked']);
-    });
-
-    it('Needs you and Background', () => {
-      expect(passing('needsYou', 'background')).toEqual(['background-blocked']);
-    });
-
-    it('Finished and Background', () => {
-      expect(passing('finished', 'background')).toEqual(['background-finished', 'background-finished-asked']);
-    });
-
-    it('Finished and Interactive: nothing, since only background sessions finish', () => {
-      expect(passing('finished', 'interactive')).toEqual([]);
-    });
-  });
-
-  describe('both kinds, with more than one chip of a kind', () => {
-    it('(Needs you or Finished) and Interactive', () => {
-      expect(passing('needsYou', 'finished', 'interactive')).toEqual(['interactive-waiting', 'interactive-asked']);
-    });
-
-    it('(Needs you or Finished) and Background', () => {
-      expect(passing('needsYou', 'finished', 'background')).toEqual(['background-blocked', 'background-finished', 'background-finished-asked']);
-    });
-
-    it('Finished and (Interactive or Background)', () => {
-      expect(passing('finished', 'interactive', 'background')).toEqual(['background-finished', 'background-finished-asked']);
-    });
-
-    it('all four: (Needs you or Finished) and (Interactive or Background)', () => {
-      expect(passing('needsYou', 'finished', 'interactive', 'background')).toEqual(passing('needsYou', 'finished'));
-    });
+  it('Interactive or Background, with both on: everything, as with neither', () => {
+    expect(passing('interactive', 'background')).toEqual(ALL);
   });
 });
 
@@ -134,59 +65,63 @@ describe('filterGroups', () => {
   const jobs = group({
     key: '/Users/example/code/jobs',
     label: 'jobs',
-    sessions: [SESSIONS['background-working'], SESSIONS['background-finished-asked']],
+    sessions: [SESSIONS['background-working'], SESSIONS['background-blocked']],
   });
-  const filters = (text: string, ...chips: FilterChip[]): Filters => ({ text, chips: new Set(chips) });
   const names = (result: ReturnType<typeof filterGroups>) => result.map(({ group: shown, sessions }) => [shown.label, sessions.map((s) => s.name)]);
 
   it('keeps every group and session with no filters', () => {
     expect(names(filterGroups([app, jobs], NO_FILTERS))).toEqual([
       ['demo-app', ['interactive-waiting', 'interactive-idle', 'background-finished']],
-      ['jobs', ['background-working', 'background-finished-asked']],
+      ['jobs', ['background-working', 'background-blocked']],
     ]);
   });
 
-  it('ANDs the chips with the text, and drops groups left empty', () => {
-    expect(names(filterGroups([app, jobs], filters('finished', 'finished')))).toEqual([
-      ['demo-app', ['background-finished']],
-      ['jobs', ['background-finished-asked']],
-    ]);
-    expect(names(filterGroups([app, jobs], filters('asked', 'finished')))).toEqual([['jobs', ['background-finished-asked']]]);
-    expect(names(filterGroups([app, jobs], filters('idle', 'finished')))).toEqual([]);
+  it('ANDs a chip with the text, and drops groups left empty', () => {
+    expect(names(filterGroups([app, jobs], filters('finished', ['background'])))).toEqual([['demo-app', ['background-finished']]]);
+    expect(names(filterGroups([app, jobs], filters('idle', ['background'])))).toEqual([]);
+    expect(names(filterGroups([app, jobs], filters('', ['interactive'])))).toEqual([['demo-app', ['interactive-waiting', 'interactive-idle']]]);
   });
 
-  it("applies the chips inside a group whose label matches the text, which otherwise shows all its sessions", () => {
-    expect(names(filterGroups([app, jobs], filters('JOBS')))).toEqual([['jobs', ['background-working', 'background-finished-asked']]]);
-    expect(names(filterGroups([app, jobs], filters('jobs', 'finished')))).toEqual([['jobs', ['background-finished-asked']]]);
+  it('ANDs the chips with "Needs attention only"', () => {
+    expect(names(filterGroups([app, jobs], filters('', [], true)))).toEqual([
+      ['demo-app', ['interactive-waiting']],
+      ['jobs', ['background-blocked']],
+    ]);
+    expect(names(filterGroups([app, jobs], filters('', ['background'], true)))).toEqual([['jobs', ['background-blocked']]]);
+    expect(names(filterGroups([app, jobs], filters('', ['interactive', 'background'], true)))).toHaveLength(2);
+  });
+
+  it('applies the chips inside a group whose label matches the text, which otherwise shows all its sessions', () => {
+    expect(names(filterGroups([app, jobs], filters('JOBS')))).toEqual([['jobs', ['background-working', 'background-blocked']]]);
+    expect(names(filterGroups([app, jobs], filters('jobs', ['interactive'])))).toEqual([]);
   });
 });
 
 describe('filtering', () => {
-  it('is on with any chip, or any text in the field, which is when Clear filters shows', () => {
+  it('is on with any text in the field, a chip or "Needs attention only", which is when Clear filters shows', () => {
     expect(filtering(NO_FILTERS)).toBe(false);
-    expect(filtering({ text: '', chips: new Set(['background']) })).toBe(true);
-    expect(filtering({ text: 'x', chips: new Set() })).toBe(true);
-    expect(filtering({ text: ' ', chips: new Set() })).toBe(true);
+    expect(filtering(filters('', ['background']))).toBe(true);
+    expect(filtering(filters('x'))).toBe(true);
+    expect(filtering(filters(' '))).toBe(true);
+    expect(filtering(filters('', [], true))).toBe(true);
   });
 });
 
 describe('noMatchText', () => {
-  const text = (value: string, ...chips: FilterChip[]) => noMatchText({ text: value, chips: new Set(chips) }, 0);
-
   it('says which text matched nothing, and with which filters', () => {
-    expect(text('zzz')).toEqual({ title: 'No sessions match', sentence: 'Nothing matches "zzz".' });
-    expect(text(' zzz ', 'background')).toEqual({ title: 'No sessions match', sentence: 'Nothing matches "zzz" with these filters.' });
-    expect(text('', 'finished', 'interactive')).toEqual({ title: 'No sessions match', sentence: 'Nothing matches these filters.' });
+    expect(noMatchText(filters('zzz'), 0)).toEqual({ title: 'No sessions match', sentence: 'Nothing matches "zzz".' });
+    expect(noMatchText(filters(' zzz ', ['background']), 0)).toEqual({ title: 'No sessions match', sentence: 'Nothing matches "zzz" with these filters.' });
+    expect(noMatchText(filters('zzz', [], true), 2).sentence).toBe('Nothing matches "zzz" with these filters.');
+    expect(noMatchText(filters('', ['interactive']), 0)).toEqual({ title: 'No sessions match', sentence: 'Nothing matches these filters.' });
   });
 
-  it('is calm when Needs you is the only filter and nothing needs you', () => {
-    expect(text('', 'needsYou')).toEqual({
+  it('is calm when "Needs attention only" is the only filter and nothing needs you', () => {
+    expect(noMatchText(filters('', [], true), 0)).toEqual({
       title: 'Nothing needs you right now',
       sentence: 'Sessions that are waiting for you, or asked you something, show here.',
     });
-    expect(text('', 'needsYou', 'interactive').title).toBe('No sessions match');
-    expect(text('docs', 'needsYou').title).toBe('No sessions match');
-    expect(noMatchText({ text: '', chips: new Set(['needsYou']) }, 2).title).toBe('No sessions match');
+    expect(noMatchText(filters('', ['interactive'], true), 0).title).toBe('No sessions match');
+    expect(noMatchText(filters('docs', [], true), 0).title).toBe('No sessions match');
   });
 });
 

@@ -14,7 +14,7 @@ import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
 import { SettleContext } from './kit.js';
 import { GroupSections, SessionRows } from './lists.js';
 import { Dialogs, Notices, Pages } from './pages.js';
-import { Headers, Summaries, Toolbars } from './shell.js';
+import { FilterSpecimens, Headers } from './shell.js';
 import { scriptedAttach, stubApi } from './stubs.js';
 import { Confirmations, MessageBoxes, SessionViews, Terminals } from './views.js';
 import './gallery.css';
@@ -32,8 +32,7 @@ const SECTIONS: Section[] = [
   { id: 'icons', title: 'Icons', intro: 'The Icon component, and the inline icons it will replace.', Content: Icons },
   { id: 'theme-switch', title: 'Theme switch', intro: "ThemeSwitch: System, Light and Dark. It's the real one, so pressing it changes this page's theme.", Content: ThemeSwitches },
   { id: 'header', title: 'Header', intro: 'Header: the wordmark, the roots, New session, the connection, the update time and the theme switch, at each width.', Content: Headers },
-  { id: 'toolbar', title: 'Toolbar', intro: 'Toolbar: the filter field, the filter chips, Clear filters and the summary. Each one keeps its own filters.', Content: Toolbars },
-  { id: 'summary', title: 'Summary', intro: "The toolbar's summary, in its two states.", Content: Summaries },
+  { id: 'filters', title: 'Filters', intro: 'FilterControls: the filter field, the filter chips and Clear filters. Each one keeps its own filters.', Content: FilterSpecimens },
   { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, inside the GroupSection it always sits in.', Content: SessionRows },
   { id: 'groups', title: 'Group sections', intro: 'GroupSection: its header, count and Finished list.', Content: GroupSections },
   { id: 'session-view', title: 'Session view', intro: 'SessionView, framed as the window it overlays.', Content: SessionViews },

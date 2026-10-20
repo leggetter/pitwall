@@ -1,15 +1,14 @@
-// The toolbar (docs/design-system.md, 3 and 4): the filter field, the filter chips and "Clear filters"
-// on the left, and the summary on the right. The Dashboard shows it once there's a session.
+// Filtering the sessions (docs/design-system.md, section 4: Search and Filter chips): the filter
+// field, the filter chips and "Clear filters", together in role="search". Where they sit on the
+// page is the layout's business (section 3).
 
 import { useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { FILTER_CHIPS, filtering, NO_FILTERS, needYou, sessionCount, type FilterChip, type Filters } from '../sessions.js';
+import { FILTER_CHIPS, filtering, NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
 import { Icon } from './Icon.js';
 
 export const CHIP_LABELS: Readonly<Record<FilterChip, string>> = {
-  needsYou: 'Needs you',
   interactive: 'Interactive',
   background: 'Background',
-  finished: 'Finished',
 };
 
 export interface FilterFieldProps {
@@ -79,14 +78,12 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
 export interface FilterChipsProps {
   chips: ReadonlySet<FilterChip>;
   onChange: (chips: ReadonlySet<FilterChip>) => void;
-  /** How many sessions need you, shown on the Needs you chip when there are any. */
-  attention: number;
   /** Shown after the chips, in their group, so it wraps with them: Clear filters. */
   children?: ReactNode;
 }
 
 /** The filter chips: toggle buttons, each pressed while it's on. */
-export function FilterChips({ chips, onChange, attention, children }: FilterChipsProps) {
+export function FilterChips({ chips, onChange, children }: FilterChipsProps) {
   const toggle = (chip: FilterChip) => {
     const next = new Set(chips);
     if (next.has(chip)) next.delete(chip);
@@ -101,13 +98,6 @@ export function FilterChips({ chips, onChange, attention, children }: FilterChip
           <button key={chip} type="button" className="chip" aria-pressed={on} onClick={() => toggle(chip)}>
             {on && <Icon name="copied" />}
             {CHIP_LABELS[chip]}
-            {/* The space keeps the count apart in the button's name; the chip's gap does it on screen. */}
-            {chip === 'needsYou' && attention > 0 && (
-              <>
-                {' '}
-                <span className="chip-count">{attention}</span>
-              </>
-            )}
           </button>
         );
       })}
@@ -116,61 +106,35 @@ export function FilterChips({ chips, onChange, attention, children }: FilterChip
   );
 }
 
-export interface SummaryProps {
-  /** Every session in the snapshot, whatever the filters show. */
-  total: number;
-  attention: number;
-}
-
-/** "12 sessions", then a solid "2 need you" badge, or "Nothing needs you". */
-export function Summary({ total, attention }: SummaryProps) {
-  return (
-    <p className="summary">
-      <span className="summary-count">{sessionCount(total)}</span>
-      {attention > 0 ? (
-        <span className="badge badge-attention">{needYou(attention)}</span>
-      ) : (
-        <>
-          <span aria-hidden="true">·</span>
-          <span className="summary-calm">Nothing needs you</span>
-        </>
-      )}
-    </p>
-  );
-}
-
-export interface ToolbarProps {
+export interface FilterControlsProps {
   filters: Filters;
   onChange: (filters: Filters) => void;
-  /** Every session in the snapshot. */
-  total: number;
-  /** How many of them need you. */
-  attention: number;
+  /** Other filters, after the chips. */
+  children?: ReactNode;
 }
 
-export function Toolbar({ filters, onChange, total, attention }: ToolbarProps) {
+/** The field, the chips and Clear filters, in role="search". */
+export function FilterControls({ filters, onChange, children }: FilterControlsProps) {
   const field = useRef<HTMLInputElement>(null);
   return (
-    <div className="toolbar">
-      <form className="toolbar-filters" role="search" onSubmit={(event) => event.preventDefault()}>
-        <FilterField value={filters.text} onChange={(text) => onChange({ ...filters, text })} inputRef={field} />
-        <FilterChips chips={filters.chips} onChange={(chips) => onChange({ ...filters, chips })} attention={attention}>
-          {filtering(filters) && (
-            <button
-              type="button"
-              className="button ghost sm"
-              onClick={() => {
-                onChange(NO_FILTERS);
-                // The button goes away with the filters, so focus goes back to the field rather than the page.
-                field.current?.focus();
-              }}
-            >
-              Clear filters
-            </button>
-          )}
-        </FilterChips>
-      </form>
-      <Summary total={total} attention={attention} />
-    </div>
+    <form className="filter-controls" role="search" onSubmit={(event) => event.preventDefault()}>
+      <FilterField value={filters.text} onChange={(text) => onChange({ ...filters, text })} inputRef={field} />
+      <FilterChips chips={filters.chips} onChange={(chips) => onChange({ ...filters, chips })}>
+        {filtering(filters) && (
+          <button
+            type="button"
+            className="button ghost sm"
+            onClick={() => {
+              onChange(NO_FILTERS);
+              // The button goes away with the filters, so focus goes back to the field rather than the page.
+              field.current?.focus();
+            }}
+          >
+            Clear filters
+          </button>
+        )}
+      </FilterChips>
+      {children}
+    </form>
   );
 }
