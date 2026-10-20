@@ -67,7 +67,7 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
   - It must be a same-origin file, because the CSP (`default-src 'self'`, set in `src/server/security.ts`) blocks inline scripts.
   - It must not throw when `localStorage` is blocked: wrap the read in `try`, and fall back to System.
   - In a browser with no `matchMedia`, System leaves `data-theme` unset, so the fallback below follows the system.
-- **After the first paint,** `web/src/theme.ts` keeps `data-theme` right: it applies a new choice, and follows the system's `change` event while System is chosen. One store holds the choice, so every switch on the page shows the same one. `web/src/theme.test.tsx` runs `theme-init.js` against the same cases and checks the two agree.
+- **After the first paint,** `web/src/theme.ts` keeps `data-theme` right: it applies a new choice, and follows the system's `change` event while System is chosen. One store holds the choice, so every switch on the page shows the same one. `main.tsx` starts it with the app, so a page with no switch, such as the token notice, still follows the system. `web/src/theme.test.tsx` runs `theme-init.js` against the same cases and checks the two agree.
 - **Without JavaScript,** or if the script fails, no `data-theme` is set. Then `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` applies the dark block.
   - That block is a copy of the `:root[data-theme='dark']` block. Keep the copy generated, or add a unit test that parses `tokens.css` and checks the two blocks are identical.
 - **`color-scheme`:** set to `light` or `dark` in each block, so native controls and scrollbars match. Keep `<meta name="color-scheme" content="light dark">` in `web/index.html`.
