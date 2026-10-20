@@ -3,7 +3,7 @@
 .button.primary {
   background: var(--pw-accent);
   color: var(--pw-on-accent);
-  font-weight: var(--pw-weight-bold);
+  font-weight: var(--pw-weight-medium);
   box-shadow: var(--pw-shadow-accent);
 }
 
@@ -11,8 +11,10 @@
   box-shadow: var(--pw-shadow-accent), var(--pw-ring-focus);
 }
 
-.button.primary:hover {
-  background: var(--pw-accent-hover);
+@media (hover: hover) {
+  .button.primary:hover {
+    background: var(--pw-accent-hover);
+  }
 }
 
 .button.danger {
@@ -25,9 +27,11 @@
   box-shadow: var(--pw-ring-focus);
 }
 
-.button.danger:hover {
-  background: var(--pw-danger-solid);
-  filter: brightness(0.92);
+@media (hover: hover) {
+  .button.danger:hover {
+    background: var(--pw-danger-solid);
+    filter: brightness(0.92);
+  }
 }
 
 .modal .button:disabled,

@@ -1,4 +1,4 @@
-/* Messaging an interactive session through the relay (W11): the session view's box and the row's note. Uses the tokens in tokens.css. */
+/* Messaging an interactive session through the relay (W11): the box at the foot of the session view. Uses the tokens in tokens.css. */
 
 /* The box fills the session view's footer (.session-view-foot), which draws the band around it. */
 .relay-box {
@@ -91,6 +91,7 @@
 .relay-result.tone-failed {
   background: var(--pw-danger-tint);
   border-color: var(--pw-danger-border);
+  color: var(--pw-danger-tint-fg);
 }
 
 .relay-exchange {
@@ -109,9 +110,10 @@
   color: var(--pw-warning-fg);
 }
 
-/* It also takes the failed badge's tint, from the shared .tone-failed class, so its text is that tint's. */
+/* On the danger tint, as when it shared the old badges' .tone-failed class; the message box's restyle (W24) replaces it. */
 .relay-exchange-line.tone-failed {
-  color: var(--pw-state-failed-fg);
+  background: var(--pw-danger-tint);
+  color: var(--pw-danger-tint-fg);
 }
 
 .relay-exchange-label {
@@ -141,10 +143,3 @@
   }
 }
 
-.relay-exchange.compact .relay-reply {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  white-space: normal;
-}

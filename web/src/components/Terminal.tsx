@@ -161,11 +161,11 @@ export function SessionTerminal({ sessionId, onClose }: SessionTerminalProps) {
           {env ? STATE_LABELS[status.kind] : 'Attach is unavailable here.'}
         </span>
         {ended && (
-          <button type="button" className="button small" onClick={() => setAttempt((count) => count + 1)}>
+          <button type="button" className="button sm" onClick={() => setAttempt((count) => count + 1)}>
             Attach again
           </button>
         )}
-        <button type="button" className="button small" onClick={onClose}>
+        <button type="button" className="button sm" onClick={onClose}>
           {ended ? 'Back to the conversation' : 'Detach'}
         </button>
       </div>
@@ -173,10 +173,10 @@ export function SessionTerminal({ sessionId, onClose }: SessionTerminalProps) {
         <div className="banner warning attach-confirm" role="alertdialog" aria-describedby={confirmId}>
           <p id={confirmId}>This session has finished, or its process has exited. Attaching restarts it.</p>
           <div className="attach-confirm-actions">
-            <button type="button" className="button small" onClick={() => session.current?.confirmRestart()}>
+            <button type="button" className="button sm" onClick={() => session.current?.confirmRestart()}>
               Restart and attach
             </button>
-            <button type="button" className="button small" onClick={onClose}>
+            <button type="button" className="button sm" onClick={onClose}>
               Cancel
             </button>
           </div>

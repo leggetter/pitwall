@@ -1,5 +1,5 @@
-// The app shell's pieces (W21): the real Header, RepoList, RepoDrawer, SessionList and filters, with
-// fixture props. The header is shown in windows of each width, since its compact rule is a container
+// The app shell's pieces (W21, W23): the real Header, RepoList, RepoDrawer, SessionList, the filters
+// and the Sort setting, with fixture props. The header is shown in windows of each width, since its compact rule is a container
 // query on the app (docs/design-system.md, 2.12). The repo lists and filters keep their own state,
 // so they can be clicked and typed into.
 
@@ -10,18 +10,29 @@ import { Header } from '../components/Header.js';
 import { RepoDrawer } from '../components/RepoDrawer.js';
 import { RepoList } from '../components/RepoList.js';
 import { SessionList, type SessionListHeading, type SessionListSummary } from '../components/SessionList.js';
+import { SortSelect } from '../components/SortSelect.js';
 import { ALL_SESSIONS, groupSelection, NEEDS_YOU, type Selection } from '../selection.js';
-import { NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
+import { NO_FILTERS, SORT_ORDERS, type FilterChip, type Filters, type SortOrder } from '../sessions.js';
 import { ago, APP_GROUP, LONG_ROOTS, NOW, REPO_LIST_SNAPSHOT, ROOT, SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT } from './fixtures.js';
 import { Reopenable, Specimen } from './kit.js';
 
 const noop = () => {};
 const UPDATED = ago(0.05);
 
-/** The filters, with state of their own, starting from `start`. */
-function LiveFilters({ start = NO_FILTERS }: { start?: Filters }) {
+/** The Sort setting, with state of its own. */
+function LiveSort({ start = 'urgency' }: { start?: SortOrder }) {
+  const [order, setOrder] = useState(start);
+  return <SortSelect value={order} onChange={setOrder} />;
+}
+
+/** The filters and the Sort setting after them, as the session list's header has them, with state of their own. */
+function LiveFilters({ start = NO_FILTERS, sort }: { start?: Filters; sort?: SortOrder }) {
   const [filters, setFilters] = useState(start);
-  return <FilterControls filters={filters} onChange={setFilters} />;
+  return (
+    <FilterControls filters={filters} onChange={setFilters}>
+      <LiveSort start={sort} />
+    </FilterControls>
+  );
 }
 
 const filters = (text: string, ...chips: FilterChip[]): Filters => ({ text, chips: new Set(chips) });
@@ -108,6 +119,7 @@ interface HeadCase {
   heading: SessionListHeading;
   summary: SessionListSummary;
   start?: Filters;
+  sort?: SortOrder;
 }
 
 const HEADS: HeadCase[] = [
@@ -122,6 +134,7 @@ const HEADS: HeadCase[] = [
     summary: { total: 10, shown: 3, attention: 2 },
     start: filters('export', 'background'),
   },
+  { title: 'Sorted by name', heading: { label: 'All sessions' }, summary: { total: 10, shown: 10, attention: 2 }, sort: 'name' },
 ];
 
 export function SessionListHeads() {
@@ -132,7 +145,7 @@ export function SessionListHeads() {
           <SessionList
             heading={head.heading}
             summary={head.summary}
-            filters={<LiveFilters start={head.start} />}
+            filters={<LiveFilters start={head.start} sort={head.sort} />}
             current={[]}
             finished={[]}
             finishedCollapsed
@@ -141,6 +154,18 @@ export function SessionListHeads() {
           />
         </Specimen>
       ))}
+      <Specimen title="At 360 px" note="The session list's width at 1,200 px: the chips and Sort share the line under the field." width={360}>
+        <SessionList
+          heading={{ label: 'All sessions' }}
+          summary={{ total: 10, shown: 10, attention: 2 }}
+          filters={<LiveFilters />}
+          current={[]}
+          finished={[]}
+          finishedCollapsed
+          onToggleFinished={noop}
+          now={NOW}
+        />
+      </Specimen>
       <Specimen title="In a narrow window" note="The summary and the filters wrap." width={320}>
         <SessionList
           heading={{ label: 'pitwall-test-app/packages/a-package-directory-with-a-long-name', kind: 'git' }}
@@ -172,8 +197,15 @@ export function FilterSpecimens() {
       <Specimen title="Both chips on" note="Interactive or Background: every session, as with neither on.">
         <LiveFilters start={filters('', 'interactive', 'background')} />
       </Specimen>
-      <Specimen title="In a narrow window" note="The chips and Clear filters wrap under the field." width={320}>
+      <Specimen title="In a narrow window" note="The chips and Clear filters wrap under the field, and Sort after them." width={320}>
         <LiveFilters start={filters('export', 'interactive')} />
+      </Specimen>
+      <Specimen title="The Sort setting" note="Urgency, the default, then Recent and Name. Each one keeps its own choice here; in the app it's one setting, kept in pitwall.sort.v1.">
+        <div className="uikit-row">
+          {SORT_ORDERS.map((order) => (
+            <LiveSort key={order} start={order} />
+          ))}
+        </div>
       </Specimen>
     </>
   );

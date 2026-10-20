@@ -3,7 +3,6 @@
 
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Icon } from '../components/Icon.js';
-import { ChevronIcon, FolderIcon, GitIcon } from '../components/icons.js';
 import { ThemeSwitch } from '../components/ThemeSwitch.js';
 import { ICON_PATHS, type IconName } from '../icons/paths.js';
 import type { StorageSource } from '../groupState.js';
@@ -286,25 +285,6 @@ export function Icons() {
             </li>
           ))}
         </ul>
-      </Specimen>
-      <Specimen
-        title="Next to today's inline icons"
-        note="Today's chevron (12 px), git and folder icons (14 px), from icons.tsx, then their replacements (expand, repo, directory) at 16 px, each in 14 px text."
-      >
-        <div className="uikit-icon-compare">
-          <p>
-            <ChevronIcon /> <GitIcon /> pitwall-test-app <span className="uikit-note">today</span>
-          </p>
-          <p>
-            <Icon name="expand" /> <Icon name="repo" /> pitwall-test-app <span className="uikit-note">Icon, 16 px</span>
-          </p>
-          <p>
-            <ChevronIcon /> <FolderIcon /> pitwall-test-notes <span className="uikit-note">today</span>
-          </p>
-          <p>
-            <Icon name="expand" /> <Icon name="directory" /> pitwall-test-notes <span className="uikit-note">Icon, 16 px</span>
-          </p>
-        </div>
       </Specimen>
     </>
   );

@@ -9,7 +9,6 @@ import { AttachContext } from '../attach.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionActions } from '../components/SessionActions.js';
 import { SessionView } from '../components/SessionView.js';
-import { createReplyLoader, ReplyLoaderContext } from '../lastMessage.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { background, NOW, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
 import { element, press, Scenario, Specimen, text, type, until } from './kit.js';
@@ -19,15 +18,8 @@ const noop = () => {};
 
 /** A stub API for everything inside, made once from `options` when it mounts. */
 export function Stubbed({ options = {}, children }: { options?: StubOptions; children: ReactNode }) {
-  const [context] = useState(() => {
-    const api = stubApi(options);
-    return { api, loader: createReplyLoader({ api }) };
-  });
-  return (
-    <ApiContext.Provider value={context.api}>
-      <ReplyLoaderContext.Provider value={context.loader}>{children}</ReplyLoaderContext.Provider>
-    </ApiContext.Provider>
-  );
+  const [api] = useState(() => stubApi(options));
+  return <ApiContext.Provider value={api}>{children}</ApiContext.Provider>;
 }
 
 /** Attach sockets that follow `script`, for everything inside, made once when it mounts. */

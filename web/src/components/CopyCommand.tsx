@@ -41,7 +41,7 @@ export function CopyCommand({ command }: { command: string }) {
       <code ref={codeRef} id={codeId}>
         {command}
       </code>
-      <button type="button" className="button small" aria-describedby={codeId} onClick={() => void copy()}>
+      <button type="button" className="button sm" aria-describedby={codeId} onClick={() => void copy()}>
         Copy
       </button>
       <span className="copy-status" role="status">

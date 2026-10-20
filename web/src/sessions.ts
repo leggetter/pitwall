@@ -1,5 +1,5 @@
 // What the screen derives from a session: whether it needs Phil, which status
-// pill it gets, and whether it passes the filters.
+// badge it gets, where it sorts, and whether it passes the filters.
 
 import type { SessionGroup, SessionKind, SessionSummary } from '../../src/shared/protocol.js';
 import { shortenHome } from './format.js';
@@ -15,35 +15,67 @@ export function needsAttention(session: SessionSummary): boolean {
   return session.status === 'waiting' || session.state === 'blocked' || session.askedYou !== undefined;
 }
 
-export type PillTone = 'attention' | 'asked' | 'busy' | 'idle' | 'done' | 'failed' | 'stopped' | 'offline';
+/**
+ * How a badge looks (docs/design-system.md, 4: Badges): solid is for "needs you" only, everything
+ * else is subtle, in a tone, or outline.
+ */
+export type BadgeLook = 'solid-warning' | 'subtle-warning' | 'subtle-info' | 'subtle-neutral' | 'subtle-success' | 'subtle-danger' | 'outline';
 
-export interface StatusPill {
-  /** The visible text, such as "waiting: permission prompt". */
+/** The session states the badges tell apart, as in the Badges table. */
+export type SessionStatus =
+  | 'waiting'
+  | 'blocked'
+  | 'asked'
+  | 'blocked-stale'
+  | 'failed'
+  | 'done'
+  | 'stopped'
+  | 'not-running'
+  | 'busy'
+  | 'working'
+  | 'idle'
+  | 'unknown';
+
+export interface StatusBadge {
+  status: SessionStatus;
+  /** The visible text, in sentence case, such as "Waiting: permission prompt". */
   label: string;
-  tone: PillTone;
+  look: BadgeLook;
+  /** An 8 px status dot before the label: busy and working. */
+  dot?: boolean;
 }
 
 /**
  * Waiting first, then blocked (unless stale), then asked you, then the
  * session's state or status. A finished session shows its state (done,
  * stopped or failed) even when it asked something; its row shows that
- * separately, muted.
+ * separately, as an outline badge.
  */
-export function statusPill(session: SessionSummary): StatusPill {
+export function statusBadge(session: SessionSummary): StatusBadge {
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
-  if (session.status === 'waiting') return { label: `waiting${reason}`, tone: 'attention' };
-  if (session.state === 'blocked' && !session.stale) return { label: `blocked${reason}`, tone: 'attention' };
-  if (session.askedYou && !session.stale && !session.finished) return { label: 'asked you', tone: 'asked' };
-  // A stale blocked job keeps its "blocked" text but loses the attention styling.
-  if (session.state === 'blocked') return { label: `blocked${reason}`, tone: 'offline' };
-  if (session.state === 'failed') return { label: 'failed', tone: 'failed' };
-  if (session.state === 'done') return { label: 'done', tone: 'done' };
-  if (session.state === 'stopped') return { label: 'stopped', tone: 'stopped' };
-  if (!session.alive) return { label: 'not running', tone: 'offline' };
-  if (session.status === 'busy') return { label: 'busy', tone: 'busy' };
-  if (session.status === 'idle') return { label: 'idle', tone: 'idle' };
-  if (session.state === 'working') return { label: 'working', tone: 'busy' };
-  return { label: 'unknown', tone: 'idle' };
+  if (session.status === 'waiting') return { status: 'waiting', label: `Waiting${reason}`, look: 'solid-warning' };
+  if (session.state === 'blocked' && !session.stale) return { status: 'blocked', label: `Blocked${reason}`, look: 'solid-warning' };
+  if (session.askedYou && !session.stale && !session.finished) return { status: 'asked', label: 'Asked you', look: 'subtle-warning' };
+  // A stale blocked job keeps its "Blocked" text but loses the attention styling.
+  if (session.state === 'blocked') return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
+  if (session.state === 'failed') return { status: 'failed', label: 'Failed', look: 'subtle-danger' };
+  if (session.state === 'done') return { status: 'done', label: 'Done', look: 'subtle-success' };
+  if (session.state === 'stopped') return { status: 'stopped', label: 'Stopped', look: 'subtle-neutral' };
+  if (!session.alive) return { status: 'not-running', label: 'Not running', look: 'outline' };
+  if (session.status === 'busy') return { status: 'busy', label: 'Busy', look: 'subtle-info', dot: true };
+  if (session.status === 'idle') return { status: 'idle', label: 'Idle', look: 'subtle-neutral' };
+  if (session.state === 'working') return { status: 'working', label: 'Working', look: 'subtle-info', dot: true };
+  return { status: 'unknown', label: 'Unknown', look: 'subtle-neutral' };
+}
+
+/**
+ * The status badge a row shows, or undefined for an idle session (Phil, 2026-10-20): the list stays
+ * quiet, and "Idle" is in the session view. Whether a session needs you never depends on this; it
+ * comes from needsAttention().
+ */
+export function rowStatusBadge(session: SessionSummary): StatusBadge | undefined {
+  const badge = statusBadge(session);
+  return badge.status === 'idle' ? undefined : badge;
 }
 
 /**
@@ -161,10 +193,20 @@ export interface Listed {
   group: SessionGroup;
 }
 
+/** When a session was last active, or started, in ms; 0 when neither parses. */
+function activityMs(session: SessionSummary): number {
+  const ms = Date.parse(session.lastActivityAt ?? session.startedAt);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function compareIds(a: SessionSummary, b: SessionSummary): number {
+  return a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0;
+}
+
 /**
- * The index's own order within a group (src/index/summaries.ts, compareSessions), for the views that
- * list sessions from several groups: waiting or blocked first, then asked you, then busy, then most
- * recently active. Stale sessions after those, and finished sessions last, by activity alone.
+ * The index's own order (src/index/summaries.ts, compareSessions), which is the Urgency sort: waiting
+ * or blocked first, then asked you, then busy, then most recently active. Stale sessions after those,
+ * and finished sessions last, by activity alone.
  */
 export function compareSessions(a: SessionSummary, b: SessionSummary): number {
   const bucket = (session: SessionSummary) => (session.finished ? 2 : session.stale ? 1 : 0);
@@ -174,30 +216,81 @@ export function compareSessions(a: SessionSummary, b: SessionSummary): number {
     if (session.status === 'busy') return 2;
     return 3;
   };
-  const activity = (session: SessionSummary) => {
-    const ms = Date.parse(session.lastActivityAt ?? session.startedAt);
-    return Number.isFinite(ms) ? ms : 0;
-  };
   const ba = bucket(a);
   const bb = bucket(b);
   if (ba !== bb) return ba - bb;
-  return (
-    (ba === 2 ? 0 : rank(a) - rank(b)) ||
-    activity(b) - activity(a) ||
-    (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0)
-  );
+  return (ba === 2 ? 0 : rank(a) - rank(b)) || activityMs(b) - activityMs(a) || compareIds(a, b);
+}
+
+// The Sort setting (docs/design-system.md, 3: Session list), Phil, 2026-10-20.
+
+export type SortOrder = 'urgency' | 'recent' | 'name';
+
+/** The orders in the select's order, Urgency first: it's the default. */
+export const SORT_ORDERS: readonly SortOrder[] = ['urgency', 'recent', 'name'];
+
+export const SORT_LABELS: Readonly<Record<SortOrder, string>> = { urgency: 'Urgency', recent: 'Recent', name: 'Name' };
+
+/** Most recently active first. */
+export function compareRecent(a: SessionSummary, b: SessionSummary): number {
+  return activityMs(b) - activityMs(a) || compareIds(a, b);
+}
+
+/** Alphanumerically by name, as the repo list sorts its groups, so it never moves as sessions change. */
+export function compareNames(a: SessionSummary, b: SessionSummary): number {
+  return LABEL_ORDER.compare(a.name, b.name) || compareIds(a, b);
 }
 
 /**
- * The scope's sessions, split into the rows and the Finished section. A group keeps the index's
- * order. Needs you is every session that needs you, from every group, with no Finished section;
- * All sessions is every session, finished ones in one section at the end.
+ * How an order sorts a selection's unfinished sessions, and its finished ones. Finished sessions
+ * follow the setting too, except that Urgency orders them by activity alone: none of them needs you.
  */
-export function listScope(groups: readonly SessionGroup[], scope: Scope): { current: Listed[]; finished: Listed[] } {
+export function sessionOrder(order: SortOrder, finished: boolean): (a: SessionSummary, b: SessionSummary) => number {
+  if (order === 'name') return compareNames;
+  if (order === 'recent' || finished) return compareRecent;
+  return compareSessions;
+}
+
+/**
+ * The scope's sessions, split into the rows and the Finished section, each in `order`. Needs you is
+ * every session that needs you, from every group, with no Finished section; All sessions is every
+ * session, finished ones in one section at the end. The index's order is Urgency, so it's sorted here.
+ */
+export function listScope(
+  groups: readonly SessionGroup[],
+  scope: Scope,
+  order: SortOrder = 'urgency',
+): { current: Listed[]; finished: Listed[] } {
   const listed = (scope.kind === 'group' ? [scope.group] : groups).flatMap((group) => group.sessions.map((session) => ({ session, group })));
-  const sorted = scope.kind === 'group' ? listed : listed.sort((a, b) => compareSessions(a.session, b.session));
-  if (scope.kind === 'needs-you') return { current: sorted.filter(({ session }) => needsAttention(session)), finished: [] };
-  return { current: sorted.filter(({ session }) => !session.finished), finished: sorted.filter(({ session }) => session.finished) };
+  const sorted = (items: Listed[], finished: boolean) => {
+    const compare = sessionOrder(order, finished);
+    return items.sort((a, b) => compare(a.session, b.session));
+  };
+  if (scope.kind === 'needs-you') return { current: sorted(listed.filter(({ session }) => needsAttention(session)), false), finished: [] };
+  return {
+    current: sorted(listed.filter(({ session }) => !session.finished), false),
+    finished: sorted(listed.filter(({ session }) => session.finished), true),
+  };
+}
+
+/**
+ * The order to show `next` in, while the reader is in the list (docs/design-system.md, 3: Session
+ * list): the ids already on screen keep their order, the ones that have gone leave it, and new ones
+ * go in after the row they follow in `next`, or first when they follow none that's shown.
+ */
+export function holdOrder(shown: readonly string[], next: readonly string[]): string[] {
+  const wanted = new Set(next);
+  const held = shown.filter((id) => wanted.has(id));
+  const kept = new Set(held);
+  let after: string | undefined;
+  for (const id of next) {
+    if (!kept.has(id)) {
+      held.splice(after === undefined ? 0 : held.indexOf(after) + 1, 0, id);
+      kept.add(id);
+    }
+    after = id;
+  }
+  return held;
 }
 
 /** The listed sessions that pass the filters, in the order given. A group whose label matches lets all its sessions through. */

@@ -26,12 +26,6 @@ export const NOTES_DIR = `${ROOT}/pitwall-test-notes`;
 export const SERVICE_DIR = `${OTHER_ROOT}/pitwall-test-service`;
 
 let count = 0;
-const sessions = new Map<string, SessionSummary>();
-
-/** A fixture session by its id, for the stub API's full replies. */
-export function sessionById(sessionId: string): SessionSummary | undefined {
-  return sessions.get(sessionId);
-}
 
 /**
  * A session named `pitwall-test-<name>`: an idle interactive session in APP_DIR unless `overrides`
@@ -59,7 +53,6 @@ export function session(name: string, overrides: Partial<SessionSummary> = {}): 
   for (const key of Object.keys(merged) as (keyof SessionSummary)[]) {
     if (merged[key] === undefined) delete merged[key];
   }
-  sessions.set(merged.sessionId, merged);
   return merged;
 }
 
@@ -154,15 +147,6 @@ function exchange(status: RelayExchange['status'], reply?: string): RelayExchang
   return reply === undefined ? { sentAt: ago(7), status } : { sentAt: ago(7), status, reply: { at: ago(5), text: reply } };
 }
 
-/** Rows whose last relay exchange is in each state. */
-export const RELAY_ROWS: SessionSummary[] = [
-  session('relay-delivered', { relay: exchange('delivered', 'Yes: the export job retries now, and the tests pass.') }),
-  session('relay-held', { relay: exchange('held') }),
-  session('relay-refused', { relay: exchange('refused') }),
-  session('relay-failed', { relay: exchange('failed') }),
-  session('relay-uncertain', { relay: exchange('uncertain') }),
-];
-
 /** Rows with long or awkward text, and the transcript notes. */
 export const AWKWARD_ROWS: SessionSummary[] = [
   session('long-title', {
@@ -176,26 +160,45 @@ export const AWKWARD_ROWS: SessionSummary[] = [
     titleSource: 'pitwall',
     cwd: `${APP_DIR}/packages/exporter/src/workers/batch/retry/strategies/exponential-backoff-with-jitter`,
   }),
-  background('worktree', {
+  session('long-asked', {
+    title: 'Retention for exported files',
+    titleSource: 'claude-code',
+    askedYou: {
+      reason: 'open-questions',
+      excerpt:
+        'Should exported files older than 30 days be deleted by the nightly job, moved to the archive bucket first, or kept until someone removes them by hand?',
+    },
+    lastActivityAt: ago(2),
+  }),
+  session('long-reason', {
+    status: 'waiting',
+    waitingFor: 'permission prompt for a command that writes outside the working directory',
+    lastActivityAt: ago(1),
+  }),
+  background('unbroken', {
     state: 'working',
-    cwd: '/Users/example/worktrees/pitwall-test-app-export-fix',
     lastUserPrompt: `Check this id: pitwall-test-${'0123456789abcdef'.repeat(8)}`,
     lastAssistantText: `It isn't valid: pitwall-test-${'0123456789abcdef'.repeat(8)} is longer than 64 characters.`,
   }),
-  session('cwd-missing', { cwd: `${APP_DIR}/.claude/worktrees/pitwall-test-removed`, cwdMissing: true }),
+  session('no-prompt', { lastUserPrompt: undefined }),
   session('transcript-missing', { transcript: 'missing', lastUserPrompt: undefined, lastAssistantText: undefined }),
   session('transcript-unreadable', { transcript: 'unreadable', lastUserPrompt: undefined, lastAssistantText: undefined }),
 ];
 
-export const OPEN_ROWS: SessionSummary[] = [
-  session('open', { lastActivityAt: ago(2) }),
-  session('open-needs-you', { status: 'waiting', waitingFor: 'dialog open', lastAssistantText: 'Choose an option in the dialog to go on.' }),
-];
-
-/** The full reply behind a clamped row, for "Show more". */
-export function fullReply(text: string): string {
-  return `${text}\n\nThis is the whole reply, which pitwall fetches when the row is expanded. It goes on past the 500-character preview that the snapshot carries, so the expanded row shows more than the clamped one did.`;
-}
+/** A row in each of the states in the Session rows table, named after it. */
+export const STATE_ROWS = {
+  default: session('default', { status: 'busy', lastActivityAt: ago(0.2) }),
+  hover: session('hover', { status: 'busy', lastActivityAt: ago(0.3) }),
+  open: session('open', { status: 'busy', lastActivityAt: ago(2) }),
+  needsYou: session('needs-you', { status: 'waiting', waitingFor: 'dialog open', lastUserPrompt: 'Pick the export format for the archive.' }),
+  needsYouOpen: session('needs-you-open', {
+    status: 'waiting',
+    waitingFor: 'permission prompt',
+    lastUserPrompt: 'Delete the old export files.',
+    lastAssistantText: 'Choose an option in the dialog to go on.',
+  }),
+  finished: finished('finished', 'done', { cwd: JOBS_DIR }),
+};
 
 // Groups, for the group sections and the dashboards.
 
@@ -265,7 +268,7 @@ export const HIGHLIGHT_SNAPSHOT = snapshot([
 export const LONG_ROOTS = [
   ROOT,
   OTHER_ROOT,
-  '/Users/example/clients/pitwall-test-client-with-a-long-name/repositories',
+  '/Users/example/projects/pitwall-test-project-with-a-long-name/repositories',
   '/srv/pitwall-test/shared/checkouts',
 ];
 

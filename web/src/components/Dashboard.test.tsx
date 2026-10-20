@@ -1,11 +1,10 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { lastMessagePath, type IndexSnapshot, type LastMessage, type SessionSummary } from '../../../src/shared/protocol.js';
-import { createApiClient } from '../api.js';
-import type { ConnectionView } from '../connection.js';
+import type { IndexSnapshot, SessionSummary } from '../../../src/shared/protocol.js';
+import type { ConnectionState, ConnectionView } from '../connection.js';
 import { FINISHED_STATE_KEY, type StorageSource } from '../groupState.js';
 import { memoryNavigation, VIEW_STATE_KEY, type NavigationEnv } from '../selection.js';
-import { createReplyLoader, ReplyLoaderContext, type FetchLike } from '../lastMessage.js';
+import { SORT_KEY } from '../sort.js';
 import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
 import { Dashboard } from './Dashboard.js';
 
@@ -91,6 +90,21 @@ function visibleRowNames(): string[] {
   return screen.queryAllByRole('heading', { level: 3 }).map((heading) => heading.textContent ?? '');
 }
 
+/** A row's badges, by their text. */
+function badges(name: string): string[] {
+  return [...row(name).querySelectorAll('.badge')].map((badge) => badge.textContent ?? '');
+}
+
+/** A row's status badge, by the state it shows, or undefined when it has none. */
+function status(name: string): string | undefined {
+  return row(name).querySelector<HTMLElement>('.badge[data-status]')?.dataset.status;
+}
+
+/** A row's second line. */
+function line2(name: string): string | undefined {
+  return row(name).querySelector('.session-what')?.textContent ?? undefined;
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
   vi.setSystemTime(NOW);
@@ -143,8 +157,28 @@ describe('Dashboard header', () => {
   it('shows the reconnecting state and a note that the list may be out of date', () => {
     renderDashboard(mixedSnapshot(), { state: 'reconnecting' });
 
-    expect(screen.getByText('Reconnecting')).toBeTruthy();
+    expect(screen.getByText('Reconnecting…')).toBeTruthy();
     expect(screen.getByText(/Reconnecting; this list may be out of date/)).toBeTruthy();
+  });
+
+  it("shows the connection as a badge in role=\"status\": a spinner while connecting, a dot once live", () => {
+    const cases: [ConnectionState, string, string, string | undefined][] = [
+      ['connecting', 'Connecting…', 'badge-subtle-neutral', 'spinner'],
+      ['live', 'Live', 'badge-subtle-success', 'status-dot'],
+      ['reconnecting', 'Reconnecting…', 'badge-subtle-warning', 'spinner'],
+      ['unauthorized', 'Token rejected', 'badge-subtle-danger', undefined],
+    ];
+    const { rerender } = render(<Dashboard view={{ state: 'connecting' }} navigation={memoryNavigation()} />);
+    for (const [state, label, look, lead] of cases) {
+      rerender(<Dashboard view={{ state }} navigation={memoryNavigation()} />);
+      const badge = document.querySelector('.app-header .connection')!;
+      expect(badge.getAttribute('role')).toBe('status');
+      expect(badge.textContent).toBe(label);
+      expect(badge.querySelector('.badge')?.className).toContain(look);
+      const leading = badge.querySelector('.spinner, .status-dot');
+      expect(leading?.className).toBe(lead);
+      if (leading) expect(leading.getAttribute('aria-hidden')).toBe('true');
+    }
   });
 
   it('warns when the session source failed', () => {
@@ -670,35 +704,118 @@ describe('from 1,200 px: the session view is the third column', () => {
 });
 
 describe('session rows', () => {
-  it('renders sessions in the order given', () => {
+  it('sorts by urgency unless told otherwise', () => {
     renderDashboard(mixedSnapshot());
 
     expect(visibleRowNames()).toEqual(['demo-docs', 'demo-worker', 'demo-api', 'notes-tidy', 'legacy-migration']);
   });
 
-  it('marks waiting and blocked sessions as needing attention, but not stale ones', () => {
+  it('has two lines: the name, title, badges and time, then what it was last asked', () => {
+    renderDashboard(snapshot([group({ sessions: [session({ name: 'git-a0', title: 'Review the auth flow', status: 'busy', lastUserPrompt: 'check the tests' })] })]), {}, { search: '?repo=/Users/example/code/demo-app' });
+
+    const item = row('git-a0');
+    expect([...item.children].map((child) => child.className)).toEqual(['session-line', 'session-what']);
+    const first = item.querySelector('.session-line')!;
+    expect([...first.querySelectorAll('h3, .session-title, .badge, time')].map((part) => part.textContent)).toEqual([
+      'git-a0',
+      'Review the auth flow',
+      'Busy',
+      '5m ago',
+    ]);
+    expect(line2('git-a0')).toBe('You: check the tests');
+  });
+
+  it('starts line 2 with the group label in All sessions and Needs you, but not in a group', () => {
+    const ROOT = '/Users/example/code';
+    const snap = snapshot([
+      group({ sessions: [session({ name: 'waits', status: 'waiting', lastUserPrompt: 'update the guide' })] }),
+      group({ key: ROOT, label: 'code', kind: 'directory', sessions: [session({ name: 'in-root', cwd: ROOT, lastUserPrompt: undefined, askedYou: { reason: 'question', excerpt: 'Ship it?' } })] }),
+    ]);
+    renderDashboard(snap);
+
+    expect(line2('waits')).toBe('demo-app · You: update the guide');
+    // The root's own directory is labelled with its path.
+    expect(line2('in-root')).toBe('~/code · Asked: Ship it?');
+    expect(row('waits').querySelector('.session-what-sep')?.getAttribute('aria-hidden')).toBe('true');
+
+    choose('Needs you');
+    expect(line2('waits')).toBe('demo-app · You: update the guide');
+    expect(line2('in-root')).toBe('~/code · Asked: Ship it?');
+
+    choose('demo-app');
+    expect(line2('waits')).toBe('You: update the guide');
+    expect(row('waits').querySelector('.session-group')).toBeNull();
+  });
+
+  it('puts what the session asked on line 2 in place of what it was asked, and shows only the group label with neither', () => {
+    renderDashboard(
+      snapshot([
+        group({
+          sessions: [
+            session({ name: 'asks', askedYou: { reason: 'question', excerpt: 'Ship it?' }, lastUserPrompt: 'fix the test' }),
+            session({ name: 'quiet', lastUserPrompt: undefined }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(line2('asks')).toBe('demo-app · Asked: Ship it?');
+    expect(row('asks').querySelector('.asked')?.getAttribute('class')).toBe('asked');
+    expect(row('asks').querySelector('.session-what')?.getAttribute('title')).toBe('Ship it?');
+    expect(row('asks').textContent).not.toContain('fix the test');
+    expect(line2('quiet')).toBe('demo-app');
+
+    choose('demo-app');
+    expect(row('quiet').querySelector('.session-what')).toBeNull();
+  });
+
+  it("leaves the reply, Show more, the relay exchange, the cwd, the attach command and a Message button to the session view", () => {
+    const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: 'All three fixed.' } };
+    renderDashboard(
+      snapshot([
+        group({
+          sessions: [
+            session({ name: 'chatty', relay, lastAssistantText: 'A reply long enough to need Show more.', cwd: '/Users/example/code/demo-app/packages/worker' }),
+            session({ name: 'job', kind: 'background', shortId: 'bg7f3a', state: 'working', status: undefined, cwdMissing: true }),
+          ],
+        }),
+      ]),
+    );
+
+    for (const name of ['chatty', 'job']) {
+      const item = row(name);
+      expect(within(item).getAllByRole('button').map((button) => button.textContent)).toEqual([name]);
+      expect(item.querySelector('.reply, .clamp-text, .relay-exchange, .cwd, .cwd-missing, .copy-command, code')).toBeNull();
+      expect(item.textContent).not.toMatch(/A reply long|All three fixed|Message from pitwall|packages\/worker|claude attach|no longer exists|interactive|background/i);
+    }
+  });
+
+  it('marks waiting and blocked sessions as needing you, with the bar and a solid badge, but not stale ones, and never tints the row', () => {
     renderDashboard(mixedSnapshot());
 
     expect(row('demo-docs').dataset.attention).toBe('true');
-    expect(within(row('demo-docs')).getByText('waiting: permission prompt').className).toContain('tone-attention');
+    expect(row('demo-docs').className).toContain('attention');
+    expect(status('demo-docs')).toBe('waiting');
+    expect(badges('demo-docs')).toEqual(['Waiting: permission prompt']);
     expect(row('demo-worker').dataset.attention).toBe('true');
-    expect(within(row('demo-worker')).getByText('blocked').className).toContain('tone-attention');
+    expect(status('demo-worker')).toBe('blocked');
 
     expect(row('demo-api').dataset.attention).toBeUndefined();
     expect(row('legacy-migration').dataset.attention).toBeUndefined();
-    expect(within(row('legacy-migration')).getByText('blocked').className).not.toContain('tone-attention');
+    expect(status('legacy-migration')).toBe('blocked-stale');
   });
 
-  it('shows the stale marker only on stale sessions', () => {
+  it('shows the stale badge only on stale sessions, with its explanation on hover', () => {
     renderDashboard(mixedSnapshot());
 
-    expect(within(row('legacy-migration')).getByText('stale').getAttribute('title')).toMatch(
+    expect(badges('legacy-migration')).toEqual(['Blocked', 'Stale']);
+    expect(within(row('legacy-migration')).getByText('Stale').closest('.badge')?.getAttribute('title')).toMatch(
       /no activity for more than 7 days, whether or not its process is running/,
     );
-    expect(within(row('demo-worker')).queryByText('stale')).toBeNull();
+    expect(within(row('demo-worker')).queryByText('Stale')).toBeNull();
   });
 
-  it('shows kind, status pill text for each state, and not running', () => {
+  it('shows each status as a badge in sentence case, and none for an idle session, which still counts when it asked you', () => {
     renderDashboard(
       snapshot([
         group({
@@ -710,23 +827,27 @@ describe('session rows', () => {
             session({ name: 'e', kind: 'background', shortId: 'e1', state: 'stopped', alive: false, status: undefined, finished: true }),
             session({ name: 'f', alive: false, status: undefined }),
             session({ name: 'g', status: 'waiting', waitingFor: 'a brand new reason' }),
+            session({ name: 'h', status: 'idle', askedYou: { reason: 'question', excerpt: 'Ship it?' } }),
           ],
         }),
       ]),
     );
 
-    const pill = (name: string) => row(name).querySelector('.pill')?.textContent;
-    expect(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(pill)).toEqual([
-      'busy',
-      'idle',
-      'done',
-      'failed',
-      'stopped',
-      'not running',
-      'waiting: a brand new reason',
+    expect(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((name) => badges(name).join(', '))).toEqual([
+      'Busy',
+      '',
+      'Done',
+      'Failed',
+      'Stopped',
+      'Not running',
+      'Waiting: a brand new reason',
+      'Asked you',
     ]);
-    expect(within(row('a')).getByText('interactive')).toBeTruthy();
-    expect(within(row('c')).getByText('background')).toBeTruthy();
+    expect(row('a').querySelector('.badge .status-dot')?.getAttribute('aria-hidden')).toBe('true');
+    expect(row('b').querySelector('.badge')).toBeNull();
+    expect(row('b').dataset.attention).toBeUndefined();
+    expect(row('h').dataset.attention).toBe('true');
+    expect(repoItem('Needs you').textContent).toBe('Needs you2 need you');
   });
 
   it('shows last activity as relative time with the absolute time on hover', () => {
@@ -738,56 +859,7 @@ describe('session rows', () => {
     expect(time.getAttribute('title')).toMatch(/2026/);
   });
 
-  it('shows the last prompt and the last assistant text', () => {
-    renderDashboard(mixedSnapshot());
-
-    const docs = row('demo-docs');
-    expect(within(docs).getByText('update the getting started guide')).toBeTruthy();
-    expect(within(docs).getByText('I need permission to edit docs/quickstart.md.')).toBeTruthy();
-  });
-
-  it('expands long assistant text', () => {
-    const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120);
-    const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(40);
-    renderDashboard(mixedSnapshot());
-
-    const docs = row('demo-docs');
-    const more = within(docs).getByRole('button', { name: 'Show more' });
-    expect(more.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(more);
-    expect(within(docs).getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
-    expect(within(docs).getByText(/I need permission/).className).toContain('expanded');
-
-    scrollHeight.mockRestore();
-    clientHeight.mockRestore();
-  });
-
-  it('offers no expand toggle when the text fits', () => {
-    renderDashboard(mixedSnapshot());
-
-    expect(within(row('demo-docs')).queryByRole('button', { name: 'Show more' })).toBeNull();
-  });
-
-  it('shows the cwd relative to the group when it is a subdirectory, and the full path when outside it', () => {
-    renderDashboard(
-      snapshot([
-        group({
-          key: '/Users/example/code/demo-app',
-          sessions: [
-            session({ name: 'at-root', cwd: '/Users/example/code/demo-app' }),
-            session({ name: 'nested', cwd: '/Users/example/code/demo-app/packages/worker' }),
-            session({ name: 'worktree', cwd: '/Users/example/code/demo-app-worktrees/feature' }),
-          ],
-        }),
-      ]),
-    );
-
-    expect(row('at-root').querySelector('.cwd')).toBeNull();
-    expect(row('nested').querySelector('.cwd')?.textContent).toBe('packages/worker');
-    expect(row('worktree').querySelector('.cwd')?.textContent).toBe('~/code/demo-app-worktrees/feature');
-  });
-
-  it('shows a missing or unreadable transcript quietly instead of the text fields', () => {
+  it('shows a missing or unreadable transcript quietly on line 2, after the group label', () => {
     renderDashboard(
       snapshot([
         group({
@@ -799,10 +871,50 @@ describe('session rows', () => {
       ]),
     );
 
-    expect(within(row('gone')).getByText('Transcript not found')).toBeTruthy();
-    expect(within(row('gone')).queryByText('old prompt')).toBeNull();
-    expect(within(row('gone')).queryByText('old reply')).toBeNull();
-    expect(within(row('garbled')).getByText('Transcript unreadable')).toBeTruthy();
+    expect(line2('gone')).toBe('demo-app · Transcript not found');
+    expect(within(row('gone')).getByText('Transcript not found').className).toBe('transcript-note');
+    expect(row('gone').textContent).not.toMatch(/old prompt|old reply/);
+    expect(line2('garbled')).toBe('demo-app · Transcript unreadable');
+  });
+});
+
+describe('row semantics', () => {
+  it('names the session with a button that controls the session view, marked current while its session is open', () => {
+    const snap = mixedSnapshot();
+    renderDashboard(snap);
+    const name = within(row('notes-tidy')).getByRole('button', { name: 'notes-tidy' });
+
+    expect(name.getAttribute('aria-controls')).toBe('session-view');
+    expect(name.hasAttribute('aria-haspopup')).toBe(false);
+    expect(name.hasAttribute('aria-current')).toBe(false);
+    expect(name.closest('h3')).toBeTruthy();
+    expect(name.dataset.openSession).toBe(snap.groups[1]!.sessions[0]!.sessionId);
+
+    fireEvent.click(name);
+    expect(name.getAttribute('aria-current')).toBe('true');
+    expect(row('notes-tidy').className).toContain('open');
+    expect(document.getElementById('session-view')?.getAttribute('aria-labelledby')).toBeTruthy();
+    expect(within(row('demo-docs')).getByRole('button', { name: 'demo-docs' }).hasAttribute('aria-current')).toBe(false);
+  });
+
+  it('opens the session from a click anywhere on the row', () => {
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.click(row('notes-tidy').querySelector('.session-what')!);
+    expect(screen.getByRole('dialog', { name: 'notes-tidy' })).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    fireEvent.click(row('demo-docs').querySelector('time')!);
+    expect(screen.getByRole('dialog', { name: 'demo-docs' })).toBeTruthy();
+  });
+
+  it("doesn't open the session from a click that ends a text selection", () => {
+    renderDashboard(mixedSnapshot());
+    const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ toString: () => 'notes' } as Selection);
+
+    fireEvent.click(row('notes-tidy').querySelector('.session-what')!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    selection.mockRestore();
   });
 });
 
@@ -814,9 +926,9 @@ describe('session titles', () => {
       snapshot([group({ sessions: [session({ name: 'git-a0', title: 'Review the auth flow', titleSource: 'claude-code' })] })]),
     );
 
+    // The " · " between them is drawn by CSS, so it goes with the title when the row is narrow.
     const head = row('git-a0').querySelector('.session-ident');
-    expect(head?.textContent).toBe('git-a0·Review the auth flow');
-    expect(head?.querySelector('.session-title-sep')?.getAttribute('aria-hidden')).toBe('true');
+    expect(head?.textContent).toBe('git-a0Review the auth flow');
     const title = within(row('git-a0')).getByText('Review the auth flow');
     expect(title.className).toBe('session-title');
     expect(title.getAttribute('title')).toBe(`Review the auth flow\n${CLAUDE_CODE_HINT}`);
@@ -827,7 +939,7 @@ describe('session titles', () => {
   it('shows nothing after the name when there is no title', () => {
     renderDashboard(snapshot([group({ sessions: [session({ name: 'untitled' })] })]));
 
-    expect(row('untitled').querySelector('.session-title, .session-title-sep')).toBeNull();
+    expect(row('untitled').querySelector('.session-title')).toBeNull();
   });
 
   it('keeps a long title whole in the text and the hover text, for the ellipsis to cut on screen', () => {
@@ -906,28 +1018,24 @@ describe('sessions that asked you something', () => {
     ]);
   }
 
-  it('shows an "asked you" pill, distinct from waiting, on an attention row', () => {
+  it('shows a subtle "Asked you" badge, distinct from waiting, on a row that needs you', () => {
     renderDashboard(askedSnapshot());
 
     const asks = row('asks');
     expect(asks.dataset.attention).toBe('true');
     expect(asks.className).toContain('attention');
-    const pill = within(asks).getByText('asked you');
-    expect(pill.className).toContain('pill');
-    expect(pill.className).toContain('tone-asked');
-    expect(pill.className).not.toContain('tone-attention');
-    expect(within(row('waits')).getByText('waiting: permission prompt').className).toContain('tone-attention');
+    expect(status('asks')).toBe('asked');
+    expect(badges('asks')).toEqual(['Asked you']);
+    expect(status('waits')).toBe('waiting');
     expect(row('calm').dataset.attention).toBeUndefined();
   });
 
-  it('shows the excerpt above the last reply', () => {
+  it('shows the excerpt on line 2, and not the last reply', () => {
     renderDashboard(askedSnapshot());
 
     const asks = row('asks');
-    const line = asks.querySelector('.asked');
-    expect(line?.textContent).toBe('Asked: Should I push it?');
-    const reply = within(asks).getByText(/Fixed the test/);
-    expect(line && line.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(asks.querySelector('.asked')?.textContent).toBe('Asked: Should I push it?');
+    expect(asks.textContent).not.toContain('Fixed the test');
     expect(row('docs-done').querySelector('.asked')?.textContent).toBe('Asked: Want me to open the PR?');
     expect(row('calm').querySelector('.asked')).toBeNull();
     expect(row('waits').querySelector('.asked')).toBeNull();
@@ -1066,7 +1174,7 @@ describe('finished sessions', () => {
     expect(document.title).toBe('pitwall');
   });
 
-  it('mutes finished rows, with the state as the pill and a muted asked-you badge', () => {
+  it('mutes finished rows, with the state as the badge and an outline asked-you badge', () => {
     render();
     fireEvent.click(finishedToggle());
 
@@ -1074,12 +1182,13 @@ describe('finished sessions', () => {
     expect(done.className).toContain('finished');
     expect(done.className).not.toContain('attention');
     expect(done.dataset.attention).toBeUndefined();
-    const pills = [...done.querySelectorAll('.pill')];
-    expect(pills.map((p) => p.textContent)).toEqual(['done', 'asked you']);
-    expect(pills[1]?.className).toContain('tone-asked-muted');
-    expect(pills[1]?.className).not.toMatch(/tone-asked(\s|$)/);
+    expect(badges('done-one')).toEqual(['Done', 'Asked you']);
+    const asked = within(done).getByText('Asked you').closest('.badge')!;
+    expect(asked.className).toContain('badge-outline');
+    expect(asked.hasAttribute('data-status')).toBe(false);
+    expect(asked.getAttribute('title')).toMatch(/isn't counted as needing you/);
     expect(done.querySelector('.asked')?.textContent).toBe('Asked: Open the PR?');
-    expect(row('failed-one').querySelector('.pill')?.textContent).toBe('failed');
+    expect(badges('failed-one')).toEqual(['Failed']);
     expect(row('idle-done').className).not.toContain('finished');
   });
 
@@ -1089,7 +1198,7 @@ describe('finished sessions', () => {
     expect(summary()).toBe('1 session·Nothing needs you');
     expect(visibleRowNames()).toEqual([]);
     fireEvent.click(finishedToggle());
-    expect(row('stopped-one').querySelector('.pill')?.textContent).toBe('stopped');
+    expect(badges('stopped-one')).toEqual(['Stopped']);
   });
 
   it('opens a finished row in the session view, like any other row', () => {
@@ -1142,85 +1251,224 @@ describe('finished sessions', () => {
   });
 });
 
-describe('missing working directory', () => {
-  it('shows a quiet marker on the row, even when the cwd is the group directory', () => {
-    renderDashboard(
-      snapshot([
-        group({
-          key: '/Users/example/code/demo-app-worktrees/old',
-          label: 'demo-app-worktrees/old',
-          kind: 'directory',
-          sessions: [
-            session({ name: 'gone', cwd: '/Users/example/code/demo-app-worktrees/old', cwdMissing: true }),
-            session({ name: 'here', cwd: '/Users/example/code/demo-app-worktrees/old' }),
-          ],
-        }),
-      ]),
-    );
+describe('the Sort setting', () => {
+  const sortSelect = () => screen.getByRole('combobox', { name: 'Sort' }) as HTMLSelectElement;
+  const sortBy = (order: string) => fireEvent.change(sortSelect(), { target: { value: order } });
+  const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, finished: true };
 
-    const marker = within(row('gone')).getByText('directory no longer exists');
-    expect(marker.className).toBe('cwd-missing');
-    expect(marker.getAttribute('title')).toMatch(/no longer exists/);
-    expect(row('gone').dataset.attention).toBeUndefined();
-    expect(within(row('here')).queryByText('directory no longer exists')).toBeNull();
+  function sortSnapshot(): IndexSnapshot {
+    return snapshot([
+      group({
+        sessions: [
+          session({ name: 'zeta', status: 'waiting', lastActivityAt: minutesAgo(9) }),
+          session({ name: 'Alpha', lastActivityAt: minutesAgo(1) }),
+          session({ name: 'job-10', kind: 'background', shortId: 'j10', status: undefined, state: 'working', lastActivityAt: minutesAgo(3) }),
+          session({ name: 'job-2', lastActivityAt: minutesAgo(2) }),
+          session({ name: 'b-done', ...finished, shortId: 'f1', state: 'done', lastActivityAt: minutesAgo(30) }),
+          session({ name: 'a-done', ...finished, shortId: 'f2', state: 'failed', lastActivityAt: minutesAgo(60) }),
+          session({ name: 'c-done', ...finished, shortId: 'f3', state: 'stopped', lastActivityAt: minutesAgo(10) }),
+        ],
+      }),
+    ]);
+  }
+
+  it('is a select labelled Sort, after the filter chips, with Urgency, the default, then Recent and Name', () => {
+    renderDashboard(sortSnapshot());
+
+    expect(sortSelect().value).toBe('urgency');
+    expect([...sortSelect().options].map((option) => option.textContent)).toEqual(['Urgency', 'Recent', 'Name']);
+    const line2 = document.querySelector('.session-list-filters')!;
+    expect(line2.contains(sortSelect())).toBe(true);
+    const chips = within(line2 as HTMLElement).getByRole('group', { name: 'Filters' });
+    expect(chips.compareDocumentPosition(sortSelect()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('sorts by Urgency, Recent or Name, and the Finished section follows, except that Urgency orders it by activity alone', () => {
+    renderDashboard(sortSnapshot());
+
+    expect(visibleRowNames()).toEqual(['zeta', 'Alpha', 'job-2', 'job-10', 'c-done', 'b-done', 'a-done']);
+    sortBy('recent');
+    expect(visibleRowNames()).toEqual(['Alpha', 'job-2', 'job-10', 'zeta', 'c-done', 'b-done', 'a-done']);
+    sortBy('name');
+    expect(visibleRowNames()).toEqual(['Alpha', 'job-2', 'job-10', 'zeta', 'a-done', 'b-done', 'c-done']);
+  });
+
+  it('applies to every selection, and is stored in pitwall.sort.v1 for the next visit', () => {
+    const first = renderDashboard(sortSnapshot());
+    sortBy('name');
+    expect(window.localStorage.getItem(SORT_KEY)).toBe('name');
+    choose('Needs you');
+    expect(sortSelect().value).toBe('name');
+    choose('demo-app');
+    expect(visibleRowNames()).toEqual(['Alpha', 'job-2', 'job-10', 'zeta', 'a-done', 'b-done', 'c-done']);
+    first.unmount();
+
+    renderDashboard(sortSnapshot());
+    expect(sortSelect().value).toBe('name');
+    expect(visibleRowNames()).toEqual(['Alpha', 'job-2', 'job-10', 'zeta', 'a-done', 'b-done', 'c-done']);
+  });
+
+  it('still sorts, by Urgency until told otherwise, when storage throws', () => {
+    const denied = () => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    };
+    renderDashboard(sortSnapshot(), {}, { storage: denied });
+
+    expect(sortSelect().value).toBe('urgency');
+    sortBy('name');
+    expect(visibleRowNames()[0]).toBe('Alpha');
   });
 });
 
-describe('copy command', () => {
-  it('is offered for background sessions only', () => {
-    renderDashboard(mixedSnapshot());
+describe('holding the row order while the reader is in the list', () => {
+  const ROW_IDS = { first: 'aaaaaaaa-0000-4000-8000-000000000001', second: 'aaaaaaaa-0000-4000-8000-000000000002', third: 'aaaaaaaa-0000-4000-8000-000000000003' };
 
-    expect(within(row('demo-worker')).getByText('claude attach bg7f3a').tagName).toBe('CODE');
-    expect(within(row('demo-worker')).getByRole('button', { name: 'Copy' })).toBeTruthy();
-    for (const name of ['demo-docs', 'demo-api', 'notes-tidy']) {
-      expect(within(row(name)).queryByRole('button', { name: 'Copy' })).toBeNull();
-      expect(row(name).textContent).not.toMatch(/claude (attach|--resume)/);
-    }
-  });
+  /** first, second and third, in that order by Urgency, unless `third` is waiting, which puts it first. */
+  function rows(overrides: { third?: Partial<SessionSummary>; extra?: SessionSummary[]; without?: string[] } = {}): IndexSnapshot {
+    const sessions = [
+      session({ sessionId: ROW_IDS.first, name: 'first', status: 'busy', lastActivityAt: minutesAgo(1) }),
+      session({ sessionId: ROW_IDS.second, name: 'second', lastActivityAt: minutesAgo(2) }),
+      session({ sessionId: ROW_IDS.third, name: 'third', lastActivityAt: minutesAgo(3), ...overrides.third }),
+      ...(overrides.extra ?? []),
+    ].filter((shown) => !(overrides.without ?? []).includes(shown.name));
+    return snapshot([group({ sessions })]);
+  }
 
-  it('copies the attach command to the clipboard', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    renderDashboard(mixedSnapshot());
+  const reordered = () => rows({ third: { status: 'waiting', waitingFor: 'permission prompt' } });
 
-    await act(async () => {
-      fireEvent.click(within(row('demo-worker')).getByRole('button', { name: 'Copy' }));
-    });
-
-    expect(writeText).toHaveBeenCalledWith('claude attach bg7f3a');
-    expect(within(row('demo-worker')).getByText('Copied')).toBeTruthy();
-    act(() => vi.advanceTimersByTime(2_000));
-    expect(within(row('demo-worker')).queryByText('Copied')).toBeNull();
-    vi.unstubAllGlobals();
-  });
-
-  it('is not offered when the short id looks unsafe to paste into a shell', () => {
-    renderDashboard(
-      snapshot([group({ sessions: [session({ name: 'odd', kind: 'background', shortId: 'x; rm -rf ~', state: 'working' })] })]),
+  function renderList(first: IndexSnapshot = rows(), storage?: StorageSource) {
+    const navigation = memoryNavigation();
+    const ui = (snap: IndexSnapshot) => (
+      <Dashboard view={{ state: 'live', snapshot: snap }} navigation={navigation} {...(storage ? { storage } : {})} />
     );
+    const result = render(ui(first));
+    return { ...result, update: (next: IndexSnapshot) => result.rerender(ui(next)) };
+  }
 
-    expect(within(row('odd')).queryByRole('button', { name: 'Copy' })).toBeNull();
+  const list = () => screen.getByRole('main');
+
+  it('waits while the pointer is over the list, updating the rows in place, and applies once it leaves', () => {
+    const { update } = renderList();
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+    const third = row('third');
+
+    fireEvent.pointerEnter(list());
+    update(reordered());
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+    // The row itself is up to date, and is the same element.
+    expect(row('third')).toBe(third);
+    expect(badges('third')).toEqual(['Waiting: permission prompt']);
+
+    fireEvent.pointerLeave(list());
+    expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
+    expect(row('third')).toBe(third);
   });
 
-  it('is not offered when the short id starts with "-", which claude would read as an option', () => {
-    renderDashboard(
+  it('waits while focus is inside the list, and applies once it leaves', () => {
+    const { update } = renderList();
+    const name = within(row('second')).getByRole('button', { name: 'second' });
+
+    act(() => name.focus());
+    update(reordered());
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+
+    act(() => name.blur());
+    expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
+  });
+
+  it('waits until both the pointer and focus have left', () => {
+    const { update } = renderList();
+    const name = within(row('first')).getByRole('button', { name: 'first' });
+
+    fireEvent.pointerEnter(list());
+    act(() => name.focus());
+    update(reordered());
+    fireEvent.pointerLeave(list());
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+
+    fireEvent.pointerEnter(list());
+    act(() => name.blur());
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+
+    fireEvent.pointerLeave(list());
+    expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
+  });
+
+  it('adds and removes rows at once, holding the rest', () => {
+    const { update } = renderList();
+    fireEvent.pointerEnter(list());
+
+    const fourth = session({ name: 'fourth', status: 'waiting', lastActivityAt: minutesAgo(0.5) });
+    update(rows({ third: { status: 'waiting' }, extra: [fourth], without: ['second'] }));
+    // By Urgency it would be fourth, third, first: fourth comes in where it goes, second has gone, third waits.
+    expect(visibleRowNames()).toEqual(['fourth', 'first', 'third']);
+
+    fireEvent.pointerLeave(list());
+    expect(visibleRowNames()).toEqual(['fourth', 'third', 'first']);
+  });
+
+  it('holds the Finished section too', () => {
+    const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, finished: true, state: 'done' as const };
+    const done = (minutes: [number, number]) =>
       snapshot([
         group({
           sessions: [
-            session({ name: 'dash-h', kind: 'background', shortId: '-h', state: 'working' }),
-            session({ name: 'dash-help', kind: 'background', shortId: '--help', state: 'working' }),
-            session({ name: 'inner-dash', kind: 'background', shortId: 'bg-7f3a', state: 'working' }),
-            session({ name: 'underscore', kind: 'background', shortId: '_bg7f', state: 'working' }),
+            session({ sessionId: ROW_IDS.first, name: 'done-a', ...finished, shortId: 'd1', lastActivityAt: minutesAgo(minutes[0]) }),
+            session({ sessionId: ROW_IDS.second, name: 'done-b', ...finished, shortId: 'd2', lastActivityAt: minutesAgo(minutes[1]) }),
           ],
         }),
-      ]),
-    );
+      ]);
+    const { update } = renderList(done([1, 2]));
+    expandFinished();
+    expect(visibleRowNames()).toEqual(['done-a', 'done-b']);
 
-    expect(within(row('dash-h')).queryByRole('button', { name: 'Copy' })).toBeNull();
-    expect(within(row('dash-help')).queryByRole('button', { name: 'Copy' })).toBeNull();
-    expect(row('dash-h').textContent).not.toContain('claude attach');
-    expect(within(row('inner-dash')).getByText('claude attach bg-7f3a')).toBeTruthy();
-    expect(within(row('underscore')).getByText('claude attach _bg7f')).toBeTruthy();
+    fireEvent.pointerEnter(list());
+    update(done([2, 1]));
+    expect(visibleRowNames()).toEqual(['done-a', 'done-b']);
+    fireEvent.pointerLeave(list());
+    expect(visibleRowNames()).toEqual(['done-b', 'done-a']);
+  });
+
+  it('applies a sort the reader chose at once, though the pointer and focus are in the list', () => {
+    renderList(reordered());
+    const select = screen.getByRole('combobox', { name: 'Sort' });
+    expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
+
+    fireEvent.pointerEnter(list());
+    act(() => select.focus());
+    fireEvent.change(select, { target: { value: 'name' } });
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+    fireEvent.change(select, { target: { value: 'urgency' } });
+    expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
+  });
+
+  it("applies a new selection's order at once", () => {
+    const { update } = renderList();
+    fireEvent.pointerEnter(list());
+    update(reordered());
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+
+    choose('Needs you');
+    expect(visibleRowNames()).toEqual(['third']);
+    choose('All sessions');
+    expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
+  });
+
+  it('never holds under Name, whose order only names change', () => {
+    window.localStorage.setItem(SORT_KEY, 'name');
+    const { update } = renderList();
+    expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
+
+    fireEvent.pointerEnter(list());
+    update(rows({ third: { name: 'a-third' } }));
+    expect(visibleRowNames()).toEqual(['a-third', 'first', 'second']);
+  });
+
+  it('announces nothing it updates: the rows are in no live region', () => {
+    const { update } = renderList();
+    update(reordered());
+
+    expect(list().querySelector('[aria-live], [role="status"], [role="alert"], [role="log"]')).toBeNull();
   });
 });
 
@@ -1341,16 +1589,18 @@ describe('the highlight', () => {
     ]);
   }
 
-  it('marks each match in session names, titles and paths, case-insensitively, and never in the repo list', () => {
+  it("marks each match in session names, titles and the rows' group labels, case-insensitively, and never in the repo list", () => {
     renderDashboard(highlightSnapshot());
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: ' Export ' } });
 
-    // tools matches by its group's label, exporter.
+    // tools matches by its group's label, exporter, which starts its line 2 in All sessions.
     expect(visibleRowNames()).toEqual(['export-retry', 'tools']);
     const retry = row('export-retry');
     expect(marks(retry.querySelector('.session-name')!)).toEqual(['export']);
     expect(marks(retry.querySelector('.session-title')!)).toEqual(['EXPORT']);
-    expect(marks(retry.querySelector('.cwd')!)).toEqual(['export']);
+    // It matches by its directory too, which the row doesn't show.
+    expect(marks(retry.querySelector('.session-what')!)).toEqual([]);
+    expect(marks(row('tools').querySelector('.session-group')!)).toEqual(['export']);
     expect(marks(repoList())).toEqual([]);
     for (const mark of document.querySelectorAll('mark')) expect(mark.className).toBe('match');
   });
@@ -1418,167 +1668,12 @@ describe('the shell', () => {
   });
 
   it('shows the roots in full in the hover text, home-shortened on screen', () => {
-    renderDashboard(snapshot([], { roots: ['/Users/example/code', '/Users/example/work/clients'] }));
+    renderDashboard(snapshot([], { roots: ['/Users/example/code', '/Users/example/work/projects'] }));
 
     const roots = document.querySelector('.roots')!;
-    expect(roots.getAttribute('title')).toBe('/Users/example/code, /Users/example/work/clients');
+    expect(roots.getAttribute('title')).toBe('/Users/example/code, /Users/example/work/projects');
     expect(roots.querySelector('.middle-ellipsis-start')?.textContent).toBe('~/code, ~/work');
-    expect(roots.querySelector('.middle-ellipsis-end')?.textContent).toBe('/clients');
-  });
-});
-
-describe('full replies', () => {
-  const SID = '00000000-0000-4000-8000-0000000000f1';
-  const PREVIEW = `Fixed the flaky test. ${'Details. '.repeat(50)}`.slice(0, 499) + '…';
-  const FULL = `Fixed the flaky test.\n\n${'Details. '.repeat(100)}\n\n- one\n- two`;
-
-  /** Every reply's paragraph reports that it overflows two lines, so "Show more" is offered. */
-  function overflowing() {
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120);
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(40);
-  }
-
-  function replySession(overrides: Partial<SessionSummary> = {}): SessionSummary {
-    return session({ sessionId: SID, name: 'long-reply', lastAssistantText: PREVIEW, lastActivityAt: minutesAgo(5), ...overrides });
-  }
-
-  function message(overrides: Partial<LastMessage> = {}): LastMessage {
-    return { sessionId: SID, text: FULL, truncated: false, at: minutesAgo(5), ...overrides };
-  }
-
-  const ok = (body: LastMessage) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
-
-  /** Renders the dashboard with a reply loader over `fetch`. */
-  function renderWithReplies(rowSession: SessionSummary, fetch: FetchLike) {
-    const loader = createReplyLoader({ api: createApiClient({ apiKey: 'test-token', fetch }) });
-    const navigation = memoryNavigation();
-    const ui = (s: SessionSummary) => (
-      <ReplyLoaderContext.Provider value={loader}>
-        <Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [s] })]) }} navigation={navigation} />
-      </ReplyLoaderContext.Provider>
-    );
-    const result = render(ui(rowSession));
-    return { ...result, update: (next: SessionSummary) => result.rerender(ui(next)) };
-  }
-
-  const text = () => row('long-reply').querySelector('.clamp-text') as HTMLElement;
-  const toggle = (name: 'Show more' | 'Show less') => fireEvent.click(within(row('long-reply')).getByRole('button', { name }));
-  const settle = () => act(async () => {});
-
-  it('fetches the whole reply on "Show more": a short loading state, then the text with its line breaks', async () => {
-    overflowing();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    const fetch = vi.fn<FetchLike>(async () => {
-      await gate;
-      return ok(message());
-    });
-    renderWithReplies(replySession(), fetch);
-    expect(text().textContent).toBe(PREVIEW);
-
-    toggle('Show more');
-    expect(within(row('long-reply')).getByRole('status').textContent).toBe('Loading the full reply…');
-    expect(text().getAttribute('aria-busy')).toBe('true');
-    expect(text().textContent).toBe(PREVIEW);
-    expect(fetch).toHaveBeenCalledWith(lastMessagePath(SID), expect.objectContaining({ headers: { Authorization: 'Bearer test-token' } }));
-
-    release();
-    await settle();
-    expect(text().textContent).toBe(FULL);
-    expect(text().className).toContain('expanded');
-    expect(text().hasAttribute('aria-busy')).toBe(false);
-    expect(within(row('long-reply')).queryByText('Loading the full reply…')).toBeNull();
-  });
-
-  it('collapses to the preview again on "Show less"', async () => {
-    overflowing();
-    renderWithReplies(replySession(), vi.fn<FetchLike>(async () => ok(message())));
-    toggle('Show more');
-    await settle();
-    expect(text().textContent).toBe(FULL);
-
-    toggle('Show less');
-    expect(text().textContent).toBe(PREVIEW);
-    expect(text().className).not.toContain('expanded');
-    expect(within(row('long-reply')).getByRole('button', { name: 'Show more' }).getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('keeps the preview, with a quiet note, when the reply cannot be loaded', async () => {
-    overflowing();
-    renderWithReplies(replySession(), vi.fn<FetchLike>(async () => new Response(null, { status: 404 })));
-    toggle('Show more');
-    await settle();
-
-    expect(text().textContent).toBe(PREVIEW);
-    expect(within(row('long-reply')).getByText("Couldn't load the full reply, so this is the preview.").className).toBe('reply-note');
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('notes a reply that was cut at 64 KiB', async () => {
-    overflowing();
-    renderWithReplies(replySession(), vi.fn<FetchLike>(async () => ok(message({ truncated: true }))));
-    toggle('Show more');
-    await settle();
-
-    expect(text().textContent).toBe(FULL);
-    expect(within(row('long-reply')).getByText('This reply is longer than 64 KiB, so this is its first 64 KiB.')).toBeTruthy();
-  });
-
-  it('fetches once per session and activity time, and again once the session has moved on', async () => {
-    overflowing();
-    const fetch = vi.fn<FetchLike>(async () => ok(message()));
-    const { update } = renderWithReplies(replySession(), fetch);
-    toggle('Show more');
-    await settle();
-    toggle('Show less');
-    toggle('Show more');
-    await settle();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(text().textContent).toBe(FULL);
-
-    toggle('Show less');
-    update(replySession({ lastActivityAt: minutesAgo(1), lastAssistantText: `A newer reply. ${PREVIEW}` }));
-    expect(fetch).toHaveBeenCalledTimes(1);
-    fetch.mockImplementation(async () => ok(message({ text: 'A newer reply, in full.', at: minutesAgo(1) })));
-    toggle('Show more');
-    await settle();
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(text().textContent).toBe('A newer reply, in full.');
-  });
-
-  it('fetches again while expanded when the session moves on, keeping the reply shown until the new one arrives', async () => {
-    overflowing();
-    const fetch = vi.fn<FetchLike>(async () => ok(message()));
-    const { update } = renderWithReplies(replySession(), fetch);
-    toggle('Show more');
-    await settle();
-
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    fetch.mockImplementation(async () => {
-      await gate;
-      return ok(message({ text: 'Newest, in full.' }));
-    });
-    update(replySession({ lastActivityAt: minutesAgo(0.5) }));
-    await settle();
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(text().textContent).toBe(FULL);
-    expect(within(row('long-reply')).queryByText('Loading the full reply…')).toBeNull();
-
-    release();
-    await settle();
-    expect(text().textContent).toBe('Newest, in full.');
-  });
-
-  it('renders the full reply as text, not markup, without control characters', async () => {
-    overflowing();
-    const hostile = '<img src=x onerror="alert(1)"><script>alert(2)</script><b>bold</b>\n\u001b[31mred\u001b[0m‮';
-    const { container } = renderWithReplies(replySession(), vi.fn<FetchLike>(async () => ok(message({ text: hostile }))));
-    toggle('Show more');
-    await settle();
-
-    expect(container.querySelector('img, script, b')).toBeNull();
-    expect(text().textContent).toBe('<img src=x onerror="alert(1)"><script>alert(2)</script><b>bold</b>\nred');
+    expect(roots.querySelector('.middle-ellipsis-end')?.textContent).toBe('/projects');
   });
 });
 
@@ -1592,10 +1687,10 @@ describe('untrusted session text', () => {
           sessions: [
             session({
               name: '<a href="javascript:alert(3)">name</a>',
+              title: '<i>title</i> **markdown**',
               status: 'waiting',
               waitingFor: '<u>reason</u>',
               lastUserPrompt: hostile,
-              lastAssistantText: `${hostile}\n\n# heading\n**markdown**`,
             }),
           ],
         }),
@@ -1611,7 +1706,7 @@ describe('untrusted session text', () => {
     ]);
     expect(container.textContent).toContain('<a href="javascript:alert(3)">name</a>');
     expect(container.textContent).toContain('<i>label</i>');
-    expect(container.textContent).toContain('waiting: <u>reason</u>');
+    expect(container.textContent).toContain('Waiting: <u>reason</u>');
     expect(container.textContent).toContain('<script>alert(2)</script><b>bold</b>');
     expect(container.textContent).toContain('**markdown**');
   });
@@ -1620,11 +1715,11 @@ describe('untrusted session text', () => {
     renderDashboard(
       snapshot([
         group({
-          sessions: [session({ name: 'esc', lastAssistantText: '\u001b[31mred\u001b[0m and \u001b]0;title\u0007plain‮' })],
+          sessions: [session({ name: 'esc', lastUserPrompt: '\u001b[31mred\u001b[0m and \u001b]0;title\u0007plain‮' })],
         }),
       ]),
     );
 
-    expect(within(row('esc')).getByText('red and plain')).toBeTruthy();
+    expect(row('esc').querySelector('.prompt')?.textContent).toBe('You: red and plain');
   });
 });

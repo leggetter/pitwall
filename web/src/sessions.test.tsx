@@ -11,14 +11,20 @@ import {
   filterListed,
   filterNeedle,
   groupLabel,
+  holdOrder,
   isRootGroup,
   listScope,
   matchesChips,
   matchRanges,
+  needsAttention,
   NO_FILTERS,
   noMatchText,
   repoListGroups,
+  rowStatusBadge,
   sessionCount,
+  SORT_LABELS,
+  SORT_ORDERS,
+  statusBadge,
   type FilterChip,
   type Filters,
   type Listed,
@@ -78,7 +84,7 @@ const jobs = group({
 });
 
 describe('listScope', () => {
-  it('lists a group in the order given, its finished sessions apart', () => {
+  it('lists a group in the index\'s order, its finished sessions apart', () => {
     const { current, finished } = listScope([app, jobs], { kind: 'group', group: app });
     expect(names(current)).toEqual(['interactive-waiting', 'interactive-idle']);
     expect(names(finished)).toEqual(['background-finished']);
@@ -106,6 +112,117 @@ describe('listScope', () => {
 
   it('sorts as the index does within a group, so a group listed alone and under All agree', () => {
     for (const listed of [app, jobs]) expect([...listed.sessions].sort(compareSessions)).toEqual(listed.sessions);
+  });
+});
+
+describe('the Sort setting', () => {
+  const at = (name: string, minutes: number, overrides: Partial<SessionSummary> = {}) => session({ name, lastActivityAt: minutesAgo(minutes), ...overrides });
+  const sorting = group({
+    sessions: [
+      at('repo-10', 1),
+      at('Beta', 30, { status: 'waiting' }),
+      at('repo-2', 3, { askedYou: { reason: 'question', excerpt: 'Ship it?' } }),
+      at('alpha', 2, { status: 'busy' }),
+      at('stale-one', 0.5, { kind: 'background', shortId: 's1', status: undefined, state: 'blocked', stale: true }),
+      at('done-new', 4, done),
+      at('Done-old', 40, done),
+      at('done-mid', 10, done),
+    ],
+  });
+  const both = (order: Parameters<typeof listScope>[2]) => {
+    const { current, finished } = listScope([sorting], { kind: 'group', group: sorting }, order);
+    return { current: names(current), finished: names(finished) };
+  };
+
+  it('has Urgency, the default, then Recent and Name', () => {
+    expect(SORT_ORDERS.map((order) => SORT_LABELS[order])).toEqual(['Urgency', 'Recent', 'Name']);
+    expect(both(undefined)).toEqual(both('urgency'));
+  });
+
+  it("Urgency is the index's order: waiting or blocked, asked you, busy, then by activity, stale after; finished ones by activity alone", () => {
+    expect(both('urgency')).toEqual({
+      current: ['Beta', 'repo-2', 'alpha', 'repo-10', 'stale-one'],
+      finished: ['done-new', 'done-mid', 'Done-old'],
+    });
+  });
+
+  it('Recent: most recently active first, finished ones too', () => {
+    expect(both('recent')).toEqual({
+      current: ['stale-one', 'repo-10', 'alpha', 'repo-2', 'Beta'],
+      finished: ['done-new', 'done-mid', 'Done-old'],
+    });
+  });
+
+  it('Name: alphanumerically, case-insensitively, numbers as numbers, finished ones too', () => {
+    expect(both('name')).toEqual({
+      current: ['alpha', 'Beta', 'repo-2', 'repo-10', 'stale-one'],
+      finished: ['done-mid', 'done-new', 'Done-old'],
+    });
+  });
+
+  it('applies to Needs you and All sessions as to a group', () => {
+    expect(names(listScope([app, jobs], { kind: 'needs-you' }, 'name').current)).toEqual(['background-blocked', 'interactive-waiting']);
+    expect(names(listScope([app, jobs], { kind: 'all' }, 'recent').current)).toEqual([
+      'interactive-idle',
+      'background-blocked',
+      'background-working',
+      'interactive-waiting',
+    ]);
+  });
+});
+
+describe('holdOrder, while the reader is in the list', () => {
+  it('keeps the order shown when the new one only reorders', () => {
+    expect(holdOrder(['a', 'b', 'c'], ['c', 'a', 'b'])).toEqual(['a', 'b', 'c']);
+  });
+
+  it('drops the rows that have gone at once', () => {
+    expect(holdOrder(['a', 'b', 'c'], ['c', 'a'])).toEqual(['a', 'c']);
+  });
+
+  it('adds new rows at once, after the row they follow in the new order, or first', () => {
+    expect(holdOrder(['a', 'b', 'c'], ['c', 'new', 'a', 'b'])).toEqual(['a', 'b', 'c', 'new']);
+    expect(holdOrder(['a', 'b'], ['first', 'b', 'a'])).toEqual(['first', 'a', 'b']);
+    expect(holdOrder(['a', 'b'], ['b', 'x', 'y', 'a'])).toEqual(['a', 'b', 'x', 'y']);
+    expect(holdOrder([], ['a', 'b'])).toEqual(['a', 'b']);
+  });
+});
+
+describe('needsAttention, with no idle badge in the list', () => {
+  const asked = { reason: 'question' as const, excerpt: 'Ship it?' };
+
+  /** A session for every combination of the fields its state and its badge come from. */
+  function everySession(): SessionSummary[] {
+    const all: SessionSummary[] = [];
+    for (const status of ['waiting', 'busy', 'idle', undefined] as const)
+      for (const state of [undefined, 'working', 'blocked', 'done', 'stopped', 'failed'] as const)
+        for (const askedYou of [undefined, asked])
+          for (const stale of [false, true])
+            for (const finished of [false, true])
+              for (const alive of [true, false])
+                for (const kind of ['interactive', 'background'] as const)
+                  all.push(session({ status, state, askedYou, stale, finished, alive, kind, shortId: kind === 'background' ? 'b1' : undefined }));
+    return all;
+  }
+
+  it('comes from waiting, blocked and asked you, never from the badge', () => {
+    for (const shown of everySession()) {
+      const expected = !shown.stale && !shown.finished && (shown.status === 'waiting' || shown.state === 'blocked' || shown.askedYou !== undefined);
+      expect(needsAttention(shown), JSON.stringify(shown)).toBe(expected);
+    }
+  });
+
+  it('is false for every session whose badge the list leaves out, so leaving Idle out hides nobody who needs you', () => {
+    const hidden = everySession().filter((shown) => rowStatusBadge(shown) === undefined);
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(hidden.every((shown) => statusBadge(shown).status === 'idle')).toBe(true);
+    expect(hidden.filter(needsAttention)).toEqual([]);
+  });
+
+  it('counts an idle session that asked you, whose badge says Asked you', () => {
+    const idleAsked = session({ status: 'idle', askedYou: asked });
+    expect(needsAttention(idleAsked)).toBe(true);
+    expect(rowStatusBadge(idleAsked)?.label).toBe('Asked you');
   });
 });
 

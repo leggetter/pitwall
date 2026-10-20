@@ -9,7 +9,6 @@ import { memo, useCallback, useEffect, useRef, useState, type ComponentType } fr
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { ThemeSwitch } from '../components/ThemeSwitch.js';
-import { createReplyLoader, ReplyLoaderContext } from '../lastMessage.js';
 import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
 import { SettleContext } from './kit.js';
 import { FinishedSections, SessionRows } from './lists.js';
@@ -29,14 +28,14 @@ interface Section {
 const SECTIONS: Section[] = [
   { id: 'tokens', title: 'Tokens', intro: 'Every --pw-* token on :root, for the theme shown.', Content: Tokens },
   { id: 'type', title: 'Type', intro: 'Inter and JetBrains Mono, bundled by fonts.css, at the sizes in 2.7.', Content: Type },
-  { id: 'icons', title: 'Icons', intro: 'The Icon component, and the inline icons it will replace.', Content: Icons },
+  { id: 'icons', title: 'Icons', intro: 'The Icon component: every icon pitwall uses.', Content: Icons },
   { id: 'theme-switch', title: 'Theme switch', intro: "ThemeSwitch: System, Light and Dark. It's the real one, so pressing it changes this page's theme.", Content: ThemeSwitches },
   { id: 'header', title: 'Header', intro: 'Header: the Repos button, the wordmark, the roots, New session, the connection, the update time and the theme switch, at each width.', Content: Headers },
   { id: 'repo-list', title: 'Repo list', intro: 'RepoList: the two views, then every group. Each one keeps its own selection, so click or use ↓, ↑, Home and End.', Content: RepoLists },
   { id: 'repo-drawer', title: 'Repo drawer', intro: 'RepoDrawer: the repo list below 900 px.', Content: RepoDrawers },
-  { id: 'session-list', title: 'Session list header', intro: "SessionList's header for each selection: its name, its summary, and the filters.", Content: SessionListHeads },
-  { id: 'filters', title: 'Filters', intro: 'FilterControls: the filter field, the filter chips and Clear filters. Each one keeps its own filters.', Content: FilterSpecimens },
-  { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, in the session list it always sits in.', Content: SessionRows },
+  { id: 'session-list', title: 'Session list header', intro: "SessionList's header for each selection: its name, its summary, the filters and the Sort setting.", Content: SessionListHeads },
+  { id: 'filters', title: 'Filters and Sort', intro: 'FilterControls: the filter field, the filter chips and Clear filters, then the Sort setting. Each one keeps its own state.', Content: FilterSpecimens },
+  { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, two lines, in the session list it always sits in: in a group, and in Needs you and All sessions.', Content: SessionRows },
   { id: 'finished', title: 'Finished section', intro: 'FinishedSection, at the foot of the session list.', Content: FinishedSections },
   { id: 'session-view', title: 'Session view', intro: 'SessionView, framed as the window it overlays.', Content: SessionViews },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer, in each send state.", Content: MessageBoxes },
@@ -45,7 +44,7 @@ const SECTIONS: Section[] = [
   { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, empty, filled, with errors and after a failure.', Content: Dialogs },
   { id: 'page-states', title: 'Page states', intro: 'The whole Dashboard in a window 560 px tall, at the gallery\'s width: loading, the selections, alerts, filters and empty states. Each column scrolls.', Content: Pages },
   { id: 'layouts', title: 'Layouts', intro: 'The whole Dashboard in windows of set widths, for one, two and three columns. A window wider than the gallery scrolls sideways.', Content: Layouts },
-  { id: 'notices', title: 'Badges and notices', intro: 'The connection badge, and the notices that replace the page.', Content: Notices },
+  { id: 'notices', title: 'Badges and notices', intro: 'The status badges, the other badges and the connection badge, and the notices that replace the page.', Content: Notices },
 ];
 
 /** The sections, rendered once: the gallery's own state changing doesn't re-render a specimen. */
@@ -73,12 +72,9 @@ function showTarget(): void {
 }
 
 export default function Gallery() {
-  // One stub API, reply loader and attach for anything not given its own, such as a session view
-  // opened from a row on one of the page specimens.
-  const [defaults] = useState(() => {
-    const api = stubApi();
-    return { api, loader: createReplyLoader({ api }), attach: scriptedAttach('attached') };
-  });
+  // One stub API and attach for anything not given its own, such as a session view opened from a
+  // row on one of the page specimens.
+  const [defaults] = useState(() => ({ api: stubApi(), attach: scriptedAttach('attached') }));
 
   // Specimens take focus as they open (a session view's Close button, a dialog's first field),
   // which scrolls the page. Once every scenario has settled, put the page back where the address says.
@@ -109,8 +105,7 @@ export default function Gallery() {
   return (
     <SettleContext.Provider value={settle}>
       <ApiContext.Provider value={defaults.api}>
-        <ReplyLoaderContext.Provider value={defaults.loader}>
-          <AttachContext.Provider value={defaults.attach}>
+        <AttachContext.Provider value={defaults.attach}>
             <div className="uikit" data-ready={ready || undefined}>
               <header className="uikit-bar">
                 <h1>pitwall UI kit</h1>
@@ -133,8 +128,7 @@ export default function Gallery() {
               </nav>
               <Sections />
             </div>
-          </AttachContext.Provider>
-        </ReplyLoaderContext.Provider>
+        </AttachContext.Provider>
       </ApiContext.Provider>
     </SettleContext.Provider>
   );

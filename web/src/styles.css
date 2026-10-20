@@ -472,27 +472,10 @@ textarea {
   gap: var(--pw-space-2) var(--pw-space-3);
 }
 
+/* The connection badge (section 4): a badge, inside the element that's its role="status". */
 .connection {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: var(--pw-weight-bold);
-  white-space: nowrap;
-}
-
-.connection .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--pw-radius-full);
-  background: var(--pw-pending);
-}
-
-.state-live .dot {
-  background: var(--pw-live);
-}
-
-.state-unauthorized .dot {
-  background: var(--pw-broken);
+  flex: none;
 }
 
 .updated {
@@ -709,14 +692,19 @@ textarea {
   margin-top: var(--pw-space-4);
 }
 
-/* Badges (section 4). Only the counts' solid "need you" so far; W23 moves the rows' badges onto these. */
+/*
+ * Badges (section 4): 20 px rectangles in label type. Solid is for "needs you" only; everything else
+ * is subtle (a tint and its edge) or outline (dashed). A session's status badge (.state-*) takes its
+ * look from the state aliases in tokens.css; the others take a tone's.
+ */
 .badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--pw-space-1);
   min-width: var(--pw-badge-h);
-  height: var(--pw-badge-h);
+  max-width: 100%;
+  min-height: var(--pw-badge-h);
   padding: 0 var(--pw-space-1-5);
   border-radius: var(--pw-radius-sm);
   font-size: var(--pw-text-xs);
@@ -726,9 +714,151 @@ textarea {
   white-space: nowrap;
 }
 
-.badge-attention {
+/* Its own box, so a label too long for its row ends in an ellipsis. */
+.badge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Its explanation is in the hover text. */
+.badge[title] {
+  cursor: help;
+}
+
+.badge-attention,
+.badge-solid-warning,
+.badge.state-waiting,
+.badge.state-blocked {
   background: var(--pw-state-attention-bg);
   color: var(--pw-state-attention-fg);
+}
+
+.badge-subtle-neutral {
+  background: var(--pw-neutral-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-neutral-border);
+  color: var(--pw-neutral-tint-fg);
+}
+
+.badge-subtle-info {
+  background: var(--pw-info-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-info-border);
+  color: var(--pw-info-tint-fg);
+}
+
+.badge-subtle-success {
+  background: var(--pw-success-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-success-border);
+  color: var(--pw-success-tint-fg);
+}
+
+.badge-subtle-warning {
+  background: var(--pw-warning-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-warning-border);
+  color: var(--pw-warning-tint-fg);
+}
+
+.badge-subtle-danger {
+  background: var(--pw-danger-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-danger-border);
+  color: var(--pw-danger-tint-fg);
+}
+
+/* Badges aren't focusable, so the outline is free for the dashed edge. */
+.badge-outline {
+  outline: 1px dashed var(--pw-border-dashed);
+  outline-offset: -1px;
+  color: var(--pw-text-subtle);
+}
+
+.badge.state-asked {
+  background: var(--pw-state-asked-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-asked-border);
+  color: var(--pw-state-asked-fg);
+}
+
+.badge.state-busy,
+.badge.state-working {
+  background: var(--pw-state-busy-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-busy-border);
+  color: var(--pw-state-busy-fg);
+}
+
+.badge.state-idle,
+.badge.state-stopped,
+.badge.state-unknown {
+  background: var(--pw-state-idle-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-idle-border);
+  color: var(--pw-state-idle-fg);
+}
+
+.badge.state-done {
+  background: var(--pw-state-done-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-done-border);
+  color: var(--pw-state-done-fg);
+}
+
+.badge.state-failed {
+  background: var(--pw-state-failed-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-failed-border);
+  color: var(--pw-state-failed-fg);
+}
+
+.badge.state-blocked-stale,
+.badge.state-not-running {
+  outline: 1px dashed var(--pw-state-offline-border);
+  outline-offset: -1px;
+  color: var(--pw-state-offline-fg);
+}
+
+/*
+ * The status dot (section 4): an 8 px circle in the text's colour, which inside a badge is its tint's
+ * -tint-fg (2.1). A label always goes with it, and it doesn't animate.
+ */
+.status-dot {
+  flex: none;
+  width: var(--pw-dot);
+  height: var(--pw-dot);
+  border-radius: var(--pw-radius-full);
+  background: currentColor;
+}
+
+/*
+ * The spinner (section 4: Skeletons and spinners), inline at 12 px: a 2 px ring, a conic gradient
+ * from transparent to the text's colour. It waits --pw-delay-spinner before showing, so a fast
+ * connection never flashes it, and slows to 2 s a turn under reduced motion.
+ */
+.spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--pw-radius-full);
+  background: conic-gradient(transparent, currentColor);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), currentColor calc(100% - 2px));
+  animation:
+    pw-spin 0.8s linear infinite,
+    pw-appear 0s linear var(--pw-delay-spinner) both;
+}
+
+@keyframes pw-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes pw-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2s, 0s;
+  }
 }
 
 /* A filter match (Search, in section 4): --pw-text whatever the text around it, the pair 2.5 checks. */
@@ -776,53 +906,64 @@ mark.match {
   text-underline-offset: 2px;
 }
 
+/*
+ * Buttons (section 4): outline at md by default, with sm and lg; primary (actions.css), ghost and
+ * danger variants. An optional 16 px leading icon sits 6 px before the label.
+ */
 .button {
-  padding: 4px 12px;
-  background: var(--pw-surface);
-  border-radius: var(--pw-radius-md);
-  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1-5);
+  min-height: var(--pw-control-md);
+  padding: var(--pw-space-1) var(--pw-space-2);
   border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface);
   box-shadow: var(--pw-shadow-control);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.button:hover {
-  background: var(--pw-surface-hover);
+.button > svg {
+  flex: none;
+}
+
+/* An outline button's icon is muted; a primary or danger button's takes the label's colour. */
+.button:not(.primary, .danger) > svg {
+  color: var(--pw-text-muted);
+}
+
+@media (hover: hover) {
+  .button:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.button:not(.primary, .danger):active {
+  background: var(--pw-surface-strong);
 }
 
 .button:focus-visible {
   box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
 }
 
-.button.small {
-  padding: 2px 10px;
-  font-size: var(--pw-text-s);
-}
-
-/*
- * The sizes and the ghost variant in section 4's Buttons, used by the shell so far. Later items move
- * the other buttons onto them, and off .small.
- */
-.button.sm,
-.button.md {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pw-space-1-5);
-  font-weight: var(--pw-weight-medium);
-}
-
 .button.sm {
-  height: var(--pw-control-sm);
+  min-height: var(--pw-control-sm);
   padding: var(--pw-space-0-5) var(--pw-space-2);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
 }
 
-.button.md {
-  height: var(--pw-control-md);
-  padding: var(--pw-space-1) var(--pw-space-2);
-  font-size: var(--pw-text-m);
-  line-height: var(--pw-leading-m);
+/* md is the default; the class only says so. */
+
+.button.lg {
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-3);
 }
 
 .button.primary:active {
@@ -889,133 +1030,231 @@ mark.match {
   list-style: none;
 }
 
-/* Session rows */
+/*
+ * Session rows (section 4): two lines, 2 px apart. Line 1 is the name and title, the badges and the
+ * time, on one line: the title gives way first, then the name, and the status badge last, which
+ * leaves the name and the time at least 10em. Line 2 is what the session asked, or was last asked, on
+ * one line with an ellipsis.
+ */
 
 .session {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 14px 10px 18px;
+  gap: var(--pw-space-0-5);
+  min-width: 0;
+  padding: var(--pw-space-2) var(--pw-space-4);
   border-top: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
+.session.openable {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .session.openable:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+/* No tint for a row that needs you: the bar and the badge say so. */
 .session.attention {
-  background: var(--pw-state-attention-row);
-  box-shadow: inset 4px 0 0 var(--pw-state-attention-bar);
+  box-shadow: inset 3px 0 0 var(--pw-state-attention-bar);
 }
 
-.session-head {
+.session.open,
+.session.open:hover {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+}
+
+.session.attention.open {
+  box-shadow:
+    inset 3px 0 0 var(--pw-state-attention-bar),
+    var(--pw-ring-selected);
+}
+
+/*
+ * The name cuts off with an ellipsis, which would clip its button's focus ring, so the row shows it,
+ * inset (2.10). The transparent outline is the forced-colours fallback, on the button itself.
+ */
+.session:has(.session-open:focus-visible) {
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.session.attention:has(.session-open:focus-visible) {
+  box-shadow:
+    inset 3px 0 0 var(--pw-state-attention-bar),
+    var(--pw-ring-focus-inset);
+}
+
+.session-open:focus-visible {
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.session-line {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--pw-space-2);
+  min-width: 0;
 }
 
-/* The name, then the title: the name keeps its room, a long title ends in an ellipsis. */
 .session-ident {
   display: flex;
+  flex: 1 1 auto;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--pw-space-1-5);
   min-width: 0;
-  max-width: 100%;
 }
 
+/* Shrinks only once the title has gone. */
 .session-name {
+  display: flex;
   flex: 0 1 auto;
   min-width: 0;
-  font-size: var(--pw-text-m);
-  font-weight: var(--pw-weight-bold);
-  overflow-wrap: anywhere;
-}
-
-.session-title-sep {
-  flex: none;
-  color: var(--pw-text-muted);
-}
-
-.session-title {
-  flex: 1 1 auto;
-  min-width: 0;
   overflow: hidden;
-  color: var(--pw-text-muted);
+  color: var(--pw-text);
   font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.session-open {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .session-open:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+/*
+ * The " · " before the title is part of it, so it goes when the title has given way. The alternative
+ * text keeps it from being read out, where that's supported.
+ */
+.session-title::before {
+  content: '·';
+  content: '·' / '';
+  margin-right: var(--pw-space-1-5);
+}
+
+/* Between the name and the title in the session view's heading. */
+.session-title-sep {
+  color: var(--pw-text-muted);
+}
+
+.session-title {
+  flex: 0 1000000 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-badges {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  max-width: calc(100% - 10em);
+}
+
+/* Stale and a finished session's Asked you are short and stay whole; the status badge gives way. */
+.session-badges > .badge {
+  flex: none;
+}
+
+.session-badges > .badge[data-status] {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.activity {
+  flex: none;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-what {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-group {
+  color: var(--pw-text-subtle);
+}
+
+.session-what-sep {
+  color: var(--pw-text-subtle);
+}
+
+.asked {
+  color: var(--pw-text);
+}
+
+.asked-label {
+  color: var(--pw-warning-fg);
+  font-weight: var(--pw-weight-medium);
+}
+
+.who {
+  font-weight: var(--pw-weight-medium);
+}
+
+.session-what .who {
+  font-weight: inherit;
+}
+
+.transcript-note {
+  color: var(--pw-text-subtle);
+}
+
+/* Finished: the name at 400 in muted, and nothing in a tone colour, since none of them needs you. */
+.session.finished .session-name {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-regular);
+}
+
+.session.finished .asked,
+.session.finished .asked-label {
+  color: var(--pw-text-muted);
+}
+
+/* The kind, in the session view's header. */
 .kind {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
-.pill {
-  padding: 1px 9px;
-  border: 1px solid transparent;
-  border-radius: var(--pw-radius-sm);
-  font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-bold);
-  overflow-wrap: anywhere;
-  font-variant-numeric: tabular-nums;
-}
-
-.tone-attention {
-  background: var(--pw-state-attention-bg);
-  color: var(--pw-state-attention-fg);
-  font-weight: var(--pw-weight-bold);
-}
-
-.tone-asked {
-  background: var(--pw-state-asked-bg);
-  border-color: var(--pw-state-asked-border);
-  color: var(--pw-state-asked-fg);
-  font-weight: var(--pw-weight-bold);
-}
-
-.tone-busy {
-  background: var(--pw-state-busy-bg);
-  border-color: var(--pw-state-busy-border);
-  color: var(--pw-state-busy-fg);
-}
-
-.tone-idle,
-.tone-stopped {
-  background: var(--pw-state-idle-bg);
-  border-color: var(--pw-state-idle-border);
-  color: var(--pw-state-idle-fg);
-}
-
-.tone-done {
-  background: var(--pw-state-done-bg);
-  border-color: var(--pw-state-done-border);
-  color: var(--pw-state-done-fg);
-}
-
-.tone-failed {
-  background: var(--pw-state-failed-bg);
-  border-color: var(--pw-state-failed-border);
-  color: var(--pw-state-failed-fg);
-}
-
-.tone-offline {
-  border-color: var(--pw-state-offline-border);
-  border-style: dashed;
-  color: var(--pw-state-offline-fg);
-}
-
-.stale {
-  padding: 0 6px;
-  border: 1px solid var(--pw-state-offline-border);
-  border-radius: var(--pw-radius-sm);
-  color: var(--pw-state-offline-fg);
-  font-size: var(--pw-text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: help;
-}
-
-/* Finished sessions: a collapsed, muted section at the bottom of the session list (section 4: Finished section) */
+/* The Finished section (section 4): a toggle row at the bottom of the session list, then its rows. */
 
 .finished-list {
   border-top: 1px solid var(--pw-border);
@@ -1024,159 +1263,97 @@ mark.match {
 .finished-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--pw-space-1-5);
   width: 100%;
-  padding: 6px 14px 6px 18px;
-  background: transparent;
+  padding: var(--pw-space-1-5) var(--pw-space-4);
   border: 0;
+  background: transparent;
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
-  font-weight: var(--pw-weight-bold);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
   text-align: left;
   cursor: pointer;
-  font-variant-numeric: tabular-nums;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
 .finished-asked {
   font-weight: var(--pw-weight-regular);
 }
 
-.finished-toggle:hover {
-  background: var(--pw-surface-hover);
+@media (hover: hover) {
+  .finished-toggle:hover {
+    background: var(--pw-surface-hover);
+  }
 }
 
+/* Full width inside the scrolling list, which would clip the outer ring (2.10). */
 .finished-toggle:focus-visible {
   outline-offset: -2px;
   box-shadow: var(--pw-ring-focus-inset);
 }
 
 .finished-toggle .chevron {
-  transition: transform 120ms ease;
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
 .finished-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
 }
 
-.session.finished {
-  color: var(--pw-text-muted);
-}
+/* The Sort setting, at the right of the filters' line (section 3: Session list). */
 
-.session.finished .session-name,
-.session.finished .asked {
-  font-weight: var(--pw-weight-medium);
-}
-
-.session.finished .asked-label {
-  color: inherit;
-}
-
-.tone-asked-muted {
-  border-color: var(--pw-state-offline-border);
-  border-style: dashed;
-  color: var(--pw-state-offline-fg);
-  cursor: help;
-}
-
-.activity {
-  margin-left: auto;
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.prompt {
-  overflow: hidden;
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-m);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.who {
-  margin-right: 4px;
-  font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-bold);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.asked {
-  font-size: var(--pw-text-m);
-  font-weight: var(--pw-weight-bold);
-  overflow-wrap: anywhere;
-}
-
-.asked-label {
-  margin-right: 2px;
-  color: var(--pw-warning-fg);
-}
-
-.reply {
+.sort {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.clamp-text {
-  display: -webkit-box;
-  max-width: 100%;
-  overflow: hidden;
-  font-size: var(--pw-text-m);
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-}
-
-.clamp-text.expanded {
-  display: block;
-  /* A full reply can be 64 KiB: it scrolls inside the row rather than pushing the list away. */
-  max-height: 70vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  white-space: pre-wrap;
-  -webkit-line-clamp: unset;
-  line-clamp: none;
-}
-
-.reply-note {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  font-style: italic;
-}
-
-.transcript-note {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  font-style: italic;
-}
-
-.session-foot {
-  display: flex;
-  flex-wrap: wrap;
+  flex: none;
   align-items: center;
-  gap: 4px 12px;
-  margin-top: 2px;
+  gap: var(--pw-space-1-5);
+  margin-left: auto;
 }
 
-.cwd {
-  min-width: 0;
+.sort-label {
   color: var(--pw-text-muted);
-  font-family: var(--pw-font-mono);
   font-size: var(--pw-text-xs);
-  overflow-wrap: anywhere;
-  font-variant-ligatures: none;
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
 }
 
-.cwd-missing {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  font-style: italic;
-  cursor: help;
+/* A native select in a field's box, with the select icon over its right edge (section 4: Inputs). */
+.select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
+
+.select-input {
+  min-height: var(--pw-control-md);
+  margin: 0;
+  padding: var(--pw-space-1) var(--pw-space-8) var(--pw-space-1) var(--pw-space-3);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-input);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  cursor: pointer;
+  appearance: none;
+}
+
+.select-input:focus-visible {
+  box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
+}
+
+.select-icon {
+  position: absolute;
+  right: var(--pw-space-2);
+  color: var(--pw-text-muted);
+  pointer-events: none;
+}
+
+/* A command to copy, as in the New session dialog's trust failure. */
 
 .copy-command {
   display: inline-flex;
@@ -1198,39 +1375,6 @@ mark.match {
 .copy-status {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
-}
-
-/* Opening a session's view from its row */
-
-.session.openable {
-  cursor: pointer;
-}
-
-.session.openable:hover {
-  background: var(--pw-surface-hover);
-}
-
-.session.attention.openable:hover {
-  background: var(--pw-state-attention-row);
-}
-
-.session.open {
-  box-shadow: inset 4px 0 0 var(--pw-selected-border);
-}
-
-.session-open {
-  padding: 0;
-  background: none;
-  border: 0;
-  font: inherit;
-  text-align: left;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-
-.session-open:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 /* The session view: a panel over the right of the page. A column: the header, the conversation, which
@@ -1349,8 +1493,6 @@ mark.match {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-xs);
   font-weight: var(--pw-weight-bold);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .entry-text {
@@ -1368,12 +1510,6 @@ mark.match {
 
 .entry-cross-session {
   border-left: 3px solid var(--pw-info-fg);
-}
-
-/* A sender's name is shown as it is, not in capitals. */
-.entry-cross-session .entry-label {
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 .entry-tool {
