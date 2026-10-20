@@ -9,11 +9,13 @@ import { ConnectionBadge } from '../components/ConnectionBadge.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
 import { Dashboard } from '../components/Dashboard.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
+import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
 import { PANEL_WIDTH_KEY } from '../panelWidth.js';
 import { memoryNavigation } from '../selection.js';
 import { statusBadge } from '../sessions.js';
+import { ShortcutsStoreContext } from '../shortcuts.js';
 import { SORT_KEY } from '../sort.js';
 import {
   APP_DIR,
@@ -39,7 +41,7 @@ import {
   TWO_ROOTS_SNAPSHOT,
 } from './fixtures.js';
 import { choose, element, laidOut, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
-import { memoryStorage, type StubOptions } from './stubs.js';
+import { memoryShortcuts, memoryStorage, type StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
 
 const PROMPT = 'Add a retry with backoff to the export job. Keep the existing 30 second timeout.';
@@ -144,6 +146,34 @@ export function Dialogs() {
               }}
             </Reopenable>
           </Stubbed>
+        </Specimen>
+      ))}
+    </>
+  );
+}
+
+const SHORTCUT_CASES = [
+  { title: 'Shortcuts on', note: 'As it opens, from ? or the header\'s keyboard button, with focus on the off switch. ⌘ on Apple platforms; Escape or Close closes it here too.', on: true, command: true },
+  { title: 'Shortcuts off', note: 'Anywhere says the single-key shortcuts are off; the rest of the map still works.', on: false, command: true },
+  { title: 'On other platforms', note: 'Ctrl in place of ⌘.', on: true, command: false },
+];
+
+/** A store of its own for each, so ticking one specimen's checkbox changes only that one. */
+function ShortcutsCase({ on, command }: { on: boolean; command: boolean }) {
+  const [store] = useState(() => memoryShortcuts(on));
+  return (
+    <ShortcutsStoreContext.Provider value={store}>
+      <Reopenable>{(close) => <ShortcutsDialog onClose={close} command={command} />}</Reopenable>
+    </ShortcutsStoreContext.Provider>
+  );
+}
+
+export function ShortcutsDialogs() {
+  return (
+    <>
+      {SHORTCUT_CASES.map((shortcuts) => (
+        <Specimen key={shortcuts.title} title={shortcuts.title} note={shortcuts.note} frame="dialog-tall">
+          <ShortcutsCase on={shortcuts.on} command={shortcuts.command} />
         </Specimen>
       ))}
     </>

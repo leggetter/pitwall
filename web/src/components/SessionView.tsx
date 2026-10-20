@@ -338,6 +338,8 @@ export interface SessionViewProps {
   onStep?: ((step: 1 | -1) => void) | undefined;
   /** Slide in when it opens over the list. False when it takes over from another session's view. */
   animate?: boolean;
+  /** Whether the message box has a draft, for the shortcuts that would replace or close the view (6.2). */
+  onDraftChange?: ((hasDraft: boolean) => void) | undefined;
 }
 
 type Tab = 'conversation' | 'terminal';
@@ -345,7 +347,7 @@ type Tab = 'conversation' | 'terminal';
 /** A copy from the actions menu that the clipboard refused: the text isn't on screen, so the header shows it. */
 type Refused = { label: string; text: string };
 
-export function SessionView({ session, listed, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true }: SessionViewProps) {
+export function SessionView({ session, listed, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, onDraftChange }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
   const ids = { title: useId(), conversationTab: useId(), conversationPanel: useId(), terminalTab: useId(), terminalPanel: useId() };
@@ -680,6 +682,7 @@ export function SessionView({ session, listed, onClose, layout = 'overlay', comp
             replyShown={replyShown}
             onDraftChange={(has) => {
               draft.current = has;
+              onDraftChange?.(has);
             }}
           />
         </footer>

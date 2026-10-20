@@ -8,6 +8,9 @@
 //
 // The button's name is its tooltip. A disabled item says why in a tooltip, on hover and when the
 // arrows reach it, and is described by it; Escape still closes the menu, its tooltip with it.
+//
+// A single-key shortcut that moves focus elsewhere, such as `/` or `j`, closes the open menus first
+// (closeMenus), so none is left open behind wherever focus goes.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { Icon, type IconName } from './Icon.js';
@@ -53,6 +56,25 @@ const isItem = (entry: MenuEntry): entry is MenuItem => entry.kind !== 'separato
 /** The gap between the button and the panel, in px. */
 const GAP = 4;
 
+/** Each open menu: where it is, and how to close it. */
+const openMenus = new Map<() => void, () => Element | null>();
+
+/**
+ * Closes every open menu inside `within`, for a shortcut that moves focus elsewhere (docs/design-system.md,
+ * 6.2). Focus in one goes back to its button first, as Escape would put it, so a dialog the shortcut
+ * opens returns focus there. Returns whether any was open.
+ */
+export function closeMenus(within: Element): boolean {
+  let closed = false;
+  for (const [close, where] of [...openMenus]) {
+    const anchor = where();
+    if (!anchor || !within.contains(anchor)) continue;
+    close();
+    closed = true;
+  }
+  return closed;
+}
+
 export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: MenuButtonProps) {
   const menuId = useId();
   const own = useRef<HTMLButtonElement>(null);
@@ -93,6 +115,19 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
     // Without scrolling: the menu opens where its button already is, in view.
     items()[0]?.focus({ preventScroll: true });
   }, [open, button]);
+
+  // While open, a shortcut can close it (closeMenus).
+  useEffect(() => {
+    if (!open) return;
+    const close = () => {
+      if (menu.current?.contains(document.activeElement)) closeToButton();
+      else show(false);
+    };
+    openMenus.set(close, () => anchor.current);
+    return () => {
+      openMenus.delete(close);
+    };
+  }, [open, closeToButton, show]);
 
   // A press outside the button and the menu closes it, leaving focus where the press puts it.
   useEffect(() => {

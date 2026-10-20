@@ -14,7 +14,7 @@ export interface SpecimenProps {
    * A frame holds what the app positions against the window (the session view, dialogs, whole
    * pages): it becomes their containing block, so they sit inside it. Its height is the window's.
    */
-  frame?: 'view' | 'short' | 'dialog' | 'page' | 'page-short' | 'toasts' | 'toasts-tall';
+  frame?: 'view' | 'short' | 'dialog' | 'dialog-tall' | 'page' | 'page-short' | 'toasts' | 'toasts-tall';
   /**
    * A window this many px wide, for the shell's width rules, which are container queries on the
    * app (docs/design-system.md, 2.12). A stage is as wide as the gallery; this one scrolls sideways

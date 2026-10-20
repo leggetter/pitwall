@@ -123,13 +123,15 @@ describe('Dashboard header', () => {
     expect(screen.getByText('updated 5s ago')).toBeTruthy();
   });
 
-  it('has the theme switch at the right of the header, before and after the first snapshot', () => {
+  it('ends the header with the theme switch, then the keyboard shortcuts button, before and after the first snapshot', () => {
     const { container, rerender } = render(<Dashboard view={{ state: 'connecting', snapshot: undefined }} />);
     const status = () => container.querySelector('header .app-header-end');
+    const lastTwo = () => [...(status()?.children ?? [])].slice(-2).map((element) => element.getAttribute('aria-label'));
     expect(within(status() as HTMLElement).getByRole('group', { name: 'Theme' })).toBeTruthy();
+    expect(lastTwo()).toEqual(['Theme', 'Keyboard shortcuts']);
 
     rerender(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
-    expect(status()?.lastElementChild?.getAttribute('aria-label')).toBe('Theme');
+    expect(lastTwo()).toEqual(['Theme', 'Keyboard shortcuts']);
   });
 
   it("shows a heartbeat's time as the update age, newer than the snapshot's", () => {

@@ -3,7 +3,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { descriptionOf, shownTooltip, tooltipText } from '../test/tooltips.js';
-import { MenuButton, type MenuEntry } from './Menu.js';
+import { closeMenus, MenuButton, type MenuEntry } from './Menu.js';
 
 function setup(overrides: { disabled?: boolean } = {}) {
   const calls: { label: string; focused: Element | null }[] = [];
@@ -177,5 +177,49 @@ describe('MenuButton', () => {
     });
     fireEvent.click(button);
     expect(screen.getByRole('menu').className).toBe('menu');
+  });
+
+  it('closes with closeMenus, for a shortcut, inside the element given only: focus in it goes back to its button', () => {
+    const entries: MenuEntry[] = [{ id: 'one', label: 'Copy session ID', onSelect: () => {} }];
+    render(
+      <>
+        <div data-testid="here">
+          <MenuButton label="Here" icon="more" entries={entries} />
+        </div>
+        <div data-testid="there">
+          <MenuButton label="There" icon="more" entries={entries} />
+        </div>
+      </>,
+    );
+    const here = screen.getByRole('button', { name: 'Here' });
+    const there = screen.getByRole('button', { name: 'There' });
+    fireEvent.click(there);
+    fireEvent.click(here);
+    expect(screen.getAllByRole('menu')).toHaveLength(2);
+    expect(screen.getByRole('menu', { name: 'Here' }).contains(document.activeElement)).toBe(true);
+
+    let closed = false;
+    act(() => {
+      closed = closeMenus(screen.getByTestId('here'));
+    });
+    expect(closed).toBe(true);
+    expect(screen.queryByRole('menu', { name: 'Here' })).toBeNull();
+    expect(here.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(here);
+    // Its tooltip stays shut: focus was put back, not moved there.
+    expect(shownTooltip()).toBeNull();
+    expect(screen.getByRole('menu', { name: 'There' })).toBeTruthy();
+
+    // One without focus in it closes, and focus stays where it is.
+    act(() => {
+      closed = closeMenus(document.body);
+    });
+    expect(closed).toBe(true);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(here);
+    act(() => {
+      closed = closeMenus(document.body);
+    });
+    expect(closed).toBe(false);
   });
 });

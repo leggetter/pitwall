@@ -13,6 +13,8 @@
 //   inside the terminal, which gets every key.
 // - It's rendered into document.body, fixed to the window, so no scrolling pane, overflow or
 //   stacking context of the page cuts it off, at --pw-z-tooltip. Text only, never markup (6.1, 16).
+// - A shortcut's key caps go at the end. While the single-key shortcuts are off (shortcuts.ts), a
+//   single character key, such as `n`, is left out; Esc, the arrows and ⌘ combinations still show.
 //
 // How the trigger relates to it (6.1, item 5):
 // - `label`, for an icon-only control: the trigger's aria-label is the tooltip's text, so its name
@@ -38,6 +40,7 @@ import {
   type Ref,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { isCharacterKey, useShortcuts } from '../shortcuts.js';
 import { cssTime, TOOLTIP_DELAY_MS } from '../timing.js';
 import { KeyCaps } from './KeyCaps.js';
 import './Tooltip.css';
@@ -60,7 +63,7 @@ interface TriggerProps {
 export interface TooltipProps {
   /** The tooltip's text, as plain text. Undefined renders the trigger alone, with no tooltip. */
   content: string | undefined;
-  /** Key caps after the text, such as Esc on Close. */
+  /** Key caps after the text, such as Esc on Close. A single character key shows only while the single-key shortcuts are on. */
   keys?: { keys: readonly string[]; label: string } | undefined;
   /** How the trigger relates to it: see the top of this file. */
   relation?: TooltipRelation;
@@ -142,6 +145,8 @@ export function Tooltip({ content, keys, relation = 'description', onlyIfCut = f
   const [pinned, setPinned] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const open = content !== undefined && (hovered || focused || pinned) && !dismissed;
+  const shortcuts = useShortcuts();
+  const shownKeys = keys && (shortcuts.on || !isCharacterKey(keys.keys)) ? keys : undefined;
 
   const childProps = children.props;
   const childRef = childProps.ref;
@@ -336,7 +341,7 @@ export function Tooltip({ content, keys, relation = 'description', onlyIfCut = f
             onClick={(event) => event.stopPropagation()}
           >
             <span className="tooltip-text">{content}</span>
-            {keys && <KeyCaps keys={keys.keys} label={keys.label} />}
+            {shownKeys && <KeyCaps keys={shownKeys.keys} label={shownKeys.label} />}
           </div>,
           document.body,
         )}

@@ -4,7 +4,9 @@
 
 import { useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { FILTER_CHIPS, filtering, NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
+import { SHORTCUT_KEYS, useShortcuts } from '../shortcuts.js';
 import { Icon } from './Icon.js';
+import { KeyCaps } from './KeyCaps.js';
 import { Tooltip } from './Tooltip.js';
 
 export const CHIP_LABELS: Readonly<Record<FilterChip, string>> = {
@@ -22,11 +24,15 @@ export interface FilterFieldProps {
  * The filter field (Search, in section 4): a search icon, the text, and a clear button once there's
  * text. Escape clears the text, or leaves the field when it's already empty. Escape that clears
  * doesn't go on to close the session view; Escape that leaves the field does.
+ *
+ * While the single-key shortcuts are on, a `/` key cap says how to get here, while the field is
+ * empty and unfocused (CSS hides it on focus), and the field's aria-keyshortcuts says so too.
  */
 export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
   const id = useId();
   const own = useRef<HTMLInputElement>(null);
   const input = inputRef ?? own;
+  const shortcuts = useShortcuts();
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Escape') return;
@@ -40,7 +46,7 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
   };
 
   return (
-    <div className="filter-field">
+    <div className={shortcuts.on ? 'filter-field with-key' : 'filter-field'}>
       <label className="visually-hidden" htmlFor={id}>
         Filter sessions
       </label>
@@ -53,10 +59,17 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
         placeholder="Filter by session, title, repo or directory"
         autoComplete="off"
         spellCheck={false}
+        aria-keyshortcuts={shortcuts.on ? '/' : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}
       />
+      {shortcuts.on && value === '' && (
+        // A hint for sighted users: the field's aria-keyshortcuts says it to everyone else.
+        <span className="filter-key" aria-hidden="true">
+          <KeyCaps keys={SHORTCUT_KEYS.filter.keys} label={SHORTCUT_KEYS.filter.label} />
+        </span>
+      )}
       {value !== '' && (
         <Tooltip content="Clear filter" relation="label">
           <button
@@ -111,11 +124,14 @@ export interface FilterControlsProps {
   onChange: (filters: Filters) => void;
   /** Other controls, after the chips, such as the session list's Sort setting, so they wrap with them. */
   children?: ReactNode;
+  /** The filter field, for the `/` shortcut. */
+  fieldRef?: RefObject<HTMLInputElement | null>;
 }
 
 /** The field, the chips and Clear filters, in role="search". */
-export function FilterControls({ filters, onChange, children }: FilterControlsProps) {
-  const field = useRef<HTMLInputElement>(null);
+export function FilterControls({ filters, onChange, children, fieldRef }: FilterControlsProps) {
+  const own = useRef<HTMLInputElement>(null);
+  const field = fieldRef ?? own;
   return (
     <form className="filter-controls" role="search" onSubmit={(event) => event.preventDefault()}>
       <FilterField value={filters.text} onChange={(text) => onChange({ ...filters, text })} inputRef={field} />

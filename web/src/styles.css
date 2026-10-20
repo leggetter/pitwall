@@ -641,6 +641,26 @@ textarea {
   right: 2px;
 }
 
+/*
+ * The `/` key cap, while the single-key shortcuts are on and the field is empty and unfocused: 4 px
+ * from the right, centred in the 28 px field. The text keeps clear of it, as of the clear button, and
+ * keeps the same room on focus, so the placeholder doesn't move. Clicks go through it to the field.
+ */
+.filter-field.with-key .filter-input {
+  padding-right: var(--pw-space-8);
+}
+
+.filter-key {
+  position: absolute;
+  right: var(--pw-space-1);
+  display: inline-flex;
+  pointer-events: none;
+}
+
+.filter-input:focus ~ .filter-key {
+  display: none;
+}
+
 /* Filter chips (section 4) */
 
 .filter-chips {

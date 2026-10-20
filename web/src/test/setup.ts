@@ -10,6 +10,8 @@ afterEach(() => {
   cleanup();
   window.sessionStorage.clear();
   window.localStorage.clear();
+  // As another tab clearing storage would: the page's shortcuts store reads it again, so each test starts with them on.
+  window.dispatchEvent(new StorageEvent('storage', { key: null }));
   // The theme store sets data-theme; each test starts without it.
   document.documentElement.removeAttribute('data-theme');
   window.history.replaceState(null, '', '/');

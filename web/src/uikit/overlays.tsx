@@ -21,13 +21,17 @@ import { Timestamp } from '../components/Timestamp.js';
 import { ToastProvider, useToast, type ToastInput } from '../components/Toast.js';
 import { Tooltip } from '../components/Tooltip.js';
 import { ClipboardContext } from '../copy.js';
+import { ShortcutsStoreContext } from '../shortcuts.js';
 import { shortenHome } from '../format.js';
 import { ago, APP_DIR, APP_GROUP, LONG_ROOTS, NOW, session, TRUST_HINT } from './fixtures.js';
 import { element, hoverFor, laidOut, Scenario, Specimen, specimenOf, text, until } from './kit.js';
-import { stubClipboard } from './stubs.js';
+import { memoryShortcuts, stubClipboard } from './stubs.js';
 import { Stubbed } from './views.js';
 
 const noop = () => {};
+
+/** The single-key shortcuts off, for the tooltips that leave their key caps out then. */
+const SHORTCUTS_OFF = memoryShortcuts(false);
 
 const MENU: MenuEntry[] = [
   { id: 'copy', label: 'Copy session ID', icon: 'copy', onSelect: noop },
@@ -70,6 +74,37 @@ export function Tooltips() {
             <SessionView session={TIP_INTERACTIVE} listed onClose={noop} />
           </Scenario>
         </Stubbed>
+      </Specimen>
+      <Specimen
+        title="The header's keyboard shortcuts button"
+        note="Named by its tooltip, with ? as its key caps. It opens the keyboard shortcuts dialog."
+        width={1100}
+      >
+        <Scenario run={hoverOn('button[aria-label="Keyboard shortcuts"]', 'Keyboard shortcuts')}>
+          <div className="uikit-tip-stage">
+            <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+          </div>
+        </Scenario>
+      </Specimen>
+      <Specimen title="New session, with its shortcut" note="A text button: its tooltip repeats its label only to show n." width={1100}>
+        <Scenario run={hoverOn('.app-header .button.primary', 'New session')}>
+          <div className="uikit-tip-stage">
+            <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+          </div>
+        </Scenario>
+      </Specimen>
+      <Specimen
+        title="With the single-key shortcuts off"
+        note="Tooltips leave out single-key caps such as ?, and New session has no tooltip, since it would only repeat its label. Esc, the arrows and ⌘ combinations still show."
+        width={1100}
+      >
+        <ShortcutsStoreContext.Provider value={SHORTCUTS_OFF}>
+          <Scenario run={hoverOn('button[aria-label="Keyboard shortcuts"]', 'Keyboard shortcuts')}>
+            <div className="uikit-tip-stage">
+              <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+            </div>
+          </Scenario>
+        </ShortcutsStoreContext.Provider>
       </Specimen>
       <Specimen title="A toggle in a group" note="The theme switch: each option is named by its tooltip.">
         <TipStage>
@@ -150,7 +185,7 @@ export function Tooltips() {
       <Specimen title="Paths in full" note="The header's roots, home and all; on screen, home is ~ and the list may be cut in the middle." width={600}>
         <Scenario run={hoverOn('.roots')}>
           <div className="uikit-tip-stage">
-            <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} />
+            <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
           </div>
         </Scenario>
       </Specimen>
