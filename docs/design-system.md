@@ -4,7 +4,11 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
 
 - **Status:** proposed for M3. The web UI doesn't follow it yet. [Mapping from today's CSS](#215-mapping-from-todays-css) lists the renames that move today's styles onto these tokens with no visual change.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
-- **Living reference:** a dev-only `#uikit` view renders every component below, in light and dark. Where this doc and the gallery disagree, fix whichever is wrong in the same PR.
+- **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
+  - It renders every component the web UI has today, in every state, with a toolbar for light, dark, or no `data-theme` (the system's). Components in section 4 that aren't built yet join it as they're built.
+  - It uses the real components from `web/src/components/` with made-up fixtures and stubs (`web/src/uikit/`). It doesn't need the token, and makes no API or WebSocket calls.
+  - It's in dev builds only: `npm run dev` builds in Vite's development mode, and `npm run build` leaves the gallery out, which `web/src/uikit/build.test.tsx` checks.
+  - **Every M3 PR adds the components and states it introduces to the gallery.** Where this doc and the gallery disagree, fix whichever is wrong in the same PR.
 - **How to read it:** every rule is written so it can be built from this doc alone. Values are exact. Where a value is a choice rather than a requirement, the reason is given.
 
 ## Contents
