@@ -8,7 +8,17 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { browserCommand, claimOpenMarker, parseCliArgs, resolveRoots, resolveToken, resolveWebRoot, USAGE, UsageError } from './cli.js';
+import {
+  browserCommand,
+  claimOpenMarker,
+  currentDirectory,
+  parseCliArgs,
+  resolveRoots,
+  resolveToken,
+  resolveWebRoot,
+  USAGE,
+  UsageError,
+} from './cli.js';
 import { DEFAULT_POLL_INTERVAL_MS, WS_PATH } from './shared/protocol.js';
 import { pitwallOrigin, proofFor } from './test/proof.js';
 
@@ -122,6 +132,47 @@ describe('resolveRoots', () => {
 
   it('fails clearly for a root that is a file', () => {
     expect(() => resolveRoots(['file'], tmp)).toThrow(new UsageError(`root is not a directory: ${join(tmp, 'file')}`));
+  });
+});
+
+/** An error shaped like the one process.cwd() throws, from libuv's uv_cwd. */
+function cwdError(code: string, errno: number, syscall = 'uv_cwd'): NodeJS.ErrnoException {
+  return Object.assign(new Error(`${code}: no such file or directory, ${syscall}`), { code, errno, syscall });
+}
+
+describe('currentDirectory', () => {
+  it('returns the current directory when it exists', () => {
+    expect(currentDirectory(() => '/home/someone/project')).toBe('/home/someone/project');
+    expect(currentDirectory()).toBe(process.cwd());
+  });
+
+  it('returns undefined when the current directory has been deleted: ENOENT from uv_cwd', () => {
+    expect(
+      currentDirectory(() => {
+        throw cwdError('ENOENT', -2);
+      }),
+    ).toBeUndefined();
+  });
+
+  it('throws any other failure as it was', () => {
+    const denied = cwdError('EACCES', -13);
+    expect(() =>
+      currentDirectory(() => {
+        throw denied;
+      }),
+    ).toThrow(denied);
+    // ENOENT from another call isn't the current directory going away.
+    const stat = cwdError('ENOENT', -2, 'stat');
+    expect(() =>
+      currentDirectory(() => {
+        throw stat;
+      }),
+    ).toThrow(stat);
+    expect(() =>
+      currentDirectory(() => {
+        throw 'not an error';
+      }),
+    ).toThrow('not an error');
   });
 });
 
