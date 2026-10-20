@@ -697,12 +697,17 @@ Three columns, left to right: where to look (the repo list), what's there (the s
     - At the right, the summary: "4 sessions", then a solid warning "2 need you" badge, or meta text "Nothing needs you".
   - **Line 2,** 8 px below, wrapping:
     - the [filter field](#search), at least 200 px wide and growing;
-    - then the [filter chips](#filter-chips) and "Clear filters".
-- **Rows:** [session rows](#session-rows) in a `<ul>`, in the index's order: waiting or blocked first, then asked you, then busy, then most recently active, with stale sessions after those.
+    - then the [filter chips](#filter-chips) and "Clear filters";
+    - then, at the right, the sort setting: a native [select](#inputs-textareas-and-selects) labelled "Sort", 28 px tall.
+- **Rows:** [session rows](#session-rows) in a `<ul>`, in the order the sort setting picks (Phil, 2026-10-20):
+  - **Urgency,** the default: waiting or blocked first, then asked you, then busy, then most recently active, with stale sessions after those. This is the index's order.
+  - **Recent:** most recently active first.
+  - **Name:** alphanumeric by name, as the repo list sorts its groups. It never moves as sessions change.
+  - The setting applies to every selection, and is saved in `localStorage` as `pitwall.sort.v1`. Finished sections use it too, except that Urgency orders finished sessions by activity alone.
   - **A group:** its unfinished sessions, then its [Finished section](#finished-section).
   - **Needs you:** every session that needs you, from every group. There's no Finished section, because a finished session never needs you.
   - **All sessions:** every unfinished session from every group, then one Finished section for all of them.
-- **Live updates:** each snapshot updates rows in place. If it would reorder rows while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it. Added and removed rows apply at once.
+- **Live updates:** each snapshot updates rows in place. If it would reorder rows (under Urgency or Recent) while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it. Added and removed rows apply at once.
 - **Empty and loading states** fill the rows' area, centred (see [Empty states](#empty-states)).
 
 ### Session view
