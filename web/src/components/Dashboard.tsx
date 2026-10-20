@@ -193,8 +193,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   );
 
   // ↑ and ↓ on a row: focus moves to the next or previous row, and stays in the list. With the view
-  // open, it shows that session too, replacing the history entry.
+  // open, it shows that session too, replacing the history entry. Nothing while the message box has a
+  // draft, which changing session would lose, as `j` and `k` do (6.2).
   const stepFromRow = (sessionId: string, by: 1 | -1) => {
+    if (openId !== undefined && draft.current) return;
     const next = rowFrom(sessionId, by);
     const id = next?.dataset.openSession;
     if (!next || id === undefined) return;
@@ -202,9 +204,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (openId !== undefined) opened.open(id, 'replace');
   };
 
-  // ↑ and ↓ in the view's header: the next or previous session, with focus on its heading.
+  // ↑ and ↓ in the view's header: the next or previous session, with focus on its heading. Nothing
+  // while the message box has a draft, as on a row.
   const stepFromView = (by: 1 | -1) => {
-    if (openId === undefined) return;
+    if (openId === undefined || draft.current) return;
     const next = rowFrom(openId, by);
     const id = next?.dataset.openSession;
     if (!next || id === undefined) return;

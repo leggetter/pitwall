@@ -360,6 +360,35 @@ describe('↑ and ↓', () => {
     expect(viewName()).toBe('demo-b');
   });
 
+  it("do nothing while the open session's message box has a draft, on a row or in the header, as j and k do", async () => {
+    const { history } = renderDashboard();
+    await open('demo-a');
+    const box = within(view()!).getByRole('textbox', { name: 'Message to demo-a' });
+    fireEvent.change(box, { target: { value: 'a draft' } });
+    const entries = [...history.entries];
+
+    rowButton('demo-a').focus();
+    // Handled, so the list doesn't scroll either: nothing happens.
+    expect(fireEvent.keyDown(rowButton('demo-a'), { key: 'ArrowDown' })).toBe(false);
+    await settle();
+    expect(viewName()).toBe('demo-a');
+    expect(document.activeElement).toBe(rowButton('demo-a'));
+
+    heading().focus();
+    fireEvent.keyDown(heading(), { key: 'ArrowDown' });
+    fireEvent.keyDown(within(view()!).getByRole('button', { name: 'Copy path' }), { key: 'ArrowDown' });
+    await settle();
+    expect(viewName()).toBe('demo-a');
+    expect(history.entries).toEqual(entries);
+    expect((within(view()!).getByRole('textbox', { name: 'Message to demo-a' }) as HTMLTextAreaElement).value).toBe('a draft');
+
+    // With the draft gone, they move again.
+    fireEvent.change(box, { target: { value: '' } });
+    fireEvent.keyDown(heading(), { key: 'ArrowDown' });
+    await settle();
+    expect(viewName()).toBe('demo-b');
+  });
+
   it('move inside an open menu instead of changing session', async () => {
     renderDashboard();
     await open('demo-b');
