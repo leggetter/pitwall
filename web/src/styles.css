@@ -82,9 +82,11 @@ textarea {
 
 /*
  * The app shell (docs/design-system.md, 3). The page doesn't scroll: the app is one window tall, a
- * grid of the app strip (W24 fills that row), the header, the toolbar and the panes, and only the
- * list pane scrolls. The shell's width rules are container queries on the app, which spans the
- * window, so they follow the window's width; the #uikit gallery's frames give them narrower ones.
+ * grid of the app strip (W24 fills that row), the header and the columns, and each column scrolls on
+ * its own. Which columns there are comes from data-layout, which layout.ts sets from the app's width:
+ * three-columns from 1,200 px, sidebar from 900 px, and drawer below that. The header's compact rule
+ * is a container query on the app, which spans the window; the #uikit gallery's frames give it
+ * narrower ones.
  */
 
 .app {
@@ -92,49 +94,36 @@ textarea {
   display: grid;
   /* One column, never wider than the window, whatever the widest row or badge inside would like. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas:
     'strip'
     'header'
-    'toolbar'
-    'panes';
+    'columns';
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   background: var(--pw-bg);
 }
 
-.panes {
-  grid-area: panes;
-  display: flex;
+.columns {
+  grid-area: columns;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 
-.list-pane {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--pw-space-3);
-  min-width: 0;
-  padding: var(--pw-space-4);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: var(--pw-bg);
+.app[data-layout='sidebar'] .columns {
+  grid-template-columns: var(--pw-sidebar-w) minmax(0, 1fr);
 }
 
-/* Cards and alerts keep their height and the pane scrolls, rather than the cards being squashed to fit. */
-.list-pane > * {
-  flex: none;
-}
-
-/* Page alerts sit at the top of the pane, 12 px apart like the cards. */
-.list-pane > .banner {
-  margin-top: 0;
+/* The session view: 760 px, or what the repo list and the session list's 360 px leave, which is 600 px at 1,200 px. */
+.app[data-layout='three-columns'] .columns {
+  grid-template-columns: var(--pw-sidebar-w) minmax(var(--pw-list-min-w), 1fr) min(var(--pw-panel-w), calc(100% - var(--pw-sidebar-w) - var(--pw-list-min-w)));
 }
 
 /*
- * A window too short for the header, the toolbar and a useful list, such as a phone held sideways or
- * 200 % zoom on a laptop: the page scrolls as a whole, so the list keeps its room.
+ * A window too short for the header and useful columns, such as a phone held sideways or 200 % zoom
+ * on a laptop: the page scrolls as a whole, so the lists keep their room.
  */
 @media (max-height: 480px) {
   .app {
@@ -144,9 +133,271 @@ textarea {
     overflow: visible;
   }
 
-  .list-pane {
+  .columns > .repo-list,
+  .session-list-body {
     overflow-y: visible;
   }
+
+  .session-view.in-column,
+  .session-view-empty {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    height: 100dvh;
+  }
+}
+
+/* The repo list (section 3, and Repo list items in section 4) */
+
+.repo-list {
+  min-width: 0;
+  min-height: 0;
+  padding: var(--pw-space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--pw-bg);
+  border-right: 1px solid var(--pw-border);
+}
+
+.repo-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo-divider {
+  margin: var(--pw-space-2) 0;
+  border: 0;
+  border-top: 1px solid var(--pw-border);
+}
+
+.repo-root {
+  padding: var(--pw-space-2) var(--pw-space-2) var(--pw-space-1);
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  overflow-wrap: anywhere;
+}
+
+.repo-item {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border-radius: var(--pw-radius-md);
+  color: var(--pw-text);
+  text-decoration: none;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+/* The sidebar is on --pw-bg; the drawer is a surface (2.3). */
+@media (hover: hover) {
+  .repo-item:hover {
+    background: var(--pw-surface-hover-bg);
+  }
+
+  .repo-drawer .repo-item:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.repo-item.selected,
+.repo-item.selected:hover {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+}
+
+.repo-item.selected:focus-visible {
+  box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+.repo-item-icon {
+  flex: none;
+  color: var(--pw-text-subtle);
+}
+
+.repo-item-label {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repo-item.selected .repo-item-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+.repo-item.finished:not(.selected) .repo-item-label {
+  color: var(--pw-text-muted);
+}
+
+.repo-item > .badge {
+  flex: none;
+}
+
+.repo-item-count {
+  flex: none;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The drawer, below 900 px: over a backdrop, like a dialog, sliding in from the left. */
+
+.repo-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--pw-z-backdrop);
+  background: var(--pw-backdrop);
+}
+
+.repo-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--pw-z-dialog);
+  display: flex;
+  width: min(var(--pw-sidebar-w), 100vw);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-overlay);
+  animation: repo-drawer-in var(--pw-duration-base) var(--pw-ease-out);
+}
+
+.repo-drawer > .repo-list {
+  flex: 1 1 auto;
+  background: var(--pw-surface);
+  border-right: 0;
+}
+
+@keyframes repo-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+/* The session list (section 3) */
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--pw-surface);
+}
+
+.session-list-alerts {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--pw-space-3);
+  padding: var(--pw-space-3) var(--pw-space-4) 0;
+}
+
+.session-list-alerts > .banner {
+  margin-top: 0;
+}
+
+.session-list-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.session-list-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-3);
+}
+
+.session-list-title {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
+}
+
+.session-list-title:focus-visible {
+  outline-offset: 2px;
+  border-radius: var(--pw-radius-sm);
+}
+
+.session-list-kind {
+  flex: none;
+  color: var(--pw-text-subtle);
+}
+
+.session-list-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-list-root {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-regular);
+  line-height: var(--pw-leading-s);
+  white-space: nowrap;
+}
+
+/* Line 2: the filters, growing, with room at the right for W23's Sort select. */
+.session-list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-2) var(--pw-space-3);
+}
+
+.session-list-filters > .filter-controls {
+  flex: 1 1 auto;
+}
+
+.session-list-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The header has the line above the first row. */
+.session-list-body > .sessions > :first-child {
+  border-top: 0;
+}
+
+/* The session view's column, from 1,200 px */
+
+.session-view.in-column {
+  position: static;
+  z-index: auto;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--pw-border);
+  box-shadow: none;
+}
+
+.session-view-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  background: var(--pw-surface);
+  border-left: 1px solid var(--pw-border);
 }
 
 .notice {
@@ -239,50 +490,22 @@ textarea {
   white-space: nowrap;
 }
 
-/*
- * For now, today's controls in the grid's toolbar row: the filters, the "Needs attention only"
- * checkbox and the summary. The three-column layout (W21) gives them their places.
- */
-
-.controls {
-  grid-area: toolbar;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--pw-space-2) var(--pw-space-4);
-  padding: var(--pw-space-2) var(--pw-space-4);
-  background: var(--pw-bg);
-  border-bottom: 1px solid var(--pw-border);
-}
-
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  user-select: none;
-}
-
-/* A checked checkbox's fill (docs/design-system.md, 2.3): at least 3:1 on every neutral surface. */
-.toggle input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--pw-selected-border);
-}
+/* The summary, at the right of the session list's heading */
 
 .summary {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-2);
+  margin-left: auto;
   color: var(--pw-text-muted);
-  font-size: var(--pw-text-m);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.summary-attention {
-  color: var(--pw-text);
-}
-
-/* The filters: the field, the chips and Clear filters, then any other filter. */
+/* The filters: the field, the chips and Clear filters. */
 
 .filter-controls {
   display: flex;
@@ -298,14 +521,14 @@ textarea {
 .filter-field {
   position: relative;
   display: flex;
-  flex: 1 1 240px;
+  flex: 1 1 200px;
   align-items: center;
-  min-width: min(240px, 100%);
-  max-width: 420px;
+  min-width: min(200px, 100%);
 }
 
 .filter-field-icon {
   position: absolute;
+  flex: none;
   left: var(--pw-space-2);
   color: var(--pw-text-subtle);
   pointer-events: none;
@@ -406,15 +629,8 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-/* The shell's widths: wider gutters from 1,100 px; at 600 px and narrower the header's right side wraps under the wordmark. */
+/* At 600 px and narrower, the header's right side wraps under the wordmark. */
 
-@container pitwall (min-width: 1100px) {
-  .app-header,
-  .controls,
-  .list-pane {
-    padding-inline: var(--pw-space-6);
-  }
-}
 
 @container pitwall (max-width: 600px) {
   .app-header {
@@ -472,6 +688,36 @@ textarea {
   font-weight: var(--pw-weight-medium);
 }
 
+.placeholder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--pw-space-2);
+  margin-top: var(--pw-space-4);
+}
+
+/* Badges (section 4). Only the counts' solid "need you" so far; W23 moves the rows' badges onto these. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1);
+  min-width: var(--pw-badge-h);
+  height: var(--pw-badge-h);
+  padding: 0 var(--pw-space-1-5);
+  border-radius: var(--pw-radius-sm);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge-attention {
+  background: var(--pw-state-attention-bg);
+  color: var(--pw-state-attention-fg);
+}
+
 /* A filter match (Search, in section 4): --pw-text whatever the text around it, the pair 2.5 checks. */
 mark.match {
   background: var(--pw-highlight);
@@ -486,16 +732,22 @@ mark.match {
   white-space: nowrap;
 }
 
+/*
+ * The start gives way first, down to the few characters MiddleEllipsis keeps as its minimum; only
+ * then does the end, which ends in an ellipsis too. Shrinking shares space out by these factors, so
+ * the start's, a million times the end's, leaves the end whole (to well under a pixel) until then.
+ * The end's has to be at least 1: below that, the spec shrinks it by only that fraction of what's needed.
+ */
 .middle-ellipsis-start {
-  flex: 0 1 auto;
+  flex: 0 1000000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .middle-ellipsis-end {
-  flex: none;
-  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -580,7 +832,8 @@ mark.match {
   }
 
   /* On the page background rather than a surface (2.3). */
-  .controls .button.ghost:hover {
+  .app-header .button.ghost:hover,
+  .app-header .icon-button.ghost:hover {
     background: var(--pw-surface-hover-bg);
   }
 }
@@ -612,79 +865,9 @@ mark.match {
   height: var(--pw-control-sm);
 }
 
-/* Groups */
-
-.group {
-  background: var(--pw-surface);
-  border-radius: var(--pw-radius-md);
-  overflow: hidden;
-  box-shadow: var(--pw-shadow-card);
-}
-
-.group-heading {
-  font-size: var(--pw-text-l);
-  font-weight: var(--pw-weight-bold);
-  line-height: var(--pw-leading-l);
-}
-
-.group-toggle {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  width: 100%;
-  padding: 10px 14px;
-  background: var(--pw-surface-muted);
-  border: 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-/* The card clips anything outside it, so a full-width toggle's ring is drawn inside its edge. */
-.group-toggle:focus-visible {
-  outline-offset: -2px;
-  box-shadow: var(--pw-ring-focus-inset);
-}
-
-.group-toggle .chevron {
-  color: var(--pw-text-muted);
-  transition: transform 120ms ease;
-}
-
-.group-toggle[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
-}
-
-.group-kind {
-  display: inline-flex;
-  color: var(--pw-text-muted);
-}
-
-.group-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.group-root,
-.group-count {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  font-weight: var(--pw-weight-regular);
-}
-
-.group-count {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-.group-attention {
-  padding: 1px 8px;
-  border-radius: var(--pw-radius-sm);
-  background: var(--pw-state-attention-bg);
-  color: var(--pw-state-attention-fg);
-  font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-bold);
-  font-variant-numeric: tabular-nums;
+.icon-button.md {
+  width: var(--pw-control-md);
+  height: var(--pw-control-md);
 }
 
 .sessions {
@@ -819,7 +1002,7 @@ mark.match {
   cursor: help;
 }
 
-/* Finished background sessions: a collapsed, muted sub-list at the bottom of each group */
+/* Finished sessions: a collapsed, muted section at the bottom of the session list (section 4: Finished section) */
 
 .finished-list {
   border-top: 1px solid var(--pw-border);
@@ -1222,17 +1405,9 @@ mark.match {
 }
 
 @media (max-width: 600px) {
-  .group-count {
-    margin-left: 0;
-  }
-
   .copy-command {
     margin-left: 0;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .group-toggle .chevron {
-    transition: none;
-  }
-}
+

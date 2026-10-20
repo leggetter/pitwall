@@ -1,28 +1,33 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lastMessagePath, type IndexSnapshot, type LastMessage, type SessionSummary } from '../../../src/shared/protocol.js';
 import { createApiClient } from '../api.js';
 import type { ConnectionView } from '../connection.js';
-import { FINISHED_STATE_KEY, GROUP_STATE_KEY, type StorageSource } from '../groupState.js';
+import { FINISHED_STATE_KEY, type StorageSource } from '../groupState.js';
+import { memoryNavigation, VIEW_STATE_KEY, type NavigationEnv } from '../selection.js';
 import { createReplyLoader, ReplyLoaderContext, type FetchLike } from '../lastMessage.js';
 import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
 import { Dashboard } from './Dashboard.js';
 
 interface RenderOptions {
-  /** Open every group, and every group's Finished list, after rendering, as most tests look at rows. Default true. */
+  /** Open the Finished section after rendering, as most tests look at rows. Default true. */
   expand?: boolean;
   storage?: StorageSource;
+  /** The query string the page starts with, such as "?repo=…". Default: none, which is All sessions. */
+  search?: string;
+  navigation?: NavigationEnv;
 }
 
 function renderDashboard(snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}, options: RenderOptions = {}) {
   const view: ConnectionView = { state: 'live', snapshot: snap, ...overrides };
-  const result = render(<Dashboard view={view} {...(options.storage ? { storage: options.storage } : {})} />);
-  if (options.expand !== false) {
-    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"], .finished-toggle[aria-expanded="false"]')) {
-      fireEvent.click(toggle);
-    }
-  }
-  return result;
+  const navigation = options.navigation ?? memoryNavigation(options.search ?? '');
+  const result = render(<Dashboard view={view} navigation={navigation} {...(options.storage ? { storage: options.storage } : {})} />);
+  if (options.expand !== false) expandFinished();
+  return { ...result, navigation };
+}
+
+function expandFinished() {
+  for (const toggle of document.querySelectorAll<HTMLElement>('.finished-toggle[aria-expanded="false"]')) fireEvent.click(toggle);
 }
 
 function row(name: string): HTMLElement {
@@ -37,16 +42,50 @@ function row(name: string): HTMLElement {
   return item;
 }
 
-function groupSection(label: string): HTMLElement {
-  const toggle = screen
-    .queryAllByRole('button', { expanded: true })
-    .concat(screen.queryAllByRole('button', { expanded: false }))
-    // By the label's text, which a filter match splits with a <mark>.
-    .find((button) => button.querySelector('.group-label')?.textContent === label);
-  const section = toggle?.closest('section');
-  if (!section) throw new Error(`no group ${label}`);
-  return section;
+/** The repo list. */
+function repoList(): HTMLElement {
+  return screen.getByRole('navigation', { name: 'Repos' });
 }
+
+/** A repo list item, by its label as shown. */
+function repoItem(label: string, within: ParentNode = document): HTMLAnchorElement {
+  const item = [...within.querySelectorAll<HTMLAnchorElement>('a[data-repo-item]')].find((link) => link.querySelector('.repo-item-label')?.textContent === label);
+  if (!item) throw new Error(`no repo list item ${label}`);
+  return item;
+}
+
+/** What each repo list item says, label and count, with the text only screen readers get. */
+function repoItems(): string[] {
+  return [...repoList().querySelectorAll('a[data-repo-item]')].map((link) => link.textContent ?? '');
+}
+
+/** Chooses a repo list item, as a click would, and opens the Finished section it shows. */
+function choose(label: string) {
+  fireEvent.click(repoItem(label));
+  expandFinished();
+}
+
+/** The session list's heading, the selection's name. */
+function listHeading(): HTMLElement {
+  return screen.getByRole('heading', { level: 2, name: /./, hidden: false });
+}
+
+/** The session list's summary. */
+function summary(): string {
+  return document.querySelector('.session-list .summary')?.textContent ?? '';
+}
+
+/** The window's width, which the layout follows: 1,024 px in happy-dom unless a test sets it. */
+function setWidth(width: number) {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  act(() => {
+    window.dispatchEvent(new Event('resize'));
+  });
+}
+
+afterEach(() => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+});
 
 function visibleRowNames(): string[] {
   return screen.queryAllByRole('heading', { level: 3 }).map((heading) => heading.textContent ?? '');
@@ -150,10 +189,11 @@ describe('Dashboard header', () => {
     expect(banner.querySelector('b')).toBeNull();
   });
 
-  it('counts sessions that need attention, in the page and the tab title', () => {
+  it('counts sessions that need attention, in the repo list, the session list and the tab title', () => {
     renderDashboard(mixedSnapshot());
 
-    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
+    expect(repoItem('Needs you').textContent).toBe('Needs you2 need you');
+    expect(summary()).toBe('5 sessions2 need you');
     expect(document.title).toBe('(2) pitwall');
   });
 });
@@ -173,165 +213,459 @@ describe('Dashboard states', () => {
   });
 });
 
-describe('groups', () => {
-  it('renders one section per group in the order given, with marker, count and attention count', () => {
+describe('the repo list', () => {
+  const ROOT = '/Users/example/code';
+
+  it('lists Needs you and All sessions, a divider, then every group alphanumerically, each with one count', () => {
     renderDashboard(mixedSnapshot());
 
-    const toggles = screen.getAllByRole('button', { expanded: true });
-    expect(toggles.map((button) => button.textContent)).toEqual([
-      'git repodemo-app3 sessions2 need you',
-      'directorynotes1 session',
-      'git repolegacy1 session',
+    expect(repoItems()).toEqual([
+      'Needs you2 need you',
+      'All sessions5 sessions',
+      'demo-app, git repo2 need you',
+      'legacy, git repo1 session',
+      'notes, directory1 session',
     ]);
+    expect(repoList().querySelectorAll('hr')).toHaveLength(1);
+    // Only a group shows its kind's icon, hidden from assistive technology like every icon.
+    expect(repoItem('Needs you').querySelector('svg')).toBeNull();
+    expect(repoItem('notes').querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('collapses and expands a group', () => {
-    renderDashboard(mixedSnapshot());
-    const section = groupSection('demo-app');
-    const toggle = within(section).getByRole('button', { expanded: true });
-    const list = section.querySelector('ul')!;
+  it("counts a group's sessions that need you as a solid badge, or else its sessions, and Needs you shows nothing when nothing does", () => {
+    renderDashboard(
+      snapshot([
+        group({ sessions: [session({ name: 'calm' }), session({ name: 'calm-too' })] }),
+        group({ key: `${ROOT}/busy`, label: 'busy', sessions: [session({ name: 'waits', status: 'waiting' })] }),
+      ]),
+    );
 
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(list.hidden).toBe(true);
-
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(list.hidden).toBe(false);
+    expect(repoItem('demo-app').querySelector('.badge')).toBeNull();
+    expect(repoItem('demo-app').querySelector('.repo-item-count')?.textContent).toBe('2 sessions');
+    expect(repoItem('busy').querySelector('.badge-attention')?.textContent).toBe('1 needs you');
+    expect(repoItem('busy').querySelector('.repo-item-count')).toBeNull();
+    // All sessions always counts; the badge is Needs you's.
+    expect(repoItem('All sessions').textContent).toBe('All sessions3 sessions');
+    expect(repoItem('Needs you').textContent).toBe('Needs you1 needs you');
   });
 
-  it('keeps two groups with the same key under different roots apart', () => {
+  it("shows only the views, with no counts, before the first snapshot, and Needs you's count stays off when nothing needs you", () => {
+    const { rerender } = render(<Dashboard view={{ state: 'connecting' }} navigation={memoryNavigation()} />);
+    expect(repoItems()).toEqual(['Needs you', 'All sessions']);
+
+    rerender(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [session({ name: 'calm' })] })]) }} navigation={memoryNavigation()} />);
+    expect(repoItem('Needs you').textContent).toBe('Needs you');
+  });
+
+  it("labels the root's own directory with its path, first among its root's groups, and mutes a group whose sessions have all finished", () => {
+    const done = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, state: 'done' as const, finished: true };
+    renderDashboard(
+      snapshot([
+        group({ key: `${ROOT}/zeta`, label: 'zeta', sessions: [session({ name: 'z' })] }),
+        group({ key: ROOT, label: 'code', kind: 'directory', sessions: [session({ name: 'in-root', cwd: ROOT })] }),
+        group({ key: `${ROOT}/archive`, label: 'archive', sessions: [session({ name: 'old', ...done, shortId: 'o1' })] }),
+      ]),
+    );
+
+    expect(repoItems().slice(2)).toEqual(['~/code, directory1 session', 'archive, git repo1 session', 'zeta, git repo1 session']);
+    expect(repoItem('archive').className).toContain('finished');
+    expect(repoItem('zeta').className).not.toContain('finished');
+    choose('~/code');
+    expect(listHeading().textContent).toBe('~/code, directory');
+  });
+
+  it("puts each root's groups under its path when there are several roots, and tells two groups with the same key apart", () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    // A worktree under one root whose main repo is under another: both groups
-    // are keyed by the main repo.
-    const key = '/Users/example/code/demo-app';
+    // A worktree under one root whose main repo is under another: both groups are keyed by the main repo.
+    const key = `${ROOT}/demo-app`;
     renderDashboard(
       snapshot(
         [
-          group({ key, label: 'demo-app', root: '/Users/example/code', sessions: [session({ name: 'in-main' })] }),
-          group({
-            key,
-            label: '~/code/demo-app',
-            root: '/Users/example/worktrees',
-            sessions: [session({ name: 'in-worktree', cwd: '/Users/example/worktrees/demo-app-feature' })],
-          }),
+          group({ key, label: 'demo-app', root: ROOT, sessions: [session({ name: 'in-main' })] }),
+          group({ key, label: '~/code/demo-app', root: '/Users/example/worktrees', sessions: [session({ name: 'in-worktree', cwd: '/Users/example/worktrees/demo-app-feature' })] }),
         ],
-        { roots: ['/Users/example/code', '/Users/example/worktrees'] },
+        { roots: [ROOT, '/Users/example/worktrees'] },
       ),
     );
 
-    const main = groupSection('demo-app');
-    const worktree = groupSection('~/code/demo-app');
-    fireEvent.click(within(main).getByRole('button', { name: /demo-app/ }));
-    expect(main.querySelector('ul')!.hidden).toBe(true);
-    expect(worktree.querySelector('ul')!.hidden).toBe(false);
+    const lists = within(repoList()).getAllByRole('list');
+    expect(lists.map((list) => list.getAttribute('aria-labelledby') && document.getElementById(list.getAttribute('aria-labelledby')!)?.textContent)).toEqual([
+      null,
+      '~/code',
+      '~/worktrees',
+    ]);
+    choose('~/code/demo-app');
+    expect(visibleRowNames()).toEqual(['in-worktree']);
+    expect(listHeading().textContent).toBe('~/code/demo-app, git repoin ~/worktrees');
+    choose('demo-app');
+    expect(visibleRowNames()).toEqual(['in-main']);
+    expect(listHeading().textContent).toBe('demo-app, git repoin ~/code');
     expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/);
   });
 
-  it('shows which root a group is under when there are several roots', () => {
-    const snap = mixedSnapshot();
-    snap.roots = ['/Users/example/code', '/Users/example/other'];
-    renderDashboard(snap);
+  it('marks the selection with aria-current="page", and links each item to its selection', () => {
+    renderDashboard(mixedSnapshot());
 
-    expect(within(groupSection('notes')).getByText('in ~/code')).toBeTruthy();
+    expect(repoItem('All sessions').getAttribute('aria-current')).toBe('page');
+    expect(repoItem('demo-app').getAttribute('aria-current')).toBeNull();
+    expect(repoItem('demo-app').getAttribute('href')).toBe('?repo=/Users/example/code/demo-app');
+    expect(repoItem('Needs you').getAttribute('href')).toBe('?view=needs-you');
+
+    choose('notes');
+    expect(repoItem('notes').getAttribute('aria-current')).toBe('page');
+    expect(repoItem('notes').className).toContain('selected');
+    expect(repoItem('All sessions').getAttribute('aria-current')).toBeNull();
+  });
+
+  it('is one Tab stop: ↓ and ↑ move, Home and End jump to the ends, and Enter selects, leaving focus in the list', () => {
+    renderDashboard(mixedSnapshot());
+    const stops = () => [...repoList().querySelectorAll('a[data-repo-item]')].filter((link) => link.getAttribute('tabindex') === '0');
+    expect(stops()).toEqual([repoItem('All sessions')]);
+
+    repoItem('All sessions').focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(repoItem('demo-app'));
+    fireEvent.keyDown(document.activeElement!, { key: 'End' });
+    expect(document.activeElement).toBe(repoItem('notes'));
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(repoItem('notes'));
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(repoItem('legacy'));
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' });
+    expect(document.activeElement).toBe(repoItem('Needs you'));
+    // The item focused last is the list's one Tab stop.
+    expect(stops()).toEqual([repoItem('Needs you')]);
+
+    fireEvent.keyDown(document.activeElement!, { key: 'End' });
+    // A link activates on Enter with a click, which the list handles without a reload.
+    fireEvent.click(document.activeElement!);
+    expect(listHeading().textContent).toBe('notes, directory');
+    expect(document.activeElement).toBe(repoItem('notes'));
+  });
+
+  it("leaves a click with a modifier key, which opens a tab, to the browser", () => {
+    const { navigation } = renderDashboard(mixedSnapshot());
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true });
+    repoItem('notes').dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(navigation.location.search).toBe('?view=all');
+  });
+
+  it("keeps its counts while the filter narrows the session list, which covers only the selection", () => {
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'notes' } });
+    expect(visibleRowNames()).toEqual(['notes-tidy']);
+    expect(repoItems()).toContain('demo-app, git repo2 need you');
+    expect(repoItems()).toContain('All sessions5 sessions');
   });
 });
 
-describe('group open state', () => {
+describe('the session list', () => {
   const ROOT = '/Users/example/code';
-  /** The stored id of a group in mixedSnapshot(): root and key. */
-  const id = (name: string) => `${ROOT}\0${ROOT}/${name}`;
-  const stored = () => JSON.parse(window.localStorage.getItem(GROUP_STATE_KEY) ?? 'null') as unknown;
-  const isOpen = (label: string) => !groupSection(label).querySelector('ul')!.hidden;
+  const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, finished: true };
 
-  it('starts every group collapsed, still showing the label, the count and the attention badge', () => {
-    renderDashboard(mixedSnapshot(), {}, { expand: false });
-
-    expect(screen.queryAllByRole('button', { expanded: true })).toHaveLength(0);
-    expect(screen.getAllByRole('button', { expanded: false }).map((button) => button.textContent)).toEqual([
-      'git repodemo-app3 sessions2 need you',
-      'directorynotes1 session',
-      'git repolegacy1 session',
+  function withFinished(): IndexSnapshot {
+    return snapshot([
+      group({
+        sessions: [
+          session({ name: 'waits', status: 'waiting' }),
+          session({ name: 'idle-one', status: 'idle' }),
+          session({ name: 'app-done', ...finished, shortId: 'f1', state: 'done' }),
+        ],
+      }),
+      group({
+        key: `${ROOT}/jobs`,
+        label: 'jobs',
+        sessions: [session({ name: 'job', kind: 'background', shortId: 'j1', status: undefined, state: 'working' }), session({ name: 'job-failed', ...finished, shortId: 'f2', state: 'failed' })],
+      }),
     ]);
-    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, false, false]);
-    expect(visibleRowNames()).toEqual([]);
-    expect(window.localStorage.getItem(GROUP_STATE_KEY)).toBeNull();
+  }
+
+  const finishedToggle = () => screen.queryByRole('button', { name: /^Finished \(/ });
+
+  it('shows All sessions the first time: every unfinished session from every group, then one Finished section', () => {
+    renderDashboard(withFinished(), {}, { expand: false });
+
+    expect(listHeading().textContent).toBe('All sessions');
+    // Waiting first; the other two tie on rank and activity, so the session id decides, as in the index.
+    expect(visibleRowNames()).toEqual(['waits', 'idle-one', 'job']);
+    expect(finishedToggle()?.textContent).toBe('Finished (2)');
+    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(finishedToggle()!);
+    expect(visibleRowNames()).toEqual(['waits', 'idle-one', 'job', 'app-done', 'job-failed']);
   });
 
-  it('remembers a group opened or closed, across a reload', () => {
-    const first = renderDashboard(mixedSnapshot(), {}, { expand: false });
-    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: false }));
-    expect(stored()).toEqual({ [id('notes')]: true });
+  it("shows a group's own sessions, then its own Finished section, under its name and kind", () => {
+    renderDashboard(withFinished(), {}, { expand: false });
+
+    choose('jobs');
+    expect(listHeading().textContent).toBe('jobs, git repo');
+    expect(listHeading().querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(visibleRowNames()).toEqual(['job', 'job-failed']);
+    expect(finishedToggle()?.textContent).toBe('Finished (1)');
+  });
+
+  it('lists every session that needs you under Needs you, with no Finished section', () => {
+    renderDashboard(mixedSnapshot());
+
+    choose('Needs you');
+    expect(listHeading().textContent).toBe('Needs you');
+    expect(visibleRowNames()).toEqual(['demo-docs', 'demo-worker']);
+    expect(finishedToggle()).toBeNull();
+  });
+
+  it('summarises the selection: its sessions, "x of y" while the filter hides some, then the need-you badge or "Nothing needs you"', () => {
+    renderDashboard(mixedSnapshot());
+    expect(summary()).toBe('5 sessions2 need you');
+    expect(document.querySelector('.session-list .summary .badge-attention')?.textContent).toBe('2 need you');
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'demo' } });
+    expect(summary()).toBe('3 of 5 sessions2 need you');
+
+    choose('notes');
+    expect(summary()).toBe('0 of 1 session·Nothing needs you');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(summary()).toBe('1 session·Nothing needs you');
+  });
+
+  it('remembers each selection\'s Finished section apart, in pitwall.finished.v1, and never touches pitwall.groups.v1', () => {
+    window.localStorage.setItem('pitwall.groups.v1', JSON.stringify({ x: true }));
+    const first = renderDashboard(withFinished(), {}, { expand: false });
+    fireEvent.click(finishedToggle()!);
+    choose('jobs');
+    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(finishedToggle()!);
+    expect(JSON.parse(window.localStorage.getItem(FINISHED_STATE_KEY) ?? 'null')).toEqual({ 'view:all': true, [`${ROOT}\0${ROOT}/jobs`]: false });
     first.unmount();
 
-    const second = renderDashboard(mixedSnapshot(), {}, { expand: false });
-    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, true, false]);
-    expect(visibleRowNames()).toEqual(['notes-tidy']);
-
-    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: true }));
-    expect(stored()).toEqual({ [id('notes')]: false });
-    second.unmount();
-
-    renderDashboard(mixedSnapshot(), {}, { expand: false });
-    expect(isOpen('notes')).toBe(false);
+    renderDashboard(withFinished(), {}, { expand: false, search: '?view=all' });
+    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('true');
+    expect(window.localStorage.getItem('pitwall.groups.v1')).toBe(JSON.stringify({ x: true }));
   });
 
-  it('restores the state from storage', () => {
-    window.localStorage.setItem(GROUP_STATE_KEY, JSON.stringify({ [id('legacy')]: true, [id('notes')]: false }));
-
-    renderDashboard(mixedSnapshot(), {}, { expand: false });
-
-    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, false, true]);
-  });
-
-  it('starts collapsed, and still toggles, when storage throws', () => {
+  it('starts its Finished section collapsed, and still toggles it, when storage throws', () => {
     const denied = () => {
       throw new DOMException('The operation is insecure.', 'SecurityError');
     };
-    const throwing: StorageSource = () => ({ getItem: denied, setItem: denied });
-    const first = renderDashboard(mixedSnapshot(), {}, { expand: false, storage: throwing });
-    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, false, false]);
-    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: false }));
-    expect(isOpen('notes')).toBe(true);
+    renderDashboard(withFinished(), {}, { expand: false, storage: denied });
+
+    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(finishedToggle()!);
+    expect(finishedToggle()?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('says nothing matched in the selection, offers Clear filters, and in a group, Search all sessions, which keeps the text', () => {
+    renderDashboard(mixedSnapshot());
+    choose('demo-app');
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'tidy' } });
+    expect(visibleRowNames()).toEqual([]);
+    expect(screen.getByText('No sessions match')).toBeTruthy();
+    expect(screen.getByText('Nothing in demo-app matches "tidy".')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search all sessions' }));
+    expect(listHeading().textContent).toBe('All sessions');
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('tidy');
+    expect(visibleRowNames()).toEqual(['notes-tidy']);
+  });
+
+  it('offers only Clear filters when nothing matches outside a group, or with only chips on', () => {
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'zzz' } });
+    expect(screen.getByText('Nothing in All sessions matches "zzz".')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Search all sessions' })).toBeNull();
+    fireEvent.click(within(document.querySelector('.session-list-body')!).getByRole('button', { name: 'Clear filters' }));
+    expect(visibleRowNames()).toHaveLength(5);
+
+    choose('notes');
+    fireEvent.click(screen.getByRole('button', { name: 'Background' }));
+    expect(screen.getByText('Nothing in notes matches these filters.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Search all sessions' })).toBeNull();
+  });
+
+  it('says so, calmly, when nothing needs you, and offers all sessions', () => {
+    renderDashboard(snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]), {}, { search: '?view=needs-you' });
+
+    expect(screen.getByText('Nothing needs you right now')).toBeTruthy();
+    expect(screen.getByText('Sessions that are waiting for you, or asked you something, show here.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
+    expect(visibleRowNames()).toEqual(['calm']);
+  });
+
+  it('keeps a selected group that has left the snapshot selected, with its own empty state', () => {
+    const view = (snap: IndexSnapshot) => <Dashboard view={{ state: 'live', snapshot: snap }} navigation={navigation} />;
+    const navigation = memoryNavigation(`?repo=${ROOT}/legacy`);
+    const { rerender } = render(view(mixedSnapshot()));
+    expect(visibleRowNames()).toEqual(['legacy-migration']);
+
+    const gone = mixedSnapshot();
+    gone.groups = gone.groups.filter((shown) => shown.label !== 'legacy');
+    rerender(view(gone));
+    expect(listHeading().textContent).toBe('legacy');
+    expect(screen.getByText('No sessions in legacy now')).toBeTruthy();
+    expect(screen.getByText('Its sessions are no longer listed under these roots.')).toBeTruthy();
+    expect(repoList().querySelector('[aria-current]')).toBeNull();
+    expect(navigation.location.search).toBe('?repo=/Users/example/code/legacy');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
+    expect(listHeading().textContent).toBe('All sessions');
+  });
+
+  it('puts the page alerts above its header', () => {
+    const { container } = renderDashboard(mixedSnapshot(), { serverError: 'index crashed' });
+
+    const list = container.querySelector('main.session-list')!;
+    expect(list.firstElementChild?.className).toBe('session-list-alerts');
+    expect(within(list.firstElementChild as HTMLElement).getByRole('alert').textContent).toContain('index crashed');
+    expect(list.firstElementChild?.nextElementSibling?.className).toBe('session-list-head');
+  });
+});
+
+describe('the selection in the URL', () => {
+  const ROOT = '/Users/example/code';
+
+  it('selects the group a ?repo= names on load, and the stored selection, or All sessions, otherwise', () => {
+    const first = renderDashboard(mixedSnapshot(), {}, { search: `?repo=${ROOT}/notes` });
+    expect(listHeading().textContent).toBe('notes, directory');
     first.unmount();
 
-    // Some browsers throw on reading window.localStorage itself.
-    renderDashboard(mixedSnapshot(), {}, { expand: false, storage: denied });
-    expect(isOpen('demo-app')).toBe(false);
-    fireEvent.click(within(groupSection('demo-app')).getByRole('button', { expanded: false }));
-    expect(isOpen('demo-app')).toBe(true);
+    window.localStorage.setItem(VIEW_STATE_KEY, 'view=needs-you');
+    const second = renderDashboard(mixedSnapshot());
+    expect(listHeading().textContent).toBe('Needs you');
+    expect(second.navigation.location.search).toBe('?view=needs-you');
   });
 
-  it('starts collapsed when the stored data is not the expected shape', () => {
-    for (const raw of ['not json', '[]', 'null', '7', JSON.stringify({ [id('notes')]: 'yes' })]) {
-      window.localStorage.setItem(GROUP_STATE_KEY, raw);
-      const { unmount } = renderDashboard(mixedSnapshot(), {}, { expand: false });
-      expect(['demo-app', 'notes', 'legacy'].map(isOpen), raw).toEqual([false, false, false]);
-      unmount();
-    }
+  it('pushes each choice, stores it, and follows the back button', () => {
+    window.history.replaceState(null, '', '/?view=all');
+    renderDashboard(mixedSnapshot(), {}, { navigation: window });
+
+    choose('legacy');
+    expect(window.location.search).toBe('?repo=/Users/example/code/legacy');
+    expect(window.localStorage.getItem(VIEW_STATE_KEY)).toBe('repo=/Users/example/code/legacy');
+
+    act(() => {
+      window.history.replaceState(null, '', '/?view=needs-you');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(listHeading().textContent).toBe('Needs you');
   });
 
-  it('drops entries for groups that are not in the snapshot when it writes', () => {
-    window.localStorage.setItem(
-      GROUP_STATE_KEY,
-      JSON.stringify({ [id('removed-worktree')]: true, [id('notes')]: true, [`/other/root\0${ROOT}/notes`]: false }),
-    );
+  it("selects a ?session='s group when the URL names no selection", () => {
+    const snap = mixedSnapshot();
+    const tidy = snap.groups[1]!.sessions[0]!;
+    const { navigation } = renderDashboard(snap, {}, { search: `?session=${tidy.sessionId}` });
 
-    renderDashboard(mixedSnapshot(), {}, { expand: false });
-    fireEvent.click(within(groupSection('legacy')).getByRole('button', { expanded: false }));
+    expect(listHeading().textContent).toBe('notes, directory');
+    expect(navigation.location.search).toBe(`?repo=/Users/example/code/notes&session=${tidy.sessionId}`);
+  });
+});
 
-    expect(stored()).toEqual({ [id('notes')]: true, [id('legacy')]: true });
+describe('below 900 px: the repo list is a drawer', () => {
+  const repos = () => screen.getByRole('button', { name: 'Repos' });
+  const drawer = () => screen.queryByRole('dialog', { name: 'Repos' });
+
+  it('shows the Repos button in place of the repo list, which opens the drawer, modal, focusing the selection', () => {
+    setWidth(600);
+    renderDashboard(mixedSnapshot());
+
+    expect(screen.queryByRole('navigation', { name: 'Repos' })).toBeNull();
+    expect(repos().getAttribute('aria-expanded')).toBe('false');
+    expect(repos().getAttribute('aria-haspopup')).toBe('dialog');
+    fireEvent.click(repos());
+
+    expect(drawer()?.getAttribute('aria-modal')).toBe('true');
+    expect(repos().getAttribute('aria-expanded')).toBe('true');
+    expect(within(drawer()!).getByRole('navigation', { name: 'Repos' })).toBeTruthy();
+    expect(document.activeElement).toBe(repoItem('All sessions'));
   });
 
-  it('keeps a group open while a filter hides it, since it is still in the snapshot', () => {
-    renderDashboard(mixedSnapshot(), {}, { expand: false });
-    fireEvent.click(within(groupSection('notes')).getByRole('button', { expanded: false }));
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'legacy' } });
-    fireEvent.click(within(groupSection('legacy')).getByRole('button', { expanded: false }));
+  it("closes on Escape, putting focus back on the Repos button, and the session view behind it stays open", () => {
+    setWidth(600);
+    renderDashboard(mixedSnapshot());
+    fireEvent.click(within(row('notes-tidy')).getByRole('button', { name: 'notes-tidy' }));
+    fireEvent.click(repos());
 
-    expect(stored()).toEqual({ [id('notes')]: true, [id('legacy')]: true });
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
-    expect(['demo-app', 'notes', 'legacy'].map(isOpen)).toEqual([false, true, true]);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(drawer()).toBeNull();
+    expect(document.activeElement).toBe(repos());
+    expect(screen.getByRole('dialog', { name: 'notes-tidy' })).toBeTruthy();
+  });
+
+  it('closes on a click on the backdrop, putting focus back on the Repos button', () => {
+    setWidth(600);
+    renderDashboard(mixedSnapshot());
+    fireEvent.click(repos());
+
+    fireEvent.click(document.querySelector('.repo-drawer-backdrop')!);
+    expect(drawer()).toBeNull();
+    expect(document.activeElement).toBe(repos());
+  });
+
+  it("closes when an item is chosen, and focus moves to the session list's heading", () => {
+    setWidth(600);
+    renderDashboard(mixedSnapshot());
+    fireEvent.click(repos());
+
+    fireEvent.click(repoItem('legacy'));
+    expect(drawer()).toBeNull();
+    expect(listHeading().textContent).toBe('legacy, git repo');
+    expect(document.activeElement).toBe(listHeading());
+  });
+
+  it('keeps Tab inside', () => {
+    setWidth(600);
+    renderDashboard(mixedSnapshot());
+    fireEvent.click(repos());
+
+    const event = fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(event).toBe(false);
+    expect(document.activeElement).toBe(repoItem('All sessions'));
+  });
+
+  it('closes, and the repo list comes back beside the session list, when the window widens past 900 px', () => {
+    setWidth(600);
+    renderDashboard(mixedSnapshot());
+    fireEvent.click(repos());
+
+    setWidth(1000);
+    expect(drawer()).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Repos' })).toBeNull();
+    expect(repoList()).toBeTruthy();
+  });
+});
+
+describe('from 1,200 px: the session view is the third column', () => {
+  it('shows "Select a session" in it with nothing open, as a region, so the layout stays put', () => {
+    setWidth(1300);
+    const { container } = renderDashboard(mixedSnapshot());
+
+    expect(container.querySelector('.app')?.getAttribute('data-layout')).toBe('three-columns');
+    expect(screen.getByRole('region', { name: 'Session' }).textContent).toBe('Select a sessionIts conversation, terminal and actions open here.');
+  });
+
+  it('opens a session there as a region named by its title, not a dialog, and closing it brings the empty state back', () => {
+    setWidth(1300);
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.click(within(row('notes-tidy')).getByRole('button', { name: 'notes-tidy' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const view = screen.getByRole('region', { name: 'notes-tidy' });
+    expect(view.className).toContain('in-column');
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'notes-tidy' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'Session' })).toBeTruthy();
+  });
+
+  it('overlays the session list as a non-modal dialog below 1,200 px', () => {
+    renderDashboard(mixedSnapshot());
+
+    fireEvent.click(within(row('notes-tidy')).getByRole('button', { name: 'notes-tidy' }));
+    expect(screen.getByRole('dialog', { name: 'notes-tidy' }).getAttribute('aria-modal')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Session' })).toBeNull();
   });
 });
 
@@ -599,21 +933,21 @@ describe('sessions that asked you something', () => {
     expect(row('waits').querySelector('.asked')).toBeNull();
   });
 
-  it('counts them in the group badges, the header and the tab title, except a finished one', () => {
+  it('counts them in the repo list, the summary and the tab title, except a finished one', () => {
     renderDashboard(askedSnapshot());
 
-    expect(within(groupSection('demo-app')).getByText('2 need you')).toBeTruthy();
+    expect(repoItem('demo-app').querySelector('.badge-attention')?.textContent).toBe('2 need you');
     // docs-done asked something, but it has finished: muted, and not counted.
-    expect(groupSection('docs').querySelector('.group-attention')).toBeNull();
-    expect(groupSection('docs').className).not.toContain('has-attention');
-    expect(screen.getByText('2 need you', { selector: '.summary-attention' })).toBeTruthy();
+    expect(repoItem('docs').querySelector('.badge')).toBeNull();
+    expect(repoItem('docs').className).toContain('finished');
+    expect(summary()).toBe('4 sessions2 need you');
     expect(document.title).toBe('(2) pitwall');
   });
 
-  it('keeps them under "needs attention only", but not a finished one', () => {
+  it('lists them under Needs you, but not a finished one', () => {
     renderDashboard(askedSnapshot());
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    choose('Needs you');
 
     expect(visibleRowNames()).toEqual(['waits', 'asks']);
     expect(screen.queryByRole('button', { name: /^Finished \(/ })).toBeNull();
@@ -658,21 +992,19 @@ describe('finished sessions', () => {
     ]);
   }
 
-  /** Opens every group, leaving the Finished lists as they start. */
-  function render(snap = finishedSnapshot(), storage?: StorageSource) {
-    const result = renderDashboard(snap, {}, { expand: false, ...(storage ? { storage } : {}) });
-    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) fireEvent.click(toggle);
-    return result;
+  /** With the group `label` selected, and the Finished section as it starts. */
+  function render(snap = finishedSnapshot(), storage?: StorageSource, label = 'demo-app') {
+    return renderDashboard(snap, {}, { expand: false, search: `?repo=${ROOT}/${label}`, ...(storage ? { storage } : {}) });
   }
 
-  const finishedToggle = (label: string) => within(groupSection(label)).getByRole('button', { name: /^Finished \(\d+\)/ });
-  const finishedOpen = (label: string) => finishedToggle(label).getAttribute('aria-expanded') === 'true';
+  const finishedToggle = () => screen.getByRole('button', { name: /^Finished \(\d+\)/ });
+  const finishedOpen = () => finishedToggle().getAttribute('aria-expanded') === 'true';
   const stored = () => JSON.parse(window.localStorage.getItem(FINISHED_STATE_KEY) ?? 'null') as unknown;
 
-  it('lists them in a collapsed "Finished (n)" sub-list at the bottom of their group', () => {
+  it('lists them in a collapsed "Finished (n)" section at the bottom of the session list', () => {
     render();
 
-    const toggle = finishedToggle('demo-app');
+    const toggle = finishedToggle();
     expect(toggle.textContent).toBe('Finished (2) · 1 asked you');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     const list = document.getElementById(toggle.getAttribute('aria-controls') ?? '')!;
@@ -684,8 +1016,8 @@ describe('finished sessions', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(list.hidden).toBe(false);
     expect(within(list).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['done-one', 'failed-one']);
-    // After the group's other rows.
-    const last = groupSection('demo-app').querySelector('ul.sessions')!.lastElementChild;
+    // After the other rows.
+    const last = document.querySelector('.session-list-body > ul.sessions')!.lastElementChild;
     expect(last?.contains(toggle)).toBe(true);
   });
 
@@ -694,6 +1026,7 @@ describe('finished sessions', () => {
     render(
       snapshot([
         group({
+          key: `${ROOT}/demo-app`,
           sessions: [
             session({ name: 'live-one', status: 'idle' }),
             session({ name: 'f1', ...finished, shortId: 'f1', state: 'done', askedYou: asked }),
@@ -704,38 +1037,38 @@ describe('finished sessions', () => {
       ]),
     );
 
-    const toggle = finishedToggle('demo-app');
+    const toggle = finishedToggle();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(toggle.textContent).toBe('Finished (3) · 2 asked you');
     const count = toggle.querySelector('.finished-asked');
     expect(count?.textContent).toBe(' · 2 asked you');
-    expect(count?.closest('.group-attention, .tone-asked, .attention')).toBeNull();
-    expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
-    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
+    expect(count?.closest('.badge, .tone-asked, .attention')).toBeNull();
+    expect(repoItem('demo-app').querySelector('.badge')).toBeNull();
+    expect(summary()).toBe('4 sessions·Nothing needs you');
     // Stays the same open, so the button's name doesn't change under the user.
     fireEvent.click(toggle);
     expect(toggle.textContent).toBe('Finished (3) · 2 asked you');
   });
 
   it('leaves the asked count off a Finished line whose sessions asked nothing', () => {
-    render();
+    render(finishedSnapshot(), undefined, 'old');
 
-    expect(finishedToggle('old').textContent).toBe('Finished (1)');
-    expect(finishedToggle('old').querySelector('.finished-asked')).toBeNull();
+    expect(finishedToggle().textContent).toBe('Finished (1)');
+    expect(finishedToggle().querySelector('.finished-asked')).toBeNull();
   });
 
-  it('counts finished sessions in the group total, but never as needing you', () => {
+  it('counts finished sessions in the totals, but never as needing you', () => {
     render();
 
-    expect(groupSection('demo-app').querySelector('.group-count')?.textContent).toBe('4 sessions');
-    expect(groupSection('demo-app').querySelector('.group-attention')).toBeNull();
-    expect(screen.getByText(/nothing needs you/)).toBeTruthy();
+    expect(summary()).toBe('4 sessions·Nothing needs you');
+    expect(repoItem('demo-app').textContent).toBe('demo-app, git repo4 sessions');
+    expect(repoItem('Needs you').textContent).toBe('Needs you');
     expect(document.title).toBe('pitwall');
   });
 
   it('mutes finished rows, with the state as the pill and a muted asked-you badge', () => {
     render();
-    fireEvent.click(finishedToggle('demo-app'));
+    fireEvent.click(finishedToggle());
 
     const done = row('done-one');
     expect(done.className).toContain('finished');
@@ -750,38 +1083,37 @@ describe('finished sessions', () => {
     expect(row('idle-done').className).not.toContain('finished');
   });
 
-  it('shows a group whose sessions have all finished with only its Finished list', () => {
-    render();
+  it('shows a group whose sessions have all finished with only its Finished section', () => {
+    render(finishedSnapshot(), undefined, 'old');
 
-    expect(groupSection('old').querySelector('.group-count')?.textContent).toBe('1 session');
-    expect(finishedToggle('old').textContent).toBe('Finished (1)');
-    fireEvent.click(finishedToggle('old'));
+    expect(summary()).toBe('1 session·Nothing needs you');
+    expect(visibleRowNames()).toEqual([]);
+    fireEvent.click(finishedToggle());
     expect(row('stopped-one').querySelector('.pill')?.textContent).toBe('stopped');
   });
 
   it('opens a finished row in the session view, like any other row', () => {
-    render();
-    fireEvent.click(finishedToggle('old'));
+    render(finishedSnapshot(), undefined, 'old');
+    fireEvent.click(finishedToggle());
 
     fireEvent.click(within(row('stopped-one')).getByRole('button', { name: 'stopped-one' }));
     expect(screen.getByRole('dialog', { name: 'stopped-one' })).toBeTruthy();
   });
 
-  it('remembers each group\'s Finished list, apart from the group itself, across a reload', () => {
-    const first = render();
-    fireEvent.click(finishedToggle('old'));
+  it("remembers each group's Finished section across a reload, under the group's id as before", () => {
+    const first = render(finishedSnapshot(), undefined, 'old');
+    fireEvent.click(finishedToggle());
     expect(stored()).toEqual({ [id('old')]: true });
-    expect(JSON.parse(window.localStorage.getItem(GROUP_STATE_KEY) ?? 'null')).toEqual({ [id('demo-app')]: true, [id('old')]: true });
     first.unmount();
 
-    const second = render();
-    expect([finishedOpen('demo-app'), finishedOpen('old')]).toEqual([false, true]);
-    fireEvent.click(finishedToggle('old'));
+    const second = render(finishedSnapshot(), undefined, 'old');
+    expect(finishedOpen()).toBe(true);
+    fireEvent.click(finishedToggle());
     expect(stored()).toEqual({ [id('old')]: false });
     second.unmount();
 
     render();
-    expect(finishedOpen('old')).toBe(false);
+    expect(finishedOpen()).toBe(false);
   });
 
   it('starts collapsed, and still toggles, when storage throws or holds the wrong shape', () => {
@@ -789,23 +1121,23 @@ describe('finished sessions', () => {
       throw new DOMException('The operation is insecure.', 'SecurityError');
     };
     const first = render(finishedSnapshot(), () => ({ getItem: denied, setItem: denied }));
-    expect(finishedOpen('demo-app')).toBe(false);
-    fireEvent.click(finishedToggle('demo-app'));
-    expect(finishedOpen('demo-app')).toBe(true);
+    expect(finishedOpen()).toBe(false);
+    fireEvent.click(finishedToggle());
+    expect(finishedOpen()).toBe(true);
     first.unmount();
 
     window.localStorage.setItem(FINISHED_STATE_KEY, '[]');
     render();
-    expect([finishedOpen('demo-app'), finishedOpen('old')]).toEqual([false, false]);
+    expect(finishedOpen()).toBe(false);
   });
 
-  it('keeps a finished session that matches the text filter in its Finished list', () => {
+  it('keeps a finished session that matches the text filter in the Finished section', () => {
     render();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'failed-one' } });
 
-    expect(finishedToggle('demo-app').textContent).toBe('Finished (1)');
+    expect(finishedToggle().textContent).toBe('Finished (1)');
     expect(visibleRowNames()).toEqual([]);
-    fireEvent.click(finishedToggle('demo-app'));
+    fireEvent.click(finishedToggle());
     expect(visibleRowNames()).toEqual(['failed-one']);
   });
 });
@@ -911,56 +1243,23 @@ describe('filters', () => {
     expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1);
   });
 
-  it('shows "x of y" when the filter hides some of a group', () => {
+  it('keeps the filter as the selection changes, and filters the new selection', () => {
     renderDashboard(mixedSnapshot());
 
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'demo-api' } });
-
-    expect(within(groupSection('demo-app')).getByText('1 of 3 sessions')).toBeTruthy();
-  });
-
-  it('says so when nothing matches', () => {
-    renderDashboard(mixedSnapshot());
-
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'zzz' } });
-
-    expect(visibleRowNames()).toEqual([]);
-    expect(screen.getByText('No sessions match')).toBeTruthy();
-    expect(screen.getByText('Nothing matches "zzz".')).toBeTruthy();
-  });
-
-  it('"needs attention only" keeps waiting and blocked sessions and drops stale ones', () => {
-    renderDashboard(mixedSnapshot());
-    const needsYou = () => screen.getByRole('checkbox', { name: 'Needs attention only' });
-
-    fireEvent.click(needsYou());
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'demo' } });
+    choose('Needs you');
     expect(visibleRowNames()).toEqual(['demo-docs', 'demo-worker']);
-
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'worker' } });
-    expect(visibleRowNames()).toEqual(['demo-worker']);
-
-    fireEvent.click(needsYou());
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
-    expect(visibleRowNames()).toHaveLength(5);
+    choose('legacy');
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('demo');
+    expect(screen.getByText('Nothing in legacy matches "demo".')).toBeTruthy();
   });
 
-  it('says nothing needs you when the toggle is on and nothing does', () => {
-    renderDashboard(snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]));
+  it('is in the session list\'s header, with the chips, once there are sessions', () => {
+    renderDashboard(mixedSnapshot());
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
-
-    expect(screen.getByText('Nothing needs you right now')).toBeTruthy();
-    expect(screen.getByText('Sessions that are waiting for you, or asked you something, show here.')).toBeTruthy();
-  });
-
-  it('says which text and filters matched nothing', () => {
-    renderDashboard(snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Background' }));
-    expect(screen.getByText('Nothing matches these filters.')).toBeTruthy();
-
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '  calm ' } });
-    expect(screen.getByText('Nothing matches "calm" with these filters.')).toBeTruthy();
+    const head = document.querySelector('.session-list-head')!;
+    expect(within(head as HTMLElement).getByRole('search')).toBeTruthy();
+    expect(within(head as HTMLElement).getByRole('group', { name: 'Filters' })).toBeTruthy();
   });
 });
 
@@ -982,9 +1281,8 @@ describe('filter chips in the list', () => {
 
   const chip = (name: string) => within(screen.getByRole('group', { name: 'Filters' })).getByRole('button', { name });
 
-  it('shows one kind of session per chip, both kinds with both on, and keeps finished ones in their Finished list', () => {
+  it('shows one kind of session per chip, both kinds with both on, and keeps finished ones in the Finished section', () => {
     renderDashboard(chipsSnapshot(), {}, { expand: false });
-    fireEvent.click(screen.getByRole('button', { name: /demo-app/, expanded: false }));
 
     fireEvent.click(chip('Interactive'));
     expect(visibleRowNames()).toEqual(['waits', 'idle-one']);
@@ -994,33 +1292,33 @@ describe('filter chips in the list', () => {
     expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one']);
     fireEvent.click(chip('Interactive'));
     expect(visibleRowNames()).toEqual(['blocked-job']);
-    // A finished background session matches, and stays in the collapsed Finished list.
+    // A finished background session matches, and stays in the collapsed Finished section.
     expect(screen.getByRole('button', { name: /^Finished \(1\)/ }).getAttribute('aria-expanded')).toBe('false');
-    expect(within(groupSection('demo-app')).getByText('2 of 4 sessions')).toBeTruthy();
+    expect(summary()).toBe('2 of 4 sessions2 need you');
   });
 
-  it('ANDs the chips with "Needs attention only" and the text', () => {
+  it('ANDs the chips with the selection and the text', () => {
     renderDashboard(chipsSnapshot());
 
     fireEvent.click(chip('Background'));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
+    choose('Needs you');
     expect(visibleRowNames()).toEqual(['blocked-job']);
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'waits' } });
     expect(visibleRowNames()).toEqual([]);
-    expect(screen.getByText('Nothing matches "waits" with these filters.')).toBeTruthy();
+    expect(screen.getByText('Nothing in Needs you matches "waits" with these filters.')).toBeTruthy();
   });
 
-  it('clears with Clear filters: the text, the chips and the checkbox', () => {
+  it('clears with Clear filters: the text and the chips, not the selection', () => {
     renderDashboard(chipsSnapshot());
+    choose('demo-app');
     fireEvent.click(chip('Interactive'));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Needs attention only' }));
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'waits' } });
     expect(visibleRowNames()).toEqual(['waits']);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Filters' })).getByRole('button', { name: 'Clear filters' }));
     expect(visibleRowNames()).toEqual(['waits', 'blocked-job', 'idle-one', 'done-job']);
     expect(chip('Interactive').getAttribute('aria-pressed')).toBe('false');
-    expect((screen.getByRole('checkbox', { name: 'Needs attention only' }) as HTMLInputElement).checked).toBe(false);
+    expect(listHeading().textContent).toBe('demo-app, git repo');
   });
 });
 
@@ -1043,16 +1341,17 @@ describe('the highlight', () => {
     ]);
   }
 
-  it('marks each match in session names, titles, group labels and paths, case-insensitively', () => {
+  it('marks each match in session names, titles and paths, case-insensitively, and never in the repo list', () => {
     renderDashboard(highlightSnapshot());
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: ' Export ' } });
 
+    // tools matches by its group's label, exporter.
     expect(visibleRowNames()).toEqual(['export-retry', 'tools']);
     const retry = row('export-retry');
     expect(marks(retry.querySelector('.session-name')!)).toEqual(['export']);
     expect(marks(retry.querySelector('.session-title')!)).toEqual(['EXPORT']);
     expect(marks(retry.querySelector('.cwd')!)).toEqual(['export']);
-    expect(marks(groupSection('exporter').querySelector('.group-label')!)).toEqual(['export']);
+    expect(marks(repoList())).toEqual([]);
     for (const mark of document.querySelectorAll('mark')) expect(mark.className).toBe('match');
   });
 
@@ -1087,30 +1386,32 @@ describe('the highlight', () => {
 });
 
 describe('the shell', () => {
-  it('is a header, then the controls once there are sessions, then the list pane', () => {
-    const { container, rerender } = render(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
+  it('is the header, then the columns: the repo list and the session list, with no filters until there are sessions', () => {
+    const { container, rerender } = render(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} navigation={memoryNavigation()} />);
     const parts = () => [...container.querySelectorAll('.app > *')].map((part) => part.className);
+    const columns = () => [...container.querySelectorAll('.columns > *')].map((part) => part.tagName.toLowerCase() + '.' + part.className);
 
-    expect(parts()).toEqual(['app-header', 'panes']);
+    expect(parts()).toEqual(['app-header', 'columns']);
+    expect(columns()).toEqual(['nav.repo-list', 'main.session-list']);
     expect(screen.queryByRole('search')).toBeNull();
 
-    rerender(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} />);
-    expect(parts()).toEqual(['app-header', 'controls', 'panes']);
-    expect(container.querySelector('.panes > main.list-pane')).not.toBeNull();
+    rerender(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} navigation={memoryNavigation()} />);
+    expect(screen.getByRole('search')).toBeTruthy();
   });
 
-  it('puts the page alerts at the top of the list pane, above the groups', () => {
-    const { container } = renderDashboard(mixedSnapshot(), { serverError: 'index crashed' });
-
-    const pane = container.querySelector('main.list-pane')!;
-    expect(pane.firstElementChild?.getAttribute('role')).toBe('alert');
-    expect(pane.firstElementChild?.nextElementSibling?.tagName).toBe('SECTION');
-  });
-
-  it('has one <h1>, the wordmark, and New session as a primary button with the add icon', () => {
+  it('has the landmarks and headings 6.1 lists: one <h1>, the session list\'s <h2>, <nav> and <main>', () => {
     renderDashboard(mixedSnapshot());
 
     expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['pitwall']);
+    expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual(['All sessions']);
+    expect(screen.getByRole('banner')).toBeTruthy();
+    expect(screen.getByRole('main', { name: 'All sessions' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Repos' })).toBeTruthy();
+  });
+
+  it('has New session as a primary button with the add icon', () => {
+    renderDashboard(mixedSnapshot());
+
     const button = screen.getByRole('button', { name: 'New session' });
     expect(button.className).toBe('button primary md');
     expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
@@ -1147,18 +1448,16 @@ describe('full replies', () => {
 
   const ok = (body: LastMessage) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-  /** Renders the dashboard with a reply loader over `fetch`, every group open. */
+  /** Renders the dashboard with a reply loader over `fetch`. */
   function renderWithReplies(rowSession: SessionSummary, fetch: FetchLike) {
     const loader = createReplyLoader({ api: createApiClient({ apiKey: 'test-token', fetch }) });
+    const navigation = memoryNavigation();
     const ui = (s: SessionSummary) => (
       <ReplyLoaderContext.Provider value={loader}>
-        <Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [s] })]) }} />
+        <Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [s] })]) }} navigation={navigation} />
       </ReplyLoaderContext.Provider>
     );
     const result = render(ui(rowSession));
-    for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) {
-      fireEvent.click(toggle);
-    }
     return { ...result, update: (next: SessionSummary) => result.rerender(ui(next)) };
   }
 
@@ -1303,7 +1602,13 @@ describe('untrusted session text', () => {
       ]),
     );
 
-    expect(container.querySelector('img, script, b, a, i, u')).toBeNull();
+    // The repo list's items are links of pitwall's own, to ?repo=: none comes from session text.
+    expect(container.querySelector('img, script, b, a:not([data-repo-item]), i, u')).toBeNull();
+    expect([...container.querySelectorAll('a')].map((link) => link.getAttribute('href'))).toEqual([
+      '?view=needs-you',
+      '?view=all',
+      '?repo=/Users/example/code/demo-app',
+    ]);
     expect(container.textContent).toContain('<a href="javascript:alert(3)">name</a>');
     expect(container.textContent).toContain('<i>label</i>');
     expect(container.textContent).toContain('waiting: <u>reason</u>');

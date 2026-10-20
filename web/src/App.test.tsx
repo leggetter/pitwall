@@ -54,7 +54,6 @@ async function appWithLongReply(fetch: FetchLike, { authenticate = true } = {}) 
   render(<App createSocket={fake.factory} fetch={fetch} />);
   await handshake(fake.last);
   showLongReply(fake.last);
-  fireEvent.click(screen.getByRole('button', { expanded: false, name: /demo-app/ }));
   if (!authenticate) act(() => fake.last.serverClose(1001));
   return { fake, more: screen.getByRole('button', { name: 'Show more' }) };
 }
@@ -207,7 +206,6 @@ describe('App', () => {
     // First connection, and a full reply.
     await handshake(fake.last, KEY_A, nonce(1));
     showLongReply(fake.last, 5);
-    fireEvent.click(screen.getByRole('button', { expanded: false, name: /demo-app/ }));
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Show more' })));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
 

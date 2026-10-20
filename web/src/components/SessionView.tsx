@@ -209,15 +209,20 @@ export interface SessionViewProps {
   listed: boolean;
   now: number;
   onClose: () => void;
+  /**
+   * The third column, from 1,200 px: a region beside the list. Otherwise, as below 1,200 px, a
+   * non-modal dialog over the list (docs/design-system.md, 6.1).
+   */
+  layout?: 'column' | 'overlay';
 }
 
 /**
- * One session's conversation, in a panel over the right of the page: the
+ * One session's conversation, in the third column or a panel over the right of the page: the
  * header at the top, the conversation scrolling in the middle and, for an
  * interactive session, the message box pinned below the newest message.
  * Closes with its button or Escape.
  */
-export function SessionView({ session, listed, now, onClose }: SessionViewProps) {
+export function SessionView({ session, listed, now, onClose, layout = 'overlay' }: SessionViewProps) {
   const api = useContext(ApiContext);
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -262,7 +267,11 @@ export function SessionView({ session, listed, now, onClose }: SessionViewProps)
   const keys = entryKeys(entries);
 
   return (
-    <section className="session-view" role="dialog" aria-modal="false" aria-labelledby={titleId}>
+    <section
+      className={layout === 'column' ? 'session-view in-column' : 'session-view'}
+      {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : {})}
+      aria-labelledby={titleId}
+    >
       <header className="session-view-head">
         <div className="session-view-top">
           <h2 className="session-view-title" id={titleId}>

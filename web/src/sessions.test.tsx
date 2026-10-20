@@ -1,31 +1,39 @@
-// The filters (docs/design-system.md, Filter chips): the Interactive and Background chips combine as
-// OR, and no chip on lets everything through. The text and "Needs attention only" AND with them.
+// The repo list's order and the session list's contents (docs/design-system.md, 3), and the filters
+// (Filter chips): the Interactive and Background chips combine as OR, no chip on lets everything
+// through, and the text ANDs with them.
 import { describe, expect, it } from 'vitest';
-import type { SessionSummary } from '../../src/shared/protocol.js';
+import type { SessionGroup, SessionSummary } from '../../src/shared/protocol.js';
 import {
+  allFinished,
+  compareSessions,
   FILTER_CHIPS,
-  filterGroups,
   filtering,
+  filterListed,
   filterNeedle,
+  groupLabel,
+  isRootGroup,
+  listScope,
   matchesChips,
   matchRanges,
   NO_FILTERS,
   noMatchText,
+  repoListGroups,
   sessionCount,
   type FilterChip,
   type Filters,
+  type Listed,
 } from './sessions.js';
-import { group, session } from './test/fixtures.js';
+import { group, minutesAgo, session } from './test/fixtures.js';
 
 const done = { kind: 'background', alive: false, pid: undefined, status: undefined, state: 'done', finished: true } as const;
 
-/** One session of each kind, and of the states the other filters tell apart, named after it. */
+/** One session of each kind, and of the states the views tell apart, named after it. */
 const SESSIONS = {
-  'interactive-waiting': session({ name: 'interactive-waiting', status: 'waiting', waitingFor: 'permission prompt' }),
-  'interactive-idle': session({ name: 'interactive-idle' }),
-  'background-blocked': session({ name: 'background-blocked', kind: 'background', shortId: 'b1', status: undefined, state: 'blocked' }),
-  'background-working': session({ name: 'background-working', kind: 'background', shortId: 'b2', status: undefined, state: 'working' }),
-  'background-finished': session({ name: 'background-finished', ...done, shortId: 'b4' }),
+  'interactive-waiting': session({ name: 'interactive-waiting', status: 'waiting', waitingFor: 'permission prompt', lastActivityAt: minutesAgo(9) }),
+  'interactive-idle': session({ name: 'interactive-idle', lastActivityAt: minutesAgo(1) }),
+  'background-blocked': session({ name: 'background-blocked', kind: 'background', shortId: 'b1', status: undefined, state: 'blocked', lastActivityAt: minutesAgo(2) }),
+  'background-working': session({ name: 'background-working', kind: 'background', shortId: 'b2', status: undefined, state: 'working', lastActivityAt: minutesAgo(3) }),
+  'background-finished': session({ name: 'background-finished', ...done, shortId: 'b4', lastActivityAt: minutesAgo(4) }),
 } satisfies Record<string, SessionSummary>;
 
 type Name = keyof typeof SESSIONS;
@@ -36,7 +44,8 @@ function passing(...chips: FilterChip[]): Name[] {
   return ALL.filter((name) => matchesChips(SESSIONS[name], new Set(chips)));
 }
 
-const filters = (text: string, chips: FilterChip[] = [], attentionOnly = false): Filters => ({ text, chips: new Set(chips), attentionOnly });
+const filters = (text: string, chips: FilterChip[] = []): Filters => ({ text, chips: new Set(chips) });
+const names = (listed: readonly Listed[]) => listed.map(({ session: shown }) => shown.name);
 
 describe('the filter chips', () => {
   it('are Interactive and Background, in that order', () => {
@@ -60,68 +69,125 @@ describe('the filter chips', () => {
   });
 });
 
-describe('filterGroups', () => {
-  const app = group({ sessions: [SESSIONS['interactive-waiting'], SESSIONS['interactive-idle'], SESSIONS['background-finished']] });
-  const jobs = group({
-    key: '/Users/example/code/jobs',
-    label: 'jobs',
-    sessions: [SESSIONS['background-working'], SESSIONS['background-blocked']],
-  });
-  const names = (result: ReturnType<typeof filterGroups>) => result.map(({ group: shown, sessions }) => [shown.label, sessions.map((s) => s.name)]);
+const ROOT = '/Users/example/code';
+const app = group({ sessions: [SESSIONS['interactive-waiting'], SESSIONS['interactive-idle'], SESSIONS['background-finished']] });
+const jobs = group({
+  key: `${ROOT}/jobs`,
+  label: 'jobs',
+  sessions: [SESSIONS['background-blocked'], SESSIONS['background-working']],
+});
 
-  it('keeps every group and session with no filters', () => {
-    expect(names(filterGroups([app, jobs], NO_FILTERS))).toEqual([
-      ['demo-app', ['interactive-waiting', 'interactive-idle', 'background-finished']],
-      ['jobs', ['background-working', 'background-blocked']],
+describe('listScope', () => {
+  it('lists a group in the order given, its finished sessions apart', () => {
+    const { current, finished } = listScope([app, jobs], { kind: 'group', group: app });
+    expect(names(current)).toEqual(['interactive-waiting', 'interactive-idle']);
+    expect(names(finished)).toEqual(['background-finished']);
+    expect(current.every(({ group: shown }) => shown === app)).toBe(true);
+  });
+
+  it('lists every group under All sessions in the index\'s order: waiting or blocked first, then by activity, finished apart', () => {
+    const { current, finished } = listScope([app, jobs], { kind: 'all' });
+    // Blocked was active 2 minutes ago, waiting 9: both need you, so the newer comes first.
+    expect(names(current)).toEqual(['background-blocked', 'interactive-waiting', 'interactive-idle', 'background-working']);
+    expect(names(finished)).toEqual(['background-finished']);
+    expect(current.find(({ session: shown }) => shown.name === 'background-blocked')?.group).toBe(jobs);
+  });
+
+  it('lists only what needs you under Needs you, from every group, with no finished section', () => {
+    const asked = session({ name: 'asked', askedYou: { reason: 'question', excerpt: 'Ship it?' }, lastActivityAt: minutesAgo(0.5) });
+    const stale = session({ name: 'stale', kind: 'background', shortId: 'b9', status: undefined, state: 'blocked', stale: true });
+    const finishedAsked = session({ name: 'finished-asked', ...done, shortId: 'b8', askedYou: { reason: 'question', excerpt: 'PR?' } });
+    const more = group({ key: `${ROOT}/more`, label: 'more', sessions: [asked, stale, finishedAsked] });
+    const { current, finished } = listScope([app, jobs, more], { kind: 'needs-you' });
+    // Waiting and blocked before asked you, however recent.
+    expect(names(current)).toEqual(['background-blocked', 'interactive-waiting', 'asked']);
+    expect(finished).toEqual([]);
+  });
+
+  it('sorts as the index does within a group, so a group listed alone and under All agree', () => {
+    for (const listed of [app, jobs]) expect([...listed.sessions].sort(compareSessions)).toEqual(listed.sessions);
+  });
+});
+
+describe('filterListed', () => {
+  const all = [...listScope([app, jobs], { kind: 'all' }).current, ...listScope([app, jobs], { kind: 'all' }).finished];
+
+  it('keeps everything with no filters', () => {
+    expect(filterListed(all, NO_FILTERS)).toEqual(all);
+  });
+
+  it('ANDs a chip with the text', () => {
+    expect(names(filterListed(all, filters('finished', ['background'])))).toEqual(['background-finished']);
+    expect(names(filterListed(all, filters('idle', ['background'])))).toEqual([]);
+    expect(names(filterListed(all, filters('', ['interactive'])))).toEqual(['interactive-waiting', 'interactive-idle']);
+  });
+
+  it('matches names, titles and cwds case-insensitively, and lets a group whose label matches through whole', () => {
+    expect(names(filterListed(all, filters(' WAITING ')))).toEqual(['interactive-waiting']);
+    expect(names(filterListed(all, filters('JOBS')))).toEqual(['background-blocked', 'background-working']);
+    expect(names(filterListed(all, filters('jobs', ['interactive'])))).toEqual([]);
+  });
+});
+
+describe('the repo list', () => {
+  const at = (root: string, label: string, overrides: Partial<SessionGroup> = {}) =>
+    group({ root, key: `${root}/${label}`, label, sessions: [session({ name: `in-${label}` })], ...overrides });
+
+  it('sorts each root\'s groups alphanumerically by label, case-insensitively, numbers as numbers, the root\'s own directory first', () => {
+    const own = group({ root: ROOT, key: ROOT, label: 'code', sessions: [session({ name: 'in-root' })] });
+    const groups = [at(ROOT, 'repo-10'), at(ROOT, 'api-server'), own, at(ROOT, 'repo-2'), at(ROOT, 'Api'), at(ROOT, 'zebra')];
+
+    const [only] = repoListGroups(groups, [ROOT]);
+    expect(only?.groups.map(groupLabel)).toEqual(['~/code', 'Api', 'api-server', 'repo-2', 'repo-10', 'zebra']);
+  });
+
+  it('keeps a group whose sessions have all finished in its place, and never sorts by activity', () => {
+    const finishedOnly = at(ROOT, 'b-finished', { sessions: [session({ name: 'f', ...done, shortId: 'f1' })] });
+    const busy = at(ROOT, 'c-busy', { sessions: [session({ name: 'busy', status: 'busy', lastActivityAt: minutesAgo(0) })] });
+    const [only] = repoListGroups([busy, finishedOnly, at(ROOT, 'a-old')], [ROOT]);
+
+    expect(only?.groups.map((shown) => shown.label)).toEqual(['a-old', 'b-finished', 'c-busy']);
+    expect(only?.groups.map(allFinished)).toEqual([false, true, false]);
+  });
+
+  it('lists roots in the order pitwall was given them, leaving out roots with no groups', () => {
+    const work = '/Users/example/work';
+    const empty = '/Users/example/empty';
+    const result = repoListGroups([at(work, 'b'), at(ROOT, 'z'), at(work, 'a'), at(ROOT, 'y')], [ROOT, empty, work]);
+
+    expect(result.map(({ root, groups: listed }) => [root, listed.map((shown) => shown.label)])).toEqual([
+      [ROOT, ['y', 'z']],
+      [work, ['a', 'b']],
     ]);
   });
 
-  it('ANDs a chip with the text, and drops groups left empty', () => {
-    expect(names(filterGroups([app, jobs], filters('finished', ['background'])))).toEqual([['demo-app', ['background-finished']]]);
-    expect(names(filterGroups([app, jobs], filters('idle', ['background'])))).toEqual([]);
-    expect(names(filterGroups([app, jobs], filters('', ['interactive'])))).toEqual([['demo-app', ['interactive-waiting', 'interactive-idle']]]);
-  });
-
-  it('ANDs the chips with "Needs attention only"', () => {
-    expect(names(filterGroups([app, jobs], filters('', [], true)))).toEqual([
-      ['demo-app', ['interactive-waiting']],
-      ['jobs', ['background-blocked']],
-    ]);
-    expect(names(filterGroups([app, jobs], filters('', ['background'], true)))).toEqual([['jobs', ['background-blocked']]]);
-    expect(names(filterGroups([app, jobs], filters('', ['interactive', 'background'], true)))).toHaveLength(2);
-  });
-
-  it('applies the chips inside a group whose label matches the text, which otherwise shows all its sessions', () => {
-    expect(names(filterGroups([app, jobs], filters('JOBS')))).toEqual([['jobs', ['background-working', 'background-blocked']]]);
-    expect(names(filterGroups([app, jobs], filters('jobs', ['interactive'])))).toEqual([]);
+  it('labels the root\'s own directory with its path, home as ~, and other groups with their label', () => {
+    const own = group({ root: ROOT, key: `${ROOT}/`, label: 'code', sessions: [] });
+    expect(isRootGroup(own)).toBe(true);
+    expect(groupLabel(own)).toBe('~/code');
+    expect(groupLabel(at(ROOT, 'pitwall'))).toBe('pitwall');
+    expect(isRootGroup(at(ROOT, 'pitwall'))).toBe(false);
+    expect(allFinished(own)).toBe(false);
   });
 });
 
 describe('filtering', () => {
-  it('is on with any text in the field, a chip or "Needs attention only", which is when Clear filters shows', () => {
+  it('is on with any text in the field or a chip, which is when Clear filters shows', () => {
     expect(filtering(NO_FILTERS)).toBe(false);
     expect(filtering(filters('', ['background']))).toBe(true);
     expect(filtering(filters('x'))).toBe(true);
     expect(filtering(filters(' '))).toBe(true);
-    expect(filtering(filters('', [], true))).toBe(true);
   });
 });
 
 describe('noMatchText', () => {
-  it('says which text matched nothing, and with which filters', () => {
-    expect(noMatchText(filters('zzz'), 0)).toEqual({ title: 'No sessions match', sentence: 'Nothing matches "zzz".' });
-    expect(noMatchText(filters(' zzz ', ['background']), 0)).toEqual({ title: 'No sessions match', sentence: 'Nothing matches "zzz" with these filters.' });
-    expect(noMatchText(filters('zzz', [], true), 2).sentence).toBe('Nothing matches "zzz" with these filters.');
-    expect(noMatchText(filters('', ['interactive']), 0)).toEqual({ title: 'No sessions match', sentence: 'Nothing matches these filters.' });
-  });
-
-  it('is calm when "Needs attention only" is the only filter and nothing needs you', () => {
-    expect(noMatchText(filters('', [], true), 0)).toEqual({
-      title: 'Nothing needs you right now',
-      sentence: 'Sessions that are waiting for you, or asked you something, show here.',
+  it('names the selection, the text, and whether chips are on', () => {
+    expect(noMatchText(filters('zzz'), 'pitwall')).toEqual({ title: 'No sessions match', sentence: 'Nothing in pitwall matches "zzz".' });
+    expect(noMatchText(filters(' zzz ', ['background']), 'All sessions')).toEqual({
+      title: 'No sessions match',
+      sentence: 'Nothing in All sessions matches "zzz" with these filters.',
     });
-    expect(noMatchText(filters('', ['interactive'], true), 0).title).toBe('No sessions match');
-    expect(noMatchText(filters('docs', [], true), 0).title).toBe('No sessions match');
+    expect(noMatchText(filters('', ['interactive']), 'Needs you').sentence).toBe('Nothing in Needs you matches these filters.');
   });
 });
 

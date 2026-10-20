@@ -73,7 +73,6 @@ function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = sn
     );
   };
   const result = render(ui(first));
-  for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) fireEvent.click(toggle);
   return { ...result, update: (next: IndexSnapshot) => result.rerender(ui(next)) };
 }
 
@@ -160,7 +159,6 @@ describe('SessionView: opening and closing', () => {
         <Dashboard view={{ state: 'connecting', snapshot: snap() }} />
       </ApiContext.Provider>,
     );
-    fireEvent.click(screen.getByRole('button', { expanded: false, name: /demo-app/ }));
     const view = await openView();
     expect(within(view).getByText('Loading the conversation…')).toBeTruthy();
 
@@ -527,7 +525,6 @@ describe('SessionView in the app', () => {
     render(<App createSocket={fake.factory} fetch={fetch} />);
     await handshake(fake.last, KEY_A, `${'n'.repeat(41)}01`);
     act(() => fake.last.receive({ type: 'snapshot', snapshot: snap() }));
-    fireEvent.click(screen.getByRole('button', { expanded: false, name: /demo-app/ }));
     return fake;
   }
 

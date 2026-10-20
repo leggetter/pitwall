@@ -11,11 +11,16 @@ export interface MiddleEllipsisProps {
   className?: string;
 }
 
+/** How much of the start always shows, in characters, before the end starts giving way too. */
+const START_MIN_CH = 4;
+
 export function MiddleEllipsis({ text, className }: MiddleEllipsisProps) {
   const { start, end } = middleEllipsisParts(text);
   return (
     <span className={className ? `middle-ellipsis ${className}` : 'middle-ellipsis'}>
-      <span className="middle-ellipsis-start">{start}</span>
+      <span className="middle-ellipsis-start" style={end ? { minWidth: `${Math.min(start.length, START_MIN_CH)}ch` } : undefined}>
+        {start}
+      </span>
       {end && <span className="middle-ellipsis-end">{end}</span>}
     </span>
   );

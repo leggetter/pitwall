@@ -25,7 +25,7 @@ function renderFilters(start: Filters = NO_FILTERS) {
   return { changes, last: () => changes.at(-1) };
 }
 
-const start = (text: string, chips: FilterChip[] = [], attentionOnly = false): Filters => ({ text, chips: new Set(chips), attentionOnly });
+const start = (text: string, chips: FilterChip[] = []): Filters => ({ text, chips: new Set(chips) });
 const field = () => screen.getByRole('searchbox', { name: 'Filter sessions' });
 const group = () => within(screen.getByRole('group', { name: 'Filters' }));
 const chip = (name: string) => group().getByRole('button', { name });
@@ -145,11 +145,11 @@ describe('the filter chips', () => {
     expect(last()?.chips).toEqual(new Set(['background']));
   });
 
-  it('keep the other filters as they toggle', () => {
-    const { last } = renderFilters(start('export', [], true));
+  it('keep the text as they toggle', () => {
+    const { last } = renderFilters(start('export'));
 
     fireEvent.click(chip('Background'));
-    expect(last()).toEqual(start('export', ['background'], true));
+    expect(last()).toEqual(start('export', ['background']));
   });
 
   it('show a check icon only while on, hidden from assistive technology', () => {
@@ -176,14 +176,8 @@ describe('Clear filters', () => {
     expect(clear()).not.toBeNull();
   });
 
-  it('shows for the other filters too, such as "Needs attention only"', () => {
-    renderFilters(start('', [], true));
-
-    expect(clear()).not.toBeNull();
-  });
-
-  it('clears the text, every chip and the other filters, and puts focus in the field', () => {
-    const { last } = renderFilters(start('export', ['interactive', 'background'], true));
+  it('clears the text and every chip, and puts focus in the field', () => {
+    const { last } = renderFilters(start('export', ['interactive', 'background']));
 
     fireEvent.click(clear()!);
 
