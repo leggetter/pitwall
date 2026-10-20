@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -542,8 +542,10 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 - **Delays as design:**
   - Spinners and skeletons wait `--pw-delay-spinner` (500 ms) before appearing, so fast loads never flash.
   - After `--pw-delay-long` (10 s), a waiting state adds a sentence saying what's taking long.
-  - Tooltips open after `--pw-delay-tooltip` (300 ms) and close at once; moving to a neighbouring control with a tooltip opens its tooltip at once.
+  - Tooltips open after `--pw-delay-tooltip` (300 ms) and close at once; moving to a neighbouring control with a tooltip opens its tooltip at once (while one is open, or within the delay of one closing).
   - Toasts stay for `--pw-toast-timeout` (4 s).
+  - A copy button's `copied` icon stays for `--pw-copied-timeout` (2 s).
+  - JavaScript reads these tokens from the element they apply to (`web/src/timing.ts`), so a part of the page can set its own. The `#uikit` gallery sets the two timeouts to an hour on a specimen's stage, so a toast or a copied icon stays for its screenshots.
 - **Reduced motion** (`prefers-reduced-motion: reduce`): the durations drop to 0, skeletons stop pulsing, the spinner slows to 2 s per turn (it still shows something is happening), and scrolling to the latest message jumps rather than animating.
 - **Nothing loops** except spinners and skeletons, and nothing pulses to get attention.
 
@@ -667,7 +669,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - Below the sidebar breakpoint (900 px), a ghost md `menu` icon button, "Repos", that opens the [repo list](#repo-list) as a drawer.
   - The wordmark "pitwall" (l 16/24, 600).
   - The roots: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full list in a tooltip.
-- **Right, 12 px apart:** New session (primary, md, `add` icon); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular); the theme switch; the keyboard-shortcuts icon button.
+- **Right, 12 px apart:** New session (primary, md, `add` icon); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular, a [timestamp](#timestamps) with the absolute time in its tooltip); the theme switch; the keyboard-shortcuts icon button.
 - **Compact (≤ 600 px):** the right side wraps under the wordmark, and the header grows to fit.
 
 ### Repo list
@@ -753,7 +755,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 
 - **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert. Today that's one: the relay is off until restart, which the snapshot's `relayOff` says. See [Alerts and banners](#alerts-and-banners).
   - Below 1,200 px the session view over the list starts just below the strip, so the strip shows in every layout.
-- **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert, "Lost the connection" and "Started *name*".
+- **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert and "Lost the connection". "Started *name*" is a [toast](#toasts).
 
 ---
 
@@ -877,7 +879,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
   - **Counts:** subtle neutral ("4", "2 of 5").
   - **Needs-you counts:** solid warning ("2 need you").
   - **Errors in folded tool calls:** subtle danger ("1 error").
-- **Stale** carries its explanation in a tooltip: "Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters."
+- **Stale** carries its explanation in a tooltip, on hover (`Badge`'s `hint`): "Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters."
 
 ### Status dot
 
@@ -902,13 +904,14 @@ The spinner and the dot take the badge's text colour. The badge sits in the elem
 - **Container:** an `<li>` in the session list's `<ul>`, padding 8 px 16 px, a 1 px `--pw-border` line between rows, `--pw-surface`.
 - **Two lines,** 2 px apart:
   1. **Identity:**
-     - The name (m 14/20, 500, `--pw-text`), then " · " and the title (m 14/20, 400, `--pw-text-muted`), on one line with an ellipsis. The full title and where it came from are in a tooltip.
+     - The name (m 14/20, 500, `--pw-text`), then " · " and the title (m 14/20, 400, `--pw-text-muted`), on one line with an ellipsis. The full title and where it came from are in a tooltip; a title whose source isn't known has one only when it's cut. The name has the session's id and start time in a tooltip.
+     - These tooltips, and those below, open on hover only: in a row, only the name's button is focusable, and the tooltip on its heading doesn't open for the button's focus. The full title and line 2 are in the DOM, so screen readers have them, and the session view shows them all.
      - Then, at the right, the status badge(s) and the relative time (meta, `--pw-text-subtle`, tabular). The badges sit just before the time, so they line up down the list.
      - **Line 1 never wraps.** The title gives way first, then the name, then the status badge, which leaves the name and the time at least 10em. "Stale" and a finished session's "Asked you" are short and stay whole. The " · " is drawn with the title (CSS `::before`, not read out), so it goes when the title has.
   2. **What it wants or did last,** on one line with an ellipsis, when the transcript is readable:
      - "Asked: *excerpt*" (meta, the label in `--pw-warning-fg` 500, the excerpt in `--pw-text`); or
      - "You: *last prompt*" (meta, `--pw-text-muted`).
-     - The full text is in a tooltip.
+     - The full text is in a tooltip when it's cut short.
      - In Needs you and All sessions, the line starts with the group's label (meta, `--pw-text-subtle`; the root's own directory as its path) and " · ". A session with neither a question nor a prompt shows only the label there, and no line 2 in a group.
 - **Not in the row:** the last reply, the relay exchange, the cwd, the attach command and a Message button. They're in the session view: the conversation, the message box, the header and the actions menu. A row stays two lines however long the session's replies are.
 - **Opening:** the name is a `<button>` with `aria-controls="session-view"`, `aria-current="true"` when its session is open, and `data-open-session`. The session view has `id="session-view"`.
@@ -935,7 +938,7 @@ The spinner and the dot take the badge's text colour. The badge sits in the elem
   - At least 32 px tall, padding 6 px 8 px, `--pw-radius-md`, 8 px gaps. It grows with zoom and text spacing.
   - Left to right:
     1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`). The two views have no icon.
-    2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip. Then a visually hidden ", git repo" or ", directory", after the label so the link's name starts with what it shows.
+    2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip when the ellipsis cuts it, on hover and on focus. Then a visually hidden ", git repo" or ", directory", after the label so the link's name starts with what it shows.
     3. At the right, one count, each with a visually hidden noun so it reads as "2 need you" or "4 sessions":
        - a solid warning badge with how many need you, when any do;
        - otherwise, how many sessions there are (meta, `--pw-text-subtle`, tabular).
@@ -960,22 +963,22 @@ The spinner and the dot take the badge's text colour. The badge sits in the elem
 **Header** (sticky, `--pw-surface`, a bottom `--pw-border`, padding 12 px 16 px):
 
 1. **Line 1:**
-   - The name (l 16/24, 600), then " · " and the title (l 16/24, 400, `--pw-text-muted`), on one line: the title gives way first, then the name, each with an ellipsis, and the full title is in a tooltip. The " · " is drawn with the title (`::before`, not read out), so it goes when the title has; screen readers get it from visually hidden text.
+   - The name (l 16/24, 600), then " · " and the title (l 16/24, 400, `--pw-text-muted`), on one line: the title gives way first, then the name, each with an ellipsis, and the full title is in a tooltip when it's cut. The " · " is drawn with the title (`::before`, not read out), so it goes when the title has; screen readers get it from visually hidden text.
    - At the right: the `more` icon button (md, ghost) opening the actions menu, then the `close` icon button ("Close", Escape in its tooltip). At ≤ 600 px, "Back to sessions" at the start replaces Close.
    - The heading is the region's label (`aria-labelledby`) and takes focus when the view is opened from a row (`tabindex="-1"`, no visible ring on the heading itself).
-   - Until toasts exist (W25), a copy's result shows just before the `more` button, in meta text: "Copied" for 2 s, or "Couldn't copy; the text is selected" in `--pw-danger-fg`. It's an `aria-live="polite"` region that's always there, so it's announced. When the copied text isn't on screen (the session ID, the attach command), a failure also shows it, selected, below line 2: "Session ID: *id*" in code style.
+   - A copy's result is a [toast](#toasts): "Copied", or "Couldn't copy; the text is selected" as an error toast. When the copied text isn't on screen (the session ID, the attach command), a refusal also shows it, selected, below line 2, "Session ID: *id*" in code style, until the next copy.
 2. **Line 2, 8 px gaps, wrapping:**
    - The status badge.
-   - The kind as meta text in `--pw-text-subtle` ("Interactive" or "Background"). An interactive session adds an `info` icon whose tooltip says that typing `/bg` in its terminal moves it to the background, so pitwall can drive it fully. Until the Tooltip exists (W25) it's `role="img"`, named with that sentence, with the same `title`.
-   - "Active 5m ago" (meta, `--pw-text-subtle`, the absolute time in a tooltip).
-   - The cwd (path type, `--pw-text-subtle`, middle ellipsis, the full path in a tooltip) with a sm copy icon button, "Copy path". It takes the rest of the line, or a line of its own below 16em.
+   - The kind as meta text in `--pw-text-subtle` ("Interactive" or "Background"). An interactive session adds an info button (`InfoTip`), so Tab reaches it: its name and its tooltip say that typing `/bg` in its terminal moves it to the background, so pitwall can drive it fully.
+   - "Active 5m ago" (meta, `--pw-text-subtle`, a [timestamp](#timestamps), the absolute time in its tooltip).
+   - The cwd (path type, `--pw-text-subtle`, middle ellipsis, the full path, home and all, in a tooltip) with a [copy button](#copy), "Copy path". It takes the rest of the line, or a line of its own below 16em.
    - When the directory no longer exists (`cwdMissing`): "Directory no longer exists" (meta, `--pw-text-muted`), its own item so it wraps rather than squeezing the path, with "The working directory no longer exists, for example after a worktree was removed." in a tooltip.
 3. **When the session has left the snapshot:** an inline neutral alert, `role="status"`: "This session is no longer listed, so this is what it showed last."
 
 **Actions menu** (`more`, "Session actions", a [menu](#menus)): Copy session ID (`copy`), Copy attach command (`terminal`), then a separator, then Stop session (`stop`) and Remove session (`remove`, in danger text).
 
 - **Copy session ID** copies the full session id. **Copy attach command** copies `claude attach <shortId>`, and is there only for a background session whose short id passes `attachCommand()`'s shell-safety check. An interactive session's menu has Copy session ID alone.
-- **Stop session and Remove session** are for background sessions that are still listed. Each opens its [inline confirmation](#inline-confirmation). Stop is `aria-disabled` while the session isn't running, and both are while one of them is in progress, with the reason as hover text.
+- **Stop session and Remove session** are for background sessions that are still listed. Each opens its [inline confirmation](#inline-confirmation). Stop is `aria-disabled` while the session isn't running, and both are while one of them is in progress, with the reason in a tooltip.
 
 **Tabs** (a row under the header, sticky, padding 0 16 px, a bottom `--pw-border`, 40 px tall):
 
@@ -983,7 +986,7 @@ The spinner and the dot take the badge's text colour. The badge sits in the elem
   - Inactive: `--pw-text-muted`; hover fill `--pw-surface-hover`, `--pw-radius-lg`.
   - Active: `--pw-text`, with a 2 px `--pw-text` underline on the row's bottom edge, over the border.
 - **"Conversation"** (`conversation`) and **"Terminal"** (`terminal`).
-  - An interactive session's Terminal tab is `aria-disabled`, with a tooltip saying it can't be attached and how `/bg` changes that, also linked with `aria-describedby`. So is a background session's when the app can't attach, or once it's no longer listed. Activating a disabled tab does nothing.
+  - An interactive session's Terminal tab is `aria-disabled`, with a tooltip saying it can't be attached and how `/bg` changes that, which describes the tab (`aria-describedby`), so it's in the DOM before it shows. So is a background session's when the app can't attach, or once it's no longer listed. Activating a disabled tab does nothing.
   - While attached, the Terminal tab shows an 8 px `--pw-success-fg` dot after its label, and a visually hidden ", attached".
 - **ARIA:** `role="tablist"` with `aria-label="Session view"`, `role="tab"` with `aria-selected` and `aria-controls`, `role="tabpanel"` with `aria-labelledby`. Roving `tabindex`.
   - ← and → (and Home, End) move focus between tabs; Enter or Space opens one.
@@ -1012,10 +1015,11 @@ The composer in the session view's footer, for interactive sessions. Messages go
   2. **The result of the last send,** as an inline alert: delivered (success), held for approval (warning), may have arrived (warning), refused (danger), not sent (danger), and pitwall's own failure before the relay answered (danger). The text is the relay's status sentence, then the server's detail in code style. `role="status"` for delivered, `role="alert"` otherwise.
   3. **The text row:** the textarea (auto-growing, one to eight lines), then the primary md "Send" button (`send` icon), aligned to the textarea's bottom.
   4. **The help line** (meta, `--pw-text-subtle`), linked to the textarea with `aria-describedby`:
-     - Left: "⌘ ↵ to send" as key caps (Ctrl on other platforms), then an `info` icon whose tooltip holds the limits note ("Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts."). Until the Tooltip exists (W25) the icon is `role="img"`, named with the note, with the same `title`.
+     - Left: "⌘ ↵ to send" as key caps (Ctrl on other platforms), then an info button (`InfoTip`) whose name and tooltip are the limits note ("Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts.").
      - Right: the character count of what will be sent, shown only from 80 % of the limit ("6,554 / 8,192"), in `--pw-danger-fg` with "*n* characters over the *limit* limit" ("1 character over the 8,192 limit") once over it, when it's also linked to the textarea.
 - **Behaviour:**
   - ⌘/Ctrl + Enter sends; Enter adds a line. Send is `aria-disabled` while empty, over the limit or sending.
+  - Its tooltip, which describes it, says why it's off: "Type a message to send it.", "Shorten it by *n* characters to send it: the limit is 8,192.", or "Messages can't be sent from here." While it's sending, its busy label says so instead.
   - While sending: the busy state ("Sending…"), and the textarea is read-only.
   - After a send, focus stays in the textarea, or comes back to it from Send, unless it was moved somewhere else while the message was out. The draft clears when the message was delivered, held or refused; it stays when it wasn't sent or may not have been.
   - Escape with a draft does nothing, wherever focus is in the view, so a draft is never lost to the shortcut that closes the view.
@@ -1067,7 +1071,6 @@ The composer in the session view's footer, for interactive sessions. Messages go
 | Connection lost | neutral | | "Lost the connection to pitwall. Reconnecting; this list may be out of date." |
 | Relay may have sent a message you didn't ask for (`blocked: false`) | danger | "pitwall's relay may have sent a message you didn't ask for" | "That usually means another session messaged the relay. Check your sessions' conversations for a message from pitwall-relay.", then "Messaging is off until you restart pitwall." only while the snapshot's `relayOff` is set, then the count since start, "Latest: *detail*", with Dismiss |
 | Relay blocked one (`blocked: true`) | warning | "pitwall blocked a message you didn't ask for" | "Its relay tried to send it, and pitwall's gate stopped it, so nothing was sent. That usually means another session messaged the relay.", then the same structure |
-| Session started | neutral | | "Started *name*. Its view opens when it shows up in the list.", with Dismiss |
 
 - **"May have sent", not "sent":** pitwall sees a call its gate didn't block only afterwards, so it can't say the message arrived (5: Errors). Some of those only restart the relay, so the alert says messaging is off only when `relayOff` does.
 
@@ -1075,7 +1078,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
 
 - **Component:** `AppStrip` (`web/src/components/AppStrip.tsx`).
 - **Box:** 32 px tall, full width above the header, `--pw-text` fill, `--pw-text-inverse` text (18.4:1 in light, 16.9:1 in dark), meta size; a 16 px `warning` icon in the text colour; a link button in `--pw-text-inverse` with an underline. The strip inverts with the theme, so it never uses a tone colour.
-  - One line: a sentence too long for it ends in an ellipsis, with the whole sentence in a tooltip, and Details stays on screen.
+  - One line: a sentence too long for it ends in an ellipsis, with the whole sentence in a tooltip when it's cut, and Details stays on screen.
 - **Use:** only while the snapshot's `relayOff` is set, which pitwall sets once it has stopped using its relay for the rest of the run. Never inferred from a relay alert: some alerts only restart the relay. "Messaging is off until you restart pitwall: *reason*", where the reason is pitwall's own words ("its gate didn't check a SendMessage call."), then "Details", which reopens the relay alert and takes focus to it. It stays after the alert is dismissed and can't itself be dismissed. Details isn't there when there's no relay alert to show.
 
 ### Inline confirmation
@@ -1094,80 +1097,94 @@ For a destructive or surprising action in the session view, without a dialog.
 
 - **Focus:** Cancel takes focus when the confirmation opens.
   - Escape cancels it, without closing the view, wherever focus is in the page.
-  - On cancel, focus goes back to whatever opened it (the actions menu button, or the Terminal tab).
+  - On cancel, focus goes back to whatever opened it (the actions menu button, or the Terminal tab), without opening that control's tooltip (`focusQuietly`).
 - **Semantics:** `role="group"` with `aria-labelledby` (the question) and `aria-describedby` (the consequence). For the restart, `role="alertdialog"`.
 - **Busy:** the confirmation stays while its action runs, and the confirm button shows the busy state ("Stopping…", "Removing…", "Restarting…"). Cancel is `aria-disabled`, and Escape does nothing, since the request is already out; the view stays open. The restart stays busy until the attach has started or failed.
 - **Result:** the confirmation goes, and focus goes back to the actions menu's button; Remove closes the view instead.
-  - Stopped: a toast once toasts exist (W25), "Stopped. Its conversation is kept."; until then a success inline alert in the confirmation's place, `role="status"`.
+  - Stopped: a [toast](#toasts), "Stopped. Its conversation is kept."
+  - Removed: a toast, "Removed *name*", as the view closes.
   - Refused: an inline danger alert, `role="alert"`: "Couldn't stop the session." (or remove), then Claude Code's message in code style.
   - A restart that fails ends the attach, whose notice says why, and Attach again takes focus.
 - **No type-to-confirm.** pitwall's destructive actions are recoverable or guarded by Claude Code.
 
 ### Dialogs
 
+- **Component:** `Dialog` (`web/src/components/Dialog.tsx`), with `title`, `subtitle`, `size`, `busy`, `dirty`, `footerMeta`, `actions` and `onSubmit`, which makes the body and footer a form. The New session dialog is built on it, and the keyboard shortcuts dialog (W26) can be.
 - **Backdrop:** `--pw-backdrop`, `--pw-z-backdrop`, centring the card with 48 px top and 16 px side margins.
-- **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-lg`, `--pw-dialog-md` (624 px) wide, at most `calc(100dvh - 96px)` tall, `--pw-z-dialog`.
+- **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-lg`, `--pw-dialog-md` (624 px) wide, or `-sm` or `-lg`, never wider than the window less its margins, at most `calc(100dvh - 96px)` tall, `--pw-z-dialog`.
 - **Sections,** divided by 1 px `--pw-border`:
-  - **Header:** padding 12 px 16 px; the title (l 16/24, 600); a ghost md `close` icon button at the right; an optional meta subtitle in `--pw-text-muted`.
+  - **Header:** padding 12 px 16 px; the title (l 16/24, 600); a ghost md `close` icon button at the right, "Close", with Esc's key cap in its tooltip; an optional meta subtitle in `--pw-text-muted`, which describes the dialog (`aria-describedby`).
   - **Body:** padding 16 px, scrolls, fields 16 px apart.
-  - **Footer:** padding 12 px 16 px; optional meta text at the left; at the right, outline "Cancel" then the primary action, 12 px apart.
+  - **Footer:** padding 12 px 16 px; optional meta text at the left, in `--pw-text-subtle`; at the right, outline "Cancel" then the primary action, 12 px apart.
 - **Behaviour:**
   - `role="dialog"`, `aria-modal="true"`, `aria-labelledby` (the title).
-  - Focus moves to the first field on open, Tab is trapped inside, and focus returns to the opener on close.
+  - Focus moves to the first field on open, Tab and Shift + Tab are trapped inside, and focus returns to the opener on close.
   - Escape closes it, except while submitting (and it doesn't also close the session view behind).
-  - A click on the backdrop closes it only when nothing has been typed.
-- **Busy:** the primary button's busy state; the other controls are `aria-disabled`.
-- **Failure:** an inline danger alert at the end of the body, above the footer.
+  - A click on the backdrop closes it only when nothing has been typed. A press that starts in the card and ends on the backdrop, as when selecting text, isn't a click on it, and a press on the backdrop doesn't take focus out of the dialog.
+- **Busy:** the primary button's busy state; the other controls are `aria-disabled`, Close included, and the text fields are read-only. Escape and the backdrop do nothing.
+- **Failure:** an inline danger alert, `role="alert"`, at the end of the body, above the footer.
 
 **New session dialog:**
 
 - **Fields:**
-  - Directory: a select of the groups' directories, plus "Another directory under a root…", which reveals a mono path field. Help text: "Under *roots*."
+  - Directory: a select of the groups' directories, plus "Another directory under a root…", which reveals a mono path field. Help text: "Under *roots*.", linked to both.
   - Name: optional, placeholder "Claude Code names it from the prompt".
-  - Model: optional; a select of Default, the aliases, and "Other…", which reveals a field.
+  - Model: optional; a select of Default, the aliases, and "Other…", which reveals a mono field.
   - First prompt: a textarea, 6 rows.
-- **Intro:** meta text under the title: "Starts a background session with `claude --bg`, which you can open from the list."
-- **Footer:** "Cancel" and "Start session". ⌘/Ctrl + Enter submits from any field.
-- **Trust failure:** an inline danger alert, "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:", with the command and a copy button.
+- **Problems** show after the first submit, then follow the typing; a submit, or ⌘/Ctrl + Enter, puts focus on the first field with one. Each is linked to its field with `aria-describedby`, and the field is `aria-invalid`.
+- **Intro:** the subtitle: "Starts a background session with `claude --bg`, which you can open from the list."
+- **Footer:** "⌘ ↵ to start" as key caps (Ctrl on other platforms) at the left; "Cancel" and "Start session" ("Starting…" while busy) at the right. ⌘/Ctrl + Enter submits from any field.
+- **Failure:** "Couldn't start the session." then the server's message in code style; or pitwall's own sentence, such as "Couldn't start the session (HTTP 500)."
+- **Trust failure:** the same alert, then "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:", with the command in a [command chip](#copy) and its copy button, "Copy command".
+- **Started:** the dialog closes, a toast says "Started *name*. Its view opens when it shows up in the list.", and the view opens once the session is listed.
 
 ### Menus
 
-- **Component:** `MenuButton` (`web/src/components/Menu.tsx`), which takes the button's icon and name and a list of items and separators. The other overlays build on it.
+- **Component:** `MenuButton` (`web/src/components/Menu.tsx`), which takes the button's icon and name and a list of items and separators. The session view's actions menu is the one menu the doc calls for; anything that later needs a menu of actions builds on it.
 - **Panel:** `--pw-surface-overlay`, `--pw-shadow-2`, `--pw-radius-md`, padding 4 px, min-width 192 px, `--pw-z-dropdown`. It opens 4 px below the button, aligned to its end edge, and flips up when the button is on screen and there's no room below but there is above.
 - **Items:** 32 px tall, padding 6 px 8 px, `--pw-radius-sm`, m 14/20, a 16 px icon in `--pw-text-muted` 8 px before the label.
   - Hover and keyboard highlight: `--pw-surface-hover`. Keyboard focus also shows `--pw-ring-focus-inset`, since the panel's 4 px padding would clip the outer ring, and a hover fill alone is under 3:1.
   - Danger items: `--pw-danger-fg` text and icon; highlighted, a `--pw-danger-tint` fill with `--pw-danger-tint-fg` text and icon, the pair 2.5 checks.
-  - Disabled items: `aria-disabled`, `--pw-text-disabled`, no highlight on hover, the reason as hover text. The arrows still reach them, and activating one does nothing and keeps the menu open.
+  - Disabled items: `aria-disabled`, `--pw-text-disabled`, no highlight on hover, the reason in a [tooltip](#tooltips), on hover and when the arrows reach the item, which it describes (`aria-describedby`). The arrows still reach them, and activating one does nothing and keeps the menu open.
 - **Separator:** `role="separator"`, 1 px `--pw-border`, 4 px above and below.
 - **Semantics:** a `<button aria-haspopup="menu" aria-expanded aria-controls>` (ghost md icon button, `aria-label` and the same tooltip) opening `role="menu"`, named like the button, with `role="menuitem"` items, each `tabindex="-1"`.
-  - Opening, by a click, Enter or Space, focuses the first item, without scrolling the page.
+  - Opening, by a click, Enter or Space, focuses the first item, without scrolling the page. The button's tooltip closes as the menu opens.
   - ↑/↓ move, wrapping at the ends; Home and End jump; Enter or Space activates; Escape and Tab close. ↑/↓ on the closed button don't open it, so the session view's header can use them.
-  - Focus returns to the button on close. An item runs after that, so one that opens something, such as a confirmation, can move focus on from there. Tab goes on from the button to the next control.
-  - A press outside closes it, leaving focus where the press puts it. Escape is handled in the menu, so nothing behind it closes too.
+  - Focus returns to the button on close, without opening its tooltip, which would only be one more thing for the next Escape. An item runs after that, so one that opens something, such as a confirmation, can move focus on from there. Tab goes on from the button to the next control.
+  - A press outside closes it, leaving focus where the press puts it. Escape is handled in the menu, so nothing behind it closes too, and it closes a disabled item's tooltip with the menu.
 
 ### Toasts
 
-- **Placement:** a stack at the bottom right, 24 px from the edges (16 px and full width below 600 px), newest at the bottom, 12 px apart, at most three (the oldest goes first), `--pw-z-toast`.
+- **Component:** `ToastProvider` and `useToast()` (`web/src/components/Toast.tsx`). The Dashboard keeps the stack inside the app, from its first render.
+- **Placement:** a stack at the bottom right, 24 px from the edges (16 px and full width when the app is 600 px wide or narrower), newest at the bottom, 12 px apart, at most three (the oldest goes first), `--pw-z-toast`. Only the toasts take the pointer, not the stack around them.
 - **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-md`, `--pw-toast-w` wide, padding 8 px.
-  - A 28 px icon tile (`--pw-<tone>-tint` with `inset 0 0 0 1px var(--pw-<tone>-border)`, `--pw-radius-sm`, a 16 px icon in `--pw-<tone>-tint-fg`).
-  - The message (m 14/20, 500), 12 px after the tile.
-  - A ghost sm `close` button ("Dismiss").
+  - A 28 px icon tile (`--pw-<tone>-tint` with `inset 0 0 0 1px var(--pw-<tone>-border)`, `--pw-radius-sm`, a 16 px icon in `--pw-<tone>-tint-fg`): `success`, `info`, or `error` on the danger tokens.
+  - The message (m 14/20, 500), 12 px after the tile, as text.
+  - A ghost sm `close` button, named "Dismiss" by its tooltip. Focus it had goes to the next toast's Dismiss, or the one before, or the session list's heading.
 - **Timing:**
-  - Success and info toasts dismiss after `--pw-toast-timeout` (4 s), pausing while hovered or while focus is inside.
+  - Success and info toasts dismiss after `--pw-toast-timeout` (4 s). The time stops while the pointer is over the stack or focus is inside it, and goes on from where it was.
   - Error toasts stay until dismissed.
-- **Live region:** the stack is an `aria-live="polite"` region that always exists in the DOM; error toasts use `role="alert"`.
-- **Use them for** results the user isn't looking at: "Copied", "Stopped. Its conversation is kept.", "Session started", "Removed *name*".
+  - The same message again replaces the toast that says it, so it's announced again without stacking.
+- **Live region:** the stack is an `aria-live="polite"` region that always exists in the DOM, so a toast's text arrives in a region that was already there and is announced; error toasts use `role="alert"`.
+- **Use them for** results the user isn't looking at: "Copied", "Couldn't copy; the text is selected" (an error), "Stopped. Its conversation is kept.", "Started *name*. Its view opens when it shows up in the list.", "Removed *name*".
 - **Don't use them for** form errors, the relay's delivery result, or anything that needs a decision. Those stay inline.
 
 ### Tooltips
 
-- **Card:** `--pw-surface-overlay`, `--pw-shadow-1`, `--pw-radius-md`, padding 6 px 8 px, meta size (13/20), `--pw-text`, at most 344 px wide, `--pw-z-tooltip`, 6 px from its trigger.
-  - It sits above the trigger by default and flips when there's no room.
+- **Component:** `Tooltip` (`web/src/components/Tooltip.tsx`), around its trigger, the one child, which takes its handlers and ARIA. `InfoTip` is an info button with one.
+- **Card:** `--pw-surface-overlay`, `--pw-shadow-1`, `--pw-radius-md`, padding 6 px 8 px, meta size (13/20), `--pw-text`, at most 344 px wide, `--pw-z-tooltip`, 6 px from its trigger. Line breaks in its text are kept.
+  - It sits above the trigger by default, centred on it and kept 8 px inside the window, and flips below when there's no room above.
+  - It's rendered into `document.body`, fixed to the window, so no scrolling pane, overflow or stacking context cuts it off, and it follows its trigger as anything scrolls.
   - Key caps go at the end, 8 px after the text.
-- **Opens** on hover after `--pw-delay-tooltip` and on keyboard focus at once.
-- **Closes** on Escape, blur and pointer leave. It stays while the pointer is over the tooltip itself (WCAG 1.4.13).
-- **Semantics:** the trigger's `aria-describedby` points at the tooltip, or the tooltip is the trigger's `aria-label` for an icon button.
-- **Replace `title` attributes** with this component, except on elements that are never focusable. Keep those `title`s short and duplicate their content elsewhere when it matters.
+- **Opens** on hover after `--pw-delay-tooltip`, or at once when another is open or has just closed, and on keyboard focus (`:focus-visible`) at once. Not on a click's focus, nor when focus is put back on the trigger as something closes (`focusQuietly`). Touch doesn't hover, so a tap doesn't open it.
+- **Closes** on Escape, blur, pointer leave and a press on its trigger, at once. It stays while the pointer is over the tooltip itself (WCAG 1.4.13): the card's hit area reaches back over the 6 px gap.
+  - Escape is the nearest layer (6.2): it closes the tooltip and goes no further. Inside a menu, Escape closes the menu and its tooltip together; inside the terminal, the terminal gets it.
+- **Semantics:**
+  - For an icon button, the tooltip is the trigger's `aria-label`, so its name and its tooltip match, and the tooltip itself is hidden from assistive technology.
+  - Otherwise the trigger's `aria-describedby` points at the tooltip, which is always in the DOM, hidden while closed, so the description is there before it shows. A disabled control says why this way: Send, the Terminal tab, a menu item.
+  - On an element that's never focusable, such as a badge, a title or a time, it's linked to nothing and opens on hover only.
+- **Replace `title` attributes** with this component. On an element that's never focusable it can only repeat what's in the DOM, such as a title cut short, or explain a label, such as Stale. A tooltip that only repeats text shows only when that text is cut short. The conversation's entries keep the browser's `title` until W27 rebuilds them.
+- **Info buttons** (`InfoTip`): a ghost sm `info` icon button, so Tab reaches it, named by its explanation, which is its tooltip. A click or a tap pins it open, since touch screens can't hover; a second click, a press elsewhere, blur or Escape hides it.
 - **Never the only place** for essential information; touch users can't hover.
 
 ### Skeletons and spinners
@@ -1207,19 +1224,22 @@ For a destructive or surprising action in the session view, without a dialog.
 
 ### Copy
 
-- **Copy buttons:** a ghost sm icon button (`copy`), labelled with what it copies ("Copy attach command", "Copy session ID", "Copy path").
-  - After a successful copy, the icon becomes `copied` for 2 s and a "Copied" toast appears.
-  - If the clipboard refuses, select the text on screen and show "Couldn't copy; the text is selected" as the button's tooltip and in the toast.
-- **Command chips:** code style, `--pw-surface-sunken`, `--pw-radius-sm`, padding 0 6 px, `user-select: all`, with a middle ellipsis and the full command in a tooltip. A copy button follows.
+- **Every copy goes through `copy.ts`:** `useCopy()` writes to the clipboard `ClipboardContext` gives, the browser's by default, and the `#uikit` gallery gives a stub.
+- **Copy buttons:** `CopyButton` (`web/src/components/CopyButton.tsx`), a ghost sm icon button (`copy`), named by its tooltip with what it copies ("Copy attach command", "Copy session ID", "Copy path", "Copy command").
+  - After a successful copy, the icon becomes `copied` for `--pw-copied-timeout` (2 s) and a "Copied" toast appears.
+  - If the clipboard refuses, select the text on screen and show "Couldn't copy; the text is selected" as the button's tooltip, which then describes it, until the next copy, and in an error toast.
+  - The actions menu's Copy session ID and Copy attach command give the same toasts. Their text isn't on screen, so a refusal shows it under the session view's line 2, selected.
+- **Command chips:** `CopyCommand`: code style, `--pw-surface-sunken`, `--pw-radius-sm`, padding 0 6 px, `user-select: all`, with a middle ellipsis and the full command in a tooltip when it's cut. A copy button follows.
 - **Write inside the click handler** (Safari rejects a deferred write), and fall back to selecting the text.
 
 ### Timestamps
 
+- **Component:** `Timestamp` (`web/src/components/Timestamp.tsx`).
 - **Relative, in rows and meta:** "just now" under 5 s, then "42s ago", "5m ago", "3h ago" (under 48 hours), "2d ago".
-  - Meta size, `--pw-text-subtle`, tabular, in `<time datetime>`, with the absolute time in a tooltip.
+  - Meta size, `--pw-text-subtle`, tabular, in `<time datetime>`, with the absolute time in a tooltip, on hover: times aren't focusable.
 - **The header's "updated 7s ago"** counts in seconds below a minute, so it visibly ticks.
 - **Absolute:** the user's locale, with seconds: "20 Oct 2026, 11:06:14". In the conversation's speaker line, only the time ("11:06"), with the full date in the `datetime`.
-- **Updates:** relative times update every second from one shared clock. They're never in a live region.
+- **Updates:** relative times update every second from one shared clock (`web/src/clock.ts`): one interval for the page, running only while a time is on screen. Each timestamp re-renders itself on the tick, so nothing else does. They're never in a live region.
 
 ### Terminal
 
@@ -1332,7 +1352,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
 9. **Announcements:**
    - The connection badge is `role="status"`.
-   - Results the user asked for are announced: send results, stop and remove results, copy.
+   - Results the user asked for are announced: send results, stop and remove results, copy. Stop, remove, copy and a started session are toasts, announced by the toasts' live region, which is always in the DOM.
    - Snapshot updates, ticking times and the list's re-sorting are never announced.
    - The document title carries the count: "(2) pitwall".
 10. **Forms:**
@@ -1360,7 +1380,7 @@ Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only when focus isn't in a t
 | ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading |
 | Enter | On a session row | Open the session |
 | ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
-| Escape | Layered, nearest first | Close a tooltip or menu → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
+| Escape | Layered, nearest first | Close a tooltip or menu (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
 | ⌘/Ctrl + Enter | The message box | Send |
 | ⌘/Ctrl + Enter | The New session dialog | Start the session |
 | ← / →, Home / End | The tab list | Move focus between Conversation and Terminal; Enter or Space opens the focused tab |
