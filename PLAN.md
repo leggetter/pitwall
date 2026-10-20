@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 and M1 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, is in progress on `m2/integration`: the security gate, session view, attach, and spawn, stop and remove, finished sessions and the relay are merged. |
+| **Status** | M0, M1 and M2 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, is next. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Phil's try-out and approval (W15)<br>- Then merge `m2/integration` into `main` |
+| **Next steps** | - Write `docs/design-system.md` (M3)<br>- Then the restyle, in the order under M3 |
 
 ## Who is this for
 
@@ -140,7 +140,7 @@ Spikes 001 and 002 confirmed every interface pitwall relies on. See "M0: spike" 
 - **Transcripts:** read them from a byte offset, never whole files (434 KB after two one-word turns).
 - **Cross-session messages:** tell them apart from my own prompts. They're `user` entries with `isMeta: true` and content starting `Another Claude session sent a message:`.
 
-### M2 - Interact with sessions from the web UI (next)
+### M2 - Interact with sessions from the web UI (done)
 
 Open a session from its row, drive background sessions fully in the browser, start new sessions, and stop or remove them. Prioritised ahead of the PR view by Phil on 2026-10-16.
 
@@ -149,7 +149,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
 | Session kind | In the web UI | How |
 | --- | --- | --- |
 | Background, including sessions pitwall starts | Full interaction: type prompts, answer permission prompts and dialogs | xterm.js over a PTY running `claude attach <id>` (D3, spike S3) |
-| Interactive, in Warp or Cursor | **Send it a message.** The message starts a turn, and the session does the work within its own permissions and rules. It can't take a permission approval from me, and it sees the message as coming from another session (spike 002) | A relay: a headless Claude session (`claude -p`) that pitwall runs, limited to `SendMessage` behind a gate (D2, D8). The M4 supervisor later takes over this role |
+| Interactive, in Warp or Cursor | **Send it a message.** The message starts a turn, and the session does the work within its own permissions and rules. It can't take a permission approval from me, and it sees the message as coming from another session (spike 002) | A relay: a headless Claude session (`claude -p`) that pitwall runs, limited to `SendMessage` behind a gate (D2, D8). The M5 supervisor later takes over this role |
 | Interactive, moved with `/bg` | Full interaction, like any background session. The row explains the route: "Type `/bg` in its terminal to drive it fully from here" | `claude attach`, as above |
 
 **Order of work:**
@@ -166,7 +166,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
    - `claude attach` restarts a background session that isn't running (done, stopped or failed). That's an action, so the UI asks first: "This session has finished, or its process has exited. Attaching restarts it." The server decides when the socket opens, re-reading `claude agents --json --all` when the snapshot's process isn't alive. A session that is still starting gets "try again in a moment" instead.
 4. **Message interactive sessions through a relay.**
    - **The relay:** on first use, pitwall starts one headless session as its own child process, `claude -p` with stream-json input and output, named `pitwall-relay`, on Haiku, in `~/.pitwall/relay/`. Its only tool is `SendMessage`, behind a gate that allows only the exact message I asked for (D8), and it's instructed to pass my text on verbatim. Pitwall writes each request to its stdin, so the text never appears in process arguments, and restarts it if it exits (D8).
-   - **Sending:** a "Message this session" box on interactive rows. The relay reports what `SendMessage` returned (delivered, held for approval, or refused), and pitwall shows it.
+   - **Sending:** a "Message this session" box at the foot of an interactive session's view, which the row's Message button opens ([#20](https://github.com/leggetter/pitwall/pull/20)). The relay reports what `SendMessage` returned (delivered, held for approval, or refused), and pitwall shows it.
    - **Replies:** the target's work shows in its own transcript, in the session view. A reply it sends back reaches the relay, and pitwall shows it on the target's row. The relay stops with pitwall, so a reply that arrives after that shows only in the target's own conversation.
    - **Cost:** one Haiku turn in the relay, plus one turn on the target's own model and effort, which is the same as typing the prompt there.
    - **Limits:**
@@ -190,9 +190,27 @@ Open a session from its row, drive background sessions fully in the browser, sta
 - **Detect a transcript rewritten in place** within one poll (W6 finding 7), if Claude Code ever does that.
 - **Tests never touch a real session.** Anything that attaches, spawns, stops or removes uses throwaway `pitwall-test-*` sessions on Haiku, removed afterwards. Live checks stay behind `PITWALL_LIVE=1`.
 
-### M3 - My open pull requests
+### M3 - Design system and restyle (next)
 
-Read-only, and separate from the session index. Requested by Phil on 2026-10-16, and scheduled after M2 at his request.
+A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled to it. It's pitwall's own design system, not Hookdeck's. Requested by Phil on 2026-10-20 after trying M2, which also moved the message box to the foot of the session view ([#20](https://github.com/leggetter/pitwall/pull/20)). Whether pitwall is open-sourced, and how, is undecided.
+
+- **Reference:** `docs/design-system.md`, pitwall's spec: tokens by role (surface, text, border, tone) for light and dark, type, spacing, components, states, layout and keyboard. Every text colour pair meets WCAG AA. A dev-only gallery in the app (`#uikit`) shows each component and is the living reference.
+- **Look:** the palette, type and component shapes are inspired by Hookdeck's, with contrast raised wherever it falls short of AA. No Hookdeck logo, illustrations or integration logos.
+- **Fonts and icons:** Inter and JetBrains Mono (both OFL 1.1), self-hosted, because the CSP (`default-src 'self'`) blocks Google Fonts. Icons from Lucide (ISC). The theme's pre-paint script is a same-origin file, for the same reason.
+- **Order of work:**
+  1. The design system doc.
+  2. Tokens by role, with no visual change: today's CSS custom properties renamed.
+  3. The `#uikit` gallery.
+  4. The app shell: full width, a compact header, and only the panes scroll, instead of one centred column.
+  5. The session view beside the list on wide windows (from about 1,100 px) and over it below that, with a sticky header, Conversation and Terminal tabs, ↑/↓ to move between sessions, and the open session in the URL.
+  6. Rows, status badges (sentence case, with only "needs you" filled), the message box (⌘↵ to send, the result inline, focus kept after a send, and no second copy of the latest reply), and the relay alert, which keeps an indicator after it's dismissed while the relay is off.
+  7. Then: keyboard shortcuts (`/` to search, j/k, Enter, Escape, `n` for a new session), runs of tool calls folded into one row with a "Jump to latest" bar, and skeleton, empty and error states.
+- **Also from the try-out:** a plain error, not a stack trace, when pitwall runs in a directory that no longer exists. It reads the current directory even when every root is absolute.
+- **Open:** should a session that needs me stay visible inside a collapsed group? That changes "groups start collapsed" (W7 feedback). Lean: yes, because collapsing was meant to cut the wall of text, not hide what's waiting.
+
+### M4 - My open pull requests
+
+Read-only, and separate from the session index. Requested by Phil on 2026-10-16, and scheduled after M2 at his request. M3, the design system, went in ahead of it on 2026-10-20; Phil didn't mind the order.
 
 - **Source:** one GraphQL search through `gh api graphql` (`is:pr is:open author:@me archived:false`), run with `execFile` and no shell, so the GitHub token stays inside `gh`.
   - One query returns the repo, number, title, draft, `reviewDecision`, `mergeable`, the latest commit's `statusCheckRollup` and `updatedAt`.
@@ -207,9 +225,9 @@ Read-only, and separate from the session index. Requested by Phil on 2026-10-16,
 - **Contract:** a separate `prs` message type and `GET /api/prs`, behind the same token and `Origin` checks. PR titles from private repos are as sensitive as session data.
 - **Fails soft:** if `gh` is missing or not logged in, the panel says so, and the sessions view is unaffected.
 
-### M4 - Supervisor
+### M5 - Supervisor
 
-Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions. It's a background Claude Code session (D4), and it takes over M2's relay. How pitwall prompts it is decided at the start of M4: a running background session can't take a new prompt without a terminal (spike 003), which is why M2's relay is a headless process instead.
+Pitwall starts and owns a supervisor session, shown in its own panel. The supervisor can list, summarise, message and spawn sessions. It's a background Claude Code session (D4), and it takes over M2's relay. How pitwall prompts it is decided at the start of M5: a running background session can't take a new prompt without a terminal (spike 003), which is why M2's relay is a headless process instead.
 
 - **First: titles from each session's recent turns** (W7 decision C), replacing Claude Code's first-prompt titles from M1.
   - **Spike first:**
@@ -221,9 +239,9 @@ Pitwall starts and owns a supervisor session, shown in its own panel. The superv
 - **Status comes from pitwall's index** (D1 polling and transcripts), not from messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
 - **Don't subscribe to idle notices broadly.** Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
 
-### M5 - Triage
+### M6 - Triage
 
-Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using the session index, the supervisor and M3's PR and CI state.
+Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using the session index, the supervisor and M4's PR and CI state.
 
 - **The supervisor refines M1's `askedYou` heuristic:** it reads each idle session's latest turns and judges whether it really needs me, and how urgently.
 - **Age is a signal.** In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
@@ -242,7 +260,8 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 | W12 | Spawn, stop and remove | `m2/spawn` | Sub-agent | Merged ([#12](https://github.com/leggetter/pitwall/pull/12)) |
 | W13 | Integration, and a live check with throwaway `pitwall-test-*` sessions | `m2/integration` | Coordinator | In progress: finished sessions listed muted, merged ([#14](https://github.com/leggetter/pitwall/pull/14)); the live check of the integrated branch passed on 2026-10-19 |
 | W14 | Review with the `role-reviewer` skill, security first | - | Sub-agent | Done 2026-10-19: changes requested, one medium finding. Fixes merged in [#16](https://github.com/leggetter/pitwall/pull/16) and [#17](https://github.com/leggetter/pitwall/pull/17). Re-check at `97e4664`: approved; follow-ups merged in [#18](https://github.com/leggetter/pitwall/pull/18) |
-| W15 | Try it, and approve the merge | - | Phil | After W14 |
+| W15 | Try it, and approve the merge | - | Phil | Approved 2026-10-20. Feedback: the message box belongs at the foot of the session view, as in agent UIs, and the UI should follow Hookdeck's UX (M3) |
+| W16 | The message box at the foot of the session view, from W15 | `m2/composer-bottom` | Sub-agent | Merged ([#20](https://github.com/leggetter/pitwall/pull/20)) |
 
 ### Security gate as built (W8, 2026-10-16)
 
@@ -263,7 +282,7 @@ Same way of working as M1. The coordinator owns the contract and the docs, sub-a
 - **Stopped background sessions left the list** (W12). After `claude stop`, a session has no process and appears only in `claude agents --json --all`, so it couldn't be removed, or attached to restart it.
   - **Decision (coordinator):** the index lists with `--all`, and the UI shows done, stopped and failed background sessions muted, like agent view's Completed group. Built at integration (W13) in [#14](https://github.com/leggetter/pitwall/pull/14): a `SessionSummary.finished` field, a muted, collapsed "Finished (n)" list per group that also counts the questions inside it, and group order that ignores finished sessions.
 - **`--all` costs nothing measurable** (W13). 15 alternating runs of each form on Claude Code 2.1.302, with 16 sessions, or 18 with `--all`: a median of 0.14 s wall time, 0.145 s of CPU and about 150 MB at peak, either way.
-- **A slow window in `claude agents --json`** (W13). For about 8 minutes on 2026-10-19, both forms took 18 to 34 s, about 4 s of CPU and 320 to 415 MB. It didn't reproduce, and the cause is unknown. During a window like that, pitwall's 10 s timeout fails every poll and shows the failure banner. Watch for it in the live check.
+- **No slow window: a quoting slip in a benchmark** (W13, corrected 2026-10-20). The 18 to 34 s runs on 2026-10-19 came from a timing loop that ran `claude $args` in zsh, which doesn't split an unquoted variable. `claude` got `agents --json` as one argument, took it as a prompt, and ran 16 full sessions on Opus 5.5 in a scratch directory. They used only `ListAgents` and read-only shell commands; the two checked cost $0.27 and $0.31. Pitwall isn't affected, because it passes `['agents', '--json', '--all']` to `execFile`. In live-check scripts, pass arguments as arrays.
 - **The live check of the integrated branch passed** (W13, `07f43c2`, 2026-10-19). 11 checks against the built CLI with throwaway Haiku sessions: the index (finished rows, the relay hidden), spawn (and the untrusted-directory error, with no trust granted), session view paging, attach (and the limit of 4), stop, restart by attaching, remove, the relay (delivered with a reply, 409 for a background session, ambiguous names), the security negatives (`Origin`, the raw token, `Host`, unknown ids, wrong proofs, no token or message text in `ps`), shutdown by SIGTERM and by SIGKILL with no orphans, and a headless UI smoke.
 - **A stopped idle session stays `done`** (W13). Claude Code reports `stopped` only for a session stopped mid-turn. `finished` covers both.
 - **Left for the review's fixes** (W13), fixed in [#16](https://github.com/leggetter/pitwall/pull/16) and `m2/relay-gate`:
@@ -335,7 +354,7 @@ All three decided by Phil on 2026-10-16. D8 was revised on 2026-10-19, after spi
   - **Requires Claude Code 2.1.295 or later,** for `onFailure`. Pitwall checks `claude --version` before the relay's first start, and refuses an older or unreadable version.
   - **Trust:** `-p` skips the trust dialog, which guards against a directory's own config running before you agree. The relay's directory is pitwall's own, empty and 0700.
   - **Trade-off:** a reply that arrives after pitwall exits isn't shown in pitwall. The target's conversation still has it.
-  - **Decided: D, by Phil on 2026-10-19.** The M4 supervisor replaces it.
+  - **Decided: D, by Phil on 2026-10-19.** The M5 supervisor replaces it.
 - **D9 - Attach limits:** one PTY per open session view, at most 4 at once, and closing the view or the tab detaches. Attaching to a background session that isn't running asks first, because `claude attach` restarts it. **Decided: as described.**
 
 ## M1 work breakdown
@@ -361,7 +380,7 @@ The coordinator, a Claude Code session working with Phil, owns `src/shared/proto
 Run read-only against `~/hookdeck/git`: 17 of 17 sessions found and grouped by repo, live updates every poll, no console errors, clean shutdown, 315 tests passing.
 
 - **"Needs you" missed most of what needed Phil.** 1 of 17 sessions was flagged, against 10 in the manual sweep that morning. Interactive sessions only report busy or idle, so one that ended its turn with questions looks the same as one that's done.
-  - **Decision (Phil):** option C. Add a transcript heuristic now (`askedYou` in the contract). M5 triage, with the M4 supervisor, refines it later.
+  - **Decision (Phil):** option C. Add a transcript heuristic now (`askedYou` in the contract). M6 triage, with the M5 supervisor, refines it later.
 - **Stale missed abandoned jobs that still had a process.** A background job blocked since 24 Sep was flagged as needing Phil. Stale is now 7 days without activity, with or without a process.
 - **Raw markdown made the rows hard to read.** The index now strips markdown syntax before truncating.
 - **A deleted working directory grouped as a plain folder.** Rows now say the directory no longer exists (`cwdMissing`).
@@ -369,10 +388,10 @@ Run read-only against `~/hookdeck/git`: 17 of 17 sessions found and grouped by r
   - **Matched the morning sweep:** every session it had rated as waiting that still was, 7 sessions.
   - **Correctly cleared:** two sessions that had moved on since the morning.
   - **Extra flags:** small or moot questions the morning sweep had rated as housekeeping or closeable, including one whose question went moot when its PR merged.
-  - **What that means:** the heuristic finds what's waiting; judging urgency and spotting moot questions is M5's job.
+  - **What that means:** the heuristic finds what's waiting; judging urgency and spotting moot questions is M6's job.
 - **Heuristic rules decided:**
   - **An "Open questions: None" section decides,** even if a later line ends in a question mark. That matches how Phil's sessions write.
-  - **Ranking older questions lower is left for M5.**
+  - **Ranking older questions lower is left for M6.**
 
 ### W6 review findings (2026-10-16)
 
@@ -408,7 +427,7 @@ From Phil's first look at the running UI.
 - **Session names like `git-a0` don't say what a session is about.**
   - **Decision:** option C.
     - **Now:** show Claude Code's own generated title after the name (`titleSource: 'claude-code'`). It's free, but it's set once from the first prompt and never updated.
-    - **M4:** replace it with a title pitwall generates from the session's recent turns (`titleSource: 'pitwall'`).
+    - **M5:** replace it with a title pitwall generates from the session's recent turns (`titleSource: 'pitwall'`).
 
 ### Module layout
 
@@ -448,10 +467,11 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] Settle D1-D4 and D6
 - [x] Confirm D5, the stack (Phil)
 - [x] Build M1 (merged in #6)
-- [ ] M2: interact with sessions, security gate first
-- [ ] M3: my open pull requests
-- [ ] M4: supervisor
-- [ ] M5: triage
+- [x] Build M2, security gate first (merged in #19)
+- [ ] M3: design system and restyle, inspired by Hookdeck's UX
+- [ ] M4: my open pull requests
+- [ ] M5: supervisor
+- [ ] M6: triage
 
 ---
 
