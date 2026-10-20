@@ -25,9 +25,9 @@ describe('THIRD_PARTY_NOTICES.md', () => {
     expect(notices).toContain(`\`@fontsource/jetbrains-mono\` ${versionOf(monoManifest)}`);
   });
 
-  it('names the icon release that paths.ts came from', () => {
-    const version = /@material-symbols\/svg-400@(\d+\.\d+\.\d+)/.exec(pathsSource)?.[1];
-    expect(version).toBeDefined();
-    expect(notices).toContain(`\`@material-symbols/svg-400\` ${version}`);
+  it('names the icon commit that paths.ts came from', () => {
+    const commit = /google\/material-design-icons at commit\s*\/\/\s*([0-9a-f]{40})\b/.exec(pathsSource)?.[1];
+    expect(commit).toBeDefined();
+    expect(notices).toContain(`\`${commit}\``);
   });
 });
