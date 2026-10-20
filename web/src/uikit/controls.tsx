@@ -7,7 +7,7 @@ import { Alert, Detail } from '../components/Alert.js';
 import { Button, type ButtonVariant } from '../components/Button.js';
 import { KeyCaps, modEnter } from '../components/KeyCaps.js';
 import { Spinner } from '../components/Spinner.js';
-import { relayAlertText } from '../relay.js';
+import { relayAlertText, STATUS_TEXT } from '../relay.js';
 import { RELAY_ALERT_BLOCKED, RELAY_ALERT_OFF, RELAY_OFF } from './fixtures.js';
 import { Specimen } from './kit.js';
 
@@ -96,7 +96,7 @@ const blocked = relayAlertText(RELAY_ALERT_BLOCKED);
 const sent = relayAlertText(RELAY_ALERT_OFF);
 const off = relayAlertText(RELAY_ALERT_OFF, RELAY_OFF);
 
-/** Each tone, as the page alerts use them, and one with an action, standalone and at 375 px. */
+/** Each tone, as the page alerts and the message box use them, and one with an action, standalone and at 375 px. */
 function AlertSet() {
   return (
     <div className="uikit-stack">
@@ -112,11 +112,8 @@ function AlertSet() {
       <Alert tone="warning" title={blocked.title} onDismiss={noop}>
         {blocked.summary} {blocked.count} Latest: <Detail>{RELAY_ALERT_BLOCKED.detail}</Detail>
       </Alert>
-      <Alert tone="neutral" onDismiss={noop}>
-        Started pitwall-test-started. Its view opens when it shows up in the list.
-      </Alert>
       <Alert tone="neutral">Lost the connection to pitwall. Reconnecting; this list may be out of date.</Alert>
-      <Alert tone="success">Stopped. Its conversation is kept.</Alert>
+      <Alert tone="success">{STATUS_TEXT.delivered}</Alert>
       <Alert
         tone="info"
         title="An info alert with an action"
@@ -161,7 +158,7 @@ export function Alerts() {
       >
         <AppStrip off={RELAY_OFF} onDetails={noop} />
       </Specimen>
-      <Specimen title="App strip at 375 px" note="One line, 32 px: the sentence ends in an ellipsis, with the whole of it in the hover text, and Details stays." width={375}>
+      <Specimen title="App strip at 375 px" note="One line, 32 px: the sentence ends in an ellipsis, with the whole of it in a tooltip, and Details stays." width={375}>
         <AppStrip off={RELAY_OFF} onDetails={noop} />
       </Specimen>
     </>

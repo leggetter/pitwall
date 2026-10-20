@@ -35,67 +35,58 @@
   }
 }
 
-/* The New session dialog */
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 48px 16px;
-  overflow-y: auto;
-  background: var(--pw-backdrop);
-}
-
-.modal {
-  width: min(620px, 100%);
-  background: var(--pw-surface-overlay);
-  border-radius: var(--pw-radius-lg);
-  box-shadow: var(--pw-shadow-3);
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px 20px;
-}
-
-.modal-title {
-  font-size: var(--pw-text-l);
-  font-weight: var(--pw-weight-bold);
-  line-height: var(--pw-leading-l);
-}
+/*
+ * Fields (docs/design-system.md, 4: Inputs, textareas and selects), as the New session dialog uses
+ * them: the label above, 4 px away, in label type, with "optional" after it; the 32 px field; then the
+ * help text and the error below, in meta type, each linked to the field with aria-describedby.
+ */
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--pw-space-1);
 }
 
 .field-label {
-  font-weight: var(--pw-weight-bold);
-  font-size: var(--pw-text-m);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
 }
 
 .field-optional {
-  margin-left: 4px;
-  color: var(--pw-text-muted);
+  margin-left: var(--pw-space-1);
+  color: var(--pw-text-subtle);
   font-weight: var(--pw-weight-regular);
-  font-size: var(--pw-text-xs);
 }
 
-.field select,
-.field-input {
+.field-input,
+.field .select-input {
   width: 100%;
-  padding: 6px 8px;
+  min-height: var(--pw-control-lg);
+  margin: 0;
+  padding: var(--pw-space-1-5) var(--pw-space-3);
   background: var(--pw-surface);
   color: var(--pw-text);
-  border-radius: var(--pw-radius-md);
   border: 0;
+  border-radius: var(--pw-radius-md);
   box-shadow: var(--pw-shadow-input);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+/* The select's text clears the icon drawn over its right edge. */
+.field .select {
+  display: flex;
+}
+
+.field .select-input {
+  padding-right: var(--pw-space-8);
+}
+
+/* Paths and model names are in the mono path style. */
+.field-input.mono {
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
 }
 
 /* Placeholders are examples, never the only label (section 4: Inputs). The browser's default is fainter. */
@@ -104,53 +95,52 @@
   opacity: 1;
 }
 
-.field select:focus-visible,
 .field-input:focus-visible {
   box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
 }
 
+/* In a dialog: resizable vertically, at least six rows. */
 .field-prompt {
-  min-height: 7.5em;
+  min-height: calc(6 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
   resize: vertical;
   font-family: var(--pw-font-sans);
-  line-height: var(--pw-leading-m);
 }
 
 .field-input[aria-invalid='true'],
-.field select[aria-invalid='true'] {
+.field .select-input[aria-invalid='true'] {
   box-shadow: var(--pw-shadow-input-error);
 }
 
 .field-input[aria-invalid='true']:focus-visible,
-.field select[aria-invalid='true']:focus-visible {
+.field .select-input[aria-invalid='true']:focus-visible {
   box-shadow: var(--pw-shadow-input-error), var(--pw-ring-focus);
+}
+
+/* While the dialog's action runs, its fields are aria-disabled: the disabled look (section 4: Inputs). */
+.field-input[aria-disabled='true'],
+.field .select-input[aria-disabled='true'] {
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
 }
 
 .field-hint {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
   overflow-wrap: anywhere;
 }
 
 .field-problem {
   color: var(--pw-danger-fg);
   font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
-.spawn-failure {
-  flex-direction: column;
-  align-items: stretch;
-  margin-top: 0;
-}
-
+/* The New session dialog's failure: the trust sentence, then the command chip and its copy button, each on a line of their own. */
+.spawn-trust,
 .spawn-failure .copy-command {
-  margin-left: 0;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  margin-top: var(--pw-space-2);
 }
 
 /* Stop and Remove in the session view: the confirmation and the result, one at a time (InlineConfirm and Alert in styles.css). */

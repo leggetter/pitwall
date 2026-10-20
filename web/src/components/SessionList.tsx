@@ -56,7 +56,6 @@ export interface SessionListProps {
   holdOrder?: boolean;
   /** The selection and the sort order. When it changes, the rows take the new order at once: the reader asked for it. */
   orderKey?: string;
-  now: number;
   onOpen?: ((sessionId: string) => void) | undefined;
   /** ↑ or ↓ on a row's name: the next or previous row in the list as shown. */
   onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
@@ -102,14 +101,13 @@ export interface FinishedSectionProps {
   collapsed: boolean;
   onToggle: () => void;
   showGroup?: boolean;
-  now: number;
   onOpen?: ((sessionId: string) => void) | undefined;
   onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   openSessionId?: string | undefined;
 }
 
 /** "Finished (n)", plus how many of them asked you something, over the finished rows. */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, now, onOpen, onStep, openSessionId }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId }: FinishedSectionProps) {
   const listId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
   const asked = finished.reduce((count, { session }) => count + (session.askedYou ? 1 : 0), 0);
@@ -127,7 +125,6 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
             session={session}
             group={group}
             showGroup={showGroup}
-            now={now}
             onOpen={onOpen}
             onStep={onStep}
             isOpen={session.sessionId === openSessionId}
@@ -152,7 +149,6 @@ export function SessionList({
   showGroup = false,
   holdOrder: holds = false,
   orderKey = '',
-  now,
   onOpen,
   onStep,
   openSessionId,
@@ -206,7 +202,6 @@ export function SessionList({
                 session={session}
                 group={group}
                 showGroup={showGroup}
-                now={now}
                 onOpen={onOpen}
                 onStep={onStep}
                 isOpen={session.sessionId === openSessionId}
@@ -218,7 +213,6 @@ export function SessionList({
                 collapsed={finishedCollapsed}
                 onToggle={onToggleFinished}
                 showGroup={showGroup}
-                now={now}
                 onOpen={onOpen}
                 onStep={onStep}
                 openSessionId={openSessionId}

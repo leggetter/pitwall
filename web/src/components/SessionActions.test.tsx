@@ -4,6 +4,8 @@ import { removePath, stopPath, type IndexSnapshot, type SessionSummary } from '.
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
+import { toastMessages, toastSaying } from '../test/toasts.js';
+import { descriptionOf } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 
 // Made-up sessions only.
@@ -98,7 +100,7 @@ describe('the actions menu', () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
     const interactive = await openView('pitwall-test-interactive');
     expect(openMenu(interactive)).toEqual(['Copy session ID']);
-    expect(within(interactive).getByRole('img', { name: /Typing \/bg in its terminal moves it to the background/ })).toBeTruthy();
+    expect(within(interactive).getByRole('button', { name: /Typing \/bg in its terminal moves it to the background/ })).toBeTruthy();
   });
 
   it('leaves out Copy attach command when the short id fails the shell-safety check', async () => {
@@ -114,7 +116,7 @@ describe('the actions menu', () => {
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     });
 
-    it('copies the session ID, says so, and puts focus back on the menu button', async () => {
+    it('copies the session ID, says so in a toast, and puts focus back on the menu button', async () => {
       renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
       const view = await openView('pitwall-test-bg');
       choose(view, 'Copy session ID');
@@ -123,8 +125,10 @@ describe('the actions menu', () => {
       expect(within(view).queryByRole('menu')).toBeNull();
       expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Session actions' }));
       await settle();
-      expect(view.querySelector('.session-view-copied')?.textContent).toBe('Copied');
-      expect(view.querySelector('.session-view-copied')?.getAttribute('aria-live')).toBe('polite');
+      expect(toastMessages()).toEqual(['Copied']);
+      expect(toastSaying('Copied').className).toBe('toast success');
+      // The view no longer says it itself.
+      expect(view.querySelector('.session-view-copied')).toBeNull();
     });
 
     it("copies the attach command from attachCommand(), never the raw short id", async () => {
@@ -140,7 +144,9 @@ describe('the actions menu', () => {
       const view = await openView('pitwall-test-bg');
       choose(view, 'Copy attach command');
       await settle();
-      expect(view.querySelector('.session-view-copied')?.textContent).toBe("Couldn't copy; the text is selected");
+      // An error toast, which stays until dismissed, and the text on screen, selected.
+      expect(toastMessages()).toEqual(["Couldn't copy; the text is selected"]);
+      expect(toastSaying("Couldn't copy; the text is selected").getAttribute('role')).toBe('alert');
       expect(view.querySelector('.session-view-copy-fallback')?.textContent).toBe('Attach command: claude attach b3899da0');
       expect(window.getSelection()?.toString()).toBe('claude attach b3899da0');
     });
@@ -190,7 +196,7 @@ describe('Stop and Remove', () => {
     expect(postedUrls(server)).toEqual([]);
   });
 
-  it('stops the session once confirmed, and says so', async () => {
+  it('stops the session once confirmed, and says so in a toast', async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
     renderDashboard(server);
     const view = await openView('pitwall-test-bg');
@@ -201,7 +207,9 @@ describe('Stop and Remove', () => {
     expect(postedUrls(server)).toEqual([stopPath(BG)]);
     const call = server.mock.calls.find(([, init]) => init.method === 'POST');
     expect((call?.[1].headers as Record<string, string>).Authorization).toBe(`Bearer ${API_KEY}`);
-    expect(within(view).getByRole('status').textContent).toBe('Stopped. Its conversation is kept.');
+    expect(toastMessages()).toEqual(['Stopped. Its conversation is kept.']);
+    // Not in the confirmation's place any more.
+    expect(view.querySelector('.session-actions')).toBeNull();
   });
 
   it("can't stop a session that isn't running, but can remove it", async () => {
@@ -213,7 +221,7 @@ describe('Stop and Remove', () => {
     openMenu(view);
     const stop = item(view, 'Stop session');
     expect(stop.getAttribute('aria-disabled')).toBe('true');
-    expect(stop.title).toMatch(/isn't running/);
+    expect(descriptionOf(stop)).toMatch(/isn't running/);
     // Activating it does nothing, and the menu stays open.
     fireEvent.click(stop);
     expect(within(view).queryByRole('group')).toBeNull();
@@ -222,7 +230,7 @@ describe('Stop and Remove', () => {
     expect(postedUrls(server)).toEqual([]);
   });
 
-  it('asks before removing, then removes the session and closes its view', async () => {
+  it('asks before removing, then removes the session, closes its view and says so in a toast', async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
     renderDashboard(server);
     const view = await openView('pitwall-test-bg');
@@ -233,6 +241,7 @@ describe('Stop and Remove', () => {
 
     expect(postedUrls(server)).toEqual([removePath(BG)]);
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(toastMessages()).toEqual(['Removed pitwall-test-bg']);
   });
 
   it("shows Claude Code's message when it refuses, and keeps the view open", async () => {
@@ -288,7 +297,7 @@ describe('Stop and Remove', () => {
     expect(server.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1);
     answer(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     await settle();
-    expect(within(view).getByRole('status').textContent).toBe('Stopped. Its conversation is kept.');
+    expect(toastMessages()).toEqual(['Stopped. Its conversation is kept.']);
     expect(item(view, 'Remove session').hasAttribute('aria-disabled')).toBe(false);
   });
 
@@ -313,9 +322,10 @@ describe('the confirmations’ focus and results (W24)', () => {
     await settle();
     expect(within(view).queryByRole('group')).toBeNull();
     expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Session actions' }));
-    const result = within(view).getByRole('status');
-    expect(result.textContent).toBe('Stopped. Its conversation is kept.');
-    expect(result.className).toContain('success');
+    // Announced by the toasts' live region, as a success toast.
+    const result = toastSaying('Stopped. Its conversation is kept.');
+    expect(result.className).toBe('toast success');
+    expect(result.closest('[aria-live="polite"]')).toBeTruthy();
   });
 
   it('puts focus back on the menu button after a refusal too, which is announced as an alert', async () => {

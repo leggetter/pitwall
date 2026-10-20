@@ -59,6 +59,11 @@
   gap: var(--pw-space-2);
 }
 
+/* Send never gives way to the text box: busy, its min-width (its idle width) would otherwise let it shrink below "Sending…". */
+.relay-compose > .button {
+  flex: none;
+}
+
 /* One line to eight (RelayBox sets its height from its content), then it scrolls. No resize handle. */
 .relay-text {
   flex: 1 1 auto;
@@ -112,10 +117,9 @@
   gap: var(--pw-space-1-5);
 }
 
-/* Its explanation is in the hover text, until the design system's tooltips (W25). */
+/* The limits note's info button (InfoTip): its 24 px box overlapping the 20 px help line. */
 .relay-info {
-  display: inline-flex;
-  cursor: help;
+  margin-block: calc(-1 * var(--pw-space-0-5));
 }
 
 .relay-count {

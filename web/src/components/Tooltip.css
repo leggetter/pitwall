@@ -1,0 +1,55 @@
+/* Tooltips (docs/design-system.md, 4: Tooltips): fixed to the window, placed by Tooltip.tsx, above the page at --pw-z-tooltip. */
+
+.tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--pw-z-tooltip);
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  width: max-content;
+  max-width: min(var(--pw-tooltip-max-w), calc(100vw - 2 * var(--pw-space-2)));
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  background: var(--pw-surface-overlay);
+  color: var(--pw-text);
+  border-radius: var(--pw-radius-md);
+  box-shadow: var(--pw-shadow-1);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-regular);
+  line-height: var(--pw-leading-s);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+
+/* Line breaks in the text, such as a title and where it came from, are kept. */
+.tooltip-text {
+  min-width: 0;
+  white-space: pre-line;
+}
+
+.tooltip .key-caps {
+  flex: none;
+}
+
+/*
+ * The card's hit area reaches back over the 6 px gap to its trigger, so the pointer can move onto
+ * the tooltip without leaving both, and the tooltip stays (WCAG 1.4.13).
+ */
+.tooltip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--pw-space-1-5);
+}
+
+.tooltip[data-side='top']::before {
+  top: 100%;
+}
+
+.tooltip[data-side='bottom']::before {
+  bottom: 100%;
+}

@@ -753,8 +753,8 @@ textarea {
 }
 
 /*
- * The older banners, left on the New session dialog's failure (W25) and the terminal's notices (W29)
- * until they become inline alerts too. The page alerts and confirmations are inline alerts (W24).
+ * The older banners, left on the terminal's notices (W29) until they become inline alerts too. The
+ * page alerts, the confirmations (W24) and the New session dialog's failure (W25) are inline alerts.
  */
 
 .banner {
@@ -831,8 +831,8 @@ textarea {
   text-overflow: ellipsis;
 }
 
-/* Its explanation is in the hover text. */
-.badge[title] {
+/* Its explanation is in a tooltip (Badge's hint). */
+.badge.has-hint {
   cursor: help;
 }
 
@@ -1158,6 +1158,20 @@ mark.match {
 }
 
 .button.ghost[aria-disabled='true']:not([aria-busy='true']):focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+/* A ghost icon button, such as a dialog's Close while its action runs: the same, with no fill. */
+.icon-button.ghost[aria-disabled='true'],
+.icon-button.ghost[aria-disabled='true']:hover,
+.icon-button.ghost[aria-disabled='true']:active {
+  background: none;
+  box-shadow: none;
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
+}
+
+.icon-button.ghost[aria-disabled='true']:focus-visible {
   box-shadow: var(--pw-ring-focus);
 }
 
@@ -1506,28 +1520,28 @@ mark.match {
   pointer-events: none;
 }
 
-/* A command to copy, as in the New session dialog's trust failure. */
+/*
+ * A command chip and its copy button (section 4: Copy): code style on --pw-surface-sunken, one line
+ * with a middle ellipsis, and a click selects the whole command.
+ */
 
 .copy-command {
-  display: inline-flex;
-  flex-wrap: wrap;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  max-width: 100%;
 }
 
-.copy-command code {
-  padding: 1px 6px;
+.command-chip {
+  display: flex;
+  min-width: 0;
+  padding: 0 var(--pw-space-1-5);
   background: var(--pw-surface-sunken);
-  border: 1px solid var(--pw-border);
+  color: var(--pw-text);
   border-radius: var(--pw-radius-sm);
-  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-s);
   user-select: all;
-}
-
-.copy-status {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
 }
 
 /*
@@ -1581,7 +1595,7 @@ mark.match {
   background: var(--pw-surface);
 }
 
-/* Line 1: Back (compact), the heading, the copy result, the actions menu, Close. */
+/* Line 1: Back (compact), the heading, the actions menu, Close. */
 .session-view-top {
   display: flex;
   align-items: center;
@@ -1596,7 +1610,7 @@ mark.match {
 
 /*
  * The name, then " · " and the title, on one line: the title gives way first, then the name, each
- * with an ellipsis. The full title is in its hover text.
+ * with an ellipsis. The full title is in its tooltip when it's cut.
  */
 .session-view-title {
   display: flex;
@@ -1670,9 +1684,9 @@ mark.match {
   gap: var(--pw-space-1);
 }
 
+/* An info button (InfoTip): a ghost sm icon button, so Tab reaches it, its 24 px box overlapping the 20 px line. */
 .session-view-info {
-  display: inline-flex;
-  cursor: help;
+  margin-block: calc(-1 * var(--pw-space-0-5));
 }
 
 .session-view-activity {
@@ -1706,19 +1720,7 @@ mark.match {
   cursor: help;
 }
 
-/* "Copied", or why it couldn't, before the actions menu. A live region, so it's there when empty. */
-.session-view-copied {
-  flex: none;
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  line-height: var(--pw-leading-s);
-  white-space: nowrap;
-}
-
-.session-view-copied.failed {
-  color: var(--pw-danger-fg);
-}
-
+/* A copy from the actions menu that the clipboard refused: the text, selected, so it can be copied by hand. */
 .session-view-copy-fallback {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
@@ -2259,11 +2261,3 @@ mark.match {
   font-size: var(--pw-text-xs);
   font-style: italic;
 }
-
-@media (max-width: 600px) {
-  .copy-command {
-    margin-left: 0;
-  }
-}
-
-

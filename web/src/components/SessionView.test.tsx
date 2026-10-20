@@ -12,6 +12,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { App } from '../App.js';
 import type { ConnectionView } from '../connection.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
+import { tooltipText } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
 
@@ -112,8 +113,9 @@ describe('SessionView: opening and closing', () => {
     expect(within(view).getByText('Idle').closest('.badge')?.getAttribute('data-status')).toBe('idle');
     expect(view.id).toBe('session-view');
     expect(view.querySelector('.session-view-path')?.textContent).toBe('~/code/demo-app/docs');
-    expect(view.querySelector('.session-view-path')?.getAttribute('title')).toBe('/Users/example/code/demo-app/docs');
-    expect(within(view).getByText('Active 5m ago').getAttribute('title')).toBeTruthy();
+    // The whole path, home and all, and the absolute time, in tooltips.
+    expect(await tooltipText(view.querySelector('.session-view-path')!)).toBe('/Users/example/code/demo-app/docs');
+    expect(await tooltipText(within(view).getByText('Active 5m ago'))).toMatch(/2026/);
     expect(texts(view)).toEqual(['prompt 1']);
     expect(cursorsOf(server)).toEqual([undefined]);
     expect(server.mock.calls[0]![0]).toBe(conversationPath(SID));
@@ -357,18 +359,22 @@ describe('SessionView: the conversation', () => {
 });
 
 describe('SessionView: the /bg note', () => {
-  it("is an info icon after an interactive session's kind, named and titled with how /bg lets pitwall drive it fully", async () => {
+  it("is an info button after an interactive session's kind, named and tooltipped with how /bg lets pitwall drive it fully", async () => {
     renderDashboard(fakeServer(ok([])));
     const view = await openView();
-    const info = within(view).getByRole('img', { name: 'Typing /bg in its terminal moves it to the background, so pitwall can drive it fully.' });
-    expect(info.getAttribute('title')).toBe(info.getAttribute('aria-label'));
+    const note = 'Typing /bg in its terminal moves it to the background, so pitwall can drive it fully.';
+    // A button, so Tab reaches it, whose name is its tooltip.
+    const info = within(view).getByRole('button', { name: note });
+    expect(info.tabIndex).toBe(0);
+    expect(info.hasAttribute('title')).toBe(false);
+    expect(await tooltipText(info)).toBe(note);
     expect(info.closest('.session-view-kind')?.textContent).toBe('Interactive');
   });
 
   it('is not shown for a background session', async () => {
     renderDashboard(fakeServer(ok([])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
     const view = await openView();
-    expect(within(view).queryByRole('img', { name: /moves it to the background/ })).toBeNull();
+    expect(within(view).queryByRole('button', { name: /moves it to the background/ })).toBeNull();
     expect(view.querySelector('.session-view-kind')?.textContent).toBe('Background');
     expect(within(view).getByText('Nothing to show yet.')).toBeTruthy();
   });

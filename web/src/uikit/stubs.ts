@@ -1,6 +1,7 @@
 // Stand-ins for everything the gallery's components would ask pitwall for (W19): an ApiClient that
-// answers from the fixtures, storage that lasts as long as the page, and attach sockets that play a
-// scripted server. None of them touches the network, the WebSocket or the token.
+// answers from the fixtures, storage that lasts as long as the page, attach sockets that play a
+// scripted server, and a clipboard. None of them touches the network, the WebSocket, the token or
+// the real clipboard.
 
 import {
   PROTOCOL_VERSION,
@@ -12,6 +13,7 @@ import {
 } from '../../../src/shared/protocol.js';
 import type { ApiClient, ApiResult } from '../api.js';
 import type { AttachEnv } from '../attach.js';
+import type { ClipboardLike } from '../copy.js';
 import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
 import { CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
@@ -104,6 +106,16 @@ function action(route: 'stop' | 'remove', result: 'done' | 'refused' | 'busy'): 
       ? 'claude rm kept the worktree ~/code/pitwall-test-app/.claude/worktrees/pitwall-test-export-fix, because it has unpushed commits.'
       : 'claude stop failed: the session had already exited.';
   return Promise.resolve(failed(409, { ok: false, error }));
+}
+
+/**
+ * A clipboard for ClipboardContext (copy.ts) that never touches the real one: it takes the text, or
+ * refuses it, as a browser that hasn't allowed the page to write does.
+ */
+export function stubClipboard(result: 'copied' | 'refused' = 'copied'): ClipboardLike {
+  return {
+    writeText: () => (result === 'copied' ? Promise.resolve() : Promise.reject(new Error('made up: the clipboard refused'))),
+  };
 }
 
 /** Storage for the dashboard's open groups that lasts as long as the page, so the gallery never writes pitwall's keys. */

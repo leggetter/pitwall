@@ -71,7 +71,10 @@ interface DialogCase {
 }
 
 const DIALOG_CASES: DialogCase[] = [
-  { title: 'Empty', note: 'As it opens. Cancel or Escape closes it here too.' },
+  {
+    title: 'Empty',
+    note: 'As it opens, with focus on Directory. Tab stays inside; Cancel, Close or Escape closes it here too, and so does a click on the backdrop while nothing has been typed. ⌘ ↵ starts the session from any field.',
+  },
   {
     title: 'Filled',
     run: (root) => fill(root, { directory: shortenHome(JOBS_DIR), name: 'pitwall-test-new', model: 'opus', prompt: PROMPT }),
@@ -83,6 +86,7 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'Submitted empty',
+    note: 'Problems show after the first submit, then follow the typing; focus goes to the first field with one.',
     run: async (root) => {
       await press(root, 'Start session');
       await element(root, '.field-problem');
@@ -117,6 +121,7 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'Starting',
+    note: 'Start session is busy; every other control, Close included, is aria-disabled, and Escape and the backdrop do nothing.',
     options: { spawn: 'starting' },
     run: async (root) => {
       await fill(root, { prompt: PROMPT });
@@ -157,6 +162,8 @@ interface PageCase {
   view: ConnectionView;
   /** What its own storage starts with, such as a Sort setting. */
   stored?: Record<string, string>;
+  /** Its toasts stay (kit.tsx). */
+  lasting?: boolean;
   run?: (root: HTMLElement) => Promise<unknown>;
 }
 
@@ -197,11 +204,12 @@ const PAGES: PageCase[] = [
   },
   {
     title: 'Session started',
-    note: 'After Start session in the dialog, until the new session shows up in the list.',
+    note: 'After Start session in the dialog: a toast, at the bottom right, and the view opens when the session shows up in the list. The toast stays here.',
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
+    lasting: true,
     run: async (root) => {
       await press(root, 'New session');
-      type(await element<HTMLTextAreaElement>(root, '.modal textarea'), PROMPT);
+      type(await element<HTMLTextAreaElement>(root, '.dialog textarea'), PROMPT);
       await press(root, 'Start session');
       await text(root, 'Started pitwall-test-started');
     },
@@ -279,7 +287,7 @@ export function Pages() {
   return (
     <>
       {PAGES.map((page) => (
-        <Specimen key={page.title} title={page.title} note={page.note} frame={page.short ? 'page-short' : 'page'}>
+        <Specimen key={page.title} title={page.title} note={page.note} frame={page.short ? 'page-short' : 'page'} lasting={page.lasting ?? false}>
           <Page page={page} />
         </Specimen>
       ))}
@@ -395,12 +403,12 @@ export function Notices() {
           ))}
         </p>
       </Specimen>
-      <Specimen title="Other badges" note="Stale and a finished session's Asked you carry their explanations in the hover text.">
+      <Specimen title="Other badges" note="Stale and a finished session's Asked you carry their explanations in tooltips, on hover. See Tooltips.">
         <p className="uikit-row">
-          <Badge look="subtle-neutral" title={STALE_HINT}>
+          <Badge look="subtle-neutral" hint={STALE_HINT}>
             Stale
           </Badge>
-          <Badge look="outline" title={FINISHED_ASKED_HINT}>
+          <Badge look="outline" hint={FINISHED_ASKED_HINT}>
             Asked you
           </Badge>
           <Badge look="subtle-neutral">4</Badge>

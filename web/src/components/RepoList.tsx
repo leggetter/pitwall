@@ -10,6 +10,7 @@ import { ALL_SESSIONS, groupSelection, NEEDS_YOU, sameSelection, selectionHref, 
 import { allFinished, countAttention, groupId, groupLabel, repoListGroups } from '../sessions.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
+import { Tooltip } from './Tooltip.js';
 
 interface Item {
   id: string;
@@ -92,36 +93,38 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
     const className = ['repo-item', isSelected && 'selected', item.muted && 'finished'].filter(Boolean).join(' ');
     return (
       <li key={item.id}>
-        <a
-          className={className}
-          href={selectionHref(item.selection)}
-          aria-current={isSelected ? 'page' : undefined}
-          tabIndex={item.id === tabStop ? 0 : -1}
-          data-repo-item=""
-          onClick={onClick}
-          onFocus={() => setFocused(item.id)}
-        >
-          {item.kind && <Icon name={item.kind === 'git' ? 'repo' : 'directory'} className="repo-item-icon" />}
-          {/* Until the design system's tooltips exist (W25), the browser's shows the whole label. */}
-          <span className="repo-item-label" title={item.label}>
-            <MiddleEllipsis text={item.label} />
-          </span>
-          {/* After the label, so the link's name starts with what it shows. */}
-          {item.kind && <span className="visually-hidden">, {item.kind === 'git' ? 'git repo' : 'directory'}</span>}
-          {item.attention > 0 ? (
-            <span className="badge badge-attention">
-              {item.attention}
-              <span className="visually-hidden"> {item.attention === 1 ? 'needs' : 'need'} you</span>
+        {/* The whole label, when the middle ellipsis has cut it: on hover, and on focus from ↓ and ↑. */}
+        <Tooltip content={item.label} relation="none" onlyIfCut>
+          <a
+            className={className}
+            href={selectionHref(item.selection)}
+            aria-current={isSelected ? 'page' : undefined}
+            tabIndex={item.id === tabStop ? 0 : -1}
+            data-repo-item=""
+            onClick={onClick}
+            onFocus={() => setFocused(item.id)}
+          >
+            {item.kind && <Icon name={item.kind === 'git' ? 'repo' : 'directory'} className="repo-item-icon" />}
+            <span className="repo-item-label">
+              <MiddleEllipsis text={item.label} />
             </span>
-          ) : (
-            item.count !== undefined && (
-              <span className="repo-item-count">
-                {item.count}
-                <span className="visually-hidden"> {item.count === 1 ? 'session' : 'sessions'}</span>
+            {/* After the label, so the link's name starts with what it shows. */}
+            {item.kind && <span className="visually-hidden">, {item.kind === 'git' ? 'git repo' : 'directory'}</span>}
+            {item.attention > 0 ? (
+              <span className="badge badge-attention">
+                {item.attention}
+                <span className="visually-hidden"> {item.attention === 1 ? 'needs' : 'need'} you</span>
               </span>
-            )
-          )}
-        </a>
+            ) : (
+              item.count !== undefined && (
+                <span className="repo-item-count">
+                  {item.count}
+                  <span className="visually-hidden"> {item.count === 1 ? 'session' : 'sessions'}</span>
+                </span>
+              )
+            )}
+          </a>
+        </Tooltip>
       </li>
     );
   };

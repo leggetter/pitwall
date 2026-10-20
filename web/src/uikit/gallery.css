@@ -185,6 +185,51 @@
   background: var(--pw-surface);
 }
 
+/* An open menu with a tooltip on one of its items, above it: room for both. */
+.uikit-menu-stage-tall {
+  min-height: 200px;
+  padding-top: 40px;
+}
+
+/* Room above a trigger for its tooltip, which sits 6 px above it, as it does in the app. */
+.uikit-tip-stage {
+  padding-top: 72px;
+}
+
+/* Something the width of the session list at 1,200 px, or narrower, so its text gives way. */
+.uikit-narrow {
+  max-width: 360px;
+}
+
+/* A row a little narrower than its title, so the title is cut, with room for some of it. */
+.uikit-row-width {
+  max-width: 560px;
+}
+
+/* A box too narrow for its path, so the middle ellipsis cuts it. */
+.uikit-cut .session-view-cwd {
+  flex: none;
+  width: 160px;
+}
+
+/* Meta text, as the app's meta lines have it. */
+.uikit-meta {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* Frames for toasts, which the app fixes to the window's bottom right: here, the frame's. */
+.uikit-frame-toasts {
+  height: 200px;
+  padding: 16px;
+}
+
+.uikit-frame-toasts-tall {
+  height: 280px;
+  padding: 16px;
+}
+
 /* A window of a set width whose content isn't a whole page: the stage's padding, inside it. */
 .uikit-window-pad {
   padding: 16px;

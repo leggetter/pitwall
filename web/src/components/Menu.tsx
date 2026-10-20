@@ -4,10 +4,14 @@
 // Space activates; Escape and Tab close it. Focus goes back to the button whenever it closes from the
 // keyboard or an item, before the item runs, so an item that opens something can move focus on from
 // there. A press outside closes it without moving focus; focus moving away by itself doesn't, so a
-// page can show several open menus, as the #uikit gallery does. The other overlays (W25) build on this.
+// page can show several open menus, as the #uikit gallery does.
+//
+// The button's name is its tooltip. A disabled item says why in a tooltip, on hover and when the
+// arrows reach it, and is described by it; Escape still closes the menu, its tooltip with it.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { Icon, type IconName } from './Icon.js';
+import { focusQuietly, Tooltip } from './Tooltip.js';
 
 export interface MenuItem {
   kind?: 'item';
@@ -20,7 +24,7 @@ export interface MenuItem {
   danger?: boolean;
   /** Shown and reachable with the arrows, but activating it does nothing (aria-disabled). */
   disabled?: boolean;
-  /** Why it's disabled. The browser's hover text, until the design system's tooltips exist (W25). */
+  /** Why it's disabled, in its tooltip. */
   hint?: string;
   /** Runs after the menu has closed and focus is back on its button. */
   onSelect: () => void;
@@ -34,7 +38,7 @@ export interface MenuSeparator {
 export type MenuEntry = MenuItem | MenuSeparator;
 
 export interface MenuButtonProps {
-  /** The button's accessible name and hover text, and the menu's name. */
+  /** The button's accessible name and tooltip, and the menu's name. */
   label: string;
   icon: IconName;
   entries: readonly MenuEntry[];
@@ -70,7 +74,8 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
   /** Closes the menu and puts focus back on its button. */
   const closeToButton = useCallback(() => {
     show(false);
-    button.current?.focus();
+    // Put back, not moved there by the user: its tooltip stays shut.
+    focusQuietly(button.current);
   }, [show, button]);
 
   // On open: below the button unless there's no room there and there is above, then the first item takes focus.
@@ -149,37 +154,36 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
 
   return (
     <div ref={anchor} className="menu-anchor">
-      <button
-        ref={button}
-        type="button"
-        className="icon-button ghost md"
-        aria-label={label}
-        // Until the design system's tooltips exist (W25), the browser's shows the same name.
-        title={label}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => show(!open)}
-      >
-        <Icon name={icon} />
-      </button>
+      <Tooltip content={label} relation="label">
+        <button
+          ref={button}
+          type="button"
+          className="icon-button ghost md"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
+          onClick={() => show(!open)}
+        >
+          <Icon name={icon} />
+        </button>
+      </Tooltip>
       {open && (
         <div ref={menu} id={menuId} className={up ? 'menu up' : 'menu'} role="menu" aria-label={label} onKeyDown={onMenuKeyDown}>
           {entries.map((entry) =>
             isItem(entry) ? (
-              <button
-                key={entry.id}
-                type="button"
-                role="menuitem"
-                tabIndex={-1}
-                className={entry.danger ? 'menu-item danger' : 'menu-item'}
-                aria-disabled={entry.disabled || undefined}
-                title={entry.disabled ? entry.hint : undefined}
-                onClick={() => activate(entry)}
-              >
-                {entry.icon && <Icon name={entry.icon} />}
-                <span className="menu-item-label">{entry.label}</span>
-              </button>
+              <Tooltip key={entry.id} content={entry.disabled ? entry.hint : undefined} relation="description">
+                <button
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  className={entry.danger ? 'menu-item danger' : 'menu-item'}
+                  aria-disabled={entry.disabled || undefined}
+                  onClick={() => activate(entry)}
+                >
+                  {entry.icon && <Icon name={entry.icon} />}
+                  <span className="menu-item-label">{entry.label}</span>
+                </button>
+              </Tooltip>
             ) : (
               <div key={entry.id} role="separator" className="menu-separator" />
             ),

@@ -7,6 +7,7 @@
 import type { RelayOff } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { Icon } from './Icon.js';
+import { Tooltip } from './Tooltip.js';
 
 /** The strip's sentence: what's off, what brings it back, and pitwall's reason, which never holds message text. */
 export function relayOffText(off: RelayOff): string {
@@ -23,10 +24,10 @@ export function AppStrip({ off, onDetails }: AppStripProps) {
   return (
     <div className="app-strip">
       <Icon name="warning" />
-      {/* One line: a sentence too long for it ends in an ellipsis, and the browser's hover text has it all (until W25's tooltips). */}
-      <p className="app-strip-text" title={relayOffText(off)}>
-        {relayOffText(off)}
-      </p>
+      {/* One line: a sentence too long for it ends in an ellipsis, with the whole of it in a tooltip. Details has it too. */}
+      <Tooltip content={relayOffText(off)} relation="none" onlyIfCut>
+        <p className="app-strip-text">{relayOffText(off)}</p>
+      </Tooltip>
       {onDetails && (
         <button type="button" className="link-button app-strip-link" onClick={onDetails}>
           Details

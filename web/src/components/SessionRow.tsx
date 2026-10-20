@@ -2,13 +2,20 @@
 // its badges and when it was last active; then what it asked, or what it was last asked. The rest,
 // such as its replies, its relay exchange, its directory and the message box, is in the session
 // view, one click away.
+//
+// Tooltips, on hover only, since none of them is on the name's button: the session's id and start
+// time on its name; the whole title and where it came from; Stale's and a finished Asked you's
+// explanations; the last activity's absolute time; and line 2 in full when it's cut short. The full
+// title and line 2 are in the DOM too, so screen readers have them, and the session view has them all.
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
-import { absoluteTime, plainText, relativeTime } from '../format.js';
+import { absoluteTime, plainText } from '../format.js';
 import { groupLabel, needsAttention, rowStatusBadge } from '../sessions.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
+import { Timestamp } from './Timestamp.js';
+import { Tooltip } from './Tooltip.js';
 
 export const STALE_HINT =
   'Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters.';
@@ -21,7 +28,7 @@ const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = 
 /** The id of the session view, which every row's name controls. */
 export const SESSION_VIEW_ID = 'session-view';
 
-/** The title's hover text: the whole title, which may be cut short on screen, and where it came from. */
+/** The title's tooltip: the whole title, which may be cut short on screen, and where it came from. */
 function titleHint(title: string, source: SessionSummary['titleSource']): string {
   const from = source === undefined ? undefined : TITLE_HINTS[source];
   return from === undefined ? title : `${title}\n${from}`;
@@ -66,7 +73,6 @@ export interface SessionRowProps {
   group: Pick<SessionGroup, 'root' | 'key' | 'label'>;
   /** Start line 2 with the group's label: in Needs you and All sessions, which list every group. */
   showGroup?: boolean;
-  now: number;
   /** Opens the session view. Clicking the name, or anywhere on the row that isn't a control, calls it. */
   onOpen?: ((sessionId: string) => void) | undefined;
   /** ↑ or ↓ on the name: the next or previous row (docs/design-system.md, 6.2). */
@@ -75,7 +81,7 @@ export interface SessionRowProps {
   isOpen?: boolean;
 }
 
-export function SessionRow({ session, group, showGroup = false, now, onOpen, onStep, isOpen = false }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false }: SessionRowProps) {
   const attention = needsAttention(session);
   const { finished } = session;
   const badge = rowStatusBadge(session);
@@ -103,12 +109,12 @@ export function SessionRow({ session, group, showGroup = false, now, onOpen, onS
   const badges = [
     badge && <StatusBadge key="status" badge={badge} />,
     finished && session.askedYou && (
-      <Badge key="asked" look="outline" title={FINISHED_ASKED_HINT}>
+      <Badge key="asked" look="outline" hint={FINISHED_ASKED_HINT}>
         Asked you
       </Badge>
     ),
     session.stale && (
-      <Badge key="stale" look="subtle-neutral" className="stale" title={STALE_HINT}>
+      <Badge key="stale" look="subtle-neutral" className="stale" hint={STALE_HINT}>
         Stale
       </Badge>
     ),
@@ -118,53 +124,55 @@ export function SessionRow({ session, group, showGroup = false, now, onOpen, onS
     <li className={className} data-attention={attention || undefined} onClick={openFromRow}>
       <div className="session-line">
         <div className="session-ident">
-          <h3 className="session-name" title={`Session ${session.sessionId}, started ${absoluteTime(session.startedAt)}`}>
-            {onOpen ? (
-              <button
-                type="button"
-                className="session-open"
-                data-open-session={session.sessionId}
-                aria-controls={SESSION_VIEW_ID}
-                aria-current={isOpen || undefined}
-                onClick={() => onOpen(session.sessionId)}
-                onKeyDown={onNameKey}
-              >
+          <Tooltip content={`Session ${session.sessionId}, started ${absoluteTime(session.startedAt)}`} relation="none">
+            <h3 className="session-name">
+              {onOpen ? (
+                <button
+                  type="button"
+                  className="session-open"
+                  data-open-session={session.sessionId}
+                  aria-controls={SESSION_VIEW_ID}
+                  aria-current={isOpen || undefined}
+                  onClick={() => onOpen(session.sessionId)}
+                  onKeyDown={onNameKey}
+                >
+                  <Highlight text={name} />
+                </button>
+              ) : (
                 <Highlight text={name} />
-              </button>
-            ) : (
-              <Highlight text={name} />
-            )}
-          </h3>
+              )}
+            </h3>
+          </Tooltip>
           {title && (
             // The " · " before it is drawn by CSS, so it goes with the title when the row is narrow.
-            <span className="session-title" title={titleHint(title, session.titleSource)}>
-              <Highlight text={title} />
-            </span>
+            <Tooltip content={titleHint(title, session.titleSource)} relation="none" onlyIfCut={session.titleSource === undefined}>
+              <span className="session-title">
+                <Highlight text={title} />
+              </span>
+            </Tooltip>
           )}
         </div>
         {badges.length > 0 && <span className="session-badges">{badges}</span>}
-        {session.lastActivityAt && (
-          <time className="activity" dateTime={session.lastActivityAt} title={absoluteTime(session.lastActivityAt)}>
-            {relativeTime(session.lastActivityAt, now)}
-          </time>
-        )}
+        {session.lastActivityAt && <Timestamp className="activity" at={session.lastActivityAt} />}
       </div>
       {(showGroup || wants) && (
-        <p className="session-what" title={wants?.hint}>
-          {showGroup && (
-            <>
-              <span className="session-group">
-                <Highlight text={plainText(groupLabel(group))} />
-              </span>
-              {wants && (
-                <span className="session-what-sep" aria-hidden="true">
-                  {' · '}
+        <Tooltip content={wants?.hint} relation="none" onlyIfCut>
+          <p className="session-what">
+            {showGroup && (
+              <>
+                <span className="session-group">
+                  <Highlight text={plainText(groupLabel(group))} />
                 </span>
-              )}
-            </>
-          )}
-          {wants?.content}
-        </p>
+                {wants && (
+                  <span className="session-what-sep" aria-hidden="true">
+                    {' · '}
+                  </span>
+                )}
+              </>
+            )}
+            {wants?.content}
+          </p>
+        </Tooltip>
       )}
     </li>
   );

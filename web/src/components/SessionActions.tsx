@@ -1,8 +1,9 @@
 // Stop and Remove for a background session (W12), each behind an inline confirmation (docs/design-
 // system.md, 4: Inline confirmation). The session view's actions menu asks for them (W22). The API
-// calls are W12's. While one runs, its confirmation stays, with the confirm button busy; then the
-// result shows in its place: "Stopped. Its conversation is kept.", or Claude Code's message when it
-// refuses, such as `claude rm` keeping a worktree with unpushed commits. Removing closes the view.
+// calls are W12's. While one runs, its confirmation stays, with the confirm button busy. Done, it's a
+// toast (W25): "Stopped. Its conversation is kept.", or "Removed name" as the view closes. Refused, the
+// result shows in the confirmation's place, with Claude Code's message, such as `claude rm` keeping a
+// worktree with unpushed commits.
 
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
@@ -12,6 +13,7 @@ import { sessionAction, type SessionAction } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import type { IconName } from './Icon.js';
 import { InlineConfirm } from './InlineConfirm.js';
+import { useToast } from './Toast.js';
 import '../actions.css';
 
 export const CONFIRM: Record<
@@ -37,9 +39,11 @@ export const CONFIRM: Record<
 };
 
 export const STOPPED = 'Stopped. Its conversation is kept.';
+/** The toast once a session is removed: its name, as written. */
+export const removedText = (name: string) => `Removed ${plainText(name)}`;
 
-/** What happened. `detail` is Claude Code's own message, when it refused. */
-export type ActionResult = { ok: true; text: string } | { ok: false; text: string; detail?: string };
+/** What went wrong. `detail` is Claude Code's own message, when it refused. Success is a toast instead. */
+export type ActionResult = { text: string; detail?: string };
 
 /** How a run ended: removed (the view closes), or anything else (the view stays). */
 export type RunEnd = 'removed' | 'stopped' | 'failed';
@@ -49,6 +53,7 @@ export interface SessionActions {
   confirming: SessionAction | undefined;
   /** The action whose request is out, if any. Nothing else can start meanwhile. */
   running: SessionAction | undefined;
+  /** Why the last one didn't happen, shown in the confirmation's place. */
   result: ActionResult | undefined;
   /** Opens the action's confirmation. */
   ask: (action: SessionAction) => void;
@@ -59,16 +64,17 @@ export interface SessionActions {
 
 /**
  * Stop and Remove for `session`, a background session. `onRemoved` runs once Claude Code has removed
- * it, so the view can close.
+ * it, so the view can close. Each success is a toast.
  */
 export function useSessionActions(session: SessionSummary, onRemoved: () => void): SessionActions {
   const api = useContext(ApiContext);
+  const toast = useToast();
   const alive = useRef(true);
   const [confirming, setConfirming] = useState<SessionAction>();
   const [running, setRunning] = useState<SessionAction>();
   const runningRef = useRef<SessionAction | undefined>(undefined);
   const [result, setResult] = useState<ActionResult>();
-  const { sessionId } = session;
+  const { sessionId, name } = session;
 
   useEffect(() => {
     alive.current = true;
@@ -93,7 +99,7 @@ export function useSessionActions(session: SessionSummary, onRemoved: () => void
       setResult(undefined);
       if (!api) {
         setConfirming(undefined);
-        setResult({ ok: false, text: "This can't be done from here." });
+        setResult({ text: "This can't be done from here." });
         return 'failed';
       }
       runningRef.current = action;
@@ -105,18 +111,19 @@ export function useSessionActions(session: SessionSummary, onRemoved: () => void
       setConfirming(undefined);
       if (outcome.kind === 'done') {
         if (action === 'remove') {
+          toast({ tone: 'success', message: removedText(name) });
           onRemoved();
           return 'removed';
         }
-        setResult({ ok: true, text: STOPPED });
+        toast({ tone: 'success', message: STOPPED });
         return 'stopped';
       }
-      if (outcome.kind === 'refused') setResult({ ok: false, text: CONFIRM[action].refused, detail: outcome.error });
-      else if (outcome.kind === 'failed') setResult({ ok: false, text: outcome.error });
+      if (outcome.kind === 'refused') setResult({ text: CONFIRM[action].refused, detail: outcome.error });
+      else if (outcome.kind === 'failed') setResult({ text: outcome.error });
       // On 'unauthorized' the app has already replaced the dashboard with the token notice.
       return 'failed';
     },
-    [api, sessionId, onRemoved],
+    [api, sessionId, name, onRemoved, toast],
   );
 
   return { confirming, running, result, ask, cancel, run };
@@ -128,7 +135,7 @@ export interface SessionConfirmProps {
   onReturnFocus: () => void;
 }
 
-/** The open confirmation, busy while its action runs, then the result, under the session view's header. */
+/** The open confirmation, busy while its action runs, then a refusal, under the session view's header. */
 export function SessionConfirm({ actions, onReturnFocus }: SessionConfirmProps) {
   const box = useRef<HTMLDivElement>(null);
   const { confirming, running, result } = actions;
@@ -164,12 +171,7 @@ export function SessionConfirm({ actions, onReturnFocus }: SessionConfirmProps) 
           }}
         />
       ) : (
-        result &&
-        (result.ok ? (
-          <Alert tone="success" role="status">
-            {result.text}
-          </Alert>
-        ) : (
+        result && (
           <Alert tone="danger" role="alert">
             {plainText(result.text)}
             {result.detail !== undefined && (
@@ -179,7 +181,7 @@ export function SessionConfirm({ actions, onReturnFocus }: SessionConfirmProps) 
               </>
             )}
           </Alert>
-        ))
+        )
       )}
     </div>
   );

@@ -5,27 +5,33 @@
 // session, the message box in the footer.
 //
 // The conversation's internals are W27's and the terminal's W29's. The message box (RelayBox) and the
-// inline confirmations (SessionActions, and the terminal's restart) are W24's.
+// inline confirmations (SessionActions, and the terminal's restart) are W24's; the tooltips, toasts
+// and copy buttons are W25's.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { ConversationEntry, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import { entryKeys, getConversation, mergeNewest, prependOlder, type ConversationResult } from '../conversation.js';
-import { copyText, selectText } from '../copy.js';
-import { absoluteTime, formatRoots, plainText, relativeTime, shortenHome } from '../format.js';
+import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
+import { absoluteTime, formatRoots, plainText, shortenHome } from '../format.js';
 import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
 import { StatusBadge } from './Badge.js';
 import { Button } from './Button.js';
+import { CopyButton } from './CopyButton.js';
 import { Icon } from './Icon.js';
+import { InfoTip } from './InfoTip.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { SESSION_VIEW_ID } from './SessionRow.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
+import { Timestamp } from './Timestamp.js';
+import { useToast } from './Toast.js';
+import { focusQuietly, Tooltip } from './Tooltip.js';
 
 /**
  * - `loading`: the first page hasn't arrived.
@@ -195,7 +201,11 @@ const TEXT_LABELS: Partial<Record<ConversationEntry['kind'], string>> = { user: 
 
 const KIND_LABELS: Record<SessionSummary['kind'], string> = { interactive: 'Interactive', background: 'Background' };
 
-/** One entry, as text only: never markup. Line breaks are kept by CSS. */
+/**
+ * One entry, as text only: never markup. Line breaks are kept by CSS. Its time, and a tool call's
+ * whole line, are still the browser's hover text: entries aren't focusable, and W27 rebuilds them,
+ * with speaker lines that show the time and folded tool calls with their own tooltips.
+ */
 function Entry({ entry }: { entry: ConversationEntry }) {
   const when = entry.at ? absoluteTime(entry.at) : undefined;
   const text = plainText(entry.text);
@@ -218,7 +228,7 @@ function Entry({ entry }: { entry: ConversationEntry }) {
 }
 
 
-/** The interactive session's info icon, until the design system's tooltips exist (W25). */
+/** The interactive session's info icon: what /bg does. */
 export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, so pitwall can drive it fully.';
 export const TERMINAL_INTERACTIVE_NOTE =
   "An interactive session can't be attached here. Typing /bg in its terminal moves it to the background, so pitwall can attach to it.";
@@ -283,7 +293,7 @@ interface TopProps {
   compact: boolean;
   onClose: () => void;
   children: ReactNode;
-  /** Between the heading and Close: the copy result and the actions menu. */
+  /** Between the heading and Close: the actions menu. */
   end?: ReactNode;
 }
 
@@ -300,17 +310,11 @@ function Top({ compact, onClose, children, end }: TopProps) {
       {children}
       {end}
       {!compact && (
-        <button
-          type="button"
-          className="icon-button ghost md"
-          aria-label="Close"
-          // Until the design system's tooltips exist (W25), the browser's, with Escape in it.
-          title="Close (Esc)"
-          aria-keyshortcuts="Escape"
-          onClick={onClose}
-        >
-          <Icon name="close" />
-        </button>
+        <Tooltip content="Close" keys={{ keys: ['Esc'], label: 'Escape' }} relation="label">
+          <button type="button" className="icon-button ghost md" aria-keyshortcuts="Escape" onClick={onClose}>
+            <Icon name="close" />
+          </button>
+        </Tooltip>
       )}
     </div>
   );
@@ -320,7 +324,6 @@ export interface SessionViewProps {
   session: SessionSummary;
   /** False once the session has left the snapshot. The view keeps what it showed. */
   listed: boolean;
-  now: number;
   onClose: () => void;
   /**
    * The third column, from 1,200 px: a region beside the list. Otherwise, as below 1,200 px, a
@@ -339,12 +342,13 @@ export interface SessionViewProps {
 
 type Tab = 'conversation' | 'terminal';
 
-type Copied = { label: string; text: string; ok: boolean; onScreen: boolean };
+/** A copy from the actions menu that the clipboard refused: the text isn't on screen, so the header shows it. */
+type Refused = { label: string; text: string };
 
-export function SessionView({ session, listed, now, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true }: SessionViewProps) {
+export function SessionView({ session, listed, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
-  const ids = { title: useId(), conversationTab: useId(), conversationPanel: useId(), terminalTab: useId(), terminalPanel: useId(), terminalNote: useId() };
+  const ids = { title: useId(), conversationTab: useId(), conversationPanel: useId(), terminalTab: useId(), terminalPanel: useId() };
   const ownHeading = useRef<HTMLHeadingElement>(null);
   const heading = headingRef ?? ownHeading;
   const menuButton = useRef<HTMLButtonElement>(null);
@@ -377,24 +381,25 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
   const [restart, setRestart] = useState<RestartPhase>();
   // Whether the message box has a draft: Escape never closes the view then (6.2).
   const draft = useRef(false);
-  const [copied, setCopied] = useState<Copied>();
+  const copyText = useCopy();
+  const toast = useToast();
+  const [refused, setRefused] = useState<Refused>();
 
-  // "Copied" for 2 s. A failure stays, with the text selected, until the next copy.
+  // A refused copy's text, shown under line 2, is selected so it can be copied by hand. It stays until the next copy.
   useEffect(() => {
-    if (!copied?.ok) return;
-    const timer = setTimeout(() => setCopied(undefined), 2_000);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  useEffect(() => {
-    if (copied && !copied.ok && !copied.onScreen) selectText(fallbackRef.current);
-  }, [copied]);
+    if (refused) selectText(fallbackRef.current);
+  }, [refused]);
 
-  /** Copies inside the click or key handler, as Safari requires (4: Copy). */
-  const copy = (label: string, text: string, onScreen: HTMLElement | null) => {
+  /** The actions menu's copies, inside the click or key that chose them, as Safari requires (4: Copy). */
+  const copy = (label: string, text: string) => {
+    setRefused(undefined);
     void copyText(text).then((ok) => {
       if (!alive.current) return;
-      if (!ok && onScreen) selectText(onScreen);
-      setCopied({ label, text, ok, onScreen: onScreen !== null });
+      if (ok) toast({ tone: 'success', message: COPIED });
+      else {
+        setRefused({ label, text });
+        toast({ tone: 'error', message: COPY_FAILED });
+      }
     });
   };
 
@@ -429,7 +434,7 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
     if (actions.running) return;
     if (actions.confirming) {
       actions.cancel();
-      menuButton.current?.focus();
+      focusQuietly(menuButton.current);
     } else if (tab === 'terminal' && restart === 'asking') {
       leaveTerminal();
     } else if ((tab === 'terminal' && restart === 'restarting') || draft.current) {
@@ -471,8 +476,8 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
   const canAct = background && listed;
   const busy = actions.running !== undefined;
   const entries: MenuEntry[] = [
-    { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId, null) },
-    ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command, null) }] : []),
+    { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
+    ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...(canAct
       ? [
           { kind: 'separator' as const, id: 'separator' },
@@ -508,26 +513,20 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
         <Top
           compact={compact}
           onClose={onClose}
-          end={
-            <>
-              {/* A live region that's always there, so the result is announced (6.1, item 9). */}
-              <span className={copied && !copied.ok ? 'session-view-copied failed' : 'session-view-copied'} aria-live="polite" aria-atomic="true">
-                {copied ? (copied.ok ? 'Copied' : "Couldn't copy; the text is selected") : ''}
-              </span>
-              <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />
-            </>
-          }
+          end={<MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />}
         >
           {/* Focused when the view opens from a row, with no ring of its own (6.1, item 8). */}
           <h2 className="session-view-title" id={ids.title} ref={heading} tabIndex={-1}>
             <span className="session-view-name">{name}</span>
             {title && (
               // The " · " is drawn with the title, so it goes when the title has given way. Screen
-              // readers get it from the hidden text instead.
-              <span className="session-view-subtitle" title={title}>
-                <span className="visually-hidden"> · </span>
-                {title}
-              </span>
+              // readers get it from the hidden text instead. The whole title is in a tooltip when it's cut.
+              <Tooltip content={title} relation="none" onlyIfCut>
+                <span className="session-view-subtitle">
+                  <span className="visually-hidden"> · </span>
+                  {title}
+                </span>
+              </Tooltip>
             )}
           </h2>
         </Top>
@@ -536,42 +535,29 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
           <StatusBadge badge={badge} />
           <span className="session-view-kind">
             {KIND_LABELS[session.kind]}
-            {!background && (
-              // Until the design system's tooltips exist (W25): the browser's, and the name for screen readers.
-              <span className="session-view-info" role="img" aria-label={BG_NOTE} title={BG_NOTE}>
-                <Icon name="info" />
-              </span>
-            )}
+            {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. */}
+            {!background && <InfoTip text={BG_NOTE} className="session-view-info" />}
           </span>
-          {session.lastActivityAt && (
-            <time className="session-view-activity" dateTime={session.lastActivityAt} title={absoluteTime(session.lastActivityAt)}>
-              Active {relativeTime(session.lastActivityAt, now)}
-            </time>
-          )}
+          {session.lastActivityAt && <Timestamp className="session-view-activity" at={session.lastActivityAt} prefix="Active " />}
           <span className="session-view-cwd">
-            <span className="session-view-path" ref={pathRef} title={cwd}>
-              <MiddleEllipsis text={shortenHome(cwd)} />
-            </span>
-            <button
-              type="button"
-              className="icon-button ghost sm"
-              aria-label="Copy path"
-              title="Copy path"
-              onClick={() => copy('Path', session.cwd, pathRef.current)}
-            >
-              <Icon name={copied?.ok && copied.label === 'Path' ? 'copied' : 'copy'} />
-            </button>
+            {/* The whole path, home and all: on screen, home is ~ and the middle may be cut. */}
+            <Tooltip content={cwd} relation="none" onlyIfCut={shortenHome(cwd) === cwd}>
+              <span className="session-view-path" ref={pathRef}>
+                <MiddleEllipsis text={shortenHome(cwd)} />
+              </span>
+            </Tooltip>
+            <CopyButton text={session.cwd} label="Copy path" target={pathRef} />
           </span>
           {session.cwdMissing && (
             // Its own item, so it wraps to the next line rather than squeezing the path.
-            <span className="session-view-missing" title={CWD_MISSING_HINT}>
-              Directory no longer exists
-            </span>
+            <Tooltip content={CWD_MISSING_HINT} relation="none">
+              <span className="session-view-missing">Directory no longer exists</span>
+            </Tooltip>
           )}
         </div>
-        {copied && !copied.ok && !copied.onScreen && (
+        {refused && (
           <p className="session-view-copy-fallback">
-            {copied.label}: <code ref={fallbackRef}>{plainText(copied.text)}</code>
+            {refused.label}: <code ref={fallbackRef}>{plainText(refused.text)}</code>
           </p>
         )}
         {!listed && (
@@ -581,7 +567,7 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
         )}
       </header>
 
-      {canAct && <SessionConfirm actions={actions} onReturnFocus={() => menuButton.current?.focus()} />}
+      {canAct && <SessionConfirm actions={actions} onReturnFocus={() => focusQuietly(menuButton.current)} />}
 
       <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
         <button
@@ -598,35 +584,30 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
           <Icon name="conversation" />
           Conversation
         </button>
-        <button
-          ref={terminalTab}
-          type="button"
-          role="tab"
-          id={ids.terminalTab}
-          className="session-tab"
-          aria-selected={tab === 'terminal'}
-          aria-controls={ids.terminalPanel}
-          aria-disabled={terminalOff !== undefined || undefined}
-          aria-describedby={terminalOff ? ids.terminalNote : undefined}
-          // Until the design system's tooltips exist (W25).
-          title={terminalOff}
-          tabIndex={tab === 'terminal' ? 0 : -1}
-          onClick={() => openTab('terminal')}
-        >
-          <Icon name="terminal" />
-          Terminal
-          {attached && (
-            <>
-              <span className="session-tab-dot" aria-hidden="true" />
-              <span className="visually-hidden">, attached</span>
-            </>
-          )}
-        </button>
-        {terminalOff && (
-          <span id={ids.terminalNote} hidden>
-            {terminalOff}
-          </span>
-        )}
+        {/* Disabled, it says why in a tooltip, which describes it. */}
+        <Tooltip content={terminalOff} relation="description">
+          <button
+            ref={terminalTab}
+            type="button"
+            role="tab"
+            id={ids.terminalTab}
+            className="session-tab"
+            aria-selected={tab === 'terminal'}
+            aria-controls={ids.terminalPanel}
+            aria-disabled={terminalOff !== undefined || undefined}
+            tabIndex={tab === 'terminal' ? 0 : -1}
+            onClick={() => openTab('terminal')}
+          >
+            <Icon name="terminal" />
+            Terminal
+            {attached && (
+              <>
+                <span className="session-tab-dot" aria-hidden="true" />
+                <span className="visually-hidden">, attached</span>
+              </>
+            )}
+          </button>
+        </Tooltip>
       </div>
 
       <div
@@ -696,7 +677,6 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay',
         <footer className="session-view-foot">
           <RelayBox
             session={session}
-            now={now}
             replyShown={replyShown}
             onDraftChange={(has) => {
               draft.current = has;

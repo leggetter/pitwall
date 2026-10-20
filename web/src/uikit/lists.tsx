@@ -8,7 +8,7 @@ import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.
 import { FinishedSection } from '../components/SessionList.js';
 import { SessionRow } from '../components/SessionRow.js';
 import type { Listed } from '../sessions.js';
-import { APP_DIR, AWKWARD_ROWS, FINISHED_ROWS, group, JOBS_DIR, NOW, ROOT, STATE_ROWS, STATUS_ROWS } from './fixtures.js';
+import { APP_DIR, AWKWARD_ROWS, FINISHED_ROWS, group, JOBS_DIR, ROOT, STATE_ROWS, STATUS_ROWS } from './fixtures.js';
 import { Specimen } from './kit.js';
 
 /** Rows all in one group, as a group's own list has them. */
@@ -44,7 +44,6 @@ function Rows({ rows, showGroup = false, openSessionId }: { rows: Listed[]; show
               session={session}
               group={shown}
               showGroup={showGroup}
-              now={NOW}
               onOpen={(id) => setOpen((current) => (current === id ? undefined : id))}
               isOpen={session.sessionId === open}
             />
@@ -68,7 +67,6 @@ function Finished({ rows, collapsed = false, showGroup = false }: { rows: Listed
             collapsed={isCollapsed}
             onToggle={() => setCollapsed((value) => !value)}
             showGroup={showGroup}
-            now={NOW}
             onOpen={(id) => setOpen((current) => (current === id ? undefined : id))}
             openSessionId={open}
           />
