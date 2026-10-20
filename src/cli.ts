@@ -59,6 +59,24 @@ export class UsageError extends Error {
   override name = 'UsageError';
 }
 
+/** Printed with a `pitwall:` prefix, exit 1, when the directory pitwall was started in has been deleted. */
+export const CWD_GONE_MESSAGE = 'the current directory no longer exists. cd to one that does and run pitwall again.';
+
+/**
+ * The current directory, or undefined when it no longer exists. A shell can
+ * stay in a directory after it has been deleted, and process.cwd() then fails
+ * with ENOENT from uv_cwd. Any other failure is thrown as it was.
+ */
+export function currentDirectory(readCwd: () => string = () => process.cwd()): string | undefined {
+  try {
+    return readCwd();
+  } catch (error) {
+    const { code, syscall } = (typeof error === 'object' && error !== null ? error : {}) as NodeJS.ErrnoException;
+    if (code === 'ENOENT' && syscall === 'uv_cwd') return undefined;
+    throw error;
+  }
+}
+
 export type CliCommand =
   | { kind: 'help' }
   | { kind: 'version' }
@@ -123,8 +141,12 @@ function parseInterval(raw: string): number {
   return seconds;
 }
 
-/** Resolves the roots to absolute paths, defaulting to cwd. Throws UsageError for one that isn't a directory. */
-export function resolveRoots(roots: string[], cwd: string = process.cwd()): string[] {
+/**
+ * Resolves the roots against `cwd` to absolute paths, defaulting to `cwd`
+ * itself. Throws UsageError for one that isn't a directory. `cwd` comes from
+ * currentDirectory(), so the CLI never reads the directory unchecked.
+ */
+export function resolveRoots(roots: string[], cwd: string): string[] {
   const absolute = (roots.length > 0 ? roots : [cwd]).map((root) => resolve(cwd, root));
   for (const root of absolute) {
     let isDirectory = false;
@@ -219,7 +241,12 @@ function readVersion(): string {
   return pkg.version;
 }
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+export interface MainOptions {
+  /** Reads the current directory. Default process.cwd(). Tests pass one that throws. */
+  cwd?: () => string;
+}
+
+export async function main(argv: string[] = process.argv.slice(2), options: MainOptions = {}): Promise<number> {
   let command: CliCommand;
   let roots: string[];
   let token: string;
@@ -236,7 +263,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       console.log(readVersion());
       return 0;
     }
-    roots = resolveRoots(command.roots);
+    // Before anything reads the directory, starts a child process or opens the
+    // browser, and even when every root is absolute: a shell can stay in a
+    // directory that has been deleted. Then process.cwd() throws, a relative
+    // PITWALL_HOME or CLAUDE_CONFIG_DIR can't be resolved, and git and the
+    // browser opener, which set no cwd of their own, would start in it.
+    // --help and --version don't need the directory, so they still work.
+    const cwd = currentDirectory(options.cwd);
+    if (cwd === undefined) {
+      console.error(`pitwall: ${CWD_GONE_MESSAGE}`);
+      return 1;
+    }
+    roots = resolveRoots(command.roots, cwd);
     token = resolveToken();
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;

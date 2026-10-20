@@ -1,14 +1,18 @@
 // main()'s startup order, in this process, with the indexer, the relay and the
 // server replaced: the token is scrubbed from process.env before anything that
-// starts a child process exists. The CLI as a process is tested in cli.test.ts.
+// starts a child process exists, and a deleted current directory stops pitwall
+// before any of them. The CLI as a process is tested in cli.test.ts.
+import { existsSync } from 'node:fs';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const seen = vi.hoisted(() => ({ calls: [] as { what: string; env: NodeJS.ProcessEnv }[] }));
+const seen = vi.hoisted(() => ({ calls: [] as { what: string; env: NodeJS.ProcessEnv; roots?: string[] }[] }));
 
 vi.mock('./index/index.js', () => ({
-  startIndexer: vi.fn(() => {
-    seen.calls.push({ what: 'indexer', env: { ...process.env } });
+  startIndexer: vi.fn((options: { roots: string[] }) => {
+    seen.calls.push({ what: 'indexer', env: { ...process.env }, roots: options.roots });
     return { latest: () => undefined, subscribe: () => () => {}, lastMessage: () => undefined, conversation: async () => undefined, stop: () => {} };
   }),
 }));
@@ -28,12 +32,29 @@ vi.mock('./server/index.js', async (importOriginal) => {
   };
 });
 
-const { main } = await import('./cli.js');
+// The browser opener. Replaced so that no test here can ever open a browser.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFile: vi.fn(() => {
+      seen.calls.push({ what: 'execFile', env: { ...process.env } });
+      return { unref: () => {} };
+    }),
+  };
+});
+
+const { CWD_GONE_MESSAGE, main, USAGE } = await import('./cli.js');
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
-describe('main(): the startup scrub', () => {
+/** What process.cwd() does once the directory it was in has been deleted. */
+const gone = (): string => {
+  throw Object.assign(new Error('ENOENT: no such file or directory, uv_cwd'), { code: 'ENOENT', errno: -2, syscall: 'uv_cwd' });
+};
+
+describe('main(): startup', () => {
   const saved = { ...process.env };
   let listeners: Map<string, Function[]>;
 
@@ -71,5 +92,57 @@ describe('main(): the startup scrub', () => {
       expect(env.PITWALL_TEST_UNRELATED, what).toBe('kept');
       expect(JSON.stringify(env), what).not.toContain(TOKEN);
     }
+  });
+
+  describe('when the current directory no longer exists', () => {
+    it.each([
+      ['an absolute root', [tmpdir()]],
+      ['no roots', []],
+    ])('with %s, prints one line and exits 1 before it prepares the launch directory or starts anything', async (_, roots) => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      // Opening is on, so a check in the wrong place would reach the launch directory and the opener.
+      delete process.env.PITWALL_NO_OPEN;
+      const home = join(tmpdir(), `pitwall-test-home-${process.pid}-${Date.now()}`);
+      process.env.PITWALL_HOME = home;
+      try {
+        expect(await main(['--port', '0', ...roots], { cwd: gone })).toBe(1);
+
+        expect(errors.mock.calls).toEqual([[`pitwall: ${CWD_GONE_MESSAGE}`]]);
+        expect(CWD_GONE_MESSAGE).toBe('the current directory no longer exists. cd to one that does and run pitwall again.');
+        expect(console.log).not.toHaveBeenCalled();
+        expect(seen.calls).toEqual([]);
+        expect(existsSync(home)).toBe(false);
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+
+    it('still prints --help and --version, which do not need it', async () => {
+      expect(await main(['--help'], { cwd: gone })).toBe(0);
+      expect(console.log).toHaveBeenCalledWith(USAGE);
+      expect(await main(['--version'], { cwd: gone })).toBe(0);
+      expect(console.log).toHaveBeenLastCalledWith(expect.stringMatching(/^\d+\.\d+\.\d+/));
+      expect(seen.calls).toEqual([]);
+    });
+  });
+
+  describe('when the current directory exists, as before', () => {
+    it('watches the current directory when no root is given', async () => {
+      expect(await main(['--no-open', '--port', '0'])).toBe(0);
+      expect(seen.calls.map((call) => call.what)).toEqual(['relay', 'indexer', 'server']);
+      expect(seen.calls[1]?.roots).toEqual([process.cwd()]);
+      expect(console.log).toHaveBeenCalledWith(expect.stringContaining(`Watching root: ${process.cwd()},`));
+    });
+
+    it('resolves a relative root against the directory it read', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
+      try {
+        await mkdir(join(dir, 'a'));
+        expect(await main(['--no-open', '--port', '0', 'a'], { cwd: () => dir })).toBe(0);
+        expect(seen.calls[1]?.roots).toEqual([join(dir, 'a')]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
