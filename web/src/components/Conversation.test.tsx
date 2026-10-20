@@ -4,13 +4,19 @@
 // "Jump to latest" bar and its announcement, and under reduced motion. Made-up conversations only.
 
 import { act, fireEvent, render, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationEntry, ConversationPage, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
+import { AttachContext } from '../attach.js';
 import { absoluteTime, clockTime } from '../format.js';
-import { NOW, minutesAgo, session } from '../test/fixtures.js';
+import { NOW, fakeSockets, minutesAgo, session } from '../test/fixtures.js';
 import { hover, pass, shownTooltip, tooltipText, unhover } from '../test/tooltips.js';
 import { SessionView } from './SessionView.js';
+
+// The Terminal tab's xterm.js, for the tests that open it: it only needs to exist.
+vi.mock('../xterm.js', () => ({
+  createXterm: () => ({ cols: 80, rows: 24, write() {}, onData() {}, fit() {}, focus() {}, dispose() {} }),
+}));
 
 const SID = '00000000-0000-4000-8000-0000000000c7';
 const API_KEY = 'k'.repeat(43);
@@ -491,6 +497,134 @@ describe('Conversation: following new entries', () => {
     expect(bar(view.body)!.textContent).toBe('1 new · Jump to latest');
     sizes.scrollHeight = 900;
     fireEvent.click(folds(view.body)[0]!);
+    expect(bar(view.body)).toBeNull();
+  });
+});
+
+describe('Conversation: across the Terminal tab (W29)', () => {
+  /**
+   * Layout as a browser has it: a hidden panel (display: none, behind the Terminal tab) has no size,
+   * and the browser may drop its scroll position. ResizeObserver fires as it hides and shows.
+   */
+  function browserLayout(initial: { scrollHeight: number; clientHeight: number }) {
+    const sizes = { ...initial };
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.closest('[hidden]') ? 0 : sizes.scrollHeight;
+    });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.closest('[hidden]') ? 0 : sizes.clientHeight;
+    });
+    const callbacks: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          callbacks.push(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const resized = () => act(() => callbacks.forEach((callback) => callback([], {} as ResizeObserver)));
+    return { sizes, resized };
+  }
+
+  /** A background session's view, which can attach, so its Terminal tab opens. */
+  async function renderBackground(server: ReturnType<typeof fakeServer>) {
+    const api = createApiClient({ apiKey: API_KEY, fetch: server.fetch });
+    const env = { token: 'pitwall-test-token', host: '127.0.0.1:4517', createSocket: fakeSockets().factory };
+    let current = target({ kind: 'background', shortId: 'bg00c7', state: 'working' });
+    let activity = Date.parse(current.lastActivityAt ?? minutesAgo(5));
+    const ui = () => (
+      <ApiContext.Provider value={api}>
+        <AttachContext.Provider value={env}>
+          <SessionView session={current} listed onClose={() => {}} />
+        </AttachContext.Provider>
+      </ApiContext.Provider>
+    );
+    const result = render(ui());
+    await settle();
+    const body = result.container.querySelector<HTMLElement>('.session-view-body')!;
+    const tab = (name: string) => within(result.container).getByRole('tab', { name: new RegExp(`^${name}`) });
+    return {
+      body,
+      async open(name: 'Conversation' | 'Terminal') {
+        fireEvent.click(tab(name));
+        await settle();
+      },
+      async refresh() {
+        activity += 1000;
+        current = { ...current, lastActivityAt: new Date(activity).toISOString() };
+        result.rerender(ui());
+        await settle();
+      },
+    };
+  }
+
+  const prompts = (count: number) => Array.from({ length: count }, (_, i) => you(i));
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps a scrolled-up place, even when the browser drops it while the panel is hidden', async () => {
+    const { resized } = browserLayout({ scrollHeight: 1000, clientHeight: 400 });
+    const view = await renderBackground(fakeServer(page(prompts(6))));
+    expect(view.body.scrollTop).toBe(1000);
+    scrollTo(view.body, 100);
+
+    await view.open('Terminal');
+    expect(view.body.hidden).toBe(true);
+    // Hidden, it has no size, and the browser may reset its scroll position.
+    view.body.scrollTop = 0;
+    resized();
+
+    await view.open('Conversation');
+    expect(view.body.hidden).toBe(false);
+    expect(view.body.scrollTop).toBe(100);
+    resized();
+    expect(view.body.scrollTop).toBe(100);
+    expect(bar(view.body)).toBeNull();
+  });
+
+  it('keeps the place, and counts what arrived while the Terminal tab was open', async () => {
+    const { sizes, resized } = browserLayout({ scrollHeight: 1000, clientHeight: 400 });
+    const server = fakeServer(page(prompts(6)));
+    const view = await renderBackground(server);
+    scrollTo(view.body, 100);
+
+    await view.open('Terminal');
+    view.body.scrollTop = 0;
+    resized();
+    server.newest(page(prompts(8)));
+    sizes.scrollHeight = 1200;
+    await view.refresh();
+
+    await view.open('Conversation');
+    resized();
+    expect(view.body.scrollTop).toBe(100);
+    expect(bar(view.body)!.textContent).toBe('2 new · Jump to latest');
+  });
+
+  it('at the bottom, comes back at the bottom, with what arrived meanwhile', async () => {
+    const { sizes, resized } = browserLayout({ scrollHeight: 1000, clientHeight: 400 });
+    const server = fakeServer(page(prompts(6)));
+    const view = await renderBackground(server);
+    expect(view.body.scrollTop).toBe(1000);
+
+    await view.open('Terminal');
+    view.body.scrollTop = 0;
+    resized();
+    server.newest(page(prompts(8)));
+    sizes.scrollHeight = 1200;
+    await view.refresh();
+
+    await view.open('Conversation');
+    expect(view.body.scrollTop).toBe(1200);
+    resized();
+    expect(view.body.scrollTop).toBe(1200);
     expect(bar(view.body)).toBeNull();
   });
 });

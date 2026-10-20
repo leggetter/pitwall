@@ -9,6 +9,9 @@
 // - At the bottom, new entries keep it there. Scrolled up, the place is kept, and "n new · Jump to
 //   latest" sticks to the bottom of the body until the reader gets there by any means. Each batch
 //   that adds to the count is announced once, as "n new", never the entries' text.
+// - Behind the Terminal tab, the panel is hidden (display: none), which leaves it no size and lets the
+//   browser drop its scroll position. Nothing counts as the reader's place while it's hidden, and
+//   shown again it goes back to the place they left, or to the bottom if they were there (W29).
 // - A fold stays open or closed across refreshes and "Load earlier" while it has a call it had.
 // - Everything is text, never markup (6.1, rule 16).
 //
@@ -106,6 +109,14 @@ function isAtBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= AT_BOTTOM_PX;
 }
 
+/**
+ * Hidden, as the panel is behind the Terminal tab: it has no size, so it would read as at the bottom,
+ * and its scrollTop as 0.
+ */
+function isHidden(element: HTMLElement): boolean {
+  return element.closest('[hidden]') !== null;
+}
+
 /** Whether the reader asked for less motion (2.13): the jump to the latest entry then doesn't animate. */
 export function prefersReducedMotion(): boolean {
   try {
@@ -148,6 +159,8 @@ export interface ConversationController {
   sync: () => void;
   /** "Jump to latest": to the bottom, smoothly unless the reader asked for less motion. */
   jumpToLatest: () => void;
+  /** Shown again after being hidden: back to the bottom if the reader was there, or else to the place they left. */
+  restorePlace: () => void;
 }
 
 /**
@@ -173,6 +186,8 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
   const alive = useRef(true);
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  // The reader's place, as last seen while the panel was shown, for when it's shown again.
+  const place = useRef(0);
   const scrollIntent = useRef<ScrollIntent | undefined>(undefined);
   // While a smooth jump to the latest entry runs, the positions it passes through aren't the reader's.
   const jumping = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -210,7 +225,8 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
 
   const sync = useCallback(() => {
     const element = scroller.current;
-    if (!element) return;
+    if (!element || isHidden(element)) return;
+    place.current = element.scrollTop;
     const bottom = isAtBottom(element);
     if (jumping.current !== undefined) {
       if (!bottom) return;
@@ -316,8 +332,14 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     const element = scroller.current;
     scrollIntent.current = undefined;
     if (!intent || !element) return;
+    if (isHidden(element)) {
+      // Entries that arrive behind the Terminal tab: following them waits until it's shown again.
+      if (intent.kind === 'bottom') atBottom.current = true;
+      return;
+    }
     element.scrollTop =
       intent.kind === 'bottom' ? element.scrollHeight : intent.kind === 'top' ? 0 : intent.top + (element.scrollHeight - intent.height);
+    place.current = element.scrollTop;
     atBottom.current = isAtBottom(element);
   }, [state]);
 
@@ -329,6 +351,8 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     const element = scroller.current;
     if (!element || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
+      // Hidden, its size is none: that's not the reader moving, and not the bottom.
+      if (isHidden(element)) return;
       if (atBottom.current) element.scrollTop = element.scrollHeight;
       else sync();
     });
@@ -356,7 +380,14 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     else element.scrollTop = element.scrollHeight;
   }, [endJump, reachedBottom]);
 
-  return { state, loadEarlier, retry, scroller, onScroll: sync, onInput: endJump, sync, jumpToLatest };
+  const restorePlace = useCallback(() => {
+    const element = scroller.current;
+    if (!element || isHidden(element)) return;
+    element.scrollTop = atBottom.current ? element.scrollHeight : place.current;
+    sync();
+  }, [sync]);
+
+  return { state, loadEarlier, retry, scroller, onScroll: sync, onInput: endJump, sync, jumpToLatest, restorePlace };
 }
 
 /** "n tool calls", "1 error", "n errors". */
@@ -514,7 +545,7 @@ export interface ConversationPanelProps {
 
 /** The Conversation tab's panel: the body that scrolls, which is also a Tab stop so the keyboard can scroll it. */
 export function ConversationPanel({ conversation, id, labelledBy, hidden }: ConversationPanelProps) {
-  const { state, loadEarlier, retry, scroller, onScroll, onInput, sync, jumpToLatest } = conversation;
+  const { state, loadEarlier, retry, scroller, onScroll, onInput, sync, jumpToLatest, restorePlace } = conversation;
   const rows = useMemo(() => conversationRows(state.entries), [state.entries]);
   // The calls of the folds that are open (conversation.ts: foldOpen). Every fold starts closed.
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
@@ -523,6 +554,12 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
     toggled.current = true;
     setOpen((current) => toggleFold(current, calls));
   }, []);
+  // Shown again, from behind the Terminal tab: the place the reader left, before it's painted.
+  const wasHidden = useRef(hidden);
+  useLayoutEffect(() => {
+    if (wasHidden.current && !hidden) restorePlace();
+    wasHidden.current = hidden;
+  }, [hidden, restorePlace]);
   // A fold moves what's below it, not the scroll position, so the reader may be at the bottom now, or no longer.
   useLayoutEffect(() => {
     if (!toggled.current) return;
