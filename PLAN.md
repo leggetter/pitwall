@@ -196,7 +196,7 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 
 - **Reference:** `docs/design-system.md`, pitwall's spec: tokens by role (surface, text, border, tone) for light and dark, type, spacing, components, states, layout and keyboard. Every text colour pair meets WCAG AA. A dev-only gallery in the app (`#uikit`) shows each component and is the living reference.
 - **Look:** the palette, type and component shapes are inspired by Hookdeck's, with contrast raised wherever it falls short of AA. No Hookdeck logo, illustrations or integration logos.
-- **Fonts and icons:** Inter and JetBrains Mono (both OFL 1.1), self-hosted, because the CSP (`default-src 'self'`) blocks Google Fonts. Icons from Lucide (ISC). The theme's pre-paint script is a same-origin file, for the same reason.
+- **Fonts and icons:** Inter and JetBrains Mono (both OFL 1.1), self-hosted, because the CSP (`default-src 'self'`) blocks Google Fonts. Icons from Material Symbols Rounded (Apache 2.0), bundled as SVGs behind a semantic name map. The theme's pre-paint script is a same-origin file, for the same reason.
 - **Order of work:**
   1. The design system doc.
   2. Tokens by role, with no visual change: today's CSS custom properties renamed.
@@ -206,7 +206,7 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
   6. Rows, status badges (sentence case, with only "needs you" filled), the message box (⌘↵ to send, the result inline, focus kept after a send, and no second copy of the latest reply), and the relay alert, which keeps an indicator after it's dismissed while the relay is off.
   7. Then: keyboard shortcuts (`/` to search, j/k, Enter, Escape, `n` for a new session), runs of tool calls folded into one row with a "Jump to latest" bar, and skeleton, empty and error states.
 - **Also from the try-out:** a plain error, not a stack trace, when pitwall runs in a directory that no longer exists. It reads the current directory even when every root is absolute.
-- **Open:** should a session that needs me stay visible inside a collapsed group? That changes "groups start collapsed" (W7 feedback). Lean: yes, because collapsing was meant to cut the wall of text, not hide what's waiting.
+- **Collapsed groups stay as they are:** groups still start collapsed (W7 feedback), and each group's header already counts the sessions that need me. Listing those sessions under a collapsed header too would save a click but bring back some of the wall of text. Coordinator's lean, put to Phil on 2026-10-20: no change.
 
 ### M4 - My open pull requests
 
