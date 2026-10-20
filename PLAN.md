@@ -197,7 +197,7 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 - **Reference:** `docs/design-system.md`, pitwall's spec: tokens by role (surface, text, border, tone) for light and dark, type, spacing, components, states, layout and keyboard. Every text colour pair meets WCAG AA. A dev-only gallery in the app (`#uikit`) shows each component and is the living reference.
 - **Look:** the palette, type and component shapes are inspired by Hookdeck's, with contrast raised wherever it falls short of AA. No Hookdeck logo, illustrations or integration logos.
 - **Fonts and icons:** Inter and JetBrains Mono (both OFL 1.1), self-hosted, because the CSP (`default-src 'self'`) blocks Google Fonts. Icons from Material Symbols Rounded (Apache 2.0), bundled as SVGs behind a semantic name map. The theme's pre-paint script is a same-origin file, for the same reason.
-- **Order of work:** the items in "M3 work breakdown" below, one reviewable PR each, in that order.
+- **Order of work:** the items in "M3 work breakdown" below, one reviewable PR each, in that order, except that the rows (W23) come before the session view (W22). The session list then gets two-line rows soon after the three columns land.
 - **Also from the try-out:** a plain error, not a stack trace, when pitwall runs in a directory that no longer exists. It reads the current directory even when every root is absolute.
 - **Three columns** (Phil, 2026-10-20): the repo list, then the selected group's sessions, then the open session. They replace the list of grouped cards, which no longer collapse, so the earlier "collapsed groups stay as they are" call is moot.
   - The repo list starts with two views, Needs you and All sessions. Needs you replaces the "Needs attention only" checkbox.

@@ -670,7 +670,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   2. A 1 px `--pw-border` divider, 8 px above and below.
   3. Every group: a git repo, or a directory that isn't in one. With more than one root, each root's groups sit under a heading: the root's path, label style, `--pw-text-subtle`, home as `~`.
 - **Group order:** as the index sorts them: most recently active first, going by unfinished sessions, then groups whose sessions have all finished. As in the session list, a snapshot that would reorder the groups waits while the pointer or focus is in the column.
-- **The root's own directory** is a group like any other, labelled with its path (`~/hookdeck/git`) rather than its last segment, so it doesn't read as a repo called "git".
+- **The root's own directory** is a group like any other, labelled with its path (`~/git`) rather than its last segment, so it doesn't read as a repo called "git".
 - **Below the sidebar breakpoint (900 px): a drawer.**
   - It slides in from the left with the same content, opened from the header's `menu` button.
   - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
