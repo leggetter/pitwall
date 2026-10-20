@@ -175,7 +175,7 @@ WCAG 2.x contrast ratios for the final values above, checked by script.
 
 ### 2.6 The token file
 
-This is the content of `web/src/tokens.css`. The no-JavaScript dark fallback is described, not repeated (see [2.2](#22-themes-and-switching)).
+This is the content of `web/src/tokens.css` once the theme is applied. Until then the file holds today's values under these names (see [2.15](#215-mapping-from-todays-css)). The no-JavaScript dark fallback is described, not repeated (see [2.2](#22-themes-and-switching)).
 
 ```css
 /* pitwall design system tokens. Import before any other CSS. See docs/design-system.md. */
@@ -529,14 +529,16 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 
 - **Fonts,** self-hosted as woff2, because the CSP blocks font CDNs:
   - Inter 400, 500 and 600; JetBrains Mono 400 and 500. Latin and Latin Extended subsets.
-  - Put them in `web/public/fonts/inter/` and `web/public/fonts/jetbrains-mono/`, served at `/fonts/…`.
-  - Declare them in `web/src/fonts.css` with `font-display: swap` and `unicode-range` per subset. Preload Inter 400 and 500 from `web/index.html` (`<link rel="preload" as="font" type="font/woff2" crossorigin>`).
-  - **Licence files:** both are SIL OFL 1.1. Ship each family's licence beside its files, as `web/public/fonts/inter/OFL.txt` and `web/public/fonts/jetbrains-mono/OFL.txt`, so it's served with the fonts. List both in a root `THIRD_PARTY_NOTICES.md`.
+  - Bundled from the `@fontsource/inter` and `@fontsource/jetbrains-mono` packages, exact devDependencies. Vite copies the woff2 files into `dist/web/assets/` with hashed names, so they're same-origin, which the CSP's `default-src 'self'` allows.
+  - Declared in `web/src/fonts.css`, imported from the web entry after `tokens.css`: one `@font-face` per weight and subset, woff2 only, with `font-display: swap` and the package's own `unicode-range`. A browser downloads a file only when text on the page uses that family, weight and subset.
+  - **No preload.** The hashed file names would need a build step to reach `web/index.html`, and pitwall is served from localhost, where a preload saves almost nothing: the stylesheet that names the files arrives at once, and `swap` shows the fallback font until they load.
+  - **Licence files:** both are SIL OFL 1.1, reproduced in full in the root `THIRD_PARTY_NOTICES.md`. The web build copies that file into `dist/web` as `THIRD_PARTY_NOTICES.txt`, so the licences ship with the font files.
 - **Icons:** Material Symbols Rounded, bundled as SVG path data, never as a font or from a CDN.
-  - Style: fill 0, weight 400, grade 0. Use the 20 px optical size at 16 px and the 24 px optical size at 24 px.
+  - Style: fill 0, weight 400, grade 0, at the 48 px optical size, at both 16 px and 24 px. `@material-symbols/svg-400` ships only that optical size, not the 20 px and 24 px ones, which adjust the strokes for small sizes.
   - Vendor only the glyphs pitwall uses, from a pinned upstream release (the repo's dependency rules apply if a package is used to extract them). Keep the path data in `web/src/icons/paths.ts`, keyed by the semantic names below.
-  - Render them through one `Icon` component: `<svg viewBox="0 -960 960 960" width height fill="currentColor" aria-hidden="true" focusable="false">`.
-  - **Licence files:** Apache 2.0. Put the licence text at `web/src/icons/LICENSE`, plus the upstream `NOTICE` file if the release has one, and list it in `THIRD_PARTY_NOTICES.md`.
+    - Today's release is `@material-symbols/svg-400@0.47.6`, which isn't a dependency. `scripts/extract-icons.ts` regenerates `paths.ts` from an unpacked copy (from `npm pack`), reading it as data; its header comment has the steps.
+  - Render them through one `Icon` component, `web/src/components/Icon.tsx`: `<svg viewBox="0 -960 960 960" width height fill="currentColor" aria-hidden="true" focusable="false">`, with `size` 16 (the default) or 24.
+  - **Licence files:** Apache 2.0. The licence text is at `web/src/icons/LICENSE` and in `THIRD_PARTY_NOTICES.md`. The release has no `NOTICE` file.
   - The CSP allows inline SVG; no `img-src` change is needed.
 - **Semantic icon names:** components ask for a meaning, not a glyph, so a glyph changes in one place.
 
@@ -544,7 +546,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 |---|---|---|
 | `close` | close | Closing the session view, dialogs, toasts |
 | `expand` | chevron_right | Group, finished-list and tool-call toggles, rotated 90° when open |
-| `select` | expand_more | The chevron in selects |
+| `select` | keyboard_arrow_down (formerly expand_more) | The chevron in selects |
 | `more` | more_horiz | The session view's actions menu |
 | `search` | search | The filter field |
 | `clear` | cancel | Clearing the filter |
@@ -570,22 +572,22 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 The first restyle PR renames today's custom properties (in `web/src/styles.css`, `relay.css`, `actions.css` and `components/Terminal.css`) and the colours hard-coded in `components/Terminal.css` and `xterm.ts`. It keeps **today's values**, so nothing changes on screen.
 
 - **Splits:** where one variable plays two roles, define both new tokens with today's value, and point each use at the role it plays.
-- **State aliases:** where two of today's values will become one role, the state aliases in section 4 of the token file hold today's values until the restyle points them at the tone tokens.
+- **State aliases:** where two of today's values will become one role, the state aliases hold today's values until the restyle points them at the tone tokens. Today's values differ between light and dark, so until then the aliases sit in the light and dark blocks rather than in section 4 of the token file.
 
 | Today | Today's value, light / dark | New token |
 |---|---|---|
 | `--bg` | `#f4f5f7` / `#0e1115` | `--pw-bg` |
-| `--surface` | `#ffffff` / `#161a20` | `--pw-surface` (and `--pw-surface-overlay` for the dialog) |
+| `--surface` | `#ffffff` / `#161a20` | `--pw-surface` (and `--pw-surface-overlay` for the dialog); `--pw-on-accent` for the primary button's text; `--pw-state-asked-bg` for the "asked you" badge |
 | `--surface-raised` | `#f0f2f5` / `#1e232b` | `--pw-surface-sunken` for fills (group headers, user messages, code chips); `--pw-surface-hover` for hovers |
 | `--border` | `#d8dce2` / `#2b323c` | `--pw-border` |
-| `--border-strong` | `#b9c0c9` / `#3d4552` | `--pw-border-input` on fields; `--pw-border-control` on buttons and the dialog edge |
+| `--border-strong` | `#b9c0c9` / `#3d4552` | `--pw-border-input` on fields; `--pw-border-control` on buttons and the dialog edge; `--pw-border-strong` on the session view's edge |
 | `--text` | `#1b1f24` / `#e6e9ee` | `--pw-text` |
 | `--text-muted` | `#555d67` / `#9ca5b1` | `--pw-text-muted` |
 | `--focus` | `#1f5fd6` / `#7ea8ff` | `--pw-focus` on outlines; `--pw-accent` on the primary button; `--pw-link` on link buttons; `--pw-selected-border` for the open row's bar |
-| `--attention` | `#f59e0b` / `#fbbf24` | `--pw-state-attention-bg` (badges) and `--pw-state-attention-bar` (row bar) |
+| `--attention` | `#f59e0b` / `#fbbf24` | `--pw-state-attention-bg` (badges) and `--pw-state-attention-bar` (row bar); `--pw-state-asked-border` for the "asked you" badge's edge |
 | `--attention-text` | `#2b1d00` / `#1c1300` | `--pw-state-attention-fg` |
 | `--attention-row` | `#fff6e5` / `#2a2008` | `--pw-state-attention-row` |
-| `--attention-strong` | `#9a5800` / `#fcc94a` | `--pw-warning-fg` (also the "Asked" label and the checkbox accent) |
+| `--attention-strong` | `#9a5800` / `#fcc94a` | `--pw-warning-fg` (also the "Asked:" label, the checkbox accent and the line for a relay message that's held or uncertain); `--pw-state-asked-fg` for the "asked you" badge's text |
 | `--busy-bg`, `--busy-text` | `#dbe8fe`, `#1d3f99` / `#18294a`, `#a9c7ff` | `--pw-state-busy-bg`, `--pw-state-busy-fg` |
 | `--idle-bg`, `--idle-text` | `#eceef1`, `#474f59` / `#232932`, `#b7bfc9` | `--pw-state-idle-bg`, `--pw-state-idle-fg` |
 | `--done-bg`, `--done-text` | `#dcf5e4`, `#165c32` / `#12301e`, `#8ee6ac` | `--pw-state-done-bg`, `--pw-state-done-fg` |
@@ -602,6 +604,7 @@ The first restyle PR renames today's custom properties (in `web/src/styles.css`,
 | `rgb(0 0 0 / 0.35)` dialog backdrop | | `--pw-backdrop` |
 | `0 12px 32px rgb(0 0 0 / 0.25)` dialog shadow | | `--pw-shadow-3` |
 | `-8px 0 24px rgb(0 0 0 / 0.18)` session view shadow | | `--pw-shadow-overlay` |
+| `color-scheme: light dark` on `:root` | | `color-scheme: light` in the light block and `dark` in the dark blocks, which comes to the same thing while the system decides |
 | `body { font-size: 15px }` | | Stays until the type change, then `--pw-text-m` (14 px) |
 
 ---
