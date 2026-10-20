@@ -249,7 +249,7 @@ Same way of working as M2, on `m3/integration`. Each item builds from `docs/desi
 | Item | What | Branch | Size | Status |
 | --- | --- | --- | --- | --- |
 | W17 | The design system doc | `m3/design-system` | M | Merged ([#21](https://github.com/leggetter/pitwall/pull/21)) |
-| W18 | Tokens renamed to `--pw-*` with no visual change, plus self-hosted fonts and icons, bundled but not yet applied | `m3/tokens` | M | Next |
+| W18 | Tokens renamed to `--pw-*` with no visual change, plus self-hosted fonts and icons, bundled but not yet applied | `m3/tokens` | M | In progress |
 | W19 | A dev-only `#uikit` gallery, in both themes | `m3/uikit` | M | |
 | W20 | Apply the theme: the palette, Inter and JetBrains Mono, a 14 px body, radii, shadows and the focus ring; `theme-init.js` and the theme switch | `m3/theme` | M | |
 | W21 | The app shell: full width, header, toolbar, panes that scroll on their own, the filter field and chips | `m3/shell` | M | |
@@ -261,7 +261,7 @@ Same way of working as M2, on `m3/integration`. Each item builds from `docs/desi
 | W27 | The conversation: folded tool calls, "Jump to latest", speaker lines with times | `m3/conversation` | M | |
 | W28 | Skeleton, empty and error states | `m3/states` | S | |
 | W29 | The terminal: its theme from tokens, JetBrains Mono, the status bar, and F6 to leave it | `m3/terminal` | S | |
-| W30 | A plain error when pitwall runs in a directory that no longer exists | `m3/cwd-error` | S | |
+| W30 | A plain error when pitwall runs in a directory that no longer exists | `m3/cwd-error` | S | Merged ([#22](https://github.com/leggetter/pitwall/pull/22)). Not covered: a directory deleted while pitwall runs, where `git` and the browser opener, which set no `cwd`, would start in it. Low priority |
 | W31 | Review and live check of the integrated branch | `m3/integration` | M | |
 | W32 | Phil tries it and approves the merge | - | - | |
 
