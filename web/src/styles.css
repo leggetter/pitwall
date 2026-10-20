@@ -48,9 +48,15 @@ textarea {
   font-variant-ligatures: none;
 }
 
+/*
+ * Keyboard focus (docs/design-system.md, 2.10): a 2 px gap in the surface colour, then a 2 px ring in
+ * --pw-focus, drawn as a shadow. The transparent outline shows in forced-colours mode, which drops
+ * shadows. A control with an edge of its own keeps it under the ring, in the rules below.
+ */
 :focus-visible {
-  outline: 2px solid var(--pw-focus);
+  outline: 2px solid transparent;
   outline-offset: 2px;
+  box-shadow: var(--pw-ring-focus);
 }
 
 [hidden] {
@@ -154,7 +160,7 @@ textarea {
 .connection .dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--pw-radius-full);
   background: var(--pw-pending);
 }
 
@@ -189,8 +195,13 @@ textarea {
   min-width: 0;
   padding: 6px 10px;
   background: var(--pw-surface);
-  border: 1px solid var(--pw-border-input);
-  border-radius: 6px;
+  border-radius: var(--pw-radius-md);
+  border: 0;
+  box-shadow: var(--pw-shadow-input);
+}
+
+.filter-input:focus-visible {
+  box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
 }
 
 .filter-input::placeholder {
@@ -234,7 +245,7 @@ textarea {
   padding: 10px 12px;
   border: 1px solid var(--pw-border);
   border-left-width: 4px;
-  border-radius: var(--pw-radius-lg);
+  border-radius: var(--pw-radius-md);
   background: var(--pw-surface);
   overflow-wrap: anywhere;
 }
@@ -283,13 +294,18 @@ textarea {
 .button {
   padding: 4px 12px;
   background: var(--pw-surface);
-  border: 1px solid var(--pw-border-control);
-  border-radius: 6px;
+  border-radius: var(--pw-radius-md);
   cursor: pointer;
+  border: 0;
+  box-shadow: var(--pw-shadow-control);
 }
 
 .button:hover {
   background: var(--pw-surface-hover);
+}
+
+.button:focus-visible {
+  box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
 }
 
 .button.small {
@@ -301,9 +317,9 @@ textarea {
 
 .group {
   background: var(--pw-surface);
-  border: 1px solid var(--pw-border);
-  border-radius: var(--pw-radius-lg);
+  border-radius: var(--pw-radius-md);
   overflow: hidden;
+  box-shadow: var(--pw-shadow-card);
 }
 
 .group-heading {
@@ -325,8 +341,10 @@ textarea {
   cursor: pointer;
 }
 
+/* The card clips anything outside it, so a full-width toggle's ring is drawn inside its edge. */
 .group-toggle:focus-visible {
   outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
 }
 
 .group-toggle .chevron {
@@ -362,7 +380,7 @@ textarea {
 
 .group-attention {
   padding: 1px 8px;
-  border-radius: var(--pw-radius-full);
+  border-radius: var(--pw-radius-sm);
   background: var(--pw-state-attention-bg);
   color: var(--pw-state-attention-fg);
   font-size: var(--pw-text-xs);
@@ -440,7 +458,7 @@ textarea {
 .pill {
   padding: 1px 9px;
   border: 1px solid transparent;
-  border-radius: var(--pw-radius-full);
+  border-radius: var(--pw-radius-sm);
   font-size: var(--pw-text-xs);
   font-weight: var(--pw-weight-bold);
   overflow-wrap: anywhere;
@@ -494,7 +512,7 @@ textarea {
 .stale {
   padding: 0 6px;
   border: 1px solid var(--pw-state-offline-border);
-  border-radius: 4px;
+  border-radius: var(--pw-radius-sm);
   color: var(--pw-state-offline-fg);
   font-size: var(--pw-text-xs);
   text-transform: uppercase;
@@ -534,6 +552,7 @@ textarea {
 
 .finished-toggle:focus-visible {
   outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
 }
 
 .finished-toggle .chevron {
@@ -676,7 +695,7 @@ textarea {
   padding: 1px 6px;
   background: var(--pw-surface-sunken);
   border: 1px solid var(--pw-border);
-  border-radius: 4px;
+  border-radius: var(--pw-radius-sm);
   font-size: var(--pw-text-xs);
   user-select: all;
 }
@@ -848,7 +867,7 @@ textarea {
 .entry-user,
 .entry-cross-session {
   padding: 8px 10px;
-  border-radius: var(--pw-radius-lg);
+  border-radius: var(--pw-radius-md);
   background: var(--pw-surface-sunken);
 }
 
@@ -883,7 +902,7 @@ textarea {
 .tool-error {
   flex: none;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: var(--pw-radius-sm);
   background: var(--pw-danger-tint);
   color: var(--pw-danger-tint-fg);
   font-family: var(--pw-font-sans);

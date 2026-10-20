@@ -170,7 +170,7 @@ WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test
 | `--pw-term-cursor` on `--pw-term-bg` | 16.92 | 16.92 | 3:1 |
 | `--pw-border-control` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-border-input` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
-| `--pw-focus` on surface, bg, muted, sunken and selected | 4.29 (selected) | 4.99 (sunken) | 3:1 |
+| `--pw-focus` on surface, bg, muted, sunken, both hovers and selected | 4.26 (hover-bg) | 4.68 (hover) | 3:1 |
 | `--pw-selected-border` on surface and selected | 6.56 (selected) | 5.14 (selected) | 3:1 |
 | `--pw-warning-indicator` on surface, bg and warning tint | 3.73 (warning tint) | 6.04 (warning tint) | 3:1 |
 
@@ -317,6 +317,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-shadow-accent: 0 0 0 1px var(--pw-accent-hover), 0 1px 2px rgb(0 0 0 / 0.08);
   --pw-shadow-overlay: var(--pw-shadow-3);
   --pw-ring-focus: 0 0 0 2px var(--pw-surface), 0 0 0 4px var(--pw-focus);
+  --pw-ring-focus-inset: inset 0 0 0 2px var(--pw-focus);
   --pw-ring-selected: inset 0 0 0 1px var(--pw-selected-border);
 }
 
@@ -486,12 +487,14 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 | `--pw-shadow-2` | Menus |
 | `--pw-shadow-3`, `--pw-shadow-overlay` | Dialogs, toasts, the session view when it overlays the list |
 | `--pw-ring-focus` | Keyboard focus, on top of the element's own shadow |
+| `--pw-ring-focus-inset` | Keyboard focus on a full-width control inside a card that clips its content, such as a group header or the Finished toggle, where the outer ring would be cut off |
 | `--pw-ring-selected` | The open row and pressed chips (inset, so nothing moves) |
 
 - **Edges are rings:** controls are outlined with `box-shadow: 0 0 0 1px …`, not `border`, so they line up with elements that have no edge. Dividers between rows and sections are a real `1px solid var(--pw-border)`.
 - **Focus:** `:focus-visible { box-shadow: <own shadow>, var(--pw-ring-focus); outline: 2px solid transparent; }`.
   - The ring is a 2 px gap in the surface colour and a 2 px ring in `--pw-focus`.
   - The transparent outline becomes visible in Windows forced-colours mode, where shadows are dropped.
+  - Inside a card with `overflow: hidden`, a full-width control uses `--pw-ring-focus-inset` and `outline-offset: -2px` instead, so neither is clipped. The 2 px ring sits on the control's own fill, so there's no gap; `--pw-focus` is at least 3:1 on every surface it's drawn on (2.5).
   - Never remove focus styles without that replacement.
 - **No other shadows,** and only one elevation per element.
 

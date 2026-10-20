@@ -41,6 +41,6 @@
   min-height: 0;
   padding: 6px;
   overflow: hidden;
-  border-radius: var(--pw-radius-lg);
+  border-radius: var(--pw-radius-md);
   background: var(--pw-term-bg);
 }
