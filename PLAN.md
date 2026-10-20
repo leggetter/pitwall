@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0, M1 and M2 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, is next. |
+| **Status** | M0, M1 and M2 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, is in progress on `m3/integration`: the design system doc, the `#uikit` gallery and the theme are merged. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - W18: tokens with no visual change, plus fonts and icons<br>- Then the rest of the M3 work breakdown, in order |
+| **Next steps** | - W21: the app shell<br>- Then the rest of the M3 work breakdown, in order |
 
 ## Who is this for
 
@@ -190,7 +190,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
 - **Detect a transcript rewritten in place** within one poll (W6 finding 7), if Claude Code ever does that.
 - **Tests never touch a real session.** Anything that attaches, spawns, stops or removes uses throwaway `pitwall-test-*` sessions on Haiku, removed afterwards. Live checks stay behind `PITWALL_LIVE=1`.
 
-### M3 - Design system and restyle (next)
+### M3 - Design system and restyle (in progress)
 
 A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled to it. It's pitwall's own design system, not Hookdeck's. Requested by Phil on 2026-10-20 after trying M2, which also moved the message box to the foot of the session view ([#20](https://github.com/leggetter/pitwall/pull/20)). Whether pitwall is open-sourced, and how, is undecided.
 
@@ -203,6 +203,7 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 - **Idle sessions show no badge in the list** (Phil, 2026-10-20), only "Idle" in the session view, on condition that needs-attention is still inferred. It is: `needsAttention()` comes from waiting, blocked and asked-you, never from the badge.
 - **Sending stays ⌘↵,** and Enter adds a line (Phil, 2026-10-20). Each message starts a turn on the target's model and can't be taken back.
 - **Disabled text is the one contrast exemption** (coordinator, 2026-10-20), as WCAG 1.4.3 allows for inactive controls.
+- **W20's judgement calls stand** (coordinator, 2026-10-20). Each old type size moved to the scale step its role in the doc's 2.7 picks, and the danger button is solid, as section 4 says. The 16 px icons draw the 20 px optical size, Material's nearest. The gallery dropped its "no `data-theme`" option, because `tokens.test.tsx` checks the no-JavaScript dark block is an exact copy.
 
 ### M4 - My open pull requests
 
@@ -252,16 +253,16 @@ Same way of working as M2, on `m3/integration`. Each item builds from `docs/desi
 | W17 | The design system doc | `m3/design-system` | M | Merged ([#21](https://github.com/leggetter/pitwall/pull/21)) |
 | W18 | Tokens renamed to `--pw-*` with no visual change, plus self-hosted fonts and icons, bundled but not yet applied | `m3/tokens` | M | Merged ([#23](https://github.com/leggetter/pitwall/pull/23)): 36 before/after screenshot pairs byte-identical, no font downloaded. The icon package has only the 48 px optical size; W19's gallery checks it at 16 px |
 | W19 | A dev-only `#uikit` gallery, in both themes | `m3/uikit` | M | Merged ([#24](https://github.com/leggetter/pitwall/pull/24)). The 48 px icons are too thin at 16 px, so W20 switches to the 20 and 24 px optical sizes |
-| W20 | Apply the theme: the palette, Inter and JetBrains Mono, a 14 px body, radii, shadows and the focus ring; `theme-init.js` and the theme switch; icons from the 20 and 24 px optical sizes | `m3/theme` | M | In progress |
-| W21 | The app shell: full width, header, toolbar, panes that scroll on their own, the filter field and chips | `m3/shell` | M | |
+| W20 | Apply the theme: the palette, Inter and JetBrains Mono, a 14 px body, radii, shadows and the focus ring; `theme-init.js` and the theme switch; icons from the 20 and 24 px optical sizes | `m3/theme` | M | Merged ([#25](https://github.com/leggetter/pitwall/pull/25)). `contrast.test.tsx` checks every pair in the doc's 2.5 against `tokens.css`, and `tokens.test.tsx` checks the file matches 2.6. `data-theme` is set before first paint in all 9 headless cases, with no CSP errors. `paths.ts` regenerates byte-identical from the pinned commit |
+| W21 | The app shell: full width, header, toolbar, panes that scroll on their own, the filter field and chips | `m3/shell` | M | From W20: the masthead's wrap at 375 px is a stopgap; the favicon's colours are hard-coded in `index.html`; placeholders, times and paths use `--pw-text-muted` where the doc says `--pw-text-subtle`; the wordmark is xl 20, the doc says l 16; the doc's `--pw-accent` checkbox fill is 2.26:1 on dark surfaces, so fix the doc or the fill; the theme store doesn't follow a change made in another tab (`storage` event) |
 | W22 | The session view: beside or over the list, the divider, header and actions menu, Conversation and Terminal tabs, footer, `?session=`, ↑/↓ and focus | `m3/session-view` | L | |
-| W23 | Rows, group headers and badges, the connection badge, and holding row order while I'm in the list | `m3/rows` | M | |
-| W24 | The message box, relay alert and app strip, and inline confirmations | `m3/message-box` | M | |
-| W25 | Overlays: the new-session dialog, menus, toasts, tooltips, copy buttons and timestamps | `m3/overlays` | M | |
+| W23 | Rows, group headers and badges, the connection badge, and holding row order while I'm in the list | `m3/rows` | M | From W20: `.kind`, `.who`, `.stale` and `.entry-label` are still uppercase with tracking (`.kind`'s text is lowercase, so it needs a text change too); the open row is still a 4 px bar, where the doc wants the selected fill, `--pw-ring-selected` and a 3 px attention bar; group headings are l 16 and names weight 600, where the doc says m 14 and 500; at 375 px a long session name breaks into fragments |
+| W24 | The message box, relay alert and app strip, and inline confirmations | `m3/message-box` | M | From W20: the `.tone-failed` badge class also styles `.relay-exchange-line` and `.relay-result`, which gives the failed line its pink band; banner "Dismiss" links put `--pw-link` on a tint (4.51:1 on dark warning), where 2.1 keeps links to neutral surfaces; disabled buttons use `opacity: 0.6`, not `--pw-text-disabled` |
+| W25 | Overlays: the new-session dialog, menus, toasts, tooltips, copy buttons and timestamps | `m3/overlays` | M | From W20: the theme switch uses `title` until the Tooltip exists |
 | W26 | Keyboard shortcuts and their dialog, with the off switch | `m3/keyboard` | M | |
 | W27 | The conversation: folded tool calls, "Jump to latest", speaker lines with times | `m3/conversation` | M | |
 | W28 | Skeleton, empty and error states | `m3/states` | S | |
-| W29 | The terminal: its theme from tokens, JetBrains Mono, the status bar, and F6 to leave it | `m3/terminal` | S | |
+| W29 | The terminal: its theme from tokens, JetBrains Mono, the status bar, and F6 to leave it | `m3/terminal` | S | From W20: `--pw-term-bg` equals dark `--pw-bg`, so an empty terminal almost vanishes in the dark session view; xterm reads only bg, fg and cursor, with a hard-coded font family |
 | W30 | A plain error when pitwall runs in a directory that no longer exists | `m3/cwd-error` | S | Merged ([#22](https://github.com/leggetter/pitwall/pull/22)). Not covered: a directory deleted while pitwall runs, where `git` and the browser opener, which set no `cwd`, would start in it. Low priority |
 | W31 | Review and live check of the integrated branch | `m3/integration` | M | |
 | W32 | Phil tries it and approves the merge | - | - | |

@@ -10,7 +10,7 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 ## Status
 
-M1, the read-only index, is merged into `main` ([PR #6](https://github.com/leggetter/pitwall/pull/6)). M2, interacting with sessions from the web UI, is in progress on `m2/integration`, starting with the security gate (W8) and the session view (W9). See "M2 work breakdown" in `PLAN.md`.
+M1, the read-only index, and M2, interacting with sessions from the web UI, are merged into `main` ([PR #6](https://github.com/leggetter/pitwall/pull/6), [PR #19](https://github.com/leggetter/pitwall/pull/19)). M3, the design system and restyle, is in progress on `m3/integration`. See "M3 work breakdown" in `PLAN.md` and `docs/design-system.md`.
 
 ## Rules
 
