@@ -200,7 +200,8 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 - **Order of work:** the items in "M3 work breakdown" below, one reviewable PR each, in that order.
 - **Also from the try-out:** a plain error, not a stack trace, when pitwall runs in a directory that no longer exists. It reads the current directory even when every root is absolute.
 - **Collapsed groups stay as they are:** groups still start collapsed (W7 feedback), and each group's header already counts the sessions that need me. Listing those sessions under a collapsed header too would save a click but bring back some of the wall of text. Coordinator's lean, put to Phil on 2026-10-20: no change.
-- **Open (Phil):** should idle sessions keep a badge in the list? "Exceptions only" says no: idle is the resting state of most interactive sessions, so the row would show no badge and the session view would still say "Idle". Lean: hide it in the list.
+- **Idle sessions show no badge in the list** (Phil, 2026-10-20), only "Idle" in the session view, on condition that needs-attention is still inferred. It is: `needsAttention()` comes from waiting, blocked and asked-you, never from the badge.
+- **Sending stays ⌘↵,** and Enter adds a line (Phil, 2026-10-20). Each message starts a turn on the target's model and can't be taken back.
 - **Disabled text is the one contrast exemption** (coordinator, 2026-10-20), as WCAG 1.4.3 allows for inactive controls.
 
 ### M4 - My open pull requests

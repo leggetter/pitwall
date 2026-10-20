@@ -782,7 +782,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 | Stopped | "Stopped" | subtle neutral |
 | Process not running | "Not running" | outline |
 | Busy / working | "Busy" / "Working", with an 8 px dot in `--pw-info-fg` | subtle info |
-| Idle | "Idle" | subtle neutral (see [Open questions](#7-open-questions)) |
+| Idle | No badge in the list; "Idle" in the session view | subtle neutral, in the session view only. Needs-you is unaffected: it comes from waiting, blocked and asked-you, never from the badge |
 | Unknown | "Unknown" | subtle neutral |
 | Finished, and it asked you | "Asked you", with a tooltip saying it isn't counted | outline |
 
@@ -1250,4 +1250,4 @@ Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only when focus isn't in a t
 
 ## 7. Open questions
 
-1. **Should idle sessions show a badge in the list?** "Exceptions only" says no: an idle interactive session would show no badge in its row, and "Idle" would show only in the session view. Today every row shows its state. Lean: hide it in the list, because idle is the healthy resting state of most interactive sessions.
+None open. Decisions made while writing this doc are recorded in `PLAN.md` under M3.
