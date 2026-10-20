@@ -304,7 +304,7 @@ input {
   gap: 4px 10px;
   width: 100%;
   padding: 10px 14px;
-  background: var(--pw-surface-sunken);
+  background: var(--pw-surface-muted);
   border: 0;
   text-align: left;
   cursor: pointer;
@@ -444,22 +444,26 @@ input {
 
 .tone-busy {
   background: var(--pw-state-busy-bg);
+  border-color: var(--pw-state-busy-border);
   color: var(--pw-state-busy-fg);
 }
 
 .tone-idle,
 .tone-stopped {
   background: var(--pw-state-idle-bg);
+  border-color: var(--pw-state-idle-border);
   color: var(--pw-state-idle-fg);
 }
 
 .tone-done {
   background: var(--pw-state-done-bg);
+  border-color: var(--pw-state-done-border);
   color: var(--pw-state-done-fg);
 }
 
 .tone-failed {
   background: var(--pw-state-failed-bg);
+  border-color: var(--pw-state-failed-border);
   color: var(--pw-state-failed-fg);
 }
 
@@ -827,7 +831,7 @@ input {
 }
 
 .entry-cross-session {
-  border-left: 3px solid var(--pw-state-busy-fg);
+  border-left: 3px solid var(--pw-info-fg);
 }
 
 /* A sender's name is shown as it is, not in capitals. */
@@ -857,8 +861,8 @@ input {
   flex: none;
   padding: 0 6px;
   border-radius: 4px;
-  background: var(--pw-state-failed-bg);
-  color: var(--pw-state-failed-fg);
+  background: var(--pw-danger-tint);
+  color: var(--pw-danger-tint-fg);
   font-family: var(--pw-font-sans);
   font-size: 0.75rem;
   font-weight: 600;

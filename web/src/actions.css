@@ -8,18 +8,19 @@
 }
 
 .button.primary:hover {
-  background: var(--pw-accent);
-  filter: brightness(1.08);
+  background: var(--pw-accent-hover);
+  border-color: var(--pw-accent-hover);
 }
 
 .button.danger {
-  background: var(--pw-danger-tint);
-  border-color: var(--pw-danger-border);
+  background: var(--pw-danger-solid);
+  border-color: var(--pw-danger-solid);
+  color: var(--pw-on-danger-solid);
 }
 
 .button.danger:hover {
-  background: var(--pw-danger-tint);
-  filter: brightness(0.97);
+  background: var(--pw-danger-solid);
+  filter: brightness(0.92);
 }
 
 .modal .button:disabled,
@@ -100,7 +101,7 @@
 
 .field-input[aria-invalid='true'],
 .field select[aria-invalid='true'] {
-  border-color: var(--pw-danger-border);
+  border-color: var(--pw-danger-fg);
 }
 
 .field-hint {
@@ -110,7 +111,7 @@
 }
 
 .field-problem {
-  color: var(--pw-state-failed-fg);
+  color: var(--pw-danger-fg);
   font-size: 0.85rem;
 }
 
@@ -152,7 +153,7 @@
   padding: 10px 12px;
   background: var(--pw-surface-sunken);
   border: 1px solid var(--pw-border);
-  border-left: 4px solid var(--pw-danger-border);
+  border-left: 4px solid var(--pw-danger-solid);
   border-radius: var(--pw-radius-lg);
   font-size: 0.875rem;
 }
@@ -165,5 +166,5 @@
 }
 
 .action-result.failed {
-  color: var(--pw-state-failed-fg);
+  color: var(--pw-danger-fg);
 }

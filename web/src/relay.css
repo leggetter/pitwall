@@ -42,7 +42,7 @@
 }
 
 .relay-text[aria-invalid='true'] {
-  border-color: var(--pw-danger-border);
+  border-color: var(--pw-danger-fg);
 }
 
 /* Under the text box, one small paragraph: the character count, then what a message can and can't do. */
@@ -52,7 +52,7 @@
 }
 
 .relay-count.over {
-  color: var(--pw-state-failed-fg);
+  color: var(--pw-danger-fg);
 }
 
 .relay-box .button:disabled {
@@ -69,9 +69,9 @@
 }
 
 .relay-result.tone-ok {
-  background: var(--pw-state-done-bg);
-  color: var(--pw-state-done-fg);
-  border-color: transparent;
+  background: var(--pw-success-tint);
+  color: var(--pw-success-tint-fg);
+  border-color: var(--pw-success-border);
 }
 
 .relay-result.tone-waiting {
@@ -100,7 +100,7 @@
 }
 
 .relay-exchange-line.tone-failed {
-  color: var(--pw-state-failed-fg);
+  color: var(--pw-danger-fg);
 }
 
 .relay-exchange-label {
