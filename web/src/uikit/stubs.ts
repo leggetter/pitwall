@@ -17,7 +17,7 @@ import type { ClipboardLike } from '../copy.js';
 import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
 import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
-import { CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
+import { CONVERSATION, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
 const forever = () => new Promise<ApiResult>(() => {});
@@ -27,10 +27,11 @@ const failed = (status?: number, body?: unknown): ApiResult =>
 
 export interface StubOptions {
   /**
-   * The conversation's newest page. `older` adds a page behind "Load earlier"; `loading` never
-   * answers; `missing` is a 404, as for a session with no transcript.
+   * The conversation's newest page. `older` adds a page behind "Load earlier", which `older-loading`
+   * never answers; `growing` answers every fetch after the first with newer entries too, for "Jump to
+   * latest"; `loading` never answers; `missing` is a 404, as for a session with no transcript.
    */
-  conversation?: 'ok' | 'older' | 'empty' | 'loading' | 'failed' | 'missing';
+  conversation?: 'ok' | 'older' | 'older-loading' | 'growing' | 'empty' | 'loading' | 'failed' | 'missing';
   /** What the relay answers a message with. `sending` never answers; `unreachable` is a network error. */
   relay?: RelayResult | 'sending' | 'unreachable';
   /** What starting a session gets. `trust` is Claude Code refusing an untrusted directory. */
@@ -44,13 +45,20 @@ const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
 
 /** An ApiClient that answers from the fixtures, as `options` say, and never calls fetch. */
 export function stubApi(options: StubOptions = {}): ApiClient {
+  // How many times each session's newest page has been asked for.
+  const fetched = new Map<string, number>();
   const answer = (method: 'GET' | 'POST', path: string): Promise<ApiResult> => {
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
     const match = SESSION_PATH.exec(path);
     if (!match) return Promise.resolve(failed(404));
     const sessionId = decodeURIComponent(match[1] ?? '');
     const route = match[2];
-    if (method === 'GET' && route === 'conversation') return conversation(sessionId, options.conversation ?? 'ok', match[3] !== undefined);
+    if (method === 'GET' && route === 'conversation') {
+      const older = match[3] !== undefined;
+      const times = older ? 0 : (fetched.get(sessionId) ?? 0);
+      if (!older) fetched.set(sessionId, times + 1);
+      return conversation(sessionId, options.conversation ?? 'ok', older, times);
+    }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
     return Promise.resolve(failed(404));
@@ -61,7 +69,8 @@ export function stubApi(options: StubOptions = {}): ApiClient {
   };
 }
 
-function conversation(sessionId: string, kind: NonNullable<StubOptions['conversation']>, older: boolean): Promise<ApiResult> {
+/** `older` is a "Load earlier" request; `times` is how often the newest page was asked for before this. */
+function conversation(sessionId: string, kind: NonNullable<StubOptions['conversation']>, older: boolean, times: number): Promise<ApiResult> {
   switch (kind) {
     case 'loading':
       return forever();
@@ -73,6 +82,10 @@ function conversation(sessionId: string, kind: NonNullable<StubOptions['conversa
       return Promise.resolve(ok({ sessionId, entries: [] }));
     case 'older':
       return Promise.resolve(ok(older ? { sessionId, entries: OLDER_CONVERSATION } : { sessionId, entries: CONVERSATION, before: 'pitwall-test-cursor' }));
+    case 'older-loading':
+      return older ? forever() : Promise.resolve(ok({ sessionId, entries: CONVERSATION, before: 'pitwall-test-cursor' }));
+    case 'growing':
+      return Promise.resolve(ok({ sessionId, entries: times === 0 ? CONVERSATION : [...CONVERSATION, ...NEWER_CONVERSATION] }));
     case 'ok':
       return Promise.resolve(ok({ sessionId, entries: CONVERSATION }));
   }

@@ -138,6 +138,11 @@
   height: 420px;
 }
 
+/* For a whole conversation, every kind of entry in it. */
+.uikit-frame-tall {
+  height: 1200px;
+}
+
 .uikit-frame-dialog {
   height: 920px;
 }

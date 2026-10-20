@@ -19,7 +19,7 @@ import { Dialogs, Layouts, Notices, Pages, ShortcutsDialogs } from './pages.js';
 import { CopyButtons, Timestamps, Toasts, Tooltips } from './overlays.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
 import { memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
-import { Confirmations, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
+import { Confirmations, Conversations, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import './gallery.css';
 
 interface Section {
@@ -47,6 +47,12 @@ const SECTIONS: Section[] = [
     title: 'Session view',
     intro: 'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state. The Layouts section shows it as the third column.',
     Content: SessionViews,
+  },
+  {
+    id: 'conversation',
+    title: 'Conversation',
+    intro: "The session view's Conversation tab: every kind of entry, folded tool calls closed and open, Load earlier idle and busy, and Jump to latest.",
+    Content: Conversations,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use.', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, and a session that can't be messaged.", Content: MessageBoxes },
