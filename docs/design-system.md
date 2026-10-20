@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -174,6 +174,7 @@ WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test
 | `--pw-border-control` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-border-input` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-focus` on surface, bg, muted, sunken, both hovers and selected | 4.26 (hover-bg) | 4.68 (hover) | 3:1 |
+| `--pw-focus` on the five tints (a control's ring inside an inline alert, and a focused alert's inset ring) | 4.29 (info tint) | 4.41 (success tint) | 3:1 |
 | `--pw-selected-border` on neutral surfaces (the selected ring, and a checked checkbox's fill) | 6.53 (hover-bg) | 4.68 (hover) | 3:1 |
 | `--pw-warning-indicator` on surface, bg, muted, hover and selected (the bar of a row that needs you, as it is, hovered or open) | 3.45 (selected) | 6.28 (hover) | 3:1 |
 
@@ -697,7 +698,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ### Session list
 
 - **Fill:** `--pw-surface`. Its header stays put; its rows scroll.
-- **Page alerts** come first, above the header, full column width, with 12 px 16 px 0 around them and 12 px between them (see [App strip and page alerts](#app-strip-and-page-alerts)).
+- **Page alerts** come first, above the header, full column width, with 12 px 16 px 0 around them and 12 px between them (see [App strip and page alerts](#app-strip-and-page-alerts)). They take at most half the column; past that, they scroll inside themselves, so the header and some rows always show.
 - **Header** (padding 12 px 16 px, a bottom `--pw-border`):
   - **Line 1:**
     - The selection's name, as the column's `<h2>` (l 16/24, 600).
@@ -749,8 +750,9 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 
 ### App strip and page alerts
 
-- **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert. Today that's one: the relay is off until restart. See [Alerts and banners](#alerts-and-banners).
-- **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert, "Lost the connection".
+- **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert. Today that's one: the relay is off until restart, which the snapshot's `relayOff` says. See [Alerts and banners](#alerts-and-banners).
+  - Below 1,200 px the session view over the list starts just below the strip, so the strip shows in every layout.
+- **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert, "Lost the connection" and "Started *name*".
 
 ---
 
@@ -776,13 +778,15 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Anatomy:** an optional 16 px leading icon, 6 px before the label; `--pw-radius-md`; `white-space: nowrap`.
 - **Pressed:** `--pw-surface-strong` fill (outline and ghost), or `--pw-accent-hover` (primary).
 - **Focus:** `--pw-ring-focus` added to the variant's shadow.
+- **Component:** `Button` (`web/src/components/Button.tsx`), with `variant`, `size`, `icon`, `disabled`, `busy` and `busyLabel`. Every button with a disabled or busy state uses it.
 - **Disabled:**
-  - Uses `aria-disabled="true"`, not `disabled`, so it stays focusable and its tooltip can say why. The click handler ignores activation.
+  - Uses `aria-disabled="true"`, not `disabled`, so it stays focusable, Tab reaches it, and its tooltip can say why. Activation does nothing: the click handler ignores the click that Enter and Space bring too, and a submit button doesn't submit its form.
   - Text and icon `--pw-text-disabled`; fill `--pw-surface-sunken` (primary, outline and danger), or none (ghost).
-  - The edge stays `--pw-shadow-control`; the cursor is `not-allowed`.
+  - The edge stays `--pw-shadow-control` (none for ghost); the cursor is `not-allowed`; hover and press change nothing, and the focus ring still shows.
 - **Busy:**
   - A spinner replaces the icon (or comes before the label), the label changes to the progressive verb ("Starting…"), and `aria-busy="true"` is set.
   - The button keeps its width (set `min-width` to the idle width), and repeat clicks are ignored.
+  - It keeps its variant's look, even where it's `aria-disabled` too, as Send is while sending: the spinner and the label say it's busy. The spinner takes the button's text colour.
 - **One primary per region:** the header, a dialog's footer, the session view's footer.
 - **Labels:** a verb or verb plus object, sentence case (see [Content](#5-content)).
 
@@ -797,7 +801,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 ### Inputs, textareas and selects
 
 - **Field:** height 32 px (`--pw-control-lg`), padding 6 px 12 px, m 14/20 text, `--pw-text` on `--pw-surface`, `--pw-shadow-input`, `--pw-radius-md`, no `border`.
-- **Placeholder:** `--pw-text-subtle`. Placeholders are examples, never the only label.
+- **Placeholder:** `--pw-text-subtle`, at full opacity (the browser's default is fainter). Placeholders are examples, never the only label.
 - **Focus:** `--pw-shadow-input`, `--pw-ring-focus`.
 - **Invalid:**
   - `--pw-shadow-input-error`, `aria-invalid="true"`, and an error message below in `--pw-danger-fg`, meta size, linked with `aria-describedby`.
@@ -1002,18 +1006,18 @@ The composer in the session view's footer, for interactive sessions. Messages go
 
 - **Region:** a `<section>` named by a visually hidden heading "Message this session".
 - **Order, top to bottom:**
-  1. **The latest exchange:** "Message from pitwall · 5m ago: *status*" (meta, `--pw-text-muted`; the status in `--pw-warning-fg` while waiting, `--pw-danger-fg` if it failed). Below it, the reply (body), at most three lines (two on short windows), scrolling past that.
-     - Show the reply once: when the conversation already shows it, the footer shows only the status line.
-  2. **The result of the last send,** as an inline alert: delivered (success), held for approval (warning), may have arrived (warning), refused (danger), not sent (danger). The text is the relay's status sentence. `role="status"` for delivered, `role="alert"` otherwise.
+  1. **The latest exchange:** "Message from pitwall · 5m ago: *status*" (meta, `--pw-text-muted`; the status in `--pw-warning-fg` while waiting, `--pw-danger-fg` if it failed, with no band behind it). Below it, the reply (body, after "Reply:" in `--pw-text-muted`, 500, so it isn't read as the message pitwall sent), at most three lines (two on short windows), scrolling past that.
+     - Show the reply once: when the conversation already shows it, the footer shows only the status line. It does when one of Claude's entries since the send has the reply's text, whitespace collapsed: the whole entry, or, for a reply of 40 characters or more, part of one. A reply that's only in the session's `SendMessage` call isn't in its conversation, which shows a tool call by its name, so it stays in the footer.
+  2. **The result of the last send,** as an inline alert: delivered (success), held for approval (warning), may have arrived (warning), refused (danger), not sent (danger), and pitwall's own failure before the relay answered (danger). The text is the relay's status sentence, then the server's detail in code style. `role="status"` for delivered, `role="alert"` otherwise.
   3. **The text row:** the textarea (auto-growing, one to eight lines), then the primary md "Send" button (`send` icon), aligned to the textarea's bottom.
-  4. **The help line** (meta, `--pw-text-subtle`):
-     - Left: "⌘ ↵ to send" as key caps (Ctrl on other platforms), then an `info` icon whose tooltip holds the limits note ("Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts.").
-     - Right: the character count, shown only from 80 % of the limit, in `--pw-danger-fg` with "*n* characters over the *limit* limit" once over it.
+  4. **The help line** (meta, `--pw-text-subtle`), linked to the textarea with `aria-describedby`:
+     - Left: "⌘ ↵ to send" as key caps (Ctrl on other platforms), then an `info` icon whose tooltip holds the limits note ("Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts."). Until the Tooltip exists (W25) the icon is `role="img"`, named with the note, with the same `title`.
+     - Right: the character count of what will be sent, shown only from 80 % of the limit ("6,554 / 8,192"), in `--pw-danger-fg` with "*n* characters over the *limit* limit" ("1 character over the 8,192 limit") once over it, when it's also linked to the textarea.
 - **Behaviour:**
   - ⌘/Ctrl + Enter sends; Enter adds a line. Send is `aria-disabled` while empty, over the limit or sending.
   - While sending: the busy state ("Sending…"), and the textarea is read-only.
-  - After a send, focus stays in the textarea. The draft clears when the message was delivered, held or refused; it stays when it wasn't sent or may not have been.
-  - Escape with a draft does nothing, so a draft is never lost to the shortcut that closes the view.
+  - After a send, focus stays in the textarea, or comes back to it from Send, unless it was moved somewhere else while the message was out. The draft clears when the message was delivered, held or refused; it stays when it wasn't sent or may not have been.
+  - Escape with a draft does nothing, wherever focus is in the view, so a draft is never lost to the shortcut that closes the view.
   - Rows have no Message button: the message box is always at the foot of an interactive session's view.
 
 ### Conversation
@@ -1050,30 +1054,36 @@ The composer in the session view's footer, for interactive sessions. Messages go
 - **Icon:** 16 px, in `--pw-<tone>-tint-fg`, top-aligned in a 20 px line box: `info` (neutral, info), `success`, `warning`, `error` (danger).
 - **Text:** an optional title (m 14/20, 500, `--pw-text`), then the body (m 14/20, 400, `--pw-text`), 8 px after the icon.
   - Detail that comes from Claude Code or the server (such as the relay's "Latest:" text) is in code style, inside `plainText`.
-- **Actions:** outline sm buttons at the right; they wrap under the text below 600 px.
-- **Roles:** `role="alert"` for warning and danger alerts that appear after an action or arrive live; `role="status"` for the rest. An alert that is there on page load has neither.
-- **Dismiss:** ghost sm "Dismiss". A dismissed alert stays dismissed until its content changes (a new time or count brings it back).
+- **Component:** `Alert` (`web/src/components/Alert.tsx`), with `tone`, `title`, `role`, `actions` and `onDismiss`.
+- **Actions:** outline sm buttons at the right; they wrap under the text when the app, or the session list column the alert is in, is 600 px wide or narrower.
+- **Roles:** `role="alert"` for warning and danger alerts that appear after an action or arrive live; `role="status"` for the rest. An alert that is there on page load has neither: for the page alerts, that's one in the first snapshot, until what it says changes or it goes.
+- **Dismiss:** ghost sm "Dismiss". Its `--pw-text-muted` passes on every tint (2.5); a link button wouldn't, since `--pw-link` belongs on neutral surfaces. A dismissed alert stays dismissed until its content changes (a new time or count brings it back). Focus goes to the session list's heading, since the button has gone.
 
 | Alert | Tone | Title | Body |
 |---|---|---|---|
 | The poll failed | warning | "Couldn't list sessions" | "`claude agents --json --all` failed on the latest poll: *error*" |
 | Server error | danger | | The error, with Dismiss |
 | Connection lost | neutral | | "Lost the connection to pitwall. Reconnecting; this list may be out of date." |
-| Relay sent a message you didn't ask for | danger | "pitwall's relay sent a message you didn't ask for" | What it means, the count since start, "Latest: *detail*", with Dismiss |
-| Relay blocked one | warning | "pitwall blocked a message you didn't ask for" | The same structure |
+| Relay may have sent a message you didn't ask for (`blocked: false`) | danger | "pitwall's relay may have sent a message you didn't ask for" | "That usually means another session messaged the relay. Check your sessions' conversations for a message from pitwall-relay.", then "Messaging is off until you restart pitwall." only while the snapshot's `relayOff` is set, then the count since start, "Latest: *detail*", with Dismiss |
+| Relay blocked one (`blocked: true`) | warning | "pitwall blocked a message you didn't ask for" | "Its relay tried to send it, and pitwall's gate stopped it, so nothing was sent. That usually means another session messaged the relay.", then the same structure |
 | Session started | neutral | | "Started *name*. Its view opens when it shows up in the list.", with Dismiss |
+
+- **"May have sent", not "sent":** pitwall sees a call its gate didn't block only afterwards, so it can't say the message arrived (5: Errors). Some of those only restart the relay, so the alert says messaging is off only when `relayOff` does.
 
 **App strip** (one at a time):
 
+- **Component:** `AppStrip` (`web/src/components/AppStrip.tsx`).
 - **Box:** 32 px tall, full width above the header, `--pw-text` fill, `--pw-text-inverse` text (18.4:1 in light, 16.9:1 in dark), meta size; a 16 px `warning` icon in the text colour; a link button in `--pw-text-inverse` with an underline. The strip inverts with the theme, so it never uses a tone colour.
-- **Use:** while the relay is off until restart: "Messaging is off until you restart pitwall." with "Details", which reopens the relay alert. It stays after the alert is dismissed and can't itself be dismissed.
+  - One line: a sentence too long for it ends in an ellipsis, with the whole sentence in a tooltip, and Details stays on screen.
+- **Use:** only while the snapshot's `relayOff` is set, which pitwall sets once it has stopped using its relay for the rest of the run. Never inferred from a relay alert: some alerts only restart the relay. "Messaging is off until you restart pitwall: *reason*", where the reason is pitwall's own words ("its gate didn't check a SendMessage call."), then "Details", which reopens the relay alert and takes focus to it. It stays after the alert is dismissed and can't itself be dismissed. Details isn't there when there's no relay alert to show.
 
 ### Inline confirmation
 
 For a destructive or surprising action in the session view, without a dialog.
 
-- **Box:** directly under the header (above the tabs). `--pw-surface-muted` fill, `inset 0 0 0 1px var(--pw-border-strong)`, a left bar `inset 3px 0 0 var(--pw-danger-solid)` (or `--pw-warning-indicator` for the restart), `--pw-radius-md`, padding 12 px, margin 8 px 16 px.
-- **Content:** a question as the title (m 14/20, 500), the consequence (meta, `--pw-text-muted`), then the buttons at the right: outline sm "Cancel", then the confirm button, 8 px apart.
+- **Component:** `InlineConfirm` (`web/src/components/InlineConfirm.tsx`).
+- **Box:** for Stop and Remove, directly under the header (above the tabs), with 8 px 16 px around it. For the restart, at the top of the Terminal tab's panel, under its bar, since that tab's attach is what waits for it. `--pw-surface-muted` fill, `inset 0 0 0 1px var(--pw-border-strong)`, a left bar `inset 3px 0 0 var(--pw-danger-solid)` (or `--pw-warning-indicator` for the restart), `--pw-radius-md`, padding 12 px.
+- **Content:** a question as the title (m 14/20, 500), the consequence (meta, `--pw-text-muted`), then the buttons at the right, wrapping under the text when there's no room: outline sm "Cancel", then the sm confirm button with its action's icon (`stop`, `remove`, `restart`), 8 px apart.
 
 | Action | Question | Consequence | Confirm button |
 |---|---|---|---|
@@ -1085,7 +1095,11 @@ For a destructive or surprising action in the session view, without a dialog.
   - Escape cancels it, without closing the view, wherever focus is in the page.
   - On cancel, focus goes back to whatever opened it (the actions menu button, or the Terminal tab).
 - **Semantics:** `role="group"` with `aria-labelledby` (the question) and `aria-describedby` (the consequence). For the restart, `role="alertdialog"`.
-- **Busy:** the confirm button shows the busy state ("Stopping…", "Removing…"). The result shows as a toast ("Stopped. Its conversation is kept."), or as an inline danger alert with Claude Code's message when it refused.
+- **Busy:** the confirmation stays while its action runs, and the confirm button shows the busy state ("Stopping…", "Removing…", "Restarting…"). Cancel is `aria-disabled`, and Escape does nothing, since the request is already out; the view stays open. The restart stays busy until the attach has started or failed.
+- **Result:** the confirmation goes, and focus goes back to the actions menu's button; Remove closes the view instead.
+  - Stopped: a toast once toasts exist (W25), "Stopped. Its conversation is kept."; until then a success inline alert in the confirmation's place, `role="status"`.
+  - Refused: an inline danger alert, `role="alert"`: "Couldn't stop the session." (or remove), then Claude Code's message in code style.
+  - A restart that fails ends the attach, whose notice says why, and Attach again takes focus.
 - **No type-to-confirm.** pitwall's destructive actions are recoverable or guarded by Claude Code.
 
 ### Dialogs
@@ -1159,7 +1173,7 @@ For a destructive or surprising action in the session view, without a dialog.
 
 - **Skeleton row:** the height of a session row; three bars (identity 40 %, preview 70 %, footer 30 % of the width), 12 px tall, `--pw-surface-sunken`, `--pw-radius-sm`, 6 px apart, pulsing.
   - On first connect: four skeleton items in the repo list and three skeleton rows in the session list. They have `aria-hidden="true"`, and a visually hidden `role="status"` says "Loading sessions".
-- **Spinner:** a 12 px (inline) or 16 px (in a button) ring: a 2 px conic gradient from transparent to `--pw-info-fg`, or to the badge's text colour inside a badge (2.1), turning 0.8 s per turn. It's `aria-hidden`; the busy element carries `aria-busy` or a status message.
+- **Spinner:** `Spinner` (`web/src/components/Spinner.tsx`), a 12 px (inline) or 16 px (in a button) ring: a 2 px conic gradient from transparent to `--pw-info-fg`, or to the text colour of the badge or button it's in (2.1; `--pw-info-fg` on a primary button's accent fill would barely show), turning 0.8 s per turn. It's `aria-hidden`; the busy element carries `aria-busy` or a status message.
 - **Waiting:** both wait `--pw-delay-spinner` (500 ms) before showing. After `--pw-delay-long` (10 s), add a meta line saying what's slow ("Still waiting for `claude agents`…").
 - **Long waits for pitwall's own work** (connecting, loading the conversation) use a status line, not an overlay: meta, `--pw-text-muted`, centred, `role="status"`.
 
@@ -1184,6 +1198,7 @@ For a destructive or surprising action in the session view, without a dialog.
 
 ### Key caps
 
+- **Component:** `KeyCaps` (`web/src/components/KeyCaps.tsx`), which takes the keys and their text alternative.
 - **Shape:** a `<kbd>`, 20 px tall, min-width 20 px, padding 0 5 px, `--pw-radius-xs`, label style (xs 12/20, 500), `--pw-text-muted` on `--pw-surface`, `--pw-shadow-control`, plus `inset 0 -1px 0 var(--pw-border-strong)`.
 - **Combinations:** keys in a combination are 2 px apart, with no "+" between them.
 - **Platform:** ⌘ on macOS, "Ctrl" elsewhere (from `navigator.userAgentData?.platform ?? navigator.platform`); ↵ for Enter, ↑ ↓ ← → for the arrows, "Esc" for Escape.
@@ -1344,7 +1359,7 @@ Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only when focus isn't in a t
 | ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading |
 | Enter | On a session row | Open the session |
 | ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
-| Escape | Layered, nearest first | Close a tooltip or menu → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box |
+| Escape | Layered, nearest first | Close a tooltip or menu → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
 | ⌘/Ctrl + Enter | The message box | Send |
 | ⌘/Ctrl + Enter | The New session dialog | Start the session |
 | ← / →, Home / End | The tab list | Move focus between Conversation and Terminal; Enter or Space opens the focused tab |
