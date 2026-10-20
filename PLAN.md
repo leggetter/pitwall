@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0, M1 and M2 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, is next. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - Write `docs/design-system.md` (M3)<br>- Then the restyle, in the order under M3 |
+| **Next steps** | - W18: tokens with no visual change, plus fonts and icons<br>- Then the rest of the M3 work breakdown, in order |
 
 ## Who is this for
 
@@ -197,16 +197,11 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 - **Reference:** `docs/design-system.md`, pitwall's spec: tokens by role (surface, text, border, tone) for light and dark, type, spacing, components, states, layout and keyboard. Every text colour pair meets WCAG AA. A dev-only gallery in the app (`#uikit`) shows each component and is the living reference.
 - **Look:** the palette, type and component shapes are inspired by Hookdeck's, with contrast raised wherever it falls short of AA. No Hookdeck logo, illustrations or integration logos.
 - **Fonts and icons:** Inter and JetBrains Mono (both OFL 1.1), self-hosted, because the CSP (`default-src 'self'`) blocks Google Fonts. Icons from Material Symbols Rounded (Apache 2.0), bundled as SVGs behind a semantic name map. The theme's pre-paint script is a same-origin file, for the same reason.
-- **Order of work:**
-  1. The design system doc.
-  2. Tokens by role, with no visual change: today's CSS custom properties renamed.
-  3. The `#uikit` gallery.
-  4. The app shell: full width, a compact header, and only the panes scroll, instead of one centred column.
-  5. The session view beside the list on wide windows (from about 1,100 px) and over it below that, with a sticky header, Conversation and Terminal tabs, ↑/↓ to move between sessions, and the open session in the URL.
-  6. Rows, status badges (sentence case, with only "needs you" filled), the message box (⌘↵ to send, the result inline, focus kept after a send, and no second copy of the latest reply), and the relay alert, which keeps an indicator after it's dismissed while the relay is off.
-  7. Then: keyboard shortcuts (`/` to search, j/k, Enter, Escape, `n` for a new session), runs of tool calls folded into one row with a "Jump to latest" bar, and skeleton, empty and error states.
+- **Order of work:** the items in "M3 work breakdown" below, one reviewable PR each, in that order.
 - **Also from the try-out:** a plain error, not a stack trace, when pitwall runs in a directory that no longer exists. It reads the current directory even when every root is absolute.
 - **Collapsed groups stay as they are:** groups still start collapsed (W7 feedback), and each group's header already counts the sessions that need me. Listing those sessions under a collapsed header too would save a click but bring back some of the wall of text. Coordinator's lean, put to Phil on 2026-10-20: no change.
+- **Open (Phil):** should idle sessions keep a badge in the list? "Exceptions only" says no: idle is the resting state of most interactive sessions, so the row would show no badge and the session view would still say "Idle". Lean: hide it in the list.
+- **Disabled text is the one contrast exemption** (coordinator, 2026-10-20), as WCAG 1.4.3 allows for inactive controls.
 
 ### M4 - My open pull requests
 
@@ -246,6 +241,29 @@ Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeepin
 - **The supervisor refines M1's `askedYou` heuristic:** it reads each idle session's latest turns and judges whether it really needs me, and how urgently.
 - **Age is a signal.** In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
 - **PRs and sessions together,** for example: "CI is failing on your PR, and the session that opened it is idle."
+
+## M3 work breakdown
+
+Same way of working as M2, on `m3/integration`. Each item builds from `docs/design-system.md` alone and grows the `#uikit` gallery with what it adds. Sizes: S under half a day, M one to two days, L three or more.
+
+| Item | What | Branch | Size | Status |
+| --- | --- | --- | --- | --- |
+| W17 | The design system doc | `m3/design-system` | M | Merged ([#21](https://github.com/leggetter/pitwall/pull/21)) |
+| W18 | Tokens renamed to `--pw-*` with no visual change, plus self-hosted fonts and icons, bundled but not yet applied | `m3/tokens` | M | Next |
+| W19 | A dev-only `#uikit` gallery, in both themes | `m3/uikit` | M | |
+| W20 | Apply the theme: the palette, Inter and JetBrains Mono, a 14 px body, radii, shadows and the focus ring; `theme-init.js` and the theme switch | `m3/theme` | M | |
+| W21 | The app shell: full width, header, toolbar, panes that scroll on their own, the filter field and chips | `m3/shell` | M | |
+| W22 | The session view: beside or over the list, the divider, header and actions menu, Conversation and Terminal tabs, footer, `?session=`, ↑/↓ and focus | `m3/session-view` | L | |
+| W23 | Rows, group headers and badges, the connection badge, and holding row order while I'm in the list | `m3/rows` | M | |
+| W24 | The message box, relay alert and app strip, and inline confirmations | `m3/message-box` | M | |
+| W25 | Overlays: the new-session dialog, menus, toasts, tooltips, copy buttons and timestamps | `m3/overlays` | M | |
+| W26 | Keyboard shortcuts and their dialog, with the off switch | `m3/keyboard` | M | |
+| W27 | The conversation: folded tool calls, "Jump to latest", speaker lines with times | `m3/conversation` | M | |
+| W28 | Skeleton, empty and error states | `m3/states` | S | |
+| W29 | The terminal: its theme from tokens, JetBrains Mono, the status bar, and F6 to leave it | `m3/terminal` | S | |
+| W30 | A plain error when pitwall runs in a directory that no longer exists | `m3/cwd-error` | S | |
+| W31 | Review and live check of the integrated branch | `m3/integration` | M | |
+| W32 | Phil tries it and approves the merge | - | - | |
 
 ## M2 work breakdown
 
