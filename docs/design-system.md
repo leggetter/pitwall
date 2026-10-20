@@ -183,7 +183,7 @@ WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test
 
 ### 2.6 The token file
 
-This is the content of `web/src/tokens.css` once the theme is applied. Until then the file holds today's values under these names (see [2.15](#215-mapping-from-todays-css)). The no-JavaScript dark fallback is described, not repeated (see [2.2](#22-themes-and-switching)).
+This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScript dark fallback is described, not repeated (see [2.2](#22-themes-and-switching)). `web/src/tokens.test.tsx` fails if the file and this block differ.
 
 ```css
 /* pitwall design system tokens. Import before any other CSS. See docs/design-system.md. */
@@ -616,6 +616,8 @@ The first restyle PR renames today's custom properties (in `web/src/styles.css`,
 | `-8px 0 24px rgb(0 0 0 / 0.18)` session view shadow | | `--pw-shadow-overlay` |
 | `color-scheme: light dark` on `:root` | | `color-scheme: light` in the light block and `dark` in the dark blocks, which comes to the same thing while the system decides |
 | `body { font-size: 15px }` | | Stays until the type change, then `--pw-text-m` (14 px) |
+
+- **Type sizes, when the theme was applied (W20):** each of today's sizes moved to one of the two scale steps either side of it, or stayed on its step when it was exact (`1rem` is l, `1.25rem` is xl). Between two steps, the element's role in [2.7](#27-type) chose: `0.95rem` session names became m, `0.8rem` badges xs, `0.85rem` meta text s. Weight 700 became 600, the heaviest bundled. Components take their roles' exact sizes as they're rebuilt.
 
 ---
 

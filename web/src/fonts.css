@@ -7,8 +7,8 @@
  * unicode-range is the package's own (its <weight>.css), so a browser downloads a subset only for
  * text that needs it. Latin Extended comes first, as in the packages, so Latin wins where they overlap.
  *
- * Nothing names these families until --pw-font-sans and --pw-font-mono do (W20), so until then
- * browsers download none of the files.
+ * --pw-font-sans and --pw-font-mono (tokens.css) name these families. A browser downloads a file
+ * only when text on the page uses that family, weight and subset.
  */
 
 /* Inter 400, 500 and 600 */

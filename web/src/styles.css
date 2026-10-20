@@ -1,4 +1,4 @@
-/* pitwall web UI. Plain CSS, with every colour and font from the custom properties in tokens.css; light and dark follow the system. */
+/* pitwall web UI. Plain CSS, with its colours, fonts and type sizes from the custom properties in tokens.css (docs/design-system.md). */
 
 *,
 *::before,
@@ -14,10 +14,10 @@ body {
   margin: 0;
   background: var(--pw-bg);
   color: var(--pw-text);
-  font-family: var(--pw-font-sans);
-  font-size: 15px;
-  line-height: 1.45;
   -webkit-text-size-adjust: 100%;
+  font: var(--pw-text-m)/var(--pw-leading-m) var(--pw-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 h1,
@@ -29,13 +29,23 @@ p {
 
 code {
   font-family: var(--pw-font-mono);
-  font-size: 0.9em;
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
+}
+
+/* Fields show what was typed, with no ligatures or contextual alternates (docs/design-system.md, 2.7): Inter would draw -> as an arrow. */
+input,
+select,
+textarea {
+  font-variant-ligatures: none;
 }
 
 :focus-visible {
@@ -83,7 +93,8 @@ input {
 }
 
 .notice p {
-  font-size: 1.1rem;
+  font-size: var(--pw-text-l);
+  line-height: var(--pw-leading-l);
 }
 
 /* Header */
@@ -109,9 +120,10 @@ input {
 }
 
 .brand {
-  font-size: 1.25rem;
-  font-weight: 700;
+  font-size: var(--pw-text-xl);
+  font-weight: var(--pw-weight-bold);
   letter-spacing: -0.01em;
+  line-height: var(--pw-leading-xl);
 }
 
 .roots {
@@ -119,8 +131,9 @@ input {
   flex: 1 1 200px;
   color: var(--pw-text-muted);
   font-family: var(--pw-font-mono);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
   overflow-wrap: anywhere;
+  font-variant-ligatures: none;
 }
 
 .masthead-status {
@@ -128,14 +141,14 @@ input {
   align-items: center;
   gap: 12px;
   margin-left: auto;
-  font-size: 0.875rem;
+  font-size: var(--pw-text-m);
 }
 
 .connection {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
+  font-weight: var(--pw-weight-bold);
 }
 
 .connection .dot {
@@ -202,7 +215,8 @@ input {
 
 .summary {
   color: var(--pw-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--pw-text-m);
+  font-variant-numeric: tabular-nums;
 }
 
 .summary-attention {
@@ -260,7 +274,7 @@ input {
   background: none;
   border: 0;
   color: var(--pw-link);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -280,7 +294,7 @@ input {
 
 .button.small {
   padding: 2px 10px;
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
 }
 
 /* Groups */
@@ -293,8 +307,9 @@ input {
 }
 
 .group-heading {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
 }
 
 .group-toggle {
@@ -336,12 +351,13 @@ input {
 .group-root,
 .group-count {
   color: var(--pw-text-muted);
-  font-size: 0.85rem;
-  font-weight: 400;
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-regular);
 }
 
 .group-count {
   margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .group-attention {
@@ -349,8 +365,9 @@ input {
   border-radius: var(--pw-radius-full);
   background: var(--pw-state-attention-bg);
   color: var(--pw-state-attention-fg);
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-bold);
+  font-variant-numeric: tabular-nums;
 }
 
 .sessions {
@@ -393,8 +410,8 @@ input {
 .session-name {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
   overflow-wrap: anywhere;
 }
 
@@ -408,14 +425,14 @@ input {
   min-width: 0;
   overflow: hidden;
   color: var(--pw-text-muted);
-  font-size: 0.9rem;
+  font-size: var(--pw-text-m);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .kind {
   color: var(--pw-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--pw-text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -424,22 +441,23 @@ input {
   padding: 1px 9px;
   border: 1px solid transparent;
   border-radius: var(--pw-radius-full);
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-bold);
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .tone-attention {
   background: var(--pw-state-attention-bg);
   color: var(--pw-state-attention-fg);
-  font-weight: 700;
+  font-weight: var(--pw-weight-bold);
 }
 
 .tone-asked {
   background: var(--pw-state-asked-bg);
   border-color: var(--pw-state-asked-border);
   color: var(--pw-state-asked-fg);
-  font-weight: 700;
+  font-weight: var(--pw-weight-bold);
 }
 
 .tone-busy {
@@ -478,7 +496,7 @@ input {
   border: 1px solid var(--pw-state-offline-border);
   border-radius: 4px;
   color: var(--pw-state-offline-fg);
-  font-size: 0.75rem;
+  font-size: var(--pw-text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: help;
@@ -499,14 +517,15 @@ input {
   background: transparent;
   border: 0;
   color: var(--pw-text-muted);
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-bold);
   text-align: left;
   cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 
 .finished-asked {
-  font-weight: 400;
+  font-weight: var(--pw-weight-regular);
 }
 
 .finished-toggle:hover {
@@ -531,7 +550,7 @@ input {
 
 .session.finished .session-name,
 .session.finished .asked {
-  font-weight: 500;
+  font-weight: var(--pw-weight-medium);
 }
 
 .session.finished .asked-label {
@@ -548,7 +567,7 @@ input {
 .activity {
   margin-left: auto;
   color: var(--pw-text-muted);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -556,22 +575,22 @@ input {
 .prompt {
   overflow: hidden;
   color: var(--pw-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--pw-text-m);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .who {
   margin-right: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .asked {
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
   overflow-wrap: anywhere;
 }
 
@@ -591,7 +610,7 @@ input {
   display: -webkit-box;
   max-width: 100%;
   overflow: hidden;
-  font-size: 0.9rem;
+  font-size: var(--pw-text-m);
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -611,13 +630,13 @@ input {
 
 .reply-note {
   color: var(--pw-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
   font-style: italic;
 }
 
 .transcript-note {
   color: var(--pw-text-muted);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
   font-style: italic;
 }
 
@@ -633,13 +652,14 @@ input {
   min-width: 0;
   color: var(--pw-text-muted);
   font-family: var(--pw-font-mono);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-xs);
   overflow-wrap: anywhere;
+  font-variant-ligatures: none;
 }
 
 .cwd-missing {
   color: var(--pw-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
   font-style: italic;
   cursor: help;
 }
@@ -657,13 +677,13 @@ input {
   background: var(--pw-surface-sunken);
   border: 1px solid var(--pw-border);
   border-radius: 4px;
-  font-size: 0.8rem;
+  font-size: var(--pw-text-xs);
   user-select: all;
 }
 
 .copy-status {
   color: var(--pw-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
 }
 
 /* Opening a session's view from its row */
@@ -734,14 +754,15 @@ input {
 .session-view-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
   overflow-wrap: anywhere;
+  line-height: var(--pw-leading-l);
 }
 
 .session-view-subtitle {
   color: var(--pw-text-muted);
-  font-weight: 400;
+  font-weight: var(--pw-weight-regular);
 }
 
 .session-view-meta {
@@ -754,13 +775,14 @@ input {
 .session-view-cwd {
   color: var(--pw-text-muted);
   font-family: var(--pw-font-mono);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-xs);
   overflow-wrap: anywhere;
+  font-variant-ligatures: none;
 }
 
 .session-view-note {
   color: var(--pw-text-muted);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
 }
 
 .session-view-body {
@@ -795,7 +817,7 @@ input {
 .session-view-status {
   margin: 12px 0;
   color: var(--pw-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--pw-text-m);
   text-align: center;
 }
 
@@ -811,14 +833,14 @@ input {
 .entry-label {
   margin-bottom: 2px;
   color: var(--pw-text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .entry-text {
-  font-size: 0.9rem;
+  font-size: var(--pw-text-m);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -847,7 +869,8 @@ input {
   min-width: 0;
   color: var(--pw-text-muted);
   font-family: var(--pw-font-mono);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
 }
 
 .entry-tool-text {
@@ -864,27 +887,23 @@ input {
   background: var(--pw-danger-tint);
   color: var(--pw-danger-tint-fg);
   font-family: var(--pw-font-sans);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-bold);
 }
 
 .entry-notice .entry-text {
   color: var(--pw-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
   font-style: italic;
 }
 
 .entry-note {
   color: var(--pw-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--pw-text-xs);
   font-style: italic;
 }
 
 @media (max-width: 600px) {
-  body {
-    font-size: 14px;
-  }
-
   .masthead {
     position: static;
   }

@@ -22,8 +22,9 @@
 }
 
 .uikit-bar h1 {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
 }
 
 .uikit-themes {
@@ -38,7 +39,7 @@
   border: 1px solid var(--pw-border-control);
   border-radius: 4px;
   background: var(--pw-surface);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
   cursor: pointer;
 }
 
@@ -51,7 +52,7 @@
 .uikit-bar a,
 .uikit-index a {
   color: var(--pw-link);
-  font-size: 0.85rem;
+  font-size: var(--pw-text-s);
 }
 
 .uikit-intro {
@@ -76,8 +77,9 @@
 .uikit-section > h2 {
   padding-bottom: 4px;
   border-bottom: 1px solid var(--pw-border-strong);
-  font-size: 1.25rem;
-  font-weight: 600;
+  font-size: var(--pw-text-xl);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-xl);
 }
 
 .uikit-specimen {
@@ -85,13 +87,13 @@
 }
 
 .uikit-specimen > h3 {
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
 }
 
 .uikit-note {
   color: var(--pw-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
 }
 
 .uikit-section > .uikit-note {
@@ -102,7 +104,7 @@
   margin-bottom: 8px;
   padding: 4px 8px;
   border: 2px dashed var(--pw-broken);
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
 }
 
 /* The stage a specimen stands on: the page background, outlined, so the specimen's own edges show. */
@@ -213,15 +215,16 @@
 
 .uikit-swatches code,
 .uikit-token-list code {
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
   overflow-wrap: anywhere;
 }
 
 .uikit-value {
   color: var(--pw-text-muted);
   font-family: var(--pw-font-mono);
-  font-size: 0.75rem;
+  font-size: var(--pw-text-xs);
   overflow-wrap: anywhere;
+  font-variant-ligatures: none;
 }
 
 .uikit-token-list {
@@ -231,7 +234,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
 }
 
 .uikit-token-list li {
@@ -245,7 +248,7 @@
 .uikit-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: var(--pw-text-s);
 }
 
 .uikit-table th,
@@ -258,11 +261,11 @@
 
 .uikit-table thead th {
   color: var(--pw-text-muted);
-  font-weight: 600;
+  font-weight: var(--pw-weight-bold);
 }
 
 .uikit-table tbody th {
-  font-weight: 500;
+  font-weight: var(--pw-weight-medium);
   white-space: nowrap;
 }
 
@@ -328,7 +331,7 @@
 }
 
 .uikit-icons code {
-  font-size: 0.75rem;
+  font-size: var(--pw-text-xs);
 }
 
 /* 14 px text, as the design system's body is, with the icon centred on it as a button would. */
@@ -337,8 +340,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
 }
 
 .uikit-icon-compare {
