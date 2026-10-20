@@ -174,6 +174,16 @@
   background: var(--pw-surface);
 }
 
+/* Room below a menu button for its open menu, with the button at the end, as in the session view's header. */
+.uikit-menu-stage {
+  display: flex;
+  justify-content: flex-end;
+  max-width: 320px;
+  min-height: 176px;
+  padding: 8px;
+  background: var(--pw-surface);
+}
+
 /* The session view's width, for what stands in its footer or header. */
 .uikit-panel-width {
   max-width: 760px;

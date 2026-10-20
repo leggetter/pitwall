@@ -79,6 +79,9 @@ function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = sn
 /** Lets the requests' promises settle. */
 const settle = () => act(async () => {});
 
+/** Waits for the next animation frame. */
+const nextFrame = () => act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
 async function openView(name = 'demo-docs'): Promise<HTMLElement> {
   fireEvent.click(screen.getByRole('button', { name }));
   await settle();
@@ -108,12 +111,16 @@ describe('SessionView: opening and closing', () => {
     // Idle has no badge in the list, but the view shows it.
     expect(within(view).getByText('Idle').closest('.badge')?.getAttribute('data-status')).toBe('idle');
     expect(view.id).toBe('session-view');
-    expect(within(view).getByText('~/code/demo-app/docs')).toBeTruthy();
-    expect(within(view).getByText('active 5m ago')).toBeTruthy();
+    expect(view.querySelector('.session-view-path')?.textContent).toBe('~/code/demo-app/docs');
+    expect(view.querySelector('.session-view-path')?.getAttribute('title')).toBe('/Users/example/code/demo-app/docs');
+    expect(within(view).getByText('Active 5m ago').getAttribute('title')).toBeTruthy();
     expect(texts(view)).toEqual(['prompt 1']);
     expect(cursorsOf(server)).toEqual([undefined]);
     expect(server.mock.calls[0]![0]).toBe(conversationPath(SID));
-    expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Close' }));
+    // The heading takes focus, not Close (6.1, item 8).
+    const heading = within(view).getByRole('heading', { level: 2 });
+    expect(document.activeElement).toBe(heading);
+    expect(heading.getAttribute('tabindex')).toBe('-1');
   });
 
   it('opens from a click anywhere on the row, but not from a click that ends a text selection', async () => {
@@ -137,11 +144,15 @@ describe('SessionView: opening and closing', () => {
 
     fireEvent.click(within(await openView()).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+    // Over the list, after a frame, so the row is there to take it.
+    await nextFrame();
     expect(document.activeElement).toBe(name);
 
     await openView();
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
+    await nextFrame();
+    expect(document.activeElement).toBe(name);
   });
 
   it("switches to another session's view when another row is opened", async () => {
@@ -346,19 +357,19 @@ describe('SessionView: the conversation', () => {
 });
 
 describe('SessionView: the /bg note', () => {
-  it('tells an interactive session how /bg will let pitwall drive it fully', async () => {
+  it("is an info icon after an interactive session's kind, named and titled with how /bg lets pitwall drive it fully", async () => {
     renderDashboard(fakeServer(ok([])));
-    const note = within(await openView()).getByText(/moves it to the background/);
-    expect(note.textContent).toBe(
-      "Typing /bg in this session's terminal moves it to the background, which will let pitwall drive it fully from here.",
-    );
-    expect(note.querySelector('code')?.textContent).toBe('/bg');
+    const view = await openView();
+    const info = within(view).getByRole('img', { name: 'Typing /bg in its terminal moves it to the background, so pitwall can drive it fully.' });
+    expect(info.getAttribute('title')).toBe(info.getAttribute('aria-label'));
+    expect(info.closest('.session-view-kind')?.textContent).toBe('Interactive');
   });
 
   it('is not shown for a background session', async () => {
     renderDashboard(fakeServer(ok([])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
     const view = await openView();
-    expect(within(view).queryByText(/moves it to the background/)).toBeNull();
+    expect(within(view).queryByRole('img', { name: /moves it to the background/ })).toBeNull();
+    expect(view.querySelector('.session-view-kind')?.textContent).toBe('Background');
     expect(within(view).getByText('Nothing to show yet.')).toBeTruthy();
   });
 });

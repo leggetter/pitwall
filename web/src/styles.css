@@ -129,9 +129,31 @@ textarea {
   grid-template-columns: var(--pw-sidebar-w) minmax(0, 1fr);
 }
 
-/* The session view: 760 px, or what the repo list and the session list's 360 px leave, which is 600 px at 1,200 px. */
+/* The session view's column takes the width its pane has: see .session-pane below. */
 .app[data-layout='three-columns'] .columns {
-  grid-template-columns: var(--pw-sidebar-w) minmax(var(--pw-list-min-w), 1fr) min(var(--pw-panel-w), calc(100% - var(--pw-sidebar-w) - var(--pw-list-min-w)));
+  grid-template-columns: var(--pw-sidebar-w) minmax(var(--pw-list-min-w), 1fr) auto;
+}
+
+/*
+ * The third column's pane: the divider and the session view, or the "Select a session" state. Below
+ * 1,200 px it isn't a box at all, and the view overlays the list from inside it, so the view is the
+ * same element in every layout and never remounts.
+ */
+.session-pane {
+  display: contents;
+}
+
+/*
+ * 760 px, or the width the divider set (Divider.tsx sets it on the pane), but never more than what the
+ * repo list and the session list's 360 px leave, which is 600 px at 1,200 px. 100cqw is the app's width.
+ */
+.app[data-layout='three-columns'] .session-pane {
+  position: relative;
+  display: flex;
+  width: var(--pw-panel-w);
+  min-width: 0;
+  max-width: calc(100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w));
+  min-height: 0;
 }
 
 /*
@@ -151,8 +173,7 @@ textarea {
     overflow-y: visible;
   }
 
-  .session-view.in-column,
-  .session-view-empty {
+  .app[data-layout='three-columns'] .session-pane {
     position: sticky;
     top: 0;
     align-self: start;
@@ -392,25 +413,69 @@ textarea {
   border-top: 0;
 }
 
-/* The session view's column, from 1,200 px */
+/* The session view's column, from 1,200 px. The divider draws the line between it and the list. */
 
-.session-view.in-column {
-  position: static;
-  z-index: auto;
-  width: auto;
+.session-view.in-column,
+.session-view-empty {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--pw-border);
-  box-shadow: none;
 }
 
 .session-view-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 0;
   background: var(--pw-surface);
-  border-left: 1px solid var(--pw-border);
+}
+
+/*
+ * The divider (section 3: Session view): an 8 px hit area at the view's left edge, with the 1 px line
+ * at that edge, which turns 2 px --pw-focus on hover, focus and while dragging. The hit area is on the
+ * view's side, over its 16 px gutter, so it never covers the list's scrollbar.
+ */
+.session-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  width: var(--pw-space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.session-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--pw-border);
+}
+
+.session-divider:focus-visible {
+  box-shadow: none;
+}
+
+.session-divider:focus-visible::before,
+.session-divider[data-dragging]::before {
+  width: 2px;
+  background: var(--pw-focus);
+}
+
+@media (hover: hover) {
+  .session-divider:hover::before {
+    width: 2px;
+    background: var(--pw-focus);
+  }
+}
+
+/* No text selection, and the resize cursor everywhere, while the divider is dragged. */
+.app:has(.session-divider[data-dragging]) {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .notice {
@@ -1154,11 +1219,6 @@ mark.match {
   margin-right: var(--pw-space-1-5);
 }
 
-/* Between the name and the title in the session view's heading. */
-.session-title-sep {
-  color: var(--pw-text-muted);
-}
-
 .session-title {
   flex: 0 1000000 auto;
   min-width: 0;
@@ -1246,12 +1306,6 @@ mark.match {
 .session.finished .asked,
 .session.finished .asked-label {
   color: var(--pw-text-muted);
-}
-
-/* The kind, in the session view's header. */
-.kind {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-xs);
 }
 
 /* The Finished section (section 4): a toggle row at the bottom of the session list, then its rows. */
@@ -1377,70 +1431,304 @@ mark.match {
   font-size: var(--pw-text-s);
 }
 
-/* The session view: a panel over the right of the page. A column: the header, the conversation, which
-   is all that scrolls, and for an interactive session the message box, pinned below the newest message. */
-
+/*
+ * The session view (sections 3 and 4): a column of the header, the actions' confirmation, the tabs,
+ * the body, which is all that scrolls, and for an interactive session the footer with the message box.
+ * In the third column from 1,200 px; below that, fixed over the right of the session list, as wide as
+ * the panel or the app, whichever is less (100cqw is the app's width: it's the query container).
+ */
 .session-view {
+  display: flex;
+  flex-direction: column;
+  background: var(--pw-surface);
+}
+
+.session-view.overlay {
   position: fixed;
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  width: min(760px, 100vw);
-  background: var(--pw-surface);
-  border-left: 1px solid var(--pw-border-strong);
+  z-index: var(--pw-z-panel);
+  width: min(var(--pw-panel-w), 100vw);
+  width: min(var(--pw-panel-w), 100cqw);
   box-shadow: var(--pw-shadow-overlay);
+}
+
+/* Sliding in from the right as it opens over the list; not when the window crosses 1,200 px. */
+.session-view.overlay.opening {
+  animation: session-view-in var(--pw-duration-base) var(--pw-ease-out);
+}
+
+@keyframes session-view-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-view.overlay.opening {
+    animation: none;
+  }
 }
 
 .session-view-head {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px 12px;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-3) var(--pw-space-4);
   border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
 }
 
+/* Line 1: Back (compact), the heading, the copy result, the actions menu, Close. */
 .session-view-top {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
 }
 
+.session-view-back {
+  flex: none;
+  margin-left: calc(-1 * var(--pw-space-2));
+}
+
+/*
+ * The name, then " · " and the title, on one line: the title gives way first, then the name, each
+ * with an ellipsis. The full title is in its hover text.
+ */
 .session-view-title {
+  display: flex;
   flex: 1 1 auto;
+  align-items: baseline;
   min-width: 0;
   font-size: var(--pw-text-l);
   font-weight: var(--pw-weight-bold);
-  overflow-wrap: anywhere;
   line-height: var(--pw-leading-l);
+  white-space: nowrap;
+}
+
+/* Focused when the view opens, with no ring of its own: it isn't a control (6.1, item 8). */
+.session-view-title:focus,
+.session-view-title:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.session-view-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The unlisted view's heading is a sentence, so it wraps. */
+.session-view-name.wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .session-view-subtitle {
+  position: relative;
+  flex: 0 1000000 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--pw-text-muted);
   font-weight: var(--pw-weight-regular);
+  text-overflow: ellipsis;
 }
 
+/* The visible " · ", with no alternative text, so it isn't read twice. */
+.session-view-subtitle::before {
+  content: '·';
+  content: '·' / '';
+  margin: 0 var(--pw-space-1-5);
+}
+
+/* Line 2: the status badge, the kind, the last activity, and the directory with its copy button, wrapping. */
 .session-view-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
+.session-view-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+}
+
+.session-view-info {
+  display: inline-flex;
+  cursor: help;
+}
+
+.session-view-activity {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The directory takes the rest of the line, or a line of its own, and gives way in the middle. */
 .session-view-cwd {
-  color: var(--pw-text-muted);
+  display: inline-flex;
+  flex: 1 1 12em;
+  align-items: center;
+  gap: var(--pw-space-0-5);
+  min-width: 0;
+}
+
+.session-view-path {
+  display: flex;
+  min-width: 0;
+  color: var(--pw-text-subtle);
   font-family: var(--pw-font-mono);
   font-size: var(--pw-text-xs);
-  overflow-wrap: anywhere;
+  line-height: var(--pw-leading-xs);
   font-variant-ligatures: none;
 }
 
-.session-view-note {
+.session-view-missing {
+  flex: none;
+  margin-left: var(--pw-space-1);
+  color: var(--pw-text-muted);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* "Copied", or why it couldn't, before the actions menu. A live region, so it's there when empty. */
+.session-view-copied {
+  flex: none;
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  white-space: nowrap;
+}
+
+.session-view-copied.failed {
+  color: var(--pw-danger-fg);
+}
+
+.session-view-copy-fallback {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.session-view-copy-fallback code {
+  padding: 0 var(--pw-space-1-5);
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
+  font-size: var(--pw-text-xs);
+  user-select: all;
+}
+
+/*
+ * An inline alert (section 4: Alerts and banners), neutral: the session has left the snapshot. The
+ * other tones and the page alerts are W24's.
+ */
+.inline-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-3);
+  border-radius: var(--pw-radius-md);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.inline-alert > svg {
+  margin-top: 2px;
+}
+
+.inline-alert.neutral {
+  background: var(--pw-neutral-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-neutral-border);
+}
+
+.inline-alert.neutral > svg {
+  color: var(--pw-neutral-tint-fg);
+}
+
+/*
+ * The tabs (section 4: Session view): a 40 px row under the header. The open tab has a 2 px --pw-text
+ * underline on the row's bottom edge, over its border.
+ */
+.session-tabs {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  gap: var(--pw-space-1);
+  height: var(--pw-space-10);
+  padding: 0 var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+}
+
+.session-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  height: var(--pw-control-md);
+  margin-bottom: 5px;
+  padding: var(--pw-space-1) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-lg);
+  background: none;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .session-tab:hover {
+    background: var(--pw-surface-hover);
+    color: var(--pw-text);
+  }
+}
+
+.session-tab[aria-selected='true'] {
+  color: var(--pw-text);
+}
+
+.session-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -6px;
+  left: 0;
+  height: 2px;
+  background: var(--pw-text);
+}
+
+.session-tab[aria-disabled='true'],
+.session-tab[aria-disabled='true']:hover {
+  background: none;
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
+}
+
+/* While attached: an 8 px success dot after the label. */
+.session-tab-dot {
+  flex: none;
+  width: var(--pw-dot);
+  height: var(--pw-dot);
+  border-radius: var(--pw-radius-full);
+  background: var(--pw-success-fg);
 }
 
 .session-view-body {
@@ -1448,22 +1736,39 @@ mark.match {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px 16px 24px;
+  padding: var(--pw-space-3) var(--pw-space-4) var(--pw-space-6);
 }
 
-/* At most half the panel, so the conversation keeps its share on a short window. */
+/* A Tab stop that fills the view, which would clip the outer ring (2.10). */
+.session-view-body:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.session-view-terminal {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/*
+ * The footer: the message box, on the --pw-surface-muted band. At most half the view, scrolling
+ * inside itself past that, so the conversation keeps its share on a short window.
+ */
 .session-view-foot {
   flex: none;
   max-height: 50%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 10px 16px 12px;
+  padding: var(--pw-space-3) var(--pw-space-4);
   border-top: 1px solid var(--pw-border);
+  background: var(--pw-surface-muted);
 }
 
 @media (max-height: 760px) {
   .session-view-foot {
-    padding: 8px 16px 10px;
+    padding: var(--pw-space-2) var(--pw-space-4);
   }
 }
 
@@ -1477,6 +1782,122 @@ mark.match {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-m);
   text-align: center;
+}
+
+.session-view-status.unlisted {
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Menus (section 4): a panel below its button, aligned to the button's end edge, or above it when
+ * there's no room below. Items are 32 px; danger items are in danger text, on the danger tint when
+ * highlighted. Keyboard focus shows the inset ring too, as the panel's 4 px padding would clip the outer one.
+ */
+.menu-anchor {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--pw-space-1));
+  right: 0;
+  z-index: var(--pw-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  min-width: 192px;
+  padding: var(--pw-space-1);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-overlay);
+  box-shadow: var(--pw-shadow-2);
+}
+
+.menu.up {
+  top: auto;
+  bottom: calc(100% + var(--pw-space-1));
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-sm);
+  background: none;
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.menu-item > svg {
+  flex: none;
+  color: var(--pw-text-muted);
+}
+
+.menu-item:focus {
+  outline: none;
+  background: var(--pw-surface-hover);
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+@media (hover: hover) {
+  .menu-item:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.menu-item.danger,
+.menu-item.danger > svg {
+  color: var(--pw-danger-fg);
+}
+
+.menu-item.danger:focus {
+  background: var(--pw-danger-tint);
+}
+
+.menu-item.danger:focus,
+.menu-item.danger:focus > svg {
+  color: var(--pw-danger-tint-fg);
+}
+
+@media (hover: hover) {
+  .menu-item.danger:hover {
+    background: var(--pw-danger-tint);
+  }
+
+  .menu-item.danger:hover,
+  .menu-item.danger:hover > svg {
+    color: var(--pw-danger-tint-fg);
+  }
+}
+
+.menu-item[aria-disabled='true'],
+.menu-item[aria-disabled='true'] > svg,
+.menu-item[aria-disabled='true']:hover {
+  background: none;
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
+}
+
+.menu-item[aria-disabled='true']:focus {
+  background: var(--pw-surface-hover);
+}
+
+.menu-separator {
+  height: 1px;
+  margin: var(--pw-space-1) 0;
+  background: var(--pw-border);
 }
 
 .conversation {

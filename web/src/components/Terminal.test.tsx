@@ -142,10 +142,12 @@ async function openView(name: string): Promise<HTMLElement> {
   return screen.getByRole('dialog');
 }
 
-/** Clicks Attach and waits for the terminal and its socket. */
+const tab = (view: HTMLElement, name: 'Conversation' | 'Terminal') => within(view).getByRole('tab', { name: new RegExp(`^${name}`) });
+
+/** Opens the Terminal tab and waits for the terminal and its socket. */
 async function attach(view: HTMLElement, fake: ReturnType<typeof fakeSockets>): Promise<{ socket: FakeSocket; terminal: FakeTerminal }> {
   const before = fake.sockets.length;
-  fireEvent.click(within(view).getByRole('button', { name: 'Attach' }));
+  fireEvent.click(tab(view, 'Terminal'));
   await waitFor(() => expect(fake.sockets.length).toBe(before + 1));
   return { socket: fake.last, terminal: terminals.at(-1)! };
 }
@@ -166,22 +168,77 @@ function binary(socket: FakeSocket, text: string) {
   act(() => socket.onmessage?.(new MessageEvent('message', { data: new TextEncoder().encode(text).buffer })));
 }
 
-describe('SessionView: attach', () => {
-  it('offers Attach for a background session, and not for an interactive one', async () => {
-    renderDashboard();
+describe('SessionView: attach, from the Terminal tab', () => {
+  it("opens for a background session; an interactive session's Terminal tab is aria-disabled, says why, and attaches nothing", async () => {
+    const { fake } = renderDashboard();
     let view = await openView('demo-docs');
-    expect(within(view).queryByRole('button', { name: 'Attach' })).toBeNull();
-    expect(within(view).getByText(/moves it to the background/)).toBeTruthy();
+    const off = tab(view, 'Terminal');
+    expect(off.getAttribute('aria-disabled')).toBe('true');
+    expect(off.getAttribute('title')).toMatch(/Typing \/bg in its terminal moves it to the background/);
+    expect(document.getElementById(off.getAttribute('aria-describedby')!)?.textContent).toBe(off.getAttribute('title'));
+    fireEvent.click(off);
+    await settle();
+    expect(off.getAttribute('aria-selected')).toBe('false');
+    expect(fake.sockets).toHaveLength(0);
 
     fireEvent.click(within(view).getByRole('button', { name: 'Close' }));
     view = await openView('demo-worker');
-    expect(within(view).getByRole('button', { name: 'Attach' })).toBeTruthy();
+    expect(tab(view, 'Terminal').hasAttribute('aria-disabled')).toBe(false);
+    await attach(view, fake);
+    expect(tab(view, 'Terminal').getAttribute('aria-selected')).toBe('true');
   });
 
-  it('offers no Attach where the app gave no way to attach', async () => {
+  it("is aria-disabled where the app gave no way to attach", async () => {
     renderDashboard(snap(), false);
     const view = await openView('demo-worker');
-    expect(within(view).queryByRole('button', { name: 'Attach' })).toBeNull();
+    expect(tab(view, 'Terminal').getAttribute('aria-disabled')).toBe('true');
+    expect(tab(view, 'Terminal').getAttribute('title')).toBe('Attach is unavailable here.');
+  });
+
+  it('attaches only when Terminal is opened, never when the view opens', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    expect(tab(view, 'Conversation').getAttribute('aria-selected')).toBe('true');
+    expect(fake.sockets).toHaveLength(0);
+    // Focus alone never opens a tab: activation is manual.
+    tab(view, 'Conversation').focus();
+    fireEvent.keyDown(tab(view, 'Conversation'), { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(tab(view, 'Terminal'));
+    await settle();
+    expect(fake.sockets).toHaveLength(0);
+  });
+
+  it('detaches when the Conversation tab is opened, and attaches afresh on Terminal', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const first = await attach(view, fake);
+    await ready(first.socket);
+    act(() => first.socket.receive({ type: 'attached' }));
+
+    fireEvent.click(tab(view, 'Conversation'));
+    expect(first.socket.closedByClient).toBe(true);
+    expect(first.terminal.disposed).toBe(true);
+    expect(tab(view, 'Conversation').getAttribute('aria-selected')).toBe('true');
+    expect(view.querySelector<HTMLElement>('.session-view-body')!.hidden).toBe(false);
+
+    const second = await attach(view, fake);
+    expect(second.socket).not.toBe(first.socket);
+    expect(fake.sockets).toHaveLength(2);
+  });
+
+  it('shows a success dot on the Terminal tab while attached, and says so to screen readers', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket } = await attach(view, fake);
+    expect(view.querySelector('.session-tab-dot')).toBeNull();
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    expect(view.querySelector('.session-tab .session-tab-dot')).not.toBeNull();
+    // happy-dom gives spans no display, so the accessible name gets a space before the comma, where a browser has none.
+    expect(within(view).getByRole('tab', { name: /^Terminal ?, attached$/ })).toBe(tab(view, 'Terminal'));
+
+    act(() => socket.receive({ type: 'exit', code: 0 }));
+    expect(view.querySelector('.session-tab-dot')).toBeNull();
   });
 
   it("proves the token without sending it, then opens the session at the terminal's size", async () => {
@@ -223,13 +280,17 @@ describe('SessionView: attach', () => {
     expect(body.hidden).toBe(false);
     const { socket, terminal } = await attach(view, fake);
     expect(body.hidden).toBe(true);
-    expect(within(view).queryByRole('button', { name: 'Attach' })).toBeNull();
+    const panel = document.getElementById(tab(view, 'Terminal').getAttribute('aria-controls')!)!;
+    expect(panel.getAttribute('role')).toBe('tabpanel');
+    expect(panel.contains(terminal.container)).toBe(true);
 
     fireEvent.click(within(view).getByRole('button', { name: 'Detach' }));
     expect(socket.closedByClient).toBe(true);
     expect(terminal.disposed).toBe(true);
     expect(body.hidden).toBe(false);
-    expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Attach' }));
+    expect(tab(view, 'Conversation').getAttribute('aria-selected')).toBe('true');
+    // Back on the tab that attaches again.
+    expect(document.activeElement).toBe(tab(view, 'Terminal'));
   });
 
   it('sends a resize when the panel resizes', async () => {
@@ -294,6 +355,19 @@ describe('SessionView: attach', () => {
       expect(terminal.disposed).toBe(true);
       expect(sent(socket).some((message) => message.restart === true)).toBe(false);
       expect(view.querySelector<HTMLElement>('.session-view-body')!.hidden).toBe(false);
+      expect(document.activeElement).toBe(tab(view, 'Terminal'));
+    });
+
+    it('Escape cancels the restart, wherever focus is, and only a second Escape closes the view', async () => {
+      const { view, socket } = await needingRestart();
+      fireEvent.keyDown(tab(view, 'Terminal'), { key: 'Escape' });
+      expect(socket.closedByClient).toBe(true);
+      expect(sent(socket).some((message) => message.restart === true)).toBe(false);
+      expect(within(view).queryByRole('alertdialog')).toBeNull();
+      expect(screen.getByRole('dialog')).toBe(view);
+
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+      expect(screen.queryByRole('dialog')).toBeNull();
     });
   });
 
@@ -363,6 +437,26 @@ describe('SessionView: attach', () => {
 });
 
 describe('App: attach', () => {
+  it('opens a session from the URL without attaching', async () => {
+    window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
+    window.history.replaceState(null, '', `/?view=all&session=${BG}`);
+    const fake = fakeSockets();
+    render(<App createSocket={fake.factory} fetch={emptyPages} />);
+    act(() => {
+      fake.last.open();
+      fake.last.receive({ type: 'challenge', version: PROTOCOL_VERSION, nonce: nonce(1) });
+    });
+    await waitFor(() => expect(fake.last.sent).toHaveLength(1));
+    act(() => fake.last.receive({ type: 'authenticated', apiKey: API_KEY }));
+    act(() => fake.last.receive({ type: 'snapshot', snapshot: snap() }));
+    await settle();
+
+    const view = screen.getByRole('dialog', { name: 'demo-worker' });
+    expect(tab(view, 'Conversation').getAttribute('aria-selected')).toBe('true');
+    // Only the index's socket: nothing attached.
+    expect(fake.sockets).toHaveLength(1);
+  });
+
   it('attaches with the token it holds, sending only proofs on every socket', async () => {
     window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
     const fake = fakeSockets();

@@ -11,11 +11,13 @@ import { Dashboard } from '../components/Dashboard.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
+import { PANEL_WIDTH_KEY } from '../panelWidth.js';
 import { memoryNavigation } from '../selection.js';
 import { statusBadge } from '../sessions.js';
 import { SORT_KEY } from '../sort.js';
 import {
   APP_DIR,
+  APP_GROUP,
   CALM_SNAPSHOT,
   DIALOG_SNAPSHOT,
   EMPTY_SNAPSHOT,
@@ -269,6 +271,9 @@ export function Pages() {
   );
 }
 
+/** A session in LIST_SNAPSHOT, opened from the URL as a reload or a link would. */
+const OPEN = `?view=all&session=${APP_GROUP.sessions[0]?.sessionId ?? ''}`;
+
 const LAYOUTS: PageCase[] = [
   {
     title: 'Three columns, from 1,200 px',
@@ -285,8 +290,51 @@ const LAYOUTS: PageCase[] = [
       await element(root, laidOut(root) ? '.session-view.in-column' : '.session-view');
     },
   },
+  {
+    title: 'Three columns, opened from the URL',
+    note: 'A ?session= opens the view on load, without attaching, sending or changing anything.',
+    width: 1280,
+    search: OPEN,
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'The divider at its minimum',
+    note: 'Dragged, or Home on the divider: 560 px, about 80 terminal columns.',
+    width: 1280,
+    search: OPEN,
+    stored: { [PANEL_WIDTH_KEY]: '560' },
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'The divider at its maximum',
+    note: 'Dragged, or End on the divider: what the repo list and the session list’s 360 px leave, here 680 px.',
+    width: 1280,
+    search: OPEN,
+    stored: { [PANEL_WIDTH_KEY]: '4000' },
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'A session the URL names that isn’t listed',
+    width: 1280,
+    search: '?view=all&session=00000000-0000-4000-8000-00000000dead',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
   { title: 'Two columns, from 900 px', note: 'An open session overlays the session list.', width: 1000, view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  {
+    title: 'Two columns, a session open',
+    note: 'Over the session list, which stays usable: non-modal, with no backdrop.',
+    width: 1000,
+    search: OPEN,
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
   { title: 'One column, below 900 px', note: 'The repo list is a drawer, opened with Repos.', width: 375, view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  {
+    title: 'One column, a session open',
+    note: 'At 600 px and narrower the view is full width, with Back to sessions in place of Close.',
+    width: 375,
+    search: OPEN,
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
   {
     title: 'The drawer open',
     width: 375,
