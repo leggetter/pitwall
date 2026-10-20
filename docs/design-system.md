@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -536,6 +536,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | Hover, colour and chevron rotation | `--pw-duration-fast` 150 ms | `--pw-ease-standard` |
 | Toast in and out (fade and scale from 0.96) | `--pw-duration-base` 220 ms | `--pw-ease-out` |
 | Overlay session view in (slide 16 px and fade), when it opens; not when the window crosses 1,200 px, or ↑/↓ moves it to another session | `--pw-duration-base` 220 ms | `--pw-ease-out` |
+| Jump to latest (scroll to the newest entry) | The browser's smooth scroll (`behavior: 'smooth'`) | The browser's |
 | Spinner turn | 0.8 s per turn, linear | |
 | Skeleton pulse (opacity 1 → 0.6 → 1) | 1.5 s, starting after 0.5 s | ease-in-out |
 
@@ -882,7 +883,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Other badges:**
   - **Counts:** subtle neutral ("4", "2 of 5").
   - **Needs-you counts:** solid warning ("2 need you").
-  - **Errors in folded tool calls:** subtle danger ("1 error").
+  - **Errors in folded tool calls:** subtle danger: "1 error" or "3 errors" on a fold's toggle, and "error" on each failed call.
 - **Stale** carries its explanation in a tooltip, on hover (`Badge`'s `hint`): "Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters."
 
 ### Status dot
@@ -1031,28 +1032,35 @@ The composer in the session view's footer, for interactive sessions. Messages go
 
 ### Conversation
 
+- **Component:** `Conversation.tsx` (`web/src/components/`): `useConversation()`, which loads, merges and follows the pages, and `ConversationPanel`, the Conversation tab's panel, which is the session view's scrolling body (`.session-view-body`, `role="tabpanel"`). The pages are merged and the rows built in `web/src/conversation.ts`.
 - **List:** an `<ol>`, oldest at the top, 12 px between entries. It opens scrolled to the newest entry.
-- **Speaker line** on each text entry: label style (xs 12/20, 500, `--pw-text-muted`): "You", "Claude", or "From *name*" (the sender's name as written), then " · 11:06" in `--pw-text-subtle`. Times are always visible, not only on hover.
+- **Speaker line** on each text entry (yours, Claude's, another session's): label style (xs 12/20, 500, `--pw-text-muted`): "You", "Claude", or "From *name*" (the sender's name as written, as text; "From another session" when there's none), then " · 11:06" in `--pw-text-subtle`, 2 px above the text. The time is a [timestamp](#timestamps) with `format="time"`: always visible, not only on hover, with the full date and time in its tooltip. An entry with no time, or one that isn't a time, has the name alone. Notices and tool calls have no speaker line.
 
 | Entry | Look |
 |---|---|
 | Your message | `--pw-surface-sunken` fill, `--pw-radius-md`, padding 8 px 12 px, body text |
 | Claude | No fill, body text |
-| From another session | `--pw-surface-sunken` fill, `--pw-radius-md`, `inset 3px 0 0 var(--pw-info-fg)`, body text |
+| From another session | `--pw-surface-sunken` fill, `--pw-radius-md`, `inset 3px 0 0 var(--pw-info-fg)`, padding 8 px 12 px, body text |
 | Tool calls | Folded (below) |
-| Notice | Meta, `--pw-text-muted` |
-| Cut short | A trailing "Cut short." in meta, `--pw-text-subtle` |
+| Notice | Meta (s 13/20), `--pw-text-muted` |
+| Cut short | A trailing "Cut short." in meta, `--pw-text-subtle`, after the text of an entry whose `truncated` is set |
 
-- **Text:** body, `white-space: pre-wrap`, `overflow-wrap: anywhere`, always as text, never as markup.
+- **Text:** body, `white-space: pre-wrap`, `overflow-wrap: anywhere`, always as text, never as markup. The speaker line wraps anywhere too, for a long sender name.
 - **Folded tool calls:**
-  - Consecutive tool calls fold into one row: an `expand` toggle button "*n* tool calls" (code style, `--pw-text-muted`), plus a subtle danger "*n* error(s)" badge when any failed.
-  - Expanded, each call is one line of code text with an ellipsis and its own "error" badge; the full text is in a tooltip.
-  - A single tool call isn't folded.
-- **Loading earlier:** an outline sm "Load earlier" button centred at the top ("Loading earlier…" while busy). The scroll position holds when older entries arrive.
+  - Consecutive tool calls fold into one row: an `expand` toggle button "*n* tool calls" (code style, `--pw-text-muted`, `--pw-text` on hover with the `--pw-surface-hover` fill, `--pw-radius-sm`, 24 px tall), plus a subtle danger "*n* error(s)" badge inside it when any failed. Its chevron turns 90° when open. It sits 6 px into the gutter, so the chevron lines up with the text around it.
+  - It's a real `<button>` with `aria-expanded`, and `aria-controls` naming the `<ol>` of its calls, which is always in the DOM and `hidden` while closed. With errors, its name is "*n* tool calls, *n* error(s)" (`aria-label`), which starts with its visible label.
+  - Expanded, each call is one line of code text (mono s 13/20, `--pw-text-muted`) with an ellipsis and its own subtle danger "error" badge, lined up with the toggle's label, 4 px apart. The full text is in a [tooltip](#tooltips) when it's cut (`onlyIfCut`); the lines aren't focusable, so it opens on hover, and the whole line is in the DOM for screen readers and find in page.
+  - A single tool call isn't folded: it's one such line, with no toggle.
+  - Every fold starts closed, and stays open or closed across refreshes and "Load earlier" while it has a call it had: a newer call joining the newest fold leaves it open, and so do older calls joining a fold at its start. The calls are known by `entryKey()`, so a call that gets its result is the same call.
+- **Loading earlier:** an outline sm "Load earlier" button centred at the top, 12 px above the list ("Loading earlier…" with its spinner while busy, and repeat clicks ignored). The scroll position holds when older entries arrive: what the reader was looking at stays where it was.
 - **Following new entries:**
   - At the bottom (within 24 px), new entries keep it at the bottom.
-  - Scrolled up, the place is kept, and a "Jump to latest" bar appears, sticky at the bottom of the body: `--pw-info-tint`, `--pw-info-tint-fg` text, the `latest` icon, "*n* new · Jump to latest", full width, `--pw-radius-md`, 8 px from the footer. It's a button.
-  - Under reduced motion, jumping to latest doesn't animate.
+  - Scrolled up, the place is kept, and a "Jump to latest" bar appears, sticky at the bottom of the body, 8 px from the footer (or the view's foot, when there's no footer): `--pw-info-tint`, `--pw-info-tint-fg` text, `inset 0 0 0 1px var(--pw-info-border)` (`--pw-info-fg` on hover), the `latest` icon 6 px before "*n* new · Jump to latest" (m 14/20, 500), centred, full width, at least 32 px tall, `--pw-radius-md`, `--pw-z-sticky`. It's a button.
+    - *n* counts the entries that arrived while scrolled up; a message that grew, or a tool call that got its result, isn't new.
+    - The sticky box has no height, so the bar covers the entries behind it rather than taking room, and nothing moves when it goes.
+    - It goes when the reader reaches the bottom by any means: the bar, scrolling, the keyboard, or a fold closing above. If it had focus, focus moves to the conversation's panel first, so the keyboard carries on from there.
+  - The bar scrolls to the bottom smoothly; the positions it passes through don't count as the reader scrolling up, and the reader's own wheel, touch, press or key ends that at once. Under reduced motion, jumping to latest doesn't animate.
+  - **Announced** politely by a visually hidden `role="status"` in the panel, which is always there: "*n* new", once for each batch that adds to the count, never once per entry and never the entries' text. Nothing is announced while the reader is at the bottom, where the entries come into view as they arrive, or when the count clears.
 - **States:** see [Empty states](#empty-states) and [Errors](#5-content).
 
 ### Alerts and banners
@@ -1189,7 +1197,7 @@ For a destructive or surprising action in the session view, without a dialog.
   - For an icon button, the tooltip is the trigger's `aria-label`, so its name and its tooltip match, and the tooltip itself is hidden from assistive technology.
   - Otherwise the trigger's `aria-describedby` points at the tooltip, which is always in the DOM, hidden while closed, so the description is there before it shows. A disabled control says why this way: Send, the Terminal tab, a menu item.
   - On an element that's never focusable, such as a badge, a title or a time, it's linked to nothing and opens on hover only.
-- **Replace `title` attributes** with this component. On an element that's never focusable it can only repeat what's in the DOM, such as a title cut short, or explain a label, such as Stale. A tooltip that only repeats text shows only when that text is cut short. The conversation's entries keep the browser's `title` until W27 rebuilds them.
+- **Replace `title` attributes** with this component. On an element that's never focusable it can only repeat what's in the DOM, such as a title cut short, or explain a label, such as Stale. A tooltip that only repeats text shows only when that text is cut short. No `title` is left in the components, and `titles.test.tsx` and the `#uikit` gallery's test check that none comes back.
 - **Info buttons** (`InfoTip`): a ghost sm `info` icon button, so Tab reaches it, named by its explanation, which is its tooltip. A click or a tap pins it open, since touch screens can't hover; a second click, a press elsewhere, blur or Escape hides it.
 - **Never the only place** for essential information; touch users can't hover.
 
@@ -1244,7 +1252,7 @@ For a destructive or surprising action in the session view, without a dialog.
 - **Relative, in rows and meta:** "just now" under 5 s, then "42s ago", "5m ago", "3h ago" (under 48 hours), "2d ago".
   - Meta size, `--pw-text-subtle`, tabular, in `<time datetime>`, with the absolute time in a tooltip, on hover: times aren't focusable.
 - **The header's "updated 7s ago"** counts in seconds below a minute, so it visibly ticks.
-- **Absolute:** the user's locale, with seconds: "20 Oct 2026, 11:06:14". In the conversation's speaker line, only the time ("11:06"), with the full date in the `datetime`.
+- **Absolute:** the user's locale, with seconds: "20 Oct 2026, 11:06:14". In the conversation's speaker line, only the time of day, in the user's locale ("11:06", or "11:06 AM"), with the full instant in the `datetime` and the absolute date and time in its tooltip (`format="time"`). It never changes, so it doesn't subscribe to the clock.
 - **Updates:** relative times update every second from one shared clock (`web/src/clock.ts`): one interval for the page, running only while a time is on screen. Each timestamp re-renders itself on the tick, so nothing else does. They're never in a live region.
 
 ### Terminal
@@ -1368,7 +1376,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 9. **Announcements:**
    - The connection badge is `role="status"`.
    - Results the user asked for are announced: send results, stop and remove results, copy. Stop, remove, copy and a started session are toasts, announced by the toasts' live region, which is always in the DOM.
-   - Snapshot updates, ticking times and the list's re-sorting are never announced.
+   - Snapshot updates, ticking times and the list's re-sorting are never announced. The one exception is the conversation's count of new entries while you're scrolled up ("3 new"), once per batch (see [Conversation](#conversation)).
    - The document title carries the count: "(2) pitwall".
 10. **Forms:**
     - Every control has a label.
@@ -1398,8 +1406,8 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 | `n` | Anywhere | Open the New session dialog |
 | `?` | Anywhere | Open the keyboard shortcuts dialog |
 | `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (shows it if a session is open) |
-| ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session |
-| ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading |
+| ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session. Nothing while the message box has a draft |
+| ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading. Nothing while the message box has a draft |
 | Enter | On a session row | Open the session |
 | ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
 | Escape | Layered, nearest first | Close a tooltip or menu (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
@@ -1416,7 +1424,7 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 - **Where focus goes:** with no session open, to the row. With one open, the view shows that session, replacing the history entry as ↑/↓ do, and focus stays in the list if it was there, stays in the conversation if it was there, and otherwise goes to the new heading.
 - **In the conversation's body,** ↑/↓ scroll it, as in any scrolling region; use `j` / `k` there to change session.
 - **An open menu** closes first when a shortcut moves focus (see [Menus](#menus)).
-- **A draft is never lost to a shortcut:** while the message box has a draft, `j` and `k` do nothing, and so does `/` where it would close the view, just as Escape does nothing then.
+- **A draft is never lost to a key:** while the message box has a draft, `j` and `k` do nothing, nor do ↑ and ↓ on a session row or in the view's header, nor `/` where it would close the view, just as Escape does nothing then. Changing session would discard the draft. ↑ and ↓ on a row are still taken, so the list doesn't scroll either.
 
 ---
 
