@@ -78,9 +78,9 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--pw-bg` | `#FAFAF8` | `#141412` | The page: behind the header, the toolbar and the cards |
-| `--pw-surface` | `#FFFFFF` | `#191917` | Cards, rows, the session view, inputs |
-| `--pw-surface-muted` | `#FAFAFA` | `#1D1D1B` | Group headers, the session view's footer band, code blocks |
+| `--pw-bg` | `#FAFAF8` | `#141412` | The page: the header and the repo list |
+| `--pw-surface` | `#FFFFFF` | `#191917` | The session list and its rows, the session view, inputs, cards |
+| `--pw-surface-muted` | `#FAFAFA` | `#1D1D1B` | The session view's footer band, code blocks |
 | `--pw-surface-sunken` | `#F5F5F5` | `#222220` | Skeleton bars, key caps, disabled fields, the user's messages |
 | `--pw-surface-strong` | `#EBEBEB` | `#353533` | Pressed and active fills only |
 | `--pw-surface-hover` | `#F5F5F5` | `#272725` | Hover on something that sits on `--pw-surface` |
@@ -93,7 +93,7 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
 | `--pw-text` | `#141412` | `#F5F5F5` | Body text, names, titles |
 | `--pw-text-muted` | `#52504A` | `#CCCCCC` | Secondary text: titles after a name, previews, help text |
 | `--pw-text-subtle` | `#6A6860` | `#9D9D9D` | Tertiary text: times, paths, placeholders, kind |
-| `--pw-text-disabled` | `#A3A093` | `#525252` | Disabled controls only (exempt from contrast, see [2.4](#24-contrast)) |
+| `--pw-text-disabled` | `#A3A093` | `#525252` | Disabled controls only (exempt from contrast, see [2.5](#25-contrast)) |
 | `--pw-text-inverse` | `#FFFFFF` | `#141412` | Text on `--pw-text` (the app strip) |
 | `--pw-border` | `#EBEBEB` | `#2C2C2A` | Dividers between rows and sections (decorative) |
 | `--pw-border-strong` | `#E0E0E0` | `#3E3E3D` | Card edges where a divider isn't enough (decorative) |
@@ -453,10 +453,9 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 
 | Where | Value |
 |---|---|
-| Page and pane gutters | 16 px; 24 px from 1,100 px wide |
-| Gap between group cards | 12 px |
-| Row padding | 8 px 12 px |
-| Group header padding | 8 px 12 px |
+| Page and column gutters | 16 px |
+| Row padding | 8 px 16 px |
+| Repo list item padding | 6 px 8 px |
 | Session view header, tabs and footer, horizontal | 16 px |
 | Dialog body | 16 px; header and footer 12 px 16 px |
 | Icon to label | 6 px in buttons; 8 px in menu items and alerts |
@@ -481,7 +480,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 
 | Token | Used for |
 |---|---|
-| `--pw-shadow-card` | Group cards |
+| `--pw-shadow-card` | Cards on `--pw-bg` |
 | `--pw-shadow-control` | Outline buttons, chips, the theme switch's selected thumb, key caps |
 | `--pw-shadow-input` / `-input-error` | Text fields, textareas, selects |
 | `--pw-shadow-accent` | Primary buttons |
@@ -489,7 +488,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 | `--pw-shadow-2` | Menus |
 | `--pw-shadow-3`, `--pw-shadow-overlay` | Dialogs, toasts, the session view when it overlays the list |
 | `--pw-ring-focus` | Keyboard focus, on top of the element's own shadow |
-| `--pw-ring-focus-inset` | Keyboard focus on a full-width control inside a card that clips its content, such as a group header or the Finished toggle, where the outer ring would be cut off |
+| `--pw-ring-focus-inset` | Keyboard focus on a full-width control inside a container that clips its content, such as the Finished toggle, where the outer ring would be cut off |
 | `--pw-ring-selected` | The open row and pressed chips (inset, so nothing moves) |
 
 - **Edges are rings:** controls are outlined with `box-shadow: 0 0 0 1px …`, not `border`, so they line up with elements that have no edge. Dividers between rows and sections are a real `1px solid var(--pw-border)`.
@@ -502,7 +501,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 
 ### 2.11 Layers
 
-`--pw-z-*` keeps this order: sticky headers 10, the overlay session view 20, menus 30, dialog backdrop 40, dialog 41, popovers 50, tooltips 60, toasts 70. Don't add a z-index outside this scale.
+`--pw-z-*` keeps this order: sticky headers 10, the overlay session view 20, menus 30, dialog backdrop 40, dialog and the repo drawer 41, popovers 50, tooltips 60, toasts 70. Don't add a z-index outside this scale.
 
 ### 2.12 Breakpoints and widths
 
@@ -510,13 +509,15 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 
 | Name | Query | What changes |
 |---|---|---|
-| **split** | `(min-width: 1100px)` | The session view sits beside the list. Below it, the view overlays the list |
-| **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark; the toolbar wraps; the overlay session view is full width; toasts are full width |
+| **three columns** | `(min-width: 1200px)` | The session view is the third column. Below it, the view overlays the session list |
+| **sidebar** | `(min-width: 900px)` | The repo list sits beside the session list. Below it, the repo list is a drawer opened from the header |
+| **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark; the session list's header wraps; the overlay session view is full width, with Back; toasts are full width |
 | **short** | `(max-height: 760px)` | The session view's footer padding tightens and the latest reply shows two lines, not three |
 
 - **Fixed widths:**
-  - List: at least `--pw-list-min-w` (360 px).
-  - Session view: `--pw-panel-w` (760 px) by default, at least `--pw-panel-min-w` (560 px, about 80 terminal columns), at most the window less 360 px.
+  - Repo list: `--pw-sidebar-w` (240 px).
+  - Session list: at least `--pw-list-min-w` (360 px).
+  - Session view: `--pw-panel-w` (760 px) by default, at least `--pw-panel-min-w` (560 px, about 80 terminal columns), at most the window less the repo list and 360 px. At 1,200 px that's 600 px.
   - Dialogs: 408, 624 (the default) or 840 px. Tooltips: at most 344 px. Toasts: 360 px. Menus: at least 192 px.
 - **Reflow:** the UI works at 320 px wide and at 200 % zoom. Only the terminal and code blocks may scroll sideways.
 
@@ -628,62 +629,95 @@ The first restyle PR renames today's custom properties (in `web/src/styles.css`,
 
 ## 3. Layout shell
 
+Three columns, left to right: where to look (the repo list), what's there (the session list), and one session (the session view). Choosing in one column fills the next. Phil asked for this layout on 2026-10-20, in place of one long list of grouped cards, where every row showed its last reply and nine sessions that needed him filled several screens.
+
 ```
-┌─ app strip, 32 px, only while the relay is off ───────────────────────────────┐
-├─ header, 52 px ───────────────────────────────────────────────────────────────┤
-│ pitwall  ~/git, ~/work                [+ New session]  ● Live  7s ago  ◐ ⌨   │
-├─ toolbar, 44 px ──────────────────────────────────────────────────────────────┤
-│ [Filter sessions    /]  [Needs you 2] [Background] [Finished]   12 sessions │
-├─ list pane (scrolls) ───────────────────┬┬─ session view (≥ 1,100 px) ────────┤
-│ page alerts                             ││ header: name · title   ⋯  ✕       │
-│ ┌ group: pitwall  4  [2 need you] ────┐ ││ badge · kind · active 5m · cwd     │
-│ │ row                                  │ │├ tabs: Conversation | Terminal ────┤
-│ │ row (open)                           │ ││ body (scrolls)                     │
-│ └──────────────────────────────────────┘ ││                                    │
-│ ┌ group: api-server  3 ────────────────┐ │├ footer: message box ──────────────┤
-└─────────────────────────────────────────┴┴────────────────────────────────────┘
+┌─ app strip, 32 px, only while the relay is off ───────────────────────────────────────────┐
+├─ header, 52 px ───────────────────────────────────────────────────────────────────────────┤
+│ pitwall  ~/git, ~/work                            [+ New session]  ● Live  7s ago  ◐  ⌨   │
+├─ repo list, 240 px ─┬─ session list (≥ 360 px) ─────────────┬┬─ session view ─────────────┤
+│ Needs you       [2] │ ⑂ pitwall      4 sessions [2 need you] ││ name · title        ⋯  ✕  │
+│ All sessions     12 │ [Filter sessions   /] [Interactive]    ││ badge · kind · 5m · cwd   │
+│ ─────────────────── │ [Background]                           │├ Conversation | Terminal ──┤
+│ ▢ ~/git           3 │────────────────────────────────────────││ body (scrolls)            │
+│ ⑂ pitwall       [2] │▌name · title        [waiting]      1m  ││                           │
+│ ⑂ api-server      4 │  Asked: Which queue should failed…     ││                           │
+│ ▢ scratch         1 │ name · title        [busy]         6s  ││                           │
+│                     │ Finished (3)  ›                        │├ footer: message box ──────┤
+└─────────────────────┴────────────────────────────────────────┴┴───────────────────────────┘
 ```
 
-- **The page doesn't scroll.** The app is `height: 100dvh` as a grid of strip, header, toolbar and panes. The list pane and the session view's body scroll on their own; the header, toolbar, panel header, tabs and footer stay put.
-- **Full width.** No centred max-width column. The list pane fills whatever the session view leaves.
+- **The page doesn't scroll.** The app is `height: 100dvh`, a grid of the strip, the header and the columns. The repo list, the session list's rows and the session view's body each scroll on their own. The header, the session list's header, and the session view's header, tabs and footer stay put.
+- **Full width.** No centred max-width column. The session list takes whatever the other two columns leave.
+- **The list is for scanning; the session view is for reading.** A row is two lines at most. A session's replies, its relay exchanges, its attach command and the message box are in the session view, one click away.
 
 ### Header
 
-- **Size and fill:** 52 px tall, `--pw-bg`, a bottom `--pw-border`, 16 px gutters (24 px from 1,100 px).
-- **Left:** the wordmark "pitwall" (l 16/24, 600), then the roots: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full list in a tooltip.
+- **Size and fill:** 52 px tall, `--pw-bg`, a bottom `--pw-border`, 16 px gutters.
+- **Left:**
+  - Below the sidebar breakpoint (900 px), a ghost md `menu` icon button, "Repos", that opens the [repo list](#repo-list) as a drawer.
+  - The wordmark "pitwall" (l 16/24, 600).
+  - The roots: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full list in a tooltip.
 - **Right, 12 px apart:** New session (primary, md, `add` icon); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular); the theme switch; the keyboard-shortcuts icon button.
 - **Compact (≤ 600 px):** the right side wraps under the wordmark, and the header grows to fit.
 
-### Toolbar
+### Repo list
 
-- **Size and fill:** 44 px tall, `--pw-bg`, a bottom `--pw-border`. Shown once there's at least one session.
-- **Left:** the filter field (240 to 420 px wide), then the filter chips.
-- **Right:** the summary: "12 sessions", then a solid warning badge "2 need you", or meta text "Nothing needs you".
+- **Fill and size:** `--pw-bg`, `--pw-sidebar-w` (240 px) wide, a right `1px solid var(--pw-border)`, padding 8 px. It scrolls on its own.
+- **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of [repo list items](#repo-list-items).
+- **Contents, top to bottom:**
+  1. Two views: "Needs you", every session that needs you under any root, and "All sessions".
+  2. A 1 px `--pw-border` divider, 8 px above and below.
+  3. Every group: a git repo, or a directory that isn't in one. With more than one root, each root's groups sit under a heading: the root's path, label style, `--pw-text-subtle`, home as `~`.
+- **Group order:** as the index sorts them: most recently active first, going by unfinished sessions, then groups whose sessions have all finished. As in the session list, a snapshot that would reorder the groups waits while the pointer or focus is in the column.
+- **The root's own directory** is a group like any other, labelled with its path (`~/hookdeck/git`) rather than its last segment, so it doesn't read as a repo called "git".
+- **Below the sidebar breakpoint (900 px): a drawer.**
+  - It slides in from the left with the same content, opened from the header's `menu` button.
+  - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
+  - Choosing an item closes it. Escape, or a click on the backdrop, closes it and returns focus to the menu button.
+- **The selection is in the URL:** `?view=needs-you`, `?view=all`, or `?repo=<group>`.
+  - `<group>` is stable across reloads and readable: the group's key, with its root when pitwall watches more than one. Never the token.
+  - Choosing pushes a history entry; `popstate` makes the columns match the URL.
+  - A URL with no selection uses the last one, saved in `localStorage` as `pitwall.view.v1`, or All sessions the first time, and replaces the URL to match.
+  - Loading `?session=` with no selection selects that session's group.
+  - A selected group that leaves the snapshot stays selected, with the "No sessions in *group* now" empty state.
 
-### List pane
+### Session list
 
-- **Fill and padding:** `--pw-bg`, padding 16 px (24 px from 1,100 px).
-- **Order:** page alerts first, then group cards 12 px apart.
-- **Groups** are cards: `--pw-surface`, `--pw-shadow-card`, `--pw-radius-md`, `overflow: hidden`.
-- **Empty and loading states** fill the pane, centred (see [Empty states](#empty-states)).
-- **Live updates:** each snapshot updates rows in place. If it would reorder rows or groups while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it. Added and removed rows apply at once.
+- **Fill:** `--pw-surface`. Its header stays put; its rows scroll.
+- **Page alerts** come first, above the header, full column width (see [App strip and page alerts](#app-strip-and-page-alerts)).
+- **Header** (padding 12 px 16 px, a bottom `--pw-border`):
+  - **Line 1:**
+    - The selection's name, as the column's `<h2>` (l 16/24, 600).
+      - A group shows its kind icon and label, plus "in *root*" (meta, `--pw-text-subtle`) when pitwall watches more than one root.
+      - The views show "Needs you" or "All sessions".
+    - At the right, the summary: "4 sessions", then a solid warning "2 need you" badge, or meta text "Nothing needs you".
+  - **Line 2,** 8 px below, wrapping:
+    - the [filter field](#search), at least 200 px wide and growing;
+    - then the [filter chips](#filter-chips) and "Clear filters".
+- **Rows:** [session rows](#session-rows) in a `<ul>`, in the index's order: waiting or blocked first, then asked you, then busy, then most recently active, with stale sessions after those.
+  - **A group:** its unfinished sessions, then its [Finished section](#finished-section).
+  - **Needs you:** every session that needs you, from every group. There's no Finished section, because a finished session never needs you.
+  - **All sessions:** every unfinished session from every group, then one Finished section for all of them.
+- **Live updates:** each snapshot updates rows in place. If it would reorder rows while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it. Added and removed rows apply at once.
+- **Empty and loading states** fill the rows' area, centred (see [Empty states](#empty-states)).
 
 ### Session view
 
-- **From 1,100 px: beside the list.**
-  - A pane on `--pw-surface`, full height under the toolbar, separated from the list by a divider.
-  - The list stays interactive and keeps its scroll position.
-  - With nothing open, the pane is closed and the list takes the full width.
-- **Below 1,100 px: over the list.**
+- **From 1,200 px: the third column.**
+  - A pane on `--pw-surface`, full height under the header, separated from the session list by a divider.
+  - The session list stays interactive and keeps its scroll position.
+  - With nothing open, the column stays and shows the "Select a session" empty state, so the layout doesn't jump.
+- **Below 1,200 px: over the session list.**
   - Fixed to the right edge, `width: min(var(--pw-panel-w), 100vw)`, `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right.
-  - It's non-modal: no backdrop, and the visible part of the list stays usable.
+  - It's non-modal: no backdrop, and the visible part of the lists stays usable.
   - At ≤ 600 px it's full width, with a "Back to sessions" ghost button (`back` icon) at the start of its header in place of the close icon.
-- **Divider** (split mode only):
+- **Divider** (three columns only):
   - An 8 px hit area with a 1 px `--pw-border` line in it; on hover or focus the line becomes 2 px `--pw-focus`.
   - `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (the panel width in px), `aria-valuemin`, `aria-valuemax`, `aria-label="Resize the session view"`, `tabindex="0"`.
-  - Drag to resize. ← and → move it 16 px, Home and End jump to the minimum and maximum, and a double-click resets to 760 px.
+  - Drag to resize, within the widths in [2.12](#212-breakpoints-and-widths). ← and → move it 16 px, Home and End jump to the minimum and maximum, and a double-click resets to 760 px, or the maximum if that's less.
   - Save the width in `localStorage` as `pitwall.panel-width.v1`.
-- **The open session is in the URL:** `?session=<sessionId>`.
+- **The open session is in the URL:** `?session=<sessionId>`, alongside the selection.
   - Opening a session pushes a history entry; moving with ↑/↓ replaces it; closing pushes one without the parameter.
   - `popstate` makes the view match the URL.
   - Loading a URL with a session that isn't in the snapshot opens the view with the state "This session isn't listed under these roots" and a Close button.
@@ -694,7 +728,7 @@ The first restyle PR renames today's custom properties (in `web/src/styles.css`,
 ### App strip and page alerts
 
 - **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert. Today that's one: the relay is off until restart. See [Alerts and banners](#alerts-and-banners).
-- **Page alerts:** inline alerts at the top of the list pane, full pane width: the poll failed, a server error, the relay alert, "Lost the connection".
+- **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert, "Lost the connection".
 
 ---
 
@@ -765,6 +799,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
   - Filters as you type (pitwall filters in memory); no Enter needed.
   - Escape in the field clears it if it has text, otherwise leaves the field.
   - Matches are highlighted in names, titles and paths with `--pw-highlight`.
+  - It filters the session list's selection: one group, Needs you or All sessions. The repo list's counts don't change.
 - **Accessibility:** inside `role="search"`; a visually hidden label "Filter sessions"; placeholder "Filter by session, title, repo or directory".
 
 ### Filter chips
@@ -773,9 +808,8 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Off:** `--pw-surface`, `--pw-shadow-control`, text `--pw-text-muted`.
 - **On:** `--pw-selected`, `--pw-ring-selected` in place of the control edge, text `--pw-info-tint-fg`, and a 16 px `copied` (check) icon before the label.
 - **Semantics:** `<button aria-pressed>`, in a group with `aria-label="Filters"`, 8 px apart.
-- **The chips:** "Needs you", "Interactive", "Background", "Finished".
-  - "Needs you" replaces today's checkbox.
-  - Chips of the same kind combine as OR; different kinds combine as AND.
+- **The chips:** "Interactive" and "Background", which combine as OR, so either one alone narrows the list and both together show every session.
+  - "Needs you" is a view in the [repo list](#repo-list), replacing today's "Needs attention only" checkbox, and finished sessions have their own [section](#finished-section), so neither is a chip.
   - A ghost sm "Clear filters" button appears after the chips when any chip is on or the field has text.
 
 ### Badges
@@ -830,20 +864,16 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 
 ### Session rows
 
-- **Container:** an `<li>` in the group's `<ul>`, padding 8 px 12 px, a 1 px `--pw-border` line between rows, `--pw-surface`.
-- **Lines,** 2 px apart:
+- **Container:** an `<li>` in the session list's `<ul>`, padding 8 px 16 px, a 1 px `--pw-border` line between rows, `--pw-surface`.
+- **Two lines,** 2 px apart:
   1. **Identity:**
-     - The name (m 14/20, 500, `--pw-text`), then " · " and the title (m 14/20, 400, `--pw-text-muted`, one line with an ellipsis, the full title and where it came from in a tooltip).
+     - The name (m 14/20, 500, `--pw-text`), then " · " and the title (m 14/20, 400, `--pw-text-muted`), on one line with an ellipsis. The full title and where it came from are in a tooltip.
      - Then the status badge(s), and at the far right the relative time (meta, `--pw-text-subtle`, tabular).
-  2. **What it wants or did last** (when the transcript is readable):
-     - "Asked: *excerpt*" (body, the label in `--pw-warning-fg` 500); or
-     - "You: *last prompt*" (meta, `--pw-text-muted`, one line, ellipsis).
-  3. **The last reply:** meta, `--pw-text-muted`, clamped to two lines, with a "Show more" link button that loads the full reply in place (scrolling inside the row past 70 % of the window height).
-  4. **The last relay exchange,** when there is one: the compact one-line form.
-  5. **Footer:**
-     - Left: the cwd within the group (path type, `--pw-text-subtle`, middle ellipsis, the full path in a tooltip), or "directory no longer exists" (meta, `--pw-text-subtle`).
-     - Right: a copy icon button for the attach command, and a ghost sm "Message" button for interactive sessions that can be messaged.
-     - The footer's buttons show on hover, on focus within the row, and on the open row; they're always visible on touch screens.
+  2. **What it wants or did last,** on one line with an ellipsis, when the transcript is readable:
+     - "Asked: *excerpt*" (meta, the label in `--pw-warning-fg` 500); or
+     - "You: *last prompt*" (meta, `--pw-text-muted`).
+     - In Needs you and All sessions, the line starts with the group's label (meta, `--pw-text-subtle`) and " · ".
+- **Not in the row:** the last reply, the relay exchange, the cwd, the attach command and a Message button. They're in the session view: the conversation, the message box, the header and the actions menu. A row stays two lines however long the session's replies are.
 - **Opening:** the name is a `<button>` with `aria-controls="session-view"`, `aria-current="true"` when its session is open, and `data-open-session`.
   - A click anywhere on the row that isn't a control (and isn't the end of a text selection) opens the session too. Keyboard users use the button.
 - **States:**
@@ -853,29 +883,37 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 | Default | `--pw-surface` | |
 | Hover | `--pw-surface-hover` | |
 | Open | `--pw-selected` | `--pw-ring-selected` |
-| Needs you | `--pw-state-attention-row` | `inset 3px 0 0 var(--pw-state-attention-bar)` |
+| Needs you | `--pw-surface` | `inset 3px 0 0 var(--pw-state-attention-bar)` |
 | Needs you and open | `--pw-selected` | both the ring and the left bar |
 | Finished | `--pw-surface` | the name at 400 weight, its text `--pw-text-muted` |
 
-- **Transcript notes:** "Transcript not found" or "Transcript unreadable", meta, `--pw-text-subtle`, in place of lines 2 and 3.
+- **Needs you has no row tint,** only the bar and the badge. On 2026-10-20, nine of Phil's fifteen sessions needed him, and tinting every one of them turned most of the list yellow. The Needs you view collects them instead.
+- **Transcript notes:** "Transcript not found" or "Transcript unreadable", meta, `--pw-text-subtle`, in place of line 2.
 - **Height:** never fixed; rows grow with zoom and text spacing.
 
-### Group sections
+### Repo list items
 
-- **Card:** as in the [layout shell](#list-pane).
-- **Header:** a `<h2>` containing a full-width `<button aria-expanded aria-controls>`.
-  - At least 40 px tall, padding 8 px 12 px, `--pw-surface-muted`, a bottom `--pw-border` when expanded.
+- **Item:** a link, `<a href="?repo=…">` (or `?view=…`), in the repo list's `<ul>`, with `aria-current="page"` when it's the selection. The page handles the click, with no reload.
+  - At least 32 px tall, padding 6 px 8 px, `--pw-radius-md`, 8 px gaps. It grows with zoom and text spacing.
   - Left to right:
-    1. The `expand` icon (16 px, `--pw-text-subtle`, rotating 90° when open).
-    2. The kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`, with a visually hidden "git repo" or "directory").
-    3. The label (m 14/20, 500).
-    4. "in *root*" (meta, `--pw-text-subtle`) when pitwall watches more than one root.
-    5. At the right: a subtle neutral count badge ("4 sessions" or "2 of 5 sessions"), then a solid warning "*n* need you" badge when any do.
+    1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`, with a visually hidden "git repo" or "directory"). The two views have no icon.
+    2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip.
+    3. At the right, one count:
+       - a solid warning badge with how many need you, when any do;
+       - otherwise, how many sessions there are (meta, `--pw-text-subtle`, tabular).
+       - Needs you shows its badge, or nothing when nothing needs you.
+- **States:**
   - Hover: `--pw-surface-hover`.
-- **Collapsed by default,** with each group's state remembered in `localStorage` (`pitwall.groups.v1`). Its header's needs-you badge shows what's waiting inside.
-- **Finished sub-list:** at the bottom of a group, a toggle row "Finished (*n*)", plus " · *n* asked you" when any did.
-  - padding 6 px 12 px, meta size, 500, `--pw-text-muted`, a top `--pw-border`, hover `--pw-surface-hover`.
-  - Collapsed by default and remembered (`pitwall.finished.v1`).
+  - Selected: `--pw-selected` with `--pw-ring-selected`, and the label at 500 in `--pw-text`.
+  - A group whose sessions have all finished: the label in `--pw-text-muted`.
+- **Keyboard:** the list is one Tab stop (roving `tabindex`). ↓ and ↑ move between items, Home and End jump to the ends, and Enter selects.
+
+### Finished section
+
+- **Toggle row:** at the bottom of the session list, a `<button aria-expanded aria-controls>` "Finished (*n*)", plus " · *n* asked you" when any did.
+  - Padding 6 px 16 px, meta size, 500, `--pw-text-muted`, a top `--pw-border`, hover `--pw-surface-hover`, and the `expand` icon, rotating 90° when open.
+  - Collapsed by default, and remembered for each selection in `localStorage` (`pitwall.finished.v1`).
+- **Groups no longer collapse.** The repo list is the overview that collapsed groups used to give, so `pitwall.groups.v1` is no longer read or written.
 
 ### Session view: header, tabs and footer
 
@@ -934,7 +972,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
   - While sending: the busy state ("Sending…"), and the textarea is read-only.
   - After a send, focus stays in the textarea. The draft clears when the message was delivered, held or refused; it stays when it wasn't sent or may not have been.
   - Escape with a draft does nothing, so a draft is never lost to the shortcut that closes the view.
-  - The row's Message button opens the view, scrolls the conversation to the newest message, and focuses the textarea.
+  - Rows have no Message button: the message box is always at the foot of an interactive session's view.
 
 ### Conversation
 
@@ -1074,7 +1112,7 @@ For a destructive or surprising action in the session view, without a dialog.
 ### Skeletons and spinners
 
 - **Skeleton row:** the height of a session row; three bars (identity 40 %, preview 70 %, footer 30 % of the width), 12 px tall, `--pw-surface-sunken`, `--pw-radius-sm`, 6 px apart, pulsing.
-  - On first connect: two group cards of three rows. The cards have `aria-hidden="true"`, and a visually hidden `role="status"` says "Loading sessions".
+  - On first connect: four skeleton items in the repo list and three skeleton rows in the session list. They have `aria-hidden="true"`, and a visually hidden `role="status"` says "Loading sessions".
 - **Spinner:** a 12 px (inline) or 16 px (in a button) ring: a 2 px conic gradient from transparent to `--pw-info-fg`, turning 0.8 s per turn. It's `aria-hidden`; the busy element carries `aria-busy` or a status message.
 - **Waiting:** both wait `--pw-delay-spinner` (500 ms) before showing. After `--pw-delay-long` (10 s), add a meta line saying what's slow ("Still waiting for `claude agents`…").
 - **Long waits for pitwall's own work** (connecting, loading the conversation) use a status line, not an overlay: meta, `--pw-text-muted`, centred, `role="status"`.
@@ -1091,9 +1129,10 @@ For a destructive or surprising action in the session view, without a dialog.
 | Where | Title | Sentence | Action |
 |---|---|---|---|
 | No sessions under the roots | "No Claude Code sessions under *roots*" | "Start one here, or start Claude Code in any terminal under these directories and it appears here." | primary "New session" |
-| The filter matches nothing | "No sessions match" | "Nothing matches "*text*" with these filters." | outline "Clear filters" |
+| The filter matches nothing | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." | outline "Clear filters"; in a group with text in the field, outline "Search all sessions", which selects All sessions and keeps the text |
+| A selected group has left the snapshot | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." | outline "Show all sessions" |
 | Needs you, and nothing does | "Nothing needs you right now" | "Sessions that are waiting for you, or asked you something, show here." | outline "Show all sessions" |
-| Split view, nothing open | "Select a session" | "Its conversation, terminal and actions open here." | none |
+| The session view column, nothing open | "Select a session" | "Its conversation, terminal and actions open here." | none |
 | Conversation, nothing yet | | "Nothing to show yet." (status line) | none |
 | No transcript | | "No transcript for this session." (status line) | none |
 
@@ -1215,15 +1254,16 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - Decorative icons are `aria-hidden="true"` and `focusable="false"`.
    - Visible labels start with the accessible name, so voice control works.
 6. **Structure:**
-   - One `<h1>` (the wordmark); group titles `<h2>`; session names in rows `<h3>`; the session view's title `<h2>`.
-   - Landmarks: `<header>`, `<main>` (the list pane) and the session view.
+   - One `<h1>` (the wordmark); the session list's title `<h2>`; session names in rows `<h3>`; the session view's title `<h2>`.
+   - Landmarks: `<header>`, `<nav aria-label="Repos">` (the repo list), `<main>` (the session list) and the session view.
    - The filter is in `role="search"`.
 7. **The session view's semantics:**
-   - In split mode, a `<section aria-labelledby>` region.
+   - As the third column, a `<section aria-labelledby>` region.
    - In overlay mode, `role="dialog"` with `aria-modal="false"`, because the list stays usable.
 8. **Focus management:**
    - Opening a session from a row (click or Enter) moves focus to the view's heading. Closing it returns focus to that session's row button, waiting a frame on narrow windows so the row exists again.
    - Moving between sessions with ↑/↓ while focus is in the list leaves focus in the list.
+   - Choosing in the repo list leaves focus there; in the drawer, focus moves to the session list's heading.
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
 9. **Announcements:**
    - The connection badge is `role="status"`.
@@ -1250,20 +1290,21 @@ Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only when focus isn't in a t
 | `/` | Anywhere | Focus the filter field |
 | `n` | Anywhere | Open the New session dialog |
 | `?` | Anywhere | Open the keyboard shortcuts dialog |
-| `j` / `k` | Anywhere, including the conversation | Next / previous session (opens it if the view is open) |
+| `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (opens it if a session is open) |
 | ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session |
 | ↓ / ↑ | In the session view's header | Show the next / previous session |
 | Enter | On a session row | Open the session |
-| Escape | Layered, nearest first | Close a tooltip or menu → cancel a confirmation → close a dialog → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box |
+| ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
+| Escape | Layered, nearest first | Close a tooltip or menu → cancel a confirmation → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box |
 | ⌘/Ctrl + Enter | The message box | Send |
 | ⌘/Ctrl + Enter | The New session dialog | Start the session |
 | ← / →, Home / End | The tab list | Move focus between Conversation and Terminal; Enter or Space opens the focused tab |
 | ← / →, Home / End | The divider | Resize the session view by 16 px; jump to the minimum or maximum |
 | ↑ / ↓, Home / End, Enter, Escape | An open menu | Move, jump, activate, close |
 | F6 | The terminal | Leave the terminal, to the Terminal tab |
-| Tab / Shift + Tab | Everywhere but the terminal | Header → toolbar → list → session view (header, tabs, body, footer) |
+| Tab / Shift + Tab | Everywhere but the terminal | Header → repo list → session list (header, rows) → session view (header, tabs, body, footer) |
 
-- **"Next" and "previous"** follow the visible list order across groups. Collapsed groups and rows hidden by the filter are skipped, and it stops at either end without wrapping.
+- **"Next" and "previous"** follow the session list's visible order. Rows in a closed Finished section and rows hidden by the filter are skipped, and it stops at either end without wrapping.
 - **In the conversation's body,** ↑/↓ scroll it, as in any scrolling region; use `j` / `k` there to change session.
 
 ---
