@@ -777,7 +777,8 @@ input {
   text-underline-offset: 2px;
 }
 
-/* The session view: a panel over the right of the page, read-only */
+/* The session view: a panel over the right of the page. A column: the header, the conversation, which
+   is all that scrolls, and for an interactive session the message box, pinned below the newest message. */
 
 .session-view {
   position: fixed;
@@ -794,6 +795,7 @@ input {
 }
 
 .session-view-head {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -845,6 +847,22 @@ input {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 12px 16px 24px;
+}
+
+/* At most half the panel, so the conversation keeps its share on a short window. */
+.session-view-foot {
+  flex: none;
+  max-height: 50%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-height: 760px) {
+  .session-view-foot {
+    padding: 8px 16px 10px;
+  }
 }
 
 .load-earlier {

@@ -1,18 +1,10 @@
 /* Messaging an interactive session through the relay (W11): the session view's box and the row's note. Uses the tokens in styles.css. */
 
+/* The box fills the session view's footer (.session-view-foot), which draws the band around it. */
 .relay-box {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.relay-title {
-  font-size: 0.95rem;
-  font-weight: 600;
 }
 
 .relay-note {
@@ -23,12 +15,22 @@
 .relay-form {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+}
+
+/* The text box, with Send beside it. */
+.relay-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .relay-text {
-  width: 100%;
-  min-height: 4.5em;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Two lines, and never so tall when dragged that it takes the conversation's place. */
+  min-height: calc(2.8em + 14px);
+  max-height: 30vh;
   padding: 6px 8px;
   resize: vertical;
   background: var(--surface);
@@ -43,16 +45,10 @@
   border-color: var(--error-border);
 }
 
-.relay-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
+/* Under the text box, one small paragraph: the character count, then what a message can and can't do. */
 .relay-count {
+  margin-right: 6px;
   color: var(--text-muted);
-  font-size: 0.8rem;
 }
 
 .relay-count.over {
@@ -114,6 +110,24 @@
 .relay-reply {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* In the session view's footer a long reply scrolls in three lines, two on a short window, so the
+   conversation keeps its height. */
+.relay-box .relay-reply {
+  max-height: calc(3 * 1.45em);
+  overflow-y: auto;
+}
+
+@media (max-height: 760px) {
+  .relay-box .relay-reply {
+    max-height: calc(2 * 1.45em);
+  }
+
+  .relay-box .relay-result {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+  }
 }
 
 .relay-exchange.compact .relay-reply {
