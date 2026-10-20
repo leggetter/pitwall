@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -538,15 +538,15 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | Overlay session view in (slide 16 px and fade), when it opens; not when the window crosses 1,200 px, or ↑/↓ moves it to another session | `--pw-duration-base` 220 ms | `--pw-ease-out` |
 | Jump to latest (scroll to the newest entry) | The browser's smooth scroll (`behavior: 'smooth'`) | The browser's |
 | Spinner turn | 0.8 s per turn, linear | |
-| Skeleton pulse (opacity 1 → 0.6 → 1) | 1.5 s, starting after 0.5 s | ease-in-out |
+| Skeleton pulse (opacity 1 → 0.6 → 1) | 1.5 s, starting as the skeletons appear, after 0.5 s | ease-in-out |
 
 - **Delays as design:**
-  - Spinners and skeletons wait `--pw-delay-spinner` (500 ms) before appearing, so fast loads never flash.
-  - After `--pw-delay-long` (10 s), a waiting state adds a sentence saying what's taking long.
+  - Spinners, skeletons and waiting status lines ("Loading the conversation…") wait `--pw-delay-spinner` (500 ms) before appearing, so fast loads never flash.
+  - After `--pw-delay-long` (10 s), a waiting state adds a line saying what's taking long (see [Skeletons and spinners](#skeletons-and-spinners)).
   - Tooltips open after `--pw-delay-tooltip` (300 ms) and close at once; moving to a neighbouring control with a tooltip opens its tooltip at once (while one is open, or within the delay of one closing).
   - Toasts stay for `--pw-toast-timeout` (4 s).
   - A copy button's `copied` icon stays for `--pw-copied-timeout` (2 s).
-  - JavaScript reads these tokens from the element they apply to (`web/src/timing.ts`), so a part of the page can set its own. The `#uikit` gallery sets the two timeouts to an hour on a specimen's stage, so a toast or a copied icon stays for its screenshots.
+  - JavaScript reads these tokens from the element they apply to (`web/src/timing.ts`), so a part of the page can set its own. The `#uikit` gallery sets the two timeouts to an hour on a specimen's stage, so a toast or a copied icon stays for its screenshots, and sets `--pw-delay-spinner` to 0 (and `--pw-delay-long` to 0 or an hour) on a waiting state's, so its skeletons and long-wait line show at once.
 - **Reduced motion** (`prefers-reduced-motion: reduce`): the durations drop to 0, skeletons stop pulsing, the spinner slows to 2 s per turn (it still shows something is happening), and scrolling to the latest message jumps rather than animating.
 - **Nothing loops** except spinners and skeletons, and nothing pulses to get attention.
 
@@ -728,7 +728,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - The Finished section is held the same way.
   - A sort or selection the reader chooses applies at once, whatever the pointer and focus.
   - Nothing in the list is a live region, so none of this is announced.
-- **Empty and loading states** fill the rows' area, centred (see [Empty states](#empty-states)).
+- **Empty and loading states** fill the rows' area: the skeleton rows before the first snapshot (see [Skeletons and spinners](#skeletons-and-spinners)), and otherwise an [empty state](#empty-states), centred both ways in what's left of the column.
 
 ### Session view
 
@@ -736,7 +736,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 - **From 1,200 px: the third column.**
   - A pane on `--pw-surface`, full height under the header, separated from the session list by the divider, which draws the line between them.
   - The session list stays interactive and keeps its scroll position.
-  - With nothing open, the column stays and shows the "Select a session" empty state, so the layout doesn't jump. While a `?session=` from the URL waits for the first snapshot, the column is blank.
+  - With nothing open, the column stays and shows the "Select a session" empty state, so the layout doesn't jump. While a `?session=` from the URL waits for the first snapshot, the column shows the view's waiting state (below).
 - **Below 1,200 px: over the session list.**
   - Fixed to the right edge, `width: min(var(--pw-panel-w), 100cqw)` (`100cqw` is the app's width, which in the app is the window's), `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right when it opens.
   - It's non-modal: no backdrop, and the visible part of the lists stays usable.
@@ -749,7 +749,8 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 - **The open session is in the URL:** `?session=<sessionId>`, after the selection.
   - Opening a session pushes a history entry, and opening the one that's open adds none; moving with ↑/↓ replaces it; closing pushes one without the parameter.
   - `popstate` makes the view match the URL.
-  - Loading a URL with a session that isn't in the snapshot, and wasn't while the page was open, opens the view with the state "This session isn't listed under these roots": that heading, a sentence naming the id and the roots, and Close. A session that leaves the snapshot while it's open, or that the back button returns to after it left, shows what it showed last instead, with the "no longer listed" alert.
+  - **Waiting:** loading a URL with a `?session=` before the first snapshot opens the view in its waiting state, in the column or over the list as the layout says: Close (or Back to sessions) in the header, and after `--pw-delay-spinner` skeleton bars for line 1 (the name, 40 %) and line 2 (70 %), `aria-hidden`, with a visually hidden `role="status"` "Loading the session"; after `--pw-delay-long`, the same long-wait line as the session list's, centred in the body. Its `<h2>` is visually hidden text, "Session", which names the region. The first snapshot replaces it with the session, or with the unlisted state.
+  - **Unlisted:** loading a URL with a session that isn't in the snapshot, and wasn't while the page was open, opens the view with an [empty state](#empty-states) centred in its body: the `info` icon, "This session isn't listed under these roots" as its title, which is the view's `<h2>` and names the region, and the sentence "pitwall lists no session with the id `<id>` under *roots*; it may have been removed, or run outside these roots." The header has only Close (or Back to sessions). The id is cut at 120 characters, and the id and roots are text. A session that leaves the snapshot while it's open, or that the back button returns to after it left, shows what it showed last instead, with the "no longer listed" alert.
   - Opening from the URL or the back button never attaches, sends or changes anything, and takes no focus.
   - Never put the token in the query string. `web/src/token.ts` takes it out of the fragment before anything else reads the URL.
 - **Inside:** a sticky header, the tabs, the scrolling body and a sticky footer (see [Session view](#session-view-header-tabs-and-footer)).
@@ -902,7 +903,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 | Reconnecting | subtle warning "Reconnecting…", with a spinner |
 | Token rejected | subtle danger "Token rejected" |
 
-The spinner and the dot take the badge's text colour. The badge sits in the element that's `role="status"`, so a change is announced.
+The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinner of its own, and it and the dot take the badge's text colour. The badge sits in the element that's `role="status"`, so a change is announced.
 
 ### Session rows
 
@@ -1052,7 +1053,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
   - Expanded, each call is one line of code text (mono s 13/20, `--pw-text-muted`) with an ellipsis and its own subtle danger "error" badge, lined up with the toggle's label, 4 px apart. The full text is in a [tooltip](#tooltips) when it's cut (`onlyIfCut`); the lines aren't focusable, so it opens on hover, and the whole line is in the DOM for screen readers and find in page.
   - A single tool call isn't folded: it's one such line, with no toggle.
   - Every fold starts closed, and stays open or closed across refreshes and "Load earlier" while it has a call it had: a newer call joining the newest fold leaves it open, and so do older calls joining a fold at its start. The calls are known by `entryKey()`, so a call that gets its result is the same call.
-- **Loading earlier:** an outline sm "Load earlier" button centred at the top, 12 px above the list ("Loading earlier…" with its spinner while busy, and repeat clicks ignored). The scroll position holds when older entries arrive: what the reader was looking at stays where it was.
+- **Loading earlier:** an outline sm "Load earlier" button centred at the top, 12 px above the list ("Loading earlier…" with its spinner while busy, and repeat clicks ignored). The scroll position holds when older entries arrive: what the reader was looking at stays where it was. If it fails, its alert takes the button's place (below).
 - **Following new entries:**
   - At the bottom (within 24 px), new entries keep it at the bottom.
   - Scrolled up, the place is kept, and a "Jump to latest" bar appears, sticky at the bottom of the body, 8 px from the footer (or the view's foot, when there's no footer): `--pw-info-tint`, `--pw-info-tint-fg` text, `inset 0 0 0 1px var(--pw-info-border)` (`--pw-info-fg` on hover), the `latest` icon 6 px before "*n* new · Jump to latest" (m 14/20, 500), centred, full width, at least 32 px tall, `--pw-radius-md`, `--pw-z-sticky`. It's a button.
@@ -1061,7 +1062,16 @@ The composer in the session view's footer, for interactive sessions. Messages go
     - It goes when the reader reaches the bottom by any means: the bar, scrolling, the keyboard, or a fold closing above. If it had focus, focus moves to the conversation's panel first, so the keyboard carries on from there.
   - The bar scrolls to the bottom smoothly; the positions it passes through don't count as the reader scrolling up, and the reader's own wheel, touch, press or key ends that at once. Under reduced motion, jumping to latest doesn't animate.
   - **Announced** politely by a visually hidden `role="status"` in the panel, which is always there: "*n* new", once for each batch that adds to the count, never once per entry and never the entries' text. Nothing is announced while the reader is at the bottom, where the entries come into view as they arrive, or when the count clears.
-- **States:** see [Empty states](#empty-states) and [Errors](#5-content).
+- **States** (`ConversationPanel`; see [Empty states](#empty-states) and [Errors](#errors)):
+  - **Status lines,** in one `role="status"` region that's always in the panel, so what it comes to say is announced: "Loading the conversation…", after `--pw-delay-spinner`, then "Still waiting for the transcript…" under it after `--pw-delay-long`; "Nothing to show yet."; "No transcript for this session."; and "The conversation can't be loaded here." where there's no API client.
+  - **Failures** are inline alerts with Try again (outline sm, `retry` icon; busy, "Trying again…", while its request is out, the alert staying until it works). Danger when nothing is shown, warning when what's shown is kept, `role="alert"` either way. When Try again works and its alert goes, focus on it moves to the panel.
+    - The first page: "Couldn't load the conversation." at the top, danger. A failed read is never "Nothing to show yet.".
+    - Load earlier: "Couldn't load earlier messages.", warning, in the button's place until it works.
+    - A refresh, the newest page fetched again when the session's activity moves: the entries stay, and "Couldn't refresh the conversation, so it may be out of date." goes at the end, below the list, warning, followed at the bottom as new entries are. The next refresh that works, or Try again, clears it.
+    - Each has the server's reason after pitwall's sentence when its body gave one (`{ "error": … }`), in code style, as text; or else, when the server answered, the HTTP status before the full stop ("Couldn't load the conversation (HTTP 500)."). Today's conversation route sends a status alone.
+  - **Notices,** neutral inline alerts, `role="status"`:
+    - "The transcript changed, so this starts again from its newest messages.": Load earlier's cursor was stale (410), so the newest page replaces the entries. The notice is at the top, above Load earlier, and the view stays at the top, where the reader was, rather than jumping to the newest entry.
+    - "The transcript is no longer available, so this is what it showed last.": a refresh found no transcript (404) with entries on screen. They stay, and the notice goes at the end.
 
 ### Alerts and banners
 
@@ -1203,30 +1213,40 @@ For a destructive or surprising action in the session view, without a dialog.
 
 ### Skeletons and spinners
 
-- **Skeleton row:** the height of a session row; three bars (identity 40 %, preview 70 %, footer 30 % of the width), 12 px tall, `--pw-surface-sunken`, `--pw-radius-sm`, 6 px apart, pulsing.
-  - On first connect: four skeleton items in the repo list and three skeleton rows in the session list. They have `aria-hidden="true"`, and a visually hidden `role="status"` says "Loading sessions".
+- **Component:** `web/src/components/Waiting.tsx`: `useWaiting()`, which says when `--pw-delay-spinner` and `--pw-delay-long` have passed, read from the element the waiting state is in, the skeletons, and `WaitingStatus`.
+- **Skeleton bar:** 12 px tall, `--pw-surface-sunken`, `--pw-radius-sm`, pulsing (2.13). On `--pw-bg`, the sidebar's fill, `--pw-surface-strong` instead, since a sunken bar barely shows there.
+- **Skeleton row:** a [session row](#session-rows)'s box and height: padding 8 px 16 px, a 1 px `--pw-border` line between rows, and two 20 px lines 2 px apart, each with a bar centred in it: identity 40 % and preview 70 % of the width, for the row's two lines.
+- **Skeleton item:** a [repo list item](#repo-list-items)'s box and height (32 px, padding 6 px 8 px), with one bar for the label, at 70 %, 50 %, 80 % and 45 % for the four.
+- **On first connect,** before the first snapshot: below the repo list's two views and their divider, four skeleton items; in the session list, three skeleton rows. Both are `aria-hidden="true"`, and a visually hidden `role="status"` in the rows' area says "Loading sessions". The session view's waiting state has its own (see [Session view](#session-view)).
 - **Spinner:** `Spinner` (`web/src/components/Spinner.tsx`), a 12 px (inline) or 16 px (in a button) ring: a 2 px conic gradient from transparent to `--pw-info-fg`, or to the text colour of the badge or button it's in (2.1; `--pw-info-fg` on a primary button's accent fill would barely show), turning 0.8 s per turn. It's `aria-hidden`; the busy element carries `aria-busy` or a status message.
-- **Waiting:** both wait `--pw-delay-spinner` (500 ms) before showing. After `--pw-delay-long` (10 s), add a meta line saying what's slow ("Still waiting for `claude agents`…").
-- **Long waits for pitwall's own work** (connecting, loading the conversation) use a status line, not an overlay: meta, `--pw-text-muted`, centred, `role="status"`.
+- **Waiting:** both wait `--pw-delay-spinner` (500 ms) before showing. After `--pw-delay-long` (10 s), add a meta line saying what's slow, a status line under the skeletons:
+  - before the first snapshot, "Still waiting for `claude agents`…", since the server sends it after the index's first poll; or "Still trying to reach pitwall…" once the connection has dropped (Reconnecting). The session list and the session view's waiting state say the same;
+  - loading the conversation, "Still waiting for the transcript…".
+- **The status** is a `role="status"` region that's there from the start, empty, so what it comes to say is announced, and a fast answer announces nothing: the visually hidden label ("Loading sessions") after `--pw-delay-spinner`, then the long-wait line after `--pw-delay-long`.
+- **Long waits for pitwall's own work** (connecting, loading the conversation) use a status line, not an overlay: meta (s 13/20), `--pw-text-muted`, centred, 12 px above and below, `role="status"`.
 
 ### Empty states
 
-- **Anatomy:** centred in its pane, at most 408 px wide.
-  1. A 24 px icon in `--pw-text-subtle`.
+- **Component:** `EmptyState` (`web/src/components/EmptyState.tsx`), with `icon`, `title`, `sentence`, `actions` and, for the session view's unlisted state, `heading`, which makes the title the region's `<h2>`. Otherwise the title is a paragraph, so the outline in [6.1](#61-rules) is unchanged.
+- **Anatomy:** centred in its pane, both ways, at most 408 px wide, with at least 24 px 16 px around it; text centred and wrapping anywhere.
+  1. A 24 px icon in `--pw-text-subtle`, `aria-hidden`.
   2. The title (l 16/24, 600), 8 px below.
   3. One sentence (m 14/20, `--pw-text-muted`), 4 px below.
-  4. One action, 16 px below.
+  4. One action, on `Button`, 16 px below; two, 8 px apart and wrapping, where the table gives two.
 - **No illustrations.**
+- **Names, roots and filter text** are text, never markup (6.1 rule 16).
+- **Focus after an action,** since the action's button goes with the empty state: Clear filters and Search all sessions put it in the filter field; Show all sessions on the session list's heading. New session opens its dialog, which returns focus to it.
 
-| Where | Title | Sentence | Action |
-|---|---|---|---|
-| No sessions under the roots | "No Claude Code sessions under *roots*" | "Start one here, or start Claude Code in any terminal under these directories and it appears here." | primary "New session" |
-| The filter matches nothing | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." Without a chip on, it ends at "*text*"; with no text, "Nothing in *selection* matches these filters." | outline "Clear filters"; in a group with text in the field, outline "Search all sessions", which selects All sessions and keeps the text |
-| A selected group has left the snapshot | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." | outline "Show all sessions" |
-| Needs you, and nothing does | "Nothing needs you right now" | "Sessions that are waiting for you, or asked you something, show here." | outline "Show all sessions" |
-| The session view column, nothing open | "Select a session" | "Its conversation, terminal and actions open here." | none |
-| Conversation, nothing yet | | "Nothing to show yet." (status line) | none |
-| No transcript | | "No transcript for this session." (status line) | none |
+| Where | Icon | Title | Sentence | Action |
+|---|---|---|---|---|
+| No sessions under the roots | `terminal` | "No Claude Code sessions under *roots*" | "Start one here, or start Claude Code in any terminal under these directories and it appears here." | primary "New session" (`add`), which opens the New session dialog |
+| The filter matches nothing | `search` | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." Without a chip on, it ends at "*text*"; with no text, "Nothing in *selection* matches these filters." | outline "Clear filters", which clears the text and the chips; in a group with text in the field, outline "Search all sessions" too, which selects All sessions and keeps the text |
+| A selected group has left the snapshot | `directory` | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." | outline "Show all sessions", which selects All sessions |
+| Needs you, and nothing does | `success` | "Nothing needs you right now" | "Sessions that are waiting for you, or asked you something, show here." | outline "Show all sessions" |
+| The session view column, nothing open | `conversation` | "Select a session" | "Its conversation, terminal and actions open here." | none |
+| The session view, unlisted (see [Session view](#session-view)) | `info` | "This session isn't listed under these roots", the view's heading | "pitwall lists no session with the id `<id>` under *roots*; it may have been removed, or run outside these roots." | none; Close is in the header |
+| Conversation, nothing yet | | | "Nothing to show yet." (status line) | none |
+| No transcript | | | "No transcript for this session." (status line) | none |
 
 ### Key caps
 
@@ -1313,7 +1333,7 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 - **Buttons:** a verb, or a verb and object: "New session", "Start session", "Send", "Stop session", "Remove session", "Restart and attach", "Attach again", "Detach", "Copy", "Dismiss", "Try again", "Clear filters", "Load earlier", "Jump to latest".
 - **Cancel** is always "Cancel".
 - **Confirmations:** the confirm button repeats the question's verb and object: "Stop this session?" → "Stop session".
-- **Progress:** the -ing form with an ellipsis: "Starting…", "Sending…", "Stopping…", "Removing…", "Attaching…", "Loading the conversation…", "Loading earlier…".
+- **Progress:** the -ing form with an ellipsis: "Starting…", "Sending…", "Stopping…", "Removing…", "Attaching…", "Loading the conversation…", "Loading earlier…", "Trying again…".
 - **Counts:** digits with the noun, singular and plural handled: "1 session", "12 sessions", "1 needs you", "2 need you", "3 tool calls", "2 of 5 sessions".
 - **Paths:** home shortened to `~`, middle ellipsis on screen, the full path in a tooltip.
   - **Middle ellipsis:** the end of the path, from its last `/`, shows whole, and the text before it ends in "…" when there isn't room. A path with no `/` after its first character is cut at its end. Both parts stay in the DOM, so screen readers, find in page and copying get the whole path.
@@ -1321,11 +1341,12 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 
 ### Errors
 
-- **Say what happened, then what to do.** "Couldn't load the conversation. Try again". The action is a button, not just words.
-- **Use the real reason** when Claude Code or the server gives one, after pitwall's own sentence: "Couldn't stop the session. *message from Claude Code*". Show it as text, never as markup.
+- **Say what happened, then what to do.** "Couldn't load the conversation." and a Try again button: the action is a button (outline sm, `retry` icon, busy as "Trying again…"), not just words.
+- **Use the real reason** when Claude Code or the server gives one, after pitwall's own sentence: "Couldn't stop the session. *message from Claude Code*". Show it as text, never as markup, in code style (`Detail`). When the server answered with a status and no reason, the status goes before the full stop instead: "Couldn't stop the session (HTTP 502)." (`couldNot()` in `web/src/format.ts`).
 - **Say only what pitwall knows:** "May have reached the session. Check its conversation before sending again." rather than "Sent" or "Failed".
 - **No blame, no "Oops", no stack traces,** no error codes on their own.
-- **Keep what's on screen** when a refresh fails, and say it may be out of date, rather than emptying the view. A failed read is an error, never "nothing here".
+- **Keep what's on screen** when a refresh fails, and say it may be out of date, rather than emptying the view: "Couldn't refresh the conversation, so it may be out of date." A failed read is an error, never "nothing here".
+- **The tone says what's left:** danger when the failure leaves nothing to show, warning when what's shown is kept, as "Couldn't list sessions" keeps the list.
 - **Pattern:** "Couldn't *verb* *object*. *Reason or next step*."
 - **Field errors** say how to fix it: "Type a model alias, or choose the default."
 
