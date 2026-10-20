@@ -73,10 +73,13 @@ export function choose(select: HTMLSelectElement, label: string): void {
   select.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-/** Presses the button labelled `label` inside `root`, waiting for it to appear. */
+/** Presses the button labelled `label` inside `root`, waiting for it to appear and to be neither disabled nor busy. */
 export async function press(root: ParentNode, label: string): Promise<void> {
   const button = await until(`the ${label} button`, () =>
-    [...root.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === label && !candidate.disabled),
+    [...root.querySelectorAll('button')].find(
+      (candidate) =>
+        candidate.textContent?.trim() === label && !candidate.disabled && candidate.getAttribute('aria-disabled') !== 'true' && candidate.getAttribute('aria-busy') !== 'true',
+    ),
   );
   button.click();
 }

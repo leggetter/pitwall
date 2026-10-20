@@ -28,7 +28,9 @@ import {
   OTHER_ROOT,
   POLL_FAILED_SNAPSHOT,
   RELAY_ALERT_BLOCKED,
+  RELAY_ALERT_OFF,
   RELAY_ALERT_SENT,
+  RELAY_OFF,
   REPO_LIST_SNAPSHOT,
   ROOT,
   SERVICE_DIR,
@@ -176,6 +178,20 @@ const PAGES: PageCase[] = [
   { title: "Relay sent a message nobody asked for", view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_SENT }) } },
   { title: 'Relay blocked one', view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_BLOCKED }) } },
   {
+    title: 'The relay off until restart',
+    note: 'The snapshot’s relayOff: the app strip above the header, and the relay alert says messaging is off.',
+    view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_OFF, relayOff: RELAY_OFF }) },
+  },
+  {
+    title: 'The relay off, its alert dismissed',
+    note: 'The strip stays. Details brings the alert back and takes focus to it.',
+    view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_OFF, relayOff: RELAY_OFF }) },
+    run: async (root) => {
+      await press(root, 'Dismiss');
+      await until('the alert to go', () => !root.querySelector('.relay-alert'));
+    },
+  },
+  {
     title: 'Server error',
     view: { state: 'live', snapshot: snapshot([NOTES_GROUP]), serverError: "The index couldn't read one transcript: a made-up error for pitwall-test." },
   },
@@ -320,6 +336,13 @@ const LAYOUTS: PageCase[] = [
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   { title: 'Two columns, from 900 px', note: 'An open session overlays the session list.', width: 1000, view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  {
+    title: 'The relay off, a session open over the list',
+    note: 'The session view starts below the app strip, so the strip shows in every layout.',
+    width: 1000,
+    search: OPEN,
+    view: { state: 'live', snapshot: { ...LIST_SNAPSHOT, relayAlert: RELAY_ALERT_OFF, relayOff: RELAY_OFF } },
+  },
   {
     title: 'Two columns, a session open',
     note: 'Over the session list, which stays usable: non-modal, with no backdrop.',
