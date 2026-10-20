@@ -1,14 +1,16 @@
 // The session list (docs/design-system.md, 3: Session list): the page alerts, then a header that
-// stays put, with the selection's name, its summary and the filters, then the rows, which scroll.
-// The rows are today's SessionRow, unchanged; two-line rows are W23's. A Finished section, collapsed
-// by default, closes the list.
+// stays put, with the selection's name, its summary, the filters and the Sort setting, then the
+// two-line rows, which scroll, and a Finished section, collapsed by default, at the end.
+//
+// The rows come sorted. While the pointer is over the list or focus is inside it, a snapshot that
+// would reorder them waits until both have left, so nothing moves under the reader; rows that are
+// added or removed apply at once, and every row updates in place.
 
-import { useId, type ReactNode, type RefObject } from 'react';
+import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
 import type { SessionGroup } from '../../../src/shared/protocol.js';
 import { plainText, shortenHome } from '../format.js';
-import { needYou, sessionCount, type Listed } from '../sessions.js';
+import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
 import { Icon } from './Icon.js';
-import { ChevronIcon } from './icons.js';
 import { SessionRow } from './SessionRow.js';
 
 export interface SessionListHeading {
@@ -37,7 +39,7 @@ export interface SessionListProps {
   headingRef?: RefObject<HTMLHeadingElement | null>;
   /** Undefined before the first snapshot. */
   summary?: SessionListSummary | undefined;
-  /** The filter field and chips, once there are sessions to filter. */
+  /** The filter field, the chips and the Sort setting, once there are sessions to filter. */
   filters?: ReactNode;
   current: readonly Listed[];
   finished: readonly Listed[];
@@ -45,6 +47,15 @@ export interface SessionListProps {
   empty?: ReactNode;
   finishedCollapsed: boolean;
   onToggleFinished: () => void;
+  /** Rows start line 2 with their group's label: in Needs you and All sessions. */
+  showGroup?: boolean;
+  /**
+   * Whether a snapshot's new order waits while the reader is in the list: under Urgency and Recent.
+   * Name order never moves as sessions change.
+   */
+  holdOrder?: boolean;
+  /** The selection and the sort order. When it changes, the rows take the new order at once: the reader asked for it. */
+  orderKey?: string;
   now: number;
   onOpen?: ((sessionId: string) => void) | undefined;
   openSessionId?: string | undefined;
@@ -67,30 +78,56 @@ export function Summary({ total, shown, attention }: SessionListSummary) {
   );
 }
 
+const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, index) => id === b[index]);
+
+/**
+ * `items` in the order last shown while `holding`, with any that have gone left out and any new ones
+ * in their place (holdOrder). Otherwise, or when `key` changes, in the order given.
+ */
+function useHeldOrder(items: readonly Listed[], holding: boolean, key: string): readonly Listed[] {
+  const ids = items.map(({ session }) => session.sessionId);
+  const [shown, setShown] = useState(() => ({ key, ids }));
+  const next = holding && shown.key === key ? holdOrder(shown.ids, ids) : ids;
+  // Remembered from this render for the next one, as React suggests for state from earlier renders.
+  if (shown.key !== key || !sameIds(shown.ids, next)) setShown({ key, ids: next });
+  if (sameIds(next, ids)) return items;
+  const byId = new Map(items.map((item) => [item.session.sessionId, item]));
+  return next.flatMap((id) => byId.get(id) ?? []);
+}
+
 export interface FinishedSectionProps {
   finished: readonly Listed[];
   collapsed: boolean;
   onToggle: () => void;
+  showGroup?: boolean;
   now: number;
   onOpen?: ((sessionId: string) => void) | undefined;
   openSessionId?: string | undefined;
 }
 
 /** "Finished (n)", plus how many of them asked you something, over the finished rows. */
-export function FinishedSection({ finished, collapsed, onToggle, now, onOpen, openSessionId }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, now, onOpen, openSessionId }: FinishedSectionProps) {
   const listId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
   const asked = finished.reduce((count, { session }) => count + (session.askedYou ? 1 : 0), 0);
   return (
     <li className="finished-list">
       <button type="button" className="finished-toggle" aria-expanded={!collapsed} aria-controls={listId} onClick={onToggle}>
-        <ChevronIcon />
+        <Icon name="expand" className="chevron" />
         Finished ({finished.length})
         {asked > 0 && <span className="finished-asked"> · {asked} asked you</span>}
       </button>
       <ul className="sessions finished-sessions" id={listId} hidden={collapsed}>
         {finished.map(({ session, group }) => (
-          <SessionRow key={session.sessionId} session={session} groupKey={group.key} now={now} onOpen={onOpen} isOpen={session.sessionId === openSessionId} />
+          <SessionRow
+            key={session.sessionId}
+            session={session}
+            group={group}
+            showGroup={showGroup}
+            now={now}
+            onOpen={onOpen}
+            isOpen={session.sessionId === openSessionId}
+          />
         ))}
       </ul>
     </li>
@@ -108,13 +145,40 @@ export function SessionList({
   empty,
   finishedCollapsed,
   onToggleFinished,
+  showGroup = false,
+  holdOrder: holds = false,
+  orderKey = '',
   now,
   onOpen,
   openSessionId,
 }: SessionListProps) {
   const headingId = useId();
+  const main = useRef<HTMLElement>(null);
+  const [pointerInside, setPointerInside] = useState(false);
+  const [focusInside, setFocusInside] = useState(false);
+  const holding = holds && (pointerInside || focusInside);
+  const shownCurrent = useHeldOrder(current, holding, orderKey);
+  const shownFinished = useHeldOrder(finished, holding, orderKey);
+
+  // A focused row that a snapshot removes takes focus with it, and no blur says so.
+  useEffect(() => {
+    if (focusInside && !main.current?.contains(document.activeElement)) setFocusInside(false);
+  });
+
+  const onBlur = (event: FocusEvent<HTMLElement>) => {
+    if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setFocusInside(false);
+  };
+
   return (
-    <main className="session-list" aria-labelledby={headingId}>
+    <main
+      ref={main}
+      className="session-list"
+      aria-labelledby={headingId}
+      onPointerEnter={() => setPointerInside(true)}
+      onPointerLeave={() => setPointerInside(false)}
+      onFocus={() => setFocusInside(true)}
+      onBlur={onBlur}
+    >
       {alerts && <div className="session-list-alerts">{alerts}</div>}
       <div className="session-list-head">
         <div className="session-list-title-row">
@@ -131,14 +195,23 @@ export function SessionList({
       <div className="session-list-body">
         {empty ?? (
           <ul className="sessions">
-            {current.map(({ session, group }) => (
-              <SessionRow key={session.sessionId} session={session} groupKey={group.key} now={now} onOpen={onOpen} isOpen={session.sessionId === openSessionId} />
+            {shownCurrent.map(({ session, group }) => (
+              <SessionRow
+                key={session.sessionId}
+                session={session}
+                group={group}
+                showGroup={showGroup}
+                now={now}
+                onOpen={onOpen}
+                isOpen={session.sessionId === openSessionId}
+              />
             ))}
-            {finished.length > 0 && (
+            {shownFinished.length > 0 && (
               <FinishedSection
-                finished={finished}
+                finished={shownFinished}
                 collapsed={finishedCollapsed}
                 onToggle={onToggleFinished}
+                showGroup={showGroup}
                 now={now}
                 onOpen={onOpen}
                 openSessionId={openSessionId}

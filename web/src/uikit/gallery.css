@@ -353,8 +353,7 @@
 }
 
 /* 14 px text, as the design system's body is, with the icon centred on it as a button would. */
-.uikit-icon-line,
-.uikit-icon-compare p {
+.uikit-icon-line {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -362,7 +361,7 @@
   line-height: var(--pw-leading-m);
 }
 
-.uikit-icon-compare {
-  display: grid;
-  gap: 8px;
+/* A row drawn as the pointer would leave it, for the States specimens. The same fill as styles.css's hover. */
+.uikit-hovered .session {
+  background: var(--pw-surface-hover);
 }

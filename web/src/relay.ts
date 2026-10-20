@@ -63,7 +63,7 @@ export const STATUS_TEXT: Record<RelayStatus, string> = {
   uncertain: 'May have reached the session. Check its conversation before sending again.',
 };
 
-/** A short label for an exchange's status, for a row. */
+/** A short label for an exchange's status, for the line above the message box. */
 export const STATUS_LABEL: Record<RelayStatus, string> = {
   delivered: 'delivered',
   held: 'held for approval in its terminal',
@@ -79,7 +79,7 @@ export function statusTone(status: RelayStatus): RelayTone {
   return status === 'delivered' ? 'ok' : status === 'held' || status === 'uncertain' ? 'waiting' : 'failed';
 }
 
-/** The latest exchange, for a row: when it was sent and what happened. */
+/** The latest exchange, above the message box: when it was sent and what happened. */
 export function exchangeSummary(exchange: RelayExchange): { status: string; tone: RelayTone } {
   return { status: STATUS_LABEL[exchange.status], tone: statusTone(exchange.status) };
 }
@@ -93,39 +93,4 @@ export function relayAlertText(alert: RelayAlert): { summary: string; count: str
     ? "pitwall's relay tried to send a message nobody asked for, and pitwall blocked it. That usually means another session messaged the relay."
     : "pitwall's relay sent a message nobody asked for, or one pitwall couldn't check, before pitwall could stop it. It may have reached one of your sessions: check their conversations for a message from pitwall-relay. That usually means another session messaged the relay, and pitwall has stopped using it until you restart pitwall.";
   return { summary, count: alert.count === 1 ? 'Once since pitwall started.' : `${alert.count} times since pitwall started.` };
-}
-
-// The row's "Message" quick action opens the session view, and the view's
-// message box takes the focus: straight away when the box is already on
-// screen, otherwise once it appears, after the view has focused its own
-// Close button. A request nobody takes within 2 seconds lapses.
-const FOCUS_REQUEST_MS = 2000;
-let focusRequest: { sessionId: string; at: number } | undefined;
-const mountedBoxes = new Map<string, () => void>();
-
-/** Asks the message box for this session to take the focus. */
-export function requestRelayFocus(sessionId: string): void {
-  const focus = mountedBoxes.get(sessionId);
-  if (focus) {
-    focusRequest = undefined;
-    focus();
-    return;
-  }
-  focusRequest = { sessionId, at: Date.now() };
-}
-
-/**
- * Called by a message box when it appears. Takes a pending request for its
- * session, and takes later ones until the returned function is called.
- */
-export function registerRelayFocus(sessionId: string, focus: () => void): () => void {
-  mountedBoxes.set(sessionId, focus);
-  if (focusRequest?.sessionId === sessionId && Date.now() - focusRequest.at <= FOCUS_REQUEST_MS) {
-    focusRequest = undefined;
-    // After the effects that run when the session view opens, which focus its Close button.
-    setTimeout(focus, 0);
-  }
-  return () => {
-    if (mountedBoxes.get(sessionId) === focus) mountedBoxes.delete(sessionId);
-  };
 }

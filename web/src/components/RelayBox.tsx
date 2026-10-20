@@ -2,7 +2,7 @@ import { useContext, useEffect, useId, useRef, useState, type FormEvent, type Ke
 import type { RelayExchange, RelayStatus, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { absoluteTime, plainText, relativeTime } from '../format.js';
-import { canMessage, exchangeSummary, MAX_RELAY_TEXT_LENGTH, outgoingText, registerRelayFocus, sendRelay, STATUS_TEXT, statusTone, type RelayTone } from '../relay.js';
+import { canMessage, exchangeSummary, MAX_RELAY_TEXT_LENGTH, outgoingText, sendRelay, STATUS_TEXT, statusTone, type RelayTone } from '../relay.js';
 import '../relay.css';
 
 /** What the box shows after a send. `error` is pitwall's own failure, before the relay answered. */
@@ -19,8 +19,6 @@ export interface RelayBoxProps {
   /** An interactive session. */
   session: SessionSummary;
   now: number;
-  /** When the row's Message button asks for the box, before it takes the focus. The session view scrolls to the newest message. */
-  onFocusRequest?: () => void;
 }
 
 /**
@@ -28,12 +26,11 @@ export interface RelayBoxProps {
  * pitwall's relay (D8). The latest exchange and any reply, then what happened
  * to this send, sit just above the text box, as text only.
  */
-export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
+export function RelayBox({ session, now }: RelayBoxProps) {
   const api = useContext(ApiContext);
   const headingId = useId();
   const textId = useId();
   const noteId = useId();
-  const textRef = useRef<HTMLTextAreaElement>(null);
   const alive = useRef(true);
   // Aborted when the box goes, so a request still waiting for an apiKey doesn't outlive it.
   const requests = useRef<AbortController | undefined>(undefined);
@@ -51,20 +48,6 @@ export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
       controller.abort();
     };
   }, []);
-
-  // The row's Message button: the view shows its newest message, and the box takes the focus.
-  const onFocusRequestRef = useRef(onFocusRequest);
-  useEffect(() => {
-    onFocusRequestRef.current = onFocusRequest;
-  }, [onFocusRequest]);
-  useEffect(
-    () =>
-      registerRelayFocus(sessionId, () => {
-        onFocusRequestRef.current?.();
-        textRef.current?.focus();
-      }),
-    [sessionId],
-  );
 
   const messageable = canMessage(session);
   const tooLong = outgoingText(text).length > MAX_RELAY_TEXT_LENGTH;
@@ -124,7 +107,6 @@ export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
           <div className="relay-compose">
             <textarea
               id={textId}
-              ref={textRef}
               className="field-input relay-text"
               rows={2}
               value={text}
@@ -135,7 +117,7 @@ export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
               aria-invalid={tooLong || undefined}
               spellCheck
             />
-            <button type="submit" className="button small primary" disabled={!canSend} aria-busy={sending || undefined}>
+            <button type="submit" className="button primary" disabled={!canSend} aria-busy={sending || undefined}>
               {sending ? 'Sending…' : 'Send'}
             </button>
           </div>
@@ -165,16 +147,14 @@ function tone(status: Shown['status']): RelayTone {
 export interface RelayExchangeNoteProps {
   exchange: RelayExchange;
   now: number;
-  /** On a row: one line for the reply, which the title shows in full. */
-  compact?: boolean;
 }
 
 /** The latest message pitwall relayed to a session, and its reply, as text only. */
-export function RelayExchangeNote({ exchange, now, compact = false }: RelayExchangeNoteProps) {
+export function RelayExchangeNote({ exchange, now }: RelayExchangeNoteProps) {
   const summary = exchangeSummary(exchange);
   const reply = exchange.reply ? plainText(exchange.reply.text) : undefined;
   return (
-    <div className={compact ? 'relay-exchange compact' : 'relay-exchange'}>
+    <div className="relay-exchange">
       <p className={`relay-exchange-line tone-${summary.tone}`}>
         <span className="relay-exchange-label">Message from pitwall</span>{' '}
         <time dateTime={exchange.sentAt} title={absoluteTime(exchange.sentAt)}>
@@ -183,7 +163,7 @@ export function RelayExchangeNote({ exchange, now, compact = false }: RelayExcha
         : {summary.status}
       </p>
       {reply !== undefined && exchange.reply && (
-        <p className="relay-reply" title={compact ? `${reply}\n${absoluteTime(exchange.reply.at)}` : absoluteTime(exchange.reply.at)}>
+        <p className="relay-reply" title={absoluteTime(exchange.reply.at)}>
           <span className="who">Reply</span> {reply}
         </p>
       )}

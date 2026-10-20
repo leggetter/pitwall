@@ -104,8 +104,10 @@ describe('SessionView: opening and closing', () => {
 
     expect(view.getAttribute('aria-labelledby')).toBeTruthy();
     expect(screen.getByRole('dialog', { name: 'demo-docs · Update the getting started guide' })).toBe(view);
-    expect(within(view).getByText('interactive')).toBeTruthy();
-    expect(within(view).getByText('idle').className).toContain('pill');
+    expect(within(view).getByText('Interactive')).toBeTruthy();
+    // Idle has no badge in the list, but the view shows it.
+    expect(within(view).getByText('Idle').closest('.badge')?.getAttribute('data-status')).toBe('idle');
+    expect(view.id).toBe('session-view');
     expect(within(view).getByText('~/code/demo-app/docs')).toBeTruthy();
     expect(within(view).getByText('active 5m ago')).toBeTruthy();
     expect(texts(view)).toEqual(['prompt 1']);
@@ -114,16 +116,16 @@ describe('SessionView: opening and closing', () => {
     expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Close' }));
   });
 
-  it('opens from a click anywhere on the row, but not from a control in it', async () => {
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120);
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(40);
+  it('opens from a click anywhere on the row, but not from a click that ends a text selection', async () => {
     const { container } = renderDashboard(fakeServer(ok([prompt(1)])));
     const row = screen.getByRole('heading', { level: 3, name: 'demo-docs' }).closest('li')!;
 
-    fireEvent.click(within(row).getByRole('button', { name: 'Show more' }));
+    const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ toString: () => 'run the' } as Selection);
+    fireEvent.click(row.querySelector('.session-what')!);
     expect(screen.queryByRole('dialog')).toBeNull();
+    selection.mockRestore();
 
-    fireEvent.click(row.querySelector('.reply')!);
+    fireEvent.click(row.querySelector('.session-what')!);
     await settle();
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(container.querySelector('.session.open')).toBe(row);
@@ -274,7 +276,7 @@ describe('SessionView: the conversation', () => {
     update(snap(target({ status: 'busy' })));
     await settle();
     expect(server).toHaveBeenCalledTimes(1);
-    expect(within(view).getByText('busy')).toBeTruthy();
+    expect(within(view).getByText('Busy')).toBeTruthy();
 
     update(snap(target({ status: 'busy', lastActivityAt: minutesAgo(0) })));
     await settle();
@@ -373,11 +375,6 @@ describe('SessionView: the message box at the foot', () => {
     );
   }
 
-  function messageButton(): HTMLElement {
-    const row = screen.getByRole('button', { name: 'demo-docs' }).closest('li')!;
-    return within(row).getByRole('button', { name: 'Message' });
-  }
-
   it('comes after the conversation, outside the header, with the latest exchange and the send result just above the text box', async () => {
     const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: 'All three fixed.' } };
     renderDashboard(chatServer([prompt(1), { kind: 'assistant', at: at(2), text: 'The newest reply.' }]), snap(target({ relay })));
@@ -413,47 +410,6 @@ describe('SessionView: the message box at the foot', () => {
 
     renderDashboard(fakeServer(ok([prompt(1)])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
     expect((await openView()).querySelector('.session-view-foot')).toBeNull();
-  });
-
-  it("the row's Message button opens the view at the newest message, with the text box focused", async () => {
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
-    renderDashboard(fakeServer(ok([prompt(1), prompt(2)])));
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] });
-    fireEvent.click(messageButton());
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
-    vi.useFakeTimers({ toFake: ['Date'] });
-    await settle();
-    const view = screen.getByRole('dialog');
-    expect(texts(view)).toEqual(['prompt 1', 'prompt 2']);
-    expect(document.activeElement).toBe(within(view).getByRole('textbox', { name: 'Message to demo-docs' }));
-    expect(view.querySelector<HTMLElement>('.session-view-body')!.scrollTop).toBe(1000);
-  });
-
-  it("the row's Message button scrolls an open view back to the newest message and focuses the text box, which then follows new entries", async () => {
-    let scrollHeight = 1000;
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
-    const { update } = renderDashboard(fakeServer(ok([prompt(1)]), ok([prompt(1), prompt(2)])));
-    const view = await openView();
-    const body = view.querySelector<HTMLElement>('.session-view-body')!;
-    const textbox = within(view).getByRole('textbox', { name: 'Message to demo-docs' });
-
-    // Scrolled up to read.
-    body.scrollTop = 100;
-    fireEvent.scroll(body);
-    fireEvent.click(messageButton());
-    expect(document.activeElement).toBe(textbox);
-    expect(body.scrollTop).toBe(1000);
-
-    // Back at the bottom, so new entries are followed.
-    scrollHeight = 1200;
-    update(snap(target({ lastActivityAt: minutesAgo(0) })));
-    await settle();
-    expect(texts(view)).toEqual(['prompt 1', 'prompt 2']);
-    expect(body.scrollTop).toBe(1200);
   });
 
   it('stays at the bottom when the box below the conversation grows, and keeps the place when scrolled up', async () => {

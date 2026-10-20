@@ -27,21 +27,6 @@ export function shortenHome(path: string): string {
   return match ? `~${path.slice(match[0].length)}` : path;
 }
 
-/**
- * Where `cwd` sits relative to its group:
- * - `undefined` when it is the group directory itself;
- * - the relative path when it is below it;
- * - the home-shortened absolute path otherwise, such as a git worktree that is
- *   grouped under its main repo but lives elsewhere on disk.
- */
-export function cwdWithinGroup(cwd: string, groupKey: string): string | undefined {
-  const key = groupKey.replace(/\/+$/, '');
-  const dir = cwd.replace(/\/+$/, '');
-  if (dir === key) return undefined;
-  if (key === '' || dir.startsWith(`${key}/`)) return dir.slice(key.length + 1);
-  return shortenHome(dir);
-}
-
 /** "12s ago", "5m ago", "3h ago", "2d ago". Future times (clock skew) read as "just now". */
 export function relativeTime(iso: string, now: number): string {
   const then = Date.parse(iso);

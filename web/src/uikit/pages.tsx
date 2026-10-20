@@ -4,12 +4,16 @@
 
 import { useState } from 'react';
 import type { ConnectionState, ConnectionView } from '../connection.js';
+import { Badge, StatusBadge } from '../components/Badge.js';
 import { ConnectionBadge } from '../components/ConnectionBadge.js';
+import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
 import { Dashboard } from '../components/Dashboard.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
 import { memoryNavigation } from '../selection.js';
+import { statusBadge } from '../sessions.js';
+import { SORT_KEY } from '../sort.js';
 import {
   APP_DIR,
   CALM_SNAPSHOT,
@@ -27,6 +31,7 @@ import {
   ROOT,
   SERVICE_DIR,
   snapshot,
+  STATUS_ROWS,
   TWO_ROOTS_SNAPSHOT,
 } from './fixtures.js';
 import { choose, element, laidOut, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
@@ -146,6 +151,8 @@ interface PageCase {
   /** A window this many px wide, for one layout whatever the gallery's width. Otherwise the gallery's. */
   width?: number;
   view: ConnectionView;
+  /** What its own storage starts with, such as a Sort setting. */
+  stored?: Record<string, string>;
   run?: (root: HTMLElement) => Promise<unknown>;
 }
 
@@ -221,8 +228,20 @@ const PAGES: PageCase[] = [
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
     run: async (root) => {
       await press(root, 'Background');
-      await until('background rows only', () => root.querySelector('.session') !== null && ![...root.querySelectorAll('.session .kind')].some((kind) => kind.textContent === 'interactive'));
+      await until('the chip to be on', () => root.querySelector('.chip[aria-pressed="true"]'));
     },
+  },
+  {
+    title: 'Sorted by Recent',
+    note: 'Most recently active first. A new order waits while the pointer is over the list or focus is inside it.',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    stored: { [SORT_KEY]: 'recent' },
+  },
+  {
+    title: 'Sorted by Name',
+    note: 'Alphanumerically, so it never moves as sessions change. The Finished section follows it too.',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    stored: { [SORT_KEY]: 'name' },
   },
   {
     title: 'Token rejected',
@@ -233,7 +252,7 @@ const PAGES: PageCase[] = [
 
 /** One page: the Dashboard with storage and an address bar of its own, so it never touches the gallery's. */
 function Page({ page }: { page: PageCase }) {
-  const [own] = useState(() => ({ storage: memoryStorage(), navigation: memoryNavigation(page.search ?? '') }));
+  const [own] = useState(() => ({ storage: memoryStorage(page.stored), navigation: memoryNavigation(page.search ?? '') }));
   const dashboard = <Dashboard view={page.view} storage={own.storage} navigation={own.navigation} />;
   return <Stubbed>{page.run ? <Scenario run={page.run}>{dashboard}</Scenario> : dashboard}</Stubbed>;
 }
@@ -298,7 +317,26 @@ const STATES: ConnectionState[] = ['connecting', 'live', 'reconnecting', 'unauth
 export function Notices() {
   return (
     <>
-      <Specimen title="Connection badges" note="The header's badge, in each connection state.">
+      <Specimen title="Status badges" note="Each session status, as statusBadge() gives it. Solid is for needing you only. The list leaves Idle out; the session view shows it.">
+        <p className="uikit-row">
+          {STATUS_ROWS.map((row) => (
+            <StatusBadge key={row.sessionId} badge={statusBadge(row)} />
+          ))}
+        </p>
+      </Specimen>
+      <Specimen title="Other badges" note="Stale and a finished session's Asked you carry their explanations in the hover text.">
+        <p className="uikit-row">
+          <Badge look="subtle-neutral" title={STALE_HINT}>
+            Stale
+          </Badge>
+          <Badge look="outline" title={FINISHED_ASKED_HINT}>
+            Asked you
+          </Badge>
+          <Badge look="subtle-neutral">4</Badge>
+          <span className="badge badge-attention">2 need you</span>
+        </p>
+      </Specimen>
+      <Specimen title="Connection badges" note="The header's badge, in each connection state: a spinner while connecting, a dot once live.">
         <p className="uikit-row">
           {STATES.map((state) => (
             <ConnectionBadge key={state} state={state} />

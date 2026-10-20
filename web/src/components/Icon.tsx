@@ -4,7 +4,7 @@
 // design and 24 px the 24 px one, so strokes keep their weight when small.
 // Decorative: the control or text next to an icon says what it means, so it's
 // hidden from assistive technology. It takes the text colour, so it follows the
-// theme. Today's inline icons are still in icons.tsx; later PRs swap them for this.
+// theme. Every icon in the web UI comes from here.
 
 import { ICON_PATHS, type IconName, type IconSize } from '../icons/paths.js';
 

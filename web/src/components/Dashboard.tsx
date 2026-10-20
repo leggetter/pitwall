@@ -15,12 +15,14 @@ import {
   findGroup,
   finishedStateId,
   scopeFor,
+  selectionHref,
   selectionName,
   useSelection,
   type NavigationEnv,
   type Selection,
 } from '../selection.js';
 import { countAttention, filterListed, filterNeedle, groupId, listScope, NO_FILTERS, noMatchText, type Filters } from '../sessions.js';
+import { useSort } from '../sort.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { FilterControls } from './Filters.js';
 import { Header } from './Header.js';
@@ -30,6 +32,7 @@ import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { SessionList, type SessionListHeading } from './SessionList.js';
 import { SessionView } from './SessionView.js';
+import { SortSelect } from './SortSelect.js';
 
 /** The current time, refreshed every second, for relative times. */
 function useNow(intervalMs = 1_000): number {
@@ -70,6 +73,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const layout = useLayout(app);
   const [selection, choose] = useSelection(snapshot, { navigation, storage });
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  // Urgency, Recent or Name, for every selection.
+  const [sort, setSort] = useSort(storage);
   // Each selection's Finished section starts collapsed, and is remembered.
   const [finishedOpen, setFinishedOpen] = useState<GroupState>(() => readGroupState(storage, FINISHED_STATE_KEY));
   const [dismissedError, setDismissedError] = useState<string>();
@@ -87,7 +92,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const attention = countAttention(allSessions);
   const selectedGroup = findGroup(groups, selection);
   const scope = scopeFor(groups, selection);
-  const listed = useMemo(() => (scope ? listScope(groups, scope) : { current: [], finished: [] }), [groups, scope?.kind, selectedGroup]);
+  const listed = useMemo(() => (scope ? listScope(groups, scope, sort) : { current: [], finished: [] }), [groups, scope?.kind, selectedGroup, sort]);
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
   const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
   const listedOpen = opened ? allSessions.find((session) => session.sessionId === opened.sessionId) : undefined;
@@ -290,12 +295,21 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             heading={heading}
             headingRef={listHeading}
             summary={snapshot && scope ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session)) } : undefined}
-            filters={allSessions.length > 0 && <FilterControls filters={filters} onChange={setFilters} />}
+            filters={
+              allSessions.length > 0 && (
+                <FilterControls filters={filters} onChange={setFilters}>
+                  <SortSelect value={sort} onChange={setSort} />
+                </FilterControls>
+              )
+            }
             current={current}
             finished={finished}
             empty={empty}
             finishedCollapsed={!(finishedId !== undefined && (finishedOpen.get(finishedId) ?? false))}
             onToggleFinished={toggleFinished}
+            showGroup={scope !== undefined && scope.kind !== 'group'}
+            holdOrder={sort !== 'name'}
+            orderKey={`${selectionHref(selection)}|${sort}`}
             now={now}
             onOpen={openSession}
             openSessionId={shownOpen?.sessionId}

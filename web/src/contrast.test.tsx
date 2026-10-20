@@ -59,7 +59,8 @@ const PAIRS: Pair[] = [
   edge('--pw-focus', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken', '--pw-surface-hover', '--pw-surface-hover-bg', '--pw-selected']),
   // The ring around a selected item, and a checked checkbox's fill, which can sit on any neutral surface.
   edge('--pw-selected-border', NEUTRAL),
-  edge('--pw-warning-indicator', ['--pw-surface', '--pw-bg', '--pw-warning-tint']),
+  // The bar of a row that needs you, on the row as it is, hovered or open, and the restart confirmation's bar.
+  edge('--pw-warning-indicator', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-hover', '--pw-selected']),
 ];
 
 /**
@@ -69,7 +70,8 @@ const PAIRS: Pair[] = [
 const ALIAS_PAIRS: Pair[] = [
   ...['attention', 'asked', 'busy', 'idle', 'done', 'failed'].map((state) => text(`--pw-state-${state}-fg`, [`--pw-state-${state}-bg`])),
   text('--pw-state-offline-fg', NEUTRAL),
-  edge('--pw-state-attention-bar', ['--pw-state-attention-row', '--pw-surface']),
+  // A row that needs you has no tint: the bar sits on the row as it is, hovered, or open.
+  edge('--pw-state-attention-bar', ['--pw-surface', '--pw-surface-hover', '--pw-selected']),
   // The connection dots, and "Attached" in the terminal's bar, which is text.
   ...['--pw-live', '--pw-pending', '--pw-broken'].map((fg) => text(fg, NEUTRAL)),
 ];

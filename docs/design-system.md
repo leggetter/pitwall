@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -175,7 +175,7 @@ WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test
 | `--pw-border-input` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-focus` on surface, bg, muted, sunken, both hovers and selected | 4.26 (hover-bg) | 4.68 (hover) | 3:1 |
 | `--pw-selected-border` on neutral surfaces (the selected ring, and a checked checkbox's fill) | 6.53 (hover-bg) | 4.68 (hover) | 3:1 |
-| `--pw-warning-indicator` on surface, bg and warning tint | 3.73 (warning tint) | 6.04 (warning tint) | 3:1 |
+| `--pw-warning-indicator` on surface, bg, muted, hover and selected (the bar of a row that needs you, as it is, hovered or open) | 3.45 (selected) | 6.28 (hover) | 3:1 |
 
 - **The one exemption:** `--pw-text-disabled` is 2.62:1 (light) and 2.25:1 (dark) on `--pw-surface`. WCAG 1.4.3 exempts text in inactive controls. Use it only on controls that are `aria-disabled`, never for content.
 - **Decorative only:** `--pw-border`, `--pw-border-strong`, `--pw-border-dashed` and the tone `-border` tokens are below 3:1. They may never be the only thing that shows where a control is or what state it's in.
@@ -313,7 +313,6 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-shadow-1: 0 0 0 1px rgb(0 0 0 / 0.04), 0 2px 4px rgb(0 0 0 / 0.08), 0 4px 8px rgb(0 0 0 / 0.08);
   --pw-shadow-2: 0 0 0 1px rgb(0 0 0 / 0.04), 0 4px 8px rgb(0 0 0 / 0.08), 0 8px 16px rgb(0 0 0 / 0.08);
   --pw-shadow-3: 0 0 0 1px rgb(0 0 0 / 0.04), 0 8px 16px rgb(0 0 0 / 0.08), 0 16px 32px rgb(0 0 0 / 0.08);
-  --pw-shadow-card: 0 0 0 1px var(--pw-border-strong), 0 1px 2px rgb(0 0 0 / 0.04);
   --pw-shadow-control: 0 0 0 1px var(--pw-border-control), 0 1px 2px rgb(0 0 0 / 0.04);
   --pw-shadow-input: 0 0 0 1px var(--pw-border-input), inset 0 1px 2px rgb(0 0 0 / 0.04);
   --pw-shadow-input-error: 0 0 0 1px var(--pw-danger-fg), inset 0 1px 2px rgb(0 0 0 / 0.04);
@@ -377,7 +376,6 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-shadow-1: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 2px 4px rgb(0 0 0 / 0.32), 0 4px 8px rgb(0 0 0 / 0.32);
   --pw-shadow-2: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 4px 8px rgb(0 0 0 / 0.32), 0 8px 16px rgb(0 0 0 / 0.32);
   --pw-shadow-3: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 8px 16px rgb(0 0 0 / 0.32), 0 16px 32px rgb(0 0 0 / 0.32);
-  --pw-shadow-card: 0 0 0 1px var(--pw-border-strong), 0 2px 4px rgb(0 0 0 / 0.16);
   --pw-shadow-control: 0 0 0 1px var(--pw-border-control), 0 2px 4px rgb(0 0 0 / 0.16);
   --pw-shadow-input: 0 0 0 1px var(--pw-border-input), inset 0 2px 4px rgb(0 0 0 / 0.24);
   --pw-shadow-input-error: 0 0 0 1px var(--pw-danger-fg), inset 0 2px 4px rgb(0 0 0 / 0.24);
@@ -388,7 +386,6 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 :root {
   --pw-state-attention-bg: var(--pw-warning-solid);   /* "needs you": the only solid badge */
   --pw-state-attention-fg: var(--pw-on-warning-solid);
-  --pw-state-attention-row: var(--pw-warning-tint);
   --pw-state-attention-bar: var(--pw-warning-indicator);
   --pw-state-asked-bg: var(--pw-warning-tint);
   --pw-state-asked-fg: var(--pw-warning-tint-fg);
@@ -481,7 +478,6 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 
 | Token | Used for |
 |---|---|
-| `--pw-shadow-card` | Cards on `--pw-bg` |
 | `--pw-shadow-control` | Outline buttons, chips, the theme switch's selected thumb, key caps |
 | `--pw-shadow-input` / `-input-error` | Text fields, textareas, selects |
 | `--pw-shadow-accent` | Primary buttons |
@@ -611,7 +607,7 @@ The first restyle PR renames today's custom properties (in `web/src/styles.css`,
 | `--focus` | `#1f5fd6` / `#7ea8ff` | `--pw-focus` on outlines; `--pw-accent` on the primary button; `--pw-link` on link buttons; `--pw-selected-border` for the open row's bar |
 | `--attention` | `#f59e0b` / `#fbbf24` | `--pw-state-attention-bg` (badges) and `--pw-state-attention-bar` (row bar); `--pw-state-asked-border` for the "asked you" badge's edge |
 | `--attention-text` | `#2b1d00` / `#1c1300` | `--pw-state-attention-fg` |
-| `--attention-row` | `#fff6e5` / `#2a2008` | `--pw-state-attention-row` |
+| `--attention-row` | `#fff6e5` / `#2a2008` | `--pw-state-attention-row`, removed in W23 when rows that need you lost their tint |
 | `--attention-strong` | `#9a5800` / `#fcc94a` | `--pw-warning-fg` (also the "Asked:" label, the checkbox accent and the line for a relay message that's held or uncertain); `--pw-state-asked-fg` for the "asked you" badge's text |
 | `--busy-bg`, `--busy-text` | `#dbe8fe`, `#1d3f99` / `#18294a`, `#a9c7ff` | `--pw-state-busy-bg`, `--pw-state-busy-fg` |
 | `--idle-bg`, `--idle-text` | `#eceef1`, `#474f59` / `#232932`, `#b7bfc9` | `--pw-state-idle-bg`, `--pw-state-idle-fg` |
@@ -647,11 +643,11 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ├─ repo list, 240 px ─┬─ session list (≥ 360 px) ─────────────┬┬─ session view ─────────────┤
 │ Needs you       [2] │ ⑂ pitwall      4 sessions [2 need you] ││ name · title        ⋯  ✕  │
 │ All sessions     12 │ [Filter sessions   /] [Interactive]    ││ badge · kind · 5m · cwd   │
-│ ─────────────────── │ [Background]                           │├ Conversation | Terminal ──┤
+│ ─────────────────── │ [Background]         Sort [Urgency ▾]  │├ Conversation | Terminal ──┤
 │ ▢ ~/git           3 │────────────────────────────────────────││ body (scrolls)            │
-│ ⑂ pitwall       [2] │▌name · title        [waiting]      1m  ││                           │
+│ ⑂ pitwall       [2] │▌name · title             [waiting] 1m  ││                           │
 │ ⑂ api-server      4 │  Asked: Which queue should failed…     ││                           │
-│ ▢ scratch         1 │ name · title        [busy]         6s  ││                           │
+│ ▢ scratch         1 │ name · title                [busy] 6s  ││                           │
 │                     │ Finished (3)  ›                        │├ footer: message box ──────┤
 └─────────────────────┴────────────────────────────────────────┴┴───────────────────────────┘
 ```
@@ -709,16 +705,20 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - **Line 2,** 8 px below, wrapping:
     - the [filter field](#search), at least 200 px wide and growing;
     - then the [filter chips](#filter-chips) and "Clear filters";
-    - then, at the right, the sort setting: a native [select](#inputs-textareas-and-selects) labelled "Sort", 28 px tall.
+    - then, at the right, the sort setting: a visible "Sort" label (label style, `--pw-text-muted`), 6 px before a native [select](#inputs-textareas-and-selects), 28 px tall. It's in the filters' `role="search"` form, after the chips, so it wraps with them: at 360 px the field has its own line, and the chips and Sort share the next.
 - **Rows:** [session rows](#session-rows) in a `<ul>`, in the order the sort setting picks (Phil, 2026-10-20):
-  - **Urgency,** the default: waiting or blocked first, then asked you, then busy, then most recently active, with stale sessions after those. This is the index's order.
+  - **Urgency,** the default: waiting or blocked first, then asked you, then busy, then most recently active, with stale sessions after those. This is the index's order; the web UI sorts every list itself, in each order.
   - **Recent:** most recently active first.
   - **Name:** alphanumeric by name, as the repo list sorts its groups. It never moves as sessions change.
   - The setting applies to every selection, and is saved in `localStorage` as `pitwall.sort.v1`. Finished sections use it too, except that Urgency orders finished sessions by activity alone.
   - **A group:** its unfinished sessions, then its [Finished section](#finished-section).
   - **Needs you:** every session that needs you, from every group. There's no Finished section, because a finished session never needs you.
   - **All sessions:** every unfinished session from every group, then one Finished section for all of them.
-- **Live updates:** each snapshot updates rows in place. If it would reorder rows (under Urgency or Recent) while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it. Added and removed rows apply at once.
+- **Live updates:** each snapshot updates rows in place. If it would reorder rows (under Urgency or Recent) while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it.
+  - Added and removed rows apply at once: a new row goes in after the row it follows in the new order, or first.
+  - The Finished section is held the same way.
+  - A sort or selection the reader chooses applies at once, whatever the pointer and focus.
+  - Nothing in the list is a live region, so none of this is announced.
 - **Empty and loading states** fill the rows' area, centred (see [Empty states](#empty-states)).
 
 ### Session view
@@ -808,7 +808,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Textarea:** the same box, padding 6 px 12 px.
   - In dialogs: resizable vertically, at least 6 rows.
   - In the message box: auto-grows from one line to eight, then scrolls; no resize handle.
-- **Select:** native `<select>` in the same box, with a 16 px `select` icon at the right in `--pw-text-muted` (`appearance: none`).
+- **Select:** native `<select>` in the same box, with a 16 px `select` icon at the right in `--pw-text-muted` (`appearance: none`), 8 px from the edge; the text has 32 px of padding on the right to clear it.
 - **Checkbox:** the native `<input type="checkbox">`, 16 px, with `accent-color: var(--pw-selected-border)`, a label after it 6 px away, and the label clickable.
   - The fill is at least 3:1 on every neutral surface in both themes (2.5).
   - The browser draws the check and the unchecked edge in its own colours. Measured in Chrome: a white check on the light fill and a `#3B3B3B` check on the dark one (3.50:1), and an unchecked edge of `#767676` on white (4.54:1) and `#858585` on `--pw-surface` dark (4.77:1).
@@ -820,7 +820,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Behaviour:**
   - Filters as you type (pitwall filters in memory); no Enter needed.
   - Escape in the field clears it if it has text, otherwise leaves the field. Escape that clears stops there (it calls `preventDefault()`); Escape that leaves the field goes on to close the session view, as in the [keyboard map](#62-keyboard-map).
-  - Matches are highlighted in session names, titles and paths: each match is a `<mark>` with `--pw-highlight` fill and `--pw-text` text, whatever the colour of the text around it, since that's the pair 2.5 checks. Matching is case-insensitive, on the trimmed text.
+  - Matches are highlighted in session names, titles and the group labels that start a row's line 2: each match is a `<mark>` with `--pw-highlight` fill and `--pw-text` text, whatever the colour of the text around it, since that's the pair 2.5 checks. Matching is case-insensitive, on the trimmed text. The filter also matches a session's directory, which the row doesn't show, so a session that matches only by its directory has no highlight.
   - It filters the session list's selection: one group, Needs you or All sessions. The repo list's counts don't change.
 - **Accessibility:** inside `role="search"`; a visually hidden label "Filter sessions"; placeholder "Filter by session, title, repo or directory".
 
@@ -847,6 +847,8 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 | **Outline** | none | `outline: 1px dashed var(--pw-border-dashed); outline-offset: -1px` (badges aren't focusable, so the outline is free) | `--pw-text-subtle` |
 
 - **Solid is for "needs you" only.** Everything else is subtle or outline.
+- **Status badges take their look from the state aliases** (`--pw-state-*`, 2.6), the rest from the tone tokens, so a state's look changes in one place.
+- **In a row,** a status badge too long for its line ends in an ellipsis (see [Session rows](#session-rows)); its full text is still in the DOM.
 
 | Session state | Label | Style |
 |---|---|---|
@@ -858,7 +860,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 | Done | "Done" | subtle success |
 | Stopped | "Stopped" | subtle neutral |
 | Process not running | "Not running" | outline |
-| Busy / working | "Busy" / "Working", with an 8 px dot in `--pw-info-fg` | subtle info |
+| Busy / working | "Busy" / "Working", with an 8 px dot in `--pw-info-tint-fg`, the badge's text colour (2.1) | subtle info |
 | Idle | No badge in the list; "Idle" in the session view | subtle neutral, in the session view only. Needs-you is unaffected: it comes from waiting, blocked and asked-you, never from the badge |
 | Unknown | "Unknown" | subtle neutral |
 | Finished, and it asked you | "Asked you", with a tooltip saying it isn't counted | outline |
@@ -871,7 +873,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 
 ### Status dot
 
-- **Shape:** 8 px circle, `--pw-radius-full`, in a tone's `-fg` colour (3:1 or better against every neutral surface).
+- **Shape:** 8 px circle, `--pw-radius-full`, in a tone's `-fg` colour on a neutral surface, or the tint's `-tint-fg` inside a subtle badge, as 2.1 asks (3:1 or better against what it sits on, 2.5).
 - **Use:** inside badges, and in the connection badge. Never the only sign of a state: a text label always goes with it. It doesn't animate.
 
 ### Connection badge
@@ -885,33 +887,38 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 | Reconnecting | subtle warning "Reconnecting…", with a spinner |
 | Token rejected | subtle danger "Token rejected" |
 
+The spinner and the dot take the badge's text colour. The badge sits in the element that's `role="status"`, so a change is announced.
+
 ### Session rows
 
 - **Container:** an `<li>` in the session list's `<ul>`, padding 8 px 16 px, a 1 px `--pw-border` line between rows, `--pw-surface`.
 - **Two lines,** 2 px apart:
   1. **Identity:**
      - The name (m 14/20, 500, `--pw-text`), then " · " and the title (m 14/20, 400, `--pw-text-muted`), on one line with an ellipsis. The full title and where it came from are in a tooltip.
-     - Then the status badge(s), and at the far right the relative time (meta, `--pw-text-subtle`, tabular).
+     - Then, at the right, the status badge(s) and the relative time (meta, `--pw-text-subtle`, tabular). The badges sit just before the time, so they line up down the list.
+     - **Line 1 never wraps.** The title gives way first, then the name, then the status badge, which leaves the name and the time at least 10em. "Stale" and a finished session's "Asked you" are short and stay whole. The " · " is drawn with the title (CSS `::before`, not read out), so it goes when the title has.
   2. **What it wants or did last,** on one line with an ellipsis, when the transcript is readable:
-     - "Asked: *excerpt*" (meta, the label in `--pw-warning-fg` 500); or
+     - "Asked: *excerpt*" (meta, the label in `--pw-warning-fg` 500, the excerpt in `--pw-text`); or
      - "You: *last prompt*" (meta, `--pw-text-muted`).
-     - In Needs you and All sessions, the line starts with the group's label (meta, `--pw-text-subtle`) and " · ".
+     - The full text is in a tooltip.
+     - In Needs you and All sessions, the line starts with the group's label (meta, `--pw-text-subtle`; the root's own directory as its path) and " · ". A session with neither a question nor a prompt shows only the label there, and no line 2 in a group.
 - **Not in the row:** the last reply, the relay exchange, the cwd, the attach command and a Message button. They're in the session view: the conversation, the message box, the header and the actions menu. A row stays two lines however long the session's replies are.
-- **Opening:** the name is a `<button>` with `aria-controls="session-view"`, `aria-current="true"` when its session is open, and `data-open-session`.
+- **Opening:** the name is a `<button>` with `aria-controls="session-view"`, `aria-current="true"` when its session is open, and `data-open-session`. The session view has `id="session-view"`.
   - A click anywhere on the row that isn't a control (and isn't the end of a text selection) opens the session too. Keyboard users use the button.
+  - **Focus:** the name's ellipsis would clip its button's ring, so the row shows `--pw-ring-focus-inset` while the button has focus, on top of the bar when there is one. The button keeps the transparent outline, inset, for forced colours.
 - **States:**
 
 | State | Fill | Marker |
 |---|---|---|
 | Default | `--pw-surface` | |
 | Hover | `--pw-surface-hover` | |
-| Open | `--pw-selected` | `--pw-ring-selected` |
+| Open, hovered or not | `--pw-selected` | `--pw-ring-selected` |
 | Needs you | `--pw-surface` | `inset 3px 0 0 var(--pw-state-attention-bar)` |
 | Needs you and open | `--pw-selected` | both the ring and the left bar |
-| Finished | `--pw-surface` | the name at 400 weight, its text `--pw-text-muted` |
+| Finished | `--pw-surface` | the name at 400 weight in `--pw-text-muted`, and the "Asked:" label and excerpt in `--pw-text-muted` too |
 
 - **Needs you has no row tint,** only the bar and the badge. On 2026-10-20, nine of Phil's fifteen sessions needed him, and tinting every one of them turned most of the list yellow. The Needs you view collects them instead.
-- **Transcript notes:** "Transcript not found" or "Transcript unreadable", meta, `--pw-text-subtle`, in place of line 2.
+- **Transcript notes:** "Transcript not found" or "Transcript unreadable", meta, `--pw-text-subtle`, in place of what line 2 would say, after the group label in Needs you and All sessions.
 - **Height:** never fixed; rows grow with zoom and text spacing.
 
 ### Repo list items
@@ -1138,7 +1145,7 @@ For a destructive or surprising action in the session view, without a dialog.
 
 - **Skeleton row:** the height of a session row; three bars (identity 40 %, preview 70 %, footer 30 % of the width), 12 px tall, `--pw-surface-sunken`, `--pw-radius-sm`, 6 px apart, pulsing.
   - On first connect: four skeleton items in the repo list and three skeleton rows in the session list. They have `aria-hidden="true"`, and a visually hidden `role="status"` says "Loading sessions".
-- **Spinner:** a 12 px (inline) or 16 px (in a button) ring: a 2 px conic gradient from transparent to `--pw-info-fg`, turning 0.8 s per turn. It's `aria-hidden`; the busy element carries `aria-busy` or a status message.
+- **Spinner:** a 12 px (inline) or 16 px (in a button) ring: a 2 px conic gradient from transparent to `--pw-info-fg`, or to the badge's text colour inside a badge (2.1), turning 0.8 s per turn. It's `aria-hidden`; the busy element carries `aria-busy` or a status message.
 - **Waiting:** both wait `--pw-delay-spinner` (500 ms) before showing. After `--pw-delay-long` (10 s), add a meta line saying what's slow ("Still waiting for `claude agents`…").
 - **Long waits for pitwall's own work** (connecting, loading the conversation) use a status line, not an overlay: meta, `--pw-text-muted`, centred, `role="status"`.
 
@@ -1273,7 +1280,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 ### 6.1 Rules
 
 1. **Contrast:** text at least 4.5:1, and control edges, focus rings and state indicators at least 3:1, in both themes. The pairs are in [2.5](#25-contrast); a new colour is checked before it's used. Disabled controls are the only exemption.
-2. **Never colour alone:** every state has a text label. A row that needs you has its badge as well as its tint and bar.
+2. **Never colour alone:** every state has a text label. A row that needs you has its badge as well as its bar.
 3. **Visible focus:** every interactive element shows `--pw-ring-focus` on `:focus-visible`, with the transparent-outline fallback for forced colours.
 4. **Targets:** at least 24 × 24 px.
 5. **Names:**

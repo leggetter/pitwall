@@ -89,7 +89,7 @@ export function SessionActions({ session, onRemoved }: SessionActionsProps) {
       <div className="session-actions-buttons">
         <button
           type="button"
-          className="button small"
+          className="button sm"
           onClick={() => ask('stop')}
           disabled={busy || !session.alive}
           aria-expanded={confirming === 'stop'}
@@ -97,7 +97,7 @@ export function SessionActions({ session, onRemoved }: SessionActionsProps) {
         >
           {running === 'stop' ? CONFIRM.stop.busy : 'Stop'}
         </button>
-        <button type="button" className="button small" onClick={() => ask('remove')} disabled={busy} aria-expanded={confirming === 'remove'}>
+        <button type="button" className="button sm" onClick={() => ask('remove')} disabled={busy} aria-expanded={confirming === 'remove'}>
           {running === 'remove' ? CONFIRM.remove.busy : 'Remove'}
         </button>
       </div>
@@ -105,10 +105,10 @@ export function SessionActions({ session, onRemoved }: SessionActionsProps) {
         <div className="session-confirm" role="group" aria-labelledby={textId} onKeyDown={onConfirmKey}>
           <p id={textId}>{CONFIRM[confirming].text}</p>
           <div className="session-confirm-buttons">
-            <button type="button" className="button small danger" onClick={() => void run(confirming)}>
+            <button type="button" className="button sm danger" onClick={() => void run(confirming)}>
               {CONFIRM[confirming].confirm}
             </button>
-            <button ref={cancelRef} type="button" className="button small" onClick={() => setConfirming(undefined)}>
+            <button ref={cancelRef} type="button" className="button sm" onClick={() => setConfirming(undefined)}>
               Cancel
             </button>
           </div>

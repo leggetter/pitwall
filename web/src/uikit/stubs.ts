@@ -14,7 +14,7 @@ import type { ApiClient, ApiResult } from '../api.js';
 import type { AttachEnv } from '../attach.js';
 import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
-import { CONVERSATION, fullReply, OLDER_CONVERSATION, sessionById, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
+import { CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
 const forever = () => new Promise<ApiResult>(() => {});
@@ -48,10 +48,6 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     const sessionId = decodeURIComponent(match[1] ?? '');
     const route = match[2];
     if (method === 'GET' && route === 'conversation') return conversation(sessionId, options.conversation ?? 'ok', match[3] !== undefined);
-    if (method === 'GET' && route === 'last-message') {
-      const text = sessionById(sessionId)?.lastAssistantText ?? '';
-      return Promise.resolve(ok({ sessionId, text: fullReply(text), truncated: false }));
-    }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
     return Promise.resolve(failed(404));

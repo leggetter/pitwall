@@ -109,7 +109,7 @@ export function FilterChips({ chips, onChange, children }: FilterChipsProps) {
 export interface FilterControlsProps {
   filters: Filters;
   onChange: (filters: Filters) => void;
-  /** Other filters, after the chips. */
+  /** Other controls, after the chips, such as the session list's Sort setting, so they wrap with them. */
   children?: ReactNode;
 }
 

@@ -3,9 +3,11 @@ import type { ConversationEntry, SessionSummary } from '../../../src/shared/prot
 import { ApiContext } from '../api.js';
 import { entryKeys, getConversation, mergeNewest, prependOlder, type ConversationResult } from '../conversation.js';
 import { absoluteTime, plainText, relativeTime, shortenHome } from '../format.js';
-import { statusPill } from '../sessions.js';
+import { statusBadge } from '../sessions.js';
+import { StatusBadge } from './Badge.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionActions } from './SessionActions.js';
+import { SESSION_VIEW_ID } from './SessionRow.js';
 import { SessionTerminal, useAttachToggle } from './Terminal.js';
 
 /**
@@ -164,22 +166,17 @@ function useConversation(lastActivityAt: string | undefined, loader: PageLoader 
     if (scroller.current) atBottom.current = isAtBottom(scroller.current);
   }, []);
 
-  /** To the newest entry, and following new ones from there. */
-  const scrollToBottom = useCallback(() => {
-    atBottom.current = true;
-    const element = scroller.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, []);
-
   const retry = useCallback(() => {
     commit({ ...stateRef.current, status: 'loading' });
     void loadNewest({ replace: true });
   }, [commit, loadNewest]);
 
-  return { state, loadEarlier, retry, scroller, onScroll, scrollToBottom };
+  return { state, loadEarlier, retry, scroller, onScroll };
 }
 
 const TEXT_LABELS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'You', assistant: 'Claude' };
+
+const KIND_LABELS: Record<SessionSummary['kind'], string> = { interactive: 'Interactive', background: 'Background' };
 
 /** One entry, as text only: never markup. Line breaks are kept by CSS. */
 function Entry({ entry }: { entry: ConversationEntry }) {
@@ -239,7 +236,7 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay' 
     () => (api ? (before) => getConversation(api, sessionId, before, requests.current?.signal) : undefined),
     [api, sessionId],
   );
-  const { state, loadEarlier, retry, scroller, onScroll, scrollToBottom } = useConversation(session.lastActivityAt, loader);
+  const { state, loadEarlier, retry, scroller, onScroll } = useConversation(session.lastActivityAt, loader);
   // Background sessions can be attached (W10). The terminal takes the conversation's place until it's closed.
   const attach = useAttachToggle(session.kind);
 
@@ -260,7 +257,7 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay' 
     closeRef.current?.focus();
   }, []);
 
-  const pill = statusPill(session);
+  const badge = statusBadge(session);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
   const { entries } = state;
@@ -268,6 +265,7 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay' 
 
   return (
     <section
+      id={SESSION_VIEW_ID}
       className={layout === 'column' ? 'session-view in-column' : 'session-view'}
       {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : {})}
       aria-labelledby={titleId}
@@ -284,17 +282,18 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay' 
             )}
           </h2>
           {attach.available && !attach.open && (
-            <button ref={attach.buttonRef} type="button" className="button small" onClick={attach.show}>
+            <button ref={attach.buttonRef} type="button" className="button sm" onClick={attach.show}>
               Attach
             </button>
           )}
-          <button ref={closeRef} type="button" className="button small" onClick={onClose}>
+          <button ref={closeRef} type="button" className="button sm" onClick={onClose}>
             Close
           </button>
         </div>
         <div className="session-view-meta">
-          <span className="kind">{session.kind}</span>
-          <span className={`pill tone-${pill.tone}`}>{plainText(pill.label)}</span>
+          <span className="kind">{KIND_LABELS[session.kind]}</span>
+          {/* Idle shows here, though not in the list. */}
+          <StatusBadge badge={badge} />
           {session.lastActivityAt && (
             <time className="activity" dateTime={session.lastActivityAt} title={absoluteTime(session.lastActivityAt)}>
               active {relativeTime(session.lastActivityAt, now)}
@@ -319,7 +318,7 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay' 
         {state.before !== undefined && (
           <button
             type="button"
-            className="button small load-earlier"
+            className="button sm load-earlier"
             onClick={() => void loadEarlier()}
             disabled={state.earlier === 'loading'}
             aria-busy={state.earlier === 'loading' || undefined}
@@ -364,7 +363,7 @@ export function SessionView({ session, listed, now, onClose, layout = 'overlay' 
 
       {session.kind === 'interactive' && listed && (
         <footer className="session-view-foot">
-          <RelayBox session={session} now={now} onFocusRequest={scrollToBottom} />
+          <RelayBox session={session} now={now} />
         </footer>
       )}
     </section>

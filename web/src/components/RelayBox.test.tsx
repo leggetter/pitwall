@@ -272,42 +272,18 @@ describe('the row', () => {
     return screen.getByRole('button', { name }).closest('li') as HTMLElement;
   }
 
-  it('has a Message quick action that opens the view with the box focused', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] });
-    fireEvent.click(within(row()).getByRole('button', { name: 'Message' }));
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
-    vi.useFakeTimers({ toFake: ['Date'] });
-    const view = screen.getByRole('dialog', { name: NAME });
-    expect(document.activeElement).toBe(textarea(view));
-  });
-
-  it('focuses the box when the view is already open', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
-    const view = await openView();
-    expect(document.activeElement).not.toBe(textarea(view));
-    fireEvent.click(within(row()).getByRole('button', { name: 'Message' }));
-    expect(document.activeElement).toBe(textarea(view));
-  });
-
-  it('has no Message action for a background session, or one that isn’t running', () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ alive: false, pid: undefined, status: undefined })));
-    expect(within(row()).queryByRole('button', { name: 'Message' })).toBeNull();
-    expect(within(row('pitwall-test-bg')).queryByRole('button', { name: 'Message' })).toBeNull();
-  });
-
-  it('shows the latest exchange and its reply, as text', () => {
+  it('has no Message button and no relay exchange: the session view has the box, with the exchange above it', async () => {
     const relay = { sentAt: minutesAgo(10), status: 'held' as const, reply: { at: minutesAgo(9), text: 'line one\nline two' } };
     renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
-    const note = row().querySelector('.relay-exchange') as HTMLElement;
+
+    expect(within(row()).queryByRole('button', { name: 'Message' })).toBeNull();
+    expect(row().querySelector('.relay-exchange')).toBeNull();
+    expect(row().textContent).not.toMatch(/Message from pitwall|line one/);
+
+    const view = await openView();
+    const note = within(box(view)).getByText('Message from pitwall').closest('.relay-exchange') as HTMLElement;
     expect(note.textContent).toContain('Message from pitwall 10m ago: held for approval in its terminal');
     expect(within(note).getByText(/line one/).textContent).toBe('Reply line one\nline two');
-  });
-
-  it('shows nothing about the relay for a session that was never messaged', () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
-    expect(row().querySelector('.relay-exchange')).toBeNull();
+    expect(textarea(view)).toBeTruthy();
   });
 });
