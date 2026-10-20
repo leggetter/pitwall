@@ -538,11 +538,13 @@ CSS custom properties don't work in media queries, so these are constants. Use t
   - **No preload.** The hashed file names would need a build step to reach `web/index.html`, and pitwall is served from localhost, where a preload saves almost nothing: the stylesheet that names the files arrives at once, and `swap` shows the fallback font until they load.
   - **Licence files:** both are SIL OFL 1.1, reproduced in full in the root `THIRD_PARTY_NOTICES.md`. The web build copies that file into `dist/web` as `THIRD_PARTY_NOTICES.txt`, so the licences ship with the font files.
 - **Icons:** Material Symbols Rounded, bundled as SVG path data, never as a font or from a CDN.
-  - Style: fill 0, weight 400, grade 0, at the 48 px optical size, at both 16 px and 24 px. `@material-symbols/svg-400` ships only that optical size, not the 20 px and 24 px ones, which adjust the strokes for small sizes.
-  - Vendor only the glyphs pitwall uses, from a pinned upstream release (the repo's dependency rules apply if a package is used to extract them). Keep the path data in `web/src/icons/paths.ts`, keyed by the semantic names below.
-    - Today's release is `@material-symbols/svg-400@0.47.6`, which isn't a dependency. `scripts/extract-icons.ts` regenerates `paths.ts` from an unpacked copy (from `npm pack`), reading it as data; its header comment has the steps.
-  - Render them through one `Icon` component, `web/src/components/Icon.tsx`: `<svg viewBox="0 -960 960 960" width height fill="currentColor" aria-hidden="true" focusable="false">`, with `size` 16 (the default) or 24.
-  - **Licence files:** Apache 2.0. The licence text is at `web/src/icons/LICENSE` and in `THIRD_PARTY_NOTICES.md`. The release has no `NOTICE` file.
+  - Style: fill 0, weight 400, grade 0. Each size draws its own optical size, which sets the stroke weight for that size: 16 px draws the 20 px design (there's no 16 px one), and 24 px draws the 24 px design.
+    - The 48 px design, the only one in the `@material-symbols/svg-400` package, is too thin at 16 px: about 1.0 px strokes, against 1.2 px for the 20 px design.
+  - Vendor only the glyphs pitwall uses, from a pinned upstream commit at least 14 days old, as the repo's dependency rule asks. Keep the path data in `web/src/icons/paths.ts`, one path per size, keyed by the semantic names below.
+    - Today's source is `google/material-design-icons` at commit `737e3324305806514d7909874fa1818ae1808232` (2026-10-02): `symbols/web/<glyph>/materialsymbolsrounded/<glyph>_20px.svg` and `_24px.svg`. Nothing is installed.
+    - `scripts/extract-icons.ts` prints a curl config for exactly those files and the licence, then regenerates `paths.ts` from the fetched copies, reading them as data. Its header comment has the steps.
+  - Render them through one `Icon` component, `web/src/components/Icon.tsx`: `<svg viewBox="0 -960 960 960" width height fill="currentColor" aria-hidden="true" focusable="false">`, with `size` 16 (the default) or 24, which picks that size's path.
+  - **Licence files:** Apache 2.0. The licence text is at `web/src/icons/LICENSE` and in `THIRD_PARTY_NOTICES.md`. The repository has no `NOTICE` file at that commit.
   - The CSP allows inline SVG; no `img-src` change is needed.
 - **Semantic icon names:** components ask for a meaning, not a glyph, so a glyph changes in one place.
 

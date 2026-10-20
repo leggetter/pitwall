@@ -6,7 +6,7 @@ pitwall's web UI includes the third-party material below. Each licence is reprod
 | --- | --- | --- | --- |
 | [Inter](https://github.com/rsms/inter) | `@fontsource/inter` 5.3.0 (Google Fonts version v20) | SIL Open Font License 1.1 | Declared in `web/src/fonts.css`. The build copies the font files into `dist/web/assets/`. |
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | `@fontsource/jetbrains-mono` 5.3.0 (Google Fonts version v24) | SIL Open Font License 1.1 | Declared in `web/src/fonts.css`. The build copies the font files into `dist/web/assets/`. |
-| [Material Symbols](https://github.com/google/material-design-icons), Rounded | `@material-symbols/svg-400` 0.47.6 | Apache License 2.0 | SVG path data in `web/src/icons/paths.ts`, with the licence beside it in `web/src/icons/LICENSE`. The package has no NOTICE file. |
+| [Material Symbols](https://github.com/google/material-design-icons), Rounded | `google/material-design-icons` at commit `737e3324305806514d7909874fa1818ae1808232` (2026-10-02), the 20 px and 24 px optical sizes | Apache License 2.0 | SVG path data in `web/src/icons/paths.ts`, with the licence beside it in `web/src/icons/LICENSE`. The repository has no NOTICE file at that commit. |
 
 The font files are used unmodified. The icon path data is each SVG's `d` attribute, copied unchanged by `scripts/extract-icons.ts`.
 

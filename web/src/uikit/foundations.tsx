@@ -241,7 +241,7 @@ export function Icons() {
     <>
       <Specimen
         title={`Every icon (${NAMES.length})`}
-        note="Each name in ICON_PATHS at 16 px and 24 px, then at 16 px in a line of 14 px text. Material Symbols Rounded at the 48 px optical size, the only one the package has."
+        note="Each name in ICON_PATHS at 16 px and 24 px, then at 16 px in a line of 14 px text. Material Symbols Rounded: 16 px draws the 20 px optical size, and 24 px the 24 px one."
       >
         <ul className="uikit-icons">
           {NAMES.map((name) => (
