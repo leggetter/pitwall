@@ -1,5 +1,6 @@
-// The tokens come first, before the stylesheets the components import.
+// The tokens come first, before the stylesheets the components import. fonts.css bundles the fonts.
 import './tokens.css';
+import './fonts.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
