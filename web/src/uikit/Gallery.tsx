@@ -64,7 +64,7 @@ const SECTIONS: Section[] = [
     intro: 'Stop session and Remove session, from the actions menu, and the restart before attaching, each asking, busy, and with its result.',
     Content: Confirmations,
   },
-  { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab, attached to a scripted server instead of pitwall.', Content: Terminals },
+  { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab in each of its bar states, with both notices, attached to a scripted server instead of pitwall. The screen stays dark in both themes.', Content: Terminals },
   { id: 'alerts', title: 'Alerts and the app strip', intro: 'Alert in each tone, as the page alerts use it, and AppStrip, for while the relay is off until restart.', Content: Alerts },
   { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, on Dialog: empty, filled, with errors, starting, and after a failure.', Content: Dialogs },
   {

@@ -772,34 +772,6 @@ textarea {
   line-height: var(--pw-leading-s);
 }
 
-/*
- * The older banners, left on the terminal's notices (W29) until they become inline alerts too. The
- * page alerts, the confirmations (W24) and the New session dialog's failure (W25) are inline alerts.
- */
-
-.banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--pw-border);
-  border-left-width: 4px;
-  border-radius: var(--pw-radius-md);
-  background: var(--pw-surface);
-  overflow-wrap: anywhere;
-}
-
-.banner.error {
-  background: var(--pw-danger-tint);
-  border-color: var(--pw-danger-border);
-}
-
-.banner.muted {
-  color: var(--pw-text-muted);
-}
-
 /* Content */
 
 /*

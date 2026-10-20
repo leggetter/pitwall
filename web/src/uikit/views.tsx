@@ -639,10 +639,11 @@ export function Confirmations() {
   );
 }
 
-/** Opens the Terminal tab, then waits for the terminal's status to be `state`. */
+/** Opens the Terminal tab, then waits for the terminal's status to be `state`, and for a notice when it has ended. */
 const attach = (state: string) => async (root: HTMLElement) => {
   await openTerminal(root);
-  await until(`the terminal to be ${state}`, () => root.querySelector(`.attach-state.state-${state}`));
+  await until(`the terminal to be ${state}`, () => root.querySelector(`.attach-status[data-status="${state}"]`));
+  if (state === 'ended') await element(root, '.attach-notice');
 };
 
 interface TerminalCase {
@@ -655,18 +656,36 @@ interface TerminalCase {
 }
 
 const TERMINAL_CASES: TerminalCase[] = [
-  { title: 'Attaching', note: 'The scripted server never answers, so it stays here.', script: 'connecting', state: 'connecting', session: working('terminal-connecting') },
-  { title: 'Attached', note: 'xterm.js, with made-up output.', script: 'attached', state: 'attached', session: working('terminal-attached') },
   {
-    title: 'Restart and attach',
-    note: "The session isn't running, so attaching asks first.",
+    title: 'Attaching',
+    note: 'A subtle neutral badge with a spinner, and an empty screen. The scripted server never answers, so it stays here.',
+    script: 'connecting',
+    state: 'connecting',
+    session: working('terminal-connecting'),
+  },
+  {
+    title: 'Attached',
+    note: 'A subtle success badge with a dot, and xterm.js in JetBrains Mono, its colours from the --pw-term-* tokens, with made-up output. F6 leaves it, for the Terminal tab.',
+    script: 'attached',
+    state: 'attached',
+    session: working('terminal-attached'),
+  },
+  {
+    title: 'Not running',
+    note: "An outline badge: the session isn't running, so attaching asks first.",
     script: 'restart',
     state: 'confirm-restart',
     session: working('terminal-restart'),
   },
-  { title: 'Ended', note: 'claude attach exited.', script: 'exit', state: 'ended', session: working('terminal-exit') },
-  { title: "Couldn't attach", script: 'error', state: 'ended', session: working('terminal-error') },
-  { title: 'Too many attached', script: 'too-many', state: 'ended', session: working('terminal-too-many') },
+  {
+    title: 'Detached',
+    note: 'claude attach exited cleanly, as it does when you detach inside it: a neutral notice above the screen, Attach again, and Back to the conversation.',
+    script: 'exit',
+    state: 'ended',
+    session: working('terminal-exit'),
+  },
+  { title: "Couldn't attach", note: 'The server refused, so a danger notice.', script: 'error', state: 'ended', session: working('terminal-error') },
+  { title: 'Too many attached', note: 'Four sessions are attached already, so a danger notice.', script: 'too-many', state: 'ended', session: working('terminal-too-many') },
 ];
 
 export function Terminals() {
