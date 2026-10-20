@@ -45,6 +45,7 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 ```
 PLAN.md                  the living plan: status, decisions, milestones
 README.md                what pitwall is, and settled decisions with reasons
+docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/spikes/             spike write-ups, one file per spike
 src/shared/protocol.ts   the contract between the index, the server and the web UI
 src/index/               the session index. Entry point index.ts: startIndexer()
@@ -52,7 +53,12 @@ src/server/              the local HTTP and WebSocket server. Entry point index.
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/test/                test helpers shared across test files, such as the v3 proof; not built
 web/                     the React web UI, built by Vite to dist/web
+web/public/theme-init.js sets the theme before first paint (a same-origin script, for the CSP)
+web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out
+web/src/test/            test helpers and fixtures shared across the web UI's tests; not built
 scripts/dev.ts           runs the two watchers behind `npm run dev`
+scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
+THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 tsconfig.json            server typecheck: src/ with tests, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)

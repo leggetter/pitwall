@@ -1,6 +1,6 @@
 # Spike 004: which repos a session works in
 
-Run on 2026-10-20 against Claude Code 2.1.303 on macOS, for W33, read-only. The sessions are every session pitwall lists under `~/hookdeck/git`, live and recently finished, through pitwall's own adapter (`claude agents --json --all`): 15 sessions, 14 of them with a readable transcript. Of those 14, seven started in the root itself and seven inside a repo. One of the seven started in the root is the coordinator session that ran this spike, so its sub-agent transcripts include the spike's own commands.
+Run on 2026-10-20 against Claude Code 2.1.303 on macOS, for W33, read-only. The sessions are every session pitwall lists under Phil's root (the folder that holds his work repos), live and recently finished, through pitwall's own adapter (`claude agents --json --all`): 15 sessions, 14 of them with a readable transcript. Of those 14, seven started in the root itself and seven inside a repo. One of the seven started in the root is the coordinator session that ran this spike, so its sub-agent transcripts include the spike's own commands.
 
 No session was messaged, attached to, stopped or started, and nothing from a session was written to disk. The measurement script is [`004-repo-grouping.mjs`](004-repo-grouping.mjs). It holds no data and only reads. The judged repos were passed to it as an argument.
 
