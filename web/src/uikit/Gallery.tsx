@@ -15,7 +15,7 @@ import { FinishedSections, SessionRows } from './lists.js';
 import { Dialogs, Layouts, Notices, Pages } from './pages.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
 import { scriptedAttach, stubApi } from './stubs.js';
-import { Confirmations, MessageBoxes, SessionViews, Terminals } from './views.js';
+import { Confirmations, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import './gallery.css';
 
 interface Section {
@@ -37,13 +37,24 @@ const SECTIONS: Section[] = [
   { id: 'filters', title: 'Filters and Sort', intro: 'FilterControls: the filter field, the filter chips and Clear filters, then the Sort setting. Each one keeps its own state.', Content: FilterSpecimens },
   { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, two lines, in the session list it always sits in: in a group, and in Needs you and All sessions.', Content: SessionRows },
   { id: 'finished', title: 'Finished section', intro: 'FinishedSection, at the foot of the session list.', Content: FinishedSections },
-  { id: 'session-view', title: 'Session view', intro: 'SessionView, framed as the window it overlays.', Content: SessionViews },
+  {
+    id: 'session-view',
+    title: 'Session view',
+    intro: 'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state. The Layouts section shows it as the third column.',
+    Content: SessionViews,
+  },
+  { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use.', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer, in each send state.", Content: MessageBoxes },
-  { id: 'confirmations', title: 'Stop and remove', intro: 'SessionActions and its confirmations.', Content: Confirmations },
+  { id: 'confirmations', title: 'Stop and remove', intro: "Stop session and Remove session, from the actions menu, and their confirmations.", Content: Confirmations },
   { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab, attached to a scripted server instead of pitwall.', Content: Terminals },
   { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, empty, filled, with errors and after a failure.', Content: Dialogs },
   { id: 'page-states', title: 'Page states', intro: 'The whole Dashboard in a window 560 px tall, at the gallery\'s width: loading, the selections, alerts, filters and empty states. Each column scrolls.', Content: Pages },
-  { id: 'layouts', title: 'Layouts', intro: 'The whole Dashboard in windows of set widths, for one, two and three columns. A window wider than the gallery scrolls sideways.', Content: Layouts },
+  {
+    id: 'layouts',
+    title: 'Layouts',
+    intro: 'The whole Dashboard in windows of set widths, for one, two and three columns, with the session view in each, and the divider at its limits. A window wider than the gallery scrolls sideways.',
+    Content: Layouts,
+  },
   { id: 'notices', title: 'Badges and notices', intro: 'The status badges, the other badges and the connection badge, and the notices that replace the page.', Content: Notices },
 ];
 

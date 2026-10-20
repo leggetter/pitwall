@@ -1,0 +1,147 @@
+// The menu button and its menu (docs/design-system.md, 4: Menus): its semantics, keyboard and focus.
+
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { MenuButton, type MenuEntry } from './Menu.js';
+
+function setup(overrides: { disabled?: boolean } = {}) {
+  const calls: { label: string; focused: Element | null }[] = [];
+  const select = (label: string) => () => calls.push({ label, focused: document.activeElement });
+  const entries: MenuEntry[] = [
+    { id: 'one', label: 'Copy session ID', icon: 'copy', onSelect: select('Copy session ID') },
+    { id: 'two', label: 'Stop session', icon: 'stop', disabled: overrides.disabled ?? true, hint: "It isn't running.", onSelect: select('Stop session') },
+    { kind: 'separator', id: 'separator' },
+    { id: 'three', label: 'Remove session', icon: 'remove', danger: true, onSelect: select('Remove session') },
+  ];
+  render(
+    <>
+      <button type="button">Before</button>
+      <MenuButton label="Session actions" icon="more" entries={entries} />
+      <button type="button">After</button>
+    </>,
+  );
+  const button = screen.getByRole('button', { name: 'Session actions' });
+  const items = () => screen.getAllByRole('menuitem');
+  return { button, items, calls };
+}
+
+describe('MenuButton', () => {
+  it('is an icon button that says it opens a menu, and controls the menu while it is open', () => {
+    const { button } = setup();
+    expect(button.getAttribute('aria-haspopup')).toBe('menu');
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.hasAttribute('aria-controls')).toBe(false);
+    expect(button.getAttribute('title')).toBe('Session actions');
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+
+    fireEvent.click(button);
+    const menu = screen.getByRole('menu', { name: 'Session actions' });
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(button.getAttribute('aria-controls')).toBe(menu.id);
+    expect(screen.getAllByRole('separator')).toHaveLength(1);
+    expect(screen.getByRole('menuitem', { name: 'Remove session' }).className).toBe('menu-item danger');
+    // Items are reached with the arrows, not Tab.
+    for (const item of screen.getAllByRole('menuitem')) expect(item.tabIndex).toBe(-1);
+  });
+
+  it('focuses the first item on open; ↓ and ↑ move, wrapping, past the separator; Home and End jump', () => {
+    const { button, items } = setup();
+    fireEvent.click(button);
+    const [first, second, third] = items();
+    expect(document.activeElement).toBe(first);
+
+    fireEvent.keyDown(first!, { key: 'ArrowDown' });
+    // A disabled item can still be reached, as the APG asks, so it can say why it's off.
+    expect(document.activeElement).toBe(second);
+    fireEvent.keyDown(second!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(third);
+    fireEvent.keyDown(third!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first!, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(third);
+    fireEvent.keyDown(third!, { key: 'Home' });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first!, { key: 'End' });
+    expect(document.activeElement).toBe(third);
+  });
+
+  it('activates an item with a click, Enter or Space: it closes, focus goes back to the button, then the item runs', () => {
+    const { button, calls } = setup();
+    fireEvent.click(button);
+    // Enter and Space reach a <button> as a click.
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove session' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(button);
+    expect(calls).toEqual([{ label: 'Remove session', focused: button }]);
+  });
+
+  it('ignores a disabled item, which stays aria-disabled with its reason, and keeps the menu open', () => {
+    const { button, calls } = setup();
+    fireEvent.click(button);
+    const stop = screen.getByRole('menuitem', { name: 'Stop session' });
+    expect(stop.getAttribute('aria-disabled')).toBe('true');
+    expect(stop.getAttribute('title')).toBe("It isn't running.");
+    fireEvent.click(stop);
+    expect(calls).toEqual([]);
+    expect(screen.getByRole('menu')).toBeTruthy();
+  });
+
+  it('closes on Escape, handled there so nothing behind closes too, and focus goes back to the button', () => {
+    const { button } = setup();
+    const behind = vi.fn((event: KeyboardEvent) => event.defaultPrevented);
+    document.addEventListener('keydown', behind);
+    fireEvent.click(button);
+
+    fireEvent.keyDown(screen.getAllByRole('menuitem')[1]!, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    // Stopped before it reached the document: Escape there would close the session view.
+    expect(behind).not.toHaveBeenCalled();
+    document.removeEventListener('keydown', behind);
+  });
+
+  it('closes on Tab, putting focus on the button so Tab goes on from there', () => {
+    const { button } = setup();
+    fireEvent.click(button);
+    const tab = fireEvent.keyDown(screen.getAllByRole('menuitem')[0]!, { key: 'Tab' });
+    // Not prevented: the browser moves focus on from the button.
+    expect(tab).toBe(true);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('closes on a press outside, leaving focus to the press, and toggles on its button', () => {
+    const { button } = setup();
+    fireEvent.click(button);
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: 'Copy session ID' }));
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    const after = screen.getByRole('button', { name: 'After' });
+    fireEvent.pointerDown(after);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).not.toBe(button);
+
+    fireEvent.click(button);
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.click(button);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('opens below its button, and above it when there is no room below but there is above', () => {
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) });
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'menu' ? rect(0, 150) : rect(window.innerHeight - 40, 28);
+    });
+    const { button } = setup();
+    fireEvent.click(button);
+    expect(screen.getByRole('menu').className).toBe('menu up');
+    fireEvent.click(button);
+
+    spy.mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'menu' ? rect(0, 150) : rect(20, 28);
+    });
+    fireEvent.click(button);
+    expect(screen.getByRole('menu').className).toBe('menu');
+  });
+});

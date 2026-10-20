@@ -66,7 +66,7 @@ function choose(label: string) {
 
 /** The session list's heading, the selection's name. */
 function listHeading(): HTMLElement {
-  return screen.getByRole('heading', { level: 2, name: /./, hidden: false });
+  return within(screen.getByRole('main')).getByRole('heading', { level: 2, name: /./, hidden: false });
 }
 
 /** The session list's summary. */
@@ -1642,7 +1642,8 @@ describe('the shell', () => {
     const columns = () => [...container.querySelectorAll('.columns > *')].map((part) => part.tagName.toLowerCase() + '.' + part.className);
 
     expect(parts()).toEqual(['app-header', 'columns']);
-    expect(columns()).toEqual(['nav.repo-list', 'main.session-list']);
+    // The third column's pane is there in every layout, empty below 1,200 px, so the session view never remounts.
+    expect(columns()).toEqual(['nav.repo-list', 'main.session-list', 'div.session-pane']);
     expect(screen.queryByRole('search')).toBeNull();
 
     rerender(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} navigation={memoryNavigation()} />);

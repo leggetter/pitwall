@@ -3,7 +3,7 @@
 // such as its replies, its relay exchange, its directory and the message box, is in the session
 // view, one click away.
 
-import type { MouseEvent, ReactNode } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText, relativeTime } from '../format.js';
 import { groupLabel, needsAttention, rowStatusBadge } from '../sessions.js';
@@ -69,11 +69,13 @@ export interface SessionRowProps {
   now: number;
   /** Opens the session view. Clicking the name, or anywhere on the row that isn't a control, calls it. */
   onOpen?: ((sessionId: string) => void) | undefined;
+  /** ↑ or ↓ on the name: the next or previous row (docs/design-system.md, 6.2). */
+  onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   /** This session's view is open. */
   isOpen?: boolean;
 }
 
-export function SessionRow({ session, group, showGroup = false, now, onOpen, isOpen = false }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, now, onOpen, onStep, isOpen = false }: SessionRowProps) {
   const attention = needsAttention(session);
   const { finished } = session;
   const badge = rowStatusBadge(session);
@@ -87,6 +89,13 @@ export function SessionRow({ session, group, showGroup = false, now, onOpen, isO
     // Selecting text to copy it isn't a click on the row.
     if ((window.getSelection()?.toString() ?? '') !== '') return;
     onOpen(session.sessionId);
+  };
+  const onNameKey = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!onStep || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    // Not the list's scroll: focus moves, and the browser scrolls the row it lands on into view.
+    event.preventDefault();
+    onStep(session.sessionId, event.key === 'ArrowDown' ? 1 : -1);
   };
   const className = ['session', attention && 'attention', finished && 'finished', onOpen && 'openable', isOpen && 'open']
     .filter(Boolean)
@@ -118,6 +127,7 @@ export function SessionRow({ session, group, showGroup = false, now, onOpen, isO
                 aria-controls={SESSION_VIEW_ID}
                 aria-current={isOpen || undefined}
                 onClick={() => onOpen(session.sessionId)}
+                onKeyDown={onNameKey}
               >
                 <Highlight text={name} />
               </button>

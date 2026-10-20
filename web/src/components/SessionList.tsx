@@ -58,6 +58,8 @@ export interface SessionListProps {
   orderKey?: string;
   now: number;
   onOpen?: ((sessionId: string) => void) | undefined;
+  /** ↑ or ↓ on a row's name: the next or previous row in the list as shown. */
+  onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   openSessionId?: string | undefined;
 }
 
@@ -102,11 +104,12 @@ export interface FinishedSectionProps {
   showGroup?: boolean;
   now: number;
   onOpen?: ((sessionId: string) => void) | undefined;
+  onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   openSessionId?: string | undefined;
 }
 
 /** "Finished (n)", plus how many of them asked you something, over the finished rows. */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, now, onOpen, openSessionId }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, now, onOpen, onStep, openSessionId }: FinishedSectionProps) {
   const listId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
   const asked = finished.reduce((count, { session }) => count + (session.askedYou ? 1 : 0), 0);
@@ -126,6 +129,7 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
             showGroup={showGroup}
             now={now}
             onOpen={onOpen}
+            onStep={onStep}
             isOpen={session.sessionId === openSessionId}
           />
         ))}
@@ -150,6 +154,7 @@ export function SessionList({
   orderKey = '',
   now,
   onOpen,
+  onStep,
   openSessionId,
 }: SessionListProps) {
   const headingId = useId();
@@ -203,6 +208,7 @@ export function SessionList({
                 showGroup={showGroup}
                 now={now}
                 onOpen={onOpen}
+                onStep={onStep}
                 isOpen={session.sessionId === openSessionId}
               />
             ))}
@@ -214,6 +220,7 @@ export function SessionList({
                 showGroup={showGroup}
                 now={now}
                 onOpen={onOpen}
+                onStep={onStep}
                 openSessionId={openSessionId}
               />
             )}

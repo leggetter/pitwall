@@ -1,9 +1,9 @@
-// A background session's terminal, inside the session view (W10, D3, D9):
-// xterm.js over an attach socket running `claude attach`. Unmounting detaches,
-// so closing the view or the tab leaves the session running.
+// A background session's terminal, the session view's Terminal tab (W10, D3, D9; W22):
+// xterm.js over an attach socket running `claude attach`. Mounting attaches and unmounting
+// detaches, so switching to the Conversation tab, closing the view or closing the browser tab
+// leaves the session running.
 
-import { useCallback, useContext, useEffect, useId, useRef, useState, type RefObject } from 'react';
-import type { SessionKind } from '../../../src/shared/protocol.js';
+import { useContext, useEffect, useId, useRef, useState } from 'react';
 import { AttachContext, attachSocketUrl, endMessage, startAttach, type AttachSession, type AttachStatus } from '../attach.js';
 import './Terminal.css';
 
@@ -26,38 +26,6 @@ async function createTerminal(container: HTMLElement): Promise<TerminalHandle> {
   return (await import('../xterm.js')).createXterm(container);
 }
 
-export interface AttachToggle {
-  /** True for a background session, when the app provides a way to attach. */
-  available: boolean;
-  /** True while the terminal is shown. */
-  open: boolean;
-  show: () => void;
-  /** Closes the terminal, which detaches, and puts focus back on the Attach button. */
-  hide: () => void;
-  /** For the Attach button. */
-  buttonRef: RefObject<HTMLButtonElement | null>;
-}
-
-/** Whether the session view shows its terminal, for SessionView. */
-export function useAttachToggle(kind: SessionKind): AttachToggle {
-  const env = useContext(AttachContext);
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  // Set when the terminal closes, so focus goes back to Attach rather than being lost.
-  const refocus = useRef(false);
-  const show = useCallback(() => setOpen(true), []);
-  const hide = useCallback(() => {
-    refocus.current = true;
-    setOpen(false);
-  }, []);
-  useEffect(() => {
-    if (open || !refocus.current) return;
-    refocus.current = false;
-    buttonRef.current?.focus();
-  }, [open]);
-  return { available: kind === 'background' && env !== undefined, open, show, hide, buttonRef };
-}
-
 const STATE_LABELS: Record<AttachStatus['kind'], string> = {
   connecting: 'Attaching…',
   'confirm-restart': 'Not running',
@@ -69,13 +37,20 @@ export interface SessionTerminalProps {
   sessionId: string;
   /** Leaves the terminal for the conversation. Unmounting detaches. */
   onClose: () => void;
+  /** Each status as it changes, for the Terminal tab's dot and Escape's layering in the session view. */
+  onStatus?: (status: AttachStatus) => void;
 }
 
-export function SessionTerminal({ sessionId, onClose }: SessionTerminalProps) {
+export function SessionTerminal({ sessionId, onClose, onStatus }: SessionTerminalProps) {
   const env = useContext(AttachContext);
   const container = useRef<HTMLDivElement>(null);
   const session = useRef<AttachSession | undefined>(undefined);
   const [status, setStatus] = useState<AttachStatus>({ kind: 'connecting' });
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
+  useEffect(() => {
+    onStatusRef.current?.(status);
+  }, [status]);
   // Bumped by "Attach again", which starts over with a new terminal and socket.
   const [attempt, setAttempt] = useState(0);
   const confirmId = useId();

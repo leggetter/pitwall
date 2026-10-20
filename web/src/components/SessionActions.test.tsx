@@ -69,32 +69,119 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
 });
 
-describe('Stop and Remove', () => {
-  it('are offered for a background session, and not for an interactive one, which keeps its note', async () => {
+/** Opens the view's actions menu, and returns its items' names in order, with "—" for a separator. */
+function openMenu(view: HTMLElement): string[] {
+  fireEvent.click(within(view).getByRole('button', { name: 'Session actions' }));
+  const menu = within(view).getByRole('menu', { name: 'Session actions' });
+  return [...menu.children].map((child) => (child.getAttribute('role') === 'separator' ? '—' : (child.textContent ?? '')));
+}
+
+/** Chooses an item from the actions menu, as a click would. */
+function choose(view: HTMLElement, label: string) {
+  if (!within(view).queryByRole('menu')) openMenu(view);
+  fireEvent.click(within(view).getByRole('menuitem', { name: label }));
+}
+
+const item = (view: HTMLElement, label: string) => within(view).getByRole('menuitem', { name: label });
+
+describe('the actions menu', () => {
+  it('has Copy session ID, Copy attach command, a separator, then Stop and Remove, for a background session', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
     const bg = await openView('pitwall-test-bg');
-    expect(within(bg).getByRole('button', { name: 'Stop' })).toBeTruthy();
-    expect(within(bg).getByRole('button', { name: 'Remove' })).toBeTruthy();
-
-    const interactive = await openView('pitwall-test-interactive');
-    expect(within(interactive).queryByRole('button', { name: 'Stop' })).toBeNull();
-    expect(within(interactive).queryByRole('button', { name: 'Remove' })).toBeNull();
-    expect(within(interactive).getByText(/moves it to the background/)).toBeTruthy();
+    expect(openMenu(bg)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
+    expect(item(bg, 'Remove session').className).toContain('danger');
+    expect(item(bg, 'Stop session').className).not.toContain('danger');
   });
 
-  it('asks before stopping, and Cancel or Escape leaves the session alone and the view open', async () => {
+  it('has only Copy session ID for an interactive session, which keeps its /bg note', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    const interactive = await openView('pitwall-test-interactive');
+    expect(openMenu(interactive)).toEqual(['Copy session ID']);
+    expect(within(interactive).getByRole('img', { name: /Typing \/bg in its terminal moves it to the background/ })).toBeTruthy();
+  });
+
+  it('leaves out Copy attach command when the short id fails the shell-safety check', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { ok: true } }), snap(background({ shortId: '$(touch pitwall-test)' })));
+    const bg = await openView('pitwall-test-bg');
+    expect(openMenu(bg)).toEqual(['Copy session ID', '—', 'Stop session', 'Remove session']);
+  });
+
+  describe('copying', () => {
+    let writeText: ReturnType<typeof vi.fn<(text: string) => Promise<void>>>;
+    beforeEach(() => {
+      writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    });
+
+    it('copies the session ID, says so, and puts focus back on the menu button', async () => {
+      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      const view = await openView('pitwall-test-bg');
+      choose(view, 'Copy session ID');
+      // Written inside the click, as Safari requires.
+      expect(writeText).toHaveBeenCalledWith(BG);
+      expect(within(view).queryByRole('menu')).toBeNull();
+      expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Session actions' }));
+      await settle();
+      expect(view.querySelector('.session-view-copied')?.textContent).toBe('Copied');
+      expect(view.querySelector('.session-view-copied')?.getAttribute('aria-live')).toBe('polite');
+    });
+
+    it("copies the attach command from attachCommand(), never the raw short id", async () => {
+      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      const view = await openView('pitwall-test-bg');
+      choose(view, 'Copy attach command');
+      expect(writeText).toHaveBeenCalledWith('claude attach b3899da0');
+    });
+
+    it('shows the text, selected, when the clipboard refuses', async () => {
+      writeText.mockRejectedValue(new Error('not allowed'));
+      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      const view = await openView('pitwall-test-bg');
+      choose(view, 'Copy attach command');
+      await settle();
+      expect(view.querySelector('.session-view-copied')?.textContent).toBe("Couldn't copy; the text is selected");
+      expect(view.querySelector('.session-view-copy-fallback')?.textContent).toBe('Attach command: claude attach b3899da0');
+      expect(window.getSelection()?.toString()).toBe('claude attach b3899da0');
+    });
+  });
+});
+
+describe('Stop and Remove', () => {
+  it('are offered for a background session, and not for an interactive one', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    const bg = await openView('pitwall-test-bg');
+    openMenu(bg);
+    expect(item(bg, 'Stop session')).toBeTruthy();
+    expect(item(bg, 'Remove session')).toBeTruthy();
+
+    const interactive = await openView('pitwall-test-interactive');
+    openMenu(interactive);
+    expect(within(interactive).queryByRole('menuitem', { name: 'Stop session' })).toBeNull();
+    expect(within(interactive).queryByRole('menuitem', { name: 'Remove session' })).toBeNull();
+  });
+
+  it('asks before stopping, and Cancel or Escape leaves the session alone and the view open, with focus back on the menu button', async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
     renderDashboard(server);
     const view = await openView('pitwall-test-bg');
+    const menuButton = within(view).getByRole('button', { name: 'Session actions' });
 
-    fireEvent.click(within(view).getByRole('button', { name: 'Stop' }));
+    choose(view, 'Stop session');
     const confirm = within(view).getByRole('group', { name: STOP_TEXT });
     expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
     fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
     expect(within(view).queryByRole('group')).toBeNull();
+    expect(document.activeElement).toBe(menuButton);
 
-    fireEvent.click(within(view).getByRole('button', { name: 'Stop' }));
+    choose(view, 'Stop session');
     fireEvent.keyDown(within(view).getByRole('button', { name: 'Stop session' }), { key: 'Escape' });
+    expect(within(view).queryByRole('group')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'pitwall-test-bg' })).toBe(view);
+    expect(document.activeElement).toBe(menuButton);
+
+    // Escape from elsewhere cancels the confirmation first, and only then closes the view.
+    choose(view, 'Stop session');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(within(view).queryByRole('group')).toBeNull();
     expect(screen.getByRole('dialog', { name: 'pitwall-test-bg' })).toBe(view);
     expect(postedUrls(server)).toEqual([]);
@@ -104,7 +191,7 @@ describe('Stop and Remove', () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
     renderDashboard(server);
     const view = await openView('pitwall-test-bg');
-    fireEvent.click(within(view).getByRole('button', { name: 'Stop' }));
+    choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
     await settle();
 
@@ -115,21 +202,28 @@ describe('Stop and Remove', () => {
   });
 
   it("can't stop a session that isn't running, but can remove it", async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }), snap(background({ alive: false, state: 'stopped', pid: undefined, finished: true })));
+    const server = fakeServer({ status: 200, body: { ok: true } });
+    renderDashboard(server, snap(background({ alive: false, state: 'stopped', pid: undefined, finished: true })));
     // Stopped with no process: finished, so it's in the collapsed Finished list, and keeps Remove.
     fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
     const view = await openView('pitwall-test-bg');
-    const stop = within(view).getByRole('button', { name: 'Stop' }) as HTMLButtonElement;
-    expect(stop.disabled).toBe(true);
+    openMenu(view);
+    const stop = item(view, 'Stop session');
+    expect(stop.getAttribute('aria-disabled')).toBe('true');
     expect(stop.title).toMatch(/isn't running/);
-    expect((within(view).getByRole('button', { name: 'Remove' }) as HTMLButtonElement).disabled).toBe(false);
+    // Activating it does nothing, and the menu stays open.
+    fireEvent.click(stop);
+    expect(within(view).queryByRole('group')).toBeNull();
+    expect(within(view).getByRole('menu')).toBeTruthy();
+    expect(item(view, 'Remove session').hasAttribute('aria-disabled')).toBe(false);
+    expect(postedUrls(server)).toEqual([]);
   });
 
   it('asks before removing, then removes the session and closes its view', async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
     renderDashboard(server);
     const view = await openView('pitwall-test-bg');
-    fireEvent.click(within(view).getByRole('button', { name: 'Remove' }));
+    choose(view, 'Remove session');
     expect(within(view).getByRole('group', { name: REMOVE_TEXT })).toBeTruthy();
     fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
     await settle();
@@ -142,14 +236,14 @@ describe('Stop and Remove', () => {
     const refusal = "Kept the worktree pitwall-test-wt: it has 2 unpushed commits.\nTo discard them, run 'claude rm b3899da0 --discard-unpushed 1a2b3c@pitwall-test-wt'.";
     renderDashboard(fakeServer({ status: 409, body: { ok: false, error: refusal } }, { status: 502 }));
     const view = await openView('pitwall-test-bg');
-    fireEvent.click(within(view).getByRole('button', { name: 'Remove' }));
+    choose(view, 'Remove session');
     fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
     await settle();
 
     expect(within(view).getByRole('alert').textContent).toBe(refusal);
     expect(screen.getByRole('dialog', { name: 'pitwall-test-bg' })).toBe(view);
 
-    fireEvent.click(within(view).getByRole('button', { name: 'Stop' }));
+    choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
     await settle();
     expect(within(view).getByRole('alert').textContent).toBe("Couldn't stop the session (HTTP 502).");
@@ -164,14 +258,19 @@ describe('Stop and Remove', () => {
     );
     renderDashboard(server);
     const view = await openView('pitwall-test-bg');
-    fireEvent.click(within(view).getByRole('button', { name: 'Stop' }));
+    choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
     await settle();
-    expect((within(view).getByRole('button', { name: 'Stopping…' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((within(view).getByRole('button', { name: 'Remove' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(view).getByRole('status').textContent).toBe('Stopping…');
+    openMenu(view);
+    expect(item(view, 'Stop session').getAttribute('aria-disabled')).toBe('true');
+    expect(item(view, 'Remove session').getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(item(view, 'Remove session'));
+    expect(within(view).queryByRole('group')).toBeNull();
     answer(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     await settle();
-    expect(within(view).getByRole('button', { name: 'Stop' })).toBeTruthy();
+    expect(within(view).getByRole('status').textContent).toBe('Stopped. Its conversation is kept.');
+    expect(item(view, 'Remove session').hasAttribute('aria-disabled')).toBe(false);
   });
 
   it('are not offered once the session is no longer listed', async () => {
@@ -179,7 +278,7 @@ describe('Stop and Remove', () => {
     const view = await openView('pitwall-test-bg');
     update(snapshot([group({ sessions: [session({ sessionId: INTERACTIVE, name: 'pitwall-test-interactive' })] })]));
     await settle();
-    expect(within(view).queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command']);
     expect(within(view).getByText(/no longer listed/)).toBeTruthy();
   });
 });
