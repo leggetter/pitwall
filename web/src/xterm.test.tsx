@@ -50,7 +50,7 @@ describe('createXterm', () => {
     style.textContent = tokensCss;
     document.head.append(style);
     createXterm(document.createElement('div'));
-    expect(lastTheme()).toEqual({ background: '#0e1115', foreground: '#e6e9ee', cursor: '#e6e9ee' });
+    expect(lastTheme()).toEqual({ background: '#141412', foreground: '#F5F5F5', cursor: '#F5F5F5' });
   });
 
   it('reads the tokens when the terminal is created, not before', () => {

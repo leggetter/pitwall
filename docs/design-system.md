@@ -55,7 +55,7 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
 | `--pw-<tone>-border` | The 1 px edge of a tinted container (decorative) |
 
 - **Where colours may go:**
-  - `-fg` tokens sit only on the neutral surfaces: `--pw-bg`, `--pw-surface`, `--pw-surface-muted`, `--pw-surface-sunken`, `--pw-surface-hover`, `--pw-surface-hover-bg` and `--pw-selected`. On a tinted container, use that tint's `-tint-fg` instead.
+  - `-fg` tokens sit only on the neutral surfaces: `--pw-bg`, `--pw-surface`, `--pw-surface-muted`, `--pw-surface-sunken`, `--pw-surface-hover`, `--pw-surface-hover-bg`, `--pw-surface-overlay` and `--pw-selected`. On a tinted container, use that tint's `-tint-fg` instead.
   - `--pw-surface-strong` is a fill for pressed and active states. Only `--pw-text`, `--pw-text-muted` and `--pw-text-subtle` go on it.
 
 ### 2.2 Themes and switching
@@ -131,10 +131,10 @@ Code and terminal colours:
 
 ### 2.5 Contrast
 
-WCAG 2.x contrast ratios for the final values above, checked by script.
+WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test.tsx`, which reads `tokens.css`.
 
 - **Ratio shown:** the *worst* case across every background the token is allowed on (see [2.1](#21-how-tokens-work)), with that background in brackets.
-- **"Every surface and tint":** `--pw-bg`, `--pw-surface`, `--pw-surface-muted`, `--pw-surface-sunken`, `--pw-surface-strong`, both hovers, `--pw-selected`, and all five `-tint` tokens.
+- **"Every surface and tint":** `--pw-bg`, `--pw-surface`, `--pw-surface-muted`, `--pw-surface-sunken`, `--pw-surface-strong`, both hovers, `--pw-surface-overlay`, `--pw-selected`, and all five `-tint` tokens. The overlay has the same value as `--pw-surface` in light and `--pw-surface-muted` in dark, so it changes no ratio below.
 - **"Neutral surfaces":** the same list without `--pw-surface-strong` and the tints.
 
 | Pair | Light | Dark | Needs |
@@ -160,12 +160,14 @@ WCAG 2.x contrast ratios for the final values above, checked by script.
 | `--pw-on-danger-solid` on `--pw-danger-solid` | 5.50 | 7.05 | 4.5:1 |
 | `--pw-on-accent` on `--pw-accent` and `--pw-accent-hover` | 7.78 (accent) | 5.08 (accent hover) | 4.5:1 |
 | `--pw-text` on `--pw-highlight` | 15.45 | 6.95 | 4.5:1 |
+| `--pw-text-inverse` on `--pw-text` (the app strip) | 18.44 | 16.92 | 4.5:1 |
 | `--pw-code-boolean` on surface and muted | 9.78 (muted) | 5.28 (muted) | 4.5:1 |
 | `--pw-code-string` on surface and muted | 6.82 (muted) | 6.75 (muted) | 4.5:1 |
 | `--pw-code-number` on surface and muted | 7.26 (muted) | 12.95 (muted) | 4.5:1 |
 | `--pw-code-null` on surface and muted | 7.37 (muted) | 5.83 (muted) | 4.5:1 |
 | `--pw-term-fg` on `--pw-term-bg` | 16.92 | 16.92 | 4.5:1 |
 | `--pw-term-red` / `-green` / `-yellow` / `-blue` on `--pw-term-bg` | 6.36 / 7.37 / 14.15 / 5.77 | same | 4.5:1 |
+| `--pw-term-cursor` on `--pw-term-bg` | 16.92 | 16.92 | 3:1 |
 | `--pw-border-control` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-border-input` on surface, bg, muted and sunken | 3.21 (sunken) | 3.12 (sunken) | 3:1 |
 | `--pw-focus` on surface, bg, muted, sunken and selected | 4.29 (selected) | 4.99 (sunken) | 3:1 |
@@ -174,6 +176,8 @@ WCAG 2.x contrast ratios for the final values above, checked by script.
 
 - **The one exemption:** `--pw-text-disabled` is 2.62:1 (light) and 2.25:1 (dark) on `--pw-surface`. WCAG 1.4.3 exempts text in inactive controls. Use it only on controls that are `aria-disabled`, never for content.
 - **Decorative only:** `--pw-border`, `--pw-border-strong`, `--pw-border-dashed` and the tone `-border` tokens are below 3:1. They may never be the only thing that shows where a control is or what state it's in.
+- **Translucent:** `--pw-backdrop` and `--pw-term-selection` aren't checked. Nothing is drawn on the backdrop, and xterm.js draws selected text in its own colours.
+- **The test also checks** each state alias against the background its components pair it with, and fails when a colour token is neither checked nor listed as exempt, decorative or translucent.
 - **Ghost buttons** have no edge until hovered. That's allowed: their label or icon identifies them, and WCAG 1.4.11 applies to an edge only when there is one.
 - **When adding a colour,** check it against every background it may sit on, in both modes, and add it to this table.
 
@@ -584,7 +588,7 @@ The first restyle PR renames today's custom properties (in `web/src/styles.css`,
 |---|---|---|
 | `--bg` | `#f4f5f7` / `#0e1115` | `--pw-bg` |
 | `--surface` | `#ffffff` / `#161a20` | `--pw-surface` (and `--pw-surface-overlay` for the dialog); `--pw-on-accent` for the primary button's text; `--pw-state-asked-bg` for the "asked you" badge |
-| `--surface-raised` | `#f0f2f5` / `#1e232b` | `--pw-surface-sunken` for fills (group headers, user messages, code chips); `--pw-surface-hover` for hovers |
+| `--surface-raised` | `#f0f2f5` / `#1e232b` | `--pw-surface-muted` for group headers; `--pw-surface-sunken` for the other fills (user messages, code chips); `--pw-surface-hover` for hovers |
 | `--border` | `#d8dce2` / `#2b323c` | `--pw-border` |
 | `--border-strong` | `#b9c0c9` / `#3d4552` | `--pw-border-input` on fields; `--pw-border-control` on buttons and the dialog edge; `--pw-border-strong` on the session view's edge |
 | `--text` | `#1b1f24` / `#e6e9ee` | `--pw-text` |
