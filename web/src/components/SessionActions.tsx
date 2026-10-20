@@ -1,39 +1,60 @@
-// Stop and Remove for a background session (W12), each behind a confirmation. The session view's
-// actions menu asks for them (W22); the confirmation, the API calls and the result are as W12 built
-// them, until W24 restyles inline confirmations. Shows Claude Code's message when it refuses, such as
-// `claude rm` keeping a worktree with unpushed commits.
+// Stop and Remove for a background session (W12), each behind an inline confirmation (docs/design-
+// system.md, 4: Inline confirmation). The session view's actions menu asks for them (W22). The API
+// calls are W12's. While one runs, its confirmation stays, with the confirm button busy; then the
+// result shows in its place: "Stopped. Its conversation is kept.", or Claude Code's message when it
+// refuses, such as `claude rm` keeping a worktree with unpushed commits. Removing closes the view.
 
-import { useCallback, useContext, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { plainText } from '../format.js';
 import { sessionAction, type SessionAction } from '../spawn.js';
+import { Alert, Detail } from './Alert.js';
+import type { IconName } from './Icon.js';
+import { InlineConfirm } from './InlineConfirm.js';
 import '../actions.css';
 
-const CONFIRM: Record<SessionAction, { text: string; confirm: string; busy: string }> = {
+export const CONFIRM: Record<
+  SessionAction,
+  { question: string; consequence: string; confirm: string; busy: string; icon: IconName; refused: string }
+> = {
   stop: {
-    text: 'Stops the session; its conversation is kept. Attaching to it later asks before restarting it.',
+    question: 'Stop this session?',
+    consequence: 'Its conversation is kept. Attaching to it later asks before restarting it.',
     confirm: 'Stop session',
     busy: 'Stopping…',
+    icon: 'stop',
+    refused: "Couldn't stop the session.",
   },
   remove: {
-    text: 'Removes it from the list. Claude Code keeps a worktree that has unpushed commits.',
+    question: 'Remove this session?',
+    consequence: 'It leaves the list. Claude Code keeps a worktree that has unpushed commits.',
     confirm: 'Remove session',
     busy: 'Removing…',
+    icon: 'remove',
+    refused: "Couldn't remove the session.",
   },
 };
 
+export const STOPPED = 'Stopped. Its conversation is kept.';
+
+/** What happened. `detail` is Claude Code's own message, when it refused. */
+export type ActionResult = { ok: true; text: string } | { ok: false; text: string; detail?: string };
+
+/** How a run ended: removed (the view closes), or anything else (the view stays). */
+export type RunEnd = 'removed' | 'stopped' | 'failed';
+
 export interface SessionActions {
-  /** The action waiting for its confirmation, if any. */
+  /** The action whose confirmation is open, if any. It stays open while the action runs. */
   confirming: SessionAction | undefined;
   /** The action whose request is out, if any. Nothing else can start meanwhile. */
   running: SessionAction | undefined;
-  result: { ok: boolean; text: string } | undefined;
+  result: ActionResult | undefined;
   /** Opens the action's confirmation. */
   ask: (action: SessionAction) => void;
-  /** Closes the confirmation without doing anything. */
+  /** Closes the confirmation without doing anything. Does nothing while the action runs. */
   cancel: () => void;
-  run: (action: SessionAction) => Promise<void>;
+  run: (action: SessionAction) => Promise<RunEnd>;
 }
 
 /**
@@ -45,7 +66,8 @@ export function useSessionActions(session: SessionSummary, onRemoved: () => void
   const alive = useRef(true);
   const [confirming, setConfirming] = useState<SessionAction>();
   const [running, setRunning] = useState<SessionAction>();
-  const [result, setResult] = useState<{ ok: boolean; text: string }>();
+  const runningRef = useRef<SessionAction | undefined>(undefined);
+  const [result, setResult] = useState<ActionResult>();
   const { sessionId } = session;
 
   useEffect(() => {
@@ -56,30 +78,43 @@ export function useSessionActions(session: SessionSummary, onRemoved: () => void
   }, []);
 
   const ask = useCallback((action: SessionAction) => {
+    if (runningRef.current) return;
     setResult(undefined);
     setConfirming(action);
   }, []);
 
-  const cancel = useCallback(() => setConfirming(undefined), []);
+  const cancel = useCallback(() => {
+    if (!runningRef.current) setConfirming(undefined);
+  }, []);
 
   const run = useCallback(
-    async (action: SessionAction) => {
-      setConfirming(undefined);
+    async (action: SessionAction): Promise<RunEnd> => {
+      if (runningRef.current) return 'failed';
       setResult(undefined);
       if (!api) {
+        setConfirming(undefined);
         setResult({ ok: false, text: "This can't be done from here." });
-        return;
+        return 'failed';
       }
+      runningRef.current = action;
       setRunning(action);
       const outcome = await sessionAction(api, sessionId, action);
-      if (!alive.current) return;
+      runningRef.current = undefined;
+      if (!alive.current) return 'failed';
       setRunning(undefined);
+      setConfirming(undefined);
       if (outcome.kind === 'done') {
-        if (action === 'remove') onRemoved();
-        else setResult({ ok: true, text: 'Stopped. Its conversation is kept.' });
-      } else if (outcome.kind !== 'unauthorized') {
-        setResult({ ok: false, text: outcome.error });
+        if (action === 'remove') {
+          onRemoved();
+          return 'removed';
+        }
+        setResult({ ok: true, text: STOPPED });
+        return 'stopped';
       }
+      if (outcome.kind === 'refused') setResult({ ok: false, text: CONFIRM[action].refused, detail: outcome.error });
+      else if (outcome.kind === 'failed') setResult({ ok: false, text: outcome.error });
+      // On 'unauthorized' the app has already replaced the dashboard with the token notice.
+      return 'failed';
     },
     [api, sessionId, onRemoved],
   );
@@ -89,59 +124,62 @@ export function useSessionActions(session: SessionSummary, onRemoved: () => void
 
 export interface SessionConfirmProps {
   actions: SessionActions;
-  /** After Cancel or Escape: focus goes back to what opened the confirmation, the actions menu's button. */
-  onCancel: () => void;
+  /** Focus back on what opened the confirmation, the actions menu's button: after Cancel, Escape, or a result. */
+  onReturnFocus: () => void;
 }
 
-/** The open confirmation, the action in progress, and the last result, under the session view's header. */
-export function SessionConfirm({ actions, onCancel }: SessionConfirmProps) {
-  const textId = useId();
-  const cancelRef = useRef<HTMLButtonElement>(null);
+/** The open confirmation, busy while its action runs, then the result, under the session view's header. */
+export function SessionConfirm({ actions, onReturnFocus }: SessionConfirmProps) {
+  const box = useRef<HTMLDivElement>(null);
   const { confirming, running, result } = actions;
 
-  // The safe choice gets focus when a confirmation opens.
-  useEffect(() => {
-    if (confirming) cancelRef.current?.focus();
-  }, [confirming]);
-
-  const cancel = () => {
-    actions.cancel();
-    onCancel();
+  const confirm = (action: SessionAction) => {
+    void actions.run(action).then((end) => {
+      // Removed: the view closes, and the app puts focus back on the list. Otherwise focus goes back to
+      // the menu button, unless it was moved elsewhere while the request was out.
+      if (end === 'removed') return;
+      const active = document.activeElement;
+      if (active === null || active === document.body || box.current?.contains(active)) onReturnFocus();
+    });
   };
 
-  const onConfirmKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Escape') return;
-    // Cancels the confirmation without closing the session view.
-    event.preventDefault();
-    event.stopPropagation();
-    cancel();
-  };
-
-  if (!confirming && !running && !result) return null;
+  if (!confirming && !result) return null;
   return (
-    <div className="session-actions">
-      {confirming && (
-        <div className="session-confirm" role="group" aria-labelledby={textId} onKeyDown={onConfirmKey}>
-          <p id={textId}>{CONFIRM[confirming].text}</p>
-          <div className="session-confirm-buttons">
-            <button type="button" className="button sm danger" onClick={() => void actions.run(confirming)}>
-              {CONFIRM[confirming].confirm}
-            </button>
-            <button ref={cancelRef} type="button" className="button sm" onClick={cancel}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-      {running && (
-        <p className="action-result" role="status" aria-busy="true">
-          {CONFIRM[running].busy}
-        </p>
-      )}
-      {result && (
-        <p className={result.ok ? 'action-result' : 'action-result failed'} role={result.ok ? 'status' : 'alert'}>
-          {plainText(result.text)}
-        </p>
+    <div className="session-actions" ref={box}>
+      {confirming ? (
+        <InlineConfirm
+          // A new confirmation, such as Remove chosen while Stop's was open, takes focus afresh.
+          key={confirming}
+          question={CONFIRM[confirming].question}
+          consequence={CONFIRM[confirming].consequence}
+          confirmLabel={CONFIRM[confirming].confirm}
+          busyLabel={CONFIRM[confirming].busy}
+          icon={CONFIRM[confirming].icon}
+          variant="danger"
+          busy={running === confirming}
+          onConfirm={() => confirm(confirming)}
+          onCancel={() => {
+            actions.cancel();
+            onReturnFocus();
+          }}
+        />
+      ) : (
+        result &&
+        (result.ok ? (
+          <Alert tone="success" role="status">
+            {result.text}
+          </Alert>
+        ) : (
+          <Alert tone="danger" role="alert">
+            {plainText(result.text)}
+            {result.detail !== undefined && (
+              <>
+                {' '}
+                <Detail>{plainText(result.detail)}</Detail>
+              </>
+            )}
+          </Alert>
+        ))
       )}
     </div>
   );

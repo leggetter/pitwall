@@ -3,7 +3,16 @@
 // the token, and the words the UI uses for each outcome. The server
 // (src/server/relayRoute.ts, relay.ts) is the authority on every check.
 
-import { relayPath, type RelayAlert, type RelayExchange, type RelayResult, type RelayStatus, type SessionSummary } from '../../src/shared/protocol.js';
+import {
+  relayPath,
+  type ConversationEntry,
+  type RelayAlert,
+  type RelayExchange,
+  type RelayOff,
+  type RelayResult,
+  type RelayStatus,
+  type SessionSummary,
+} from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 
 /** The server's limit, repeated so the box can say so before sending. */
@@ -84,13 +93,85 @@ export function exchangeSummary(exchange: RelayExchange): { status: string; tone
   return { status: STATUS_LABEL[exchange.status], tone: statusTone(exchange.status) };
 }
 
+/** The result of a send, or 'error' for pitwall's own failure before the relay answered. */
+export type SendResultStatus = RelayStatus | 'error';
+
+const RESULT_TONES: Record<RelayTone, 'success' | 'warning' | 'danger'> = { ok: 'success', waiting: 'warning', failed: 'danger' };
+
 /**
- * The banner for the snapshot's relayAlert: what pitwall's relay tried that
- * nobody asked for. `detail` is pitwall's own words, never a message's text.
+ * The inline alert for a send's result (docs/design-system.md, 4: Message box): delivered is success
+ * and role="status"; held and "may have arrived" are warnings, refused and not sent are danger, all
+ * role="alert", since they need a look.
  */
-export function relayAlertText(alert: RelayAlert): { summary: string; count: string } {
-  const summary = alert.blocked
-    ? "pitwall's relay tried to send a message nobody asked for, and pitwall blocked it. That usually means another session messaged the relay."
-    : "pitwall's relay sent a message nobody asked for, or one pitwall couldn't check, before pitwall could stop it. It may have reached one of your sessions: check their conversations for a message from pitwall-relay. That usually means another session messaged the relay, and pitwall has stopped using it until you restart pitwall.";
-  return { summary, count: alert.count === 1 ? 'Once since pitwall started.' : `${alert.count} times since pitwall started.` };
+export function resultLook(status: SendResultStatus): { tone: 'success' | 'warning' | 'danger'; role: 'status' | 'alert' } {
+  const tone = status === 'error' ? 'danger' : RESULT_TONES[statusTone(status)];
+  return { tone, role: status === 'delivered' ? 'status' : 'alert' };
+}
+
+/** The character count shows from this share of the limit. */
+export const COUNT_FROM = 0.8;
+
+/**
+ * The message box's character count: nothing below 80 % of the limit, then "6,554 / 8,192", then
+ * "12 characters over the 8,192 limit" once over it.
+ */
+export function characterCount(length: number, limit = MAX_RELAY_TEXT_LENGTH): { text: string; over: boolean } | undefined {
+  if (length < limit * COUNT_FROM) return undefined;
+  const format = (n: number) => n.toLocaleString('en');
+  if (length <= limit) return { text: `${format(length)} / ${format(limit)}`, over: false };
+  const over = length - limit;
+  return { text: `${format(over)} ${over === 1 ? 'character' : 'characters'} over the ${format(limit)} limit`, over: true };
+}
+
+/** Whitespace collapsed, for comparing text the conversation and the relay each cleaned in their own way. */
+function squash(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** Replies at least this long may sit inside a longer entry; shorter ones must be the whole entry, or "Done." would match everything. */
+const CONTAINED_FROM = 40;
+
+/**
+ * Whether the conversation already shows the exchange's reply, so the message box shows only its
+ * status line (docs/design-system.md, 4: Message box). It does when one of Claude's entries since
+ * the send has the reply's text: the whole entry, or for a reply of 40 characters or more, part of
+ * one. A reply only in the session's SendMessage call isn't in its conversation, which shows a tool
+ * call by its name alone, so it stays in the footer.
+ */
+export function replyInConversation(exchange: RelayExchange, entries: readonly ConversationEntry[]): boolean {
+  if (!exchange.reply) return false;
+  // The relay cuts a long reply with an ellipsis; the rest is a prefix of what was sent.
+  const reply = squash(exchange.reply.text.replace(/…$/, ''));
+  if (reply === '') return false;
+  const sent = Date.parse(exchange.sentAt);
+  return entries.some((entry) => {
+    if (entry.kind !== 'assistant') return false;
+    if (entry.at !== undefined && Date.parse(entry.at) < sent) return false;
+    const text = squash(entry.text);
+    return text === reply || (reply.length >= CONTAINED_FROM && text.includes(reply));
+  });
+}
+
+/**
+ * The page alert for the snapshot's relayAlert (docs/design-system.md, 4: Alerts and banners): what
+ * pitwall's relay tried that nobody asked for. Blocked is a warning, since nothing was sent; otherwise
+ * it's danger, since pitwall saw it only afterwards. It says messaging is off only when the snapshot's
+ * relayOff says so: some alerts only restart the relay. `detail` is pitwall's own words, never a
+ * message's text.
+ */
+export function relayAlertText(alert: RelayAlert, off?: RelayOff): { title: string; summary: string; count: string } {
+  const offNote = off ? ' Messaging is off until you restart pitwall.' : '';
+  const count = alert.count === 1 ? 'Once since pitwall started.' : `${alert.count.toLocaleString('en')} times since pitwall started.`;
+  if (alert.blocked) {
+    return {
+      title: "pitwall blocked a message you didn't ask for",
+      summary: `Its relay tried to send it, and pitwall's gate stopped it, so nothing was sent. That usually means another session messaged the relay.${offNote}`,
+      count,
+    };
+  }
+  return {
+    title: "pitwall's relay may have sent a message you didn't ask for",
+    summary: `That usually means another session messaged the relay. Check your sessions' conversations for a message from pitwall-relay.${offNote}`,
+    count,
+  };
 }

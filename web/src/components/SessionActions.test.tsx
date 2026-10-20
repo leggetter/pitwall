@@ -12,8 +12,9 @@ const API_KEY = 'k'.repeat(43);
 const BG = '00000000-0000-4000-8000-0000000000b1';
 const INTERACTIVE = '00000000-0000-4000-8000-0000000000a1';
 
-const STOP_TEXT = 'Stops the session; its conversation is kept. Attaching to it later asks before restarting it.';
-const REMOVE_TEXT = 'Removes it from the list. Claude Code keeps a worktree that has unpushed commits.';
+const STOP_TEXT = 'Stop this session?';
+const STOP_CONSEQUENCE = 'Its conversation is kept. Attaching to it later asks before restarting it.';
+const REMOVE_TEXT = 'Remove this session?';
 
 function background(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return session({ sessionId: BG, name: 'pitwall-test-bg', kind: 'background', shortId: 'b3899da0', state: 'working', ...overrides });
@@ -167,8 +168,10 @@ describe('Stop and Remove', () => {
     const menuButton = within(view).getByRole('button', { name: 'Session actions' });
 
     choose(view, 'Stop session');
-    const confirm = within(view).getByRole('group', { name: STOP_TEXT });
+    const confirm = within(view).getByRole('group', { name: STOP_TEXT, description: STOP_CONSEQUENCE });
     expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
+    // Cancel, then the confirm button, which repeats the question's verb and object.
+    expect(within(confirm).getAllByRole('button').map((button) => button.textContent)).toEqual(['Cancel', 'Stop session']);
     fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
     expect(within(view).queryByRole('group')).toBeNull();
     expect(document.activeElement).toBe(menuButton);
@@ -240,7 +243,11 @@ describe('Stop and Remove', () => {
     fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
     await settle();
 
-    expect(within(view).getByRole('alert').textContent).toBe(refusal);
+    // pitwall's sentence, then Claude Code's message in code style, as text.
+    const alert = within(view).getByRole('alert');
+    expect(alert.textContent).toBe(`Couldn't remove the session. ${refusal}`);
+    expect(alert.querySelector('.alert-detail')?.textContent).toBe(refusal);
+    expect(alert.className).toContain('danger');
     expect(screen.getByRole('dialog', { name: 'pitwall-test-bg' })).toBe(view);
 
     choose(view, 'Stop session');
@@ -261,12 +268,24 @@ describe('Stop and Remove', () => {
     choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
     await settle();
-    expect(within(view).getByRole('status').textContent).toBe('Stopping…');
+    // The confirm button is busy, in the confirmation, which stays; Cancel is aria-disabled.
+    const confirm = within(view).getByRole('group', { name: STOP_TEXT });
+    const busy = within(confirm).getByRole('button', { name: 'Stopping…' });
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    expect(busy.querySelector('.spinner')).toBeTruthy();
+    expect(within(confirm).getByRole('button', { name: 'Cancel' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(busy);
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    fireEvent.keyDown(busy, { key: 'Escape' });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(within(view).getByRole('group', { name: STOP_TEXT })).toBe(confirm);
+    expect(screen.getByRole('dialog', { name: 'pitwall-test-bg' })).toBe(view);
     openMenu(view);
     expect(item(view, 'Stop session').getAttribute('aria-disabled')).toBe('true');
     expect(item(view, 'Remove session').getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(item(view, 'Remove session'));
-    expect(within(view).queryByRole('group')).toBeNull();
+    expect(within(view).getByRole('group', { name: STOP_TEXT })).toBeTruthy();
+    expect(server.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1);
     answer(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     await settle();
     expect(within(view).getByRole('status').textContent).toBe('Stopped. Its conversation is kept.');
@@ -280,5 +299,60 @@ describe('Stop and Remove', () => {
     await settle();
     expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command']);
     expect(within(view).getByText(/no longer listed/)).toBeTruthy();
+  });
+});
+
+describe('the confirmations’ focus and results (W24)', () => {
+  it('puts focus back on the menu button once Stop has finished, and announces the result', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Stop session');
+    const confirmButton = within(view).getByRole('button', { name: 'Stop session' });
+    confirmButton.focus();
+    fireEvent.click(confirmButton);
+    await settle();
+    expect(within(view).queryByRole('group')).toBeNull();
+    expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Session actions' }));
+    const result = within(view).getByRole('status');
+    expect(result.textContent).toBe('Stopped. Its conversation is kept.');
+    expect(result.className).toContain('success');
+  });
+
+  it('puts focus back on the menu button after a refusal too, which is announced as an alert', async () => {
+    renderDashboard(fakeServer({ status: 409, body: { ok: false, error: 'claude stop failed: made up for the test.' } }));
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Stop session');
+    fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
+    await settle();
+    expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Session actions' }));
+    expect(within(view).getByRole('alert').textContent).toBe("Couldn't stop the session. claude stop failed: made up for the test.");
+  });
+
+  it('keeps the confirm button’s width while it’s busy', async () => {
+    let answer: (response: Response) => void = () => {};
+    const server = vi.fn<FetchLike>(async (_url, init) =>
+      init.method === 'POST'
+        ? new Promise<Response>((resolve) => (answer = resolve))
+        : new Response(JSON.stringify({ sessionId: BG, entries: [] }), { status: 200 }),
+    );
+    renderDashboard(server);
+    const view = await openView('pitwall-test-bg');
+    // happy-dom has no layout, so give buttons the width a browser would, before the confirmation opens.
+    vi.spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 117, 24));
+    choose(view, 'Stop session');
+    fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
+    await settle();
+    expect(within(view).getByRole('button', { name: 'Stopping…' }).style.minWidth).toBe('117px');
+    answer(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await settle();
+  });
+
+  it('opens a new confirmation with focus on its own Cancel, when another was open', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Stop session');
+    choose(view, 'Remove session');
+    const confirm = within(view).getByRole('group', { name: 'Remove this session?' });
+    expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
   });
 });

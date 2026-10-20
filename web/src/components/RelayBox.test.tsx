@@ -5,6 +5,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { Dashboard } from './Dashboard.js';
+import { usesCommandKey } from './KeyCaps.js';
 
 // Made-up sessions and messages only.
 
@@ -91,8 +92,23 @@ describe('the message box', () => {
   it('is in an interactive session’s view, says what it costs and that it can’t approve prompts', async () => {
     renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
-    expect(within(box(view)).getByText(LIMITS)).toBeTruthy();
+    // Behind an info icon, with the browser's hover text until W25's tooltips.
+    const info = within(box(view)).getByRole('img', { name: LIMITS });
+    expect(info.getAttribute('title')).toBe(LIMITS);
     expect(textarea(view)).toBeTruthy();
+    expect(textarea(view).getAttribute('rows')).toBe('1');
+    // The class the placeholder rule in relay.css styles.
+    expect(textarea(view).classList.contains('relay-text')).toBe(true);
+  });
+
+  it('says how to send, as key caps with words for screen readers, and links that to the text box', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    const help = box(view).querySelector('.relay-help-keys')!;
+    expect([...help.querySelectorAll('kbd')].map((key) => key.textContent)).toEqual(usesCommandKey() ? ['⌘', '↵'] : ['Ctrl', '↵']);
+    expect(help.querySelector('.key-caps-keys')?.getAttribute('aria-hidden')).toBe('true');
+    expect(help.textContent).toContain(usesCommandKey() ? 'Command Enter to send' : 'Control Enter to send');
+    expect(textarea(view).getAttribute('aria-describedby')).toBe(help.id);
   });
 
   it('isn’t in a background session’s view', async () => {
@@ -152,7 +168,7 @@ describe('the message box', () => {
     expect(alert.textContent).toBe(
       'May have reached the session. Check its conversation before sending again. The relay stopped (exit code 1). It may have reached the session.',
     );
-    expect(alert.className).toContain('tone-waiting');
+    expect(alert.className).toContain('warning');
     expect(textarea(view).value).toBe('hello');
   });
 
@@ -160,9 +176,9 @@ describe('the message box', () => {
     const relay = { sentAt: minutesAgo(3), status: 'uncertain' as const };
     renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
     const view = await openView();
-    const line = within(box(view)).getByText('Message from pitwall').closest('.relay-exchange-line') as HTMLElement;
-    expect(line.textContent).toBe('Message from pitwall 3m ago: may have reached it: check its conversation');
-    expect(line.className).toContain('tone-waiting');
+    const line = box(view).querySelector('.relay-exchange-line') as HTMLElement;
+    expect(line.textContent).toBe('Message from pitwall · 3m ago: may have reached it: check its conversation');
+    expect(line.querySelector('.relay-exchange-status')?.className).toContain('tone-waiting');
   });
 
   it('shows the server’s detail for a refused request, such as 409 or 429', async () => {
@@ -193,15 +209,23 @@ describe('the message box', () => {
     renderDashboard(server);
     const view = await openView();
     const send = () => within(view).getByRole('button', { name: 'Send' }) as HTMLButtonElement;
-    expect(send().disabled).toBe(true);
+    const off = () => send().getAttribute('aria-disabled') === 'true';
+    expect(off()).toBe(true);
     fireEvent.change(textarea(view), { target: { value: ' \n ' } });
-    expect(send().disabled).toBe(true);
+    expect(off()).toBe(true);
     fireEvent.change(textarea(view), { target: { value: 'x'.repeat(8193) } });
-    expect(send().disabled).toBe(true);
-    expect(textarea(view).getAttribute('aria-invalid')).toBe('true');
-    expect(within(view).getByText('1 characters over the 8192 limit')).toBeTruthy();
-    fireEvent.change(textarea(view), { target: { value: 'x'.repeat(8192) } });
+    expect(off()).toBe(true);
+    // aria-disabled, not disabled: it can still be focused, and a press or ⌘↵ sends nothing.
     expect(send().disabled).toBe(false);
+    fireEvent.click(send());
+    fireEvent.keyDown(textarea(view), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(textarea(view).getAttribute('aria-invalid')).toBe('true');
+    const count = within(view).getByText('1 character over the 8,192 limit');
+    expect(textarea(view).getAttribute('aria-describedby')?.split(' ')).toContain(count.id);
+    fireEvent.change(textarea(view), { target: { value: 'x'.repeat(8192) } });
+    expect(off()).toBe(false);
+    expect(send().hasAttribute('aria-disabled')).toBe(false);
     expect(posts(server)).toEqual([]);
   });
 
@@ -231,8 +255,16 @@ describe('the message box', () => {
     renderDashboard(server);
     const view = await openView();
     await sendFrom(view, 'hello');
-    expect((within(view).getByRole('button', { name: 'Sending…' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(textarea(view).disabled).toBe(true);
+    const busy = within(view).getByRole('button', { name: 'Sending…' });
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    expect(busy.getAttribute('aria-disabled')).toBe('true');
+    expect(busy.querySelector('.spinner')?.getAttribute('aria-hidden')).toBe('true');
+    // Read-only, not disabled, so it keeps focus and its text can still be selected.
+    expect(textarea(view).readOnly).toBe(true);
+    expect(textarea(view).disabled).toBe(false);
+    fireEvent.click(busy);
+    fireEvent.keyDown(textarea(view), { key: 'Enter', metaKey: true });
+    expect(server.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1);
     answer(new Response(JSON.stringify({ status: 'delivered' }), { status: 200 }));
     await settle();
     expect(within(view).getByRole('button', { name: 'Send' })).toBeTruthy();
@@ -254,15 +286,18 @@ describe('the message box', () => {
     const view = await openView();
     expect(within(box(view)).getByText("It isn't running, so it can't be messaged.")).toBeTruthy();
     expect(within(view).queryByRole('textbox')).toBeNull();
+    // The note alone: the limits note is about sending, which it can't.
+    expect(within(box(view)).queryByRole('img', { name: LIMITS })).toBeNull();
+    expect(box(view).textContent).not.toContain(LIMITS);
   });
 
   it('shows the latest exchange and its reply, as text', async () => {
     const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: 'Done: <b>3 tests</b> pass\u001b[0m' } };
     renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
     const view = await openView();
-    const exchange = within(box(view)).getByText('Message from pitwall').closest('.relay-exchange') as HTMLElement;
-    expect(exchange.textContent).toContain('Message from pitwall 3m ago: delivered');
-    expect(exchange.textContent).toContain('Reply Done: <b>3 tests</b> pass');
+    const exchange = box(view).querySelector('.relay-exchange') as HTMLElement;
+    expect(exchange.textContent).toContain('Message from pitwall · 3m ago: delivered');
+    expect(exchange.textContent).toContain('Reply: Done: <b>3 tests</b> pass');
     expect(exchange.querySelector('b')).toBeNull();
   });
 });
@@ -281,9 +316,137 @@ describe('the row', () => {
     expect(row().textContent).not.toMatch(/Message from pitwall|line one/);
 
     const view = await openView();
-    const note = within(box(view)).getByText('Message from pitwall').closest('.relay-exchange') as HTMLElement;
-    expect(note.textContent).toContain('Message from pitwall 10m ago: held for approval in its terminal');
-    expect(within(note).getByText(/line one/).textContent).toBe('Reply line one\nline two');
+    const note = box(view).querySelector('.relay-exchange') as HTMLElement;
+    expect(note.textContent).toContain('Message from pitwall · 10m ago: held for approval in its terminal');
+    expect(note.querySelector('.relay-reply')?.textContent).toBe('Reply: line one\nline two');
     expect(textarea(view)).toBeTruthy();
+  });
+});
+
+describe('the message box’s rules (W24)', () => {
+  it('keeps focus in the text box after ⌘↵, and brings it back there from Send', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    textarea(view).focus();
+    fireEvent.change(textarea(view), { target: { value: 'one' } });
+    fireEvent.keyDown(textarea(view), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(document.activeElement).toBe(textarea(view));
+
+    fireEvent.change(textarea(view), { target: { value: 'two' } });
+    const send = within(view).getByRole('button', { name: 'Send' });
+    send.focus();
+    fireEvent.click(send);
+    await settle();
+    expect(document.activeElement).toBe(textarea(view));
+  });
+
+  it('leaves focus alone when it was moved elsewhere while the message was being sent', async () => {
+    let answer: (response: Response) => void = () => {};
+    const server = vi.fn<FetchLike>(async (_url, init) =>
+      init.method === 'POST'
+        ? new Promise<Response>((resolve) => (answer = resolve))
+        : new Response(JSON.stringify({ sessionId: INTERACTIVE, entries: [] }), { status: 200 }),
+    );
+    renderDashboard(server);
+    const view = await openView();
+    await sendFrom(view, 'hello');
+    const heading = within(view).getByRole('heading', { level: 2 });
+    heading.focus();
+    answer(new Response(JSON.stringify({ status: 'delivered' }), { status: 200 }));
+    await settle();
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it('never loses a draft to Escape, wherever focus is in the view, and closes the view once the draft is gone', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    fireEvent.change(textarea(view), { target: { value: 'draft' } });
+    const heading = within(view).getByRole('heading', { level: 2 });
+    heading.focus();
+    fireEvent.keyDown(heading, { key: 'Escape' });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: NAME })).toBe(view);
+    expect(textarea(view).value).toBe('draft');
+
+    fireEvent.change(textarea(view), { target: { value: '' } });
+    fireEvent.keyDown(heading, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('counts a whitespace-only draft as a draft, so Escape keeps it too', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    fireEvent.change(textarea(view), { target: { value: '  ' } });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: NAME })).toBe(view);
+  });
+
+  it('shows the character count only from 80 % of the limit, then how far over it is', async () => {
+    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    const count = () => box(view).querySelector('.relay-count');
+    const type = (length: number) => fireEvent.change(textarea(view), { target: { value: 'x'.repeat(length) } });
+    type(6553);
+    expect(count()).toBeNull();
+    type(6554);
+    expect(count()?.textContent).toBe('6,554 / 8,192');
+    expect(count()?.className).toBe('relay-count');
+    type(8192);
+    expect(count()?.textContent).toBe('8,192 / 8,192');
+    type(8193);
+    expect(count()?.textContent).toBe('1 character over the 8,192 limit');
+    expect(count()?.className).toBe('relay-count over');
+    type(8200);
+    expect(count()?.textContent).toBe('8 characters over the 8,192 limit');
+    // What's sent, without the whitespace after it, is what's counted.
+    fireEvent.change(textarea(view), { target: { value: `${'x'.repeat(8192)}\n\n  ` } });
+    expect(count()?.textContent).toBe('8,192 / 8,192');
+    expect(within(view).getByRole('button', { name: 'Send' }).hasAttribute('aria-disabled')).toBe(false);
+  });
+
+  it.each([
+    ['delivered', 'status', 'success'],
+    ['held', 'alert', 'warning'],
+    ['uncertain', 'alert', 'warning'],
+    ['refused', 'alert', 'danger'],
+    ['failed', 'alert', 'danger'],
+  ] as const)('shows %s as an inline alert with role="%s", in the %s tone', async (status, role, tone) => {
+    renderDashboard(fakeServer({ status: 200, body: { status, detail: 'A made-up detail.' } }));
+    const view = await openView();
+    await sendFrom(view, 'hello');
+    const result = box(view).querySelector('.relay-result')!;
+    expect(result.getAttribute('role')).toBe(role);
+    expect(result.className).toBe(`inline-alert ${tone} relay-result`);
+    // The server's detail is in code style, after pitwall's own sentence; delivered has none.
+    expect(result.querySelector('.alert-detail')?.textContent).toBe(status === 'delivered' ? undefined : 'A made-up detail.');
+  });
+
+  it('shows pitwall’s own failure, before the relay answered, as a danger alert', async () => {
+    renderDashboard(fakeServer(new TypeError('network down')));
+    const view = await openView();
+    await sendFrom(view, 'hello');
+    const result = box(view).querySelector('.relay-result')!;
+    expect(result.getAttribute('role')).toBe('alert');
+    expect(result.className).toContain('danger');
+  });
+
+  it('shows the reply once: not in the footer when the conversation already has it', async () => {
+    const replyText = 'The export job retries three times now, and every test passes.';
+    const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: replyText } };
+    const entries = [
+      { kind: 'assistant', at: minutesAgo(10), text: 'Earlier, before the message.' },
+      { kind: 'assistant', at: minutesAgo(2), text: `Replying now.\n${replyText}` },
+    ];
+    const server = vi.fn<FetchLike>(async (_url, init) =>
+      init.method === 'POST'
+        ? new Response(JSON.stringify({ status: 'delivered' }), { status: 200 })
+        : new Response(JSON.stringify({ sessionId: INTERACTIVE, entries }), { status: 200 }),
+    );
+    renderDashboard(server, snap(interactive({ relay })));
+    const view = await openView();
+    await settle();
+    expect(box(view).querySelector('.relay-exchange-line')?.textContent).toBe('Message from pitwall · 3m ago: delivered');
+    expect(box(view).querySelector('.relay-reply')).toBeNull();
   });
 });

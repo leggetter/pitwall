@@ -6,6 +6,9 @@
 // layout: CSS takes it out of the grid and over the list below 1,200 px. So crossing 1,200 px with a
 // session open changes how it sits, not the view itself, which keeps its conversation and terminal.
 // The open session is in the URL, as ?session= (openSession.ts).
+//
+// The app strip goes above the header while the relay is off until restart, and the page alerts sit at
+// the top of the session list (3: App strip and page alerts).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
@@ -30,6 +33,8 @@ import {
 import { countAttention, filterListed, filterNeedle, groupId, listScope, NO_FILTERS, noMatchText, type Filters } from '../sessions.js';
 import { useSort } from '../sort.js';
 import { useOpenWhenListed } from '../spawn.js';
+import { Alert, Detail } from './Alert.js';
+import { AppStrip } from './AppStrip.js';
 import { Divider } from './Divider.js';
 import { FilterControls } from './Filters.js';
 import { Header } from './Header.js';
@@ -60,6 +65,21 @@ function Placeholder({ title, sentence, children }: { title: string; sentence?: 
       {children && <p className="placeholder-actions">{children}</p>}
     </div>
   );
+}
+
+/**
+ * Whether each page alert arrived after the first snapshot, given its key (what it says, or its time
+ * and count), so the caller can give it role="alert". One that was there when the page loaded has no
+ * role, so it isn't announced over everything else (4: Alerts and banners). Once its key changes or
+ * it goes, it's no longer the one from the page's load.
+ */
+function useArrivedLive(keys: Record<string, string | undefined>, loaded: boolean): (name: string) => boolean {
+  const initial = useRef<Map<string, string> | undefined>(undefined);
+  if (loaded && initial.current === undefined) {
+    initial.current = new Map(Object.entries(keys).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  }
+  for (const [name, key] of initial.current ?? []) if (keys[name] !== key) initial.current?.delete(name);
+  return (name) => !(initial.current?.has(name) ?? false);
 }
 
 export interface DashboardProps {
@@ -243,47 +263,71 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   const showError = serverError !== undefined && serverError !== dismissedError;
   const relayAlert = snapshot?.relayAlert;
+  const relayOff = snapshot?.relayOff;
   const relayAlertKey = relayAlert ? `${relayAlert.at}#${relayAlert.count}` : undefined;
-  const alertText = relayAlert && relayAlertKey !== dismissedAlert ? relayAlertText(relayAlert) : undefined;
+  const alertText = relayAlert && relayAlertKey !== dismissedAlert ? relayAlertText(relayAlert, relayOff) : undefined;
+  const pollFailed = snapshot && source && !source.ok ? source.error : undefined;
+  const live = useArrivedLive(
+    { poll: pollFailed, relay: alertText ? relayAlertKey : undefined, error: showError ? serverError : undefined },
+    snapshot !== undefined,
+  );
+  // A warning or danger alert that arrives live is announced; one that was there on load isn't.
+  const role = (name: string) => (live(name) ? 'alert' : undefined);
+  // Details in the app strip reopens the relay alert and takes focus to it.
+  const relayAlertRef = useRef<HTMLDivElement>(null);
+  const focusRelayAlert = useRef(false);
+  useEffect(() => {
+    if (!focusRelayAlert.current || !relayAlertRef.current) return;
+    focusRelayAlert.current = false;
+    relayAlertRef.current.scrollIntoView?.({ block: 'nearest' });
+    relayAlertRef.current.focus();
+  });
+  const showRelayAlert = () => {
+    setDismissedAlert(undefined);
+    focusRelayAlert.current = true;
+  };
+  // Dismiss goes with its alert, so focus goes to the session list's heading rather than the page.
+  const dismiss = (apply: () => void) => () => {
+    apply();
+    listHeading.current?.focus();
+  };
   const alerts = (
     <>
-      {snapshot && source && !source.ok && (
-        <div className="banner warning" role="alert">
-          <code>claude agents --json --all</code> failed on the latest poll: {plainText(source.error)}
-        </div>
+      {pollFailed !== undefined && (
+        <Alert tone="warning" role={role('poll')} title="Couldn't list sessions">
+          <code>claude agents --json --all</code> failed on the latest poll: <Detail>{plainText(pollFailed)}</Detail>
+        </Alert>
       )}
       {relayAlert && alertText && (
-        <div className={relayAlert.blocked ? 'banner warning relay-alert' : 'banner error relay-alert'} role="alert">
-          <span>
-            {alertText.summary} {alertText.count} Latest: {plainText(relayAlert.detail)}
-          </span>
-          <button type="button" className="link-button" onClick={() => setDismissedAlert(relayAlertKey)}>
-            Dismiss
-          </button>
-        </div>
+        <Alert
+          ref={relayAlertRef}
+          tone={relayAlert.blocked ? 'warning' : 'danger'}
+          role={role('relay')}
+          title={alertText.title}
+          className="relay-alert"
+          onDismiss={dismiss(() => setDismissedAlert(relayAlertKey))}
+        >
+          {alertText.summary} {alertText.count} Latest: <Detail>{plainText(relayAlert.detail)}</Detail>
+        </Alert>
       )}
       {showError && (
-        <div className="banner error" role="alert">
-          <span>{plainText(serverError)}</span>
-          <button type="button" className="link-button" onClick={() => setDismissedError(serverError)}>
-            Dismiss
-          </button>
-        </div>
+        <Alert tone="danger" role={role('error')} onDismiss={dismiss(() => setDismissedError(serverError))}>
+          {plainText(serverError)}
+        </Alert>
       )}
       {started.waiting && (
-        <div className="banner muted" role="status">
-          <span>Started {plainText(started.waiting.name)}. Its view opens when it shows up in the list.</span>
-          <button type="button" className="link-button" onClick={started.dismiss}>
-            Dismiss
-          </button>
-        </div>
+        <Alert tone="neutral" role="status" onDismiss={dismiss(started.dismiss)}>
+          Started {plainText(started.waiting.name)}. Its view opens when it shows up in the list.
+        </Alert>
       )}
       {snapshot && state === 'reconnecting' && (
-        <div className="banner muted">Lost the connection to pitwall. Reconnecting; this list may be out of date.</div>
+        <Alert tone="neutral" role="status">
+          Lost the connection to pitwall. Reconnecting; this list may be out of date.
+        </Alert>
       )}
     </>
   );
-  const hasAlerts = (snapshot && source && !source.ok) || (relayAlert && alertText) || showError || started.waiting || (snapshot && state === 'reconnecting');
+  const hasAlerts = pollFailed !== undefined || (relayAlert && alertText) || showError || started.waiting || (snapshot && state === 'reconnecting');
 
   const name = selectionName(groups, selection);
   const heading: SessionListHeading =
@@ -388,6 +432,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   return (
     <div className="app" ref={app} data-layout={layout}>
+      {relayOff && <AppStrip off={relayOff} onDetails={relayAlert ? showRelayAlert : undefined} />}
       <Header
         state={state}
         roots={snapshot?.roots}

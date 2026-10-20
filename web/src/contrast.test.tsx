@@ -57,6 +57,8 @@ const PAIRS: Pair[] = [
   edge('--pw-border-control', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken']),
   edge('--pw-border-input', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken']),
   edge('--pw-focus', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-sunken', '--pw-surface-hover', '--pw-surface-hover-bg', '--pw-selected']),
+  // The ring around a control in an inline alert, such as Dismiss, or around the alert itself when Details focuses it.
+  edge('--pw-focus', TINTS),
   // The ring around a selected item, and a checked checkbox's fill, which can sit on any neutral surface.
   edge('--pw-selected-border', NEUTRAL),
   // The bar of a row that needs you, on the row as it is, hovered or open, and the restart confirmation's bar.

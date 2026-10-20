@@ -1,44 +1,85 @@
-/* Messaging an interactive session through the relay (W11): the box at the foot of the session view. Uses the tokens in tokens.css. */
+/* The message box (docs/design-system.md, 4: Message box), at the foot of the session view. Uses the tokens in tokens.css.
+   The result of a send is an inline alert, and the buttons and key caps are in styles.css. */
 
 /* The box fills the session view's footer (.session-view-foot), which draws the band around it. */
 .relay-box {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--pw-space-2);
 }
 
-.relay-note {
+/* "Message from pitwall · 5m ago: delivered": meta, muted, on the footer's neutral band, with the
+   status in --pw-warning-fg while it waits and --pw-danger-fg when it failed (2.1). */
+.relay-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-0-5);
+}
+
+.relay-exchange-line {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.relay-exchange-status.tone-waiting {
+  color: var(--pw-warning-fg);
+}
+
+.relay-exchange-status.tone-failed {
+  color: var(--pw-danger-fg);
+}
+
+/* The reply, in body text: three lines, two on a short window, then it scrolls, so the conversation keeps its height. */
+.relay-reply {
+  max-height: calc(3 * var(--pw-leading-m));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.relay-reply-label {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-medium);
 }
 
 .relay-form {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--pw-space-1);
 }
 
-/* The text box, with Send beside it. */
+/* The text box, with Send beside it, aligned to its bottom. */
 .relay-compose {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--pw-space-2);
 }
 
+/* One line to eight (RelayBox sets its height from its content), then it scrolls. No resize handle. */
 .relay-text {
   flex: 1 1 auto;
   min-width: 0;
-  /* Two lines, and never so tall when dragged that it takes the conversation's place. */
-  min-height: calc(2 * var(--pw-leading-m) + 14px);
-  max-height: 30vh;
-  padding: 6px 8px;
-  resize: vertical;
+  min-height: calc(var(--pw-leading-m) + 2 * var(--pw-space-1-5));
+  max-height: calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
+  padding: var(--pw-space-1-5) var(--pw-space-3);
+  overflow-y: auto;
+  resize: none;
   background: var(--pw-surface);
   color: var(--pw-text);
-  border-radius: var(--pw-radius-md);
-  line-height: var(--pw-leading-m);
   border: 0;
+  border-radius: var(--pw-radius-md);
   box-shadow: var(--pw-shadow-input);
+  font-family: var(--pw-font-sans);
+  line-height: var(--pw-leading-m);
+}
+
+.relay-text::placeholder {
+  color: var(--pw-text-subtle);
+  opacity: 1;
 }
 
 .relay-text:focus-visible {
@@ -53,10 +94,32 @@
   box-shadow: var(--pw-shadow-input-error), var(--pw-ring-focus);
 }
 
-/* Under the text box, one small paragraph: the character count, then what a message can and can't do. */
+/* The help line: ⌘ ↵ to send and the limits note's icon at the left, the count at the right. */
+.relay-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-3);
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.relay-help-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+}
+
+/* Its explanation is in the hover text, until the design system's tooltips (W25). */
+.relay-info {
+  display: inline-flex;
+  cursor: help;
+}
+
 .relay-count {
-  margin-right: 6px;
-  color: var(--pw-text-muted);
+  margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
 
@@ -64,82 +127,15 @@
   color: var(--pw-danger-fg);
 }
 
-.relay-box .button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.relay-result {
-  padding: 6px 8px;
-  border-radius: var(--pw-radius-md);
-  border: 1px solid var(--pw-border);
-  font-size: var(--pw-text-m);
-  overflow-wrap: anywhere;
-}
-
-.relay-result.tone-ok {
-  background: var(--pw-success-tint);
-  color: var(--pw-success-tint-fg);
-  border-color: var(--pw-success-border);
-}
-
-.relay-result.tone-waiting {
-  background: var(--pw-warning-tint);
-  border-color: var(--pw-warning-border);
-}
-
-.relay-result.tone-failed {
-  background: var(--pw-danger-tint);
-  border-color: var(--pw-danger-border);
-  color: var(--pw-danger-tint-fg);
-}
-
-.relay-exchange {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: var(--pw-text-s);
-  font-variant-numeric: tabular-nums;
-}
-
-.relay-exchange-line {
+/* A session that can't be messaged: the note alone. */
+.relay-note {
   color: var(--pw-text-muted);
-}
-
-.relay-exchange-line.tone-waiting {
-  color: var(--pw-warning-fg);
-}
-
-/* On the danger tint, as when it shared the old badges' .tone-failed class; the message box's restyle (W24) replaces it. */
-.relay-exchange-line.tone-failed {
-  background: var(--pw-danger-tint);
-  color: var(--pw-danger-tint-fg);
-}
-
-.relay-exchange-label {
-  font-weight: var(--pw-weight-bold);
-}
-
-.relay-reply {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* In the session view's footer a long reply scrolls in three lines, two on a short window, so the
-   conversation keeps its height. */
-.relay-box .relay-reply {
-  max-height: calc(3 * var(--pw-leading-s));
-  overflow-y: auto;
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
 @media (max-height: 760px) {
-  .relay-box .relay-reply {
-    max-height: calc(2 * var(--pw-leading-s));
-  }
-
-  .relay-box .relay-result {
-    padding: 4px 8px;
-    font-size: var(--pw-text-s);
+  .relay-reply {
+    max-height: calc(2 * var(--pw-leading-m));
   }
 }
-

@@ -323,16 +323,37 @@ describe('SessionView: attach, from the Terminal tab', () => {
 
     it('asks before restarting it, and sends restart only after the user confirms', async () => {
       const { view, socket } = await needingRestart();
-      const confirm = within(view).getByRole('alertdialog');
-      expect(confirm.textContent).toContain('This session has finished, or its process has exited. Attaching restarts it.');
+      const confirm = within(view).getByRole('alertdialog', {
+        name: 'Restart and attach?',
+        description: 'This session has finished, or its process has exited. Attaching restarts it.',
+      });
+      // Cancel takes focus as it opens (W22 found it didn't).
+      expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
       expect(sent(socket).map((message) => message.type)).toEqual(['auth', 'open']);
       expect(sent(socket).some((message) => message.restart !== undefined)).toBe(false);
 
       fireEvent.click(within(confirm).getByRole('button', { name: 'Restart and attach' }));
       expect(sent(socket).at(-1)).toEqual({ type: 'open', sessionId: BG, cols: 80, rows: 24, restart: true });
-      expect(within(view).queryByRole('alertdialog')).toBeNull();
+      // Busy until the attach has started: the button says so, Cancel is off, and Escape changes nothing.
+      const busy = within(confirm).getByRole('button', { name: 'Restarting…' });
+      expect(busy.getAttribute('aria-busy')).toBe('true');
+      expect(within(confirm).getByRole('button', { name: 'Cancel' }).getAttribute('aria-disabled')).toBe('true');
+      fireEvent.click(busy);
+      fireEvent.keyDown(busy, { key: 'Escape' });
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(sent(socket).filter((message) => message.restart === true)).toHaveLength(1);
+      expect(screen.getByRole('dialog', { name: 'demo-worker' })).toBe(view);
       act(() => socket.receive({ type: 'attached' }));
+      expect(within(view).queryByRole('alertdialog')).toBeNull();
       expect(within(view).getByRole('status').textContent).toBe('Attached');
+    });
+
+    it('when the restart fails, the confirmation goes and Attach again takes focus', async () => {
+      const { view, socket } = await needingRestart();
+      fireEvent.click(within(within(view).getByRole('alertdialog')).getByRole('button', { name: 'Restart and attach' }));
+      act(() => socket.receive({ type: 'error', error: 'made up for the test.' }));
+      expect(within(view).queryByRole('alertdialog')).toBeNull();
+      expect(document.activeElement).toBe(within(view).getByRole('button', { name: 'Attach again' }));
     });
 
     it("says a session that's still starting is starting, never asks to restart it, and can try again", async () => {
