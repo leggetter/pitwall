@@ -203,6 +203,9 @@ describe('/', () => {
     expect(view()).toBeUndefined();
     expect(document.activeElement).toBe(filterField());
     expect(history.entries.at(-1)).toBe('?view=all');
+    // And it stays there: the row doesn't take it back a frame later, as it does after Close (W31).
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(document.activeElement).toBe(filterField());
 
     await open('demo-a');
     const box = within(view()!).getByRole('textbox', { name: 'Message to demo-a' });

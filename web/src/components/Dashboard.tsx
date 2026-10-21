@@ -25,7 +25,6 @@
 // they're on. One that moves focus closes an open menu first.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { flushSync } from 'react-dom';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
 import { formatRoots, plainText } from '../format.js';
@@ -306,6 +305,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   // Closing with Close, Back or Escape gives focus back to the session's row (6.1, item 8).
   const returnFocus = useRef<string | undefined>(undefined);
+  // Where focus goes once the view over the list has closed, in place of the session's row: the filter
+  // field after `/`, or the relay alert after Details, which the view covered until then.
+  const focusAfterClose = useRef<(() => void) | undefined>(undefined);
   const closeSession = useCallback(() => {
     returnFocus.current = openId;
     opened.close();
@@ -318,6 +320,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (was === undefined || openId !== undefined) return;
     const asked = returnFocus.current === was;
     returnFocus.current = undefined;
+    const instead = focusAfterClose.current;
+    focusAfterClose.current = undefined;
+    if (instead) {
+      // After the commit that closed it, so what the view covered is no longer inert.
+      instead();
+      return;
+    }
     // The back button closed it: focus goes to the row only if it was inside the view, and so is lost now.
     const active = document.activeElement;
     if (!asked && active !== null && active !== document.body) return;
@@ -357,19 +366,26 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   }, [drawerOpen]);
 
   // `/`: the filter field. Below 1,200 px the view covers the list and its filter, so it closes first,
-  // as Close would, unless the message box has a draft; focus goes to the field, not the row. The
-  // close is applied at once, so the list is no longer inert when the field takes focus.
+  // as Close would, unless the message box has a draft; focus goes to the field, not the row, once the
+  // close has made the list usable again.
   const focusFilter = (root: HTMLElement): boolean => {
     const field = filterField.current;
     if (!field) return false;
     if (overlaid && draft.current) return false;
     closeMenus(root);
-    if (overlaid) flushSync(() => opened.close());
-    field.focus();
-    try {
-      field.setSelectionRange(field.value.length, field.value.length);
-    } catch {
-      // A field that can't place the caret keeps it where the browser put it.
+    const place = () => {
+      field.focus();
+      try {
+        field.setSelectionRange(field.value.length, field.value.length);
+      } catch {
+        // A field that can't place the caret keeps it where the browser put it.
+      }
+    };
+    if (overlaid) {
+      focusAfterClose.current = place;
+      opened.close();
+    } else {
+      place();
     }
     return true;
   };
@@ -462,7 +478,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // the message box has a draft, which closing would lose. Then Details does nothing.
   const showRelayAlert = () => {
     if (overlaid && draft.current) return;
-    if (overlaid) opened.close();
+    if (overlaid) {
+      // The alert's own effect focuses it; the row doesn't take focus back meanwhile.
+      focusAfterClose.current = () => {};
+      opened.close();
+    }
     setDismissedAlert(undefined);
     setRelayAlertAsked((count) => count + 1);
   };
