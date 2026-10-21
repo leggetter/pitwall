@@ -50,6 +50,8 @@ export interface OpenSession {
   open: (sessionId: string, mode?: HistoryMode) => void;
   /** Closes the view, pushing an entry without ?session=. */
   close: () => void;
+  /** Makes the open session match the URL again, after something else pushed an entry for it, as a root tab does. */
+  follow: () => void;
 }
 
 /**
@@ -61,11 +63,16 @@ export function useOpenSession(navigation: NavigationEnv = browserNavigation): O
   const current = useRef(id);
   current.current = id;
 
-  useEffect(() => {
-    const onPopState = () => setId(parseSession(navigation.location.search));
-    navigation.addEventListener('popstate', onPopState);
-    return () => navigation.removeEventListener('popstate', onPopState);
+  const follow = useCallback(() => {
+    const next = parseSession(navigation.location.search);
+    current.current = next;
+    setId(next);
   }, [navigation]);
+
+  useEffect(() => {
+    navigation.addEventListener('popstate', follow);
+    return () => navigation.removeEventListener('popstate', follow);
+  }, [navigation, follow]);
 
   const write = useCallback(
     (sessionId: string | undefined, mode: HistoryMode) => {
@@ -94,5 +101,5 @@ export function useOpenSession(navigation: NavigationEnv = browserNavigation): O
     setId(undefined);
   }, [write]);
 
-  return { id, open, close };
+  return { id, open, close, follow };
 }

@@ -226,15 +226,6 @@ textarea {
   border-top: 1px solid var(--pw-border);
 }
 
-.repo-root {
-  padding: var(--pw-space-2) var(--pw-space-2) var(--pw-space-1);
-  color: var(--pw-text-subtle);
-  font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-medium);
-  line-height: var(--pw-leading-xs);
-  overflow-wrap: anywhere;
-}
-
 .repo-item {
   display: flex;
   align-items: center;
@@ -507,14 +498,6 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.session-list-root {
-  color: var(--pw-text-subtle);
-  font-size: var(--pw-text-s);
-  font-weight: var(--pw-weight-regular);
-  line-height: var(--pw-leading-s);
-  white-space: nowrap;
-}
-
 /* Line 2: the filters, growing, with room at the right for W23's Sort select. */
 .session-list-filters {
   display: flex;
@@ -662,6 +645,80 @@ textarea {
   flex: none;
   align-items: center;
   gap: var(--pw-space-2) var(--pw-space-3);
+}
+
+/*
+ * With two or more roots, a tab per root in place of the roots' path (section 3: Header, and 4: Tabs,
+ * W38). The header wraps whenever its line has no room, at any width: first the right side goes
+ * under the wordmark and the tabs, then the tabs go under the wordmark and wrap among themselves, and
+ * only a tab wider than a whole line is cut, in the middle. So every tab, and every badge on one, is
+ * in sight at 320 px, and nothing scrolls sideways. 12 px above and below keep one line at 52 px.
+ */
+.app-header.has-tabs {
+  flex-wrap: wrap;
+  padding-block: var(--pw-space-3);
+}
+
+.app-header.has-tabs .app-header-start {
+  flex-wrap: wrap;
+  row-gap: var(--pw-space-2);
+}
+
+.root-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Path type, as the roots were. The open tab has the selected look, as the selected repo list item does. */
+.root-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--pw-control-md);
+  padding: var(--pw-space-1) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: none;
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
+  font-variant-ligatures: none;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+/* On the page background, the header's fill (2.3). */
+@media (hover: hover) {
+  .root-tab:hover {
+    background: var(--pw-surface-hover-bg);
+    color: var(--pw-text);
+  }
+}
+
+.root-tab[aria-selected='true'],
+.root-tab[aria-selected='true']:hover {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+  color: var(--pw-text);
+  font-weight: var(--pw-weight-medium);
+}
+
+.root-tab[aria-selected='true']:focus-visible {
+  box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+/* The need-you badge, in the badges' own type, never cut. */
+.root-tab .badge {
+  flex: none;
+  font-family: var(--pw-font-sans);
 }
 
 /* The connection badge (section 4): a badge, inside the element that's its role="status". */
@@ -2974,10 +3031,15 @@ ol.md-list {
     padding: 0 calc(var(--pw-space-2) - 2px);
   }
 
-  /* The selected repo list item, and the theme switch's selected option. */
+  /* The selected repo list item, the open root tab, and the theme switch's selected option. */
   .repo-item.selected {
     border: 2px solid Highlight;
     padding: calc(var(--pw-space-1-5) - 2px) calc(var(--pw-space-2) - 2px);
+  }
+
+  .root-tab[aria-selected='true'] {
+    border: 2px solid Highlight;
+    padding: calc(var(--pw-space-1) - 2px) calc(var(--pw-space-2) - 2px);
   }
 
   .theme-switch {

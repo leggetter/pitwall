@@ -21,6 +21,8 @@ export function ago(minutes: number): string {
 
 export const ROOT = '/Users/example/code';
 export const OTHER_ROOT = '/Users/example/work';
+/** A third root, for the root tabs (W38). */
+export const THIRD_ROOT = '/Users/example/personal';
 export const APP_DIR = `${ROOT}/pitwall-test-app`;
 export const JOBS_DIR = `${ROOT}/pitwall-test-jobs`;
 export const NOTES_DIR = `${ROOT}/pitwall-test-notes`;
@@ -225,6 +227,9 @@ export const CALM_SNAPSHOT = snapshot([
   group('pitwall-test-calm', [session('calm-idle', { cwd: CALM_DIR }), session('calm-busy', { cwd: CALM_DIR, status: 'busy' })]),
 ]);
 export const TWO_ROOTS_SNAPSHOT = snapshot([APP_GROUP, SERVICE_GROUP], { roots: [ROOT, OTHER_ROOT] });
+/** Three roots, the third with no sessions: a tab each, ~/code's sessions needing you (W38). */
+export const THREE_ROOTS = [ROOT, OTHER_ROOT, THIRD_ROOT];
+export const THREE_ROOTS_SNAPSHOT = snapshot([APP_GROUP, NOTES_GROUP, SERVICE_GROUP], { roots: THREE_ROOTS });
 export const EMPTY_SNAPSHOT = snapshot([]);
 export const POLL_FAILED_SNAPSHOT = snapshot([NOTES_GROUP], {
   source: { ok: false, error: 'claude exited with code 1: pitwall-test made-up failure' },
@@ -236,7 +241,7 @@ export const ROOT_GROUP = group('code', [session('in-root', { cwd: ROOT, lastAct
 /** Every kind of repo list item: a need-you badge, counts, the root's own directory, a finished-only group and a long label. */
 export const REPO_LIST_SNAPSHOT = snapshot([APP_GROUP, JOBS_GROUP, NOTES_GROUP, ALL_FINISHED_GROUP, LONG_LABEL_GROUP, ROOT_GROUP]);
 
-/** Two roots, each with groups, for the root headings. */
+/** Two roots, each with groups: the repo list of one root's tab. */
 export const TWO_ROOTS_LIST_SNAPSHOT = snapshot([APP_GROUP, NOTES_GROUP, SERVICE_GROUP, ROOT_GROUP], { roots: [ROOT, OTHER_ROOT] });
 
 /** A hidden group that's in no snapshot (W35): a clone of another project's repo, last worked in weeks ago. */
@@ -307,7 +312,10 @@ export const WORKED_ROOT_GROUP = group('code', [WORKED_FROM_ROOT, WORKED_ROOT_AL
 /** Six sessions, two of which need you, in four groups: none for pitwall-test-docs, where three of them worked. */
 export const WORKED_SNAPSHOT = snapshot([WORKED_API_GROUP, WORKED_APP_GROUP, WORKED_SCRATCH_GROUP, WORKED_ROOT_GROUP]);
 
-/** More roots than the header has room for. */
+/** One root with a long path, for the header's middle ellipsis. */
+export const LONG_ROOT = '/Users/example/projects/pitwall-test-project-with-a-long-name/repositories';
+
+/** More roots than the header has room for on one line, as tabs. */
 export const LONG_ROOTS = [
   ROOT,
   OTHER_ROOT,

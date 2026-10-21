@@ -94,27 +94,54 @@ export interface DirectoryChoice {
  * The directories a new session can start in without typing one: each
  * group's directory under a root, most recently active first, then the roots.
  * A group outside every root (a worktree whose main repo isn't under one)
- * is left out, since the server would refuse it.
+ * is left out, since the server would refuse it. With a root tab open (W38),
+ * the tab's groups' directories alone, then its root.
  */
-export function directoryChoices(snapshot: Pick<IndexSnapshot, 'roots' | 'groups'>): DirectoryChoice[] {
+export function directoryChoices(snapshot: Pick<IndexSnapshot, 'roots' | 'groups'>, tab?: string): DirectoryChoice[] {
+  const roots = tab === undefined ? snapshot.roots : [tab];
   const paths: string[] = [];
   for (const group of snapshot.groups) {
-    if (isUnderRoot(group.key, snapshot.roots) && !paths.includes(group.key)) paths.push(group.key);
+    if ((tab === undefined || group.root === tab) && isUnderRoot(group.key, roots) && !paths.includes(group.key)) paths.push(group.key);
   }
-  for (const root of snapshot.roots) if (!paths.includes(root)) paths.push(root);
+  for (const root of roots) if (!paths.includes(root)) paths.push(root);
   return paths.map((path) => ({ path, label: shortenHome(path) }));
 }
 
-function isUnderRoot(dir: string, roots: readonly string[]): boolean {
+function isWithin(root: string, dir: string): boolean {
   const clean = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
-  return roots.some((root) => clean === root || clean.startsWith(root.endsWith('/') ? root : `${root}/`));
+  return clean === root || clean.startsWith(root.endsWith('/') ? root : `${root}/`);
 }
 
-/** What's wrong with a typed directory, if anything. A path through a symlink is left to the server. */
-export function directoryProblem(dir: string, roots: readonly string[]): string | undefined {
+function isUnderRoot(dir: string, roots: readonly string[]): boolean {
+  return roots.some((root) => isWithin(root, dir));
+}
+
+/**
+ * The root a directory is under as the index places it (src/index/roots.ts, matchRoot): the longest
+ * root that holds it, so with one root inside another the inner one. Undefined when none does. On the
+ * path as typed; a path through a symlink is left to the server.
+ */
+export function rootOf(dir: string, roots: readonly string[]): string | undefined {
+  let best: string | undefined;
+  for (const root of roots) if (isWithin(root, dir) && (best === undefined || root.length > best.length)) best = root;
+  return best;
+}
+
+/**
+ * What's wrong with a typed directory, if anything. A path through a symlink is left to the server.
+ * With a root tab open (W38), the directory must be in that tab: under its root, and not under
+ * another root inside it, whose tab the session would be listed in.
+ */
+export function directoryProblem(dir: string, roots: readonly string[], tab?: string): string | undefined {
   if (dir.trim() === '') return 'Choose a directory.';
   if (!dir.startsWith('/')) return 'Use an absolute path, starting with /.';
   if (/[\u0000-\u001f\u007f]/.test(dir)) return 'The path has control characters in it.';
+  if (tab !== undefined) {
+    const root = rootOf(dir, roots);
+    if (root === tab) return undefined;
+    const other = root === undefined ? '' : ` ${shortenHome(root)} has its own tab.`;
+    return `Use a directory under ${shortenHome(tab)}.${other}`;
+  }
   if (!isUnderRoot(dir, roots)) return `Use a directory under ${roots.map(shortenHome).join(' or ')}.`;
   return undefined;
 }

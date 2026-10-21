@@ -23,9 +23,10 @@ import { Tooltip } from '../components/Tooltip.js';
 import { ClipboardContext } from '../copy.js';
 import { ShortcutsStoreContext } from '../shortcuts.js';
 import { shortenHome } from '../format.js';
-import { ago, APP_DIR, APP_GROUP, LONG_ROOTS, NOW, session, TRUST_HINT } from './fixtures.js';
+import { ago, APP_DIR, APP_GROUP, LONG_ROOT, LONG_ROOTS, NOW, session, TRUST_HINT } from './fixtures.js';
 import { element, hoverFor, laidOut, Scenario, Specimen, specimenOf, text, until } from './kit.js';
 import { memoryShortcuts, stubClipboard } from './stubs.js';
+import { TabbedHeader } from './shell.js';
 import { Stubbed } from './views.js';
 
 const noop = () => {};
@@ -82,14 +83,14 @@ export function Tooltips() {
       >
         <Scenario run={hoverOn('button[aria-label="Keyboard shortcuts"]', 'Keyboard shortcuts')}>
           <div className="uikit-tip-stage">
-            <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+            <Header state="live" roots={[LONG_ROOT]} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
           </div>
         </Scenario>
       </Specimen>
       <Specimen title="New session, with its shortcut" note="A text button: its tooltip repeats its label only to show n." width={1100}>
         <Scenario run={hoverOn('.app-header .button.primary', 'New session')}>
           <div className="uikit-tip-stage">
-            <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+            <Header state="live" roots={[LONG_ROOT]} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
           </div>
         </Scenario>
       </Specimen>
@@ -101,7 +102,7 @@ export function Tooltips() {
         <ShortcutsStoreContext.Provider value={SHORTCUTS_OFF}>
           <Scenario run={hoverOn('button[aria-label="Keyboard shortcuts"]', 'Keyboard shortcuts')}>
             <div className="uikit-tip-stage">
-              <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+              <Header state="live" roots={[LONG_ROOT]} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
             </div>
           </Scenario>
         </ShortcutsStoreContext.Provider>
@@ -182,10 +183,17 @@ export function Tooltips() {
           </Scenario>
         </TipStage>
       </Specimen>
-      <Specimen title="Paths in full" note="The header's roots, home and all; on screen, home is ~ and the list may be cut in the middle." width={600}>
+      <Specimen title="Paths in full" note="The header's root, home and all; on screen, home is ~ and the path may be cut in the middle." width={600}>
         <Scenario run={hoverOn('.roots')}>
           <div className="uikit-tip-stage">
-            <Header state="live" roots={LONG_ROOTS} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+            <Header state="live" roots={[LONG_ROOT]} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
+          </div>
+        </Scenario>
+      </Specimen>
+      <Specimen title="A root tab's path in full" note="With several roots, each tab's tooltip is its root's path, home and all, and describes the tab (W38)." width={800}>
+        <Scenario run={hoverOn('.root-tab[aria-selected="false"]', LONG_ROOTS[1])}>
+          <div className="uikit-tip-stage">
+            <TabbedHeader roots={LONG_ROOTS} repos />
           </div>
         </Scenario>
       </Specimen>

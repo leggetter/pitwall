@@ -1,8 +1,12 @@
 // The repo list (docs/design-system.md, 3 and 4: Repo list and Repo list items): the Needs you and
-// All sessions views, a divider, then every group, under its root's path when pitwall watches more
-// than one root. Each item is a link to its selection, one count at the right, and the list is one
-// Tab stop: ↓ and ↑ move between items, Home and End jump to the ends, and Enter selects. Before the
-// first snapshot, four skeleton items stand in for the groups (4: Skeletons and spinners).
+// All sessions views, a divider, then every group. Each item is a link to its selection, one count at
+// the right, and the list is one Tab stop: ↓ and ↑ move between items, Home and End jump to the ends,
+// and Enter selects. Before the first snapshot, four skeleton items stand in for the groups (4:
+// Skeletons and spinners).
+//
+// With two or more roots, the list is the open root tab's (W38): the dashboard passes that root's
+// groups and hidden groups alone, so the views, their counts and the Hidden section are the root's
+// too, and every link names the root, so the URL says which tab it opens.
 //
 // Groups hidden from the list (W35, hidden.ts) are left out of it and listed at its foot instead,
 // behind a "Hidden (n)" disclosure, collapsed by default, which carries the needs-you badge when any
@@ -18,9 +22,9 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import type { SessionGroup } from '../../../src/shared/protocol.js';
-import { plainText, shortenHome } from '../format.js';
+import { plainText } from '../format.js';
 import { absentGroup, sameGroup, type HiddenGroup } from '../hidden.js';
-import { ALL_SESSIONS, groupSelection, NEEDS_YOU, sameSelection, selectionHref, type Selection } from '../selection.js';
+import { groupSelection, sameSelection, selectionHref, viewIn, type Selection } from '../selection.js';
 import { allFinished, countAttention, groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
@@ -79,21 +83,22 @@ export interface RepoListProps {
   inert?: boolean;
   /** The groups hidden from the list, listed at its foot (W35). Nothing is hidden when it's undefined. */
   hidden?: HiddenListProps | undefined;
+  /** With two or more roots, the open root tab: `groups` and `hidden` are its alone, and the views' links name it too (W38). */
+  tab?: string | undefined;
 }
 
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden }: RepoListProps) {
-  const rootId = useId();
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session is in one group (W39), so the groups' counts under a root add up to its sessions, and All sessions' to every root's.
   const sessions = sessionsIn(groups ?? []);
   const views: Item[] = [
-    { id: 'view:needs-you', selection: NEEDS_YOU, label: 'Needs you', attention: countAttention(sessions), count: undefined, muted: false },
+    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: 'Needs you', attention: countAttention(sessions), count: undefined, muted: false },
     // The total, never a badge: Needs you, just above, has that.
-    { id: 'view:all', selection: ALL_SESSIONS, label: 'All sessions', attention: 0, count: groups ? sessions.length : undefined, muted: false },
+    { id: 'view:all', selection: viewIn('all', tab), label: 'All sessions', attention: 0, count: groups ? sessions.length : undefined, muted: false },
   ];
   // Before the first snapshot there's nothing to hide yet.
   const hiddenGroups = groups ? (hidden?.groups ?? []) : [];
@@ -298,24 +303,13 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
     );
   };
 
-  /** Each root's entries, under its path when pitwall watches more than one. */
-  function rooted<T>(list: readonly { root: string; entries: readonly T[] }[], each: (entry: T, index: number) => ReactNode, prefix: string) {
-    return list.map(({ root, entries }, index) =>
-      roots.length > 1 ? (
-        <div key={root} className="repo-root-section">
-          <p className="repo-root" id={`${prefix}-${index}`}>
-            {plainText(shortenHome(root))}
-          </p>
-          <ul className="repo-items" aria-labelledby={`${prefix}-${index}`}>
-            {entries.map(each)}
-          </ul>
-        </div>
-      ) : (
-        <ul key={root} className="repo-items">
-          {entries.map(each)}
-        </ul>
-      ),
-    );
+  /** Each root's entries, root by root: one root's, the open tab's, when pitwall watches several. */
+  function rooted<T>(list: readonly { root: string; entries: readonly T[] }[], each: (entry: T, index: number) => ReactNode) {
+    return list.map(({ root, entries }) => (
+      <ul key={root} className="repo-items">
+        {entries.map(each)}
+      </ul>
+    ));
   }
 
   return (
@@ -323,7 +317,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
       <ul className="repo-items">{views.map((item) => render(item))}</ul>
       {(sections.length > 0 || (skeletons && !groups)) && <hr className="repo-divider" />}
       {skeletons && !groups && <SkeletonItems />}
-      {rooted(sections, (item) => render(item), rootId)}
+      {rooted(sections, (item) => render(item))}
       {hidden && hiddenEntries.length > 0 && (
         <div className="repo-hidden">
           <hr className="repo-divider" />
@@ -338,7 +332,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
             )}
           </button>
           <div className="repo-hidden-list" id={hiddenId} hidden={!hidden.open}>
-            {rooted(hiddenSections, renderHidden, `${rootId}-hidden`)}
+            {rooted(hiddenSections, renderHidden)}
           </div>
         </div>
       )}

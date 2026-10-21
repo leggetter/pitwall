@@ -112,10 +112,13 @@ beforeEach(() => {
 });
 
 describe('Dashboard header', () => {
-  it('shows the roots with the home directory shortened, the connection state and the update age', () => {
-    renderDashboard(snapshot([], { roots: ['/Users/example/code', '/srv/projects'] }));
+  it('shows the root with the home directory shortened, the connection state and the update age', () => {
+    renderDashboard(snapshot([], { roots: ['/Users/example/code'] }));
 
-    expect(document.querySelector('.roots')?.textContent).toBe('~/code, /srv/projects');
+    expect(document.querySelector('.roots')?.textContent).toBe('~/code');
+    // One root: no tabs, and the header as it always was (W38).
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(document.querySelector('header')?.className).toBe('app-header');
     expect(screen.getByText('Live')).toBeTruthy();
     expect(screen.getByText('updated 3s ago')).toBeTruthy();
 
@@ -337,7 +340,7 @@ describe('the repo list', () => {
     expect(listHeading().textContent).toBe('~/code, directory');
   });
 
-  it("puts each root's groups under its path when there are several roots, and tells two groups with the same key apart", () => {
+  it("shows each root's groups in its own root tab when there are several roots, and tells two groups with the same key apart", () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     // A worktree under one root whose main repo is under another: both groups are keyed by the main repo.
     const key = `${ROOT}/demo-app`;
@@ -351,18 +354,17 @@ describe('the repo list', () => {
       ),
     );
 
-    const lists = within(repoList()).getAllByRole('list');
-    expect(lists.map((list) => list.getAttribute('aria-labelledby') && document.getElementById(list.getAttribute('aria-labelledby')!)?.textContent)).toEqual([
-      null,
-      '~/code',
-      '~/worktrees',
-    ]);
-    choose('~/code/demo-app');
-    expect(visibleRowNames()).toEqual(['in-worktree']);
-    expect(listHeading().textContent).toBe('~/code/demo-app, git repoin ~/worktrees');
+    // No root headings in the list: the tab names the root (W38).
+    expect(within(repoList()).getAllByRole('list').map((list) => list.getAttribute('aria-labelledby'))).toEqual([null, null]);
+    expect(repoItems().slice(2)).toEqual(['demo-app, git repo1 session']);
     choose('demo-app');
     expect(visibleRowNames()).toEqual(['in-main']);
-    expect(listHeading().textContent).toBe('demo-app, git repoin ~/code');
+    expect(listHeading().textContent).toBe('demo-app, git repo');
+    fireEvent.click(screen.getAllByRole('tab')[1]!);
+    expect(repoItems().slice(2)).toEqual(['~/code/demo-app, git repo1 session']);
+    choose('~/code/demo-app');
+    expect(visibleRowNames()).toEqual(['in-worktree']);
+    expect(listHeading().textContent).toBe('~/code/demo-app, git repo');
     expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/);
   });
 
@@ -1703,12 +1705,12 @@ describe('the shell', () => {
     expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('shows the roots in full in a tooltip, home-shortened on screen', async () => {
-    renderDashboard(snapshot([], { roots: ['/Users/example/code', '/Users/example/work/projects'] }));
+  it('shows the root in full in a tooltip, home-shortened on screen', async () => {
+    renderDashboard(snapshot([], { roots: ['/Users/example/work/projects'] }));
 
     const roots = document.querySelector('.roots')!;
-    expect(await tooltipText(roots)).toBe('/Users/example/code, /Users/example/work/projects');
-    expect(roots.querySelector('.middle-ellipsis-start')?.textContent).toBe('~/code, ~/work');
+    expect(await tooltipText(roots)).toBe('/Users/example/work/projects');
+    expect(roots.querySelector('.middle-ellipsis-start')?.textContent).toBe('~/work');
     expect(roots.querySelector('.middle-ellipsis-end')?.textContent).toBe('/projects');
   });
 });
@@ -1799,7 +1801,7 @@ describe('each session in one group (W39)', () => {
     expect(badges).toBe(counted(repoItem('Needs you'), '.badge-attention'));
   });
 
-  it('adds the groups’ counts under each root up to that root’s sessions, and every root’s to All sessions', () => {
+  it('adds the groups’ counts in each root’s tab up to that root’s All sessions (W38)', () => {
     const calm = (name: string, cwd: string, repos: string[] = []) => session({ name, cwd, ...(repos.length > 0 ? { workedIn: worked(...repos) } : {}) });
     const snap = snapshot(
       [
@@ -1811,18 +1813,19 @@ describe('each session in one group (W39)', () => {
       { roots: [ROOT, WORK] },
     );
     renderDashboard(snap);
-    const sections = [...repoList().querySelectorAll('.repo-root-section')];
-    const sums = sections.map((section) => [section.querySelector('.repo-root')?.textContent, groupLinks(section).reduce((sum, link) => sum + counted(link, '.repo-item-count'), 0)]);
-    expect(sums).toEqual([
-      ['~/code', 5],
-      ['~/work', 1],
-    ]);
-    expect(counted(repoItem('All sessions'), '.repo-item-count')).toBe(6);
+    const sum = () => groupLinks(repoList()).reduce((total, link) => total + counted(link, '.repo-item-count'), 0);
+    expect(sum()).toBe(5);
+    expect(counted(repoItem('All sessions'), '.repo-item-count')).toBe(5);
     // Each group's summary says what its item does.
-    for (const [label, count] of [['app', '2 sessions'], ['api', '1 session'], ['~/code', '2 sessions'], ['svc', '1 session']] as const) {
+    for (const [label, count] of [['app', '2 sessions'], ['api', '1 session'], ['~/code', '2 sessions']] as const) {
       choose(label);
       expect(summary()).toBe(`${count}·Nothing needs you`);
     }
+    fireEvent.click(screen.getAllByRole('tab')[1]!);
+    expect(sum()).toBe(1);
+    expect(counted(repoItem('All sessions'), '.repo-item-count')).toBe(1);
+    choose('svc');
+    expect(summary()).toBe('1 session·Nothing needs you');
   });
 
   it('lists each session once in All sessions and Needs you, and counts them in the summary and the title', () => {

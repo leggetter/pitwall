@@ -12,12 +12,14 @@ import {
   NEEDS_YOU,
   parseSelection,
   readStoredSelection,
+  rootedSelection,
   sameSelection,
   scopeFor,
   selectionHref,
   selectionName,
   useSelection,
   VIEW_STATE_KEY,
+  viewIn,
   withSelection,
   writeStoredSelection,
   type NavigationEnv,
@@ -50,6 +52,17 @@ describe('parseSelection and withSelection', () => {
   it('round-trips any path through the URL', () => {
     const selections: Selection[] = [NEEDS_YOU, ALL_SESSIONS, { repo: '~/odd path/#1?&=+%' }, { repo: '/a:b@c,d', root: '/a' }];
     for (const selection of selections) expect(parseSelection(withSelection('', selection))).toEqual(selection);
+  });
+
+  it("reads and writes a view's root, which with several roots names the open root tab (W38)", () => {
+    expect(parseSelection(`?view=all&root=${WORK}`)).toEqual({ view: 'all', root: WORK });
+    expect(parseSelection(`?view=needs-you&root=`)).toEqual(NEEDS_YOU);
+    expect(withSelection('?session=abc', { view: 'needs-you', root: WORK })).toBe('?view=needs-you&root=/Users/example/work&session=abc');
+    expect(viewIn('all', undefined)).toEqual(ALL_SESSIONS);
+    expect(viewIn('all', WORK)).toEqual({ view: 'all', root: WORK });
+    expect(sameSelection({ view: 'all', root: WORK }, ALL_SESSIONS)).toBe(false);
+    expect(sameSelection({ view: 'all', root: WORK }, { view: 'all', root: WORK })).toBe(true);
+    expect(sameSelection({ view: 'all', root: WORK }, { view: 'needs-you', root: WORK })).toBe(false);
   });
 
   it('never carries the token, which lives in sessionStorage, not the query string', () => {
@@ -250,5 +263,33 @@ describe('useSelection', () => {
 
     hook.rerender({ current: snap });
     expect(selection()).toEqual(NEEDS_YOU);
+  });
+});
+
+describe('rootedSelection (W38)', () => {
+  const two = snapshot(
+    [group({ key: `${ROOT}/api`, label: 'api', sessions: [] }), group({ key: `${WORK}/api`, label: 'api', root: WORK, sessions: [] }), group({ key: `${WORK}/web`, label: 'web', root: WORK, sessions: [] })],
+    { roots: [ROOT, WORK] },
+  );
+  const one = snapshot([group({ key: `${ROOT}/api`, label: 'api', sessions: [] })]);
+
+  it('with several roots, gives a selection its tab: its own root, its group’s, the stored tab, or the first', () => {
+    const rooted = { view: 'all', root: WORK } as const;
+    expect(rootedSelection(rooted, two, undefined)).toBe(rooted);
+    expect(rootedSelection(ALL_SESSIONS, two, WORK)).toEqual({ view: 'all', root: WORK });
+    expect(rootedSelection(ALL_SESSIONS, two, '/Users/example/gone')).toEqual({ view: 'all', root: ROOT });
+    expect(rootedSelection({ view: 'all', root: '/Users/example/gone' }, two, undefined)).toEqual({ view: 'all', root: ROOT });
+    // A group named without a root: the first with its key, as findGroup picks it.
+    expect(rootedSelection({ repo: `${WORK}/web` }, two, undefined)).toEqual({ repo: `${WORK}/web`, root: WORK });
+    expect(rootedSelection({ repo: `${ROOT}/api` }, two, WORK)).toEqual({ repo: `${ROOT}/api`, root: ROOT });
+    // One no snapshot lists: the stored tab's, where it shows as gone.
+    expect(rootedSelection({ repo: `${WORK}/gone` }, two, WORK)).toEqual({ repo: `${WORK}/gone`, root: WORK });
+  });
+
+  it('with one root, drops a view’s root and leaves a group as it is', () => {
+    expect(rootedSelection({ view: 'needs-you', root: ROOT }, one, undefined)).toEqual(NEEDS_YOU);
+    const group = { repo: `${ROOT}/api`, root: ROOT };
+    expect(rootedSelection(group, one, undefined)).toBe(group);
+    expect(rootedSelection(ALL_SESSIONS, one, WORK)).toBe(ALL_SESSIONS);
   });
 });

@@ -4,7 +4,7 @@ import { SPAWN_PATH, type IndexSnapshot, type SessionSummary } from '../../../sr
 import actionsCss from '../actions.css?raw';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
-import { directoryChoices, directoryProblem, modelProblem, nameProblem, promptProblem } from '../spawn.js';
+import { directoryChoices, directoryProblem, modelProblem, nameProblem, promptProblem, rootOf } from '../spawn.js';
 import { block, declarations, withoutComments } from '../test/css.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
 import { hover, unhover } from '../test/tooltips.js';
@@ -521,5 +521,32 @@ describe('spawn helpers', () => {
     expect(promptProblem(' \n')).toBeDefined();
     expect(promptProblem('x'.repeat(16_384))).toBeUndefined();
     expect(promptProblem('x'.repeat(16_385))).toBeDefined();
+  });
+
+  it("with a root tab open, offers that tab's directories alone, then its root (W38)", () => {
+    const s = snapshot(
+      [
+        group({ key: '/r/b', label: 'b', root: '/r', sessions: [] }),
+        group({ key: '/r2/a', label: 'a', root: '/r2', sessions: [] }),
+        group({ key: '/r/a', label: 'a', root: '/r2', sessions: [] }),
+      ],
+      { roots: ['/r', '/r2'] },
+    );
+    expect(directoryChoices(s, '/r').map((choice) => choice.path)).toEqual(['/r/b', '/r']);
+    // A group the index put under /r2 whose key is under /r (a worktree's main repo) isn't /r2's to offer.
+    expect(directoryChoices(s, '/r2').map((choice) => choice.path)).toEqual(['/r2/a', '/r2']);
+  });
+
+  it("places a directory under the longest root that holds it, as the index does, and keeps a typed one in the open tab (W38)", () => {
+    expect(rootOf('/a/b/c', ['/a', '/a/b'])).toBe('/a/b');
+    expect(rootOf('/a/bc', ['/a', '/a/b'])).toBe('/a');
+    expect(rootOf('/a/b/', ['/a/b', '/a'])).toBe('/a/b');
+    expect(rootOf('/z', ['/a'])).toBeUndefined();
+    expect(directoryProblem('/a/x', ['/a', '/a/b'], '/a')).toBeUndefined();
+    expect(directoryProblem('/a/b/x', ['/a', '/a/b'], '/a')).toBe('Use a directory under /a. /a/b has its own tab.');
+    expect(directoryProblem('/a/b/x', ['/a', '/a/b'], '/a/b')).toBeUndefined();
+    expect(directoryProblem('/q/x', ['/a', '/q'], '/a')).toBe('Use a directory under /a. /q has its own tab.');
+    expect(directoryProblem('/elsewhere', ['/a', '/q'], '/a')).toBe('Use a directory under /a.');
+    expect(directoryProblem('relative', ['/a', '/q'], '/a')).toMatch(/absolute/);
   });
 });

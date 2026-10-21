@@ -5,7 +5,8 @@
 //
 // - Fields: Directory, a select of the groups' directories plus "Another directory under a root…",
 //   which reveals a path field; Name and Model, optional, Model's "Other…" revealing a field; and the
-//   first prompt.
+//   first prompt. With a root tab open (W38), the directories are that tab's, and a typed one must be
+//   in that tab, so the session is listed where it was started from.
 // - Problems show after the first submit, then follow the typing; a submit puts focus on the first
 //   field with one. ⌘/Ctrl + Enter submits from any field.
 // - While the request is out, Start session is busy, every other control is aria-disabled, and
@@ -50,15 +51,19 @@ export interface NewSessionDialogProps {
   onClose: () => void;
   /** The server started a session. The dialog is done; the caller closes it. */
   onStarted: (started: StartedSession) => void;
+  /** With two or more roots, the open root tab, whose directories alone it offers (W38). */
+  tab?: string | undefined;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
   const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), prompt: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
 
-  const choices = useMemo(() => directoryChoices(snapshot), [snapshot]);
+  const choices = useMemo(() => directoryChoices(snapshot, tab), [snapshot, tab]);
+  // The roots it offers directories under: the open tab's, or every one.
+  const roots = tab === undefined ? snapshot.roots : [tab];
   const [dirChoice, setDirChoice] = useState(() => choices[0]?.path ?? OTHER);
   const [customDir, setCustomDir] = useState('');
   const [name, setName] = useState('');
@@ -80,7 +85,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted }: NewSessionDia
   const cwd = dirChoice === OTHER ? customDir.trim() : dirChoice;
   const model = modelChoice === OTHER ? customModel.trim() : modelChoice;
   const problems = {
-    cwd: directoryProblem(cwd, snapshot.roots),
+    cwd: directoryProblem(cwd, snapshot.roots, tab),
     name: nameProblem(name),
     model: modelChoice === OTHER && model === '' ? 'Type a model alias, or choose the default.' : modelProblem(model),
     prompt: promptProblem(prompt),
@@ -202,7 +207,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted }: NewSessionDia
             type="text"
             className="field-input mono"
             aria-label="Directory path"
-            placeholder={`${snapshot.roots[0] ?? '/'}/…`}
+            placeholder={`${roots[0] ?? '/'}/…`}
             autoComplete="off"
             spellCheck={false}
             value={customDir}
@@ -214,7 +219,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted }: NewSessionDia
           />
         )}
         <p className="field-hint" id={`${ids.dir}-roots`}>
-          Under {snapshot.roots.map((root) => plainText(shortenHome(root))).join(' or ')}.
+          Under {roots.map((root) => plainText(shortenHome(root))).join(' or ')}.
         </p>
         {shown.cwd && (
           <p className="field-problem" id={`${ids.dir}-problem`}>
