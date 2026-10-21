@@ -152,6 +152,8 @@ export interface SessionViewProps {
   animate?: boolean;
   /** Whether the message box has a draft, for the shortcuts that would replace or close the view (6.2). */
   onDraftChange?: ((hasDraft: boolean) => void) | undefined;
+  /** Whether a Stop or Remove is running, for j, k, ↑ and ↓, which wait for it rather than move the view away (6.2). */
+  onRunningChange?: ((running: boolean) => void) | undefined;
 }
 
 type Tab = 'conversation' | 'terminal';
@@ -159,7 +161,18 @@ type Tab = 'conversation' | 'terminal';
 /** A copy from the actions menu that the clipboard refused: the text isn't on screen, so the header shows it. */
 type Refused = { label: string; text: string };
 
-export function SessionView({ session, listed, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, onDraftChange }: SessionViewProps) {
+export function SessionView({
+  session,
+  listed,
+  onClose,
+  layout = 'overlay',
+  compact = false,
+  headingRef,
+  onStep,
+  animate = true,
+  onDraftChange,
+  onRunningChange,
+}: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
   const ids = { title: useId(), conversationTab: useId(), conversationPanel: useId(), terminalTab: useId(), terminalPanel: useId() };
@@ -292,6 +305,12 @@ export function SessionView({ session, listed, onClose, layout = 'overlay', comp
   const command = attachCommand(session);
   const canAct = background && listed;
   const busy = actions.running !== undefined;
+  const onRunningRef = useRef(onRunningChange);
+  onRunningRef.current = onRunningChange;
+  useEffect(() => {
+    onRunningRef.current?.(busy);
+  }, [busy]);
+  useEffect(() => () => onRunningRef.current?.(false), []);
   const entries: MenuEntry[] = [
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),

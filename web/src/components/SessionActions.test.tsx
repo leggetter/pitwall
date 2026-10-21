@@ -311,6 +311,115 @@ describe('Stop and Remove', () => {
   });
 });
 
+/** A server whose POSTs wait until released with an answer; GETs get an empty page at once. */
+function heldServer() {
+  const waiting: ((answer: Answer) => void)[] = [];
+  const fetch = vi.fn<FetchLike>(async (url, init) => {
+    if (init.method !== 'POST') {
+      const sessionId = decodeURIComponent(/\/api\/sessions\/([^/]+)\//.exec(url)?.[1] ?? '');
+      return new Response(JSON.stringify({ sessionId, entries: [] }), { status: 200 });
+    }
+    const answer = await new Promise<Answer>((resolve) => waiting.push(resolve));
+    return new Response(answer.body === undefined ? 'not json' : JSON.stringify(answer.body), { status: answer.status });
+  });
+  const release = async (answer: Answer) => {
+    const next = waiting.shift();
+    if (!next) throw new Error('no POST is waiting');
+    await act(async () => next(answer));
+    await settle();
+  };
+  return { fetch, release };
+}
+
+describe('a result that arrives after the view has gone (W31)', () => {
+  const viewName = () => document.querySelector('#session-view .session-view-name')?.textContent;
+  const press = (key: string, target: Element) => act(() => void fireEvent.keyDown(target, { key }));
+
+  it('j, k, ↑ and ↓ do nothing while a Stop runs, so they never move the view away from it', async () => {
+    const { fetch, release } = heldServer();
+    renderDashboard(fetch);
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Stop session');
+    fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
+    await settle();
+    const heading = view.querySelector<HTMLElement>('.session-view-title')!;
+    heading.focus();
+    for (const key of ['j', 'k', 'ArrowDown', 'ArrowUp']) press(key, heading);
+    await settle();
+    expect(viewName()).toBe('pitwall-test-bg');
+    expect(within(view).getByRole('button', { name: 'Stopping…' })).toBeTruthy();
+
+    await release({ status: 200, body: { ok: true } });
+    expect(toastMessages()).toEqual(['Stopped. Its conversation is kept.']);
+    // Done, they move again: the interactive session is the row before.
+    press('k', view.querySelector<HTMLElement>('.session-view-title')!);
+    await settle();
+    expect(viewName()).toBe('pitwall-test-interactive');
+  });
+
+  it('says a Stop finished, naming the session, when its view was closed while it ran', async () => {
+    const { fetch, release } = heldServer();
+    renderDashboard(fetch);
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Stop session');
+    fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
+    await settle();
+    fireEvent.click(within(view).getByRole('button', { name: 'Close' }));
+    await settle();
+    expect(document.getElementById('session-view')).toBeNull();
+
+    await release({ status: 200, body: { ok: true } });
+    expect(toastMessages()).toEqual(['Stopped pitwall-test-bg. Its conversation is kept.']);
+  });
+
+  it("turns a refusal into an error toast with Claude Code's message, as text, when the view has gone", async () => {
+    const refusal = 'Kept the worktree pitwall-test-wt: it has 2 unpushed commits. <b>made up</b>';
+    const { fetch, release } = heldServer();
+    renderDashboard(fetch);
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Remove session');
+    fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
+    await settle();
+    fireEvent.click(within(view).getByRole('button', { name: 'Close' }));
+    await settle();
+
+    await release({ status: 409, body: { ok: false, error: refusal } });
+    const message = `Couldn't remove pitwall-test-bg. ${refusal}`;
+    expect(toastMessages()).toEqual([message]);
+    const toast = toastSaying(message);
+    expect(toast.getAttribute('role')).toBe('alert');
+    expect(toast.querySelector('b')).toBeNull();
+  });
+
+  it('says a request with no answer it understands failed, with its status, naming the session', async () => {
+    const { fetch, release } = heldServer();
+    renderDashboard(fetch);
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Stop session');
+    fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
+    await settle();
+    fireEvent.click(within(view).getByRole('button', { name: 'Close' }));
+    await settle();
+
+    await release({ status: 502 });
+    expect(toastMessages()).toEqual(["Couldn't stop pitwall-test-bg (HTTP 502)."]);
+  });
+
+  it('says a Remove finished when the view went while it ran, and keeps it closed', async () => {
+    const { fetch, release } = heldServer();
+    renderDashboard(fetch);
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Remove session');
+    fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
+    await settle();
+    fireEvent.click(within(view).getByRole('button', { name: 'Close' }));
+    await settle();
+    await release({ status: 200, body: { ok: true } });
+    expect(toastMessages()).toEqual(['Removed pitwall-test-bg']);
+    expect(document.getElementById('session-view')).toBeNull();
+  });
+});
+
 describe('the confirmations’ focus and results (W24)', () => {
   it('puts focus back on the menu button once Stop has finished, and announces the result', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
