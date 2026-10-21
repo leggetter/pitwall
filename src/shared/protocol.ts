@@ -115,6 +115,8 @@ export interface SessionSummary {
    * sub-agents' included, touched it. It's shown in the session view only: a
    * session is listed under the group it started in and nowhere else (W39,
    * Phil, 2026-10-21), so a repo here may have no group in IndexSnapshot.groups.
+   * The web UI may still show the session under one of these repos, by the
+   * viewer's View preferences (W42).
    * Absent until the session's transcripts have been scanned, when they can't
    * be read, and when no repo passes the rule.
    */
@@ -127,6 +129,12 @@ export interface WorkedIn {
   key: string;
   /** The repo's label, as its group's SessionGroup.label is or would be. */
   label: string;
+  /**
+   * The configured root the repo's group sits under, or would: SessionGroup.root. The web UI groups
+   * the snapshot by the viewer's choice (W42, View preferences), and needs it to place a session
+   * under a repo that has no group in the snapshot.
+   */
+  root: string;
   /** Tool calls that touched the repo, sub-agents' included. */
   calls: number;
   /** Edits and writes in the repo, commits and pushes there, and PRs created or merged for it. */
