@@ -79,9 +79,14 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** each attach is a PTY and a `claude attach` process. Closing the view or the tab detaches, and the session keeps running. `claude attach` restarts a background session that isn't running, which is an action, so the UI asks first.
 
-### D6 - Group sessions by `git rev-parse --git-common-dir`
+### D6 - Group sessions by repo: where they started, and where they worked
 
-- **Why:** worktrees sit under the repo they belong to. A directory that isn't a git repo groups as itself.
+- **Start group:** the repo of the session's working directory, by `git rev-parse --git-common-dir`, so worktrees sit under the repo they belong to. A directory below a root that isn't in a repo groups as itself.
+- **Also listed under:** every repo under a configured root that the session changed (an edit or write, a commit or push, a PR created or merged), or that at least 5% of its tool calls touched, sub-agents' included. Spike 004 scored that rule at 1 false positive and 3 misses on 28 hand-judged repos.
+- **The root's own group:** only the sessions started in the root that worked in no repo. One that worked in repos is listed under those repos.
+- **Why:** most sessions start in the folder that holds the repos, so grouping by start alone put most of them in one group.
+- **How:** a background scanner reads each session's transcripts, sub-agents' included, and the poll never waits on it. It keeps what it finds in memory only, and runs read-only git at repo boundaries, at most two processes at once. A session sits where it started until its first scan finishes.
+- **Counts:** a repo's count is its number of distinct sessions, so the repos' counts can add up to more than All sessions.
 
 ### D10 - pitwall's own design system, inspired by Hookdeck's UX
 
