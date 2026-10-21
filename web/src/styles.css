@@ -2600,12 +2600,13 @@ mark.match {
 /*
  * A radio group in a menu (W42, View preferences): its title in label type, then its options, the
  * chosen one with a check mark in the icon's place. An option's line saying what it does wraps under
- * its label, so the panel is as wide as its content up to 20rem, and never wider than the window
- * leaves, 16 px each side, with no sideways scroll at 320 px.
+ * its label, so the panel is as wide as its content up to 20rem, and never wider than the app leaves,
+ * 16 px each side, with no sideways scroll at 320 px. 100cqw is the app's width (the pitwall
+ * container), or a #uikit frame's; with no container, the window's.
  */
 .menu.described {
   width: max-content;
-  max-width: min(20rem, calc(100vw - 2 * var(--pw-space-4)));
+  max-width: min(20rem, calc(100cqw - 2 * var(--pw-space-4)));
 }
 
 .menu-group {

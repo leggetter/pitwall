@@ -400,6 +400,26 @@ describe('switching modes', () => {
     expect(toasts()).toEqual(['Selected All sessions: ~/work has no sessions when grouped by main repo.']);
   });
 
+  it.each([
+    ['main-repo', 'changed most'],
+    ['every-repo', 'worked in'],
+  ] as const)("%s: says where a selected root's group went, once every session started there is under its repos", (mode, how) => {
+    const list = sessions();
+    const snap = twoRoots(list);
+    const work = snap.groups.find((g) => g.key === WORK);
+    if (work) work.sessions = [list.big, list.cross];
+    renderApp({ mode, snap, search: `?repo=${WORK}&root=${WORK}` });
+    // Selected, though not listed, so with no kind, as any group that has gone.
+    expect(listHeading().textContent).toBe('~/work');
+    expect(screen.getByText('No sessions in ~/work now')).toBeTruthy();
+    expect(screen.getByText(`Its sessions are listed under the repos they ${how}, as View preferences groups them.`)).toBeTruthy();
+  });
+
+  it("keeps the usual sentence for a group the snapshot no longer has", () => {
+    renderApp({ search: `?repo=${at(WORK, 'gone')}&root=${WORK}` });
+    expect(screen.getByText('Its sessions are no longer listed under these roots.')).toBeTruthy();
+  });
+
   it("replaces another tab's selection quietly, for when that tab is back", () => {
     renderApp({ search: `?repo=${at(WORK, 'evals')}&root=${WORK}` });
     fireEvent.click(tab('~/personal'));

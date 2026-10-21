@@ -19,6 +19,10 @@
 // and Where it started; in Every repo it worked in, the group it started in, or, for a root-started
 // session that worked in repos, its main repo.
 //
+// A worked-in repo without a key or root, as a server from before W42 would send while `npm run dev`
+// restarts it, is left out of the grouping, so its session stays where it started, and the page never
+// throws; the session view still names it.
+//
 // "Started in a root itself" is a session in a root's own group that is a directory, as W34 had it:
 // a root that is itself a repo is a repo like any other, and its sessions stay put. A repo that only
 // moved sessions list has no group in the snapshot, so one is built from the WorkedIn: its key, label
@@ -93,6 +97,11 @@ export function useGroupBy(storage: StorageSource = browserStorage): [GroupBy, (
   return [mode, choose];
 }
 
+/** A repo the page can list a session under: one with a key and a root, as the contract says (W42). */
+function placeable(repo: WorkedIn): boolean {
+  return typeof repo.key === 'string' && repo.key !== '' && typeof repo.root === 'string' && repo.root !== '';
+}
+
 function lastAtMs(repo: WorkedIn): number {
   const ms = Date.parse(repo.lastAt);
   return Number.isFinite(ms) ? ms : 0;
@@ -165,7 +174,7 @@ export function groupSessions(startGroups: SessionGroup[], mode: GroupBy): Group
     const listed = byId.get(groupId(start)) as SessionGroup;
     for (const session of start.sessions) {
       if (home.has(session.sessionId)) continue;
-      const worked = session.workedIn ?? [];
+      const worked = (session.workedIn ?? []).filter(placeable);
       const main = isRootStart(start) ? mainRepo(worked) : undefined;
       const homeGroup = main === undefined ? listed : repoGroup(main);
       home.set(session.sessionId, homeGroup);
@@ -191,7 +200,7 @@ export function everyGroupId(startGroups: readonly SessionGroup[]): Set<string> 
   const ids = new Set<string>();
   for (const group of startGroups) {
     ids.add(groupId(group));
-    for (const session of group.sessions) for (const repo of session.workedIn ?? []) ids.add(groupId(repo));
+    for (const session of group.sessions) for (const repo of session.workedIn ?? []) if (placeable(repo)) ids.add(groupId(repo));
   }
   return ids;
 }
