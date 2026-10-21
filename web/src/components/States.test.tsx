@@ -268,9 +268,25 @@ describe('empty states', () => {
     expect(shown.title).toBe('Nothing needs you right now');
     expect(shown.sentence).toBe('Sessions that are waiting for you, or asked you something, show here.');
     expect(names(shown.actions)).toEqual(['Show all sessions (button md)']);
+    // No summary over it, which would only say "Nothing needs you" again (W31).
+    expect(document.querySelector('.session-list .summary')).toBeNull();
     fireEvent.click(shown.actions[0]!);
     expect(rowNames()).toEqual(['calm']);
     expect(document.activeElement).toBe(listHeading());
+    expect(document.querySelector('.session-list .summary')?.textContent).toBe('1 session·Nothing needs you');
+  });
+
+  it('has no summary over the no-sessions empty state, which would only say "0 sessions · Nothing needs you" (W31)', () => {
+    dashboard({ state: 'live', snapshot: snapshot([]) });
+    expect(emptyState().title).toBe('No Claude Code sessions under ~/code');
+    expect(document.querySelector('.session-list .summary')).toBeNull();
+  });
+
+  it('keeps the summary over the no-match empty state, where it says what the filter hides', () => {
+    dashboard({ state: 'live', snapshot: snapshot([group({ sessions: [session({ name: 'calm', status: 'idle' })] })]) });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter sessions' }), { target: { value: 'nothing-like-it' } });
+    expect(emptyState().title).toBe('No sessions match');
+    expect(document.querySelector('.session-list .summary')?.textContent).toBe('0 of 1 session·Nothing needs you');
   });
 
   it('the session view column with nothing open: "Select a session", and no action', () => {
