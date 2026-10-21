@@ -446,16 +446,26 @@ describe('Markdown: links in code, bounded on hostile input (W37)', () => {
   const fence = (body: string) => `\`\`\`\n${body.slice(0, N - 8)}\n\`\`\``;
   /** As W36's render limit: happy-dom is several times slower than a browser; headless Chrome's times are in the app check. */
   const RENDER_MS = 500;
+  const renderTime = (text: string) =>
+    bestOf3(() => {
+      const { unmount } = renderMarkdown(text);
+      unmount();
+    });
 
   it.each([
     ['a code block packed with URLs, shown as written', fence(fill('https://a.example/x '))],
-    ['a code block of 1,247 URLs, one a line, just under the cap', fence(Array.from({ length: 1247 }, (_, i) => `https://a.example/${String(i).padStart(4, '0')}`).join('\n'))],
-    ['thousands of code spans holding URLs', fill('`https://a.example/x` ')],
+    ['thousands of code spans holding URLs, shown as written', fill('`https://a.example/x` ')],
   ])('renders 32 KiB of %s', (_name, hostile) => {
-    const took = bestOf3(() => {
-      const { unmount } = renderMarkdown(hostile);
-      unmount();
-    });
-    expect(took).toBeLessThan(RENDER_MS);
+    expect(renderTime(hostile)).toBeLessThan(RENDER_MS);
+  });
+
+  it('renders the most links in code a message can show about as fast as 32 KiB of dense everyday markdown', () => {
+    // 1,247 links, 4,998 elements, each link a tooltip of its own. happy-dom builds a portal for each
+    // one slowly, so this is measured against W36's dense everyday markdown here, on the same machine,
+    // rather than against RENDER_MS. Headless Chrome drew both in about 20 to 36 ms (W37's app check).
+    const links = fence(Array.from({ length: 1247 }, (_, i) => `https://a.example/${String(i).padStart(4, '0')}`).join('\n'));
+    const everyday = fill('A **made-up** reply with `code`, a [link](https://example.com/a) and *emphasis*.\n\n- one item\n- two items\n\n');
+    expect(renderMarkdown(links).root.querySelectorAll('pre a')).toHaveLength(1247);
+    expect(renderTime(links)).toBeLessThan(2 * renderTime(everyday));
   });
 });
