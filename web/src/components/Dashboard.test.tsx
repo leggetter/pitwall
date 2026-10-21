@@ -1760,16 +1760,18 @@ describe('untrusted session text', () => {
   });
 });
 
-describe('sessions in several groups (W34)', () => {
+describe('each session in one group (W39)', () => {
   const ROOT = '/Users/example/code';
-  const key = (name: string) => `${ROOT}/${name}`;
-  const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
+  const WORK = '/Users/example/work';
+  const key = (name: string, root = ROOT) => `${root}/${name}`;
+  const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), label: name, calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
 
   /**
-   * What the index sends once sessions have been scanned: one summary object under each group that
-   * lists it. Six sessions, two of which need you; `inApp` and `fromRoot` are in three groups each.
+   * What the index sends once sessions have been scanned: each session in the group it started in
+   * alone. Six sessions, two of which need you. `fromRoot` started in the root and worked in docs and
+   * api; docs has no group, since nothing started there.
    */
-  function several() {
+  function oneGroupEach() {
     const inApp = session({ name: 'in-app', cwd: key('app'), status: 'waiting', waitingFor: 'permission prompt', lastUserPrompt: 'made-up prompt in app', workedIn: worked('api') });
     const app2 = session({ name: 'app-only', cwd: key('app') });
     const inApi = session({ name: 'in-api', cwd: key('api') });
@@ -1778,29 +1780,53 @@ describe('sessions in several groups (W34)', () => {
     const alone = session({ name: 'alone', cwd: ROOT });
     const snap = snapshot([
       group({ key: key('app'), label: 'app', sessions: [inApp, app2] }),
-      group({ key: key('api'), label: 'api', sessions: [inApp, inApi, fromRoot] }),
-      group({ key: key('docs'), label: 'docs', sessions: [fromRoot, inNotes] }),
+      group({ key: key('api'), label: 'api', sessions: [inApi] }),
       group({ key: key('notes'), label: 'notes', kind: 'directory', sessions: [inNotes] }),
-      group({ key: ROOT, label: 'code', kind: 'directory', sessions: [alone] }),
+      group({ key: ROOT, label: 'code', kind: 'directory', sessions: [fromRoot, alone] }),
     ]);
     return { snap, inApp, app2, inApi, fromRoot, inNotes, alone };
   }
 
-  it('counts each repo’s distinct sessions, and badges the ones that need you in every repo they are under', () => {
-    renderDashboard(several().snap);
-    expect(repoItems()).toEqual([
-      'Needs you2 need you',
-      'All sessions6 sessions',
-      '~/code, directory1 session',
-      'api, git repo2 need you',
-      'app, git repo1 needs you',
-      'docs, git repo1 needs you',
-      'notes, directory1 session',
-    ]);
+  /** The number at an item's right: its sessions, or the badge's sessions that need you. */
+  const counted = (link: Element, selector: string) => Number.parseInt(link.querySelector(selector)?.textContent ?? '0', 10);
+  const groupLinks = (list: ParentNode) => [...list.querySelectorAll('a[data-repo-item]')].filter((link) => !['Needs you', 'All sessions'].includes(link.querySelector('.repo-item-label')?.textContent ?? ''));
+
+  it('counts the sessions started in each group, so the groups’ badges add up to Needs you, and a repo sessions only worked in has no item', () => {
+    renderDashboard(oneGroupEach().snap);
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions6 sessions', '~/code, directory1 needs you', 'api, git repo1 session', 'app, git repo1 needs you', 'notes, directory1 session']);
+    expect(repoItems().some((item) => item.startsWith('docs'))).toBe(false);
+    const badges = groupLinks(repoList()).reduce((sum, link) => sum + counted(link, '.badge-attention'), 0);
+    expect(badges).toBe(counted(repoItem('Needs you'), '.badge-attention'));
   });
 
-  it('lists each session once in All sessions and Needs you, and counts them once, in the summary and the title', () => {
-    renderDashboard(several().snap);
+  it('adds the groups’ counts under each root up to that root’s sessions, and every root’s to All sessions', () => {
+    const calm = (name: string, cwd: string, repos: string[] = []) => session({ name, cwd, ...(repos.length > 0 ? { workedIn: worked(...repos) } : {}) });
+    const snap = snapshot(
+      [
+        group({ key: key('app'), label: 'app', sessions: [calm('a1', key('app'), ['api']), calm('a2', key('app'))] }),
+        group({ key: key('api'), label: 'api', sessions: [calm('p1', key('api'), ['app'])] }),
+        group({ key: ROOT, label: 'code', kind: 'directory', sessions: [calm('r1', ROOT, ['app', 'api', 'docs']), calm('r2', ROOT)] }),
+        group({ key: key('svc', WORK), label: 'svc', root: WORK, sessions: [calm('w1', key('svc', WORK), ['app'])] }),
+      ],
+      { roots: [ROOT, WORK] },
+    );
+    renderDashboard(snap);
+    const sections = [...repoList().querySelectorAll('.repo-root-section')];
+    const sums = sections.map((section) => [section.querySelector('.repo-root')?.textContent, groupLinks(section).reduce((sum, link) => sum + counted(link, '.repo-item-count'), 0)]);
+    expect(sums).toEqual([
+      ['~/code', 5],
+      ['~/work', 1],
+    ]);
+    expect(counted(repoItem('All sessions'), '.repo-item-count')).toBe(6);
+    // Each group's summary says what its item does.
+    for (const [label, count] of [['app', '2 sessions'], ['api', '1 session'], ['~/code', '2 sessions'], ['svc', '1 session']] as const) {
+      choose(label);
+      expect(summary()).toBe(`${count}·Nothing needs you`);
+    }
+  });
+
+  it('lists each session once in All sessions and Needs you, and counts them in the summary and the title', () => {
+    renderDashboard(oneGroupEach().snap);
     expect(visibleRowNames().sort()).toEqual(['alone', 'app-only', 'from-root', 'in-api', 'in-app', 'in-notes']);
     expect(summary()).toBe('6 sessions2 need you');
     expect(document.title).toBe('(2) pitwall');
@@ -1809,64 +1835,77 @@ describe('sessions in several groups (W34)', () => {
     expect(summary()).toBe('2 sessions2 need you');
   });
 
-  it('names where a row started in All sessions, or for one started in the root, the repo it touched last', () => {
-    renderDashboard(several().snap);
+  it('names the group each row started in, in All sessions, the one it is listed under', () => {
+    renderDashboard(oneGroupEach().snap);
     expect(line2('in-app')).toBe('app · You: made-up prompt in app');
     expect(line2('in-notes')).toBe('notes · You: run the tests');
-    expect(line2('from-root')).toBe('docs · Asked: Merge the made-up docs change?');
+    expect(line2('from-root')).toBe('~/code · Asked: Merge the made-up docs change?');
     expect(line2('alone')).toBe('~/code · You: run the tests');
   });
 
-  it("starts line 2 with where a session started, in a repo's list, when it's listed there because it worked in it", () => {
-    renderDashboard(several().snap);
+  it("lists only the sessions started in a group, and no row there starts with where it started", () => {
+    renderDashboard(oneGroupEach().snap);
     choose('api');
-    expect(summary()).toBe('3 sessions2 need you');
-    expect(line2('in-app')).toBe('Started in app · You: made-up prompt in app');
-    expect(line2('from-root')).toBe('Started in ~/code · Asked: Merge the made-up docs change?');
-    // Started here: no label, as in any group's list.
-    expect(line2('in-api')).toBe('You: run the tests');
-    // "Started in" is for screen readers; the screen shows the label alone, as All sessions does.
-    expect(row('in-app').querySelector('.session-started .visually-hidden')?.textContent).toBe('Started in ');
-    expect(row('in-app').querySelectorAll('.session-what')).toHaveLength(1);
+    expect(visibleRowNames()).toEqual(['in-api']);
+    expect(summary()).toBe('1 session·Nothing needs you');
+    choose('~/code');
+    expect(visibleRowNames()).toEqual(['from-root', 'alone']);
+    expect(line2('from-root')).toBe('Asked: Merge the made-up docs change?');
+    for (const label of ['app', 'api', 'notes', '~/code']) {
+      choose(label);
+      for (const name of visibleRowNames()) {
+        expect(line2(name), `${label}: ${name}`).not.toMatch(/^Started in /);
+        expect(row(name).querySelector('.session-group'), `${label}: ${name}`).toBeNull();
+      }
+    }
+    expect(document.querySelector('.session-started')).toBeNull();
   });
 
-  it('lets a row through the filter when any group it is under matches, whichever its line 2 names', () => {
-    renderDashboard(several().snap);
+  it('lets a row through the filter when a repo it worked in matches, whether or not that repo has a group', () => {
+    renderDashboard(oneGroupEach().snap);
+    // docs has no group: the two sessions that worked there.
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'docs' } });
     expect(visibleRowNames().sort()).toEqual(['from-root', 'in-notes']);
+    // The badge counts the selection, as it always has, not what the filter shows.
+    expect(summary()).toBe('2 of 6 sessions2 need you');
+    // api has one: the session started there and the two that worked there.
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'api' } });
+    expect(visibleRowNames().sort()).toEqual(['from-root', 'in-api', 'in-app']);
   });
 
-  it('shows where the session started and the repos it worked in, with the rule in an info button', async () => {
-    const { snap, fromRoot } = several();
+  it('names every repo the session worked in, by its label, a repo with no group too, with the rule in an info button', () => {
+    const { snap, fromRoot } = oneGroupEach();
     renderDashboard(snap, {}, { search: `?view=all&session=${fromRoot.sessionId}` });
     const line = () => document.querySelector('#session-view .session-view-worked');
     // The " · " is drawn; screen readers get ", and" instead.
     const shown = (element: Element) => [...element.childNodes].map((node) => (node instanceof HTMLElement && node.classList.contains('visually-hidden') ? '' : node.textContent)).join('');
     expect(shown(line()?.querySelector('.session-view-worked-text') as Element)).toBe('Started in ~/code · worked in docs, api');
     expect(line()?.querySelectorAll('.session-view-repo')).toHaveLength(3);
+    // The names are text: nothing to select or follow.
+    expect(line()?.querySelectorAll('a, button:not(.info-tip)')).toHaveLength(0);
     const info = within(line() as HTMLElement).getByRole('button');
     expect(info.getAttribute('aria-label')).toBe(
-      "A session is also listed under each repo it changed, or that at least 5% of its tool calls touched, its sub-agents' included. One started in a root's own directory is listed under those repos alone.",
+      "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. The session is listed only where it started: to find every session that worked in a repo, type the repo's name in the filter on All sessions.",
     );
     // Rows keep their two lines.
     expect(row('from-root').children).toHaveLength(2);
   });
 
   it('has no worked-in line for a session that worked in no other repo, or has not been scanned yet', () => {
-    const { snap, app2 } = several();
+    const { snap, app2 } = oneGroupEach();
     renderDashboard(snap, {}, { search: `?view=all&session=${app2.sessionId}` });
     expect(document.querySelector('#session-view')).toBeTruthy();
     expect(document.querySelector('.session-view-worked')).toBeNull();
   });
 
-  it("selects where a ?session= started, or for one started in the root, the repo it touched last", () => {
-    const first = several();
+  it('selects the group a ?session= started in, the root’s own for one started there that worked in repos', () => {
+    const first = oneGroupEach();
     const opened = renderDashboard(first.snap, {}, { search: `?session=${first.inApp.sessionId}` });
     expect(listHeading().textContent).toBe('app, git repo');
     opened.unmount();
-    const second = several();
+    const second = oneGroupEach();
     renderDashboard(second.snap, {}, { search: `?session=${second.fromRoot.sessionId}` });
-    expect(listHeading().textContent).toBe('docs, git repo');
+    expect(listHeading().textContent).toBe('~/code, directory');
   });
 
   it('falls back as before when a saved selection names a group that has gone, such as a directory that emptied', () => {
@@ -1875,62 +1914,57 @@ describe('sessions in several groups (W34)', () => {
       const store = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => void values.set(k, v), removeItem: (k: string) => void values.delete(k) };
       return () => store as unknown as Storage;
     })();
-    renderDashboard(several().snap, {}, { storage });
+    renderDashboard(oneGroupEach().snap, {}, { storage });
     expect(listHeading().textContent).toBe('scratch');
     expect(screen.getByText('No sessions in scratch now')).toBeTruthy();
-    // Any group but a root's own keeps the sentence it had.
     expect(screen.getByText('Its sessions are no longer listed under these roots.')).toBeTruthy();
-    expect(screen.queryByText('Sessions started here that worked in repos are listed under those repos.')).toBeNull();
     expect(repoList().querySelector('[aria-current]')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
     expect(listHeading().textContent).toBe('All sessions');
   });
 
-  it("names the root's group by its path once it has emptied, with the same fallback as any group that has gone", () => {
+  it("names the root's group by its path once its sessions have gone, with the fallback any group that has gone has", () => {
     const navigation = memoryNavigation(`?repo=${ROOT}`);
-    const moved = session({ name: 'moved', cwd: ROOT, workedIn: worked('api') });
-    render(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ key: key('api'), label: 'api', sessions: [moved] })]) }} navigation={navigation} />);
+    const elsewhere = session({ name: 'elsewhere', cwd: key('api'), workedIn: worked('docs') });
+    render(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ key: key('api'), label: 'api', sessions: [elsewhere] })]) }} navigation={navigation} />);
     expect(listHeading().textContent).toBe('~/code');
     expect(screen.getByText('No sessions in ~/code now')).toBeTruthy();
-    // It says where the sessions went, not that they've gone.
-    expect(screen.getByText('Sessions started here that worked in repos are listed under those repos.')).toBeTruthy();
-    expect(screen.queryByText('Its sessions are no longer listed under these roots.')).toBeNull();
+    expect(screen.getByText('Its sessions are no longer listed under these roots.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
-    expect(visibleRowNames()).toEqual(['moved']);
+    expect(visibleRowNames()).toEqual(['elsewhere']);
   });
 
-  it("moves a session out of the root's group once it has worked in a repo, which appears in its alphanumeric place", () => {
+  it("keeps a session in the root's group once its scan finds repos, and gives those repos no item", () => {
     const navigation = memoryNavigation(`?repo=${ROOT}`);
     const alone = session({ name: 'alone', cwd: ROOT });
     const other = session({ name: 'other', cwd: ROOT });
     const ui = (snap: IndexSnapshot) => <Dashboard view={{ state: 'live', snapshot: snap }} navigation={navigation} />;
-    const before = snapshot([group({ key: key('zeta'), label: 'zeta', sessions: [session({ name: 'z' })] }), group({ key: ROOT, label: 'code', kind: 'directory', sessions: [alone, other] })]);
-    const { rerender } = render(ui(before));
+    const zeta = group({ key: key('zeta'), label: 'zeta', sessions: [session({ name: 'z' })] });
+    const { rerender } = render(ui(snapshot([zeta, group({ key: ROOT, label: 'code', kind: 'directory', sessions: [alone, other] })])));
     expect(visibleRowNames()).toEqual(['alone', 'other']);
-    const moved = { ...alone, workedIn: worked('beta') };
-    rerender(ui(snapshot([group({ key: key('zeta'), label: 'zeta', sessions: [session({ name: 'z' })] }), group({ key: key('beta'), label: 'beta', sessions: [moved] }), group({ key: ROOT, label: 'code', kind: 'directory', sessions: [other] })])));
-    expect(visibleRowNames()).toEqual(['other']);
-    expect(repoItems()).toEqual(['Needs you', 'All sessions3 sessions', '~/code, directory1 session', 'beta, git repo1 session', 'zeta, git repo1 session']);
+    const before = repoItems();
+    rerender(ui(snapshot([zeta, group({ key: ROOT, label: 'code', kind: 'directory', sessions: [{ ...alone, workedIn: worked('beta', 'zeta') }, other] })])));
+    expect(visibleRowNames()).toEqual(['alone', 'other']);
+    expect(repoItems()).toEqual(before);
+    expect(repoItems()).toEqual(['Needs you', 'All sessions3 sessions', '~/code, directory2 sessions', 'zeta, git repo1 session']);
   });
 
   it('moves focus to the row that takes its place when the focused row leaves the selected group, or to the heading when none is left', () => {
     const navigation = memoryNavigation(`?repo=${ROOT}`);
     const a = session({ name: 'first-in-root', cwd: ROOT, lastActivityAt: minutesAgo(1) });
     const b = session({ name: 'second-in-root', cwd: ROOT, lastActivityAt: minutesAgo(2) });
-    const ui = (sessions: SessionSummary[], moved: SessionSummary[] = []) => (
-      <Dashboard
-        view={{ state: 'live', snapshot: snapshot([group({ key: ROOT, label: 'code', kind: 'directory', sessions }), ...(moved.length ? [group({ key: key('api'), label: 'api', sessions: moved })] : [])]) }}
-        navigation={navigation}
-      />
+    const elsewhere = group({ key: key('api'), label: 'api', sessions: [session({ name: 'in-api', cwd: key('api') })] });
+    const ui = (sessions: SessionSummary[]) => (
+      <Dashboard view={{ state: 'live', snapshot: snapshot([...(sessions.length ? [group({ key: ROOT, label: 'code', kind: 'directory', sessions })] : []), elsewhere]) }} navigation={navigation} />
     );
     const { rerender } = render(ui([a, b]));
     const button = (name: string) => within(row(name)).getByRole('button', { name });
     button('first-in-root').focus();
-    // It held the order, but a row that leaves goes at once.
-    rerender(ui([b], [{ ...a, workedIn: worked('api') }]));
+    // It held the order, but a row that leaves, here because the session went, goes at once.
+    rerender(ui([b]));
     expect(visibleRowNames()).toEqual(['second-in-root']);
     expect(document.activeElement).toBe(button('second-in-root'));
-    rerender(ui([], [{ ...a, workedIn: worked('api') }, { ...b, workedIn: worked('api') }]));
+    rerender(ui([]));
     expect(document.activeElement).toBe(listHeading());
   });
 });

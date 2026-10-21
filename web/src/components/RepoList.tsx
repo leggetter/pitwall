@@ -21,7 +21,7 @@ import type { SessionGroup } from '../../../src/shared/protocol.js';
 import { plainText, shortenHome } from '../format.js';
 import { absentGroup, sameGroup, type HiddenGroup } from '../hidden.js';
 import { ALL_SESSIONS, groupSelection, NEEDS_YOU, sameSelection, selectionHref, type Selection } from '../selection.js';
-import { allFinished, countAttention, groupId, groupLabel, repoListGroups, uniqueSessions } from '../sessions.js';
+import { allFinished, countAttention, groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { Tooltip } from './Tooltip.js';
@@ -40,7 +40,7 @@ interface Item {
   muted: boolean;
 }
 
-/** A group's item: its sessions, each once, and how many of them need you, whether they started there or worked in it. */
+/** A group's item: its sessions, which are the ones started in it (W39), and how many of them need you. */
 function groupItem(group: SessionGroup, roots: readonly string[]): Item {
   return {
     id: groupId(group),
@@ -88,8 +88,8 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
   const rootId = useId();
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
-  // Each session once, though one can be under several repos: the views count sessions, not listings.
-  const sessions = uniqueSessions(groups ?? []);
+  // Each session is in one group (W39), so the groups' counts under a root add up to its sessions, and All sessions' to every root's.
+  const sessions = sessionsIn(groups ?? []);
   const views: Item[] = [
     { id: 'view:needs-you', selection: NEEDS_YOU, label: 'Needs you', attention: countAttention(sessions), count: undefined, muted: false },
     // The total, never a badge: Needs you, just above, has that.
@@ -116,8 +116,8 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
     }),
   }));
   const hiddenEntries = hiddenSections.flatMap((section) => section.entries);
-  // Each session once, however many hidden groups list it, so nothing that needs you is out of sight.
-  const hiddenAttention = countAttention(uniqueSessions(listedHidden.flatMap(({ group }) => (group ? [group] : []))));
+  // The hidden groups' sessions that need you, so nothing that needs you is out of sight.
+  const hiddenAttention = countAttention(sessionsIn(listedHidden.flatMap(({ group }) => (group ? [group] : []))));
 
   // The one item in the Tab order: the last one focused, else the selection, else the first.
   const [focused, setFocused] = useState<string>();

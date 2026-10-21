@@ -128,13 +128,12 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
         {asked > 0 && <span className="finished-asked"> · {asked} asked you</span>}
       </button>
       <ul className="sessions finished-sessions" id={listId} hidden={collapsed}>
-        {finished.map(({ session, group, startedIn }) => (
+        {finished.map(({ session, group }) => (
           <SessionRow
             key={session.sessionId}
             session={session}
             group={group}
             showGroup={showGroup}
-            startedIn={startedIn}
             onOpen={onOpen}
             onStep={onStep}
             isOpen={session.sessionId === openSessionId}
@@ -243,13 +242,12 @@ export function SessionList({
       <div className="session-list-body">
         {empty ?? (
           <ul className="sessions">
-            {shownCurrent.map(({ session, group, startedIn }) => (
+            {shownCurrent.map(({ session, group }) => (
               <SessionRow
                 key={session.sessionId}
                 session={session}
                 group={group}
                 showGroup={showGroup}
-                startedIn={startedIn}
                 onOpen={onOpen}
                 onStep={onStep}
                 isOpen={session.sessionId === openSessionId}

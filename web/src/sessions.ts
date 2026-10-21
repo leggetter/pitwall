@@ -110,7 +110,10 @@ export type FilterChip = SessionKind;
 export const FILTER_CHIPS: readonly FilterChip[] = ['interactive', 'background'];
 
 export interface Filters {
-  /** Matched case-insensitively against session names, titles and cwds, and their groups' labels. */
+  /**
+   * Matched case-insensitively against session names, titles and cwds, their groups' labels, and the
+   * labels of the repos they worked in.
+   */
   text: string;
   /** The chips that are on. */
   chips: ReadonlySet<FilterChip>;
@@ -190,48 +193,28 @@ export type Scope = { kind: 'needs-you' } | { kind: 'all' } | { kind: 'group'; g
 /** A session, with the group it's listed under. */
 export interface Listed {
   session: SessionSummary;
-  /** The group it's listed under: in a group's list, that group; in Needs you and All sessions, its primaryGroup(). */
+  /** The group it's listed under: the one it started in, its only one (W39). */
   group: SessionGroup;
-  /**
-   * In a group's list, for a session listed there because it worked in that repo: where it started,
-   * as startLabel() says. Line 2 starts with it, so the row says it began elsewhere.
-   */
-  startedIn?: string;
-  /** Every group the session is listed under, for the filter: a label that matches any of them lets it through. */
-  groups?: readonly SessionGroup[];
 }
 
-// Sessions in several groups (W34): a repo lists the sessions started in it and those that worked in
-// it, so one session can be in several groups, and every count of sessions counts each once.
+// Each session in one group (W39, Phil, 2026-10-21): a session is listed only under the group it
+// started in, so a group's count is the sessions started there, and the groups' counts under a root
+// add up to that root's sessions. The repos it worked in (SessionSummary.workedIn) are named in the
+// session view and matched by the filter, and a repo that sessions only worked in has no group.
 
-/** Every session in the snapshot's groups, each once, by sessionId, in the order first listed. */
-export function uniqueSessions(groups: readonly SessionGroup[]): SessionSummary[] {
-  const seen = new Map<string, SessionSummary>();
-  for (const group of groups) for (const session of group.sessions) if (!seen.has(session.sessionId)) seen.set(session.sessionId, session);
-  return [...seen.values()];
+/** Every session in the groups, in the groups' order. Each is in exactly one group, so each is here once. */
+export function sessionsIn(groups: readonly SessionGroup[]): SessionSummary[] {
+  return groups.flatMap((group) => group.sessions);
 }
 
-/** The groups that list a session, in the snapshot's order. */
-export function groupsOf(groups: readonly SessionGroup[], sessionId: string): SessionGroup[] {
-  return groups.filter((group) => group.sessions.some((session) => session.sessionId === sessionId));
-}
-
-/** Whether a group lists a session because the session worked in it, rather than started there. */
-export function workedInHere(session: SessionSummary, group: Pick<SessionGroup, 'key'>): boolean {
-  return session.workedIn?.some((repo) => repo.key === group.key) ?? false;
-}
-
-/**
- * The group a session started in: the one listing it that its workedIn doesn't name. Undefined for
- * one started in the root itself that worked in repos, which the root's own group doesn't list.
- */
+/** The group a session is listed under, which is the one it started in, or undefined when the snapshot no longer lists it. */
 export function startGroup(groups: readonly SessionGroup[], session: SessionSummary): SessionGroup | undefined {
-  return groupsOf(groups, session.sessionId).find((group) => !workedInHere(session, group));
+  return groups.find((group) => group.sessions.some((listed) => listed.sessionId === session.sessionId));
 }
 
 /**
- * Where a session started, as the repo list labels it: its start group's label, or for one started
- * in the root itself that isn't listed there, the root's path, home as ~, as the root's group shows it.
+ * Where a session started, as the repo list labels it: its group's label, the root's own directory
+ * as its path. For one the snapshot no longer lists, its working directory, with home as ~.
  */
 export function startLabel(groups: readonly SessionGroup[], session: SessionSummary): string {
   const start = startGroup(groups, session);
@@ -239,29 +222,14 @@ export function startLabel(groups: readonly SessionGroup[], session: SessionSumm
 }
 
 /**
- * The group a session's row names in Needs you and All sessions: where it started, or, for one
- * started in the root that worked in repos, the repo it touched most recently.
+ * The repos a session worked in beyond where it started, newest touch first, for the session view:
+ * each by its label, whether or not it has a group. A repo that is itself one of the roots shows the
+ * root's path, as the repo list shows a root's own directory.
  */
-export function primaryGroup(groups: readonly SessionGroup[], session: SessionSummary): SessionGroup | undefined {
-  const listing = groupsOf(groups, session.sessionId);
-  const start = listing.find((group) => !workedInHere(session, group));
-  if (start) return start;
-  for (const repo of session.workedIn ?? []) {
-    const group = listing.find((candidate) => candidate.key === repo.key);
-    if (group) return group;
-  }
-  return listing[0];
-}
-
-/**
- * The repos a session worked in, as their groups' labels, newest touch first, for the session view.
- * One with no group in the snapshot is left out.
- */
-export function workedInLabels(groups: readonly SessionGroup[], session: SessionSummary): string[] {
-  const listing = groupsOf(groups, session.sessionId);
-  return (session.workedIn ?? []).flatMap((repo) => {
-    const group = listing.find((candidate) => candidate.key === repo.key) ?? groups.find((candidate) => candidate.key === repo.key);
-    return group ? [groupLabel(group)] : [];
+export function workedInLabels(session: SessionSummary, roots: readonly string[]): string[] {
+  return (session.workedIn ?? []).map((repo) => {
+    const root = roots.find((candidate) => isRootGroup({ root: candidate, key: repo.key }));
+    return root === undefined ? repo.label : groupLabel({ root, key: repo.key, label: repo.label });
   });
 }
 
@@ -335,14 +303,9 @@ export function listScope(
 ): { current: Listed[]; finished: Listed[] } {
   const listed: Listed[] =
     scope.kind === 'group'
-      ? scope.group.sessions.map((session) =>
-          workedInHere(session, scope.group) ? { session, group: scope.group, startedIn: startLabel(groups, session) } : { session, group: scope.group },
-        )
-      : // Each session once, under the group its row names.
-        uniqueSessions(groups).map((session) => {
-          const listing = groupsOf(groups, session.sessionId);
-          return { session, group: primaryGroup(groups, session) ?? (listing[0] as SessionGroup), groups: listing };
-        });
+      ? scope.group.sessions.map((session) => ({ session, group: scope.group }))
+      : // Each session under the one group it's in, which its row names.
+        groups.flatMap((group) => group.sessions.map((session) => ({ session, group })));
   const sorted = (items: Listed[], finished: boolean) => {
     const compare = sessionOrder(order, finished);
     return items.sort((a, b) => compare(a.session, b.session));
@@ -375,16 +338,18 @@ export function holdOrder(shown: readonly string[], next: readonly string[]): st
 }
 
 /**
- * The listed sessions that pass the filters, in the order given. A group whose label matches lets all
- * its sessions through, in Needs you and All sessions too, whichever group a row names.
+ * The listed sessions that pass the filters, in the order given. The text matches a session's name,
+ * title and cwd, its group's label, and the label of every repo it worked in (W39), so typing a
+ * repo's name in All sessions finds each session that started there or worked there.
  */
 export function filterListed(listed: readonly Listed[], filters: Filters): Listed[] {
   const needle = filterNeedle(filters.text);
-  return listed.filter(({ session, group, groups }) => {
+  return listed.filter(({ session, group }) => {
     if (!matchesChips(session, filters.chips)) return false;
     if (needle === '') return true;
     return (
-      (groups ?? [group]).some((listing) => groupLabel(listing).toLowerCase().includes(needle)) ||
+      groupLabel(group).toLowerCase().includes(needle) ||
+      (session.workedIn?.some((repo) => repo.label.toLowerCase().includes(needle)) ?? false) ||
       session.name.toLowerCase().includes(needle) ||
       (session.title?.toLowerCase().includes(needle) ?? false) ||
       session.cwd.toLowerCase().includes(needle)

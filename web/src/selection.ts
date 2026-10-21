@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { IndexSnapshot, SessionGroup } from '../../src/shared/protocol.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { shortenHome } from './format.js';
-import { groupId, groupLabel, primaryGroup, type Scope } from './sessions.js';
+import { groupId, groupLabel, startGroup, type Scope } from './sessions.js';
 
 export const VIEW_STATE_KEY = 'pitwall.view.v1';
 
@@ -72,8 +72,7 @@ export function scopeFor(groups: readonly SessionGroup[], selection: Selection):
 
 /**
  * A selection's name on screen. A group that has left the snapshot is named from its key: a root's
- * own directory, which empties once its sessions are listed under the repos they worked in (W34),
- * by its path, as the repo list labels it, and any other by its last segment.
+ * own directory by its path, as the repo list labels it, and any other by its last segment.
  */
 export function selectionName(groups: readonly SessionGroup[], selection: Selection, roots: readonly string[] = []): string {
   if ('view' in selection) return selection.view === 'all' ? 'All sessions' : 'Needs you';
@@ -149,9 +148,8 @@ export function memoryNavigation(search = ''): NavigationEnv {
 /**
  * The selection, from the URL, and a way to choose another. A URL with none takes the stored one, or
  * All sessions, and is replaced to match, except that ?session= with no selection waits for the
- * snapshot and selects that session's group: where it started, or, for one started in the root that
- * worked in repos, the repo it touched most recently. Choosing pushes a history entry; popstate
- * follows the URL.
+ * snapshot and selects that session's group, the one it started in. Choosing pushes a history entry;
+ * popstate follows the URL.
  */
 export function useSelection(
   snapshot: IndexSnapshot | undefined,
@@ -180,9 +178,9 @@ export function useSelection(
     const sessionId = pending.current;
     if (sessionId === undefined || !snapshot) return;
     pending.current = undefined;
-    // The group it started in, or for one started in the root that worked in repos, the newest of those.
+    // The group it started in, its only one (W39).
     const listed = snapshot.groups.flatMap((candidate) => candidate.sessions).find((session) => session.sessionId === sessionId);
-    const group = listed ? primaryGroup(snapshot.groups, listed) : undefined;
+    const group = listed ? startGroup(snapshot.groups, listed) : undefined;
     const next = group ? groupSelection(group, snapshot.roots) : selection;
     navigation.history.replaceState(navigation.history.state, '', url(withSelection(navigation.location.search, next)));
     setSelection(next);

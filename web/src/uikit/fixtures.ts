@@ -258,17 +258,18 @@ export const HIGHLIGHT_SNAPSHOT = snapshot([
   group('pitwall-test-exporter', [session('exporter', { cwd: `${ROOT}/pitwall-test-exporter` })]),
 ]);
 
-// Sessions in several groups (W34): a repo lists the sessions started in it and those that worked in
-// it, a directory below the root lists the sessions started in it, and the root's own group lists only
-// the root-started sessions that worked in no repo. One summary object sits under each group that
-// lists it, as the index sends it.
+// Each session in one group (W39): every group lists the sessions started in it and only those, the
+// root's own included. The repos a session worked in beyond that are in its workedIn, each with its
+// label, for the session view's worked-in line and the filter; pitwall-test-docs, which sessions only
+// worked in, has no group.
 
 export const API_DIR = `${ROOT}/pitwall-test-api`;
 export const DOCS_DIR = `${ROOT}/pitwall-test-docs`;
 export const SCRATCH_DIR = `${ROOT}/pitwall-test-scratch`;
-const touched = (...keys: string[]) => keys.map((key, index) => ({ key, calls: 40 - 10 * index, changes: index === 0 ? 3 : 0, lastAt: ago(2 + 20 * index) }));
+const touched = (...keys: string[]) =>
+  keys.map((key, index) => ({ key, label: key.slice(ROOT.length + 1), calls: 40 - 10 * index, changes: index === 0 ? 3 : 0, lastAt: ago(2 + 20 * index) }));
 
-/** Started in the app, then changed the API and read the docs: under all three. */
+/** Started in the app, then changed the API and read the docs: under the app alone. */
 export const WORKED_MULTI = session('across-repos', {
   title: 'Retry exports end to end',
   titleSource: 'claude-code',
@@ -278,15 +279,15 @@ export const WORKED_MULTI = session('across-repos', {
   lastActivityAt: ago(1),
   workedIn: touched(API_DIR, DOCS_DIR),
 });
-/** Started in the root itself, then worked in the API: under it alone. */
+/** Started in the root itself, then worked in the API and the docs: under the root's own group. */
 export const WORKED_FROM_ROOT = session('from-root', {
   cwd: ROOT,
   askedYou: { reason: 'question', excerpt: 'Should the API return 429 or 503 while an export retries?' },
   lastUserPrompt: 'Look at how the API reports a retrying export.',
   lastActivityAt: ago(6),
-  workedIn: touched(API_DIR),
+  workedIn: touched(API_DIR, DOCS_DIR),
 });
-/** Started in a directory below the root that's in no repo, then wrote the docs: under both. */
+/** Started in a directory below the root that's in no repo, then wrote the docs: under the directory alone. */
 export const WORKED_FROM_SCRATCH = session('scratch-notes', {
   cwd: SCRATCH_DIR,
   lastUserPrompt: 'Turn these notes into a page in the docs.',
@@ -295,17 +296,16 @@ export const WORKED_FROM_SCRATCH = session('scratch-notes', {
 });
 const WORKED_APP_ONLY = session('app-only', { lastActivityAt: ago(3) });
 const WORKED_API_ONLY = session('api-only', { cwd: API_DIR, status: 'busy', lastActivityAt: ago(0.2) });
-/** Started in the root, and worked in no repo: the root's group keeps it. */
+/** Started in the root, and worked in no repo. */
 export const WORKED_ROOT_ALONE = session('root-alone', { cwd: ROOT, lastUserPrompt: 'What is in this folder?', lastActivityAt: ago(30) });
 
 export const WORKED_APP_GROUP = group('pitwall-test-app', [WORKED_MULTI, WORKED_APP_ONLY], { key: APP_DIR });
-export const WORKED_API_GROUP = group('pitwall-test-api', [WORKED_MULTI, WORKED_FROM_ROOT, WORKED_API_ONLY], { key: API_DIR });
-export const WORKED_DOCS_GROUP = group('pitwall-test-docs', [WORKED_MULTI, WORKED_FROM_SCRATCH], { key: DOCS_DIR });
+export const WORKED_API_GROUP = group('pitwall-test-api', [WORKED_API_ONLY], { key: API_DIR });
 export const WORKED_SCRATCH_GROUP = group('pitwall-test-scratch', [WORKED_FROM_SCRATCH], { key: SCRATCH_DIR, kind: 'directory' });
-export const WORKED_ROOT_GROUP = group('code', [WORKED_ROOT_ALONE], { key: ROOT, kind: 'directory' });
+export const WORKED_ROOT_GROUP = group('code', [WORKED_FROM_ROOT, WORKED_ROOT_ALONE], { key: ROOT, kind: 'directory' });
 
-/** Six sessions, two of which need you, in five groups. */
-export const WORKED_SNAPSHOT = snapshot([WORKED_API_GROUP, WORKED_APP_GROUP, WORKED_DOCS_GROUP, WORKED_SCRATCH_GROUP, WORKED_ROOT_GROUP]);
+/** Six sessions, two of which need you, in four groups: none for pitwall-test-docs, where three of them worked. */
+export const WORKED_SNAPSHOT = snapshot([WORKED_API_GROUP, WORKED_APP_GROUP, WORKED_SCRATCH_GROUP, WORKED_ROOT_GROUP]);
 
 /** More roots than the header has room for. */
 export const LONG_ROOTS = [
