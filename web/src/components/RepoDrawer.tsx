@@ -23,8 +23,11 @@ export function RepoDrawer({ onClose, children }: RepoDrawerProps) {
       return;
     }
     if (event.key !== 'Tab' || !drawer.current) return;
-    // Keep Tab inside the drawer. The repo list is one Tab stop, so this usually keeps focus where it is.
-    const stops = [...drawer.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')].filter((element) => element.tabIndex >= 0);
+    // Keep Tab inside the drawer. The repo list is one Tab stop, so this usually keeps focus where it is;
+    // the Hidden section's toggle, links and Unhide buttons are stops of their own, except while it's closed.
+    const stops = [...drawer.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')].filter(
+      (element) => element.tabIndex >= 0 && !element.closest('[hidden]'),
+    );
     const first = stops[0];
     const last = stops[stops.length - 1];
     if (!first || !last) return;
