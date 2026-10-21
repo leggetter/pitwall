@@ -386,6 +386,18 @@ const LAYOUTS: PageCase[] = [
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   {
+    title: 'Three columns, the actions menu',
+    note: 'In three columns the menu can resize the view without a drag (WCAG 2.5.7): Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px. Here it is at 760 px, so Reset view width is off.',
+    width: 1280,
+    search: OPEN,
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    run: async (root) => {
+      if (!laidOut(root)) return;
+      (await element<HTMLButtonElement>(root, '.session-view button[aria-label="Session actions"]')).click();
+      await element(root, '[role="menu"]');
+    },
+  },
+  {
     title: 'The divider at its minimum',
     note: 'Dragged, or Home on the divider: 560 px, about 80 terminal columns.',
     width: 1280,

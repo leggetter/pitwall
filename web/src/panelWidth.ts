@@ -51,3 +51,67 @@ export function writePanelWidth(width: number, storage: StorageSource): void {
     // Blocked or full: the width lasts until the page reloads.
   }
 }
+
+/** One "Make view wider" or "Make view narrower" from the actions menu: five of the divider's key steps. */
+export const PANEL_MENU_STEP = 5 * PANEL_STEP;
+
+/** The width asked for, which may be more than the app allows, and the app's width, which together give what's shown. */
+export interface PanelWidthState {
+  readonly requested: number;
+  readonly appWidth: number;
+}
+
+/**
+ * The session view's width as the third column, for the divider and the actions menu's width items,
+ * which both change it. A store rather than the Dashboard's state, so dragging re-renders only what
+ * reads it: the divider every pixel, the menu only when what it can do changes (panelLimits).
+ */
+export interface PanelWidthStore {
+  get(): PanelWidthState;
+  subscribe(listener: () => void): () => void;
+  /** Asks for `width`, clamped to what the app allows now, and stores it when `save`. */
+  set(width: number, save: boolean): void;
+  /** The app's width, as the divider measures it. */
+  setAppWidth(appWidth: number): void;
+}
+
+export function createPanelWidthStore(storage: StorageSource, appWidth = typeof window === 'undefined' ? 0 : window.innerWidth): PanelWidthStore {
+  let state: PanelWidthState = { requested: readPanelWidth(storage), appWidth };
+  const listeners = new Set<() => void>();
+  const change = (next: PanelWidthState) => {
+    if (next.requested === state.requested && next.appWidth === state.appWidth) return;
+    state = next;
+    for (const listener of [...listeners]) listener();
+  };
+  return {
+    get: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    set(width, save) {
+      const next = clampPanel(width, state.appWidth);
+      change({ ...state, requested: next });
+      if (save) writePanelWidth(next, storage);
+    },
+    setAppWidth(next) {
+      change({ ...state, appWidth: next });
+    },
+  };
+}
+
+/** The width shown: what was asked for, within what the app allows. */
+export function shownPanel(state: PanelWidthState): number {
+  return clampPanel(state.requested, state.appWidth);
+}
+
+/** What the actions menu's width items can do now, as a string that changes only when one of them does. */
+export function panelLimits(state: PanelWidthState): string {
+  const shown = shownPanel(state);
+  const wider = shown < panelMax(state.appWidth);
+  const narrower = shown > PANEL_MIN;
+  const reset = shown !== panelReset(state.appWidth);
+  return `${wider ? 'wider' : ''}|${narrower ? 'narrower' : ''}|${reset ? 'reset' : ''}`;
+}

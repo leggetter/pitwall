@@ -14,7 +14,11 @@ import { PANEL_WIDTH_KEY, readPanelWidth } from '../panelWidth.js';
 import type { NavigationEnv } from '../selection.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
+import stylesCss from '../styles.css?raw';
+import { block, declarations, withoutComments } from '../test/css.js';
+import { descriptionOf } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
+import { WIDTH_HINTS } from './SessionView.js';
 import { Dashboard } from './Dashboard.js';
 import type { TerminalHandle } from './Terminal.js';
 
@@ -595,6 +599,82 @@ describe('the tabs', () => {
 describe('the divider', () => {
   const divider = () => screen.getByRole('separator', { name: 'Resize the session view' });
   const pane = () => document.querySelector<HTMLElement>('.session-pane')!;
+
+  it('has a 24 px hit area: 16 px over the view’s gutter and 8 px over the list’s edge, with its line where it was (W31)', () => {
+    const css = withoutComments(stylesCss);
+    const own = Object.fromEntries(declarations(block(css, /\n\.session-divider\s*\{/)));
+    expect(own.width).toBe('var(--pw-control-sm)');
+    expect(own.left).toBe('calc(-1 * var(--pw-space-2))');
+    const line = Object.fromEntries(declarations(block(css, /\n\.session-divider::before\s*\{/)));
+    expect(line.left).toBe('var(--pw-space-2)');
+    expect(line.width).toBe('1px');
+  });
+
+  describe('without a drag: the actions menu’s width items (W31, WCAG 2.5.7)', () => {
+    const menuItems = () => within(view()!).queryAllByRole('menuitem').map((item) => item.textContent);
+    const openMenu = () => fireEvent.click(within(view()!).getByRole('button', { name: 'Session actions' }));
+    const choose = (label: string) => {
+      openMenu();
+      fireEvent.click(within(view()!).getByRole('menuitem', { name: label }));
+    };
+
+    it('widens and narrows the view 80 px at a time, within its limits, resets it, and stores each width', async () => {
+      setWidth(1440);
+      const storage = memory();
+      renderDashboard(snap(), { storage });
+      await open('demo-a');
+      openMenu();
+      expect(menuItems()).toEqual(['Copy session ID', 'Make view wider', 'Make view narrower', 'Reset view width']);
+      // At the usual width there's nothing to reset.
+      const reset = within(view()!).getByRole('menuitem', { name: 'Reset view width' });
+      expect(reset.getAttribute('aria-disabled')).toBe('true');
+      expect(descriptionOf(reset)).toBe(WIDTH_HINTS.reset);
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+
+      choose('Make view wider');
+      // 760 + 80, capped at what the repo list and the list's 360 px leave: 840.
+      expect(divider().getAttribute('aria-valuenow')).toBe('840');
+      expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('840');
+      openMenu();
+      const wider = within(view()!).getByRole('menuitem', { name: 'Make view wider' });
+      expect(wider.getAttribute('aria-disabled')).toBe('true');
+      expect(descriptionOf(wider)).toBe(WIDTH_HINTS.wider);
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+
+      for (const width of ['760', '680', '600', '560']) {
+        choose('Make view narrower');
+        expect(divider().getAttribute('aria-valuenow')).toBe(width);
+      }
+      expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('560');
+      openMenu();
+      expect(within(view()!).getByRole('menuitem', { name: 'Make view narrower' }).getAttribute('aria-disabled')).toBe('true');
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+
+      choose('Reset view width');
+      expect(divider().getAttribute('aria-valuenow')).toBe('760');
+      expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('760');
+      // Focus is back on the menu's button, as after any item.
+      expect(document.activeElement).toBe(within(view()!).getByRole('button', { name: 'Session actions' }));
+    });
+
+    it('follows the divider, which changes the same width', async () => {
+      setWidth(1440);
+      renderDashboard();
+      await open('demo-a');
+      fireEvent.keyDown(divider(), { key: 'End' });
+      openMenu();
+      expect(within(view()!).getByRole('menuitem', { name: 'Make view wider' }).getAttribute('aria-disabled')).toBe('true');
+      expect(within(view()!).getByRole('menuitem', { name: 'Reset view width' }).hasAttribute('aria-disabled')).toBe(false);
+    });
+
+    it('are only in three columns: over the list, the view’s width is set', async () => {
+      setWidth(1100);
+      renderDashboard();
+      await open('demo-a');
+      openMenu();
+      expect(menuItems()).toEqual(['Copy session ID']);
+    });
+  });
 
   it('is a focusable vertical separator whose value is the view’s width, in three columns only', () => {
     setWidth(1440);

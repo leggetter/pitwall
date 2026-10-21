@@ -748,9 +748,10 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - At ≤ 600 px it's full width, with a "Back to sessions" ghost button (`back` icon) at the start of its header in place of the close icon.
   - On a short window (the low row in 2.12), it sticks to the top of the window, one window tall, as the third column does.
 - **Divider** (three columns only, with or without a session open):
-  - An 8 px hit area along the view's left edge, with a 1 px `--pw-border` line at the edge; on hover, focus or while dragging the line becomes 2 px `--pw-focus`, which is the focus indicator, so there's no ring. The hit area is on the view's side, over its 16 px gutter, so it never covers the list's scrollbar.
+  - A 24 px hit area (WCAG 2.5.8) along the view's left edge, with a 1 px `--pw-border` line at the edge; on hover, focus or while dragging the line becomes 2 px `--pw-focus`, which is the focus indicator, so there's no ring. The hit area is 16 px over the view's gutter, which has nothing in it, and 8 px over the list's edge: its rows' padding and the outer 8 px of its scrollbar. So it covers none of the view's content, which starts after the gutter (W31).
   - `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (the view's width in px, as shown), `aria-valuemin`, `aria-valuemax`, `aria-label="Resize the session view"`, `tabindex="0"`.
   - Drag to resize, within the widths in [2.12](#212-breakpoints-and-widths). ← and → move it 16 px (← widens the view, since the divider is its left edge), Home and End jump to the minimum and maximum, and a double-click resets to 760 px, or the maximum if that's less.
+  - **Without dragging** (WCAG 2.5.7): the actions menu's Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px or the maximum. Each is `aria-disabled` when it can't, with why in its tooltip. They change the same width as the divider, through one store (`createPanelWidthStore()` in `panelWidth.ts`), and are in three columns only.
   - Save the width in `localStorage` as `pitwall.panel-width.v1`: on each key, on a double-click, and when a drag ends. A value that isn't a whole number of px from 560 up reads as 760.
 - **The open session is in the URL:** `?session=<sessionId>`, after the selection.
   - Opening a session pushes a history entry, and opening the one that's open adds none; moving with ↑/↓ replaces it; closing pushes one without the parameter.
@@ -988,7 +989,7 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
    - When the directory no longer exists (`cwdMissing`): "Directory no longer exists" (meta, `--pw-text-muted`), its own item so it wraps rather than squeezing the path, with "The working directory no longer exists, for example after a worktree was removed." in a tooltip.
 3. **When the session has left the snapshot:** an inline neutral alert, `role="status"`: "This session is no longer listed, so this is what it showed last."
 
-**Actions menu** (`more`, "Session actions", a [menu](#menus)): Copy session ID (`copy`), Copy attach command (`terminal`), then a separator, then Stop session (`stop`) and Remove session (`remove`, in danger text).
+**Actions menu** (`more`, "Session actions", a [menu](#menus)): Copy session ID (`copy`), Copy attach command (`terminal`); then, in three columns, a separator and Make view wider, Make view narrower and Reset view width (no icons; see the [divider](#session-view)); then a separator, then Stop session (`stop`) and Remove session (`remove`, in danger text).
 
 - **Copy session ID** copies the full session id. **Copy attach command** copies `claude attach <shortId>`, and is there only for a background session whose short id passes `attachCommand()`'s shell-safety check. An interactive session's menu has Copy session ID alone.
 - **Stop session and Remove session** are for background sessions that are still listed. Each opens its [inline confirmation](#inline-confirmation). Stop is `aria-disabled` while the session isn't running, and both are while one of them is in progress, with the reason in a tooltip.
@@ -1191,7 +1192,7 @@ For a destructive or surprising action in the session view, without a dialog.
 
 - **Component:** `MenuButton` (`web/src/components/Menu.tsx`), which takes the button's icon and name and a list of items and separators. The session view's actions menu is the one menu the doc calls for; anything that later needs a menu of actions builds on it.
 - **Panel:** `--pw-surface-overlay`, `--pw-shadow-2`, `--pw-radius-md`, padding 4 px, min-width 192 px, `--pw-z-dropdown`. It opens 4 px below the button, aligned to its end edge, and flips up when the button is on screen and there's no room below but there is above.
-- **Items:** 32 px tall, padding 6 px 8 px, `--pw-radius-sm`, m 14/20, a 16 px icon in `--pw-text-muted` 8 px before the label.
+- **Items:** 32 px tall, padding 6 px 8 px, `--pw-radius-sm`, m 14/20, a 16 px icon in `--pw-text-muted` 8 px before the label. An item with no icon of its own, in a menu whose other items have them, keeps an icon's room, so the labels line up.
   - Hover and keyboard highlight: `--pw-surface-hover`. Keyboard focus also shows `--pw-ring-focus-inset`, since the panel's 4 px padding would clip the outer ring, and a hover fill alone is under 3:1.
   - Danger items: `--pw-danger-fg` text and icon; highlighted, a `--pw-danger-tint` fill with `--pw-danger-tint-fg` text and icon, the pair 2.5 checks.
   - Disabled items: `aria-disabled`, `--pw-text-disabled`, no highlight on hover, the reason in a [tooltip](#tooltips), on hover and when the arrows reach the item, which it describes (`aria-describedby`). The arrows still reach them, and activating one does nothing and keeps the menu open.

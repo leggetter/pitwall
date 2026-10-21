@@ -32,6 +32,7 @@ import { formatRoots, plainText } from '../format.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { useLayout } from '../layout.js';
 import { useOpenSession } from '../openSession.js';
+import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import {
   ALL_SESSIONS,
@@ -123,6 +124,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const toasts = useToastStack();
   const app = useRef<HTMLDivElement>(null);
   const { layout, compact, overlayCoversRepos } = useLayout(app);
+  // The session view's width as the third column: the divider and the actions menu's width items change it.
+  const [panelWidth] = useState(() => createPanelWidthStore(storage));
   const [selection, choose] = useSelection(snapshot, { navigation, storage });
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   // Urgency, Recent or Name, for every selection.
@@ -627,6 +630,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         compact={compact}
         headingRef={viewHeading}
         onStep={stepFromView}
+        panel={layout === 'three-columns' ? panelWidth : undefined}
         animate={animate}
         onDraftChange={(has) => {
           draft.current = has;
@@ -718,7 +722,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         </HighlightContext.Provider>
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
         <div className="session-pane">
-          {layout === 'three-columns' && <Divider storage={storage} />}
+          {layout === 'three-columns' && <Divider store={panelWidth} />}
           {sessionView}
         </div>
       </div>

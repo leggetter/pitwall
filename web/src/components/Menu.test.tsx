@@ -27,6 +27,25 @@ function setup(overrides: { disabled?: boolean } = {}) {
 }
 
 describe('MenuButton', () => {
+  it('keeps an icon’s room for an item without one, so the labels line up, and only where other items have icons (W31)', () => {
+    const entries: MenuEntry[] = [
+      { id: 'one', label: 'Copy session ID', icon: 'copy', onSelect: () => {} },
+      { id: 'two', label: 'Make view wider', onSelect: () => {} },
+    ];
+    const { unmount } = render(<MenuButton label="Session actions" icon="more" entries={entries} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    const [withIcon, without] = screen.getAllByRole('menuitem');
+    expect(withIcon?.querySelector('svg')).not.toBeNull();
+    expect(without?.querySelector('svg')).toBeNull();
+    expect(without?.querySelector('.menu-item-icon-room')?.getAttribute('aria-hidden')).toBe('true');
+    expect(without?.textContent).toBe('Make view wider');
+    unmount();
+
+    render(<MenuButton label="Plain" icon="more" entries={[{ id: 'only', label: 'No icons here', onSelect: () => {} }]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
+    expect(screen.getByRole('menuitem').querySelector('.menu-item-icon-room')).toBeNull();
+  });
+
   it('is an icon button that says it opens a menu, and controls the menu while it is open', async () => {
     const { button } = setup();
     expect(button.getAttribute('aria-haspopup')).toBe('menu');
