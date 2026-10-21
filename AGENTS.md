@@ -51,7 +51,8 @@ src/shared/protocol.ts   the contract between the index, the server and the web 
 src/index/               the session index. Entry point index.ts: startIndexer()
 src/server/              the local HTTP and WebSocket server. Entry point index.ts: startServer()
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
-src/test/                test helpers shared across test files, such as the v3 proof; not built
+src/test/                test helpers shared across test files, such as the v3 proof, and noClaude.ts,
+                         which fails any server test that would run `claude` without PITWALL_LIVE=1; not built
 web/                     the React web UI, built by Vite to dist/web
 web/public/theme-init.js sets the theme before first paint (a same-origin script, for the CSP)
 web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out
