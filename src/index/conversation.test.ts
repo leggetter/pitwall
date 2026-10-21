@@ -8,11 +8,11 @@ import {
   ConversationCursorError,
   ENTRY_TEXT_MAX,
   isWellFormedCursor,
-  LEAN_SOURCE_MAX,
+  LEAN_TEXT_MAX,
   NOTICE_MAX,
-  PAGE_STRIP_CHARS,
   PAGE_ENTRIES,
   PAGE_READ_BUDGET,
+  PAGE_TEXT_BUDGET,
   readConversationPage,
   toolSummary,
   type ConversationReadOptions,
@@ -104,10 +104,17 @@ async function entriesOf(...lines: unknown[]): Promise<ConversationEntry[]> {
 }
 
 describe('readConversationPage: what becomes an entry', () => {
-  it('reads a typed prompt as a user entry, with system reminders and markdown stripped', async () => {
+  it('reads a typed prompt as a user entry, with system reminders stripped and nothing else', async () => {
     const at = nextTimestamp();
     const prompt = { ...user('<system-reminder>harness note</system-reminder>\nPlease fix the **flaky** test in `src/a.ts`'), timestamp: at };
-    expect(await entriesOf(prompt)).toEqual([{ kind: 'user', at, text: 'Please fix the flaky test in src/a.ts' }]);
+    expect(await entriesOf(prompt)).toEqual([{ kind: 'user', at, text: 'Please fix the **flaky** test in `src/a.ts`' }]);
+  });
+
+  it('keeps a prompt as typed: its markdown, indents, runs of spaces and blank lines, losing only blank lines before it and whitespace after it', async () => {
+    const typed = '  Two spaces first.\n\n\n\n    indented   by four,   with runs\n\t- a tab\n```\n[code] and # not a heading\n```\n| a | b |\n|---|---|';
+    const [entry] = await entriesOf(user(`<system-reminder>note</system-reminder>\n \n${typed}  \n\n`));
+    expect(entry).toEqual({ kind: 'user', at: expect.any(String), text: typed });
+    expect(entry?.markdown).toBeUndefined();
   });
 
   it('reads text blocks and images as one prompt', async () => {
@@ -144,8 +151,8 @@ describe('readConversationPage: what becomes an entry', () => {
       assistant([text('Another message.')], 'msg_2'),
     );
     expect(entries).toEqual([
-      { kind: 'assistant', at: first.timestamp, text: 'First part.\nSecond part.' },
-      { kind: 'assistant', at: expect.any(String), text: 'Another message.' },
+      { kind: 'assistant', at: first.timestamp, text: 'First part.\n\nSecond part.', markdown: true },
+      { kind: 'assistant', at: expect.any(String), text: 'Another message.', markdown: true },
     ]);
     expect(JSON.stringify(entries)).not.toContain('reasoning');
   });
@@ -173,7 +180,7 @@ describe('readConversationPage: what becomes an entry', () => {
       ]),
     );
     expect(entries).toMatchObject([
-      { kind: 'assistant', text: 'One.\nTwo.' },
+      { kind: 'assistant', text: 'One.\n\nTwo.' },
       { kind: 'tool', text: 'Bash: ls', toolName: 'Bash', toolError: false },
       { kind: 'tool', text: 'Grep: TODO', toolName: 'Grep', toolError: true },
     ]);
@@ -210,7 +217,7 @@ describe('readConversationPage: what becomes an entry', () => {
         { isMeta: true, origin: { kind: 'peer' } },
       ),
     );
-    expect(entries).toEqual([{ kind: 'cross-session', at: expect.any(String), text: 'Please review PR 4.', from: 'pitwall-test-sup' }]);
+    expect(entries).toEqual([{ kind: 'cross-session', at: expect.any(String), text: 'Please **review** PR 4.', markdown: true, from: 'pitwall-test-sup' }]);
   });
 
   it("reads newer Claude Code's agent-message form, whose from is the sender", async () => {
@@ -230,7 +237,7 @@ describe('readConversationPage: what becomes an entry', () => {
       }),
       user('Another Claude session sent a message:\n<agent-message from="R&amp;D &quot;bot&quot;">hello</agent-message>', { isMeta: true }),
     );
-    expect(noName).toEqual({ kind: 'cross-session', at: expect.any(String), text: 'hi' });
+    expect(noName).toEqual({ kind: 'cross-session', at: expect.any(String), text: 'hi', markdown: true });
     expect(named).toMatchObject({ from: 'R&D "bot"', text: 'hello' });
   });
 
@@ -289,30 +296,109 @@ describe('readConversationPage: what becomes an entry', () => {
     ]);
   });
 
-  it('caps text at 8 KiB and marks it truncated, after stripping markdown, and leaves HTML as text', async () => {
-    const [long, html] = await entriesOf(
-      assistant([text(`**bold** ${'word '.repeat(4000)}`)], 'msg_long'),
-      assistant([text('<b>not bold</b> <img src=x onerror=alert(1)>')], 'msg_html'),
+  it("sends Claude's markdown as written, flagged as markdown, with HTML and anything else left as text", async () => {
+    const markdown = [
+      '## Summary',
+      '',
+      'The **export** job *retries*, ~~once~~ three times. See [the docs](https://example.com/docs) or <https://example.com>.',
+      '',
+      '```ts',
+      'const delays = [1, 4, 16]; // `seconds`',
+      '```',
+      '',
+      '| Attempt | Wait |',
+      '|:---|---:|',
+      '| 1 | 1 s |',
+      '',
+      '- one',
+      '  1. nested',
+      '> quoted <b>not bold</b> <img src=x onerror=alert(1)>',
+      '',
+      '---',
+      '\\*escaped\\* [code] · joined',
+    ].join('\n');
+    const [entry, rule] = await entriesOf(assistant([text(`\n${markdown}\n\n`)], 'msg_md'), assistant([text('---')], 'msg_rule'));
+    expect(entry).toEqual({ kind: 'assistant', at: expect.any(String), text: markdown, markdown: true });
+    // A thematic break alone is markdown too, not an empty entry.
+    expect(rule).toMatchObject({ kind: 'assistant', text: '---', markdown: true });
+  });
+
+  it("sends another session's message as markdown, as written", async () => {
+    const body = 'Please check:\n\n```sh\nnpm test\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |';
+    expect(await entriesOf(user(`Another Claude session sent a message:\n<agent-message from="pitwall-test-peer">\n${body}\n</agent-message>`, { isMeta: true }))).toEqual([
+      { kind: 'cross-session', at: expect.any(String), text: body, markdown: true, from: 'pitwall-test-peer' },
+    ]);
+  });
+
+  it('leaves tool calls and notices as they were, with no markdown flag', async () => {
+    const entries = await entriesOf(
+      assistant([toolUse('toolu_md', 'Bash', { command: 'echo "**not bold**"' })]),
+      toolResult('toolu_md'),
+      user('<local-command-stdout>**Context** `12%`</local-command-stdout>'),
     );
-    expect(long?.text.startsWith('bold word')).toBe(true);
-    expect(long?.text.length).toBeLessThanOrEqual(ENTRY_TEXT_MAX);
-    expect(long?.truncated).toBe(true);
-    expect(html).toEqual({ kind: 'assistant', at: expect.any(String), text: '<b>not bold</b> <img src=x onerror=alert(1)>' });
+    expect(entries).toEqual([
+      { kind: 'tool', at: expect.any(String), text: 'Bash: echo "**not bold**"', toolName: 'Bash', toolError: false },
+      { kind: 'notice', at: expect.any(String), text: '**Context** `12%`' },
+    ]);
   });
 
-  it('strips the newest entries in full while the page budget lasts, then keeps 512 characters of the rest', async () => {
-    const long = `${'word '.repeat(2000)}`;
-    const entries = await entriesOf(...Array.from({ length: 20 }, (_, i) => assistant([text(`${i} ${long}`)], `msg_${i}`)));
-    // 128 KiB of 8 KiB entries: the newest 16 in full, the 4 before them lean.
-    expect(PAGE_STRIP_CHARS / ENTRY_TEXT_MAX).toBe(16);
-    expect(entries.map((e) => e.text.length > LEAN_SOURCE_MAX)).toEqual([...Array(4).fill(false), ...Array(16).fill(true)]);
-    expect(entries.every((e) => e.truncated === true)).toBe(true);
-    expect(entries[0]?.text.startsWith('0 word')).toBe(true);
+  it('caps an entry at 32 KiB, marked truncated, as the start of what was written', async () => {
+    const source = `**bold** ${'word '.repeat(8000)}`;
+    const [long, prompt, peer] = await entriesOf(
+      assistant([text(source)], 'msg_long'),
+      user(source),
+      user(`Another Claude session sent a message:\n<agent-message from="x">${source}</agent-message>`, { isMeta: true }),
+    );
+    expect(ENTRY_TEXT_MAX).toBe(32 * 1024);
+    for (const entry of [long, prompt, peer]) {
+      expect(entry?.text).toBe(source.slice(0, ENTRY_TEXT_MAX));
+      expect(entry?.truncated).toBe(true);
+    }
+    // One that fits isn't marked.
+    expect((await entriesOf(assistant([text('a'.repeat(ENTRY_TEXT_MAX))], 'msg_fits')))[0]).toEqual({
+      kind: 'assistant',
+      at: expect.any(String),
+      text: 'a'.repeat(ENTRY_TEXT_MAX),
+      markdown: true,
+    });
   });
 
-  it('leaves out an entry with nothing left once stripped, and an entry without a timestamp has no at', async () => {
+  it('never splits a surrogate pair where it cuts', async () => {
+    // The 32 KiB cut falls between the two halves of the emoji.
+    const source = `${'a'.repeat(ENTRY_TEXT_MAX - 1)}😀 and more`;
+    const [entry] = await entriesOf(assistant([text(source)], 'msg_pair'));
+    expect(entry?.text).toBe('a'.repeat(ENTRY_TEXT_MAX - 1));
+    expect(entry?.truncated).toBe(true);
+    // And at the 512-character cut, past the page's budget.
+    const lean = `${'b'.repeat(LEAN_TEXT_MAX - 1)}😀${'c'.repeat(ENTRY_TEXT_MAX)}`;
+    const entries = await entriesOf(
+      assistant([text(lean)], 'msg_lean'),
+      ...Array.from({ length: 8 }, (_, i) => assistant([text('d'.repeat(ENTRY_TEXT_MAX))], `msg_full_${i}`)),
+    );
+    expect(entries[0]?.text).toBe('b'.repeat(LEAN_TEXT_MAX - 1));
+  });
+
+  it("carries the newest entries' text in full while the page's 256 KiB lasts, then the first 512 characters of the rest", async () => {
+    const big = (i: number) => `${i} ${'word '.repeat(6000)}`; // 30,002 characters or so
+    const sources = [
+      'a short, old reply that still fits',
+      ...Array.from({ length: 11 }, (_, i) => big(i)),
+    ];
+    const entries = await entriesOf(...sources.map((source, i) => assistant([text(source)], `msg_${i}`)));
+    expect(PAGE_TEXT_BUDGET).toBe(256 * 1024);
+    // Newest first: eight of about 30 KiB fit in 256 KiB, the ninth doesn't, and nor do the two before
+    // it; the short one does, in what's left.
+    expect(entries.map((e) => e.text.length === LEAN_TEXT_MAX)).toEqual([false, true, true, true, ...Array(8).fill(false)]);
+    expect(entries.map((e) => e.truncated === true)).toEqual([false, true, true, true, ...Array(8).fill(false)]);
+    // A cut entry is the start of what was written, so the client can tell it's the same entry.
+    entries.forEach((entry, i) => expect(sources[i]?.startsWith(entry.text)).toBe(true));
+    const full = entries.filter((e) => e.truncated !== true).reduce((sum, e) => sum + e.text.length, 0);
+    expect(full).toBeLessThanOrEqual(PAGE_TEXT_BUDGET);
+  });
+
+  it('leaves out an entry with only whitespace, and an entry without a timestamp has no at', async () => {
     const undated = { type: 'user', message: { role: 'user', content: 'undated' } };
-    expect(await entriesOf(assistant([text('---')], 'msg_rule'), undated)).toEqual([{ kind: 'user', text: 'undated' }]);
+    expect(await entriesOf(assistant([text(' \n\t ')], 'msg_blank'), undated)).toEqual([{ kind: 'user', text: 'undated' }]);
   });
 });
 
@@ -406,7 +492,7 @@ describe('readConversationPage: paging', () => {
       ),
     );
     const { pages } = await allPages(file, { pageEntries: 2 });
-    expect(pages.map((p) => p.entries.map((e) => e.text))).toEqual([['block 1\nblock 2\nblock 3', 'newest prompt'], ['older prompt']]);
+    expect(pages.map((p) => p.entries.map((e) => e.text))).toEqual([['block 1\n\nblock 2\n\nblock 3', 'newest prompt'], ['older prompt']]);
   });
 
   it('pairs a tool call with its result when they fall on different pages', async () => {
@@ -621,21 +707,24 @@ describe('readConversationPage: bounded on hostile files', () => {
   const FAST_MS = 200;
   const N = 64 * 1024;
 
-  // 24 KiB each, three times what an entry keeps, so 50 of them fit in one page's 8 MiB.
-  const M = 24 * 1024;
+  // 40 KiB each, more than an entry keeps, so a page cuts every one; 50 of them fit in its 8 MiB.
+  const M = 40 * 1024;
   it.each([
     ['emphasis that never closes', '*\\\\ '.repeat(M / 4)],
     ['unclosed emphasis', '*a '.repeat(M / 3)],
     ['a run of [', '['.repeat(M)],
     ['a link opener and spaces', `[a](${' '.repeat(M - 4)}`],
-    ['lines just over the piece length', Array.from({ length: M / 130 }, () => '*\\\\ '.repeat(33).slice(0, 129)).join('\n')],
+    ['short lines of escapes and emphasis', Array.from({ length: M / 130 }, () => '*\\\\ '.repeat(33).slice(0, 129)).join('\n')],
   ])('reads a page of 50 hostile assistant messages of %s quickly', async (_name, hostile) => {
     const lines = Array.from({ length: 50 }, (_, i) => assistant([text(hostile)], `msg_${i}`));
     const file = await transcript(jsonl(...lines));
     expect(await bestOf3(() => readConversationPage(file, SID))).toBeLessThan(FAST_MS);
     const { page: first } = (await readConversationPage(file, SID))!;
     expect(first.entries).toHaveLength(50);
-    expect(first.entries.every((e) => e.text.length <= ENTRY_TEXT_MAX)).toBe(true);
+    const cut = hostile.trim().length > ENTRY_TEXT_MAX;
+    expect(first.entries.every((e) => e.text.length <= ENTRY_TEXT_MAX && (e.truncated === true) === cut)).toBe(true);
+    const full = first.entries.filter((e) => e.text.length > LEAN_TEXT_MAX).reduce((sum, e) => sum + e.text.length, 0);
+    expect(full).toBeLessThanOrEqual(PAGE_TEXT_BUDGET);
   });
 
   it.each([

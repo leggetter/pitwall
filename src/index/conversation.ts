@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { open, type FileHandle } from 'node:fs/promises';
 import type { ConversationEntry, ConversationPage } from '../shared/protocol.js';
 import { isRecord } from './guards.js';
-import { cap, stripMarkdownBounded, truncate } from './text.js';
+import { cap, truncate } from './text.js';
 import { stripSystemReminders } from './transcripts.js';
 
 const KIB = 1024;
@@ -23,16 +23,12 @@ export const PAGE_ENTRIES = 50;
 export const CHUNK_BYTES = 256 * KIB;
 /** The most read from the file for one page. */
 export const PAGE_READ_BUDGET = 8 * MIB;
-/**
- * The most text an entry carries, in UTF-16 code units, as the contract
- * allows. It's also the most of an entry's source that is stripped of
- * markdown, so stripping one entry takes bounded time however hostile it is.
- */
-export const ENTRY_TEXT_MAX = 8 * KIB;
-/** How much source a page strips of markdown in full, newest entries first. */
-export const PAGE_STRIP_CHARS = 128 * KIB;
-/** How much of an entry's source is kept once the page's budget is spent. */
-export const LEAN_SOURCE_MAX = 512;
+/** The most text an entry carries, in UTF-16 code units, as the contract allows. */
+export const ENTRY_TEXT_MAX = 32 * KIB;
+/** How much of its entries' text a page carries in full, in UTF-16 code units, newest entries first. */
+export const PAGE_TEXT_BUDGET = 256 * KIB;
+/** How much of an entry's text is kept once the page's budget is spent. */
+export const LEAN_TEXT_MAX = 512;
 /** Notices are kept short. */
 export const NOTICE_MAX = 500;
 /** A tool call's one-line summary. */
@@ -124,7 +120,7 @@ export async function readConversationPage(
     }
     try {
       const result = await readBackwards(handle, end, midLine, pending, options);
-      const page: ConversationPage = { sessionId, entries: await result.builder.finish() };
+      const page: ConversationPage = { sessionId, entries: result.builder.finish() };
       if (result.stop !== undefined) {
         page.before = encodeCursor({
           offset: result.stop.offset,
@@ -313,13 +309,13 @@ type Item =
   | { kind: 'text'; messageId: string | undefined; text: string; at: string | undefined }
   | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined }
   | { kind: 'result'; id: string; isError: boolean }
-  | { kind: 'entry'; entry: ConversationEntry; strip: boolean };
+  | { kind: 'entry'; entry: ConversationEntry };
 
 /** An entry being built. Assistant text keeps its blocks until the page is finished. */
 type Draft =
   | { kind: 'assistant'; messageId: string | undefined; at: string | undefined; parts: string[] }
   | { kind: 'tool'; id: string | undefined; entry: ConversationEntry }
-  | { kind: 'entry'; entry: ConversationEntry; strip: boolean };
+  | { kind: 'entry'; entry: ConversationEntry };
 
 /**
  * Collects entries from lines handed over newest first.
@@ -406,7 +402,7 @@ class PageBuilder {
       }
       case 'entry':
         if (this.full()) return;
-        this.drafts.push({ kind: 'entry', entry: item.entry, strip: item.strip });
+        this.drafts.push({ kind: 'entry', entry: item.entry });
         return;
     }
   }
@@ -417,18 +413,14 @@ class PageBuilder {
   }
 
   /**
-   * The entries, oldest first, with their text stripped and capped. The
-   * newest entries are stripped first, while the page's budget lasts; the
-   * rest keep only their first 512 characters. Yields between entries.
+   * The entries, oldest first, each with at most 32 KiB of text. The newest
+   * keep theirs in full while the page's 256 KiB budget lasts; once an entry
+   * doesn't fit what's left, it keeps only its first 512 characters.
    */
-  async finish(): Promise<ConversationEntry[]> {
+  finish(): ConversationEntry[] {
     const entries: ConversationEntry[] = [];
-    const budget = { chars: PAGE_STRIP_CHARS };
-    for (let i = 0; i < this.drafts.length; i++) {
-      const entry = finishDraft(this.drafts[i] as Draft, budget);
-      if (entry !== undefined) entries.push(entry);
-      if (i % 10 === 9) await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    const budget = { chars: PAGE_TEXT_BUDGET };
+    for (const draft of this.drafts) entries.push(withinBudget(finishDraft(draft), budget));
     return entries.reverse();
   }
 }
@@ -437,44 +429,30 @@ function joins(oldest: { assistant: boolean; messageId: string | undefined } | u
   return oldest !== undefined && oldest.assistant && messageId !== undefined && oldest.messageId === messageId;
 }
 
-function finishDraft(draft: Draft, budget: { chars: number }): ConversationEntry | undefined {
+function finishDraft(draft: Draft): ConversationEntry {
   switch (draft.kind) {
     case 'tool':
+    case 'entry':
       return draft.entry;
     case 'assistant':
-      // Parts were collected newest first.
-      return plainEntry('assistant', [...draft.parts].reverse().join('\n'), draft.at, budget);
-    case 'entry': {
-      if (!draft.strip) return draft.entry;
-      const entry = plainEntry(draft.entry.kind, draft.entry.text, draft.entry.at, budget);
-      if (entry === undefined) return undefined;
-      if (draft.entry.from !== undefined) entry.from = draft.entry.from;
-      return entry;
-    }
+      // Parts were collected newest first. Each block is markdown on its own, so they're joined as
+      // separate paragraphs: a table or a list at the end of one doesn't run on into the next.
+      return withAt({ kind: 'assistant', text: [...draft.parts].reverse().join('\n\n'), markdown: true }, draft.at);
   }
 }
 
 /**
- * An entry whose text is markdown stripped to plain text, at most 8 KiB.
- * Undefined when nothing is left. Each entry's stripping is bounded, but a
- * page of 50 hostile entries would still take tens of milliseconds, so a page
- * strips at most 128 KiB of source in full.
+ * The entry with at most 32 KiB of text, without splitting a surrogate pair, and in full while the
+ * page's budget lasts: once it doesn't fit what's left, only its first 512 characters. Either cut
+ * marks it truncated. The text is cut as it is, never trimmed, so a shorter copy of an entry is
+ * always the start of the longer one.
  */
-function plainEntry(
-  kind: ConversationEntry['kind'],
-  source: string,
-  at: string | undefined,
-  budget: { chars: number },
-): ConversationEntry | undefined {
-  let kept = Math.min(source.length, ENTRY_TEXT_MAX);
-  if (kept <= budget.chars) budget.chars -= kept;
-  else kept = Math.min(kept, LEAN_SOURCE_MAX);
-  const stripped = stripMarkdownBounded(cap(source, kept)).trim();
-  if (stripped === '') return undefined;
-  const entry: ConversationEntry = { kind, text: cap(stripped, ENTRY_TEXT_MAX) };
-  if (at !== undefined) entry.at = at;
-  if (source.length > kept || stripped.length > ENTRY_TEXT_MAX) entry.truncated = true;
-  return entry;
+function withinBudget(entry: ConversationEntry, budget: { chars: number }): ConversationEntry {
+  let text = cap(entry.text, ENTRY_TEXT_MAX);
+  if (text.length <= budget.chars) budget.chars -= text.length;
+  else text = cap(text, LEAN_TEXT_MAX);
+  if (text.length === entry.text.length) return entry;
+  return { ...entry, text, truncated: true };
 }
 
 // --- Reading lines ---------------------------------------------------------------
@@ -565,7 +543,8 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   }
   const raw = textOf(content);
   if (raw === undefined && images === 0) return [];
-  const text = stripSystemReminders(raw ?? '').trim();
+  const unreminded = stripSystemReminders(raw ?? '');
+  const text = unreminded.trim();
   const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
   if (text.startsWith(CROSS_SESSION_PREFIX) || origin === 'peer') return text === '' ? [] : [crossSession(text, at)];
   if (entry.isMeta === true) return [];
@@ -575,8 +554,17 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   if (text.startsWith('Caveat:')) return [];
   if (text === '' && images === 0) return [];
   const imageNote = images === 0 ? '' : `[${images} ${images === 1 ? 'image' : 'images'}]`;
-  const prompt = text === '' ? imageNote : imageNote === '' ? text : `${text}\n\n${imageNote}`;
-  return [{ kind: 'entry', entry: withAt({ kind: 'user', text: cap(prompt, ENTRY_TEXT_MAX + 1) }, at), strip: true }];
+  const typed = asTyped(unreminded);
+  const prompt = typed === '' ? imageNote : imageNote === '' ? typed : `${typed}\n\n${imageNote}`;
+  return [{ kind: 'entry', entry: withAt({ kind: 'user', text: cap(prompt, ENTRY_TEXT_MAX + 1) }, at) }];
+}
+
+/**
+ * A prompt as typed, with nothing stripped: only the blank lines before it and the whitespace after
+ * it go, which the reminders taken out of it can leave. Spaces at the start of its first line stay.
+ */
+function asTyped(text: string): string {
+  return text.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
 }
 
 /** Claude Code writes local slash-command output as `system` entries too. Other system entries are left out. */
@@ -649,16 +637,16 @@ function crossSession(text: string, at: string | undefined): Item {
       body = close > openEnd ? rest.slice(openEnd + 1, close) : rest.slice(openEnd + 1);
     }
   }
-  const entry: ConversationEntry = withAt({ kind: 'cross-session', text: cap(body.trim(), ENTRY_TEXT_MAX + 1) }, at);
+  const entry: ConversationEntry = withAt({ kind: 'cross-session', text: cap(body.trim(), ENTRY_TEXT_MAX + 1), markdown: true }, at);
   const sender = from === undefined ? '' : oneLine(decodeEntities(from), 120);
   if (sender !== '') entry.from = sender;
-  return { kind: 'entry', entry, strip: true };
+  return { kind: 'entry', entry };
 }
 
 function notice(text: string, at: string | undefined): Item {
   const entry: ConversationEntry = withAt({ kind: 'notice', text: truncate(text, NOTICE_MAX) }, at);
   if (text.length > NOTICE_MAX) entry.truncated = true;
-  return { kind: 'entry', entry, strip: false };
+  return { kind: 'entry', entry };
 }
 
 function withAt(entry: ConversationEntry, at: string | undefined): ConversationEntry {
