@@ -1,39 +1,38 @@
 // The divider between the session list and the session view, in three columns only
-// (docs/design-system.md, 3: Session view): an 8 px hit area with a 1 px line in it, a focusable
+// (docs/design-system.md, 3: Session view): a 24 px hit area with a 1 px line in it, a focusable
 // role="separator" whose value is the view's width in px. Dragging it, ← and → (16 px), Home and End
 // (the minimum and maximum) resize the view, and a double-click resets it. The width is stored in
 // pitwall.panel-width.v1 (panelWidth.ts).
 //
-// It sets the width on the third column's pane itself, which the stylesheet clamps to what the app's
-// width allows, rather than through the Dashboard's state, so dragging re-renders only this.
+// The width lives in a store the Dashboard makes (createPanelWidthStore), which the session view's
+// actions menu also changes, with Make view wider, Make view narrower and Reset view width, so it can
+// be resized without dragging (WCAG 2.5.7). The divider sets the width on the third column's pane
+// itself, which the stylesheet clamps to what the app's width allows, so dragging re-renders only this.
 
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import type { StorageSource } from '../groupState.js';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent } from 'react';
 import { widthOf } from '../layout.js';
-import { clampPanel, PANEL_MIN, PANEL_STEP, panelMax, panelReset, readPanelWidth, writePanelWidth } from '../panelWidth.js';
+import { PANEL_MIN, PANEL_STEP, panelMax, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 
 export interface DividerProps {
-  /** Where pitwall.panel-width.v1 is kept. */
-  storage: StorageSource;
+  /** The view's width, which pitwall.panel-width.v1 keeps, shared with the actions menu. */
+  store: PanelWidthStore;
 }
 
 /** The pane the divider sits in, which takes the width: the divider's parent. Its own parent, the columns, is as wide as the app. */
 const paneOf = (divider: HTMLElement | null) => divider?.parentElement ?? null;
 const appWidthOf = (divider: HTMLElement | null) => widthOf(paneOf(divider)?.parentElement ?? null);
 
-export function Divider({ storage }: DividerProps) {
+export function Divider({ store }: DividerProps) {
   const self = useRef<HTMLDivElement>(null);
-  const [requested, setRequested] = useState(() => readPanelWidth(storage));
-  const [appWidth, setAppWidth] = useState(() => window.innerWidth);
+  const state = useSyncExternalStore(store.subscribe, store.get);
+  const { requested, appWidth } = state;
   const [dragging, setDragging] = useState(false);
   const drag = useRef<{ x: number; width: number } | undefined>(undefined);
-  const latest = useRef(requested);
-  latest.current = requested;
 
   // The app's width, for the maximum, kept up to date as the window or the frame is resized.
   useLayoutEffect(() => {
     const element = paneOf(self.current)?.parentElement ?? null;
-    const update = () => setAppWidth(widthOf(element));
+    const update = () => store.setAppWidth(widthOf(element));
     update();
     window.addEventListener('resize', update);
     const observer = typeof ResizeObserver === 'function' && element ? new ResizeObserver(update) : undefined;
@@ -42,7 +41,7 @@ export function Divider({ storage }: DividerProps) {
       window.removeEventListener('resize', update);
       observer?.disconnect();
     };
-  }, []);
+  }, [store]);
 
   // Before paint, so the first frame already has the stored width. The stylesheet keeps it within
   // what the window allows, so a narrower window shows less without losing the setting.
@@ -55,13 +54,12 @@ export function Divider({ storage }: DividerProps) {
     };
   }, [requested]);
 
-  const shown = clampPanel(requested, appWidth);
+  const shown = shownPanel(state);
 
+  /** Asks for `width`, against the app's width as it is now. */
   const set = (width: number, save: boolean) => {
-    const next = clampPanel(width, appWidthOf(self.current));
-    latest.current = next;
-    setRequested(next);
-    if (save) writePanelWidth(next, storage);
+    store.setAppWidth(appWidthOf(self.current));
+    store.set(width, save);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -108,7 +106,7 @@ export function Divider({ storage }: DividerProps) {
     if (!drag.current) return;
     drag.current = undefined;
     setDragging(false);
-    writePanelWidth(latest.current, storage);
+    store.set(store.get().requested, true);
   };
 
   return (

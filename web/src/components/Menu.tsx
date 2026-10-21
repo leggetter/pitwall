@@ -180,6 +180,8 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
     }
   };
 
+  const iconRoom = entries.some((entry) => isItem(entry) && entry.icon !== undefined);
+
   const activate = (item: MenuItem) => {
     if (item.disabled) return;
     closeToButton();
@@ -204,6 +206,7 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
       </Tooltip>
       {open && (
         <div ref={menu} id={menuId} className={up ? 'menu up' : 'menu'} role="menu" aria-label={label} onKeyDown={onMenuKeyDown}>
+          {/* An item with no icon of its own keeps the room for one, so the labels line up. */}
           {entries.map((entry) =>
             isItem(entry) ? (
               <Tooltip key={entry.id} content={entry.disabled ? entry.hint : undefined} relation="description">
@@ -215,7 +218,7 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
                   aria-disabled={entry.disabled || undefined}
                   onClick={() => activate(entry)}
                 >
-                  {entry.icon && <Icon name={entry.icon} />}
+                  {entry.icon ? <Icon name={entry.icon} /> : iconRoom && <span className="menu-item-icon-room" aria-hidden="true" />}
                   <span className="menu-item-label">{entry.label}</span>
                 </button>
               </Tooltip>

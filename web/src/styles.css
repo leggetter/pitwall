@@ -452,17 +452,18 @@ textarea {
 }
 
 /*
- * The divider (section 3: Session view): an 8 px hit area at the view's left edge, with the 1 px line
- * at that edge, which turns 2 px --pw-focus on hover, focus and while dragging. The hit area is on the
- * view's side, over its 16 px gutter, so it never covers the list's scrollbar.
+ * The divider (section 3: Session view): a 24 px hit area (WCAG 2.5.8) at the view's left edge, with
+ * the 1 px line at that edge, which turns 2 px --pw-focus on hover, focus and while dragging. The hit
+ * area is 16 px over the view's gutter, which has nothing in it, and 8 px over the list's edge, its
+ * rows' padding and the outer part of its scrollbar, so it covers none of the view's content.
  */
 .session-divider {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  left: calc(-1 * var(--pw-space-2));
   z-index: 1;
-  width: var(--pw-space-2);
+  width: var(--pw-control-sm);
   cursor: col-resize;
   touch-action: none;
 }
@@ -472,7 +473,7 @@ textarea {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  left: var(--pw-space-2);
   width: 1px;
   background: var(--pw-border);
 }
@@ -2311,6 +2312,13 @@ mark.match {
 .menu-item > svg {
   flex: none;
   color: var(--pw-text-muted);
+}
+
+/* The room an icon takes, for an item without one, so its label lines up with the others'. */
+.menu-item-icon-room {
+  flex: none;
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
 }
 
 .menu-item:focus {

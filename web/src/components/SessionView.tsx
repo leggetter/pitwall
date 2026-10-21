@@ -11,13 +11,14 @@
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
-import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import { getConversation } from '../conversation.js';
 import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
+import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
@@ -45,6 +46,15 @@ export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, s
 export const TERMINAL_INTERACTIVE_NOTE =
   "An interactive session can't be attached here. Typing /bg in its terminal moves it to the background, so pitwall can attach to it.";
 export const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
+
+/** The actions menu's width items' tooltips, when they can't do anything. */
+export const WIDTH_HINTS = {
+  wider: "It's as wide as this window allows.",
+  narrower: `It's as narrow as it goes, ${PANEL_MIN} px.`,
+  reset: "It's at its usual width.",
+} as const;
+
+const noStore = () => () => {};
 
 /** How the view sits on the page (docs/design-system.md, 6.1 item 7). */
 export type SessionViewLayout = 'column' | 'overlay';
@@ -154,6 +164,11 @@ export interface SessionViewProps {
   onDraftChange?: ((hasDraft: boolean) => void) | undefined;
   /** Whether a Stop or Remove is running, for j, k, ↑ and ↓, which wait for it rather than move the view away (6.2). */
   onRunningChange?: ((running: boolean) => void) | undefined;
+  /**
+   * The view's width as the third column, which the divider also changes: the actions menu then has
+   * Make view wider, Make view narrower and Reset view width, so it can be resized without a drag.
+   */
+  panel?: PanelWidthStore | undefined;
 }
 
 type Tab = 'conversation' | 'terminal';
@@ -172,6 +187,7 @@ export function SessionView({
   animate = true,
   onDraftChange,
   onRunningChange,
+  panel,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -313,9 +329,33 @@ export function SessionView({
     onRunningRef.current?.(busy);
   }, [busy]);
   useEffect(() => () => onRunningRef.current?.(false), []);
+  // What the width items can do, which changes only at the limits, so a drag doesn't re-render the view.
+  const limits = useSyncExternalStore(panel?.subscribe ?? noStore, () => (panel ? panelLimits(panel.get()) : ''));
+  const [canWiden, canNarrow, canReset] = limits.split('|').map((part) => part !== '');
+  const widthEntries: MenuEntry[] = panel
+    ? [
+        { kind: 'separator', id: 'width-separator' },
+        {
+          id: 'wider',
+          label: 'Make view wider',
+          disabled: !canWiden,
+          hint: WIDTH_HINTS.wider,
+          onSelect: () => panel.set(shownPanel(panel.get()) + PANEL_MENU_STEP, true),
+        },
+        {
+          id: 'narrower',
+          label: 'Make view narrower',
+          disabled: !canNarrow,
+          hint: WIDTH_HINTS.narrower,
+          onSelect: () => panel.set(shownPanel(panel.get()) - PANEL_MENU_STEP, true),
+        },
+        { id: 'reset-width', label: 'Reset view width', disabled: !canReset, hint: WIDTH_HINTS.reset, onSelect: () => panel.set(panelReset(panel.get().appWidth), true) },
+      ]
+    : [];
   const entries: MenuEntry[] = [
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
+    ...widthEntries,
     ...(canAct
       ? [
           { kind: 'separator' as const, id: 'separator' },
