@@ -11,7 +11,7 @@ import { AttachContext } from '../attach.js';
 import { slowFirstSnapshot } from '../components/Dashboard.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
-import { SessionView, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
+import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { startLabel, workedInLabels } from '../sessions.js';
@@ -32,7 +32,7 @@ import {
   WORKED_MULTI,
   WORKED_SNAPSHOT,
 } from './fixtures.js';
-import { element, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
+import { element, hoverFor, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
 import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
 const noop = () => {};
@@ -103,6 +103,14 @@ async function openMenu(root: HTMLElement): Promise<HTMLElement> {
   (await element<HTMLButtonElement>(root, 'button[aria-label="Session actions"]')).click();
   return element(root, '[role="menu"]');
 }
+
+/** Opens the actions menu and hovers `label`, a disabled item, for its tooltip. */
+const openMenuAt = (label: string) => async (root: HTMLElement) => {
+  await openMenu(root);
+  const item = await until(`the ${label} item`, () => [...root.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((candidate) => candidate.textContent?.trim() === label));
+  item.dataset.uikitHover = 'stop';
+  await hoverFor(root, '[data-uikit-hover="stop"]', STOP_INTERACTIVE_HINT);
+};
 
 /** Opens the actions menu and chooses `label`. */
 async function chooseFromMenu(root: HTMLElement, label: string): Promise<void> {
@@ -239,9 +247,13 @@ export function SessionViews() {
           </Scenario>
         </Stubbed>
       </Specimen>
-      <Specimen title="Actions menu, interactive" note="Only Copy session ID: it has no attach command, and can't be stopped or removed from here." frame="short">
+      <Specimen
+        title="Actions menu, interactive"
+        note="Copy session ID, then Stop session, off: it has no attach command, and can't be stopped or removed from here (W40). Its tooltip says how /bg changes that."
+        frame="short"
+      >
         <Stubbed>
-          <Scenario run={openMenu}>
+          <Scenario run={openMenuAt('Stop session')}>
             <SessionView session={MENU_INTERACTIVE} listed onClose={noop} />
           </Scenario>
         </Stubbed>

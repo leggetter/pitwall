@@ -98,10 +98,11 @@ describe('the actions menu', () => {
     expect(item(bg, 'Stop session').className).not.toContain('danger');
   });
 
-  it('has only Copy session ID for an interactive session, which keeps its /bg note', async () => {
+  it('has Copy session ID, then Stop session, off, for an interactive session, which keeps its /bg note', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
     const interactive = await openView('pitwall-test-interactive');
-    expect(openMenu(interactive)).toEqual(['Copy session ID']);
+    expect(openMenu(interactive)).toEqual(['Copy session ID', '—', 'Stop session']);
+    expect(within(interactive).queryByRole('menuitem', { name: 'Remove session' })).toBeNull();
     expect(within(interactive).getByRole('button', { name: /Typing \/bg in its terminal moves it to the background/ })).toBeTruthy();
   });
 
@@ -165,8 +166,58 @@ describe('Stop and Remove', () => {
 
     const interactive = await openView('pitwall-test-interactive');
     openMenu(interactive);
-    expect(within(interactive).queryByRole('menuitem', { name: 'Stop session' })).toBeNull();
+    expect(item(interactive, 'Stop session').getAttribute('aria-disabled')).toBe('true');
     expect(within(interactive).queryByRole('menuitem', { name: 'Remove session' })).toBeNull();
+  });
+
+  describe("an interactive session's Stop session (W40)", () => {
+    const HINT = "An interactive session can't be stopped here. Type /bg in its terminal to move it to the background, then stop it here.";
+
+    it('is shown, disabled, with how /bg lets pitwall stop it in the tooltip that describes it, in the icon and place of a background one', async () => {
+      const server = fakeServer({ status: 200, body: { ok: true } });
+      renderDashboard(server);
+      const interactive = await openView('pitwall-test-interactive');
+      openMenu(interactive);
+      const stop = item(interactive, 'Stop session');
+      expect(stop.getAttribute('aria-disabled')).toBe('true');
+      expect(stop.className).toBe('menu-item');
+      expect(stop.querySelector('svg')).toBeTruthy();
+      expect(descriptionOf(stop)).toBe(HINT);
+      expect(stop.hasAttribute('title')).toBe(false);
+      // Activating it, by a click or Enter, does nothing: no confirmation, no request, and the menu stays open.
+      fireEvent.click(stop);
+      fireEvent.keyDown(stop, { key: 'Enter' });
+      expect(within(interactive).queryByRole('group')).toBeNull();
+      expect(within(interactive).getByRole('menu')).toBeTruthy();
+      expect(postedUrls(server)).toEqual([]);
+    });
+
+    it('is reached by the arrows, as any disabled item is', async () => {
+      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      const interactive = await openView('pitwall-test-interactive');
+      openMenu(interactive);
+      const menu = within(interactive).getByRole('menu');
+      expect(document.activeElement?.textContent).toBe('Copy session ID');
+      fireEvent.keyDown(menu, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(item(interactive, 'Stop session'));
+    });
+
+    it("is a background session's own Stop, not this one, for a background session", async () => {
+      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      const bg = await openView('pitwall-test-bg');
+      openMenu(bg);
+      const stop = item(bg, 'Stop session');
+      expect(stop.hasAttribute('aria-disabled')).toBe(false);
+      expect(descriptionOf(stop) ?? '').not.toContain('/bg');
+    });
+
+    it('goes when the interactive session is no longer listed', async () => {
+      const { update } = renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      const interactive = await openView('pitwall-test-interactive');
+      update(snapshot([group({ sessions: [background()] })]));
+      await settle();
+      expect(openMenu(interactive)).toEqual(['Copy session ID']);
+    });
   });
 
   it('asks before stopping, and Cancel or Escape leaves the session alone and the view open, with focus back on the menu button', async () => {
