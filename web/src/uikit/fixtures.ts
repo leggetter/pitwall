@@ -312,6 +312,40 @@ export const WORKED_ROOT_GROUP = group('code', [WORKED_FROM_ROOT, WORKED_ROOT_AL
 /** Six sessions, two of which need you, in four groups: none for pitwall-test-docs, where three of them worked. */
 export const WORKED_SNAPSHOT = snapshot([WORKED_API_GROUP, WORKED_APP_GROUP, WORKED_SCRATCH_GROUP, WORKED_ROOT_GROUP]);
 
+// View preferences (W42): two roots, ~/code and ~/work. pitwall-test-delivery-plan started in ~/code
+// itself, worked most in pitwall-test-docs, which has no group, and less in pitwall-test-service,
+// under ~/work. So Main repo lists it under pitwall-test-docs, Where it started under ~/code, and Every
+// repo it worked in under both repos, one in each root's tab.
+
+/** Started in ~/code itself: 180 changes in pitwall-test-docs, 3 in pitwall-test-service, under ~/work. */
+export const PREFS_DELIVERY = session('delivery-plan', {
+  title: 'Build the delivery plan',
+  titleSource: 'claude-code',
+  cwd: ROOT,
+  status: 'waiting',
+  waitingFor: 'permission prompt',
+  lastUserPrompt: 'Draft the delivery plan in the docs, and check the service for the dates.',
+  lastActivityAt: ago(1),
+  workedIn: [
+    { key: DOCS_DIR, label: 'pitwall-test-docs', root: ROOT, calls: 1600, changes: 180, lastAt: ago(1) },
+    { key: SERVICE_DIR, label: 'pitwall-test-service', root: OTHER_ROOT, calls: 140, changes: 3, lastAt: ago(40) },
+  ],
+});
+/** Started in ~/code itself, and worked in no repo: it stays in the root's own group in every mode. */
+export const PREFS_ROOT_ALONE = session('prefs-root-alone', { cwd: ROOT, lastUserPrompt: 'What is in this folder?', lastActivityAt: ago(20) });
+const PREFS_APP = session('prefs-app', { lastActivityAt: ago(5) });
+const PREFS_SERVICE = session('prefs-service', { cwd: SERVICE_DIR, status: 'busy', lastActivityAt: ago(0.5) });
+
+/** Two roots: ~/code's own group, pitwall-test-app, and pitwall-test-service under ~/work; none for pitwall-test-docs. */
+export const PREFS_SNAPSHOT = snapshot(
+  [
+    group('code', [PREFS_DELIVERY, PREFS_ROOT_ALONE], { key: ROOT, kind: 'directory' }),
+    group('pitwall-test-app', [PREFS_APP], { key: APP_DIR }),
+    group('pitwall-test-service', [PREFS_SERVICE], { key: SERVICE_DIR, root: OTHER_ROOT }),
+  ],
+  { roots: [ROOT, OTHER_ROOT] },
+);
+
 /** One root with a long path, for the header's middle ellipsis. */
 export const LONG_ROOT = '/Users/example/projects/pitwall-test-project-with-a-long-name/repositories';
 

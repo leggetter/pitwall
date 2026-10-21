@@ -214,6 +214,27 @@
   padding-top: 40px;
 }
 
+/* Each root tab's repo list in one mode of View preferences, side by side, each as wide as the sidebar (W42). */
+.uikit-mode-lists {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.uikit-mode-list {
+  width: 240px;
+}
+
+.uikit-mode-list .repo-list {
+  border: 1px solid var(--pw-border);
+}
+
+/* Room below View preferences for its menu, which is taller and wider than the actions menu (W42). */
+.uikit-menu-stage-prefs {
+  max-width: 360px;
+  min-height: 280px;
+}
+
 /* Room above a trigger for its tooltip, which sits 6 px above it, as it does in the app. */
 .uikit-tip-stage {
   padding-top: 72px;
