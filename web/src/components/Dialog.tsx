@@ -5,14 +5,17 @@
 //
 // - role="dialog", aria-modal, named by its title and described by its subtitle.
 // - Focus moves to the first field on open, Tab and Shift+Tab stay inside, and focus goes back to
-//   whatever had it, normally the button that opened it, when it closes.
+//   whatever had it, normally the button that opened it, when it closes, without opening that
+//   button's tooltip (focusQuietly), which would take the next Escape.
+// - Its header and footer are plain elements, not <header> and <footer>, which outside a sectioning
+//   element would be the page's banner and contentinfo landmarks.
 // - Escape closes it, and goes no further, so the session view behind stays open. A click on the
 //   backdrop closes it only when nothing has been typed. While its action runs (`busy`), neither does,
 //   and Close is aria-disabled.
 
 import { useEffect, useId, useRef, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { Icon } from './Icon.js';
-import { Tooltip } from './Tooltip.js';
+import { focusQuietly, Tooltip } from './Tooltip.js';
 import './Dialog.css';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -57,7 +60,8 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
     const returnTo = document.activeElement;
     (tabStops(body.current)[0] ?? tabStops(card.current)[0])?.focus();
     return () => {
-      if (returnTo instanceof HTMLElement && returnTo.isConnected) returnTo.focus();
+      // Put back, not moved there by the user: its tooltip stays shut, so the next Escape goes on to whatever is behind.
+      if (returnTo instanceof HTMLElement && returnTo.isConnected) focusQuietly(returnTo);
     };
   }, []);
 
@@ -105,7 +109,7 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
 
   const content = (
     <>
-      <header className="dialog-head">
+      <div className="dialog-head">
         <div className="dialog-heading">
           <h2 className="dialog-title" id={ids.title}>
             {title}
@@ -127,15 +131,15 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
             <Icon name="close" />
           </button>
         </Tooltip>
-      </header>
+      </div>
       <div className="dialog-body" ref={body}>
         {children}
       </div>
       {(footerMeta !== undefined || actions !== undefined) && (
-        <footer className="dialog-foot">
+        <div className="dialog-foot">
           {footerMeta !== undefined && <p className="dialog-foot-meta">{footerMeta}</p>}
           <div className="dialog-actions">{actions}</div>
-        </footer>
+        </div>
       )}
     </>
   );
