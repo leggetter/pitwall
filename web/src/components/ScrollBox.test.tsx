@@ -44,4 +44,23 @@ describe('ScrollBox', () => {
     expect(screen.queryByRole('region')).toBeNull();
     expect(screen.getByText('A made-up reply.').hasAttribute('tabindex')).toBe(false);
   });
+
+  it('on the x axis, is a Tab stop while its content is wider than it, as a code block in a message is (W36)', async () => {
+    const sizes = { scrollWidth: 900, clientWidth: 300 };
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(() => sizes.scrollWidth);
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => sizes.clientWidth);
+    // Taller than it is doesn't count on this axis.
+    layout({ scrollHeight: 400, clientHeight: 100 });
+    render(
+      <ScrollBox as="pre" axis="x" label="Code">
+        a made-up long line
+      </ScrollBox>,
+    );
+    const box = screen.getByRole('region', { name: 'Code' });
+    expect(box.tagName).toBe('PRE');
+    expect(box.tabIndex).toBe(0);
+    sizes.scrollWidth = 300;
+    await act(async () => window.dispatchEvent(new Event('resize')));
+    expect(screen.queryByRole('region')).toBeNull();
+  });
 });

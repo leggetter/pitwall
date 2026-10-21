@@ -22,7 +22,8 @@ const SID = '00000000-0000-4000-8000-0000000000c7';
 const API_KEY = 'k'.repeat(43);
 const at = (second: number) => `2026-03-02T11:50:${String(second).padStart(2, '0')}.000Z`;
 const you = (second: number, text = `prompt ${second}`): ConversationEntry => ({ kind: 'user', at: at(second), text });
-const claude = (second: number, text = `reply ${second}`): ConversationEntry => ({ kind: 'assistant', at: at(second), text });
+// Claude's messages are markdown, as the server sends them (W36), so everything below runs on them.
+const claude = (second: number, text = `reply ${second}`): ConversationEntry => ({ kind: 'assistant', at: at(second), text, markdown: true });
 const tool = (second: number, text: string, toolError = false): ConversationEntry => ({
   kind: 'tool',
   at: at(second),
@@ -133,8 +134,8 @@ describe('Conversation: entries', () => {
     const entries: ConversationEntry[] = [
       you(1, 'Add a retry to the export job.'),
       claude(2, 'Reading the job first.'),
-      { kind: 'cross-session', at: at(3), from: 'pitwall-test-reviewer', text: 'Please log each retry.' },
-      { kind: 'cross-session', at: at(4), text: 'ping' },
+      { kind: 'cross-session', at: at(3), from: 'pitwall-test-reviewer', text: 'Please log each retry.', markdown: true },
+      { kind: 'cross-session', at: at(4), text: 'ping', markdown: true },
       { kind: 'notice', at: at(5), text: 'Conversation compacted.' },
       { ...claude(6, 'A long reply'), truncated: true },
       { kind: 'user', text: 'A prompt with no time.' },
@@ -178,7 +179,7 @@ describe('Conversation: entries', () => {
       fakeServer(
         page([
           you(1, html),
-          { kind: 'cross-session', at: at(2), from: `<i>${html}</i>`, text: html },
+          { kind: 'cross-session', at: at(2), from: `<i>${html}</i>`, text: html, markdown: true },
           { kind: 'notice', at: at(3), text: html },
           tool(4, `Bash: echo '${html}'`),
           claude(5),
@@ -198,6 +199,61 @@ describe('Conversation: entries', () => {
     layout({ scrollHeight: 2400, clientHeight: 400 });
     const { body } = await renderView(fakeServer(page(Array.from({ length: 30 }, (_, i) => you(i)))));
     expect(body.scrollTop).toBe(2400);
+  });
+});
+
+describe('Conversation: markdown in messages (W36)', () => {
+  const MARKDOWN = '## Results\n\nThe job retries **three times**:\n\n```sh\nnpm test\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |';
+
+  it("shows Claude's messages and other sessions' as pitwall's own elements, after their speaker lines", async () => {
+    const { body } = await renderView(
+      fakeServer(page([claude(1, MARKDOWN), { kind: 'cross-session', at: at(2), from: 'pitwall-test-sup', text: 'Please run `npm test`.', markdown: true }])),
+    );
+    const [mine, peer] = rows(body);
+    expect([...mine!.children].map((child) => child.className)).toEqual(['entry-speaker', 'entry-text entry-markdown']);
+    const md = mine!.querySelector('.entry-markdown')!;
+    expect(md.tagName).toBe('DIV');
+    expect(md.querySelector('.md-heading')!.textContent).toBe('Results');
+    expect(md.querySelector('strong')!.textContent).toBe('three times');
+    expect(md.querySelector('pre code')!.textContent).toBe('npm test');
+    expect(md.querySelector('button[aria-label="Copy code"]')).not.toBeNull();
+    expect([...md.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['a', 'b']);
+    expect(peer!.querySelector('.entry-markdown code')!.textContent).toBe('npm test');
+  });
+
+  it('keeps your prompts, notices and tool calls as plain text, markdown and all', async () => {
+    const prompt = '  **not bold**\n\n```\nnot code\n```\n| a |\n|---|';
+    const { body } = await renderView(
+      fakeServer(page([you(1, prompt), { kind: 'notice', at: at(2), text: '**Context** `12%`' }, tool(3, 'Bash: echo "**x**"'), claude(4, 'after')])),
+    );
+    const [user, notice, call] = rows(body);
+    expect(user!.querySelector('p.entry-text')!.textContent).toBe(prompt);
+    expect(notice!.querySelector('p.entry-text')!.textContent).toBe('**Context** `12%`');
+    expect(lines(call!)).toEqual(['Bash: echo "**x**"']);
+    for (const row of [user!, notice!, call!]) expect(row.querySelector('.entry-markdown, strong, pre, table, code')).toBeNull();
+  });
+
+  it('shows a message without the markdown flag, as an older server sends it, as plain text', async () => {
+    const { body } = await renderView(fakeServer(page([{ kind: 'assistant', at: at(1), text: '**plain**' }])));
+    expect(body.querySelector('.entry-markdown, strong')).toBeNull();
+    expect(body.querySelector('p.entry-text')!.textContent).toBe('**plain**');
+  });
+
+  it('runs a code block cut short to the end, then says the message was cut short', async () => {
+    const { body } = await renderView(fakeServer(page([{ ...claude(1, 'Draft:\n\n```text\nHi all, the export'), truncated: true }])));
+    const [entry] = rows(body);
+    expect(entry!.querySelector('pre code')!.textContent).toBe('Hi all, the export');
+    expect(entry!.lastElementChild?.textContent).toBe('Cut short.');
+  });
+
+  it('keeps a message drawn once as entries arrive after it, rather than drawing it again', async () => {
+    const server = fakeServer(page([claude(1, MARKDOWN)]));
+    const view = await renderView(server);
+    const table = view.body.querySelector('table');
+    server.newest(page([claude(1, MARKDOWN), you(2)]));
+    await view.refresh();
+    expect(rows(view.body)).toHaveLength(2);
+    expect(view.body.querySelector('table')).toBe(table);
   });
 });
 

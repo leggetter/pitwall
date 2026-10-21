@@ -9,6 +9,7 @@ import {
   entryKeys,
   foldOpen,
   getConversation,
+  KEY_TEXT_MAX,
   mergeNewest,
   prependOlder,
   STALE_CURSOR_STATUS,
@@ -39,6 +40,17 @@ describe('entryKey', () => {
   it("counts an undated assistant entry's text, so undated entries stay apart", () => {
     expect(entryKey({ kind: 'assistant', text: 'a' })).not.toBe(entryKey({ kind: 'assistant', text: 'b' }));
   });
+
+  it("is the same for an entry sent in full and cut to the server's 512 characters once a page's budget is spent (W36)", () => {
+    const full = userEntry(4, `${'a long prompt, '.repeat(300)}end`);
+    const cut: ConversationEntry = { ...full, text: full.text.slice(0, 512), truncated: true };
+    expect(KEY_TEXT_MAX).toBeLessThan(512);
+    expect(entryKey(cut)).toBe(entryKey(full));
+    const peer: ConversationEntry = { kind: 'cross-session', at: at(5), from: 'pitwall-test-sup', text: `${'x'.repeat(600)} full`, markdown: true };
+    expect(entryKey({ ...peer, text: peer.text.slice(0, 512), truncated: true })).toBe(entryKey(peer));
+    // Entries that differ within the start still differ.
+    expect(entryKey(userEntry(4, 'b'.repeat(400)))).not.toBe(entryKey(userEntry(4, 'c'.repeat(400))));
+  });
 });
 
 describe('mergeNewest', () => {
@@ -58,6 +70,13 @@ describe('mergeNewest', () => {
     const older = Array.from({ length: 5 }, (_, i) => userEntry(i));
     const current = [...older, userEntry(10), userEntry(11)];
     expect(mergeNewest(current, [userEntry(10), userEntry(11), userEntry(12)])).toEqual([...current, userEntry(12)]);
+  });
+
+  it('meets what is shown at an entry the newest page carries cut short, once its budget is spent (W36)', () => {
+    const long = userEntry(2, 'p'.repeat(5000));
+    const current = [userEntry(1), long, reply(3, 'Done.')];
+    const leaner = { ...long, text: long.text.slice(0, 512), truncated: true };
+    expect(mergeNewest(current, [leaner, reply(3, 'Done.'), userEntry(4)])).toEqual([userEntry(1), leaner, reply(3, 'Done.'), userEntry(4)]);
   });
 
   it('says to replace the entries when the newest page does not overlap them', () => {
@@ -292,6 +311,22 @@ describe('getConversation', () => {
 
 describe('asConversationPage', () => {
   const SID = '00000000-0000-4000-8000-0000000000c2';
+
+  it('keeps the markdown flag only when it is true', () => {
+    const body = {
+      sessionId: SID,
+      entries: [
+        { kind: 'assistant', text: '**a**', markdown: true },
+        { kind: 'assistant', text: '**b**', markdown: 'yes' },
+        { kind: 'cross-session', text: '**c**', markdown: false },
+      ],
+    };
+    expect(asConversationPage(body, SID)?.entries).toEqual([
+      { kind: 'assistant', text: '**a**', markdown: true },
+      { kind: 'assistant', text: '**b**' },
+      { kind: 'cross-session', text: '**c**' },
+    ]);
+  });
 
   it('drops entries that are not well formed, and fields of the wrong type', () => {
     const body = {

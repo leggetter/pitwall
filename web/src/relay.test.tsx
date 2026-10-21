@@ -55,6 +55,12 @@ describe('replyInConversation', () => {
     expect(replyInConversation(exchange('Done.'), [said('Done. The tests pass.')])).toBe(false);
   });
 
+  it('matches a reply written in markdown against the markdown the entry now carries (W36)', () => {
+    const markdown = '**Done.** The export retries three times now, and `npm test` passes:\n\n- one\n- two';
+    expect(replyInConversation(exchange(markdown), [{ ...said(markdown), markdown: true }])).toBe(true);
+    expect(replyInConversation(exchange('**Done.**'), [{ ...said('**Done.**\n'), markdown: true }])).toBe(true);
+  });
+
   it('matches a reply the relay cut short by what was kept', () => {
     expect(replyInConversation(exchange(`${LONG.slice(0, 50)}…`), [said(LONG)])).toBe(true);
   });
