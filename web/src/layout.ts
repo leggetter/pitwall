@@ -39,10 +39,17 @@ export function layoutFor(width: number): Layout {
   return width >= SIDEBAR_MIN ? 'sidebar' : 'drawer';
 }
 
-/** The element's width, or the window's when it has none yet, as before it's laid out. */
+/**
+ * The element's width as laid out, or the window's when it has none yet, as before it's laid out. Its
+ * width on screen, which is exact, unless a transform on an ancestor scales it, as the #uikit gallery
+ * scales a window wider than its stage to fit: then its layout width (offsetWidth, which a transform
+ * doesn't change, rounded to a whole px), so the layout is the window's, not the scaled size's.
+ */
 export function widthOf(element: HTMLElement | null): number {
   const width = element?.getBoundingClientRect().width ?? 0;
-  return width > 0 ? width : window.innerWidth;
+  if (!(width > 0)) return window.innerWidth;
+  const laidOut = element?.offsetWidth ?? 0;
+  return laidOut > 0 && Math.abs(laidOut - width) > 1 ? laidOut : width;
 }
 
 function appLayoutFor(width: number): AppLayout {

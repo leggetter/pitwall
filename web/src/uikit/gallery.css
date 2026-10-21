@@ -107,9 +107,16 @@
   border-radius: var(--pw-radius-sm);
 }
 
-/* A stage holding a window of a set width, which scrolls sideways when the gallery is narrower. */
+/*
+ * A stage holding a window of a set width (kit.tsx, FitWindow): a window wider than the stage is
+ * scaled to fit it, whole, so nothing at its right edge, such as the session view's Send, is cut off.
+ */
 .uikit-widths {
-  overflow-x: auto;
+  overflow: hidden;
+}
+
+.uikit-fit {
+  min-width: 0;
 }
 
 .uikit-window {
