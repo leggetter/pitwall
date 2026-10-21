@@ -120,7 +120,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** until M3, every snapshot sent to the browser held each session's latest reply, though the UI showed none of it. That's gone.
 - **What it still carries:** what the list and the session view's header show: each session's title, its newest prompt (up to 300 characters), what it asked you, and the reply to a message you relayed. The conversation itself leaves the server only when you open it, through the token-gated conversation route.
-- **Browser storage:** no token and no session content. The token is in `sessionStorage`. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1` and `pitwall.hidden.v1:<root>`. The last is one key per root, holding each hidden group's path, label and kind, so pitwalls watching different roots keep separate lists. Storage is also per origin, so a pitwall on a fallback port starts with none.
+- **Browser storage:** no token and no session content. The token is in `sessionStorage`. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1`, `pitwall.root-tab.v1` and `pitwall.hidden.v1:<root>`. The last is one key per root, holding each hidden group's path, label and kind, so pitwalls watching different roots keep separate lists. Storage is also per origin, so a pitwall on a fallback port starts with none.
 
 ### D15 - The session view renders markdown as pitwall's own elements, never HTML
 
@@ -129,3 +129,11 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Safety:** the parser is pitwall's own, with no new dependency, and builds a tree of text that React renders as text. Raw HTML, and anything outside the subset, shows as the literal text it is. Only absolute `http:` and `https:` URLs become links; each opens in a new tab with `noopener noreferrer`, with the URL it opens in its tooltip. Images are never loaded.
 - **Links in code** (Phil, 2026-10-21): bare URLs in code blocks and inline code are links too, as terminals make them clickable, while Copy code copies the code as written. A bare URL ends at a space, `<`, `>`, `"` or a backtick, and drops a `)`, `]` or `}` it didn't open, so a URL in an HTML attribute, JSON or backticks links where it points.
 - **Bounds:** at most 32 Ki characters a message and 256 Ki a page. A message that would take more than 5,000 elements is shown as written, with a note.
+
+### D16 - Several roots show as tabs
+
+- **What:** with two or more roots (`pitwall ~/hookdeck/git ~/leggetter/git`), the header shows a tab per root, and each tab narrows the repo list, Needs you, All sessions, the session list, the filter and New session to its root. With one root, the header is as before.
+- **Nothing out of sight:** a tab that isn't open shows its root's needs-you badge, and the page title's count covers every root.
+- **Each tab keeps its place:** its selection, open session and filter. Switching never detaches a terminal (D9's four count across tabs), drops a draft or stops a send. The open tab is in the URL (`&root=`) and in `pitwall.root-tab.v1`.
+- **Nested roots:** a session belongs to the longest root that holds it, as the index decides, so the tabs always agree with the server.
+- **Why:** Phil asked for one pitwall over two roots, as tabs (2026-10-21). Rejected: two pitwalls in two browser tabs, which double the polling, scanning and relays, and one page showing other pitwalls, which would need each one's token and a looser CSP.
