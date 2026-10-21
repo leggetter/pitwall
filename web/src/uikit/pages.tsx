@@ -39,6 +39,9 @@ import {
   snapshot,
   STATUS_ROWS,
   TWO_ROOTS_SNAPSHOT,
+  API_DIR,
+  WORKED_MULTI,
+  WORKED_SNAPSHOT,
 } from './fixtures.js';
 import { choose, element, laidOut, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
 import { memoryShortcuts, memoryStorage, type StubOptions } from './stubs.js';
@@ -226,6 +229,18 @@ const PAGES: PageCase[] = [
   { title: 'A group', search: repo(APP_DIR), view: { state: 'live', snapshot: LIST_SNAPSHOT } },
   { title: 'Needs you', search: '?view=needs-you', view: { state: 'live', snapshot: LIST_SNAPSHOT } },
   { title: 'Two roots', note: 'A group under the second root.', search: repo(SERVICE_DIR, OTHER_ROOT), view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT } },
+  {
+    title: 'Sessions in several repos',
+    note: 'pitwall-test-api selected: its own session, and two that worked in it, each saying where it started. Each repo counts its distinct sessions, and the summary counts this list’s.',
+    search: repo(API_DIR),
+    view: { state: 'live', snapshot: WORKED_SNAPSHOT },
+  },
+  {
+    title: "The root's group",
+    note: 'Only the session started in the root that worked in no repo. The directory below it, pitwall-test-scratch, keeps its own group.',
+    search: repo(ROOT),
+    view: { state: 'live', snapshot: WORKED_SNAPSHOT },
+  },
   { title: 'Connection lost', view: { state: 'reconnecting', snapshot: LIST_SNAPSHOT } },
   { title: 'Poll failed', view: { state: 'live', snapshot: POLL_FAILED_SNAPSHOT } },
   { title: "Relay sent a message nobody asked for", view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_SENT }) } },
@@ -397,6 +412,13 @@ const LAYOUTS: PageCase[] = [
       (await element<HTMLButtonElement>(root, '.session-view button[aria-label="Session actions"]')).click();
       await element(root, '[role="menu"]');
     },
+  },
+  {
+    title: 'Three columns, a session that worked in several repos',
+    note: 'Opened from pitwall-test-api, where it worked: its row says it started in pitwall-test-app, and the view’s line 3 lists the repos it worked in, with the rule behind the info button.',
+    width: 1280,
+    search: `${repo(API_DIR)}&session=${WORKED_MULTI.sessionId}`,
+    view: { state: 'live', snapshot: WORKED_SNAPSHOT },
   },
   {
     title: 'The divider at its minimum',
