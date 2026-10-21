@@ -2656,9 +2656,14 @@ ol.md-list {
   border-top: 1px solid var(--pw-border-strong);
 }
 
-/* Inline code (2.7): mono s on --pw-surface-sunken, or --pw-surface inside another session's message, which is sunken. */
+/*
+ * Inline code (2.7): mono s on --pw-surface-sunken, or --pw-surface inside another session's message,
+ * which is sunken. Its line height is its own size, so JetBrains Mono's taller ascent doesn't stretch
+ * the line it's on past the 4 px grid; its fill still covers the glyphs.
+ */
 .md-code-span {
   padding: 0 var(--pw-space-1);
+  line-height: 1;
   border-radius: var(--pw-radius-sm);
   background: var(--pw-surface-sunken);
   color: var(--pw-text);
