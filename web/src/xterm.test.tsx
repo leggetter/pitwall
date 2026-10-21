@@ -5,19 +5,32 @@ import terminalSource from './components/Terminal.tsx?raw';
 import tokensCss from './tokens.css?raw';
 import xtermSource from './xterm.ts?raw';
 
-const created = vi.hoisted(() => ({ options: [] as unknown[], events: [] as string[] }));
+const created = vi.hoisted(() => ({ options: [] as unknown[], events: [] as string[], terminals: [] as { options: Record<string, unknown>; textarea: HTMLTextAreaElement | undefined }[] }));
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
-    constructor(options: unknown) {
+    // xterm.js's live options: setting one, as a late font sets fontFamily, is recorded.
+    options: Record<string, unknown>;
+    textarea: HTMLTextAreaElement | undefined;
+    constructor(options: Record<string, unknown>) {
       created.options.push(options);
       created.events.push('created');
+      this.options = new Proxy({ ...options }, {
+        set: (target, key, value) => {
+          created.events.push(`set ${String(key)}`);
+          target[String(key)] = value;
+          return true;
+        },
+      });
+      created.terminals.push(this);
     }
     loadAddon() {}
-    open() {
+    open(container: HTMLElement) {
       created.events.push('opened');
+      this.textarea = document.createElement('textarea');
+      container.append(this.textarea);
     }
     onData() {}
     write() {}
@@ -25,7 +38,13 @@ vi.mock('@xterm/xterm', () => ({
     dispose() {}
   },
 }));
-vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit() {
+      created.events.push('fit');
+    }
+  },
+}));
 
 const { createXterm, FONT_WAIT_MS, THEME_TOKENS, waitForFont } = await import('./xterm.js');
 const { terminalLinkHandler } = await import('./links.js');
@@ -70,6 +89,7 @@ function fontSet() {
 beforeEach(() => {
   created.options.length = 0;
   created.events.length = 0;
+  created.terminals.length = 0;
 });
 
 afterEach(() => {
@@ -147,10 +167,69 @@ describe('createXterm', () => {
 
       for (const load of loads) load.resolve();
       await opening;
-      expect(created.events).toEqual(['created', 'opened']);
+      expect(created.events).toEqual(['created', 'opened', 'fit']);
     } finally {
       delete (document as { fonts?: unknown }).fonts;
     }
+  });
+
+  it('draws bold with the 500 face, the heaviest bundled, so the browser never synthesises a heavier one (W31)', async () => {
+    await createXterm(document.createElement('div'), { fonts: undefined });
+    expect(lastOptions().fontWeightBold).toBe(500);
+  });
+
+  it("describes xterm.js's textarea by the F6 hint, once it's open (W31)", async () => {
+    const container = document.createElement('div');
+    await createXterm(container, { describedBy: 'made-up-hint', fonts: undefined });
+    expect(container.querySelector('textarea')?.getAttribute('aria-describedby')).toBe('made-up-hint');
+  });
+
+  it('measures its cells again, fits, and says its new size, when the font arrives after the wait (W31)', async () => {
+    vi.useFakeTimers();
+    withTokens();
+    const { fonts, loads } = fontSet();
+    const resized = vi.fn();
+    const opening = createXterm(document.createElement('div'), { fonts, onResize: resized });
+    await vi.advanceTimersByTimeAsync(FONT_WAIT_MS);
+    await opening;
+    // Opened with the fallback's cells.
+    expect(created.events).toEqual(['created', 'opened', 'fit']);
+    const family = lastOptions().fontFamily;
+
+    for (const load of loads) load.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(created.events).toEqual(['created', 'opened', 'fit', 'set fontFamily', 'fit']);
+    // A different string for the same list, so xterm.js measures again.
+    const again = created.terminals.at(-1)!.options.fontFamily;
+    expect(again).not.toBe(family);
+    expect(String(again).trim()).toBe(String(family).trim());
+    expect(resized).toHaveBeenCalledWith(80, 24);
+  });
+
+  it('leaves a terminal that opened in time, or was closed meanwhile, alone when the font arrives', async () => {
+    vi.useFakeTimers();
+    withTokens();
+    const late = fontSet();
+    const resized = vi.fn();
+    const handle = await (async () => {
+      const opening = createXterm(document.createElement('div'), { fonts: late.fonts, onResize: resized });
+      await vi.advanceTimersByTimeAsync(FONT_WAIT_MS);
+      return opening;
+    })();
+    handle.dispose();
+    for (const load of late.loads) load.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(created.events).not.toContain('set fontFamily');
+    expect(resized).not.toHaveBeenCalled();
+
+    const inTime = fontSet();
+    const opening = createXterm(document.createElement('div'), { fonts: inTime.fonts, onResize: resized });
+    await vi.advanceTimersByTimeAsync(0);
+    for (const load of inTime.loads) load.resolve();
+    await opening;
+    await vi.advanceTimersByTimeAsync(FONT_WAIT_MS);
+    expect(created.events.filter((event) => event === 'set fontFamily')).toEqual([]);
+    expect(resized).not.toHaveBeenCalled();
   });
 });
 

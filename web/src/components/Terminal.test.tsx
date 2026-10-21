@@ -65,11 +65,14 @@ class FakeTerminal implements TerminalHandle {
 }
 
 const terminals: FakeTerminal[] = [];
+/** The options each terminal was created with, as the session view gave them. */
+const created: { describedBy?: string | undefined; onResize?: ((cols: number, rows: number) => void) | undefined }[] = [];
 
 vi.mock('../xterm.js', () => ({
-  createXterm: (container: HTMLElement) => {
+  createXterm: (container: HTMLElement, options: (typeof created)[number] = {}) => {
     const terminal = new FakeTerminal(container);
     terminals.push(terminal);
+    created.push(options);
     return terminal;
   },
 }));
@@ -91,6 +94,7 @@ class FakeResizeObserver {
 
 beforeEach(() => {
   terminals.length = 0;
+  created.length = 0;
   observers.length = 0;
   vi.stubGlobal('ResizeObserver', FakeResizeObserver);
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -495,6 +499,19 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
     expect(notice(view)).toBeNull();
   });
 
+  it("gives xterm.js the F6 hint's id, to describe its textarea, and sends the new size when a late font resizes the cells (W31)", async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket } = await attach(view, fake);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    const hint = view.querySelector<HTMLElement>('.attach-hint')!;
+    expect(hint.id).not.toBe('');
+    expect(created.at(-1)?.describedBy).toBe(hint.id);
+    act(() => created.at(-1)?.onResize?.(96, 30));
+    expect(sent(socket).at(-1)).toEqual({ type: 'resize', cols: 96, rows: 30 });
+  });
+
   it('Attached: a subtle success badge with a dot, the hint, and Detach', async () => {
     const { fake } = renderDashboard();
     const view = await openView('demo-worker');
@@ -583,6 +600,16 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
       const view = await ended((socket) => socket.receive({ type: 'error', error: '<b>made up</b>\u001b[31m reason' }));
       expect(notice(view)!.textContent).toBe("Couldn't attach: <b>made up</b> reason");
       expect(notice(view)!.querySelector('b')).toBeNull();
+    });
+
+    it("puts the server's reason in code style, apart from pitwall's words, and claude attach in code style too (W31)", async () => {
+      let view = await ended((socket) => socket.receive({ type: 'error', error: 'Only background sessions can be attached.' }));
+      expect(notice(view)!.querySelector('.alert-detail')?.textContent).toBe('Only background sessions can be attached.');
+      cleanup();
+      view = await ended((socket) => socket.receive({ type: 'exit', code: 1 }));
+      expect(notice(view)!.textContent).toBe('claude attach ended with exit code 1.');
+      expect(notice(view)!.querySelector('code')?.textContent).toBe('claude attach');
+      expect(notice(view)!.querySelector('.alert-detail')).toBeNull();
     });
   });
 

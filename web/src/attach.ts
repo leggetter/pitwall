@@ -41,7 +41,9 @@ export const INPUT_CHUNK = 8192;
 export type AttachEnd =
   /** `claude attach` exited. */
   | { kind: 'exit'; code: number | null }
-  /** The server refused or failed, with its message, or the page couldn't do the handshake. */
+  /** The server refused or failed, with its own message, which the notice shows in code style. */
+  | { kind: 'server'; reason: string }
+  /** The page couldn't do its part, such as the handshake, in pitwall's own words. */
   | { kind: 'error'; error: string }
   /** MAX_ATTACHED sessions are already attached. */
   | { kind: 'too-many' }
@@ -59,19 +61,32 @@ export type AttachStatus =
   | { kind: 'attached' }
   | { kind: 'ended'; end: AttachEnd };
 
-/** A short notice for an ended attach, or undefined when there's nothing to say. */
-export function endMessage(end: AttachEnd): string | undefined {
+/** The command a notice names, which the terminal shows in code style wherever it's in the text. */
+export const ATTACH_COMMAND = 'claude attach';
+
+/** What an ended attach's notice says: pitwall's sentence, then the server's own reason when it gave one. */
+export interface EndNotice {
+  /** pitwall's words. ATTACH_COMMAND, where it appears, is a command, for code style. */
+  text: string;
+  /** The server's reason, as it sent it: shown after the text, in code style, as text. */
+  detail?: string;
+}
+
+/** The notice for an ended attach, or undefined when there's nothing to say. */
+export function endMessage(end: AttachEnd): EndNotice | undefined {
   switch (end.kind) {
     case 'exit':
-      return end.code === null || end.code === 0 ? 'claude attach ended.' : `claude attach ended with exit code ${end.code}.`;
+      return { text: end.code === null || end.code === 0 ? `${ATTACH_COMMAND} ended.` : `${ATTACH_COMMAND} ended with exit code ${end.code}.` };
+    case 'server':
+      return { text: "Couldn't attach:", detail: end.reason };
     case 'error':
-      return `Couldn't attach: ${end.error}`;
+      return { text: `Couldn't attach: ${end.error}` };
     case 'too-many':
-      return `${MAX_ATTACHED} sessions are already attached; detach one first.`;
+      return { text: `${MAX_ATTACHED} sessions are already attached; detach one first.` };
     case 'unauthorized':
-      return 'pitwall refused the sign-in proof. Reopen pitwall from the URL the command printed.';
+      return { text: 'pitwall refused the sign-in proof. Reopen pitwall from the URL the command printed.' };
     case 'closed':
-      return 'The connection to pitwall closed, so this terminal is detached.';
+      return { text: 'The connection to pitwall closed, so this terminal is detached.' };
     case 'detached':
       return undefined;
   }
@@ -260,7 +275,8 @@ export function startAttach(options: AttachOptions): AttachSession {
           end({ kind: 'exit', code: message.code });
           return;
         case 'error':
-          end({ kind: 'error', error: message.error });
+          // The server's own words, kept apart from the page's, so the notice can show them as its detail.
+          end({ kind: 'server', reason: message.error });
           return;
       }
     };
