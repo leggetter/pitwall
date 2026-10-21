@@ -1180,7 +1180,7 @@ For a destructive or surprising action in the session view, without a dialog.
 - **Footer:** "⌘ ↵ to start" as key caps (Ctrl on other platforms) at the left; "Cancel" and "Start session" ("Starting…" while busy) at the right. ⌘/Ctrl + Enter submits from any field.
 - **Failure:** "Couldn't start the session." then the server's message in code style; or pitwall's own sentence, such as "Couldn't start the session (HTTP 500)."
 - **Trust failure:** the same alert, then "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:", with the command in a [command chip](#copy) and its copy button, "Copy command".
-- **Started:** the dialog closes, a toast says "Started *name*. Its view opens when it shows up in the list.", and the view opens once the session is listed.
+- **Started:** the dialog closes, a toast says "Started *name*. Its view opens when it shows up in the list.", and the view opens once the session is listed. It takes no focus, unless focus has been left on the page, as when the session was started from the no-sessions empty state, whose button goes as the session is listed: then its heading takes it.
 
 ### Menus
 
@@ -1257,7 +1257,7 @@ For a destructive or surprising action in the session view, without a dialog.
   4. One action, on `Button`, 16 px below; two, 8 px apart and wrapping, where the table gives two.
 - **No illustrations.**
 - **Names, roots and filter text** are text, never markup (6.1 rule 16).
-- **Focus after an action,** since the action's button goes with the empty state: Clear filters and Search all sessions put it in the filter field; Show all sessions on the session list's heading. New session opens its dialog, which returns focus to it.
+- **Focus after an action,** since the action's button goes with the empty state: Clear filters and Search all sessions put it in the filter field; Show all sessions on the session list's heading. New session opens its dialog, which returns focus to it; once the session it started is listed, the empty state goes and its button with it, so focus moves to the new session view's heading.
 
 | Where | Icon | Title | Sentence | Action |
 |---|---|---|---|---|
