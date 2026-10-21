@@ -10,6 +10,10 @@
 //   escapes, links from [text](url), <url> and bare URLs, and images, which become their alt text.
 // - Only absolute http: and https: URLs become links, as the browser parses them. A link to anything
 //   else shows as the literal text it was written as.
+// - Code is literal, but its bare http: and https: URLs are links too, under the same rule (W37), so a
+//   draft or a command that Claude puts in code can be opened from it. Markdown's own link syntax in
+//   code, [text](url) and <url>, stays text, as everything else in code does, and so does a code span
+//   inside a link's text, since links can't nest.
 // - Anything else shows as the literal text it is: raw HTML, entities, reference links, setext
 //   headings, indented code, a single ~, footnotes and task-list markers.
 //
@@ -17,7 +21,7 @@
 // parser's do, so the time grows with the text's length, and lists and quotes nest at most
 // MAX_BLOCK_DEPTH deep, emphasis and links MAX_INLINE_DEPTH, past which the syntax is text. Drawing
 // what it parses is bounded too: a message that would take more than MAX_ELEMENTS elements is shown
-// as the text it was written in (elementCount).
+// as the text it was written in (elementCount), and the links in code count towards it.
 
 /** The most lists and quotes nest. A marker deeper than this is text. */
 export const MAX_BLOCK_DEPTH = 8;
@@ -41,15 +45,23 @@ export type Inline =
   | { type: 'text'; text: string }
   | { type: 'break' }
   | { type: 'strong' | 'em' | 'del'; children: Inline[] }
-  | { type: 'code'; text: string }
+  /**
+   * `text` is the code as written. `linked`, only when it holds a bare http: or https: URL, is the same
+   * text with those URLs as links: text and link nodes only, read once, here (linkedCode).
+   */
+  | { type: 'code'; text: string; linked?: Inline[] }
   /** `href` is the URL as the browser parsed it: absolute, http: or https:. */
   | { type: 'link'; href: string; children: Inline[] };
 
 export type Block =
   | { type: 'paragraph'; children: Inline[] }
   | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; children: Inline[] }
-  /** `language` is the first word of the info string, or empty. `closed` is false when the fence never closed. */
-  | { type: 'code'; language: string; text: string; closed: boolean }
+  /**
+   * `language` is the first word of the info string, or empty. `closed` is false when the fence never
+   * closed. `text` is the code as written, and `linked` the same text with its bare URLs as links, as
+   * for a code span.
+   */
+  | { type: 'code'; language: string; text: string; closed: boolean; linked?: Inline[] }
   | { type: 'list'; ordered: boolean; start: number; items: Block[][] }
   | { type: 'quote'; children: Block[] }
   | { type: 'rule' }
@@ -62,8 +74,8 @@ export function parseMarkdown(source: string): Block[] {
 
 /**
  * About how many elements the blocks take on the page: one for each element, and more for the parts
- * that bring their own, a link's tooltip and a code block's bar, Copy button and scroll box. Stops
- * counting once past `limit`.
+ * that bring their own, a link's tooltip and a code block's bar, Copy button and scroll box. A link in
+ * code counts as any link does. Stops counting once past `limit`.
  */
 export function elementCount(blocks: Block[], limit = Number.POSITIVE_INFINITY): number {
   let count = 0;
@@ -73,6 +85,7 @@ export function elementCount(blocks: Block[], limit = Number.POSITIVE_INFINITY):
       if (item.type === 'text') continue;
       count += item.type === 'link' ? 4 : 1;
       if ('children' in item) inline(item.children);
+      else if (item.type === 'code' && item.linked) inline(item.linked);
     }
   };
   const block = (list: Block[]) => {
@@ -86,6 +99,7 @@ export function elementCount(blocks: Block[], limit = Number.POSITIVE_INFINITY):
           break;
         case 'code':
           count += 10;
+          if (item.linked) inline(item.linked);
           break;
         case 'list':
           count += 1 + item.items.length;
@@ -370,7 +384,9 @@ function readFence(lines: string[], i: number, fence: Fence, blocks: Block[]): n
     content.push(removeIndent(line, Math.min(fence.indent, indentOf(line))));
   }
   const language = (fence.info.split(/[ \t]/, 1)[0] ?? '').slice(0, MAX_LANGUAGE);
-  blocks.push({ type: 'code', language, text: content.join('\n'), closed });
+  const text = content.join('\n');
+  const linked = linkedCode(text);
+  blocks.push(linked ? { type: 'code', language, text, closed, linked } : { type: 'code', language, text, closed });
   return j;
 }
 
@@ -1068,8 +1084,8 @@ function skipSpace(text: string, at: number): number {
 
 /**
  * The nodes as the tree: delimiters left over are text, neighbouring text is joined, and bare URLs
- * in text outside a link become links. A link inside a link, as an image inside one is, gives only
- * its text, since links can't nest.
+ * in text and code outside a link become links. A link inside a link, as an image inside one is, gives
+ * only its text, and code inside a link stays plain code, since links can't nest.
  */
 function toInlines(first: Node | null, inLink: boolean): Inline[] {
   const out: Inline[] = [];
@@ -1087,9 +1103,11 @@ function toInlines(first: Node | null, inLink: boolean): Inline[] {
       case 'delim':
         pushText(at.text.repeat(at.count));
         break;
-      case 'code':
-        out.push({ type: 'code', text: at.text });
+      case 'code': {
+        const linked = inLink ? undefined : linkedCode(at.text);
+        out.push(linked ? { type: 'code', text: at.text, linked } : { type: 'code', text: at.text });
         break;
+      }
       case 'break':
         out.push({ type: 'break' });
         break;
@@ -1122,8 +1140,12 @@ const TRAILING = new Set(['?', '!', '.', ',', ':', ';', '*', '_', '~', "'", '"']
  * or a digit (GFM allows only a space, `*`, `_`, `~` or `(` before one; a quote or a bracket is allowed
  * here too), runs to a space or `<`, and loses trailing punctuation and closing parentheses or
  * brackets it doesn't open. One that the browser can't parse stays text, and the scan goes on after it.
+ *
+ * `within` is `code` for the text of a code span or block (W37): the same rule, except that a URL in
+ * markdown's own link syntax stays text there, as the rest of code does: a link's target, `](url`, link
+ * text that a target follows, `[url](…`, or an autolink, `<url>`.
  */
-export function linkify(text: string): Inline[] {
+export function linkify(text: string, within: 'text' | 'code' = 'text'): Inline[] {
   if (!text.includes('://')) return [{ type: 'text', text }];
   const out: Inline[] = [];
   let copied = 0;
@@ -1135,6 +1157,10 @@ export function linkify(text: string): Inline[] {
     let end = start + found[0].length;
     while (end < text.length && !/[\s<]/.test(text[end] as string)) end++;
     const scanned = end;
+    if (within === 'code' && inLinkSyntax(text, start, scanned)) {
+      BARE_URL.lastIndex = scanned;
+      continue;
+    }
     end = trimmedEnd(text, start, end);
     const url = end > start + found[0].length ? httpUrl(text.slice(start, end)) : undefined;
     if (!url) {
@@ -1149,6 +1175,26 @@ export function linkify(text: string): Inline[] {
   }
   if (copied < text.length) out.push({ type: 'text', text: text.slice(copied) });
   return out;
+}
+
+/**
+ * Whether the URL at `start`, whose run goes to `end`, is part of markdown's link syntax: a link's
+ * target, `](url`; link text with a target after it, `url](…`; or an autolink, `<url>`. Only the run is
+ * looked at, so each run is scanned once.
+ */
+function inLinkSyntax(text: string, start: number, end: number): boolean {
+  if (text[start - 1] === '(' && text[start - 2] === ']') return true;
+  const run = text.slice(start, end);
+  return run.includes('](') || (text[start - 1] === '<' && run.includes('>'));
+}
+
+/**
+ * Code's text with its bare http: and https: URLs as links, or undefined when it has none, so code
+ * with no URL in it stays a single string (W37).
+ */
+function linkedCode(text: string): Inline[] | undefined {
+  const linked = linkify(text, 'code');
+  return linked.some((item) => item.type === 'link') ? linked : undefined;
 }
 
 /** Where a bare URL in text[start, end) really ends: without trailing punctuation, or a `)` or `]` it didn't open. */
