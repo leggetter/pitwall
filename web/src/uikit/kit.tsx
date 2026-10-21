@@ -2,7 +2,7 @@
 // real component into a state by using it, as a person would: typing, choosing, pressing. That
 // keeps the components unchanged, with no props that exist only for the gallery.
 
-import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 /** Collects the scenarios still running, so the gallery knows when every specimen has settled. */
 export const SettleContext = createContext<((work: Promise<unknown>) => void) | undefined>(undefined);
@@ -16,9 +16,9 @@ export interface SpecimenProps {
    */
   frame?: 'view' | 'short' | 'tall' | 'dialog' | 'dialog-tall' | 'page' | 'toasts' | 'toasts-tall';
   /**
-   * A window this many px wide, for the shell's width rules, which are container queries on the
-   * app (docs/design-system.md, 2.12). A stage is as wide as the gallery; this one scrolls sideways
-   * when the gallery is narrower than the window it shows.
+   * A window this many px wide, for the shell's width rules, which follow the app's width
+   * (docs/design-system.md, 2.12). A stage is as wide as the gallery; a window wider than that is
+   * scaled down to fit it, whole, rather than cut off at the stage's edge (W34, from W31's review).
    */
   width?: number;
   /**
@@ -56,11 +56,54 @@ export function Specimen({ title, note, frame, width, lasting = false, waited, c
         </div>
       ) : (
         <div className="uikit-stage uikit-widths">
-          <div className={frame ? `uikit-window uikit-frame uikit-frame-${frame}` : 'uikit-window'} style={{ ...style, width }}>
+          <FitWindow width={width} className={frame ? `uikit-window uikit-frame uikit-frame-${frame}` : 'uikit-window'} style={style}>
             {children}
-          </div>
+          </FitWindow>
         </div>
       )}
+    </div>
+  );
+}
+
+interface FitWindowProps {
+  width: number;
+  className: string;
+  style: CSSProperties | undefined;
+  children: ReactNode;
+}
+
+/**
+ * A window `width` px wide, laid out at that width, and scaled to the room its stage has when that's
+ * less, from its top left, in a box as tall as it then is. The app inside measures its layout width
+ * (layout.ts, widthOf), so it keeps the window's columns. Without layout, as in the tests, it's unscaled.
+ */
+function FitWindow({ width, className, style, children }: FitWindowProps) {
+  const box = useRef<HTMLDivElement>(null);
+  const shown = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState<{ scale: number; height: number }>({ scale: 1, height: 0 });
+  useLayoutEffect(() => {
+    const outer = box.current;
+    const inner = shown.current;
+    if (!outer || !inner) return;
+    const update = () => {
+      const room = outer.clientWidth;
+      const scale = room > 0 && room < width ? room / width : 1;
+      const height = inner.offsetHeight * scale;
+      setFit((current) => (current.scale === scale && current.height === height ? current : { scale, height }));
+    };
+    update();
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(update);
+    observer.observe(outer);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [width]);
+  const scaled = fit.scale < 1;
+  return (
+    <div ref={box} className="uikit-fit" style={scaled ? { height: fit.height } : undefined} data-scale={scaled ? fit.scale.toFixed(3) : undefined}>
+      <div ref={shown} className={className} style={{ ...style, width, ...(scaled ? { transform: `scale(${fit.scale})`, transformOrigin: '0 0' } : {}) }}>
+        {children}
+      </div>
     </div>
   );
 }

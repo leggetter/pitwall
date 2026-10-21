@@ -87,7 +87,7 @@ const SECTIONS: Section[] = [
   {
     id: 'layouts',
     title: 'Layouts',
-    intro: 'The whole Dashboard in windows of set widths, for one, two and three columns, with the session view in each, and the divider at its limits. A window wider than the gallery scrolls sideways.',
+    intro: 'The whole Dashboard in windows of set widths, for one, two and three columns, with the session view in each, and the divider at its limits. A window wider than the gallery is scaled down to fit it, whole.',
     Content: Layouts,
   },
   {
@@ -143,7 +143,7 @@ export default function Gallery() {
     void Promise.allSettled(pending.current).then(() => {
       if (!alive) return;
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      // A window wider than the gallery scrolls sideways to whatever took focus; start each at its left edge.
+      // Focus can scroll a stage sideways, though it hides its overflow; start each at its left edge.
       for (const stage of document.querySelectorAll<HTMLElement>('.uikit-widths')) stage.scrollLeft = 0;
       showTarget();
       setReady(true);
