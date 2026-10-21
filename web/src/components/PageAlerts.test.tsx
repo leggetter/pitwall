@@ -93,12 +93,17 @@ describe('the app strip', () => {
       return within(strip() as HTMLElement).getByRole('button', { name: 'Details' });
     };
 
-    it.each([1100, 375])('at %i px, closes the view over the list first, then focuses the alert, which is no longer covered', (width) => {
+    it.each([1100, 375])('at %i px, closes the view over the list first, then focuses the alert, which is no longer covered', async (width) => {
       const details = openOver(width);
       expect(relayAlert()?.closest('[inert]')).toBeTruthy();
+      // Focus starts in the view, as it does after opening it from a row.
+      act(() => document.querySelector<HTMLElement>('#session-view .session-view-title')?.focus());
       fireEvent.click(details);
       expect(document.getElementById('session-view')).toBeNull();
       expect(relayAlert()?.closest('[inert]')).toBeNull();
+      expect(document.activeElement).toBe(relayAlert());
+      // And it stays there: the row doesn't take it back a frame later, as it does after Close.
+      await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
       expect(document.activeElement).toBe(relayAlert());
     });
 
