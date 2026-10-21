@@ -8,6 +8,12 @@
 // arguments to every user. The token is printed to stdout, the user's own
 // terminal, and passed in from `npm run dev` through the environment, which
 // other users can't read.
+//
+// PITWALL_TOKEN comes from the environment only. The CLI never loads a .env,
+// from the current directory or anywhere else: pitwall runs inside other
+// people's repos, and one of those repos' .env would then pick the token,
+// fixed and known to whoever wrote it. `npm run dev` reads the pitwall repo's
+// own .env, found from its own location (scripts/dev.ts).
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -48,8 +54,11 @@ Environment:
                        characters from A-Z, a-z, 0-9, "-" and "_". Reusing
                        it keeps one token alive across runs: any page or
                        script that ever saw it can drive every later run
-                       that uses it. Leave it unset to get a new token on
-                       every run.
+                       that uses it, so use it only on a single-user
+                       machine or for development. Leave it unset to get a
+                       new token on every run. pitwall reads it from the
+                       environment only, never from a .env file; npm run
+                       dev also reads it from the pitwall repo's own .env.
   PITWALL_NO_OPEN      Set to 1 to skip opening the browser.
   PITWALL_HOME         Where launch files go, instead of ~/.pitwall.
   PITWALL_OPEN_MARKER  A file path. Open the browser only if it doesn't exist
@@ -160,6 +169,14 @@ export function resolveRoots(roots: string[], cwd: string): string[] {
     if (!isDirectory) throw new UsageError(`root is not a directory: ${root}`);
   }
   return absolute;
+}
+
+/**
+ * The line printed at start when PITWALL_TOKEN is set, by the CLI and by npm
+ * run dev, which says where it came from (`source`). Never the token itself.
+ */
+export function fixedTokenNotice(source?: string): string {
+  return `the token is fixed by PITWALL_TOKEN${source ? ` in ${source}` : ''}, so every run that uses it has the same one. Use this only on a single-user machine or for development.`;
 }
 
 /** PITWALL_TOKEN when set and valid, otherwise 32 random bytes as base64url. */
@@ -294,6 +311,9 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
     console.error(`pitwall: ${error.message}\nRun pitwall --help for usage.`);
     return 1;
   }
+  // A fixed token, said once. Not under npm run dev, which sets the marker: it says so itself when
+  // PITWALL_TOKEN is fixed, and otherwise passes a token of its own run, which isn't.
+  if (process.env.PITWALL_TOKEN !== undefined && marker === undefined) console.error(`pitwall: ${fixedTokenNotice()}`);
   // Under npm run dev, a restart finds the marker the first run created, and
   // doesn't open another tab.
   if (command.open && !(marker !== undefined && existsSync(marker))) {
