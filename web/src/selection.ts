@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { IndexSnapshot, SessionGroup } from '../../src/shared/protocol.js';
 import { browserStorage, type StorageSource } from './groupState.js';
+import { shortenHome } from './format.js';
 import { groupId, groupLabel, primaryGroup, type Scope } from './sessions.js';
 
 export const VIEW_STATE_KEY = 'pitwall.view.v1';
@@ -69,12 +70,18 @@ export function scopeFor(groups: readonly SessionGroup[], selection: Selection):
   return group ? { kind: 'group', group } : undefined;
 }
 
-/** A selection's name on screen. A group that has left the snapshot is named from its key. */
-export function selectionName(groups: readonly SessionGroup[], selection: Selection): string {
+/**
+ * A selection's name on screen. A group that has left the snapshot is named from its key: a root's
+ * own directory, which empties once its sessions are listed under the repos they worked in (W34),
+ * by its path, as the repo list labels it, and any other by its last segment.
+ */
+export function selectionName(groups: readonly SessionGroup[], selection: Selection, roots: readonly string[] = []): string {
   if ('view' in selection) return selection.view === 'all' ? 'All sessions' : 'Needs you';
   const group = findGroup(groups, selection);
   if (group) return groupLabel(group);
-  return selection.repo.replace(/\/+$/, '').split('/').pop() || selection.repo;
+  const key = selection.repo.replace(/\/+$/, '');
+  if (roots.some((root) => root.replace(/\/+$/, '') === key)) return shortenHome(key);
+  return key.split('/').pop() || selection.repo;
 }
 
 /**

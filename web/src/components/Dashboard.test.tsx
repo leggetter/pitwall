@@ -1883,6 +1883,16 @@ describe('sessions in several groups (W34)', () => {
     expect(listHeading().textContent).toBe('All sessions');
   });
 
+  it("names the root's group by its path once it has emptied, with the same fallback as any group that has gone", () => {
+    const navigation = memoryNavigation(`?repo=${ROOT}`);
+    const moved = session({ name: 'moved', cwd: ROOT, workedIn: worked('api') });
+    render(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ key: key('api'), label: 'api', sessions: [moved] })]) }} navigation={navigation} />);
+    expect(listHeading().textContent).toBe('~/code');
+    expect(screen.getByText('No sessions in ~/code now')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
+    expect(visibleRowNames()).toEqual(['moved']);
+  });
+
   it("moves a session out of the root's group once it has worked in a repo, which appears in its alphanumeric place", () => {
     const navigation = memoryNavigation(`?repo=${ROOT}`);
     const alone = session({ name: 'alone', cwd: ROOT });
