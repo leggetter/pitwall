@@ -39,6 +39,13 @@ export interface GroupResolver {
 // for example when pitwall runs inside a git hook.
 const GIT_REPO_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_NAMESPACE'];
 
+/** `env` without the variables that would point git at another repository than the one `-C` names. */
+export function gitEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const scrubbed = { ...env };
+  for (const name of GIT_REPO_ENV) delete scrubbed[name];
+  return scrubbed;
+}
+
 export function createGroupResolver(options: GroupResolverOptions = {}): GroupResolver {
   const run = options.run ?? runFile;
   const realpath = options.realpath ?? fsRealpath;
@@ -48,8 +55,7 @@ export function createGroupResolver(options: GroupResolverOptions = {}): GroupRe
   const timeoutMs = options.timeoutMs ?? 5_000;
   const cache = new Map<string, { expiresAt: number; result: Promise<GroupKey> }>();
 
-  const env = { ...process.env };
-  for (const name of GIT_REPO_ENV) delete env[name];
+  const env = gitEnvironment();
 
   /** The absolute path git prints for `rev-parse <flag>` in `cwd`, or undefined. */
   async function revParse(cwd: string, flag: string): Promise<string | undefined> {

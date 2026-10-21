@@ -8,6 +8,7 @@ import type { AgentRow, AgentsResult } from './agents.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
 import { createTranscriptReader, encodeProjectDir, type TranscriptInfo } from './transcripts.js';
+import { createWorkedInScanner, type RepoWorkedIn, type TrackedSession, type WorkedInScanner } from './workedIn.js';
 
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
 
@@ -526,6 +527,223 @@ describe('createIndexer', () => {
   });
 });
 
+describe('createIndexer with the repos sessions worked in (W34)', () => {
+  const ROOT = '/work';
+  /** Repos under the root; any other directory is in no repo. */
+  const REPOS = ['/work/alpha', '/work/beta', '/work/gamma'];
+
+  /** A fake scanner: `found` is what workedIn() answers, by session id; `tracked` records each track(). */
+  function fakeScanner() {
+    const found = new Map<string, RepoWorkedIn[]>();
+    const tracked: { sessions: TrackedSession[]; roots: string[] }[] = [];
+    const scanner: WorkedInScanner = {
+      track: (sessions, roots) => {
+        tracked.push({ sessions: [...sessions], roots: [...roots] });
+      },
+      workedIn: (id) => found.get(id),
+      settled: async () => undefined,
+      stats: () => ({ bytesRead: 0, calls: 0, scans: 0, gitRuns: 0, gitPeak: 0 }),
+      stop: () => undefined,
+    };
+    return { scanner, found, tracked };
+  }
+
+  const repo = (key: string, minutesAgo = 1): RepoWorkedIn => ({ key, root: ROOT, calls: 12, changes: 1, lastAt: new Date(NOW - minutesAgo * 60_000).toISOString() });
+
+  function setup() {
+    const { state, deps } = harness();
+    const fake = fakeScanner();
+    deps.workedIn = fake.scanner;
+    deps.groups = {
+      async resolve(cwd) {
+        const key = REPOS.find((r) => cwd === r || cwd.startsWith(`${r}/`));
+        return key ? { key, kind: 'git' } : { key: cwd, kind: 'directory' };
+      },
+      prune() {},
+    };
+    for (const id of ['in-alpha', 'in-root', 'in-root-alone', 'in-notes', 'in-beta']) state.files.set(id, `/made-up/projects/${id}.jsonl`);
+    state.result = {
+      ok: true,
+      rows: [
+        row('in-alpha', '/work/alpha/src'),
+        row('in-root', ROOT),
+        row('in-root-alone', ROOT),
+        row('in-notes', '/work/notes'),
+        row('in-beta', '/work/beta'),
+      ],
+    };
+    return { state, deps, ...fake };
+  }
+
+  /** label: session ids, for every group. */
+  const placement = (snapshot: IndexSnapshot | undefined) =>
+    Object.fromEntries((snapshot?.groups ?? []).map((g) => [`${g.label} (${g.kind})`, g.sessions.map((s) => s.sessionId).sort()]));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('hands the scanner every listed session with its transcript, its start group and the roots', async () => {
+    const { deps, tracked } = setup();
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    expect(tracked).toHaveLength(1);
+    expect(tracked[0]?.roots).toEqual([ROOT]);
+    expect(tracked[0]?.sessions.sort((a, b) => (a.sessionId < b.sessionId ? -1 : 1))).toEqual([
+      { sessionId: 'in-alpha', file: '/made-up/projects/in-alpha.jsonl', startKey: '/work/alpha' },
+      { sessionId: 'in-beta', file: '/made-up/projects/in-beta.jsonl', startKey: '/work/beta' },
+      { sessionId: 'in-notes', file: '/made-up/projects/in-notes.jsonl', startKey: ROOT },
+      { sessionId: 'in-root', file: '/made-up/projects/in-root.jsonl', startKey: ROOT },
+      { sessionId: 'in-root-alone', file: '/made-up/projects/in-root-alone.jsonl', startKey: ROOT },
+    ]);
+    indexer.stop();
+  });
+
+  it('places each session by where it started, and under every repo it worked in', async () => {
+    const { deps, found } = setup();
+    found.set('in-alpha', [repo('/work/beta'), repo('/work/gamma', 5)]);
+    found.set('in-root', [repo('/work/alpha')]);
+    found.set('in-notes', [repo('/work/gamma')]);
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    expect(placement(indexer.latest())).toEqual({
+      // Started in it, and the root-started session that worked in it.
+      'alpha (git)': ['in-alpha', 'in-root'],
+      'beta (git)': ['in-alpha', 'in-beta'],
+      // A repo reached only through workedIn, labelled as any other.
+      'gamma (git)': ['in-alpha', 'in-notes'],
+      // A directory below the root that's in no repo keeps its group, with every session started in it.
+      'notes (directory)': ['in-notes'],
+      // Only the root-started session that worked in no repo.
+      'work (directory)': ['in-root-alone'],
+    });
+    indexer.stop();
+  });
+
+  it('adds workedIn to the summary, without the roots, in the scanner’s order', async () => {
+    const { deps, found } = setup();
+    found.set('in-alpha', [repo('/work/beta'), repo('/work/gamma', 5)]);
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
+    const inAlpha = sessions.filter((s) => s.sessionId === 'in-alpha');
+    // The same session in three groups, each with the same summary.
+    expect(inAlpha).toHaveLength(3);
+    for (const s of inAlpha) {
+      expect(s.workedIn).toEqual([
+        { key: '/work/beta', calls: 12, changes: 1, lastAt: new Date(NOW - 60_000).toISOString() },
+        { key: '/work/gamma', calls: 12, changes: 1, lastAt: new Date(NOW - 5 * 60_000).toISOString() },
+      ]);
+    }
+    expect(sessions.find((s) => s.sessionId === 'in-beta')).not.toHaveProperty('workedIn');
+    indexer.stop();
+  });
+
+  it('leaves the root’s group out once every session started there worked in repos', async () => {
+    const { deps, found } = setup();
+    found.set('in-root', [repo('/work/alpha')]);
+    found.set('in-root-alone', [repo('/work/beta')]);
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    expect(indexer.latest()?.groups.some((g) => g.key === ROOT)).toBe(false);
+    indexer.stop();
+  });
+
+  it('keeps a session where it started until its scan finishes, then moves it', async () => {
+    const { deps, found } = setup();
+    const indexer = createIndexer({ roots: [ROOT], intervalMs: 1000 }, deps);
+    await flush();
+    expect(placement(indexer.latest())['work (directory)']).toEqual(['in-root', 'in-root-alone']);
+    found.set('in-root', [repo('/work/gamma')]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(placement(indexer.latest())).toMatchObject({ 'work (directory)': ['in-root-alone'], 'gamma (git)': ['in-root'] });
+    indexer.stop();
+  });
+
+  it('keeps every session in its start group when the scanner throws', async () => {
+    const { deps, scanner } = setup();
+    scanner.track = () => {
+      throw new Error('a scanner bug');
+    };
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    expect(indexer.latest()?.source).toEqual({ ok: true });
+    expect(Object.keys(placement(indexer.latest())).sort()).toEqual(['alpha (git)', 'beta (git)', 'notes (directory)', 'work (directory)']);
+    indexer.stop();
+  });
+
+  it('stops the scanner with the indexer', async () => {
+    const { deps, scanner } = setup();
+    const stop = vi.spyOn(scanner, 'stop');
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    indexer.stop();
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the indexer with a real scanner', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-worked-in-')));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('never waits for a scan: a poll finishes while one is held back, and a later poll has its result', async () => {
+    const root = path.join(dir, 'code');
+    const repoDir = path.join(root, 'api');
+    await mkdir(path.join(repoDir, '.git'), { recursive: true });
+    const file = path.join(dir, 'made-up.jsonl');
+    const edit = { type: 'assistant', timestamp: new Date(NOW).toISOString(), cwd: root, message: { content: [{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: path.join(repoDir, 'a.ts') } }] } };
+    await writeFile(file, `${JSON.stringify(edit)}\n`);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { open } = await import('node:fs/promises');
+    const scanner = createWorkedInScanner({
+      home: dir,
+      // A fake git that knows `.git` directories, and a transcript read that waits for the gate.
+      run: async (_file, args) => `${path.join(args[1] ?? '', '.git')}\n`,
+      fs: {
+        open: async (p) => {
+          if (p === file) await gate;
+          return open(p, 'r');
+        },
+      },
+    });
+    const { state, deps } = harness();
+    deps.workedIn = scanner;
+    deps.groups = { resolve: async (cwd) => ({ key: cwd, kind: 'directory' }), prune() {} };
+    state.files.set('s', file);
+    state.result = { ok: true, rows: [row('s', root)] };
+    const snapshots: IndexSnapshot[] = [];
+    const indexer = createIndexer({ roots: [root], intervalMs: 50 }, deps);
+    indexer.subscribe((snapshot) => snapshots.push(snapshot));
+    // Several polls finish while the scan is held at its first read, each with the session where it started.
+    while (snapshots.length < 3) await new Promise((resolve) => setTimeout(resolve, 10));
+    for (const snapshot of snapshots) {
+      expect(snapshot.groups.map((g) => [g.key, g.sessions.map((x) => x.sessionId)])).toEqual([[root, ['s']]]);
+      expect(snapshot.groups[0]?.sessions[0]).not.toHaveProperty('workedIn');
+    }
+    release();
+    await scanner.settled();
+    const before = snapshots.length;
+    while (snapshots.length === before) await new Promise((resolve) => setTimeout(resolve, 10));
+    const moved = snapshots.at(-1);
+    indexer.stop();
+    // The session started in the root and changed api, so it's listed there alone.
+    expect(moved?.groups.map((g) => [g.key, g.sessions.map((x) => x.sessionId)])).toEqual([[repoDir, ['s']]]);
+    expect(moved?.groups[0]?.sessions[0]?.workedIn).toMatchObject([{ key: repoDir, calls: 1, changes: 1 }]);
+  });
+});
+
 describe('the indexer against temporary directories', () => {
   let dir: string;
 
@@ -699,6 +917,56 @@ describe('the indexer against temporary directories', () => {
     expect(repoSession).toMatchObject({
       lastActivityAt: '2026-10-16T11:59:00.000Z',
       lastUserPrompt: 'make it faster',
+    });
+  });
+});
+
+describe('a root inside a repo', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-root-in-repo-')));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("gives the root's sessions the enclosing repo's git group, with no special case, and its repos their own", async () => {
+    const outer = path.join(dir, 'outer');
+    const root = path.join(outer, 'code');
+    const app = path.join(root, 'app');
+    await mkdir(path.join(root, 'notes'), { recursive: true });
+    await mkdir(app, { recursive: true });
+    for (const repoDir of [outer, app]) execFileSync('git', ['init', '-q'], { cwd: repoDir, stdio: 'ignore' });
+    const configDir = path.join(dir, 'claude-config');
+    const ids = { root: '66666666-6666-4666-8666-666666666671', notes: '66666666-6666-4666-8666-666666666672', app: '66666666-6666-4666-8666-666666666673' };
+    // The root-started session edits app.
+    const projectDir = path.join(configDir, 'projects', encodeProjectDir(root));
+    await mkdir(projectDir, { recursive: true });
+    const edit = { type: 'assistant', timestamp: new Date(NOW).toISOString(), cwd: root, message: { content: [{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: path.join(app, 'a.ts') } }] } };
+    await writeFile(path.join(projectDir, `${ids.root}.jsonl`), `${JSON.stringify(edit)}\n`);
+    const rows = [row(ids.root, root), row(ids.notes, path.join(root, 'notes')), row(ids.app, app)];
+    const now = () => NOW;
+    const scanner = createWorkedInScanner({ home: dir });
+    const indexer = createIndexer(
+      { roots: [root], intervalMs: 50 },
+      { agents: { list: async () => ({ ok: true, rows }) }, groups: createGroupResolver({ now }), transcripts: createTranscriptReader({ configDir, now }), workedIn: scanner, now, home: dir, concurrency: 8 },
+    );
+    const snapshots: IndexSnapshot[] = [];
+    indexer.subscribe((next) => snapshots.push(next));
+    while (snapshots.length === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+    await scanner.settled();
+    expect(scanner.workedIn(ids.root)).toMatchObject([{ key: app, root, changes: 1 }]);
+    const before = snapshots.length;
+    while (snapshots.length === before) await new Promise((resolve) => setTimeout(resolve, 10));
+    indexer.stop();
+    const snapshot = snapshots.at(-1) as IndexSnapshot;
+    const view = Object.fromEntries(snapshot.groups.map((g) => [g.key, { label: g.label, kind: g.kind, ids: g.sessions.map((s) => s.sessionId).sort() }]));
+    expect(view).toEqual({
+      // The root and its plain directory are in outer, a repo like any other, labelled outside the root.
+      [outer]: { label: '~/outer', kind: 'git', ids: [ids.root, ids.notes].sort() },
+      [app]: { label: 'app', kind: 'git', ids: [ids.root, ids.app].sort() },
     });
   });
 });

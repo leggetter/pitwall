@@ -15,6 +15,7 @@ import { createGroupResolver, type GroupResolver } from './grouping.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
 import { buildGroups, toSessionSummary, type PlacedSession } from './summaries.js';
 import { createTranscriptReader, type TranscriptReader } from './transcripts.js';
+import { createWorkedInScanner, type WorkedInScanner } from './workedIn.js';
 
 export { isSafeSessionId } from './transcripts.js';
 export { ConversationCursorError, isWellFormedCursor } from './conversation.js';
@@ -71,6 +72,11 @@ export interface IndexerDeps {
   home: string;
   /** How many sessions are resolved and read at the same time. */
   concurrency: number;
+  /**
+   * The repos each session worked in (workedIn.ts), read synchronously on every poll, which never
+   * waits for a scan. Without one, no session has workedIn.
+   */
+  workedIn?: WorkedInScanner;
 }
 
 /**
@@ -87,6 +93,7 @@ export function startIndexer(options: IndexerOptions): Indexer {
     agents: createAgentsSource(options.claudeBin === undefined ? {} : { claudeBin: options.claudeBin }),
     groups: createGroupResolver({ now }),
     transcripts: createTranscriptReader({ now }),
+    workedIn: createWorkedInScanner({ now }),
     now,
     home: os.homedir(),
     concurrency: 8,
@@ -169,6 +176,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       stopped = true;
       clearInterval(timer);
       listeners.clear();
+      deps.workedIn?.stop();
     },
   };
 }
@@ -205,8 +213,38 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
   const kept = placed.filter((p): p is PlacedSession => p !== undefined);
   deps.transcripts.retain(new Set(kept.map((p) => p.summary.sessionId)));
   deps.groups.prune();
+  addWorkedIn(kept, resolvedRoots, deps);
 
   return { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } };
+}
+
+/**
+ * Hands the scanner this poll's sessions, which queues their scans without waiting for them, and
+ * adds what earlier scans found. A session seen for the first time has no workedIn until a later
+ * poll, so it sits where it started until then. Nothing here can fail the poll.
+ */
+function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: IndexerDeps): void {
+  const scanner = deps.workedIn;
+  if (scanner === undefined) return;
+  try {
+    scanner.track(
+      kept.map(({ root, group, summary }) => ({
+        sessionId: summary.sessionId,
+        file: deps.transcripts.transcriptFile(summary.sessionId),
+        // A session started in no repo has the root's group or a directory's, which no repo matches.
+        startKey: group.kind === 'git' ? group.key : root,
+      })),
+      roots,
+    );
+    for (const placed of kept) {
+      const repos = scanner.workedIn(placed.summary.sessionId);
+      if (repos === undefined || repos.length === 0) continue;
+      placed.workedIn = repos.map(({ key, root }) => ({ key, root }));
+      placed.summary.workedIn = repos.map(({ key, calls, changes, lastAt }) => ({ key, calls, changes, lastAt }));
+    }
+  } catch {
+    // The sessions keep their start groups.
+  }
 }
 
 /** A hook's answer, or `fallback` when it throws or answers nothing, so one bad hook can't break a poll. */
