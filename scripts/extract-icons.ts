@@ -67,6 +67,9 @@ const ICONS: Readonly<Record<string, string>> = {
   latest: 'arrow_downward',
   back: 'arrow_back',
   keyboard: 'keyboard',
+  // Hide from the repo list, and show in it again (W35).
+  hide: 'visibility_off',
+  show: 'visibility',
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',
