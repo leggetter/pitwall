@@ -1,7 +1,7 @@
 // The page alerts at the top of the session list, and the app strip above the header (W24). Made-up
 // sessions only.
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IndexSnapshot, RelayAlert, RelayOff } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
 import { memoryNavigation } from '../selection.js';
@@ -71,6 +71,54 @@ describe('the app strip', () => {
     expect(relayAlert()).toBeTruthy();
     expect(document.activeElement).toBe(relayAlert());
     expect(relayAlert()?.textContent).toContain('Messaging is off until you restart pitwall.');
+  });
+
+  describe('Details, with a session open', () => {
+    /** The window's width, which the layout follows. */
+    const setWidth = (width: number) => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+    };
+    afterEach(() => setWidth(1024));
+
+    const openOver = (width: number) => {
+      setWidth(width);
+      const one = session({ name: 'pitwall-test-one' });
+      const snap = { ...snapshot([group({ sessions: [one] })]), relayAlert: SENT, relayOff: OFF };
+      render(<Dashboard view={live(snap)} navigation={memoryNavigation(`?view=all&session=${one.sessionId}`)} />);
+      // The alert is in the session list, which the view covers below 1,200 px.
+      expect(document.getElementById('session-view')).toBeTruthy();
+      return within(strip() as HTMLElement).getByRole('button', { name: 'Details' });
+    };
+
+    it.each([1100, 375])('at %i px, closes the view over the list first, then focuses the alert, which is no longer covered', (width) => {
+      const details = openOver(width);
+      expect(relayAlert()?.closest('[inert]')).toBeTruthy();
+      fireEvent.click(details);
+      expect(document.getElementById('session-view')).toBeNull();
+      expect(relayAlert()?.closest('[inert]')).toBeNull();
+      expect(document.activeElement).toBe(relayAlert());
+    });
+
+    it.each([1100, 375])('at %i px, does nothing while the message box has a draft, which closing would lose', (width) => {
+      const details = openOver(width);
+      const box = screen.getByRole('textbox', { name: 'Message to pitwall-test-one' }) as HTMLTextAreaElement;
+      fireEvent.change(box, { target: { value: 'a made-up draft' } });
+      box.focus();
+      fireEvent.click(details);
+      expect(document.getElementById('session-view')).toBeTruthy();
+      expect((screen.getByRole('textbox', { name: 'Message to pitwall-test-one' }) as HTMLTextAreaElement).value).toBe('a made-up draft');
+      expect(document.activeElement).not.toBe(relayAlert());
+    });
+
+    it('in three columns, leaves the view open beside the list, and focuses the alert', () => {
+      const details = openOver(1280);
+      fireEvent.click(details);
+      expect(document.getElementById('session-view')).toBeTruthy();
+      expect(document.activeElement).toBe(relayAlert());
+    });
   });
 
   it('has no Details when there’s no relay alert to show', () => {

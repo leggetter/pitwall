@@ -433,18 +433,22 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   );
   // A warning or danger alert that arrives live is announced; one that was there on load isn't.
   const role = (name: string) => (live(name) ? 'alert' : undefined);
-  // Details in the app strip reopens the relay alert and takes focus to it.
+  // Details in the app strip reopens the relay alert and takes focus to it, once it's rendered and
+  // nothing covers it. Each press counts, so one with the alert already showing focuses it too.
   const relayAlertRef = useRef<HTMLDivElement>(null);
-  const focusRelayAlert = useRef(false);
+  const [relayAlertAsked, setRelayAlertAsked] = useState(0);
   useEffect(() => {
-    if (!focusRelayAlert.current || !relayAlertRef.current) return;
-    focusRelayAlert.current = false;
+    if (relayAlertAsked === 0 || !relayAlertRef.current) return;
     relayAlertRef.current.scrollIntoView?.({ block: 'nearest' });
     relayAlertRef.current.focus();
-  });
+  }, [relayAlertAsked]);
+  // Below 1,200 px the view covers the list, where the alert is: it closes first, as `/` does, unless
+  // the message box has a draft, which closing would lose. Then Details does nothing.
   const showRelayAlert = () => {
+    if (overlaid && draft.current) return;
+    if (overlaid) opened.close();
     setDismissedAlert(undefined);
-    focusRelayAlert.current = true;
+    setRelayAlertAsked((count) => count + 1);
   };
   // Dismiss goes with its alert, so focus goes to the session list's heading rather than the page.
   const dismiss = (apply: () => void) => () => {
