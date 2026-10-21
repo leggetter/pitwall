@@ -1158,13 +1158,13 @@ For a destructive or surprising action in the session view, without a dialog.
 - **Component:** `Dialog` (`web/src/components/Dialog.tsx`), with `title`, `subtitle`, `size`, `busy`, `dirty`, `footerMeta`, `actions` and `onSubmit`, which makes the body and footer a form. The New session dialog and the keyboard shortcuts dialog are built on it.
 - **Backdrop:** `--pw-backdrop`, `--pw-z-backdrop`, centring the card with 48 px top and 16 px side margins.
 - **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-lg`, `--pw-dialog-md` (624 px) wide, or `-sm` or `-lg`, never wider than the window less its margins, at most `calc(100dvh - 96px)` tall, `--pw-z-dialog`.
-- **Sections,** divided by 1 px `--pw-border`:
+- **Sections,** divided by 1 px `--pw-border`. The header and footer are plain elements, not `<header>` and `<footer>`, which outside a sectioning element would be the page's banner and contentinfo landmarks:
   - **Header:** padding 12 px 16 px; the title (l 16/24, 600); a ghost md `close` icon button at the right, "Close", with Esc's key cap in its tooltip; an optional meta subtitle in `--pw-text-muted`, which describes the dialog (`aria-describedby`).
   - **Body:** padding 16 px, scrolls, fields 16 px apart.
   - **Footer:** padding 12 px 16 px; optional meta text at the left, in `--pw-text-subtle`; at the right, outline "Cancel" then the primary action, 12 px apart. A dialog with nothing to submit, such as the keyboard shortcuts dialog, has no footer: it has neither `actions` nor `footerMeta`.
 - **Behaviour:**
   - `role="dialog"`, `aria-modal="true"`, `aria-labelledby` (the title).
-  - Focus moves to the first field on open, Tab and Shift + Tab are trapped inside, and focus returns to the opener on close.
+  - Focus moves to the first field on open, Tab and Shift + Tab are trapped inside, and focus returns to the opener on close, without opening the opener's tooltip (`focusQuietly`), which would take the next Escape: one more Escape then goes on to what's behind, such as the session view.
   - Escape closes it, except while submitting (and it doesn't also close the session view behind).
   - A click on the backdrop closes it only when nothing has been typed. A press that starts in the card and ends on the backdrop, as when selecting text, isn't a click on it, and a press on the backdrop doesn't take focus out of the dialog.
 - **Busy:** the primary button's busy state; the other controls are `aria-disabled`, Close included, and the text fields are read-only. Escape and the backdrop do nothing.
