@@ -1108,7 +1108,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
 - **Component:** `AppStrip` (`web/src/components/AppStrip.tsx`).
 - **Box:** 32 px tall, full width above the header, `--pw-text` fill, `--pw-text-inverse` text (18.4:1 in light, 16.9:1 in dark), meta size; a 16 px `warning` icon in the text colour; a link button in `--pw-text-inverse` with an underline. The strip inverts with the theme, so it never uses a tone colour.
   - One line: a sentence too long for it ends in an ellipsis, with the whole sentence in a tooltip when it's cut, and Details stays on screen.
-- **Use:** only while the snapshot's `relayOff` is set, which pitwall sets once it has stopped using its relay for the rest of the run. Never inferred from a relay alert: some alerts only restart the relay. "Messaging is off until you restart pitwall: *reason*", where the reason is pitwall's own words ("its gate didn't check a SendMessage call."), then "Details", which reopens the relay alert and takes focus to it. It stays after the alert is dismissed and can't itself be dismissed. Details isn't there when there's no relay alert to show.
+- **Use:** only while the snapshot's `relayOff` is set, which pitwall sets once it has stopped using its relay for the rest of the run. Never inferred from a relay alert: some alerts only restart the relay. "Messaging is off until you restart pitwall: *reason*", where the reason is pitwall's own words ("its gate didn't check a SendMessage call."), then "Details", which reopens the relay alert and takes focus to it. Below 1,200 px with a session open, the alert is under the view, so Details closes the view first, as `/` does; while the message box has a draft, which closing would lose, it does nothing. It stays after the alert is dismissed and can't itself be dismissed. Details isn't there when there's no relay alert to show.
 
 ### Inline confirmation
 
@@ -1458,7 +1458,7 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 - **Where focus goes:** with no session open, to the row. With one open, the view shows that session, replacing the history entry as ↑/↓ do, and focus stays in the list if it was there, stays in the conversation if it was there, and otherwise goes to the new heading.
 - **In the conversation's body,** ↑/↓ scroll it, as in any scrolling region; use `j` / `k` there to change session.
 - **An open menu** closes first when a shortcut moves focus (see [Menus](#menus)).
-- **A draft is never lost to a key:** while the message box has a draft, `j` and `k` do nothing, nor do ↑ and ↓ on a session row or in the view's header, nor `/` where it would close the view, just as Escape does nothing then. Changing session would discard the draft. ↑ and ↓ on a row are still taken, so the list doesn't scroll either.
+- **A draft is never lost to a key:** while the message box has a draft, `j` and `k` do nothing, nor do ↑ and ↓ on a session row or in the view's header, nor `/` or the app strip's Details where they would close the view, just as Escape does nothing then. Changing session would discard the draft. ↑ and ↓ on a row are still taken, so the list doesn't scroll either.
 
 ---
 
