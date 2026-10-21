@@ -7,7 +7,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Spawns new sessions** in any directory under the root.
 - **Has a supervisor session** you can talk to instead of visiting each session. It knows what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, is done. M2, interacting with sessions from the web UI, is in progress on `m2/integration`. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, and M2, interacting with sessions from the web UI, are done. M3, a design system and restyle, is in progress on `m3/integration`. See [`PLAN.md`](PLAN.md).
 
 ## Use
 
@@ -20,7 +20,8 @@ node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 - **Opening it:** the CLI opens your browser through a launch file in `~/.pitwall/` (D7), which sends it to `http://127.0.0.1:<port>/#token=...`. The token is per run and never appears in a process's arguments. The page moves it out of the address bar, and never sends it to the server: it proves it with an HMAC over the WebSocket. `PITWALL_HOME` overrides `~/.pitwall`.
 - **Port:** the default is 4517, falling back to a free port if it's busy. An explicit `--port` fails instead.
 - **Interval:** `--interval` sets the poll, in seconds (default 5).
-- **Acting on sessions:** open a session to read its conversation; attach to a background session in a terminal in the page; message an interactive session through the relay (D8); start, stop and remove background sessions. Finished background sessions stay listed, muted.
+- **Acting on sessions:** open a session to read its conversation; attach to a background session in a terminal in the page; message an interactive session through the relay (D8); start, stop and remove background sessions. Finished background sessions stay listed, in a Finished section at the end of the list.
+- **Layout:** repos, then the selected repo's sessions, then the open session (D11). `/` filters, `n` starts a session, `?` lists the shortcuts and `j`/`k` move through the list; a setting turns them off (D13).
 
 ## Decisions
 
@@ -81,3 +82,35 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D6 - Group sessions by `git rev-parse --git-common-dir`
 
 - **Why:** worktrees sit under the repo they belong to. A directory that isn't a git repo groups as itself.
+
+### D10 - pitwall's own design system, inspired by Hookdeck's UX
+
+- **What:** [`docs/design-system.md`](docs/design-system.md) is the spec: tokens by role (surface, text, border, tone) for light and dark, type, spacing, components, states, layout and keyboard. A dev-only gallery in the app (`#uikit`) shows each component, and the production build leaves it out. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos or artwork.
+- **Contrast:** every text color pair meets WCAG AA in both themes, and `contrast.test.tsx` checks them. Disabled text is the one exemption, as WCAG 1.4.3 allows for inactive controls.
+- **Fonts and icons:** Inter and JetBrains Mono (both OFL 1.1), self-hosted, because the CSP (`default-src 'self'`) blocks Google Fonts. Icons are Material Symbols Rounded (Apache 2.0), bundled as SVGs behind a name map that `scripts/extract-icons.ts` generates. The theme's pre-paint script is a same-origin file for the same reason. The licenses are in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+### D11 - Three columns: repos, then sessions, then the open session
+
+- **Why:** asked for after trying M2: pick a repo, then one of its sessions, then work with that session. It replaces M2's single list of grouped cards.
+- **Repo list:** Needs you and All sessions first, then the root's own directory, labelled with its path, then the repos in alphanumeric order, so the list never jumps.
+- **Widths:** three columns from 1,200 px. Below that, the session view lies over the session list, starting below the header, and what it covers is inert (it can't be clicked or tabbed to). Below 900 px the repo list is a drawer, and at 600 px and narrower the session view is full width, with Back to sessions.
+- **Resizing:** the session view is 760 px by default and at least 560 px, about 80 terminal columns. The divider resizes it, and so do the actions menu's Make view wider and Make view narrower, for anyone who can't drag (WCAG 2.5.7). The width is remembered.
+
+### D12 - Two-line rows without a needs-you tint, sorted by urgency
+
+- **Rows:** name, title, badge and time, then what the session asked or was last asked. The last reply, the relay exchange, the working directory, the attach command and the message box are in the session view.
+- **No tint:** rows that need you keep their bar and badge, without a yellow background. Nine of fifteen sessions needed attention on 2026-10-20, and the tint turned most of the list yellow.
+- **No idle badge in the list:** "Idle" shows only in the session view. Needs you is still inferred: `needsAttention()` comes from waiting, blocked and asked-you, never from the badge.
+- **Sort:** Urgency by default, or Recent or Name. The order holds while the pointer or focus is in the list, so rows don't move under you.
+
+### D13 - ⌘↵ sends, and the single-key shortcuts can be turned off
+
+- **Sending:** ⌘↵ (Ctrl+Enter on other platforms) sends, and Enter adds a line. Each message starts a turn on the target session's model and can't be taken back, so a stray Enter mustn't send.
+- **When a send's outcome is unknown:** no answer, a server error or a success pitwall can't read. The UI says the message may have reached the session and to check its conversation, rather than inviting a resend that would start another turn.
+- **Shortcuts:** `/`, `n`, `?` and `j`/`k`. They're ignored while you type, in the terminal, with ⌘, Ctrl or Alt held, and while an input method composes. A setting in the shortcuts dialog turns them off (WCAG 2.1.4), and the browser remembers it.
+- **Leaving the terminal:** F6 moves focus from the attached terminal to its tab, so the terminal isn't a keyboard trap (WCAG 2.1.2). Claude Code's docs bind nothing to F6 (checked 2026-10-21).
+
+### D14 - The live snapshot carries no reply text
+
+- **Why:** until M3, every snapshot sent to the browser held each session's latest reply, though the UI showed none of it. Now session content leaves the server only when you open a session's conversation, through the token-gated conversation route.
+- **Browser storage:** no token and no session content. The token is in `sessionStorage`. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1` and `pitwall.groups.v1`.
