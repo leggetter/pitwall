@@ -79,15 +79,15 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** each attach is a PTY and a `claude attach` process. Closing the view or the tab detaches, and the session keeps running. `claude attach` restarts a background session that isn't running, which is an action, so the UI asks first.
 
-### D6 - Group sessions by repo: where they started, and where they worked
+### D6 - Group sessions by the repo they started in, and name the repos they worked in
 
 - **Start group:** the repo of the session's working directory, by `git rev-parse --git-common-dir`, so worktrees sit under the repo they belong to. A directory below a root that isn't in a repo groups as itself.
-- **Also listed under:** every repo under a configured root that the session changed (an edit or write, a commit or push, a PR created or merged), or that at least 5% of its tool calls touched, sub-agents' included. Spike 004 scored that rule at 1 false positive and 3 misses on 28 hand-judged repos.
-- **The root's own group:** only the sessions started in the root that worked in no repo. One that worked in repos is listed under those repos.
-- **Why:** most sessions start in the folder that holds the repos, so grouping by start alone put most of them in one group.
-- **How:** a background scanner reads each session's transcripts, sub-agents' included, and the poll never waits on it. It keeps what it finds in memory only, and runs read-only git at repo boundaries, at most two processes at once. A session sits where it started until its first scan finishes.
-- **Counts:** a repo's count is its number of distinct sessions, so the repos' counts can add up to more than All sessions.
-- **Hiding** (Phil, 2026-10-21): a repo or directory can be hidden from the repo list, and the hidden ones are listed at its foot, to select or unhide. It changes only the repo list: every session still shows in Needs you, All sessions and every other group that lists it. Chosen over ageing old repos out, after the try-out found a long session still listed under a repo it last worked in 44 days before its latest work.
+- **One group each** (Phil, 2026-10-21): a session is listed only under the group it started in. The root's own group lists every session started in the root.
+- **Worked in:** the session view names every repo under a configured root that the session changed (an edit or write, a commit or push, a PR created or merged), or that at least 5% of its tool calls touched, sub-agents' included. The filter finds a session by any of them, so typing a repo's name in All sessions lists every session that started or worked there. Spike 004 scored that rule at 1 false positive and 3 misses on 28 hand-judged repos.
+- **Why not list it under each repo it worked in:** M3 did that at first (W34), because most sessions start in the folder that holds the repos. In the try-out, 12 of 20 sessions were in more than one group, and Phil found the duplication worse than a large root group ("The problem is duplication").
+- **How:** a background scanner reads each session's transcripts, sub-agents' included, and the poll never waits on it. It keeps what it finds in memory only, and runs read-only git at repo boundaries, at most two processes at once. A scan never moves a session.
+- **Counts:** a group's count is the sessions started in it, so the groups' counts under a root add up to that root's sessions.
+- **Hiding** (Phil, 2026-10-21): a repo or directory can be hidden from the repo list, and the hidden ones are listed at its foot, to select or unhide. It changes only the repo list: its sessions still show in Needs you and All sessions. Chosen over ageing old repos out, after the try-out found a long session still listed under a repo it last worked in 44 days before its latest work.
 
 ### D10 - pitwall's own design system, inspired by Hookdeck's UX
 
