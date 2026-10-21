@@ -508,6 +508,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       : { label: name, kind: selectedGroup?.kind, root: roots.length > 1 ? (selectedGroup?.root ?? selection.root) : undefined };
   const total = listed.current.length + listed.finished.length;
   const shown = current.length + finished.length;
+  // No summary where it would only repeat the empty state below it: "0 sessions · Nothing needs you"
+  // over no sessions at all, or "Nothing needs you" over Needs you's own "Nothing needs you right now".
+  const summarised = snapshot !== undefined && scope !== undefined && allSessions.length > 0 && !(scope.kind === 'needs-you' && total === 0);
   // The empty states' actions take their button away, so focus goes where the reader carries on: the
   // filter field after a filter action, the session list's heading otherwise.
   const focusField = () => filterField.current?.focus();
@@ -691,7 +694,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             alerts={hasAlerts ? alerts : undefined}
             heading={heading}
             headingRef={listHeading}
-            summary={snapshot && scope ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session)) } : undefined}
+            summary={summarised ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session)) } : undefined}
             filters={
               allSessions.length > 0 && (
                 <FilterControls filters={filters} onChange={setFilters} fieldRef={filterField}>

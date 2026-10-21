@@ -712,6 +712,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
       - A group shows its kind icon and label, plus "in *root*" (meta, `--pw-text-subtle`) when pitwall watches more than one root.
       - The views show "Needs you" or "All sessions".
     - At the right, the summary: "4 sessions", or "2 of 4 sessions" while the filter hides some, then a solid warning "2 need you" badge, or " · Nothing needs you" in meta text. The counts are the selection's; Needs you never counts a finished session.
+    - No summary where it would only repeat the empty state below it (W31): over no sessions at all ("0 sessions · Nothing needs you" above "No Claude Code sessions under *roots*"), and over Needs you with nothing in it ("Nothing needs you" above "Nothing needs you right now"). The filter's no-match state keeps it, since "0 of 4 sessions" says what the filter hides.
   - **Line 2,** 8 px below, wrapping:
     - the [filter field](#search), at least 200 px wide and growing;
     - then the [filter chips](#filter-chips) and "Clear filters";
