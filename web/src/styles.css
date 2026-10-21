@@ -588,19 +588,40 @@ textarea {
   user-select: none;
 }
 
+/*
+ * Page notices (docs/design-system.md, 4: Page notices): in place of the dashboard, 560 px at most,
+ * 15 % of the window down. The wordmark, the lead in l, then the detail in m and --pw-text-muted 4 px
+ * below, with commands as inline code (2.7).
+ */
 .notice {
   max-width: 560px;
   margin: 15vh auto 0;
   padding: 0 var(--pw-space-4);
+  overflow-wrap: anywhere;
 }
 
 .notice .brand {
   margin-bottom: var(--pw-space-2);
 }
 
-.notice p {
+.notice-lead {
+  color: var(--pw-text);
   font-size: var(--pw-text-l);
   line-height: var(--pw-leading-l);
+}
+
+.notice-detail {
+  margin-top: var(--pw-space-1);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.notice code {
+  padding: 0 var(--pw-space-1);
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
 }
 
 /* Header */

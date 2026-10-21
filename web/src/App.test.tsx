@@ -54,14 +54,15 @@ async function appWithSession(fetch: FetchLike, { authenticate = true } = {}) {
 }
 
 describe('App', () => {
-  it('without a token, says where to open pitwall from and opens no socket', () => {
+  it('without a token, says how to bring the tab back, and opens no socket', () => {
     const fake = fakeSockets();
-    render(<App createSocket={fake.factory} />);
+    const { container } = render(<App createSocket={fake.factory} />);
 
-    expect(screen.getByText(/Open pitwall from the URL the/)).toHaveProperty(
-      'textContent',
-      'Open pitwall from the URL the pitwall command printed.',
+    expect(screen.getByText('This tab has no token for pitwall.')).toBeTruthy();
+    expect(container.querySelector('.notice-detail')?.textContent).toBe(
+      'Paste the link pitwall prints when it starts into this tab. On a single-user machine, a fixed PITWALL_TOKEN keeps a pinned tab working when pitwall restarts.',
     );
+    expect([...container.querySelectorAll('.notice-detail code')].map((code) => code.textContent)).toEqual(['PITWALL_TOKEN']);
     expect(fake.sockets).toHaveLength(0);
   });
 
@@ -182,12 +183,12 @@ describe('App', () => {
     // Straight away, not after a backoff: the old socket is replaced for a fresh challenge.
     await waitFor(() => expect(fake.sockets).toHaveLength(2));
     expect(fake.sockets[0]!.closedByClient).toBe(true);
-    expect(screen.queryByText(/Token rejected/)).toBeNull();
+    expect(screen.queryByText(/rejected this tab's token/)).toBeNull();
 
     await handshake(fake.last, KEY_B, nonce(2));
     await waitFor(() => expect(screen.getByText('Fetched with the fresh key.')).toBeTruthy());
     expect(fetch.mock.calls.map(([, init]) => authorization(init))).toEqual([`Bearer ${KEY_A}`, `Bearer ${KEY_B}`]);
-    expect(screen.queryByText(/Token rejected/)).toBeNull();
+    expect(screen.queryByText(/rejected this tab's token/)).toBeNull();
   });
 
   it('never sends the raw token: not in a frame, a URL or a request header, across a restart and a stale key', async () => {
@@ -229,7 +230,7 @@ describe('App', () => {
       expect(JSON.stringify(init)).not.toContain(TOKEN);
       expect(Object.values(init.headers as Record<string, string>).join('\n')).not.toContain(TOKEN);
     }
-    expect(screen.queryByText(/Token rejected/)).toBeNull();
+    expect(screen.queryByText(/rejected this tab's token/)).toBeNull();
   });
 
   it('on 4401, says the token was rejected and stops reconnecting', () => {
@@ -242,7 +243,10 @@ describe('App', () => {
       fake.last.serverClose(WS_CLOSE_UNAUTHORIZED);
     });
 
-    expect(screen.getByText('Token rejected; reopen pitwall from the URL the command printed.')).toBeTruthy();
+    expect(screen.getByText("pitwall rejected this tab's token.")).toBeTruthy();
+    expect(document.querySelector('.notice-detail')?.textContent).toBe(
+      "Each run of pitwall has its own token, so this usually follows a restart. Paste the link pitwall printed when it started into this tab; on a single-user machine, a fixed PITWALL_TOKEN keeps a pinned tab working when pitwall restarts.",
+    );
     expect(fake.sockets).toHaveLength(1);
   });
 
@@ -251,7 +255,7 @@ describe('App', () => {
     const fake = fakeSockets();
     render(<App createSocket={fake.factory} />);
     act(() => fake.last.serverClose(WS_CLOSE_UNAUTHORIZED));
-    expect(screen.getByText(/Token rejected/)).toBeTruthy();
+    expect(screen.getByText(/rejected this tab's token/)).toBeTruthy();
 
     act(() => {
       window.history.replaceState(null, '', '/#token=new');
@@ -262,7 +266,7 @@ describe('App', () => {
     expect(fake.sockets).toHaveLength(2);
     await handshake(fake.last);
     expect(JSON.parse(fake.last.sent[0]!)).toEqual({ type: 'auth', proof: await computeProof('new', nonce()) });
-    expect(screen.queryByText(/Token rejected/)).toBeNull();
+    expect(screen.queryByText(/rejected this tab's token/)).toBeNull();
   });
 
   it('closes the socket when it unmounts', () => {

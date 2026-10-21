@@ -576,6 +576,6 @@ describe('SessionView in the app', () => {
 
     await waitFor(() => expect(texts(screen.getByRole('dialog'))).toEqual(['fetched with the fresh key']));
     expect(fetch.mock.calls.map(([, init]) => authorization(init))).toEqual([`Bearer ${KEY_A}`, `Bearer ${KEY_B}`]);
-    expect(screen.queryByText(/Token rejected/)).toBeNull();
+    expect(screen.queryByText(/rejected this tab's token/)).toBeNull();
   });
 });

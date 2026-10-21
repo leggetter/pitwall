@@ -92,7 +92,7 @@ describe('the #uikit route', () => {
     window.history.replaceState(null, '', '/#somewhere-else');
     render(<App createSocket={fakeSockets().factory} />);
 
-    expect(screen.getByText(/Open pitwall from the URL the/)).toBeTruthy();
+    expect(screen.getByText('This tab has no token for pitwall.')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'pitwall UI kit' })).toBeNull();
   });
 
