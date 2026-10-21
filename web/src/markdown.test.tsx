@@ -660,3 +660,48 @@ describe('links in code, bounded on hostile input (W37)', () => {
     expect(elementCount(parseMarkdown(fence(fill(`https://example.com/${'a'.repeat(60)}\n`))), MAX_ELEMENTS)).toBeLessThanOrEqual(MAX_ELEMENTS);
   });
 });
+
+describe('where a bare URL ends, in text and code (W37)', () => {
+  const url = (href: string, written = href): Inline => link(href, text(written));
+  /** A code block's text with its links, from linkify as the parser runs it on code. */
+  const inCode = (code: string): Inline[] => {
+    const [parsed] = parseMarkdown(`\`\`\`\n${code}\n\`\`\``);
+    return parsed?.type === 'code' ? (parsed.linked ?? [text(parsed.text)]) : [];
+  };
+
+  it.each([
+    ['an HTML attribute', '<a href="https://example.com/docs">Docs</a>', [text('<a href="'), url('https://example.com/docs'), text('">Docs</a>')]],
+    ['an HTML attribute that closes the tag', '<img src="https://example.com/a.png">', [text('<img src="'), url('https://example.com/a.png'), text('">')]],
+    ['minified JSON', '{"url":"https://example.com/a"}', [text('{"url":"'), url('https://example.com/a'), text('"}')]],
+    ["a Python dict, its ' trailing punctuation and its } unopened", "{'url': 'https://example.com/a'}", [text("{'url': '"), url('https://example.com/a'), text("'}")]],
+    ['a } the URL did not open', 'see https://example.com/a})', [text('see '), url('https://example.com/a'), text('})')]],
+    ['a { the URL opened, which keeps its }', 'GET https://example.com/users/{id}', [text('GET '), url('https://example.com/users/%7Bid%7D', 'https://example.com/users/{id}')]],
+    ['a > straight after it', 'curl https://example.com/a>out.txt', [text('curl '), url('https://example.com/a'), text('>out.txt')]],
+  ])('ends a URL in %s, in text and in code', (_name, written, expected) => {
+    expect(linkify(written)).toEqual(expected);
+    expect(inCode(written)).toEqual(expected);
+  });
+
+  it('ends a backticked URL inside a code block, as in a markdown draft, at its backtick', () => {
+    expect(inCode('Merged in `https://github.com/example/app/pull/41`, see `https://example.com/a`.')).toEqual([
+      text('Merged in `'),
+      url('https://github.com/example/app/pull/41'),
+      text('`, see `'),
+      url('https://example.com/a'),
+      text('`.'),
+    ]);
+  });
+
+  it('ends a URL at the end of its line, and of the text', () => {
+    expect(inCode('see https://example.com/end\nhttps://example.com/next.')).toEqual([text('see '), url('https://example.com/end'), text('\n'), url('https://example.com/next'), text('.')]);
+    expect(parseMarkdown('see https://example.com/end\nand on')).toEqual([para(text('see '), url('https://example.com/end'), { type: 'break' }, text('and on'))]);
+    expect(linkify('the end: https://example.com/end')).toEqual([text('the end: '), url('https://example.com/end')]);
+  });
+
+  it('still reads <url> as an autolink in text, and as text in code', () => {
+    expect(parseInline('<https://example.com/a>')).toEqual([url('https://example.com/a')]);
+    expect(inCode('<https://example.com/a> and <https://example.com/b>,')).toEqual([text('<https://example.com/a> and <https://example.com/b>,')]);
+    // A < before it with no > after it isn't an autolink: the URL is a bare one.
+    expect(inCode('<https://example.com/c d')).toEqual([text('<'), url('https://example.com/c'), text(' d')]);
+  });
+});

@@ -1132,14 +1132,18 @@ function toInlines(first: Node | null, inLink: boolean): Inline[] {
 }
 
 const BARE_URL = /https?:\/\//gi;
+/** What ends a bare URL's run: a space, or a character a URL can't hold as written. */
+const URL_ENDS = /[\s<>"`]/;
 /** Characters a bare URL can't end with, as in GFM: they're the sentence's. */
 const TRAILING = new Set(['?', '!', '.', ',', ':', ';', '*', '_', '~', "'", '"']);
 
 /**
  * Text with its bare http: and https: URLs as links. A URL starts anywhere but straight after a letter
  * or a digit (GFM allows only a space, `*`, `_`, `~` or `(` before one; a quote or a bracket is allowed
- * here too), runs to a space or `<`, and loses trailing punctuation and closing parentheses or
- * brackets it doesn't open. One that the browser can't parse stays text, and the scan goes on after it.
+ * here too). It runs to a space, `<`, `>`, `"` or a backtick, none of which a URL holds as written
+ * (they're percent-encoded in one), and which HTML attributes, JSON and code spans put around one
+ * (W37). It loses trailing punctuation, and a `)`, `]` or `}` it doesn't open, so `{id}` in a path
+ * stays. One that the browser can't parse stays text, and the scan goes on after it.
  *
  * `within` is `code` for the text of a code span or block (W37): the same rule, except that a URL in
  * markdown's own link syntax stays text there, as the rest of code does: a link's target, `](url`, link
@@ -1155,7 +1159,7 @@ export function linkify(text: string, within: 'text' | 'code' = 'text'): Inline[
     const before = text[start - 1];
     if (before !== undefined && /[\p{L}\p{N}]/u.test(before)) continue;
     let end = start + found[0].length;
-    while (end < text.length && !/[\s<]/.test(text[end] as string)) end++;
+    while (end < text.length && !URL_ENDS.test(text[end] as string)) end++;
     const scanned = end;
     if (within === 'code' && inLinkSyntax(text, start, scanned)) {
       BARE_URL.lastIndex = scanned;
@@ -1179,13 +1183,14 @@ export function linkify(text: string, within: 'text' | 'code' = 'text'): Inline[
 
 /**
  * Whether the URL at `start`, whose run goes to `end`, is part of markdown's link syntax: a link's
- * target, `](url`; link text with a target after it, `url](…`; or an autolink, `<url>`. Only the run is
- * looked at, so each run is scanned once.
+ * target, `](url`; link text with a target after it, `url](…`; or an autolink, `<url>`, whose `>` is
+ * what ended the run. Only the run and the characters either side of it are looked at, so each run is
+ * scanned once.
  */
 function inLinkSyntax(text: string, start: number, end: number): boolean {
   if (text[start - 1] === '(' && text[start - 2] === ']') return true;
-  const run = text.slice(start, end);
-  return run.includes('](') || (text[start - 1] === '<' && run.includes('>'));
+  if (text[start - 1] === '<' && text[end] === '>') return true;
+  return text.slice(start, end).includes('](');
 }
 
 /**
@@ -1197,23 +1202,29 @@ function linkedCode(text: string): Inline[] | undefined {
   return linked.some((item) => item.type === 'link') ? linked : undefined;
 }
 
-/** Where a bare URL in text[start, end) really ends: without trailing punctuation, or a `)` or `]` it didn't open. */
+/** The closing bracket for each opening one a URL may hold. */
+const CLOSES: Record<string, ')' | ']' | '}'> = { '(': ')', '[': ']', '{': '}' };
+
+/**
+ * Where a bare URL in text[start, end) really ends: without trailing punctuation, or a `)`, `]` or `}`
+ * it didn't open. `'` is trailing punctuation, so `'https://example.com/a'}` ends at `a`.
+ */
 function trimmedEnd(text: string, start: number, end: number): number {
-  let opened = { ')': 0, ']': 0 };
+  // For each closing bracket: how many the run opened, less how many it closed.
+  const opened = { ')': 0, ']': 0, '}': 0 };
   for (let i = start; i < end; i++) {
-    const c = text[i];
-    if (c === '(') opened[')']++;
-    else if (c === ')') opened[')']--;
-    else if (c === '[') opened[']']++;
-    else if (c === ']') opened[']']--;
+    const c = text[i] as string;
+    const closer = CLOSES[c];
+    if (closer) opened[closer]++;
+    else if (c === ')' || c === ']' || c === '}') opened[c]--;
   }
   let at = end;
   while (at > start) {
     const c = text[at - 1] as string;
     if (TRAILING.has(c)) {
       at--;
-    } else if ((c === ')' || c === ']') && opened[c] < 0) {
-      opened = { ...opened, [c]: opened[c] + 1 };
+    } else if ((c === ')' || c === ']' || c === '}') && opened[c] < 0) {
+      opened[c]++;
       at--;
     } else {
       break;
