@@ -239,6 +239,9 @@ export const REPO_LIST_SNAPSHOT = snapshot([APP_GROUP, JOBS_GROUP, NOTES_GROUP, 
 /** Two roots, each with groups, for the root headings. */
 export const TWO_ROOTS_LIST_SNAPSHOT = snapshot([APP_GROUP, NOTES_GROUP, SERVICE_GROUP, ROOT_GROUP], { roots: [ROOT, OTHER_ROOT] });
 
+/** A hidden group that's in no snapshot (W35): a clone of another project's repo, last worked in weeks ago. */
+export const GONE_HIDDEN = { root: ROOT, key: `${ROOT}/pitwall-test-old-clone`, label: 'pitwall-test-old-clone', kind: 'git' } as const;
+
 /** Sessions whose names, titles and paths all have "export" in them, for the filter's highlight. */
 const EXPORTS_DIR = `${ROOT}/pitwall-test-exports`;
 export const HIGHLIGHT_SNAPSHOT = snapshot([

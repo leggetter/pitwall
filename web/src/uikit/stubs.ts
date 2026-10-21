@@ -16,6 +16,7 @@ import type { AttachEnv } from '../attach.js';
 import type { ClipboardLike } from '../copy.js';
 import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
+import { writeHidden, type HiddenGroup } from '../hidden.js';
 import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
 import { CONVERSATION, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
@@ -181,6 +182,17 @@ export function memoryStorage(entries: Record<string, string> = {}): StorageSour
     },
   };
   return () => storage;
+}
+
+/**
+ * What a page's storage holds with `groups` hidden from its repo list (W35), under each one's root's
+ * key, and the Hidden section open or closed: for memoryStorage(), so the gallery never writes the app's keys.
+ */
+export function storedHidden(groups: readonly HiddenGroup[], open: boolean): Record<string, string> {
+  const values: Record<string, string> = {};
+  const into: StorageSource = () => ({ getItem: () => null, setItem: (key, value) => void (values[key] = value) });
+  for (const root of new Set(groups.map((group) => group.root))) writeHidden(root, groups, open, into);
+  return values;
 }
 
 /**
