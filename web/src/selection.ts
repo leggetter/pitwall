@@ -2,16 +2,23 @@
 // sessions, or one group. It's in the URL, as ?view=needs-you, ?view=all or ?repo=<key>, with
 // &root=<root> when pitwall watches more than one root, so a reload or the back button shows the
 // same columns. The last one chosen is kept in localStorage as pitwall.view.v1, for a URL with none.
+//
+// With more than one root, the root also says which root tab is open (W38, rootTabs.ts), for the
+// views as well as a group: ?view=all&root=<root>. A selection without one, or with one pitwall
+// doesn't watch, is given its tab's root once the snapshot says what the roots are, and the URL is
+// replaced to match. With one root, a view's root is dropped, so the URL is as it always was.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { IndexSnapshot, SessionGroup } from '../../src/shared/protocol.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { shortenHome } from './format.js';
+import { hasTabs, readStoredTab, selectionTab } from './rootTabs.js';
 import { groupId, groupLabel, startGroup, type Scope } from './sessions.js';
 
 export const VIEW_STATE_KEY = 'pitwall.view.v1';
 
-export type Selection = { view: 'needs-you' | 'all' } | { repo: string; root?: string };
+/** A view, or a group. With more than one root, each names its root, which is the open root tab. */
+export type Selection = { view: 'needs-you' | 'all'; root?: string } | { repo: string; root?: string };
 
 export const ALL_SESSIONS: Selection = { view: 'all' };
 export const NEEDS_YOU: Selection = { view: 'needs-you' };
@@ -25,9 +32,10 @@ export function parseSelection(search: string): Selection | undefined {
   const view = params.get('view');
   const repo = params.get('repo');
   const root = params.get('root');
-  if (view !== null) return view === 'needs-you' || view === 'all' ? { view } : undefined;
+  const rooted = root === null || root === '' ? {} : { root };
+  if (view !== null) return view === 'needs-you' || view === 'all' ? { view, ...rooted } : undefined;
   if (repo === null || repo === '') return undefined;
-  return root === null || root === '' ? { repo } : { repo, root };
+  return { repo, ...rooted };
 }
 
 /** Percent-encoding that leaves the characters of a path readable: / ~ : @ and so on. */
@@ -38,7 +46,8 @@ function encode(value: string): string {
 /** `search` with the selection's parameters set and every other parameter kept. Starts with "?". */
 export function withSelection(search: string, selection: Selection): string {
   const kept = [...new URLSearchParams(search)].filter(([name]) => !(PARAMS as readonly string[]).includes(name));
-  const own: [string, string][] = 'view' in selection ? [['view', selection.view]] : [['repo', selection.repo], ...(selection.root ? [['root', selection.root] as [string, string]] : [])];
+  const root: [string, string][] = selection.root ? [['root', selection.root]] : [];
+  const own: [string, string][] = 'view' in selection ? [['view', selection.view], ...root] : [['repo', selection.repo], ...root];
   return `?${[...own, ...kept].map(([name, value]) => `${encode(name)}=${encode(value)}`).join('&')}`;
 }
 
@@ -53,8 +62,29 @@ export function groupSelection(group: Pick<SessionGroup, 'root' | 'key'>, roots:
 }
 
 export function sameSelection(a: Selection, b: Selection): boolean {
+  if ((a.root ?? '') !== (b.root ?? '')) return false;
   if ('view' in a || 'view' in b) return 'view' in a && 'view' in b && a.view === b.view;
-  return a.repo === b.repo && (a.root ?? '') === (b.root ?? '');
+  return a.repo === b.repo;
+}
+
+/** A view in a root tab: with a root when pitwall watches more than one, so the URL says which tab is open. */
+export function viewIn(view: 'needs-you' | 'all', tab: string | undefined): Selection {
+  return tab === undefined ? { view } : { view, root: tab };
+}
+
+/**
+ * The selection as the URL should have it for these roots (W38). With more than one, it names the
+ * tab it opens (selectionTab() in rootTabs.ts says which). With one, a view names no root, as before
+ * there were tabs; a group keeps what it has. The same object when nothing changes.
+ */
+export function rootedSelection(selection: Selection, snapshot: Pick<IndexSnapshot, 'roots' | 'groups'>, stored: string | undefined): Selection {
+  if (!hasTabs(snapshot.roots)) {
+    if (!('view' in selection) || selection.root === undefined) return selection;
+    return { view: selection.view };
+  }
+  const tab = selectionTab('view' in selection ? { root: selection.root } : selection, snapshot, stored);
+  if (tab === undefined || selection.root === tab) return selection;
+  return 'view' in selection ? { view: selection.view, root: tab } : { repo: selection.repo, root: tab };
 }
 
 /** The group a selection names, if it's in the snapshot. Without a root, the first group with the key. */
@@ -145,16 +175,25 @@ export function memoryNavigation(search = ''): NavigationEnv {
   };
 }
 
+/** What useSelection() gives besides the selection and choosing one. */
+export interface SelectionExtras {
+  /** The open root tab, with more than one root once the snapshot says what they are (W38): the selection's root. */
+  tab: string | undefined;
+  /** Makes the selection match the URL again, after something else pushed an entry for it, as a root tab does. */
+  follow: () => void;
+}
+
 /**
  * The selection, from the URL, and a way to choose another. A URL with none takes the stored one, or
  * All sessions, and is replaced to match, except that ?session= with no selection waits for the
  * snapshot and selects that session's group, the one it started in. Choosing pushes a history entry;
- * popstate follows the URL.
+ * popstate follows the URL. With more than one root, once the snapshot is in, a selection is given the
+ * root of the tab it opens, as rootedSelection() says, and the URL is replaced to match.
  */
 export function useSelection(
   snapshot: IndexSnapshot | undefined,
   { navigation = browserNavigation, storage = browserStorage }: { navigation?: NavigationEnv; storage?: StorageSource } = {},
-): [Selection, (next: Selection) => void] {
+): [Selection, (next: Selection) => void, SelectionExtras] {
   const url = (search: string) => `${navigation.location.pathname}${search}${navigation.location.hash}`;
   // ?session=, with no selection: the session's group, once the snapshot says which it is.
   const pending = useRef<string | undefined>(undefined);
@@ -174,26 +213,37 @@ export function useSelection(
     // Only on mount: later selections write the URL themselves.
   }, []);
 
-  useEffect(() => {
+  // The open root tab when the URL doesn't say, read once: a URL with no selection, or none pitwall watches.
+  const [storedTab] = useState(() => readStoredTab(storage));
+
+  // Before it's painted, so the columns never show a tab or a group the URL is about to leave.
+  useLayoutEffect(() => {
+    if (!snapshot) return;
+    let next = selection;
     const sessionId = pending.current;
-    if (sessionId === undefined || !snapshot) return;
-    pending.current = undefined;
-    // The group it started in, its only one (W39).
-    const listed = snapshot.groups.flatMap((candidate) => candidate.sessions).find((session) => session.sessionId === sessionId);
-    const group = listed ? startGroup(snapshot.groups, listed) : undefined;
-    const next = group ? groupSelection(group, snapshot.roots) : selection;
+    if (sessionId !== undefined) {
+      pending.current = undefined;
+      // The group it started in, its only one (W39).
+      const listed = snapshot.groups.flatMap((candidate) => candidate.sessions).find((session) => session.sessionId === sessionId);
+      const group = listed ? startGroup(snapshot.groups, listed) : undefined;
+      if (group) next = groupSelection(group, snapshot.roots);
+    }
+    // With several roots, the selection names its tab; with one, a view names none.
+    next = rootedSelection(next, snapshot, storedTab);
+    if (sessionId === undefined && next === selection) return;
     navigation.history.replaceState(navigation.history.state, '', url(withSelection(navigation.location.search, next)));
     setSelection(next);
   }, [snapshot, selection, navigation]);
 
-  useEffect(() => {
-    const onPopState = () => {
-      const fromUrl = parseSelection(navigation.location.search);
-      if (fromUrl) setSelection(fromUrl);
-    };
-    navigation.addEventListener('popstate', onPopState);
-    return () => navigation.removeEventListener('popstate', onPopState);
+  const follow = useCallback(() => {
+    const fromUrl = parseSelection(navigation.location.search);
+    if (fromUrl) setSelection(fromUrl);
   }, [navigation]);
+
+  useEffect(() => {
+    navigation.addEventListener('popstate', follow);
+    return () => navigation.removeEventListener('popstate', follow);
+  }, [navigation, follow]);
 
   const current = useRef(selection);
   current.current = selection;
@@ -209,5 +259,6 @@ export function useSelection(
     [navigation, storage],
   );
 
-  return [selection, choose];
+  const tab = snapshot ? selectionTab('view' in selection ? { root: selection.root } : selection, snapshot, storedTab) : undefined;
+  return [selection, choose, { tab, follow }];
 }

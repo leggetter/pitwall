@@ -11,6 +11,11 @@
 // New session says its key in aria-keyshortcuts too. The shortcuts button doesn't: ARIA 1.2 wants
 // the keys pressed, modifiers and all, and `?` is Shift and another key that differs by layout, so
 // no value would be right everywhere. Its tooltip, and the dialog's map, say it instead.
+//
+// With two or more roots, the roots' path is a tab per root (RootTabs, W38). The header then wraps
+// whenever its line has no room, at any width: the right side goes under the wordmark and the tabs
+// first, and then the tabs go under the wordmark, wrapping among themselves, so every tab, and every
+// badge on one, stays in sight at 320 px. With one root it's exactly as it was.
 
 import type { RefObject } from 'react';
 import type { ConnectionState } from '../connection.js';
@@ -20,6 +25,7 @@ import { Button } from './Button.js';
 import { ConnectionBadge } from './ConnectionBadge.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
+import { RootTabs, type RootTabsProps } from './RootTabs.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -40,14 +46,17 @@ export interface HeaderProps {
   reposRef?: RefObject<HTMLButtonElement | null>;
   /** Opens the keyboard shortcuts dialog. The button shows only when this is given. */
   onShortcuts?: (() => void) | undefined;
+  /** With two or more roots, a tab for each, in place of the roots' path (W38). */
+  tabs?: RootTabsProps | undefined;
 }
 
 export const SHORTCUTS_LABEL = 'Keyboard shortcuts';
 
-export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts }: HeaderProps) {
+export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs }: HeaderProps) {
   const shortcuts = useShortcuts();
+  const tabbed = tabs !== undefined && tabs.tabs.length > 1;
   return (
-    <header className="app-header">
+    <header className={tabbed ? 'app-header has-tabs' : 'app-header'}>
       <div className="app-header-start">
         {onRepos && (
           <Tooltip content="Repos" relation="label">
@@ -57,7 +66,8 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
           </Tooltip>
         )}
         <h1 className="brand">pitwall</h1>
-        {roots && (
+        {tabbed && <RootTabs {...tabs} />}
+        {roots && !tabbed && (
           // The full paths, home and all; on screen, home is ~ and the list may be cut in the middle.
           <Tooltip content={plainText(roots.join(', '))} relation="none">
             <p className="roots">

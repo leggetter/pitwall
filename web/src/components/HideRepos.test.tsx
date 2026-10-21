@@ -85,6 +85,13 @@ function hiddenLink(label: string): HTMLAnchorElement {
   return link;
 }
 
+/** A root tab, by its label as shown (W38). By text: happy-dom gives spans no display, so a name computed from them gains spaces. */
+function rootTab(label: string): HTMLElement {
+  const tab = screen.getAllByRole('tab').find((candidate) => candidate.querySelector('.root-tab-label')?.textContent === label);
+  if (!tab) throw new Error(`no root tab ${label}`);
+  return tab;
+}
+
 const unhideButton = (label: string) => within(repoList()).getByRole('button', { name: `Unhide ${label}` });
 
 const listHeading = () => within(screen.getByRole('main')).getByRole('heading', { level: 2 });
@@ -313,18 +320,26 @@ describe('the Hidden section', () => {
     expect(repoItems().some((item) => item.startsWith('notes'))).toBe(false);
   });
 
-  it("lists each root's hidden groups under its path when pitwall watches more than one", () => {
+  it("lists the open root tab's hidden groups alone, and counts theirs alone, when pitwall watches more than one (W38)", () => {
     const snap = snapshot(
-      [group({ key: key('app'), label: 'app', root: ROOT, sessions: [session({ name: 'a' })] }), group({ key: key('svc', WORK), label: 'svc', root: WORK, sessions: [session({ name: 's', cwd: key('svc', WORK) })] })],
+      [
+        group({ key: key('app'), label: 'app', root: ROOT, sessions: [session({ name: 'a' })] }),
+        group({ key: key('svc', WORK), label: 'svc', root: WORK, sessions: [session({ name: 's', cwd: key('svc', WORK), status: 'waiting', waitingFor: 'permission prompt' })] }),
+      ],
       { roots: [ROOT, WORK] },
     );
     renderDashboard(snap);
-    hide('svc');
     hide('app');
-    const section = repoList().querySelector('.repo-hidden-list') as HTMLElement;
-    const lists = within(section).getAllByRole('list');
-    expect(lists.map((list) => document.getElementById(list.getAttribute('aria-labelledby') ?? '')?.textContent)).toEqual(['~/code', '~/work']);
-    expect(within(lists[1] as HTMLElement).getByRole('link').getAttribute('href')).toBe(`?repo=${key('svc', WORK)}&root=${WORK}`);
+    fireEvent.click(rootTab('~/work'));
+    hide('svc');
+    expect(hiddenItems()).toEqual(['svc, git repo1 needs you']);
+    expect(hiddenToggle()?.textContent).toBe('Hidden (1)1 needs you');
+    expect(hiddenLink('svc').getAttribute('href')).toBe(`?repo=${key('svc', WORK)}&root=${WORK}`);
+    // No root headings: the tab names the root.
+    expect(repoList().querySelector('[aria-labelledby]')).toBeNull();
+    fireEvent.click(rootTab('~/code'));
+    expect(hiddenItems()).toEqual(['app, git repo1 session']);
+    expect(hiddenToggle()?.textContent).toBe('Hidden (1)');
   });
 
   it("selects a hidden group from its link, so its sessions show in the session list as usual, and leaves a modified click to the browser", () => {
@@ -427,8 +442,11 @@ describe('hidden groups in storage', () => {
     // Both roots: each root's key is read, and a hide writes its own root's.
     const both = snapshot([...one.groups, ...other.groups], { roots: [ROOT, WORK] });
     renderDashboard(both, { storage: source });
+    // The first root's tab is open: its hidden app, not the other root's app.
     expect(hiddenItems()).toEqual(['app, git repo1 session']);
     expect(hiddenLink('app').getAttribute('href')).toBe(`?repo=${key('app')}&root=${ROOT}`);
+    fireEvent.click(rootTab('~/work'));
+    expect(hiddenToggle()).toBeNull();
     fireEvent.click(repoItem('app'));
     fireEvent.click(screen.getByRole('button', { name: HIDE_LABEL }));
     expect(JSON.parse(items.get(hiddenKey(WORK)) ?? 'null').groups).toEqual([{ key: key('app', WORK), label: 'app', kind: 'git' }]);

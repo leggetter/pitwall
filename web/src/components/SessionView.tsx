@@ -8,6 +8,11 @@
 // Two more states take the view's place: waiting, while a ?session= from the URL waits for the first
 // snapshot, and unlisted, for one that pitwall doesn't list under its roots (3: Session view).
 //
+// With root tabs (W38), each tab keeps its own open session, and the views of the tabs that aren't
+// open stay mounted, hidden, so switching tabs never detaches a terminal, drops a draft, or stops a
+// send or an action in flight. A hidden view has no id and ignores Escape, and its conversation keeps
+// the reader's place, as it does behind the Terminal tab.
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
@@ -22,6 +27,7 @@ import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
+import { moveTabFocus } from '../tabs.js';
 import { Alert } from './Alert.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Button } from './Button.js';
@@ -81,6 +87,8 @@ function plainKey(event: KeyboardEvent): boolean {
 
 interface FrameProps {
   layout: SessionViewLayout;
+  /** In a root tab that isn't open: hidden, with no id, and Escape isn't its. */
+  hidden?: boolean;
   /** Slide in, over the list: when it opens, not when it changes from one session to the next. */
   animate: boolean;
   titleId: string;
@@ -93,17 +101,19 @@ interface FrameProps {
  * The view's region: a <section> named by its heading, which is a non-modal dialog when it overlays
  * the list. It slides in when it opens over the list, but not when the window then crosses 1,200 px.
  */
-function Frame({ layout, animate, titleId, onEscape, children }: FrameProps) {
+function Frame({ layout, hidden = false, animate, titleId, onEscape, children }: FrameProps) {
   const [opening, setOpening] = useState(animate && layout === 'overlay');
   const onEscapeRef = useRef(onEscape);
+  const hiddenRef = useRef(hidden);
   useEffect(() => {
     onEscapeRef.current = onEscape;
-  }, [onEscape]);
+    hiddenRef.current = hidden;
+  }, [onEscape, hidden]);
 
   // Escape, last in the layered order (6.2): whatever nearer handled it called preventDefault.
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) onEscapeRef.current();
+      if (event.key === 'Escape' && !event.defaultPrevented && !hiddenRef.current) onEscapeRef.current();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -111,7 +121,8 @@ function Frame({ layout, animate, titleId, onEscape, children }: FrameProps) {
 
   return (
     <section
-      id={SESSION_VIEW_ID}
+      id={hidden ? undefined : SESSION_VIEW_ID}
+      hidden={hidden}
       className={['session-view', layout === 'column' ? 'in-column' : 'overlay', opening && 'opening'].filter(Boolean).join(' ')}
       {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : {})}
       aria-labelledby={titleId}
@@ -183,6 +194,8 @@ export interface SessionViewProps {
    * Make view wider, Make view narrower and Reset view width, so it can be resized without a drag.
    */
   panel?: PanelWidthStore | undefined;
+  /** In a root tab that isn't open (W38): kept, hidden, so its terminal, draft and sends carry on. */
+  hidden?: boolean;
 }
 
 type Tab = 'conversation' | 'terminal';
@@ -203,6 +216,7 @@ export function SessionView({
   onDraftChange,
   onRunningChange,
   panel,
+  hidden = false,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -307,22 +321,8 @@ export function SessionView({
     }
   };
 
-  // ← and → (and Home and End) move focus between the tabs; Enter or Space opens one, never focus alone.
-  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    const tabs = [conversationTab.current, terminalTab.current];
-    const at = tabs.indexOf(document.activeElement as HTMLButtonElement);
-    const to =
-      event.key === 'ArrowRight' || event.key === 'ArrowLeft'
-        ? (at + 1) % tabs.length
-        : event.key === 'Home'
-          ? 0
-          : event.key === 'End'
-            ? tabs.length - 1
-            : undefined;
-    if (to === undefined) return;
-    event.preventDefault();
-    tabs[to]?.focus();
-  };
+  // ← and → (and Home and End) move focus between the tabs; Enter or Space opens one, never focus alone (4: Tabs).
+  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => moveTabFocus(event, [conversationTab.current, terminalTab.current]);
 
   const onHeaderKey = (event: KeyboardEvent<HTMLElement>) => {
     if (!onStep || event.defaultPrevented || !plainKey(event)) return;
@@ -400,7 +400,7 @@ export function SessionView({
   const attached = tab === 'terminal' && attachStatus?.kind === 'attached';
 
   return (
-    <Frame layout={layout} animate={animate} titleId={ids.title} onEscape={onEscape}>
+    <Frame layout={layout} hidden={hidden} animate={animate} titleId={ids.title} onEscape={onEscape}>
       <header className="session-view-head" onKeyDown={onHeaderKey}>
         <Top
           compact={compact}
@@ -540,7 +540,8 @@ export function SessionView({
         </Tooltip>
       </div>
 
-      <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation'} />
+      {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
+      <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation' || hidden} />
 
       <div
         className="session-view-terminal"

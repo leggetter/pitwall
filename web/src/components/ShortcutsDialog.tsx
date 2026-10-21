@@ -76,6 +76,11 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
           what: 'In the repo list: move, jump to either end, select',
           keys: [[DOWN, UP], [HOME, END], [ENTER]],
         },
+        {
+          doc: { key: '← / →, Home / End', where: 'The root tabs, with two or more roots' },
+          what: 'In the root tabs, with several roots: move between them. Enter or Space opens one',
+          keys: [[LEFT, RIGHT], [HOME, END]],
+        },
       ],
     },
     {
@@ -87,7 +92,7 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
           keys: [[DOWN, UP]],
         },
         {
-          doc: { key: '← / →, Home / End', where: 'The tab list' },
+          doc: { key: '← / →, Home / End', where: "The session view's tabs" },
           what: 'In the tabs: move between Conversation and Terminal. Enter or Space opens one',
           keys: [[LEFT, RIGHT], [HOME, END]],
         },

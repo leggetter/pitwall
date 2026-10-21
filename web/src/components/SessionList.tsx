@@ -9,7 +9,7 @@
 
 import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
 import type { SessionGroup } from '../../../src/shared/protocol.js';
-import { plainText, shortenHome } from '../format.js';
+import { plainText } from '../format.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
 import { Icon } from './Icon.js';
 import { ScrollBox } from './ScrollBox.js';
@@ -18,10 +18,8 @@ import { SessionRow } from './SessionRow.js';
 export interface SessionListHeading {
   /** The selection's name: a group's label, "Needs you" or "All sessions". */
   label: string;
-  /** A group's kind, for its icon. */
+  /** A group's kind, for its icon. With several roots, the open root tab says which root it's under (W38). */
   kind?: SessionGroup['kind'] | undefined;
-  /** A group's root, shown as "in ~/work" when pitwall watches more than one. */
-  root?: string | undefined;
 }
 
 export interface SessionListSummary {
@@ -226,7 +224,6 @@ export function SessionList({
             {heading.kind && <Icon name={heading.kind === 'git' ? 'repo' : 'directory'} className="session-list-kind" />}
             <span className="session-list-label">{plainText(heading.label)}</span>
             {heading.kind && <span className="visually-hidden">, {heading.kind === 'git' ? 'git repo' : 'directory'}</span>}
-            {heading.root && <span className="session-list-root">in {plainText(shortenHome(heading.root))}</span>}
           </h2>
           {headingAction ? (
             <div className="session-list-end">

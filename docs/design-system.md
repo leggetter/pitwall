@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28), then the terminal: its bar on `Badge`, `KeyCaps` and `Button`, the screen's font and colours from the tokens and its edge, F6 to leave it, its notices as inline alerts, and the conversation's place kept across the Terminal tab (W29), then the fixes from the integrated branch's review (W31), then sessions under the repos they worked in: distinct counts, the root's group, line 2's start label and the session view's worked-in line (W34), then hiding a repo or directory from the repo list: the session list header's Hide from repo list and the Hidden section at the list's foot (W35), then markdown in the session view: Claude's messages and other sessions' as pitwall's own elements, and your prompts as typed (W36), then links in code: bare URLs in code blocks and inline code open as links (W37), then each session in one group, the one it started in, with the repos it worked in in the session view and the filter, which replaces W34's listing under those repos, its start label and its distinct counts (W39). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28), then the terminal: its bar on `Badge`, `KeyCaps` and `Button`, the screen's font and colours from the tokens and its edge, F6 to leave it, its notices as inline alerts, and the conversation's place kept across the Terminal tab (W29), then the fixes from the integrated branch's review (W31), then sessions under the repos they worked in: distinct counts, the root's group, line 2's start label and the session view's worked-in line (W34), then hiding a repo or directory from the repo list: the session list header's Hide from repo list and the Hidden section at the list's foot (W35), then markdown in the session view: Claude's messages and other sessions' as pitwall's own elements, and your prompts as typed (W36), then links in code: bare URLs in code blocks and inline code open as links (W37), then each session in one group, the one it started in, with the repos it worked in in the session view and the filter, which replaces W34's listing under those repos, its start label and its distinct counts (W39), then roots as tabs: with two or more roots, a tab per root in the header, each narrowing the columns to its root, with its own place, and a need-you badge on the tabs that aren't open (W38). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -508,7 +508,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | **three columns** | `(min-width: 1200px)` | The session view is the third column. Below it, the view overlays the session list, below the header, and the list is inert while it's open |
 | **overlay clears the sidebar** | `(min-width: 1000px)`, from `layout.ts` | Below it, in the sidebar layout, the view over the list reaches into the repo list, which is inert while it's open too. 1,000 px is `--pw-sidebar-w` plus `--pw-panel-w` |
 | **sidebar** | `(min-width: 900px)` | The repo list sits beside the session list. Below it, the repo list is a drawer opened from the header |
-| **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark; the session list's header wraps; the overlay session view is full width, with Back; toasts are full width |
+| **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark (and the root tabs, which by then are usually under it too); the session list's header wraps; the overlay session view is full width, with Back; toasts are full width |
 | **short** | `(max-height: 760px)` | The session view's footer padding tightens and the latest reply shows two lines, not three |
 | **low** | `(max-height: 480px)` | The page scrolls as a whole, header and all, so the lists keep their room on a phone held sideways or at 200 % zoom on a laptop. The session view, as the third column or over the list, sticks to the top of the window, one window tall |
 
@@ -646,7 +646,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ```
 ┌─ app strip, 32 px, only while the relay is off ───────────────────────────────────────────┐
 ├─ header, 52 px ───────────────────────────────────────────────────────────────────────────┤
-│ pitwall  ~/git, ~/work                            [+ New session]  ● Live  7s ago  ◐  ⌨   │
+│ pitwall  ~/git                                    [+ New session]  ● Live  7s ago  ◐  ⌨   │
 ├─ repo list, 240 px ─┬─ session list (≥ 360 px) ─────────────┬┬─ session view ─────────────┤
 │ Needs you       [2] │ ⑂ pitwall      4 sessions [2 need you] ││ name · title        ⋯  ✕  │
 │ All sessions     12 │ [Filter sessions   /] [Interactive]    ││ badge · kind · 5m · cwd   │
@@ -659,6 +659,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 └─────────────────────┴────────────────────────────────────────┴┴───────────────────────────┘
 ```
 
+- **With two or more roots,** the header's root is a tab per root, and the three columns are the open tab's: see [Root tabs](#root-tabs).
 - **The page doesn't scroll.** The app is `height: 100dvh`, a grid of the strip, the header and the columns. The repo list, the session list's rows and the session view's body each scroll on their own. The header, the session list's header, and the session view's header, tabs and footer stay put.
 - **Full width.** No centred max-width column. The session list takes whatever the other two columns leave.
 - **The list is for scanning; the session view is for reading.** A row is two lines at most. A session's replies, its relay exchanges, its attach command and the message box are in the session view, one click away.
@@ -669,21 +670,44 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 - **Left:**
   - Below the sidebar breakpoint (900 px), a ghost md `menu` icon button, "Repos", that opens the [repo list](#repo-list) as a drawer.
   - The wordmark "pitwall" (l 16/24, 600).
-  - The roots: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full list in a tooltip.
+  - With one root, the root: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full path in a tooltip, exactly as before there were tabs.
+  - With two or more, a tab per root in its place: see [Root tabs](#root-tabs).
 - **Right, 12 px apart:** New session (primary, md, `add` icon, with `n` in its tooltip); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular, a [timestamp](#timestamps) with the absolute time in its tooltip); the theme switch; the keyboard shortcuts button (ghost md `keyboard` [icon button](#icon-buttons), "Keyboard shortcuts", with `?` in its tooltip), which opens the [keyboard shortcuts dialog](#keyboard-shortcuts-dialog).
   - The shortcuts button is there from the first render, before the first snapshot, and stays while the single-key shortcuts are off, so they can be turned back on.
   - New session says its key in `aria-keyshortcuts="n"` while the single-key shortcuts are on. The shortcuts button has none: ARIA 1.2 wants the keys as pressed, modifiers and all, and `?` is Shift and a key that differs by keyboard layout (`/` on a US one), so no value is right everywhere. Its tooltip's key cap and the dialog's map say it.
 - **Compact (≤ 600 px):** the right side wraps under the wordmark, and the header grows to fit.
 
+### Root tabs
+
+Phil runs pitwall over two folders of repos and wants both in one window (W38). One pitwall watching several roots, with a tab per root, was chosen over two pitwalls, which double the polling, scanning and relays, and over one page showing other pitwalls, which would need each one's token and a looser CSP. There's no All roots tab: a several-root pitwall without tabs was that view.
+
+- **When:** two or more roots. With one, the header is as above, with no tabs, and the URL names no root.
+- **The tabs:** one per root, in the order pitwall was given them, after the wordmark, in a [tablist](#tabs) named "Roots". Each is labelled with its root's path, home as `~`, with the full path in a tooltip that describes the tab. They use the root tabs' look in [Tabs](#tabs).
+- **What the open tab narrows to its root:** the repo list (Needs you, All sessions and their counts, the groups, and the Hidden section and its badge), the session list and its summary, the filter, `j` and `k`, and the New session dialog's directories (see [Dialogs](#dialogs)). The columns are the open tab's `role="tabpanel"`, named by its tab.
+  - **Which root is a session's:** the index's, never the page's. A group's `SessionGroup.root` is the root the index put it under, the longest configured root that holds its directory (`matchRoot()` in `src/index/roots.ts`). So with one root inside another, the inner root's sessions are in its tab alone, and the outer root's tab never lists them.
+  - A tab's Needs you and All sessions are the sessions its groups list. Each session is in one group, the one it started in (W39), so it's in one tab, and the tabs' counts add up to every root's.
+- **What stays the whole page's:** the header's other controls, the page alerts, the app strip, the toasts, the Sort setting, the single-key shortcuts setting, the session view's width, and the document title's count.
+- **The badge:** a tab that isn't open carries a solid warning need-you [badge](#badges) after its label, 6 px from it, whenever any session under its root needs you: the sum of its groups' badges, since each session is in one group, as the Hidden section's is. It's in the tab's name ("~/work, 2 need you"), so nothing that needs you is out of sight in a tab that isn't open. The open tab has none: its repo list's Needs you says the same, just below, and the document title counts every root's.
+- **Each tab keeps its own place:** its selection, its open session and its filter, for the page's life. Switching back shows them again.
+  - The open session views of the tabs that aren't open stay mounted, `hidden`, so switching never detaches an attached terminal (D9's limit of four counts across tabs), never drops a message box's draft, and never stops a send, or a Stop or Remove, in flight; its result shows when the tab is back. A hidden view has no `id`, so rows' `aria-controls` name only the one shown, and Escape isn't its. Its conversation keeps the reader's place, as behind the Terminal tab.
+  - A session started from a tab that's been left by the time it's listed opens in that tab, for when it's back, unless the view open there has a draft or a running action.
+- **The URL:** the selection's `&root=<root>` names the open tab, for the views as well as a group: `?view=all&root=/Users/example/work`. Switching pushes one history entry, with the tab's selection and open session; the back button switches back.
+  - A URL to a group or session in another root opens its tab: a group by its root, or, without one, by the first group with its key; `?session=` with no selection by the group it selects ([Repo list](#repo-list)). A URL with a root pitwall doesn't watch, or none, opens the stored tab, or the first, and is replaced to match.
+  - A root with no sessions keeps its tab, with the usual "No Claude Code sessions under *root*" empty state.
+- **Storage:** the open tab, as its root's path alone, in `localStorage` as `pitwall.root-tab.v1`, for a URL with no selection, such as the one the CLI opens. Missing, throwing or empty storage, or a root pitwall no longer watches, opens the first root's tab, as `pitwall.view.v1` falls back (W38).
+- **The page title** names the open tab's root after the count: "(3) pitwall · ~/work". The count is every root's, each session once, so the browser's tab shows what needs you anywhere.
+- **Focus:** opening a tab leaves focus on it. When the back button switches tabs with focus in what that hides, the last tab's session view, or with focus dropped to the page, it goes to the open tab. Everything else, F6, `/`, `n`, `?` and `j`/`k`, works as before, in the open tab.
+- **Widths:** with tabs, the header wraps whenever its line has no room, at any width, not only at 600 px and narrower. First the right side goes under the wordmark and the tabs; then the tabs go under the wordmark, and wrap among themselves; only a tab wider than a whole line is cut, in the middle, its last segment kept. So at 320 px, and 200 % zoom, every tab and every badge is in sight, and nothing scrolls sideways. A select or a menu of roots would hide the badges of the roots not chosen, and a tab strip that scrolls would hide the tabs past its edge, so neither keeps what needs you in sight; and labels stay whole as long as they can, since cut paths such as `~/wo…/git` and `~/pe…/git` are harder to tell apart. One line holds at 52 px, with 12 px above and below.
+
 ### Repo list
 
 - **Fill and size:** `--pw-bg`, `--pw-sidebar-w` (240 px) wide, a right `1px solid var(--pw-border)`, padding 8 px. It scrolls on its own.
 - **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of the two views, an `<hr>` divider, then a `<ul>` of [repo list items](#repo-list-items) for each root's groups, then, while any group is hidden, another `<hr>` and the [Hidden section](#hidden-groups).
-  - With more than one root, each root's `<ul>` is labelled by its path (`aria-labelledby`). The path is a label, not a heading element, so the outline stays as [6.1](#61-rules) has it.
+  - With two or more roots, it's the open [root tab](#root-tabs)'s: that root's groups and hidden groups alone, under no heading, since the tab names the root.
 - **Contents, top to bottom:**
-  1. Two views: "Needs you", every session that needs you under any root, and "All sessions".
+  1. Two views: "Needs you", every session that needs you under the root (the open tab's, with several), and "All sessions".
   2. A 1 px `--pw-border` divider, 8 px above and below.
-  3. Every group: a git repo, or a directory that isn't in one. With more than one root, each root's groups sit under a heading: the root's path, label style, `--pw-text-subtle`, home as `~`.
+  3. Every group: a git repo, or a directory that isn't in one.
   4. While any group is hidden, the same divider, then the [Hidden section](#hidden-groups): "Hidden (*n*)", collapsed by default, listing the hidden groups.
 - **Hiding a group** (Phil, 2026-10-21, W35): any group, a git repo or a directory, the root's own included, can be hidden from the list with the session list header's Hide from repo list (see [Session list](#session-list)), and shown again there or from the Hidden section. Needs you and All sessions can't be.
   - It takes out only that group's item. Its sessions still show in the group, Needs you and All sessions, with line 2 naming their group as before; the views' counts, the other groups' counts, the document title's and the session view's "Started in … · worked in …" line don't change.
@@ -705,10 +729,10 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
   - Choosing an item closes it. Escape, or a click on the backdrop, closes it and returns focus to the menu button.
 - **The selection is in the URL:** `?view=needs-you`, `?view=all`, or `?repo=<key>`.
-  - The group's key, plus `&root=<root>` when pitwall watches more than one root, since a worktree's group can share its main repo's key under another root. Stable across reloads, and readable: `/`, `~`, `:`, `@` and `,` aren't escaped. Never the token.
+  - The group's key, plus `&root=<root>` when pitwall watches more than one root, since a worktree's group can share its main repo's key under another root. With more than one, the views name their root too, which is the open [root tab](#root-tabs). Stable across reloads, and readable: `/`, `~`, `:`, `@` and `,` aren't escaped. Never the token.
   - Other parameters, such as `?session=`, are kept as the selection changes.
   - Choosing pushes a history entry; `popstate` makes the columns match the URL.
-  - A URL with no selection uses the last one, saved in `localStorage` as `pitwall.view.v1`, or All sessions the first time, and replaces the URL to match.
+  - A URL with no selection uses the last one, saved in `localStorage` as `pitwall.view.v1`, or All sessions the first time, and replaces the URL to match. With root tabs, the stored tab, `pitwall.root-tab.v1`, picks the tab, and the stored selection is used when it's that tab's.
   - Loading `?session=` with no selection selects the group that session started in, its only one.
   - A hidden group is selected as any other, from a link, the URL or its entry in the Hidden section, and its sessions show as usual.
   - A selected group that leaves the snapshot stays selected, with the "No sessions in *group* now" empty state (see [Empty states](#empty-states)). That includes a saved selection in `pitwall.view.v1` whose group has since emptied, the root's own directory included, once no session started there is listed.
@@ -720,7 +744,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 - **Header** (padding 12 px 16 px, a bottom `--pw-border`):
   - **Line 1:**
     - The selection's name, as the column's `<h2>` (l 16/24, 600).
-      - A group shows its kind icon and label, plus "in *root*" (meta, `--pw-text-subtle`) when pitwall watches more than one root.
+      - A group shows its kind icon and label. With two or more roots, the open [root tab](#root-tabs) says which root it's under, so the heading doesn't (until W38, it added "in *root*").
       - The views show "Needs you" or "All sessions".
     - At the right, the summary: "4 sessions", or "2 of 4 sessions" while the filter hides some, then a solid warning "2 need you" badge, or " · Nothing needs you" in meta text. The counts are the selection's; Needs you never counts a finished session.
     - **For a group** (W35), after the summary, 8 px from it: Hide from repo list, a ghost sm `hide` [icon button](#icon-buttons) named by its tooltip. For a hidden group it's Show in repo list, with the `show` icon, in the same place. sm is 24 px, the line's height, so the header is as tall for a group as for a view.
@@ -742,6 +766,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - **A group:** its unfinished sessions, then its [Finished section](#finished-section).
   - **Needs you:** every session that needs you, from every group. Each is in one group, so each shows once. There's no Finished section, because a finished session never needs you.
   - **All sessions:** every unfinished session from every group, each once, then one Finished section for all of them.
+  - With two or more roots, "every group" is the open [root tab](#root-tabs)'s.
   - The summary's counts, and the document title's, count each session once. A group's summary is its sessions, the ones started in it, as its repo list item says.
 - **Live updates:** each snapshot updates rows in place. If it would reorder rows (under Urgency or Recent) while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it.
   - Added and removed rows apply at once: a new row goes in after the row it follows in the new order, or first. A session that leaves the selected group, as one does when it's no longer listed, leaves at once too. A scan that finds the repos a session worked in never moves it.
@@ -878,6 +903,17 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
   - "Needs you" is a view in the [repo list](#repo-list), replacing today's "Needs attention only" checkbox, and finished sessions have their own [section](#finished-section), so neither is a chip.
   - A ghost sm "Clear filters" button appears after the chips, inside their group so it wraps with them, when any chip is on or the field has text. It clears the text and the chips, and puts focus in the field, since the button itself goes away.
 
+### Tabs
+
+A row of tabs that switches what's below them: the session view's Conversation and Terminal (see [Session view: header, tabs and footer](#session-view-header-tabs-and-footer)), and the header's [root tabs](#root-tabs) (W38). One pattern, `web/src/tabs.ts`, with a look for each place.
+
+- **ARIA:** `role="tablist"`, named (`aria-label`); each tab a `<button role="tab">` with `aria-selected` and `aria-controls`; the panel `role="tabpanel"` with `aria-labelledby` the open tab. The root tabs all control one panel, the columns, which the open tab names.
+- **Keys:** the tablist is one Tab stop, the open tab's (roving `tabindex`). ← and → move focus to the previous and next tab, wrapping at the ends; Home and End to the first and last. A key with ⌘, Ctrl, Alt or Shift is left alone, so Alt + ← still goes back.
+- **Opening is manual,** never on focus: Enter, Space or a click opens the focused tab, and focus stays on it. Opening Terminal attaches, and opening a root tab changes all three columns and adds a history entry, neither of which an arrow key should do.
+- **What a tab carries:** its label, then, where it has one, a badge or a dot, whose meaning is in the tab's name as visually hidden text (", attached", ", 2 need you").
+- **The session view's look:** 28 px tall, padding 4 px 8 px, m 14/20, 500, a 16 px icon; inactive `--pw-text-muted` with a `--pw-surface-hover` fill on hover; open `--pw-text` with a 2 px `--pw-text` underline on the row's bottom edge.
+- **The root tabs' look:** path type, as the root was (xs 12/20, mono, ligatures off), at least 28 px tall (`--pw-control-md`), padding 4 px 8 px, `--pw-radius-md`, 4 px apart, wrapping. Inactive: `--pw-text-muted`, no fill; hover `--pw-surface-hover-bg`, on the header's `--pw-bg`, with `--pw-text`. Open: the selected repo list item's look, `--pw-selected` with `--pw-ring-selected`, `--pw-text` at 500. An underline would sit on no shared edge once the tabs wrap. Focus: `--pw-ring-focus`, with the ring when open. The need-you badge keeps the badges' own type and is never cut; the label gives way first, with a middle ellipsis.
+
 ### Badges
 
 - **Shape:** 20 px tall, min-width 20 px, padding 0 6 px, `--pw-radius-sm`, label style (xs 12/20, 500), tabular numbers, `white-space: nowrap`.
@@ -995,7 +1031,7 @@ The groups hidden from the [repo list](#repo-list) (W35), at its foot, after the
   - A repo list item's box: full width, at least 32 px tall, padding 6 px 8 px, `--pw-radius-md`; the Finished toggle's type: meta (s 13/20), 500, `--pw-text-muted`, tabular; the `expand` icon before the label, 6 px from it, rotating 90° when open. Hover: `--pw-surface-hover-bg` in the sidebar and `--pw-surface-hover` in the drawer, text `--pw-text`. Focus: `--pw-ring-focus`, which the list's 8 px padding has room for.
   - It carries the solid warning need-you badge at the right whenever any session in a hidden group needs you, open or closed, with the hidden noun ("2 need you"), so nothing that needs you is out of sight. It's the sum of the hidden groups' badges, since each session is in one group.
   - Collapsed by default. Its own Tab stop, outside the list's one; Enter or Space toggles it, and focus stays on it.
-- **Opened,** it lists each hidden group, in the list's order, under its root's path when pitwall watches more than one root, as the list does. Each entry is a row, 4 px between its two controls:
+- **Opened,** it lists each hidden group, in the list's order: with two or more roots, the open [root tab](#root-tabs)'s alone, and its count and badge are theirs. Each entry is a row, 4 px between its two controls:
   1. A link, `<a href="?repo=…">`, that selects the group, so its sessions show in the session list as usual: a [repo list item](#repo-list-items), with its kind's icon, label, hidden kind and its count or need-you badge as the list shows them, but its label in `--pw-text-muted` (`--pw-text` and 500 while it's the selection, which it marks with `aria-current="page"` and the selected look). In the drawer, choosing it closes the drawer, as any item does.
   2. Unhide: a ghost sm `show` icon button, named "Unhide *group*" by its tooltip, so each one says which group it shows again. An icon, not a text button, because the sidebar is 240 px and a text label would leave the group's label a few characters.
   - Both are Tab stops; ↓ and ↑ don't reach them.
@@ -1049,9 +1085,7 @@ The groups hidden from the [repo list](#repo-list) (W35), at its foot, after the
 - **"Conversation"** (`conversation`) and **"Terminal"** (`terminal`).
   - An interactive session's Terminal tab is `aria-disabled`, with a tooltip saying it can't be attached and how `/bg` changes that, which describes the tab (`aria-describedby`), so it's in the DOM before it shows. So is a background session's when the app can't attach, or once it's no longer listed. Activating a disabled tab does nothing.
   - While attached, the Terminal tab shows an 8 px `--pw-success-fg` dot after its label, and a visually hidden ", attached".
-- **ARIA:** `role="tablist"` with `aria-label="Session view"`, `role="tab"` with `aria-selected` and `aria-controls`, `role="tabpanel"` with `aria-labelledby`. Roving `tabindex`.
-  - ← and → (and Home, End) move focus between tabs; Enter or Space opens one.
-  - Opening is manual, never on focus, because opening Terminal attaches.
+- **ARIA and keys:** the [Tabs](#tabs) pattern, with `aria-label="Session view"`. Opening is manual, never on focus, because opening Terminal attaches.
 - **Switching** from Terminal to Conversation detaches, as Detach does. Opening Terminal attaches; for a session that isn't running it first shows the restart confirmation, which the server asks for when the socket opens (D9).
   - Detach, Back to the conversation and the restart's Cancel go back to Conversation, with focus on the Terminal tab. F6 in the terminal moves focus to the Terminal tab too, but leaves the terminal open and attached.
   - Back on Conversation, the conversation is where it was left: at the bottom if it was there, with what arrived meanwhile; otherwise at the same place, with what arrived counted on the "Jump to latest" bar. Its panel is `hidden` behind the Terminal tab, which leaves it no size and lets the browser drop its scroll position, so nothing counts as the reader moving while it's hidden, and it's put back before it's painted.
@@ -1259,6 +1293,7 @@ For a destructive or surprising action in the session view, without a dialog.
 
 - **Fields:**
   - Directory: a select of the groups' directories, plus "Another directory under a root…", which reveals a mono path field. Help text: "Under *roots*.", linked to both.
+    - With [root tabs](#root-tabs), the open tab's root alone: its groups' directories, then its root, and "Under *root*.". A typed directory must be in that tab, under its root and under no other root inside it, where the index would list the session: "Use a directory under ~/work. ~/personal has its own tab." (W38).
   - Name: optional, placeholder "Claude Code names it from the prompt".
   - Model: optional; a select of Default, the aliases, and "Other…", which reveals a mono field.
   - First prompt: a textarea, 6 rows.
@@ -1499,7 +1534,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - Visible labels start with the accessible name, so voice control works.
 6. **Structure:**
    - One `<h1>` (the wordmark); the session list's title `<h2>`; session names in rows `<h3>`; the session view's title `<h2>`. Headings in messages are styled text, not headings (see [Markdown in messages](#markdown-in-messages)).
-   - Landmarks: `<header>`, `<nav aria-label="Repos">` (the repo list), `<main>` (the session list) and the session view.
+   - Landmarks: `<header>`, `<nav aria-label="Repos">` (the repo list), `<main>` (the session list) and the session view. With [root tabs](#root-tabs), the columns that hold the last three are the open tab's `tabpanel`.
    - The filter is in `role="search"`.
 7. **The session view's semantics:**
    - As the third column, a `<section aria-labelledby>` region.
@@ -1512,12 +1547,13 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - A focused row that a snapshot takes out of the list, such as a session that moved to its repos, hands focus to the row that took its place, or the one before it, or the session list's heading (see [Session list](#session-list)).
    - Choosing in the repo list leaves focus there; in the drawer, focus moves to the session list's heading.
    - Hide from repo list and Show in repo list keep focus: it's the same button with its other name. Show in repo list for a group in no snapshot takes its button away, so focus goes to the session list's heading. Unhide in the Hidden section moves focus to the group's item, back in the list, or for a group with no sessions to the next Unhide, the one before, or the list's Tab stop (see [Hidden groups](#hidden-groups)). A focused repo list item that leaves the list hands focus to the one that took its place, or the one before it.
+   - Opening a [root tab](#root-tabs) leaves focus on it. The back button switching tabs with focus in what that hides moves focus to the open tab.
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
 9. **Announcements:**
    - The connection badge is `role="status"`.
    - Results the user asked for are announced: send results, stop and remove results, copy. Stop, remove, copy and a started session are toasts, announced by the toasts' live region, which is always in the DOM.
    - Snapshot updates, ticking times and the list's re-sorting are never announced. The one exception is the conversation's count of new entries while you're scrolled up ("3 new"), once per batch (see [Conversation](#conversation)).
-   - The document title carries the count: "(2) pitwall".
+   - The document title carries the count: "(2) pitwall". With [root tabs](#root-tabs), the open tab's root follows: "(2) pitwall · ~/work"; the count is still every root's.
 10. **Forms:**
     - Every control has a label.
     - Errors appear after the first submit, are linked with `aria-describedby`, and focus moves to the first one.
@@ -1528,7 +1564,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 14. **The terminal** isn't a keyboard trap: F6 leaves it.
 15. **Single-key shortcuts** can be turned off, and are ignored while typing (see below).
 16. **Text is text:** session names, titles, prompts, replies and server messages render as plain text, never HTML. Markdown in Claude's messages and other sessions' renders as pitwall's own elements, each piece of its text a text node, never as HTML (see [Markdown in messages](#markdown-in-messages)).
-17. **Forced colours** (Windows' contrast themes, `@media (forced-colors: active)`): the browser drops every box-shadow and forces every colour that isn't a system colour. So what a shadow or a fill says is drawn again there, in system colours (W31): the open row as a 2 px `Highlight` outline; a chip's edge as a 1 px `ButtonText` border, 2 px `Highlight` while pressed; the selected repo item and the theme switch's selected option as a 2 px `Highlight` border; the open tab's underline and the divider's line in `Highlight` and `CanvasText`; the session view over the list, the drawer, dialogs, menus, toasts and tooltips with a 1 px `CanvasText` edge; and fields, buttons with an edge, inline alerts, confirmations and the Jump to latest bar with a 1 px `ButtonText` border. Code blocks, tables and quotes in messages are drawn with real borders, which forced colours keep, and links in messages, in text and in code, take the system's link colour and keep their underline. A state is a border where its element can also take focus, so the focus outline still shows; padding gives back what a border takes. `web/src/forcedColors.test.tsx` checks the rules use only system colours.
+17. **Forced colours** (Windows' contrast themes, `@media (forced-colors: active)`): the browser drops every box-shadow and forces every colour that isn't a system colour. So what a shadow or a fill says is drawn again there, in system colours (W31): the open row as a 2 px `Highlight` outline; a chip's edge as a 1 px `ButtonText` border, 2 px `Highlight` while pressed; the selected repo item, the open root tab and the theme switch's selected option as a 2 px `Highlight` border; the open tab's underline and the divider's line in `Highlight` and `CanvasText`; the session view over the list, the drawer, dialogs, menus, toasts and tooltips with a 1 px `CanvasText` edge; and fields, buttons with an edge, inline alerts, confirmations and the Jump to latest bar with a 1 px `ButtonText` border. Code blocks, tables and quotes in messages are drawn with real borders, which forced colours keep, and links in messages, in text and in code, take the system's link colour and keep their underline. A state is a border where its element can also take focus, so the focus outline still shows; padding gives back what a border takes. `web/src/forcedColors.test.tsx` checks the rules use only system colours.
 
 ### 6.2 Keyboard map
 
@@ -1554,11 +1590,12 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 | Escape | Layered, nearest first | Close a tooltip or menu (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
 | ⌘/Ctrl + Enter | The message box | Send |
 | ⌘/Ctrl + Enter | The New session dialog | Start the session |
-| ← / →, Home / End | The tab list | Move focus between Conversation and Terminal; Enter or Space opens the focused tab |
+| ← / →, Home / End | The root tabs, with two or more roots | Move focus between the roots' tabs; Enter or Space opens the focused tab, with its own selection and open session |
+| ← / →, Home / End | The session view's tabs | Move focus between Conversation and Terminal; Enter or Space opens the focused tab |
 | ← / →, Home / End | The divider | Resize the session view by 16 px; jump to the minimum or maximum |
 | ↑ / ↓, Home / End, Enter, Escape | An open menu | Move, jump, activate, close |
 | F6 | The terminal | Leave the terminal, to the Terminal tab |
-| Tab / Shift + Tab | Everywhere but the terminal | Header → repo list → session list (header, rows) → session view (header, tabs, body, footer). Below 1,200 px with a session open, the session list is skipped, and below 1,000 px the repo list too: the view covers them, and they're inert |
+| Tab / Shift + Tab | Everywhere but the terminal | Header (with root tabs, the open tab, then New session and the rest) → repo list → session list (header, rows) → session view (header, tabs, body, footer). Below 1,200 px with a session open, the session list is skipped, and below 1,000 px the repo list too: the view covers them, and they're inert |
 
 - **The repo list's Hidden section** is outside its single Tab stop: Tab reaches the "Hidden (*n*)" toggle, then, while it's open, each hidden group's link and Unhide button. ↓, ↑, Home and End keep to the list's own items.
 - **"Next" and "previous"** follow the session list's visible order, including an order that's being held while focus or the pointer is in the list. Rows in a closed Finished section and rows hidden by the filter are skipped, and it stops at either end without wrapping.

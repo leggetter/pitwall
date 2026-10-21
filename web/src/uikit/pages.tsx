@@ -40,6 +40,8 @@ import {
   SERVICE_DIR,
   snapshot,
   STATUS_ROWS,
+  THIRD_ROOT,
+  THREE_ROOTS_SNAPSHOT,
   TWO_ROOTS_SNAPSHOT,
   API_DIR,
   WORKED_FROM_ROOT,
@@ -230,7 +232,18 @@ const PAGES: PageCase[] = [
   },
   { title: 'A group', search: repo(APP_DIR), view: { state: 'live', snapshot: LIST_SNAPSHOT } },
   { title: 'Needs you', search: '?view=needs-you', view: { state: 'live', snapshot: LIST_SNAPSHOT } },
-  { title: 'Two roots', note: 'A group under the second root.', search: repo(SERVICE_DIR, OTHER_ROOT), view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT } },
+  {
+    title: 'Two roots',
+    note: 'A tab per root in the header. ~/work is open, with a group under it selected: the repo list, its counts and the session list are ~/work’s alone. ~/code’s tab carries its need-you badge.',
+    search: repo(SERVICE_DIR, OTHER_ROOT),
+    view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT },
+  },
+  {
+    title: 'Three roots, one with no sessions',
+    note: '~/personal is open and has no sessions, so it keeps its tab, with the usual empty state, naming its root. Switch tabs to see each keep its own selection and open session.',
+    search: `?view=all&root=${THIRD_ROOT}`,
+    view: { state: 'live', snapshot: THREE_ROOTS_SNAPSHOT },
+  },
   {
     title: 'Each session in one group',
     note: 'pitwall-test-api selected: only the session started in it. Two others worked in it, and are listed where they started, pitwall-test-app and ~/code. pitwall-test-docs, where sessions only worked, has no group.',

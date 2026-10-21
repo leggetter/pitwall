@@ -29,26 +29,38 @@
 // shown. shortcuts.ts says which key is which, and when a key isn't one, such as while typing; here,
 // they act only on this dashboard's keys, never over a dialog or the repo drawer, and only while
 // they're on. One that moves focus closes an open menu first.
+//
+// With two or more roots, the header has a tab per root (W38, rootTabs.ts), and the open tab narrows
+// the repo list, the session list, the filter, `j` and `k`, and the New session dialog to its root.
+// Each tab keeps its own place, its selection, its open session and its filter, and the open session
+// views of the tabs that aren't open stay mounted, hidden, so switching never detaches a terminal,
+// drops a draft, or stops a send or an action in flight. The header, the page alerts, the app strip,
+// the toasts, the Sort setting and the document title's count are the whole page's. Switching tabs
+// pushes one history entry, with the tab's selection and open session; the back button switches back.
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
-import { formatRoots, plainText } from '../format.js';
+import { formatRoots, plainText, shortenHome } from '../format.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
-import { useOpenSession } from '../openSession.js';
+import { useOpenSession, withSession } from '../openSession.js';
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
+import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
 import {
-  ALL_SESSIONS,
   browserNavigation,
   findGroup,
   finishedStateId,
+  sameSelection,
   scopeFor,
   selectionHref,
   selectionName,
   useSelection,
+  viewIn,
+  withSelection,
+  writeStoredSelection,
   type NavigationEnv,
   type Selection,
 } from '../selection.js';
@@ -62,6 +74,7 @@ import {
   NO_FILTERS,
   noMatchText,
   sessionsIn,
+  startGroup,
   startLabel,
   workedInLabels,
   type Filters,
@@ -154,8 +167,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const { layout, compact, overlayCoversRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
   const [panelWidth] = useState(() => createPanelWidthStore(storage));
-  const [selection, choose] = useSelection(snapshot, { navigation, storage });
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  // With two or more roots, `tab` is the open root tab: the selection's root (W38).
+  const [selection, choose, { tab, follow: followSelection }] = useSelection(snapshot, { navigation, storage });
+  // Each root tab's own filter; with one root, the one filter.
+  const [filtersByTab, setFiltersByTab] = useState<ReadonlyMap<string, Filters>>(() => new Map());
+  const filterKey = tab ?? '';
+  const filters = filtersByTab.get(filterKey) ?? NO_FILTERS;
+  const setFilters = useCallback((next: Filters) => setFiltersByTab((current) => new Map(current).set(filterKey, next)), [filterKey]);
   // Urgency, Recent or Name, for every selection.
   const [sort, setSort] = useSort(storage);
   // Each selection's Finished section starts collapsed, and is remembered.
@@ -172,39 +190,67 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const filterField = useRef<HTMLInputElement>(null);
   const shortcuts = useShortcutsStore();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  // Whether the open session's message box has a draft: no shortcut replaces or closes the view then,
-  // just as Escape doesn't (6.2).
-  const draft = useRef(false);
-  // Whether the open session's Stop or Remove is running: j, k, ↑ and ↓ wait for it, so its result isn't moved away from (6.2).
-  const actionRunning = useRef(false);
-  /** Whether changing the open session now would lose something: a draft, or a running action's place. */
-  const holding = () => draft.current || actionRunning.current;
+  // Which open session views have a draft in the message box: no shortcut replaces or closes the view
+  // then, just as Escape doesn't (6.2). By session, since each root tab keeps its view (W38).
+  const drafts = useRef(new Map<string, boolean>());
+  // Which have a Stop or Remove running: j, k, ↑ and ↓ wait for it, so its result isn't moved away from (6.2).
+  const running = useRef(new Map<string, boolean>());
+  const hasDraft = (sessionId = openId) => sessionId !== undefined && (drafts.current.get(sessionId) ?? false);
+  /** Whether changing a session's view now would lose something: a draft, or a running action's place. The open one's, by default. */
+  const holding = (sessionId = openId) => hasDraft(sessionId) || (sessionId !== undefined && (running.current.get(sessionId) ?? false));
 
   // Before the first snapshot: the skeletons after --pw-delay-spinner, and what's slow after --pw-delay-long.
   const waiting = useWaiting(app, snapshot === undefined);
   const slow = slowFirstSnapshot(state);
 
+  // Every root's groups, and the open root tab's alone (W38): those the index put under its root.
   const groups = snapshot?.groups ?? [];
   const roots = snapshot?.roots ?? [];
-  // Each session is in one group, the one it started in (W39).
-  const allSessions = useMemo(() => sessionsIn(groups), [groups]);
-  const attention = countAttention(allSessions);
+  const shownGroups = useMemo(() => tabGroups(groups, tab), [groups, tab]);
+  // Each session is in one group, the one it started in (W39), and so in one root tab.
+  // Every root's, for the open session and the document title; the open tab's, for the lists.
+  const everySession = useMemo(() => sessionsIn(groups), [groups]);
+  const allSessions = useMemo(() => (tab === undefined ? everySession : sessionsIn(shownGroups)), [tab, everySession, shownGroups]);
+  const attention = countAttention(everySession);
   const selectedGroup = findGroup(groups, selection);
   // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
+  // The repo list shows the open tab's.
   const hidden = useHiddenGroups(roots, storage);
+  const shownHidden = tab === undefined ? hidden.groups : hidden.groups.filter((group) => group.root === tab);
   const selectedHidden = 'view' in selection ? undefined : hidden.find(selection.repo, selection.root);
-  const scope = scopeFor(groups, selection);
-  const listed = useMemo(() => (scope ? listScope(groups, scope, sort) : { current: [], finished: [] }), [groups, scope?.kind, selectedGroup, sort]);
+  const scope = scopeFor(shownGroups, selection);
+  const listed = useMemo(() => (scope ? listScope(shownGroups, scope, sort) : { current: [], finished: [] }), [shownGroups, scope?.kind, selectedGroup, sort]);
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
   const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
   // What pitwall last knew of each session, for one that leaves the snapshot while it's open, or that
   // the back button returns to: the view keeps showing it, and says it's no longer listed.
   const known = useRef(new Map<string, SessionSummary>());
   useEffect(() => {
-    for (const session of allSessions) known.current.set(session.sessionId, session);
-  }, [allSessions]);
-  const listedOpen = openId === undefined ? undefined : allSessions.find((session) => session.sessionId === openId);
+    for (const session of everySession) known.current.set(session.sessionId, session);
+  }, [everySession]);
+  const listedSession = (sessionId: string) => everySession.find((session) => session.sessionId === sessionId);
+  const listedOpen = openId === undefined ? undefined : listedSession(openId);
   const shownOpen = listedOpen ?? (openId === undefined ? undefined : known.current.get(openId));
+
+  // Each root tab's place, its selection and its open session, as it was last left (W38). The open
+  // tab's is the URL's; the others' are kept here for switching back, and their open session views
+  // stay mounted, hidden.
+  const [places, setPlaces] = useState<ReadonlyMap<string, { selection: Selection; session: string | undefined }>>(() => new Map());
+  useEffect(() => {
+    if (tab === undefined) return;
+    setPlaces((current) => {
+      const was = current.get(tab);
+      if (was && was.session === openId && sameSelection(was.selection, selection)) return current;
+      return new Map(current).set(tab, { selection, session: openId });
+    });
+  }, [tab, selection, openId]);
+  /** Closes a tab's open session while that tab isn't open, as a Remove that finished there does. */
+  const closeIn = useCallback((root: string) => {
+    setPlaces((current) => {
+      const was = current.get(root);
+      return was && was.session !== undefined ? new Map(current).set(root, { ...was, session: undefined }) : current;
+    });
+  }, []);
   // Below 1,200 px the open session's view covers the session list, and below 1,000 px part of the
   // repo list beside it too (3: Session view). What it covers is inert while it's open, so nothing
   // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
@@ -214,15 +260,24 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const [newSession, setNewSession] = useState(false);
   // Its view takes no focus, unless focus has nowhere to be: started from the no-sessions empty state,
   // whose New session button goes as the session is listed, focus would otherwise be left on the page.
+  // Started in a root tab that has since been left, it opens there instead, for when that tab is back,
+  // unless the view open there has a draft or a running action, which it would replace (W38).
   const openStarted = useCallback(
     (session: SessionSummary) => {
+      const root = startGroup(groups, session)?.root;
+      if (tab !== undefined && root !== undefined && root !== tab) {
+        const there = places.get(root)?.session;
+        if (there !== undefined && holding(there)) return;
+        setPlaces((current) => new Map(current).set(root, { selection: current.get(root)?.selection ?? viewIn('all', root), session: session.sessionId }));
+        return;
+      }
       const active = document.activeElement;
       if (active === null || active === document.body) focusView.current = { id: session.sessionId, on: 'heading' };
       opened.open(session.sessionId);
     },
-    [opened.open],
+    [opened.open, groups, tab, places],
   );
-  const started = useOpenWhenListed(allSessions, openStarted);
+  const started = useOpenWhenListed(everySession, openStarted);
 
   // The view's heading, which takes focus when a session is opened from a row or the view's header;
   // or its conversation, when `j` or `k` was pressed there, so ↑ and ↓ go on scrolling it.
@@ -347,10 +402,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   }, [openId, opened.close]);
 
   const previousOpen = useRef(openId);
+  // The root tab the previous render showed: a session that goes with its tab hasn't been closed.
+  const previousTab = useRef(tab);
   useEffect(() => {
     const was = previousOpen.current;
     previousOpen.current = openId;
-    if (was === undefined || openId !== undefined) return;
+    const switched = previousTab.current !== tab;
+    previousTab.current = tab;
+    if (was === undefined || openId !== undefined || switched) return;
     const asked = returnFocus.current === was;
     returnFocus.current = undefined;
     const instead = focusAfterClose.current;
@@ -371,14 +430,47 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     // Over the list, wait a frame, so the row is there to take it.
     const frame = requestAnimationFrame(restore);
     return () => cancelAnimationFrame(frame);
-  }, [openId, layout]);
+  }, [openId, layout, tab]);
 
+  // The count is every root's, each session once, so what needs you under a tab that isn't open shows
+  // in the browser's tab too; with root tabs, the open one's root follows the name (W38).
   useEffect(() => {
-    document.title = attention > 0 ? `(${attention}) pitwall` : 'pitwall';
+    document.title = `${attention > 0 ? `(${attention}) ` : ''}pitwall${tab === undefined ? '' : ` · ${plainText(shortenHome(tab))}`}`;
     return () => {
       document.title = 'pitwall';
     };
-  }, [attention]);
+  }, [attention, tab]);
+
+  // The open root tab is remembered for a URL with no selection, as the one the CLI opens (W38).
+  useEffect(() => {
+    if (tab !== undefined) writeStoredTab(tab, storage);
+  }, [tab, storage]);
+
+  // Switching root tabs: one history entry with the tab's own place, its selection and open session,
+  // or All sessions the first time. Focus stays on the tab (W38).
+  const tabsId = useId();
+  const tabId = (root: string) => `${tabsId}-tab-${roots.indexOf(root)}`;
+  const panelId = `${tabsId}-panel`;
+  const switchTab = (root: string) => {
+    if (tab === undefined || root === tab || !roots.includes(root)) return;
+    const place = places.get(root) ?? { selection: viewIn('all', root), session: undefined };
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, place.selection), place.session)}${hash}`);
+    writeStoredSelection(place.selection, storage);
+    followSelection();
+    opened.follow();
+  };
+  // The back button can switch tabs too. Focus in what that hid, the last tab's session view, or
+  // dropped to the page, goes to the open tab, before the browser would leave it on the page.
+  const shownTab = useRef(tab);
+  useLayoutEffect(() => {
+    const was = shownTab.current;
+    shownTab.current = tab;
+    if (was === undefined || tab === undefined || was === tab) return;
+    const active = document.activeElement;
+    const lost = active === null || active === document.body || !active.isConnected || active.closest('[hidden]') !== null;
+    if (lost) focusQuietly(app.current?.querySelector<HTMLElement>('.root-tab[aria-selected="true"]'));
+  }, [tab]);
 
   // The drawer only exists below the sidebar breakpoint: widening the window closes it.
   useEffect(() => {
@@ -404,7 +496,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const focusFilter = (root: HTMLElement): boolean => {
     const field = filterField.current;
     if (!field) return false;
-    if (overlaid && draft.current) return false;
+    if (overlaid && hasDraft()) return false;
     closeMenus(root);
     const place = () => {
       field.focus();
@@ -510,7 +602,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Below 1,200 px the view covers the list, where the alert is: it closes first, as `/` does, unless
   // the message box has a draft, which closing would lose. Then Details does nothing.
   const showRelayAlert = () => {
-    if (overlaid && draft.current) return;
+    if (overlaid && hasDraft()) return;
     if (overlaid) {
       // The alert's own effect focuses it; the row doesn't take focus back meanwhile.
       focusAfterClose.current = () => {};
@@ -561,7 +653,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const heading: SessionListHeading =
     'view' in selection
       ? { label: name }
-      : { label: name, kind: selectedGroup?.kind ?? selectedHidden?.kind, root: roots.length > 1 ? (selectedGroup?.root ?? selection.root) : undefined };
+      : { label: name, kind: selectedGroup?.kind ?? selectedHidden?.kind };
   // A group's Hide from repo list, or Show in repo list once it's hidden, whether or not it's in the snapshot.
   const unhide = (group: HiddenGroup) => {
     hidden.unhide(group);
@@ -604,7 +696,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const showAll = (
     <Button
       onClick={() => {
-        select(ALL_SESSIONS);
+        select(viewIn('all', tab));
         listHeading.current?.focus();
       }}
     >
@@ -625,7 +717,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     empty = (
       <EmptyState
         icon="terminal"
-        title={`No Claude Code sessions under ${plainText(formatRoots(snapshot.roots))}`}
+        title={`No Claude Code sessions under ${plainText(formatRoots(tab === undefined ? snapshot.roots : [tab]))}`}
         sentence="Start one here, or start Claude Code in any terminal under these directories and it appears here."
         actions={
           <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
@@ -674,7 +766,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
               // Keeps the text: the same search, across every group.
               <Button
                 onClick={() => {
-                  select(ALL_SESSIONS);
+                  select(viewIn('all', tab));
                   focusField();
                 }}
               >
@@ -689,44 +781,52 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   const repoList = (from: 'list' | 'drawer') => (
     <RepoList
-      groups={snapshot?.groups}
+      groups={snapshot ? shownGroups : undefined}
       roots={roots}
       selection={selection}
       onSelect={(next) => select(next, from)}
       autoFocus={from === 'drawer'}
       skeletons={waiting.shown}
       inert={from === 'list' && reposCovered}
-      hidden={{ groups: hidden.groups, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: unhide }}
+      hidden={{ groups: shownHidden, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: unhide }}
+      tab={tab}
     />
   );
 
   // The open session's view, the same element in every layout so it's never remounted. It slides in
   // only when it opens, not when it goes from one session to the next.
   const viewLayout = layout === 'three-columns' ? 'column' : 'overlay';
-  const animate = previousOpen.current === undefined;
+  // Not when a root tab is switched to: its view was there all along, hidden.
+  const animate = previousOpen.current === undefined && previousTab.current === tab;
+  /**
+   * A session's view: the open one, or, `hiddenIn` another root tab, that tab's, kept hidden (W38).
+   * Keyed by the session alone, so switching tabs only hides or shows a view, never remounts it.
+   */
+  const viewOf = (session: SessionSummary, hiddenIn?: string) => (
+    <SessionView
+      key={session.sessionId}
+      session={session}
+      placement={{ startedIn: startLabel(groups, session), workedIn: workedInLabels(session, roots) }}
+      listed={listedSession(session.sessionId) !== undefined}
+      onClose={hiddenIn === undefined ? closeSession : () => closeIn(hiddenIn)}
+      layout={viewLayout}
+      compact={compact}
+      headingRef={hiddenIn === undefined ? viewHeading : undefined}
+      onStep={hiddenIn === undefined ? stepFromView : undefined}
+      panel={layout === 'three-columns' ? panelWidth : undefined}
+      animate={hiddenIn === undefined && animate}
+      hidden={hiddenIn !== undefined}
+      onDraftChange={(has) => {
+        drafts.current.set(session.sessionId, has);
+      }}
+      onRunningChange={(busy) => {
+        running.current.set(session.sessionId, busy);
+      }}
+    />
+  );
   let sessionView: ReactNode;
   if (shownOpen) {
-    sessionView = (
-      <SessionView
-        key={shownOpen.sessionId}
-        session={shownOpen}
-        placement={{ startedIn: startLabel(groups, shownOpen), workedIn: workedInLabels(shownOpen, roots) }}
-        listed={listedOpen !== undefined}
-        onClose={closeSession}
-        layout={viewLayout}
-        compact={compact}
-        headingRef={viewHeading}
-        onStep={stepFromView}
-        panel={layout === 'three-columns' ? panelWidth : undefined}
-        animate={animate}
-        onDraftChange={(has) => {
-          draft.current = has;
-        }}
-        onRunningChange={(running) => {
-          actionRunning.current = running;
-        }}
-      />
-    );
+    sessionView = viewOf(shownOpen);
   } else if (openId !== undefined && !snapshot) {
     // A ?session= from the URL, before the first snapshot says what it is.
     sessionView = (
@@ -757,10 +857,29 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   } else if (layout === 'three-columns') {
     // With nothing open, the column stays, so the layout doesn't jump.
     sessionView = (
-      <section className="session-view-empty" aria-label="Session">
+      <section key="nothing-open" className="session-view-empty" aria-label="Session">
         <EmptyState icon="conversation" title="Select a session" sentence="Its conversation, terminal and actions open here." />
       </section>
     );
+  }
+  // The other root tabs' open sessions, hidden, in their tabs' order, with the open tab's view in its
+  // own tab's place, so switching tabs moves nothing in the page (W38). A session a URL opened in two
+  // tabs has one view, the open tab's when it's one of them.
+  const paneViews: ReactNode[] = [];
+  if (tab === undefined) paneViews.push(sessionView);
+  else {
+    const placed = new Set(openId === undefined ? [] : [openId]);
+    for (const root of roots) {
+      if (root === tab) {
+        paneViews.push(sessionView);
+        continue;
+      }
+      const id = places.get(root)?.session;
+      const session = id === undefined || placed.has(id) ? undefined : (listedSession(id) ?? known.current.get(id));
+      if (!session) continue;
+      placed.add(session.sessionId);
+      paneViews.push(viewOf(session, root));
+    }
   }
 
   return (
@@ -776,9 +895,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         reposOpen={drawerOpen}
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
+        tabs={
+          tab === undefined
+            ? undefined
+            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root) })), active: tab, onSelect: switchTab, panelId, tabId }
+        }
       />
 
-      <div className="columns">
+      {/* With root tabs, the columns are the open tab's panel, named by it. */}
+      <div className="columns" {...(tab === undefined ? {} : { role: 'tabpanel', id: panelId, 'aria-labelledby': tabId(tab) })}>
         {layout !== 'drawer' && repoList('list')}
         <HighlightContext.Provider value={filterNeedle(filters.text)}>
           <SessionList
@@ -811,7 +936,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
         <div className="session-pane">
           {layout === 'three-columns' && <Divider store={panelWidth} />}
-          {sessionView}
+          {paneViews}
         </div>
       </div>
 
@@ -820,6 +945,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       {newSession && snapshot && (
         <NewSessionDialog
           snapshot={snapshot}
+          tab={tab}
           onClose={() => setNewSession(false)}
           onStarted={(session) => {
             setNewSession(false);
