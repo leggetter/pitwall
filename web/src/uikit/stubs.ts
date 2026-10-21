@@ -9,6 +9,7 @@ import {
   WS_CLOSE_TOO_MANY,
   type AttachClientMessage,
   type AttachServerMessage,
+  type ConversationEntry,
   type RelayResult,
 } from '../../../src/shared/protocol.js';
 import type { ApiClient, ApiResult } from '../api.js';
@@ -54,6 +55,8 @@ export interface StubOptions {
     | 'refresh-failed'
     | 'refresh-failed-retrying'
     | 'gone';
+  /** The newest page's entries, in place of the fixtures' conversation, for 'ok' (W36). */
+  entries?: ConversationEntry[];
   /** What the relay answers a message with. `sending` never answers; `unreachable` is a network error; `refused-request` is pitwall refusing the request, as its API checks would. */
   relay?: RelayResult | 'sending' | 'unreachable' | 'refused-request';
   /** What starting a session gets. `trust` is Claude Code refusing an untrusted directory. */
@@ -81,6 +84,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
       const counts = older ? fetchedOlder : fetched;
       const times = counts.get(sessionId) ?? 0;
       counts.set(sessionId, times + 1);
+      if (options.entries && (options.conversation ?? 'ok') === 'ok') return Promise.resolve(ok({ sessionId, entries: options.entries }));
       return conversation(sessionId, options.conversation ?? 'ok', older, times);
     }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });

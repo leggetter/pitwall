@@ -14,7 +14,21 @@ import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
-import { APP_DIR, background, exchange, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE, WORKED_FROM_ROOT, WORKED_MULTI } from './fixtures.js';
+import {
+  APP_DIR,
+  background,
+  exchange,
+  MARKDOWN_CONVERSATION,
+  MARKDOWN_EDGES,
+  MARKDOWN_ELEMENTS,
+  ROOT,
+  session,
+  VIEW_BACKGROUND,
+  VIEW_BACKGROUND_DONE,
+  VIEW_INTERACTIVE,
+  WORKED_FROM_ROOT,
+  WORKED_MULTI,
+} from './fixtures.js';
 import { element, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
 import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
@@ -266,6 +280,11 @@ const REFRESH_FAILED = background('conversation-refresh-failed', { state: 'worki
 const REFRESH_RETRYING = background('conversation-refresh-retrying', { state: 'working' });
 const GONE_TRANSCRIPT = background('conversation-gone', { state: 'working' });
 const JUMP = session('conversation-jump', { title: 'Export retries' });
+const MARKDOWN = background('conversation-markdown', { state: 'working' });
+const MARKDOWN_AS_TEXT = background('conversation-markdown-as-text', { state: 'working' });
+const MARKDOWN_NARROW = background('conversation-markdown-narrow', { state: 'working' });
+const MARKDOWN_COPY = background('conversation-markdown-copy', { state: 'working' });
+const MARKDOWN_STUB: StubOptions = { entries: MARKDOWN_CONVERSATION };
 
 /** The event that moves a Refreshing session's activity, as the index does when the session does something. */
 const REFRESH = 'uikit-refresh';
@@ -316,6 +335,27 @@ async function earlierUntil(root: HTMLElement, selector: string): Promise<void> 
   if (body) body.scrollTop = 0;
 }
 
+/** Scrolls the conversation so the first `selector` is at the top, as a reader would; at the top for none. */
+const scrolledTo = (selector?: string) => async (root: HTMLElement) => {
+  const body = await conversationBody(root);
+  if (selector === undefined) {
+    body.scrollTop = 0;
+    return;
+  }
+  const target = await element(body, selector);
+  // In a window scaled to fit its stage, the box on screen is smaller than the one that scrolls.
+  const scale = body.offsetHeight > 0 ? body.getBoundingClientRect().height / body.offsetHeight : 1;
+  body.scrollTop += (target.getBoundingClientRect().top - body.getBoundingClientRect().top) / scale - 12;
+};
+
+/** Copies the first code block with its Copy button, as a reader would, then waits for the copied icon and the toast. */
+async function copyCode(root: HTMLElement): Promise<void> {
+  await scrolledTo('.md-code')(root);
+  (await element<HTMLButtonElement>(root, 'button[aria-label="Copy code"]')).click();
+  await until('the copied icon', () => root.querySelector('.md-code .copy-button.copied'));
+  await text(specimenOf(root), 'Copied');
+}
+
 /** Scrolls up to read, then the session does more: "Jump to latest" appears with the count. */
 async function scrollUpThenMore(root: HTMLElement): Promise<void> {
   const body = await conversationBody(root);
@@ -339,6 +379,49 @@ export function Conversations() {
         <Stubbed>
           <SessionView session={CONVERSATION_ALL} listed onClose={noop} />
         </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Markdown in messages"
+        note="Your prompt as typed, its indents and blank lines kept and its markdown not read; then Claude's message with every element of the subset: headings, bold, italic, both, strikethrough, inline code, line breaks, escapes, a nested list with its task markers as text, a code block with its language and Copy, a table with its alignments, quotes, a rule, and a link, an autolink and a bare URL. Scrolled to the top."
+        frame="tall"
+      >
+        <Stubbed options={{ entries: MARKDOWN_ELEMENTS }}>
+          <Scenario run={scrolledTo()}>
+            <SessionView session={MARKDOWN} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Markdown cut short, and shown as text"
+        note="A message the server cut short inside a code block, which runs to the end; one whose raw HTML, links to anything but http and https, image and unsupported syntax show as the text they are; and another session's message, in markdown too."
+        frame="view"
+      >
+        <Stubbed options={{ entries: MARKDOWN_EDGES }}>
+          <Scenario run={scrolledTo()}>
+            <SessionView session={MARKDOWN_AS_TEXT} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Markdown, 600 px and narrower"
+        note="The code block's long line and the wide table each scroll sideways in their own box, a Tab stop while they do; the page doesn't. Scrolled to the code block."
+        frame="view"
+        width={375}
+      >
+        <Stubbed options={MARKDOWN_STUB}>
+          <Scenario run={scrolledTo('.md-code')}>
+            <SessionView session={MARKDOWN_NARROW} listed onClose={noop} compact />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Copying a code block" note="Copy, pressed: the copied icon for --pw-copied-timeout, and a Copied toast, as every copy button gives. These stay, for the gallery." frame="view" lasting>
+        <ToastProvider>
+          <Stubbed options={MARKDOWN_STUB}>
+            <Scenario run={copyCode}>
+              <SessionView session={MARKDOWN_COPY} listed onClose={noop} />
+            </Scenario>
+          </Stubbed>
+        </ToastProvider>
       </Specimen>
       <Specimen title="Folds open" note="Each call on its line, cut with an ellipsis and whole in a tooltip, with its own error badge. Scrolled to the top." frame="tall">
         <Stubbed>
