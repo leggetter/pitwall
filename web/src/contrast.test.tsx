@@ -76,8 +76,6 @@ const ALIAS_PAIRS: Pair[] = [
   text('--pw-state-offline-fg', NEUTRAL),
   // A row that needs you has no tint: the bar sits on the row as it is, hovered, or open.
   edge('--pw-state-attention-bar', ['--pw-surface', '--pw-surface-hover', '--pw-selected']),
-  // The connection dots, and "Attached" in the terminal's bar, which is text.
-  ...['--pw-live', '--pw-pending', '--pw-broken'].map((fg) => text(fg, NEUTRAL)),
 ];
 
 /** Colours that are never checked, and why. */

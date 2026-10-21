@@ -308,17 +308,6 @@ export function filterListed(listed: readonly Listed[], filters: Filters): Liste
   });
 }
 
-/**
- * A group's sessions split by `finished` into the ones listed normally and the
- * finished ones, each in the order given.
- */
-export function splitFinished(sessions: readonly SessionSummary[]): { current: SessionSummary[]; finished: SessionSummary[] } {
-  const current: SessionSummary[] = [];
-  const finished: SessionSummary[] = [];
-  for (const session of sessions) (session.finished ? finished : current).push(session);
-  return { current, finished };
-}
-
 export function countAttention(sessions: readonly SessionSummary[]): number {
   return sessions.reduce((count, session) => count + (needsAttention(session) ? 1 : 0), 0);
 }

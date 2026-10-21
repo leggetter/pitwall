@@ -513,11 +513,11 @@ textarea {
 .notice {
   max-width: 560px;
   margin: 15vh auto 0;
-  padding: 0 16px;
+  padding: 0 var(--pw-space-4);
 }
 
 .notice .brand {
-  margin-bottom: 8px;
+  margin-bottom: var(--pw-space-2);
 }
 
 .notice p {
@@ -738,10 +738,6 @@ textarea {
   box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
 }
 
-.chip-count {
-  font-variant-numeric: tabular-nums;
-}
-
 /* At 600 px and narrower, the header's right side wraps under the wordmark. */
 
 
@@ -807,7 +803,7 @@ textarea {
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-width: 408px;
+  max-width: var(--pw-dialog-sm);
   margin: auto;
   padding: var(--pw-space-6) var(--pw-space-4);
   text-align: center;
@@ -2290,7 +2286,7 @@ mark.match {
   z-index: var(--pw-z-dropdown);
   display: flex;
   flex-direction: column;
-  min-width: 192px;
+  min-width: var(--pw-menu-min-w);
   padding: var(--pw-space-1);
   border-radius: var(--pw-radius-md);
   background: var(--pw-surface-overlay);

@@ -90,7 +90,7 @@
 .uikit-problem {
   margin-bottom: 8px;
   padding: 4px 8px;
-  border: 2px dashed var(--pw-broken);
+  border: 2px dashed var(--pw-danger-fg);
   font-size: var(--pw-text-s);
 }
 
@@ -174,10 +174,6 @@
     margin-inline: -16px;
     border-radius: 0;
   }
-}
-
-.uikit-surface {
-  background: var(--pw-surface);
 }
 
 /* Room below a menu button for its open menu, with the button at the end, as in the session view's header. */

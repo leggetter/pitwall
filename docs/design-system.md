@@ -243,7 +243,6 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-z-dropdown: 30;
   --pw-z-backdrop: 40;
   --pw-z-dialog: 41;
-  --pw-z-popover: 50;
   --pw-z-tooltip: 60;
   --pw-z-toast: 70;
 
@@ -407,9 +406,6 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-state-failed-border: var(--pw-danger-border);
   --pw-state-offline-fg: var(--pw-text-subtle);
   --pw-state-offline-border: var(--pw-border-dashed);
-  --pw-live: var(--pw-success-fg);
-  --pw-pending: var(--pw-warning-fg);
-  --pw-broken: var(--pw-danger-fg);
 }
 
 /* 5. Reduced motion */
@@ -501,7 +497,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 
 ### 2.11 Layers
 
-`--pw-z-*` keeps this order: sticky headers 10, the overlay session view 20, menus 30, dialog backdrop 40, dialog and the repo drawer 41, popovers 50, tooltips 60, toasts 70. Don't add a z-index outside this scale.
+`--pw-z-*` keeps this order: sticky headers 10, the overlay session view 20, menus 30, dialog backdrop 40, dialog and the repo drawer 41, tooltips 60, toasts 70. (Popovers had 50; nothing used it, and it went in W31.) Don't add a z-index outside this scale.
 
 ### 2.12 Breakpoints and widths
 
@@ -624,7 +620,7 @@ The first restyle PR renames today's custom properties (in `web/src/styles.css`,
 | `--failed-bg`, `--failed-text` | `#fde2e2`, `#921c1c` / `#3b1717`, `#ffaaaa` | `--pw-state-failed-bg`, `--pw-state-failed-fg` |
 | `--offline-text` | `#5a626c` / `#9ca5b1` | `--pw-state-offline-fg` |
 | `--offline-border` | `#9aa1ab` / `#535c69` | `--pw-state-offline-border` |
-| `--live`, `--pending`, `--broken` | `#16833d`, `#b26b00`, `#c42b2b` / `#4ade80`, `#fbbf24`, `#f87171` | `--pw-live`, `--pw-pending`, `--pw-broken` |
+| `--live`, `--pending`, `--broken` | `#16833d`, `#b26b00`, `#c42b2b` / `#4ade80`, `#fbbf24`, `#f87171` | `--pw-live`, `--pw-pending`, `--pw-broken`, removed in W31: the connection badge and the terminal's bar use `Badge`'s tones, so nothing used them |
 | `--warning-bg`, `--warning-border` | `#fff3cd`, `#d9a400` / `#33280a`, `#a37b00` | `--pw-warning-tint`, `--pw-warning-border` |
 | `--error-bg`, `--error-border` | `#fde2e2`, `#d14343` / `#3b1717`, `#b84040` | `--pw-danger-tint`, `--pw-danger-border` |
 | `--radius` | `8px` | `--pw-radius-lg` for now; the restyle moves cards, rows and buttons to `--pw-radius-md` |
@@ -1192,7 +1188,7 @@ For a destructive or surprising action in the session view, without a dialog.
 ### Menus
 
 - **Component:** `MenuButton` (`web/src/components/Menu.tsx`), which takes the button's icon and name and a list of items and separators. The session view's actions menu is the one menu the doc calls for; anything that later needs a menu of actions builds on it.
-- **Panel:** `--pw-surface-overlay`, `--pw-shadow-2`, `--pw-radius-md`, padding 4 px, min-width 192 px, `--pw-z-dropdown`. It opens 4 px below the button, aligned to its end edge, and flips up when the button is on screen and there's no room below but there is above.
+- **Panel:** `--pw-surface-overlay`, `--pw-shadow-2`, `--pw-radius-md`, padding 4 px, min-width `--pw-menu-min-w` (192 px), `--pw-z-dropdown`. It opens 4 px below the button, aligned to its end edge, and flips up when the button is on screen and there's no room below but there is above.
 - **Items:** 32 px tall, padding 6 px 8 px, `--pw-radius-sm`, m 14/20, a 16 px icon in `--pw-text-muted` 8 px before the label. An item with no icon of its own, in a menu whose other items have them, keeps an icon's room, so the labels line up.
   - Hover and keyboard highlight: `--pw-surface-hover`. Keyboard focus also shows `--pw-ring-focus-inset`, since the panel's 4 px padding would clip the outer ring, and a hover fill alone is under 3:1.
   - Danger items: `--pw-danger-fg` text and icon; highlighted, a `--pw-danger-tint` fill with `--pw-danger-tint-fg` text and icon, the pair 2.5 checks.
@@ -1257,7 +1253,7 @@ For a destructive or surprising action in the session view, without a dialog.
 ### Empty states
 
 - **Component:** `EmptyState` (`web/src/components/EmptyState.tsx`), with `icon`, `title`, `sentence`, `actions` and, for the session view's unlisted state, `heading`, which makes the title the region's `<h2>`. Otherwise the title is a paragraph, so the outline in [6.1](#61-rules) is unchanged.
-- **Anatomy:** centred in its pane, both ways, at most 408 px wide, with at least 24 px 16 px around it; text centred and wrapping anywhere.
+- **Anatomy:** centred in its pane, both ways, at most `--pw-dialog-sm` (408 px, a small dialog's width) wide, with at least 24 px 16 px around it; text centred and wrapping anywhere.
   1. A 24 px icon in `--pw-text-subtle`, `aria-hidden`.
   2. The title (l 16/24, 600), 8 px below.
   3. One sentence (m 14/20, `--pw-text-muted`), 4 px below.

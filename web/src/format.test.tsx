@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { middleEllipsisParts, plainText, relativeTime, shortenHome, updatedAgo } from './format.js';
-import { attachCommand, needsAttention, rowStatusBadge, splitFinished, statusBadge, type SessionStatus } from './sessions.js';
+import { attachCommand, needsAttention, rowStatusBadge, statusBadge, type SessionStatus } from './sessions.js';
 import { NOW, session } from './test/fixtures.js';
 
 describe('shortenHome', () => {
@@ -93,17 +93,6 @@ describe('session helpers', () => {
     }
     // Done with its process still alive is idle, not finished, so its question counts.
     expect(needsAttention(session({ kind: 'background', state: 'done', status: 'idle', askedYou: asked }))).toBe(true);
-  });
-
-  it('splitFinished goes by the finished field and keeps the order within each part', () => {
-    const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, state: 'done' as const, finished: true };
-    const a = session({ name: 'a' });
-    const b = session({ name: 'b', ...finished });
-    const c = session({ name: 'c' });
-    const d = session({ name: 'd', ...finished, state: 'failed' });
-    const { current, finished: done } = splitFinished([a, b, c, d]);
-    expect(current.map((s) => s.name)).toEqual(['a', 'c']);
-    expect(done.map((s) => s.name)).toEqual(['b', 'd']);
   });
 
   it('statusBadge puts waiting first, then blocked unless stale, then asked you, then the rest', () => {

@@ -152,8 +152,8 @@
 
 .checkbox input {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
   margin: 0;
   accent-color: var(--pw-selected-border);
 }
@@ -173,5 +173,5 @@
 .session-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--pw-space-2);
 }
