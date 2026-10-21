@@ -671,6 +671,40 @@ describe("the conversation's errors", () => {
     expect(notice!.compareDocumentPosition(load) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('keeps "The transcript changed…" while the entries it starts are shown, across refreshes and Load earlier, and drops it once they are replaced (W31)', async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
+    const changed = 'The transcript changed, so this starts again from its newest messages.';
+    const notice = (body: HTMLElement) => alerts(body).find((alert) => alert.textContent === changed);
+    const view = await renderView(
+      server(
+        // The first page, the newest after the stale cursor, a refresh that overlaps it, then one that doesn't.
+        [page([you(3)], 'old'), page([you(7), you(8)], 'new'), page([you(7), you(8), you(9)], 'new'), page([you(50), you(51)], 'later')],
+        [status(410), page([you(5), you(6)])],
+      ),
+    );
+    view.body.scrollTop = 0;
+    fireEvent.scroll(view.body);
+    await act(async () => fireEvent.click(within(view.body).getByRole('button', { name: 'Load earlier' })));
+    expect(notice(view.body)).toBeTruthy();
+
+    // A refresh that adds to what's shown keeps it.
+    await view.refresh();
+    expect(texts(view.body)).toEqual(['prompt 7', 'prompt 8', 'prompt 9']);
+    expect(notice(view.body)).toBeTruthy();
+    // So does Load earlier that works, from the new page's cursor.
+    await act(async () => fireEvent.click(within(view.body).getByRole('button', { name: 'Load earlier' })));
+    expect(texts(view.body)).toEqual(['prompt 5', 'prompt 6', 'prompt 7', 'prompt 8', 'prompt 9']);
+    expect(notice(view.body)).toBeTruthy();
+
+    // A newest page that replaces them, at the bottom, starts afresh: the notice goes.
+    view.body.scrollTop = 600;
+    fireEvent.scroll(view.body);
+    await view.refresh();
+    expect(texts(view.body)).toEqual(['prompt 50', 'prompt 51']);
+    expect(notice(view.body)).toBeUndefined();
+  });
+
   it('a refresh that fails keeps the entries, and says at the end that they may be out of date, with Try again', async () => {
     const retried = gate(page([you(1), you(2)]));
     const view = await renderView(server([page([you(1)]), status(500), retried.answer]));
