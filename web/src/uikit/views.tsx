@@ -14,6 +14,7 @@ import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
+import { startLabel, workedInLabels } from '../sessions.js';
 import {
   APP_DIR,
   background,
@@ -29,11 +30,15 @@ import {
   VIEW_INTERACTIVE,
   WORKED_FROM_ROOT,
   WORKED_MULTI,
+  WORKED_SNAPSHOT,
 } from './fixtures.js';
 import { element, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
 import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
 const noop = () => {};
+
+/** Where a session started and worked, as the Dashboard works it out from WORKED_SNAPSHOT. */
+const placementOf = (session: SessionSummary) => ({ startedIn: startLabel(WORKED_SNAPSHOT.groups, session), workedIn: workedInLabels(session, WORKED_SNAPSHOT.roots) });
 
 /** A stub API for everything inside, made once from `options` when it mounts. */
 export function Stubbed({ options = {}, children }: { options?: StubOptions; children: ReactNode }) {
@@ -142,16 +147,16 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Worked in other repos"
-        note="Line 3: where it started and the repos it worked in, newest first, as the repo list labels them, with the rule behind an info button. It shows once a scan finds a repo beyond the start; rows stay two lines."
+        note="Line 3: the group it started in, the only one that lists it, and the repos it worked in, newest first, each by its label, pitwall-test-docs too, which has no group. The names are text: selecting one does nothing. The info button has the rule, and how to find every session that worked in a repo. It shows once a scan finds a repo beyond the start; rows stay two lines."
         frame="short"
       >
         <Stubbed>
-          <SessionView session={WORKED_MULTI} placement={{ startedIn: 'pitwall-test-app', workedIn: ['pitwall-test-api', 'pitwall-test-docs'] }} listed onClose={noop} />
+          <SessionView session={WORKED_MULTI} placement={placementOf(WORKED_MULTI)} listed onClose={noop} />
         </Stubbed>
       </Specimen>
-      <Specimen title="Worked in repos, started in the root" note="It started in the root itself, so it's listed under the repos it worked in alone." frame="short">
+      <Specimen title="Worked in repos, started in the root" note="It started in the root itself, so it's listed in the root's own group, ~/code, and its line 3 names the repos it worked in." frame="short">
         <Stubbed>
-          <SessionView session={WORKED_FROM_ROOT} placement={{ startedIn: '~/code', workedIn: ['pitwall-test-api'] }} listed onClose={noop} />
+          <SessionView session={WORKED_FROM_ROOT} placement={placementOf(WORKED_FROM_ROOT)} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="Finished, and it asked you" note="The row's outlined Asked you, with its explanation behind an info button too." frame="short">

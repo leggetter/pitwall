@@ -8,7 +8,7 @@ import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.
 import { FinishedSection } from '../components/SessionList.js';
 import { SessionRow } from '../components/SessionRow.js';
 import { listScope, type Listed } from '../sessions.js';
-import { APP_DIR, AWKWARD_ROWS, FINISHED_ROWS, group, JOBS_DIR, ROOT, STATE_ROWS, STATUS_ROWS, WORKED_API_GROUP, WORKED_SNAPSHOT } from './fixtures.js';
+import { APP_DIR, AWKWARD_ROWS, FINISHED_ROWS, group, JOBS_DIR, ROOT, STATE_ROWS, STATUS_ROWS, WORKED_SNAPSHOT } from './fixtures.js';
 import { Specimen } from './kit.js';
 
 /** Rows all in one group, as a group's own list has them. */
@@ -38,13 +38,12 @@ function Rows({ rows, showGroup = false, openSessionId }: { rows: Listed[]; show
     <div className="session-list uikit-rows">
       <div className="session-list-body">
         <ul className="sessions">
-          {rows.map(({ session, group: shown, startedIn }) => (
+          {rows.map(({ session, group: shown }) => (
             <SessionRow
               key={session.sessionId}
               session={session}
               group={shown}
               showGroup={showGroup}
-              startedIn={startedIn}
               onOpen={(id) => setOpen((current) => (current === id ? undefined : id))}
               isOpen={session.sessionId === open}
             />
@@ -132,14 +131,8 @@ export function SessionRows() {
         <Rows rows={acrossGroups(AWKWARD_ROWS)} showGroup />
       </Specimen>
       <Specimen
-        title="A session listed under several repos, in one it worked in"
-        note="pitwall-test-api's list: line 2 starts with where a session started when it's listed here because it worked in this repo (pitwall-test-app; ~/code, the root itself), and screen readers hear “Started in” first. One started here has no label, as in any group. Rows stay two lines."
-      >
-        <Rows rows={listScope(WORKED_SNAPSHOT.groups, { kind: 'group', group: WORKED_API_GROUP }).current} />
-      </Specimen>
-      <Specimen
-        title="Sessions in several repos, in All sessions"
-        note="Each session once, its line 2 naming where it started, or for one started in the root that worked in repos, the repo it touched last."
+        title="Sessions that worked in other repos, in All sessions"
+        note="Each session once, its line 2 naming the group it started in, the only one it's listed under: pitwall-test-across-repos under pitwall-test-app, pitwall-test-from-root under ~/code, though both worked in pitwall-test-api and pitwall-test-docs. The session view names those."
       >
         <Rows rows={listScope(WORKED_SNAPSHOT.groups, { kind: 'all' }).current} showGroup />
       </Specimen>

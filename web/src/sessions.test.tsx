@@ -11,7 +11,6 @@ import {
   filterListed,
   filterNeedle,
   groupLabel,
-  groupsOf,
   holdOrder,
   isRootGroup,
   listScope,
@@ -20,16 +19,15 @@ import {
   needsAttention,
   NO_FILTERS,
   noMatchText,
-  primaryGroup,
   repoListGroups,
   rowStatusBadge,
   sessionCount,
+  sessionsIn,
   SORT_LABELS,
   SORT_ORDERS,
   startGroup,
   startLabel,
   statusBadge,
-  uniqueSessions,
   workedInLabels,
   type FilterChip,
   type Filters,
@@ -344,67 +342,81 @@ describe('sessionCount', () => {
   });
 });
 
-describe('sessions in several groups (W34)', () => {
+describe('each session in one group (W39)', () => {
   const ROOT = '/Users/example/code';
-  const worked = (...keys: string[]) => keys.map((key, index) => ({ key: `${ROOT}/${key}`, calls: 10, changes: 0, lastAt: minutesAgo(index) }));
+  const worked = (...keys: string[]) => keys.map((key, index) => ({ key: `${ROOT}/${key}`, label: key, calls: 10, changes: 0, lastAt: minutesAgo(index) }));
+  // As the index sends them: each session in the group it started in alone. docs has no group, since
+  // no session started there.
   const inApp = session({ name: 'in-app', cwd: `${ROOT}/app`, status: 'waiting', workedIn: worked('api') });
   const fromRoot = session({ name: 'from-root', cwd: ROOT, workedIn: worked('docs', 'api') });
   const inNotes = session({ name: 'in-notes', cwd: `${ROOT}/notes`, workedIn: worked('docs') });
+  const inApi = session({ name: 'in-api', cwd: `${ROOT}/api` });
   const app = group({ key: `${ROOT}/app`, label: 'app', sessions: [inApp] });
-  const api = group({ key: `${ROOT}/api`, label: 'api', sessions: [inApp, fromRoot] });
-  const docs = group({ key: `${ROOT}/docs`, label: 'docs', sessions: [fromRoot, inNotes] });
+  const api = group({ key: `${ROOT}/api`, label: 'api', sessions: [inApi] });
   const notes = group({ key: `${ROOT}/notes`, label: 'notes', kind: 'directory', sessions: [inNotes] });
-  const groups = [api, app, docs, notes];
+  const code = group({ key: ROOT, label: 'code', kind: 'directory', sessions: [fromRoot] });
+  const groups = [api, app, notes, code];
 
-  it('uniqueSessions: each session once, in the order first listed', () => {
-    expect(uniqueSessions(groups).map((s) => s.name)).toEqual(['in-app', 'from-root', 'in-notes']);
-    expect(uniqueSessions([])).toEqual([]);
+  it('sessionsIn: every session, each once, in the groups’ order', () => {
+    expect(sessionsIn(groups).map((s) => s.name)).toEqual(['in-api', 'in-app', 'in-notes', 'from-root']);
+    expect(sessionsIn([])).toEqual([]);
   });
 
-  it('groupsOf: every group listing a session', () => {
-    expect(groupsOf(groups, fromRoot.sessionId).map((g) => g.label)).toEqual(['api', 'docs']);
-  });
-
-  it("startGroup and startLabel: the group its workedIn doesn't name, or the root's path for one started in the root", () => {
-    expect(startGroup(groups, inApp)?.label).toBe('app');
-    expect(startGroup(groups, inNotes)?.label).toBe('notes');
-    expect(startGroup(groups, fromRoot)).toBeUndefined();
+  it('startGroup and startLabel: the one group listing it, the root’s own as its path', () => {
+    expect(startGroup(groups, inApp)).toBe(app);
+    expect(startGroup(groups, inNotes)).toBe(notes);
+    expect(startGroup(groups, fromRoot)).toBe(code);
     expect(startLabel(groups, inApp)).toBe('app');
     expect(startLabel(groups, fromRoot)).toBe('~/code');
   });
 
-  it('primaryGroup: where it started, or the repo a root-started session touched most recently', () => {
-    expect(primaryGroup(groups, inApp)?.label).toBe('app');
-    expect(primaryGroup(groups, inNotes)?.label).toBe('notes');
-    expect(primaryGroup(groups, fromRoot)?.label).toBe('docs');
+  it('startGroup and startLabel: none for a session the snapshot no longer lists, which is labelled by its directory', () => {
+    const gone = session({ name: 'gone', cwd: `${ROOT}/app/src` });
+    expect(startGroup(groups, gone)).toBeUndefined();
+    expect(startLabel(groups, gone)).toBe('~/code/app/src');
   });
 
-  it("workedInLabels: the repos' labels, newest touch first", () => {
-    expect(workedInLabels(groups, fromRoot)).toEqual(['docs', 'api']);
-    expect(workedInLabels(groups, session({ name: 'none' }))).toEqual([]);
+  it("workedInLabels: each repo's label, newest touch first, whether or not it has a group", () => {
+    // docs has no group; api has one.
+    expect(workedInLabels(fromRoot, [ROOT])).toEqual(['docs', 'api']);
+    expect(workedInLabels(session({ name: 'none' }), [ROOT])).toEqual([]);
+    // The labels come from the session, not the snapshot's groups, so they're the same with none.
+    expect(workedInLabels(inNotes, [])).toEqual(['docs']);
   });
 
-  it('listScope: All sessions and Needs you list each session once, under its primary group', () => {
+  it("workedInLabels: a repo that is itself a root shows the root's path, as the repo list does", () => {
+    const other = '/Users/example/work';
+    const nested = session({ name: 'nested', cwd: `${other}/vendor/lib`, workedIn: [{ key: other, label: 'work', calls: 5, changes: 1, lastAt: minutesAgo(1) }] });
+    expect(workedInLabels(nested, [ROOT, other])).toEqual(['~/work']);
+  });
+
+  it('listScope: each session once, under the group it started in, in All sessions and Needs you', () => {
     const all = listScope(groups, { kind: 'all' });
-    expect(all.current.map(({ session: s, group: g }) => [s.name, g.label])).toEqual([
+    expect(all.current.map(({ session: s, group: g }) => [s.name, g.label]).sort()).toEqual([
+      ['from-root', 'code'],
+      ['in-api', 'api'],
       ['in-app', 'app'],
-      ['from-root', 'docs'],
       ['in-notes', 'notes'],
     ]);
     expect(listScope(groups, { kind: 'needs-you' }).current.map(({ session: s }) => s.name)).toEqual(['in-app']);
   });
 
-  it("listScope: a group's list says where each session it lists through workedIn started", () => {
-    expect(listScope(groups, { kind: 'group', group: api }).current.map(({ session: s, startedIn }) => [s.name, startedIn])).toEqual([
-      ['in-app', 'app'],
-      ['from-root', '~/code'],
-    ]);
-    expect(listScope(groups, { kind: 'group', group: app }).current.map(({ startedIn }) => startedIn)).toEqual([undefined]);
+  it("listScope: a group's list is the sessions started in it, and none says it started elsewhere", () => {
+    const listed = listScope(groups, { kind: 'group', group: api }).current;
+    expect(names(listed)).toEqual(['in-api']);
+    for (const item of listed) expect(Object.keys(item).sort()).toEqual(['group', 'session']);
   });
 
-  it("filterListed: a match on any of a row's groups lets it through in All sessions", () => {
+  it('filterListed: a repo a session worked in lets it through, as its own group does, with or without a group of its own', () => {
     const all = listScope(groups, { kind: 'all' }).current;
-    expect(names(filterListed(all, filters('api')))).toEqual(['in-app', 'from-root']);
+    // docs has no group: the sessions that worked there.
+    expect(names(filterListed(all, filters('docs'))).sort()).toEqual(['from-root', 'in-notes']);
+    // api has one: the session started there, and the two that worked there.
+    expect(names(filterListed(all, filters('API'))).sort()).toEqual(['from-root', 'in-api', 'in-app']);
     expect(names(filterListed(all, filters('notes')))).toEqual(['in-notes']);
+    // In a group's own list too.
+    expect(names(filterListed(listScope(groups, { kind: 'group', group: app }).current, filters('api')))).toEqual(['in-app']);
+    // And with the chips, which it ANDs with.
+    expect(filterListed(all, filters('docs', ['background']))).toEqual([]);
   });
 });

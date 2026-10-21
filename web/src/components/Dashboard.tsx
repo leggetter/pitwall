@@ -45,7 +45,6 @@ import {
   browserNavigation,
   findGroup,
   finishedStateId,
-  isRootSelection,
   scopeFor,
   selectionHref,
   selectionName,
@@ -62,8 +61,8 @@ import {
   listScope,
   NO_FILTERS,
   noMatchText,
+  sessionsIn,
   startLabel,
-  uniqueSessions,
   workedInLabels,
   type Filters,
 } from '../sessions.js';
@@ -97,10 +96,8 @@ import { SkeletonRows, useWaiting, WaitingStatus } from './Waiting.js';
  */
 let dashboards = 0;
 
-/** The empty state's sentence for a selected group that has left the snapshot (4: Empty states). */
+/** The empty state's sentence for a selected group that has left the snapshot, a root's own included (4: Empty states). */
 export const GROUP_GONE = 'Its sessions are no longer listed under these roots.';
-/** The same, for a root's own group, whose sessions have moved to the repos they worked in. */
-export const ROOT_GROUP_GONE = 'Sessions started here that worked in repos are listed under those repos.';
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
@@ -189,8 +186,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   const groups = snapshot?.groups ?? [];
   const roots = snapshot?.roots ?? [];
-  // Each session once: a session that worked in several repos is listed under each of them (W34).
-  const allSessions = useMemo(() => uniqueSessions(groups), [groups]);
+  // Each session is in one group, the one it started in (W39).
+  const allSessions = useMemo(() => sessionsIn(groups), [groups]);
   const attention = countAttention(allSessions);
   const selectedGroup = findGroup(groups, selection);
   // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
@@ -638,12 +635,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   } else if (!scope) {
-    // A root's own group empties once the sessions started there are listed under the repos they worked in (W34).
+    // A group, a root's own included, goes once no session started in it is listed.
     empty = (
       <EmptyState
         icon="directory"
         title={`No sessions in ${plainText(name)} now`}
-        sentence={isRootSelection(selection, roots) ? ROOT_GROUP_GONE : GROUP_GONE}
+        sentence={GROUP_GONE}
         actions={showAll}
       />
     );
@@ -713,7 +710,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       <SessionView
         key={shownOpen.sessionId}
         session={shownOpen}
-        placement={{ startedIn: startLabel(groups, shownOpen), workedIn: workedInLabels(groups, shownOpen) }}
+        placement={{ startedIn: startLabel(groups, shownOpen), workedIn: workedInLabels(shownOpen, roots) }}
         listed={listedOpen !== undefined}
         onClose={closeSession}
         layout={viewLayout}

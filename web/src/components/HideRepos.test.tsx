@@ -16,15 +16,16 @@ import { HIDE_LABEL, SHOW_LABEL } from './HideButton.js';
 const ROOT = '/Users/example/code';
 const WORK = '/Users/example/work';
 const key = (name: string, root = ROOT) => `${root}/${name}`;
-const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
+const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), label: name, calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
 
 /**
- * Six sessions in five groups, three of which need you. `multi` started in app and worked in old, so
- * it's under both, and it needs you.
+ * Six sessions in four groups, three of which need you. `multi` started in app and worked in old, and
+ * it needs you; it's listed under app alone (W39). Nothing started in docs, which multi worked in too,
+ * so it has no group.
  */
 function several() {
   const waits = session({ name: 'waits', cwd: key('app'), status: 'waiting', waitingFor: 'permission prompt' });
-  const multi = session({ name: 'multi', cwd: key('app'), askedYou: { reason: 'question', excerpt: 'Keep the made-up flag?' }, workedIn: worked('old') });
+  const multi = session({ name: 'multi', cwd: key('app'), askedYou: { reason: 'question', excerpt: 'Keep the made-up flag?' }, workedIn: worked('old', 'docs') });
   const calm = session({ name: 'calm', cwd: key('app') });
   const inOld = session({ name: 'in-old', cwd: key('old'), status: 'waiting', waitingFor: 'permission prompt' });
   const notes = session({ name: 'note-taker', cwd: key('notes') });
@@ -33,7 +34,7 @@ function several() {
     root: group({ key: ROOT, label: 'code', kind: 'directory', sessions: [inRoot] }),
     app: group({ key: key('app'), label: 'app', sessions: [waits, multi, calm] }),
     notes: group({ key: key('notes'), label: 'notes', kind: 'directory', sessions: [notes] }),
-    old: group({ key: key('old'), label: 'old', sessions: [inOld, multi] }),
+    old: group({ key: key('old'), label: 'old', sessions: [inOld] }),
   };
   return { snap: snapshot(Object.values(groups)), groups, waits, multi, calm, inOld, notes, inRoot };
 }
@@ -147,7 +148,7 @@ describe('Hide from repo list, in the session list header', () => {
   it('hides a git repo: only its entry leaves the repo list, and the views, their counts, other groups and every list stay as they were', () => {
     renderDashboard(several().snap);
     const before = repoItems();
-    expect(before).toEqual(['Needs you3 need you', 'All sessions6 sessions', '~/code, directory1 session', 'app, git repo2 need you', 'notes, directory1 session', 'old, git repo2 need you']);
+    expect(before).toEqual(['Needs you3 need you', 'All sessions6 sessions', '~/code, directory1 session', 'app, git repo2 need you', 'notes, directory1 session', 'old, git repo1 needs you']);
     choose('All sessions');
     const allRows = visibleRowNames().sort();
     choose('Needs you');
@@ -158,8 +159,8 @@ describe('Hide from repo list, in the session list header', () => {
     hide('old');
     expect(repoItems()).toEqual(before.filter((item) => !item.startsWith('old')));
     expect(document.title).toBe('(3) pitwall');
-    // Its sessions still show under the group, and under every other that lists them.
-    expect(visibleRowNames().sort()).toEqual(['in-old', 'multi']);
+    // Its sessions still show under the group, and in every view.
+    expect(visibleRowNames().sort()).toEqual(['in-old']);
     choose('All sessions');
     expect(visibleRowNames().sort()).toEqual(allRows);
     expect(summary()).toBe('6 sessions3 need you');
@@ -175,7 +176,7 @@ describe('Hide from repo list, in the session list header', () => {
     renderDashboard(several().snap);
     hide('notes');
     hide('~/code');
-    expect(repoItems()).toEqual(['Needs you3 need you', 'All sessions6 sessions', 'app, git repo2 need you', 'old, git repo2 need you']);
+    expect(repoItems()).toEqual(['Needs you3 need you', 'All sessions6 sessions', 'app, git repo2 need you', 'old, git repo1 needs you']);
     expect(hiddenItems()).toEqual(['~/code, directory1 session', 'notes, directory1 session']);
     // The rows of All sessions still name their groups.
     choose('All sessions');
@@ -211,7 +212,7 @@ describe('Hide from repo list, in the session list header', () => {
     renderDashboard(several().snap);
     const button = hide('old');
     fireEvent.click(button);
-    expect(repoItems().at(-1)).toBe('old, git repo2 need you');
+    expect(repoItems().at(-1)).toBe('old, git repo1 needs you');
     expect(hiddenToggle()).toBeNull();
     expect(document.activeElement).toBe(button);
     expect(button.getAttribute('aria-label')).toBe(HIDE_LABEL);
@@ -221,9 +222,10 @@ describe('Hide from repo list, in the session list header', () => {
   it("leaves the session view's Started in … · worked in … line as it was", () => {
     setWidth(1300);
     const { snap, multi } = several();
-    renderDashboard(snap, { search: `?repo=${key('old')}&session=${multi.sessionId}` });
+    renderDashboard(snap, { search: `?repo=${key('app')}&session=${multi.sessionId}` });
     const line = () => document.querySelector('#session-view .session-view-worked-text')?.textContent;
     expect(line()).toContain('Started in app');
+    expect(line()).toContain('worked in old, docs');
     const before = line();
     fireEvent.click(screen.getByRole('button', { name: HIDE_LABEL }));
     expect(line()).toBe(before);
@@ -242,7 +244,7 @@ describe('the Hidden section', () => {
     const { source, items } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: false, groups: [{ key: key('old'), label: 'old', kind: 'git' }] }) });
     const first = renderDashboard(several().snap, { storage: source });
     const toggle = hiddenToggle() as HTMLButtonElement;
-    expect(toggle.textContent).toBe('Hidden (1)2 need you');
+    expect(toggle.textContent).toBe('Hidden (1)1 needs you');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     const list = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
     expect(list?.hidden).toBe(true);
@@ -267,8 +269,8 @@ describe('the Hidden section', () => {
     expect(hiddenToggle()?.querySelector('.badge')).toBeNull();
     expect(hiddenToggle()?.textContent).toBe('Hidden (1)');
     hide('old');
-    expect(hiddenToggle()?.textContent).toBe('Hidden (2)2 need you');
-    // multi is in app and old: it counts once.
+    // multi worked in old, but it's listed under app, so old's badge counts in-old alone (W39).
+    expect(hiddenToggle()?.textContent).toBe('Hidden (2)1 needs you');
     hide('app');
     expect(hiddenToggle()?.querySelector('.badge-attention')?.textContent).toBe('3 need you');
     expect(hiddenToggle()?.textContent).toBe('Hidden (3)3 need you');
@@ -279,13 +281,23 @@ describe('the Hidden section', () => {
       [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [{ key: key('old'), label: 'old', kind: 'git' }, { key: key('notes'), label: 'notes', kind: 'directory' }, { key: key('gone'), label: 'gone', kind: 'git' }] }),
     });
     renderDashboard(several().snap, { storage: source });
-    expect(hiddenItems()).toEqual(['gone, git repoNo sessions', 'notes, directory1 session', 'old, git repo2 need you']);
+    expect(hiddenItems()).toEqual(['gone, git repoNo sessions', 'notes, directory1 session', 'old, git repo1 needs you']);
     expect(hiddenLink('notes').className).toContain('hidden-item');
     expect(hiddenLink('notes').getAttribute('href')).toBe(`?repo=${key('notes')}`);
-    expect(hiddenLink('old').querySelector('.badge-attention')?.textContent).toBe('2 need you');
+    expect(hiddenLink('old').querySelector('.badge-attention')?.textContent).toBe('1 needs you');
     expect(unhideButton('gone').querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     // The badge counts only what the snapshot has.
-    expect(hiddenToggle()?.textContent).toBe('Hidden (3)2 need you');
+    expect(hiddenToggle()?.textContent).toBe('Hidden (3)1 needs you');
+  });
+
+  it('lists a hidden repo that sessions only worked in with "No sessions", since it has no group (W39)', () => {
+    const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [{ key: key('docs'), label: 'docs', kind: 'git' }] }) });
+    renderDashboard(several().snap, { storage: source });
+    expect(hiddenItems()).toEqual(['docs, git repoNo sessions']);
+    expect(hiddenToggle()?.textContent).toBe('Hidden (1)');
+    // multi, which worked there, is in app, and still counted in the views.
+    expect(repoItems()).toContain('app, git repo2 need you');
+    expect(repoItems()).toContain('All sessions6 sessions');
   });
 
   it('keeps an entry while its group is absent from the snapshot, and when it comes back', () => {
@@ -322,7 +334,7 @@ describe('the Hidden section', () => {
     fireEvent.click(hiddenLink('old'));
     expect(navigation.location.search).toBe(`?repo=${key('old')}`);
     expect(listHeading().textContent).toBe('old, git repo');
-    expect(visibleRowNames().sort()).toEqual(['in-old', 'multi']);
+    expect(visibleRowNames().sort()).toEqual(['in-old']);
     expect(hiddenLink('old').getAttribute('aria-current')).toBe('page');
     expect(headerButton()?.getAttribute('aria-label')).toBe(SHOW_LABEL);
 
@@ -344,7 +356,7 @@ describe('the Hidden section', () => {
     // The item it landed on is the list's one Tab stop.
     expect(repoItem('notes').tabIndex).toBe(0);
     expect(toastMessages()).toContain("Unhid notes. It's back in the repo list.");
-    expect(hiddenItems()).toEqual(['old, git repo2 need you']);
+    expect(hiddenItems()).toEqual(['old, git repo1 needs you']);
 
     fireEvent.click(unhideButton('old'));
     expect(document.activeElement).toBe(repoItem('old'));
@@ -372,7 +384,7 @@ describe('hidden groups and the URL', () => {
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: false, groups: [{ key: key('old'), label: 'old', kind: 'git' }] }) });
     renderDashboard(several().snap, { storage: source, search: `?repo=${key('old')}` });
     expect(listHeading().textContent).toBe('old, git repo');
-    expect(visibleRowNames().sort()).toEqual(['in-old', 'multi']);
+    expect(visibleRowNames().sort()).toEqual(['in-old']);
     expect(headerButton()?.getAttribute('aria-label')).toBe(SHOW_LABEL);
     // The section keeps the state it was left in.
     expect(hiddenToggle()?.getAttribute('aria-expanded')).toBe('false');
@@ -433,7 +445,7 @@ describe('hidden groups in storage', () => {
     first.unmount();
     renderDashboard(several().snap, { storage: source });
     expect(repoItems().some((item) => item.startsWith('old'))).toBe(false);
-    expect(hiddenItems()).toEqual(['old, git repo2 need you']);
+    expect(hiddenItems()).toEqual(['old, git repo1 needs you']);
   });
 
   it('starts with nothing hidden when storage is missing, throws or holds a bad shape, and hiding still works for the page’s life', () => {
@@ -452,7 +464,7 @@ describe('hidden groups in storage', () => {
       const view = renderDashboard(several().snap, { storage });
       expect(hiddenToggle(), name).toBeNull();
       expect(() => hide('old'), name).not.toThrow();
-      expect(hiddenItems(), name).toEqual(['old, git repo2 need you']);
+      expect(hiddenItems(), name).toEqual(['old, git repo1 needs you']);
       fireEvent.click(hiddenToggle() as HTMLButtonElement);
       expect(hiddenToggle()?.getAttribute('aria-expanded'), name).toBe('false');
       fireEvent.click(screen.getByRole('button', { name: SHOW_LABEL }));

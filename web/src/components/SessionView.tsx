@@ -48,15 +48,15 @@ export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, s
 export const TERMINAL_INTERACTIVE_NOTE =
   "An interactive session can't be attached here. Typing /bg in its terminal moves it to the background, so pitwall can attach to it.";
 export const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
-/** The worked-in line's info icon: the rule behind it (W34, spike 004). */
+/** The worked-in line's info icon: the rule behind it (W34, spike 004), and where to find the sessions that worked in a repo (W39). */
 export const WORKED_IN_NOTE =
-  "A session is also listed under each repo it changed, or that at least 5% of its tool calls touched, its sub-agents' included. One started in a root's own directory is listed under those repos alone.";
+  "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. The session is listed only where it started: to find every session that worked in a repo, type the repo's name in the filter on All sessions.";
 
 /** Where a session started and the repos it worked in, as the repo list labels them. */
 export interface SessionPlacement {
-  /** Its start group's label, or a root's path for one started in the root itself. */
+  /** Its group's label, the one it's listed under, or a root's path for one started in the root itself. */
   startedIn: string;
-  /** The repos it worked in beyond that, newest touch first. */
+  /** The repos it worked in beyond that, newest touch first, each by its label, whether or not it has a group (W39). */
   workedIn: readonly string[];
 }
 
@@ -466,7 +466,8 @@ export function SessionView({
           )}
         </div>
         {placement && placement.workedIn.length > 0 && (
-          // Line 3: the repos it's listed under beyond where it started. Labels are text, never markup.
+          // Line 3: where it started, and the repos it worked in beyond that, which don't list it (W39).
+          // The names are text, never markup or links: selecting one does nothing.
           <p className="session-view-worked">
             <span className="session-view-worked-text">
               Started in <span className="session-view-repo">{plainText(placement.startedIn)}</span>
@@ -474,7 +475,8 @@ export function SessionView({
               <span className="visually-hidden">, and </span>
               worked in{' '}
               {placement.workedIn.map((label, index) => (
-                <span key={label}>
+                // By place as well as label: two repos under different roots can share a label.
+                <span key={`${index}:${label}`}>
                   {index > 0 && ', '}
                   <span className="session-view-repo">{plainText(label)}</span>
                 </span>

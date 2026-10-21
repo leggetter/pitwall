@@ -42,7 +42,7 @@ import {
   STATUS_ROWS,
   TWO_ROOTS_SNAPSHOT,
   API_DIR,
-  WORKED_MULTI,
+  WORKED_FROM_ROOT,
   WORKED_SNAPSHOT,
 } from './fixtures.js';
 import { choose, element, laidOut, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
@@ -232,16 +232,25 @@ const PAGES: PageCase[] = [
   { title: 'Needs you', search: '?view=needs-you', view: { state: 'live', snapshot: LIST_SNAPSHOT } },
   { title: 'Two roots', note: 'A group under the second root.', search: repo(SERVICE_DIR, OTHER_ROOT), view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT } },
   {
-    title: 'Sessions in several repos',
-    note: 'pitwall-test-api selected: its own session, and two that worked in it, each saying where it started. Each repo counts its distinct sessions, and the summary counts this list’s.',
+    title: 'Each session in one group',
+    note: 'pitwall-test-api selected: only the session started in it. Two others worked in it, and are listed where they started, pitwall-test-app and ~/code. pitwall-test-docs, where sessions only worked, has no group.',
     search: repo(API_DIR),
     view: { state: 'live', snapshot: WORKED_SNAPSHOT },
   },
   {
     title: "The root's group",
-    note: 'Only the session started in the root that worked in no repo. The directory below it, pitwall-test-scratch, keeps its own group.',
+    note: 'Every session started in the root, one that worked in pitwall-test-api and pitwall-test-docs too. The directory below it, pitwall-test-scratch, keeps its own group.',
     search: repo(ROOT),
     view: { state: 'live', snapshot: WORKED_SNAPSHOT },
+  },
+  {
+    title: 'Filtered by a repo sessions worked in',
+    note: 'All sessions, filtered by pitwall-test-docs, which has no group: the three sessions that worked there, each under where it started. Nothing on their rows matches, so nothing is highlighted.',
+    view: { state: 'live', snapshot: WORKED_SNAPSHOT },
+    run: async (root) => {
+      type(await element<HTMLInputElement>(root, 'input[type="search"]'), 'pitwall-test-docs');
+      await text(root, '3 of 6 sessions');
+    },
   },
   {
     title: 'Hiding a group',
@@ -435,9 +444,9 @@ const LAYOUTS: PageCase[] = [
   },
   {
     title: 'Three columns, a session that worked in several repos',
-    note: 'Opened from pitwall-test-api, where it worked: its row says it started in pitwall-test-app, and the view’s line 3 lists the repos it worked in, with the rule behind the info button.',
+    note: 'Opened from ~/code, where it started: the view’s line 3 names the repos it worked in, pitwall-test-docs too, which has no group, with the rule behind the info button.',
     width: 1280,
-    search: `${repo(API_DIR)}&session=${WORKED_MULTI.sessionId}`,
+    search: `${repo(ROOT)}&session=${WORKED_FROM_ROOT.sessionId}`,
     view: { state: 'live', snapshot: WORKED_SNAPSHOT },
   },
   {

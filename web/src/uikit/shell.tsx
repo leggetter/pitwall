@@ -132,15 +132,15 @@ export function RepoLists() {
         <LiveRepoList snapshot={undefined} />
       </Specimen>
       <Specimen
-        title="Sessions in several repos"
-        note="One session started in pitwall-test-app and worked in pitwall-test-api and pitwall-test-docs, so it's under all three, and its need-you badge shows in each. Each repo counts its distinct sessions; Needs you and All sessions count each session once, so the repos' counts add up to more than All sessions."
+        title="Each session in one group"
+        note="Each session is under the group it started in alone: one started in pitwall-test-app is there, though it worked in pitwall-test-api and pitwall-test-docs too. pitwall-test-docs, where sessions only worked, has no item. Each group counts the sessions started in it, so the groups' counts add up to All sessions', and their badges to Needs you's."
         width={240}
       >
         <LiveRepoList snapshot={WORKED_SNAPSHOT} />
       </Specimen>
       <Specimen
         title="The root's group, and a directory below it"
-        note="~/code holds only the sessions started in the root itself that worked in no repo; one started there that worked in a repo is under that repo alone. pitwall-test-scratch, a directory below the root that isn't a repo, holds every session started in it, including one that also worked in pitwall-test-docs."
+        note="~/code holds every session started in the root itself, one that worked in pitwall-test-api and pitwall-test-docs among them. pitwall-test-scratch, a directory below the root that isn't a repo, holds the session started in it, which also worked in pitwall-test-docs."
         width={240}
       >
         <LiveRepoList snapshot={WORKED_SNAPSHOT} start={groupSelection(WORKED_ROOT_GROUP, [ROOT])} />
