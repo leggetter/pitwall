@@ -152,10 +152,14 @@ describe('main(): startup', () => {
       expect(JSON.stringify(errors.mock.calls)).not.toContain(TOKEN);
     });
 
-    it('says nothing about a fixed token without PITWALL_TOKEN, or under npm run dev, which says it itself (W40)', async () => {
+    it('says nothing about a fixed token without PITWALL_TOKEN, with an empty one, or under npm run dev, which says it itself (W40)', async () => {
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
       delete process.env.PITWALL_TOKEN;
       expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      // Empty counts as unset, and isn't passed on.
+      process.env.PITWALL_TOKEN = '';
+      expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      expect(seen.calls.at(-1)?.env.PITWALL_TOKEN).toBeUndefined();
       process.env.PITWALL_TOKEN = TOKEN;
       process.env.PITWALL_OPEN_MARKER = join(tmpdir(), `pitwall-test-marker-${process.pid}`);
       expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);

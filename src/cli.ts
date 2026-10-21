@@ -55,10 +55,11 @@ Environment:
                        it keeps one token alive across runs: any page or
                        script that ever saw it can drive every later run
                        that uses it, so use it only on a single-user
-                       machine or for development. Leave it unset to get a
-                       new token on every run. pitwall reads it from the
-                       environment only, never from a .env file; npm run
-                       dev also reads it from the pitwall repo's own .env.
+                       machine or for development. Leave it unset, or
+                       empty, to get a new token on every run. pitwall
+                       reads it from the environment only, never from a
+                       .env file; npm run dev also reads it from the
+                       pitwall repo's own .env.
   PITWALL_NO_OPEN      Set to 1 to skip opening the browser.
   PITWALL_HOME         Where launch files go, instead of ~/.pitwall.
   PITWALL_OPEN_MARKER  A file path. Open the browser only if it doesn't exist
@@ -179,10 +180,20 @@ export function fixedTokenNotice(source?: string): string {
   return `the token is fixed by PITWALL_TOKEN${source ? ` in ${source}` : ''}, so every run that uses it has the same one. Use this only on a single-user machine or for development.`;
 }
 
-/** PITWALL_TOKEN when set and valid, otherwise 32 random bytes as base64url. */
+/** Whether PITWALL_TOKEN fixes the token: set and not empty. An empty one counts as unset (W40). */
+export function hasFixedToken(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.PITWALL_TOKEN !== undefined && env.PITWALL_TOKEN !== '';
+}
+
+/**
+ * PITWALL_TOKEN when set and valid, otherwise 32 random bytes as base64url.
+ * An empty PITWALL_TOKEN counts as unset, so `PITWALL_TOKEN=` in a .env, as
+ * .env.example has it, gives a new token every run; one that's set but not
+ * valid is refused.
+ */
 export function resolveToken(env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env.PITWALL_TOKEN;
-  if (fromEnv === undefined) return randomBytes(32).toString('base64url');
+  if (fromEnv === undefined || fromEnv === '') return randomBytes(32).toString('base64url');
   if (fromEnv.length < 32) throw new UsageError('PITWALL_TOKEN must be at least 32 characters');
   // The token goes into a URL fragment, an Authorization header and, on
   // Windows, a `cmd /c start` command line, so keep it to URL-safe characters.
@@ -313,7 +324,9 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   }
   // A fixed token, said once. Not under npm run dev, which sets the marker: it says so itself when
   // PITWALL_TOKEN is fixed, and otherwise passes a token of its own run, which isn't.
-  if (process.env.PITWALL_TOKEN !== undefined && marker === undefined) console.error(`pitwall: ${fixedTokenNotice()}`);
+  if (hasFixedToken() && marker === undefined) console.error(`pitwall: ${fixedTokenNotice()}`);
+  // Unset, as it counts: not passed on to the children, empty.
+  if (process.env.PITWALL_TOKEN === '') delete process.env.PITWALL_TOKEN;
   // Under npm run dev, a restart finds the marker the first run created, and
   // doesn't open another tab.
   if (command.open && !(marker !== undefined && existsSync(marker))) {
