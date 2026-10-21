@@ -80,8 +80,15 @@ export function selectionName(groups: readonly SessionGroup[], selection: Select
   const group = findGroup(groups, selection);
   if (group) return groupLabel(group);
   const key = selection.repo.replace(/\/+$/, '');
-  if (roots.some((root) => root.replace(/\/+$/, '') === key)) return shortenHome(key);
+  if (isRootSelection(selection, roots)) return shortenHome(key);
   return key.split('/').pop() || selection.repo;
+}
+
+/** Whether a selection is a root's own directory, whether or not its group is in the snapshot. */
+export function isRootSelection(selection: Selection, roots: readonly string[]): boolean {
+  if ('view' in selection) return false;
+  const key = selection.repo.replace(/\/+$/, '');
+  return roots.some((root) => root.replace(/\/+$/, '') === key);
 }
 
 /**

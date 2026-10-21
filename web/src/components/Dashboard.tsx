@@ -38,6 +38,7 @@ import {
   browserNavigation,
   findGroup,
   finishedStateId,
+  isRootSelection,
   scopeFor,
   selectionHref,
   selectionName,
@@ -86,6 +87,11 @@ import { SkeletonRows, useWaiting, WaitingStatus } from './Waiting.js';
  * pressed with nothing focused belongs to a dashboard only when it's the only one.
  */
 let dashboards = 0;
+
+/** The empty state's sentence for a selected group that has left the snapshot (4: Empty states). */
+export const GROUP_GONE = 'Its sessions are no longer listed under these roots.';
+/** The same, for a root's own group, whose sessions have moved to the repos they worked in. */
+export const ROOT_GROUP_GONE = 'Sessions started here that worked in repos are listed under those repos.';
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
@@ -584,11 +590,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   } else if (!scope) {
+    // A root's own group empties once the sessions started there are listed under the repos they worked in (W34).
     empty = (
       <EmptyState
         icon="directory"
         title={`No sessions in ${plainText(name)} now`}
-        sentence="Its sessions are no longer listed under these roots."
+        sentence={isRootSelection(selection, roots) ? ROOT_GROUP_GONE : GROUP_GONE}
         actions={showAll}
       />
     );

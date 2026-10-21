@@ -1878,6 +1878,9 @@ describe('sessions in several groups (W34)', () => {
     renderDashboard(several().snap, {}, { storage });
     expect(listHeading().textContent).toBe('scratch');
     expect(screen.getByText('No sessions in scratch now')).toBeTruthy();
+    // Any group but a root's own keeps the sentence it had.
+    expect(screen.getByText('Its sessions are no longer listed under these roots.')).toBeTruthy();
+    expect(screen.queryByText('Sessions started here that worked in repos are listed under those repos.')).toBeNull();
     expect(repoList().querySelector('[aria-current]')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
     expect(listHeading().textContent).toBe('All sessions');
@@ -1889,6 +1892,9 @@ describe('sessions in several groups (W34)', () => {
     render(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ key: key('api'), label: 'api', sessions: [moved] })]) }} navigation={navigation} />);
     expect(listHeading().textContent).toBe('~/code');
     expect(screen.getByText('No sessions in ~/code now')).toBeTruthy();
+    // It says where the sessions went, not that they've gone.
+    expect(screen.getByText('Sessions started here that worked in repos are listed under those repos.')).toBeTruthy();
+    expect(screen.queryByText('Its sessions are no longer listed under these roots.')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
     expect(visibleRowNames()).toEqual(['moved']);
   });

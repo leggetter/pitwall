@@ -703,7 +703,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - Choosing pushes a history entry; `popstate` makes the columns match the URL.
   - A URL with no selection uses the last one, saved in `localStorage` as `pitwall.view.v1`, or All sessions the first time, and replaces the URL to match.
   - Loading `?session=` with no selection selects the group that session started in, or, for one started in the root that worked in repos, the repo it touched most recently.
-  - A selected group that leaves the snapshot stays selected, with the "No sessions in *group* now" empty state. That includes a saved selection in `pitwall.view.v1` whose group has since emptied, such as the root's own directory once its sessions are listed under their repos.
+  - A selected group that leaves the snapshot stays selected, with the "No sessions in *group* now" empty state (see [Empty states](#empty-states) for its sentence, which differs for a root's own group). That includes a saved selection in `pitwall.view.v1` whose group has since emptied, such as the root's own directory once its sessions are listed under their repos.
 
 ### Session list
 
@@ -1277,7 +1277,7 @@ For a destructive or surprising action in the session view, without a dialog.
 |---|---|---|---|---|
 | No sessions under the roots | `terminal` | "No Claude Code sessions under *roots*" | "Start one here, or start Claude Code in any terminal under these directories and it appears here." | primary "New session" (`add`), which opens the New session dialog |
 | The filter matches nothing | `search` | "No sessions match" | "Nothing in *selection* matches "*text*" with these filters." Without a chip on, it ends at "*text*"; with no text, "Nothing in *selection* matches these filters." | outline "Clear filters", which clears the text and the chips; in a group with text in the field, outline "Search all sessions" too, which selects All sessions and keeps the text |
-| A selected group has left the snapshot | `directory` | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." | outline "Show all sessions", which selects All sessions |
+| A selected group has left the snapshot | `directory` | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." For a root's own group, which empties once the sessions started there are listed under the repos they worked in (W34): "Sessions started here that worked in repos are listed under those repos." | outline "Show all sessions", which selects All sessions |
 | Needs you, and nothing does | `success` | "Nothing needs you right now" | "Sessions that are waiting for you, or asked you something, show here." | outline "Show all sessions" |
 | The session view column, nothing open | `conversation` | "Select a session" | "Its conversation, terminal and actions open here." | none |
 | The session view, unlisted (see [Session view](#session-view)) | `info` | "This session isn't listed under these roots", the view's heading | "pitwall lists no session with the id `<id>` under *roots*; it may have been removed, or run outside these roots." | none; Close is in the header |
