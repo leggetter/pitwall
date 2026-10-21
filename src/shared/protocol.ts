@@ -98,11 +98,6 @@ export interface SessionSummary {
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
-   * The newest assistant text, with markdown syntax stripped to plain text, then
-   * trimmed and truncated to 500 characters.
-   */
-  lastAssistantText?: string;
-  /**
    * The newest prompt typed by the user, truncated to 300 characters. Messages
    * from other sessions (cross-session messages) are never counted as prompts.
    */
@@ -230,21 +225,6 @@ export type ServerMessage =
   | { type: 'error'; error: string };
 
 /**
- * The full newest assistant message of one session, fetched on demand when the
- * user expands a row. Same plain-text treatment as lastAssistantText, without
- * the 500-character limit.
- */
-export interface LastMessage {
-  sessionId: string;
-  /** Markdown syntax stripped to plain text. At most 64 KiB of source text. */
-  text: string;
-  /** True when the source message was longer than the 64 KiB the index keeps. */
-  truncated: boolean;
-  /** ISO 8601 timestamp of the message, when known. */
-  at?: string;
-}
-
-/**
  * Client → server WebSocket messages. The client's first message must be
  * `auth`, within 5 seconds of the challenge, or the server closes the
  * connection with code 4401.
@@ -274,16 +254,6 @@ export const WS_PATH = '/ws';
 
 /** HTTP path that returns the latest IndexSnapshot as JSON. */
 export const SNAPSHOT_PATH = '/api/snapshot';
-
-/**
- * HTTP path that returns one session's LastMessage as JSON. Only sessions in
- * the current snapshot (under the roots) are served: any other id gets 404.
- */
-// For clients. A server building a route pattern from this must decode it,
-// because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
-export function lastMessagePath(sessionId: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/last-message`;
-}
 
 /** Default poll interval for the index, in milliseconds. `pitwall --interval <seconds>` overrides it. */
 export const DEFAULT_POLL_INTERVAL_MS = 5000;
@@ -342,10 +312,11 @@ export const CONVERSATION_STALE_STATUS = 410;
  * HTTP path that returns a ConversationPage as JSON: the newest page, or the
  * page before the `before` cursor. A cursor for a file that was rotated or
  * rewritten gets 410, and the client should reload the newest page. More than
- * 4 reads at once get 429 with `Retry-After`. Same rules as lastMessagePath():
- * only sessions in the current snapshot, and a server building a route
- * pattern from this must decode it.
+ * 4 reads at once get 429 with `Retry-After`. Only sessions in the current
+ * snapshot (under the roots) are served: any other id gets 404.
  */
+// For clients. A server building a route pattern from this must decode it,
+// because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
 export function conversationPath(sessionId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
   return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;

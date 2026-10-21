@@ -5,17 +5,15 @@
 import { open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { AskedYou, LastMessage, TranscriptStatus } from '../shared/protocol.js';
+import type { AskedYou, TranscriptStatus } from '../shared/protocol.js';
 import { detectAskedYou } from './asked.js';
 import { isRecord } from './guards.js';
-import { cap, stripMarkdown, stripMarkdownBounded, truncate } from './text.js';
+import { cap, truncate } from './text.js';
 
 export interface TranscriptInfo {
   transcript: TranscriptStatus;
   /** ISO 8601. */
   lastActivityAt?: string;
-  /** The newest assistant text, with markdown stripped, trimmed and truncated to 500 characters. */
-  lastAssistantText?: string;
   lastUserPrompt?: string;
   /**
    * Set when the newest assistant text asks the user something and no prompt
@@ -54,13 +52,6 @@ export interface TranscriptReader {
    */
   read(sessionId: string, cwds: readonly string[]): Promise<TranscriptInfo>;
   /**
-   * The newest assistant message of a session `read` has seen, in full: the
-   * text kept from the transcript, markdown stripped without the 500-character
-   * limit. Undefined when there's none. Reads no files: it works from what the
-   * last `read` kept, and strips it once per change of message. Never throws.
-   */
-  lastMessage(sessionId: string): LastMessage | undefined;
-  /**
    * The transcript file `read` last found for a session, for the session
    * view to page through. Undefined when there's none. Reads no files.
    */
@@ -69,7 +60,6 @@ export interface TranscriptReader {
   retain(sessionIds: ReadonlySet<string>): void;
 }
 
-export const ASSISTANT_TEXT_MAX = 500;
 export const USER_PROMPT_MAX = 300;
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -77,16 +67,9 @@ const MIB = 1024 * KIB;
 const MAX_CARRY_BYTES = 8 * MIB;
 /**
  * How much of the newest assistant message's raw text is kept, its text blocks
- * joined. The "asked you" check reads the whole message, not the 500 characters
- * that are shown.
+ * joined. The "asked you" check reads all of it.
  */
 export const ASSISTANT_TEXT_KEEP = 64 * KIB;
-/**
- * How much of the assistant text, outside code blocks, is stripped of
- * markdown to make the 500 characters shown. Stripping is quadratic on some
- * hostile lines, so it reads a bounded start rather than all 64 KiB.
- */
-export const ASSISTANT_TEXT_STRIP_MAX = 4 * KIB;
 /** The longest title kept from an `ai-title` entry. */
 export const TITLE_MAX = 120;
 const NEWLINE = 0x0a;
@@ -223,24 +206,6 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
         return { transcript: 'unreadable' };
       }
     },
-    lastMessage(sessionId) {
-      try {
-        const state = files.get(sessionId);
-        if (state === undefined) return undefined;
-        const { fields } = state;
-        const source = fields.assistantText;
-        if (source === undefined) return undefined;
-        if (state.full?.source !== source) {
-          state.full = { source, text: stripMarkdownBounded(source).trim() };
-        }
-        if (state.full.text === '') return undefined;
-        const message: LastMessage = { sessionId, text: state.full.text, truncated: fields.assistantTextTruncated === true };
-        if (fields.assistantAtMs !== undefined) message.at = new Date(fields.assistantAtMs).toISOString();
-        return message;
-      } catch {
-        return undefined;
-      }
-    },
     transcriptFile(sessionId) {
       return isSafeSessionId(sessionId) ? located.get(sessionId) : undefined;
     },
@@ -267,13 +232,10 @@ interface FileState {
   fields: Fields;
   /** What was worked out from `fields.assistantText`, kept until the text changes. */
   derived?: Derived;
-  /** The full stripped text of `fields.assistantText`, made on request and kept until the text changes. */
-  full?: { source: string; text: string };
 }
 
 interface Derived {
   source: string;
-  text: string;
   askedYou: AskedYou | undefined;
 }
 
@@ -362,8 +324,6 @@ export interface Fields {
   assistantMessageId?: string;
   /** The newest assistant message's raw text, its text blocks joined, capped at 64 KiB. */
   assistantText?: string;
-  /** True when the newest assistant message's text was longer than the 64 KiB kept. */
-  assistantTextTruncated?: boolean;
   /** When the newest assistant message's latest text block was written. */
   assistantAtMs?: number;
   userPrompt?: string;
@@ -414,8 +374,6 @@ export function applyEntry(fields: Fields, entry: unknown): void {
       fields.assistantAtMs = undefined;
     }
     fields.assistantText = cap(joined, ASSISTANT_TEXT_KEEP);
-    // Once cut, every later block makes the join longer still, so this stays true.
-    fields.assistantTextTruncated = joined.length > ASSISTANT_TEXT_KEEP;
     if (at !== undefined) fields.assistantAtMs = at;
     fields.promptAfterText = false;
     return;
@@ -556,7 +514,6 @@ function toInfo(state: FileState): TranscriptInfo {
   if (fields.lastActivityMs !== undefined) info.lastActivityAt = new Date(fields.lastActivityMs).toISOString();
   if (fields.assistantText !== undefined) {
     const derived = derive(state, fields.assistantText);
-    if (derived.text !== '') info.lastAssistantText = derived.text;
     if (derived.askedYou !== undefined && fields.promptAfterText !== true) info.askedYou = derived.askedYou;
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
@@ -564,14 +521,10 @@ function toInfo(state: FileState): TranscriptInfo {
   return info;
 }
 
-/** Strips and checks the assistant text once per change, not on every poll. */
+/** Checks the assistant text once per change, not on every poll. */
 function derive(state: FileState, source: string): Derived {
   if (state.derived?.source !== source) {
-    state.derived = {
-      source,
-      text: truncate(stripMarkdown(source, ASSISTANT_TEXT_STRIP_MAX).trim(), ASSISTANT_TEXT_MAX),
-      askedYou: detectAskedYou(source),
-    };
+    state.derived = { source, askedYou: detectAskedYou(source) };
   }
   return state.derived;
 }

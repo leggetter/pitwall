@@ -112,7 +112,6 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
   return {
     latest: () => latest ?? undefined,
     subscribe: () => () => {},
-    lastMessage: () => undefined,
     conversation: async () => undefined,
     stop: () => {},
   };

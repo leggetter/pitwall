@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IndexSnapshot, SessionSummary } from '../shared/protocol.js';
-import { startIndexer, type Indexer } from './index.js';
+import { startIndexer } from './index.js';
 import { isWithin, resolveCwd } from './roots.js';
 import { compareGroups, compareSessions } from './summaries.js';
 
@@ -18,7 +18,7 @@ const root = process.env.PITWALL_LIVE_ROOT || os.homedir();
 
 const SESSION_KEYS = new Set([
   'sessionId', 'shortId', 'name', 'title', 'titleSource', 'kind', 'cwd', 'cwdMissing', 'pid', 'alive', 'status', 'state',
-  'waitingFor', 'startedAt', 'stale', 'finished', 'askedYou', 'lastActivityAt', 'lastAssistantText', 'lastUserPrompt', 'transcript',
+  'waitingFor', 'startedAt', 'stale', 'finished', 'askedYou', 'lastActivityAt', 'lastUserPrompt', 'transcript',
 ]);
 const GROUP_KEYS = new Set(['key', 'label', 'kind', 'root', 'sessions']);
 
@@ -80,36 +80,14 @@ function sessionProblems(s: SessionSummary, at: string): string[] {
   check(oneOf(s.transcript, ['ok', 'missing', 'unreadable']), 'transcript');
   check(s.transcript === 'ok' || s.title === undefined, 'title without ok');
   check(optional(s.lastActivityAt, isIso), 'lastActivityAt');
-  check(optional(s.lastAssistantText, (v) => typeof v === 'string' && v.length > 0 && v.length <= 500), 'lastAssistantText');
   check(optional(s.lastUserPrompt, (v) => typeof v === 'string' && v.length > 0 && v.length <= 300), 'lastUserPrompt');
   check(optional(s.lastUserPrompt, (v) => !(v as string).includes('<cross-session-message')), 'lastUserPrompt (cross-session)');
   if (s.transcript !== 'ok') {
     check(
-      s.lastActivityAt === undefined && s.lastAssistantText === undefined && s.lastUserPrompt === undefined && s.askedYou === undefined,
+      s.lastActivityAt === undefined && s.lastUserPrompt === undefined && s.askedYou === undefined,
       'transcript fields without ok',
     );
   }
-  return problems;
-}
-
-/** lastMessage for every session: well-formed for those with a reply, and nothing for an id that isn't listed. */
-function lastMessageProblems(indexer: Indexer, snapshot: IndexSnapshot): string[] {
-  const problems: string[] = [];
-  for (const [g, group] of snapshot.groups.entries()) {
-    for (const [i, s] of group.sessions.entries()) {
-      const at = `groups[${g}].sessions[${i}].lastMessage`;
-      const message = indexer.lastMessage(s.sessionId);
-      if (message === undefined) {
-        if (s.lastAssistantText !== undefined) problems.push(`${at} (missing, with lastAssistantText)`);
-        continue;
-      }
-      if (message.sessionId !== s.sessionId) problems.push(`${at}.sessionId`);
-      if (typeof message.text !== 'string' || message.text === '') problems.push(`${at}.text`);
-      if (typeof message.truncated !== 'boolean') problems.push(`${at}.truncated`);
-      if (!optional(message.at, isIso)) problems.push(`${at}.at`);
-    }
-  }
-  if (indexer.lastMessage('00000000-0000-4000-8000-000000000000') !== undefined) problems.push('lastMessage (unlisted id)');
   return problems;
 }
 
@@ -153,8 +131,6 @@ describe.runIf(live)('live index (PITWALL_LIVE=1, read-only)', () => {
     const indexer = startIndexer({ roots: [root], intervalMs: 1000 });
     try {
       const first = await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
-      // Before anything async, so the next poll can't change what the reader holds.
-      expect(lastMessageProblems(indexer, first)).toEqual([]);
       expect(await snapshotProblems(first)).toEqual([]);
 
       // Let the poller run again, so the incremental read path runs on real files.

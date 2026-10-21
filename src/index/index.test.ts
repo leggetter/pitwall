@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type LastMessage, type RelayAlert, type RelayOff } from '../shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type RelayAlert, type RelayOff } from '../shared/protocol.js';
 import type { AgentRow, AgentsResult } from './agents.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
@@ -33,7 +33,6 @@ function harness() {
     reads: [] as string[],
     retained: [] as string[][],
     transcripts: new Map<string, TranscriptInfo>(),
-    messages: new Map<string, LastMessage>(),
     /** What transcriptFile() answers, by session id. */
     files: new Map<string, string>(),
     /** When set, list() waits for this before answering. */
@@ -57,9 +56,6 @@ function harness() {
       async read(sessionId) {
         state.reads.push(sessionId);
         return state.transcripts.get(sessionId) ?? { transcript: 'missing' };
-      },
-      lastMessage(sessionId) {
-        return state.messages.get(sessionId);
       },
       transcriptFile(sessionId) {
         return state.files.get(sessionId);
@@ -133,32 +129,36 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
-  it('answers lastMessage only for sessions in the latest snapshot', async () => {
-    const { state, deps } = harness();
-    const message = (id: string): LastMessage => ({ sessionId: id, text: `full reply of ${id}`, truncated: false });
-    for (const id of ['in', 'out', 'later-gone']) state.messages.set(id, message(id));
-    state.result = { ok: true, rows: [row('in', '/work/repo/a'), row('out', '/elsewhere/b'), row('later-gone', '/work/repo/c')] };
-    const indexer = createIndexer({ roots: ['/work'], intervalMs: 1000 }, deps);
-    // Before the first poll there is no snapshot, so nothing is answered.
-    expect(indexer.lastMessage('in')).toBeUndefined();
-    await flush();
+  it('stops answering conversation for a session that leaves the snapshot, but not after a failed poll', async () => {
+    // Only the poll interval is faked: the page is read from a real file.
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-snapshot-'));
+    try {
+      const { state, deps } = harness();
+      const file = path.join(dir, 'prompt.jsonl');
+      await writeFile(file, `${JSON.stringify({ type: 'user', timestamp: new Date(NOW).toISOString(), message: { content: 'a prompt' } })}\n`);
+      for (const id of ['in', 'later-gone']) state.files.set(id, file);
+      state.result = { ok: true, rows: [row('in', '/work/repo/a'), row('later-gone', '/work/repo/c')] };
+      const indexer = createIndexer({ roots: ['/work'], intervalMs: 1000 }, deps);
+      await flush();
+      expect(await indexer.conversation('in')).toBeDefined();
+      expect(await indexer.conversation('later-gone')).toBeDefined();
 
-    expect(indexer.lastMessage('in')).toEqual(message('in'));
-    expect(indexer.lastMessage('later-gone')).toEqual(message('later-gone'));
-    // Outside the roots: the reader may know it, but the index never serves it.
-    expect(indexer.lastMessage('out')).toBeUndefined();
-    expect(indexer.lastMessage('never-listed')).toBeUndefined();
+      state.result = { ok: true, rows: [row('in', '/work/repo/a')] };
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await indexer.conversation('later-gone')).toBeUndefined();
+      expect(await indexer.conversation('in')).toBeDefined();
 
-    state.result = { ok: true, rows: [row('in', '/work/repo/a')] };
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(indexer.lastMessage('later-gone')).toBeUndefined();
-    expect(indexer.lastMessage('in')).toEqual(message('in'));
-
-    // A failed poll keeps the last sessions, so it keeps answering for them.
-    state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(indexer.lastMessage('in')).toEqual(message('in'));
-    indexer.stop();
+      // A failed poll keeps the last sessions, so it keeps answering for them.
+      state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(indexer.latest()?.source.ok).toBe(false);
+      expect(await indexer.conversation('in')).toBeDefined();
+      indexer.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('answers conversation only for sessions in the latest snapshot that have a transcript', async () => {
@@ -643,21 +643,21 @@ describe('the indexer against temporary directories', () => {
       },
     );
     const snapshot = await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
-    const askedMessage = indexer.lastMessage(ids.asked);
-    const outsideMessage = indexer.lastMessage(ids.outside);
-    const noMessage = indexer.lastMessage(ids.worktree);
+    const askedPage = await indexer.conversation(ids.asked);
+    const outsidePage = await indexer.conversation(ids.outside);
     indexer.stop();
 
-    expect(askedMessage).toEqual({
-      sessionId: ids.asked,
-      text: 'Done\n\nOpen questions:\n- Should I push it?\n\nNext steps:\n1. You review.',
-      truncated: false,
+    // The session view reads the whole reply from the transcript.
+    expect(askedPage?.entries[askedPage.entries.length - 1]).toEqual({
+      kind: 'assistant',
       at: '2026-10-16T11:51:00.000Z',
+      text: 'Done\n\nOpen questions:\n- Should I push it?\n\nNext steps:\n1. You review.',
     });
     // Its transcript exists, but the session is outside the root.
-    expect(outsideMessage).toBeUndefined();
-    // In the snapshot, but its transcript has no assistant text.
-    expect(noMessage).toBeUndefined();
+    expect(outsidePage).toBeUndefined();
+    // Replies stay out of the snapshot. Only askedYou's excerpt comes from one.
+    const sent = JSON.stringify(snapshot);
+    for (const reply of ['Profiling now.', 'Which table first?', 'You review.']) expect(sent).not.toContain(reply);
 
     expect(snapshot.roots).toEqual([root]);
     expect(snapshot.source).toEqual({ ok: true });
@@ -687,7 +687,6 @@ describe('the indexer against temporary directories', () => {
     const byId = (id: string) => sessions.find((s) => s.sessionId === id);
     expect(byId(ids.asked)).toMatchObject({
       askedYou: { reason: 'open-questions', excerpt: 'Should I push it?' },
-      lastAssistantText: 'Done\n\nOpen questions:\n- Should I push it?\n\nNext steps:\n1. You review.',
       title: 'Tidy the docs folder',
       titleSource: 'claude-code',
     });
@@ -699,7 +698,6 @@ describe('the indexer against temporary directories', () => {
     const repoSession = snapshot.groups[0]?.sessions.find((s) => s.sessionId === ids.repo);
     expect(repoSession).toMatchObject({
       lastActivityAt: '2026-10-16T11:59:00.000Z',
-      lastAssistantText: 'Profiling now.',
       lastUserPrompt: 'make it faster',
     });
   });

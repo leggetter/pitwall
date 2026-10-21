@@ -13,7 +13,7 @@ const seen = vi.hoisted(() => ({ calls: [] as { what: string; env: NodeJS.Proces
 vi.mock('./index/index.js', () => ({
   startIndexer: vi.fn((options: { roots: string[] }) => {
     seen.calls.push({ what: 'indexer', env: { ...process.env }, roots: options.roots });
-    return { latest: () => undefined, subscribe: () => () => {}, lastMessage: () => undefined, conversation: async () => undefined, stop: () => {} };
+    return { latest: () => undefined, subscribe: () => () => {}, conversation: async () => undefined, stop: () => {} };
   }),
 }));
 
