@@ -201,6 +201,18 @@ describe('groupSessions: Main repo, the default', () => {
   });
 });
 
+describe('groupSessions: a worked-in repo with no root', () => {
+  it('is left out, so its session stays where it started and nothing throws, as from a server before W42', () => {
+    const old = { key: at(WORK, 'evals'), label: 'evals', calls: 9, changes: 9, lastAt: minutesAgo(1) } as unknown as WorkedIn;
+    const fromRoot = session({ name: 'from-root', cwd: WORK, workedIn: [old] });
+    const groups = [group({ key: WORK, label: 'work', kind: 'directory', root: WORK, sessions: [fromRoot] })];
+    for (const mode of ['main-repo', 'every-repo'] as const) {
+      expect(placement(groupSessions(groups, mode).groups), mode).toEqual({ 'work (work)': ['from-root'] });
+    }
+    expect([...everyGroupId(groups)]).toEqual([groupId(groups[0] as SessionGroup)]);
+  });
+});
+
 describe('groupSessions: Where it started', () => {
   it('is the snapshot’s groups exactly, each session’s home the group it started in', () => {
     const fx = fixture();

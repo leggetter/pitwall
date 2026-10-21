@@ -120,6 +120,13 @@ let dashboards = 0;
 /** The empty state's sentence for a selected group that has left the snapshot, a root's own included (4: Empty states). */
 export const GROUP_GONE = 'Its sessions are no longer listed under these roots.';
 
+/**
+ * The empty state's sentence for a root's own group that the snapshot still has, but View
+ * preferences doesn't: every session started there worked in repos, so it's listed under them (W42).
+ */
+export const groupMovedText = (mode: GroupBy) =>
+  `Its sessions are listed under the repos they ${mode === 'main-repo' ? 'changed most' : 'worked in'}, as View preferences groups them.`;
+
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
 
@@ -787,12 +794,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   } else if (!scope) {
+    // Only Main repo and Every repo it worked in take sessions out of a group the snapshot has.
+    const mode = groupBy === 'where-started' ? undefined : groupBy;
     // A group, a root's own included, goes once no session is listed under it, as View preferences groups them.
     empty = (
       <EmptyState
         icon="directory"
         title={`No sessions in ${plainText(name)} now`}
-        sentence={GROUP_GONE}
+        sentence={'view' in selection || mode === undefined || findGroup(startGroups ?? [], selection) === undefined ? GROUP_GONE : groupMovedText(mode)}
         actions={showAll}
       />
     );
