@@ -15,6 +15,7 @@ import {
   currentDirectory,
   fallbackPortMessage,
   fixedTokenNotice,
+  hasFixedToken,
   parseCliArgs,
   resolveRoots,
   resolveToken,
@@ -203,9 +204,18 @@ describe('resolveToken', () => {
     expect(resolveToken({ PITWALL_TOKEN: token })).toBe(token);
   });
 
-  it('rejects a PITWALL_TOKEN shorter than 32 characters, including empty', () => {
+  it('rejects a PITWALL_TOKEN shorter than 32 characters', () => {
     expect(() => resolveToken({ PITWALL_TOKEN: 'a'.repeat(31) })).toThrow(/at least 32 characters/);
-    expect(() => resolveToken({ PITWALL_TOKEN: '' })).toThrow(/at least 32 characters/);
+    expect(() => resolveToken({ PITWALL_TOKEN: 'a' })).toThrow(/at least 32 characters/);
+  });
+
+  it('takes an empty PITWALL_TOKEN as unset: a new random token, and not a fixed one (W40)', () => {
+    const a = resolveToken({ PITWALL_TOKEN: '' });
+    expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(resolveToken({ PITWALL_TOKEN: '' })).not.toBe(a);
+    expect(hasFixedToken({ PITWALL_TOKEN: '' })).toBe(false);
+    expect(hasFixedToken({})).toBe(false);
+    expect(hasFixedToken({ PITWALL_TOKEN: 'pitwall-test-token-0123456789abcd' })).toBe(true);
   });
 
   it('rejects a PITWALL_TOKEN with characters outside base64url', () => {
@@ -944,11 +954,26 @@ describe('npm run dev: a fixed token (W40)', () => {
   }, 60_000);
 
   it.each([
+    ['in the environment', { token: '' }, undefined],
+    ['in .env, as .env.example has it', {}, 'PITWALL_TOKEN=\n'],
+    ['in both', { token: '' }, 'PITWALL_TOKEN=\n'],
+  ] as const)('takes an empty PITWALL_TOKEN %s as unset: a random token for the run, and nothing about a fixed one', async (_, options, env) => {
+    const run = await devRun(await layout(env), options);
+    expect(run.started).toBe(true);
+    expect(run.length).toBe(43);
+    expect(run.stderr + run.stdout).not.toContain('fixed');
+  }, 60_000);
+
+  it('lets .env set PITWALL_TOKEN when the environment has it empty', async () => {
+    const run = await devRun(await layout(`PITWALL_TOKEN=${FROM_FILE}\n`), { token: '' });
+    expect(run.hash).toBe(sha256(FROM_FILE));
+    expect(run.stderr).toBe(`pitwall dev: ${fixedTokenNotice('.env')}\n`);
+  }, 60_000);
+
+  it.each([
     ['too short, from the environment', { token: 'short' }, undefined, 'pitwall dev: PITWALL_TOKEN must be at least 32 characters\n'],
-    ['empty, from the environment', { token: '' }, undefined, 'pitwall dev: PITWALL_TOKEN must be at least 32 characters\n'],
     ['with other characters, from the environment', { token: `${FIXED}!` }, undefined, 'pitwall dev: PITWALL_TOKEN may only contain A-Z, a-z, 0-9, "-" and "_"\n'],
     ['too short, from .env', {}, 'PITWALL_TOKEN=short\n', 'pitwall dev: PITWALL_TOKEN must be at least 32 characters (from '],
-    ['empty, from .env, as .env.example has it', {}, 'PITWALL_TOKEN=\n', 'pitwall dev: PITWALL_TOKEN must be at least 32 characters (from '],
   ] as const)('refuses a PITWALL_TOKEN that is %s, with the CLI’s message, and starts nothing', async (_, options, env, message) => {
     const run = await devRun(await layout(env), options);
     expect(run.code).toBe(1);
@@ -1004,6 +1029,13 @@ describe('pitwall (the process): PITWALL_TOKEN comes from the environment only (
     expect(run.stderr).not.toContain('fixed');
   }, 30_000);
 
+  it('with PITWALL_TOKEN empty, takes it as unset: a new random token, and nothing says it is fixed', async () => {
+    const run = await started('');
+    expect(run.code).toBe(0);
+    expect(run.printed).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(run.stderr).not.toContain('fixed');
+  }, 30_000);
+
   it('with PITWALL_TOKEN set, prints one line saying the token is fixed, without the token', async () => {
     const run = await started(FIXED);
     expect(run.code).toBe(0);
@@ -1020,6 +1052,7 @@ describe('.env.example (W40)', () => {
     expect(text.split('\n').filter((line) => line !== '' && !line.startsWith('#'))).toEqual(['PITWALL_TOKEN=']);
     expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('Use this only on a single-user machine or for development.');
     expect(text).toContain('never reads a .env');
+    expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('Left empty, as here, it counts as unset');
     // Its command makes a token the CLI accepts.
     const command = /node -e "(.*)"/.exec(text)![1]!;
     const made = execFileSync(process.execPath, ['-e', command], { encoding: 'utf8' }).trim();

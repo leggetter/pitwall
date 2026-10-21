@@ -17,7 +17,8 @@
 // never with the token. The .env is found from this file's location, never
 // from the current directory, and loaded only when it exists; the environment
 // wins over it, and its other variables reach the watchers too. The token is
-// checked as the CLI checks it (resolveToken in src/cli.ts). .env.example says
+// checked as the CLI checks it (resolveToken in src/cli.ts): an empty one counts
+// as unset, and one that's set but not valid is refused. .env.example says
 // how to make one. The CLI itself never reads a .env.
 //
 // The browser is opened once per dev run, by the CLI child itself, through its
@@ -47,7 +48,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fixedTokenNotice, resolveToken, UsageError } from '../src/cli.js';
+import { fixedTokenNotice, hasFixedToken, resolveToken, UsageError } from '../src/cli.js';
 
 const DEFAULT_DEV_PORT = 4517;
 
@@ -108,6 +109,8 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
  * else one random token for this run. Exits 1 with the CLI's message for one that isn't valid.
  */
 function devToken(): string {
+  // An empty PITWALL_TOKEN counts as unset (resolveToken), so the repo's .env can still set it.
+  if (process.env.PITWALL_TOKEN === '') delete process.env.PITWALL_TOKEN;
   const fromEnvironment = process.env.PITWALL_TOKEN !== undefined;
   // The repo's root, from this file's own place: never the current directory, whose .env isn't ours.
   const envFile = join(fileURLToPath(new URL('..', import.meta.url)), '.env');
@@ -120,7 +123,7 @@ function devToken(): string {
     console.error(`pitwall dev: ${error.message}${fromEnvironment ? '' : ` (from ${envFile})`}`);
     process.exit(1);
   }
-  if (process.env.PITWALL_TOKEN !== undefined) console.error(`pitwall dev: ${fixedTokenNotice(fromEnvironment ? undefined : '.env')}`);
+  if (hasFixedToken(process.env)) console.error(`pitwall dev: ${fixedTokenNotice(fromEnvironment ? undefined : '.env')}`);
   return resolved;
 }
 
