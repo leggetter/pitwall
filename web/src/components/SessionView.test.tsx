@@ -15,6 +15,8 @@ import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/
 import { tooltipText } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
+import { FINISHED_ASKED_HINT, STALE_HINT } from './SessionRow.js';
+import { SessionView } from './SessionView.js';
 
 // Made-up sessions and conversations only.
 
@@ -357,6 +359,35 @@ describe('SessionView: the conversation', () => {
     expect(screen.getByRole('dialog')).toBe(view);
     expect(within(view).getByText('This session is no longer listed, so this is what it showed last.')).toBeTruthy();
     expect(texts(view)).toEqual(['prompt 1']);
+  });
+});
+
+describe('SessionView: the badges a row has, with their explanations (W31)', () => {
+  const lineTwo = () => document.querySelector<HTMLElement>('.session-view-meta')!;
+  const badges = () => [...lineTwo().querySelectorAll('.badge')].map((badge) => badge.textContent);
+
+  it('shows Stale after the status, with an info button whose name is its explanation, so the keyboard reaches it', async () => {
+    const stale = target({ kind: 'background', shortId: 'pt0d1', state: 'blocked', status: undefined, stale: true, waitingFor: 'a made-up question' });
+    render(<SessionView session={stale} listed onClose={() => {}} />);
+    expect(badges()).toEqual(['Blocked: a made-up question', 'Stale']);
+    const info = within(lineTwo()).getByRole('button', { name: STALE_HINT });
+    expect(info.closest('.session-view-badge')?.querySelector('.badge')?.textContent).toBe('Stale');
+    expect(info.tabIndex).toBe(0);
+    expect(await tooltipText(info)).toBe(STALE_HINT);
+  });
+
+  it('shows a finished session’s Asked you, outlined, with its explanation the same way', () => {
+    const finished = target({ kind: 'background', shortId: 'pt0d1', state: 'done', status: undefined, alive: false, pid: undefined, finished: true, askedYou: { reason: 'open-questions', excerpt: 'A made-up question?' } });
+    render(<SessionView session={finished} listed onClose={() => {}} />);
+    expect(badges()).toEqual(['Done', 'Asked you']);
+    expect(lineTwo().querySelector('.badge-outline')?.textContent).toBe('Asked you');
+    expect(within(lineTwo()).getByRole('button', { name: FINISHED_ASKED_HINT })).toBeTruthy();
+  });
+
+  it('shows neither for a session that is neither stale nor finished', () => {
+    render(<SessionView session={target({ askedYou: { reason: 'open-questions', excerpt: 'A made-up question?' } })} listed onClose={() => {}} />);
+    expect(badges()).toEqual(['Asked you']);
+    expect(lineTwo().querySelector('.session-view-badge')).toBeNull();
   });
 });
 

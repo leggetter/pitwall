@@ -1855,7 +1855,8 @@ mark.match {
   line-height: var(--pw-leading-s);
 }
 
-.session-view-kind {
+.session-view-kind,
+.session-view-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--pw-space-1);

@@ -6,7 +6,9 @@
 // Tooltips, on hover only, since none of them is on the name's button: the session's id and start
 // time on its name; the whole title and where it came from; Stale's and a finished Asked you's
 // explanations; the last activity's absolute time; and line 2 in full when it's cut short. The full
-// title and line 2 are in the DOM too, so screen readers have them, and the session view has them all.
+// title and line 2 are in the DOM too, so screen readers have them. The session view has them all:
+// the title in its heading, the question or prompt in its conversation, and Stale and Asked you in
+// its line 2, each with an info button whose name is its explanation, so the keyboard reaches it.
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
