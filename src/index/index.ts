@@ -11,7 +11,7 @@ import {
 import { createAgentsSource, type AgentRow, type AgentsSource } from './agents.js';
 import { ConversationCursorError, readConversationPage } from './conversation.js';
 import { oneLine } from './exec.js';
-import { createGroupResolver, type GroupResolver } from './grouping.js';
+import { createGroupResolver, groupLabel, type GroupResolver } from './grouping.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
 import { buildGroups, toSessionSummary, type PlacedSession } from './summaries.js';
 import { createTranscriptReader, type TranscriptReader } from './transcripts.js';
@@ -220,8 +220,9 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
 
 /**
  * Hands the scanner this poll's sessions, which queues their scans without waiting for them, and
- * adds what earlier scans found. A session seen for the first time has no workedIn until a later
- * poll, so it sits where it started until then. Nothing here can fail the poll.
+ * adds what earlier scans found to their summaries, each repo labelled as its group is or would be.
+ * It never moves a session: each is listed only where it started (W39). A session seen for the
+ * first time has no workedIn until a later poll. Nothing here can fail the poll.
  */
 function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: IndexerDeps): void {
   const scanner = deps.workedIn;
@@ -236,14 +237,14 @@ function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: Inde
       })),
       roots,
     );
-    for (const placed of kept) {
-      const repos = scanner.workedIn(placed.summary.sessionId);
+    for (const { summary } of kept) {
+      const repos = scanner.workedIn(summary.sessionId);
       if (repos === undefined || repos.length === 0) continue;
-      placed.workedIn = repos.map(({ key, root }) => ({ key, root }));
-      placed.summary.workedIn = repos.map(({ key, calls, changes, lastAt }) => ({ key, calls, changes, lastAt }));
+      // The label buildGroups would give the repo's group, under the root that group would sit under.
+      summary.workedIn = repos.map(({ key, root, calls, changes, lastAt }) => ({ key, label: groupLabel(key, root, deps.home), calls, changes, lastAt }));
     }
   } catch {
-    // The sessions keep their start groups.
+    // What was added stays, and the poll goes on: a scanner failure only leaves workedIn out.
   }
 }
 

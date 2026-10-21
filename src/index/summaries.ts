@@ -183,39 +183,28 @@ function compareText(a: string, b: string): number {
 export interface PlacedSession {
   /** The root the session belongs to. */
   root: string;
-  /** The group of the directory it started in. */
+  /** The group of the directory it started in: the one group it's listed under. */
   group: GroupKey;
   summary: SessionSummary;
-  /** The repos it worked in beyond its start (workedIn.ts), each with the root its group sits under. */
-  workedIn?: readonly { key: string; root: string }[];
 }
 
 /**
- * The groups each session is listed under (SessionGroup's comments):
- * - a repo lists the sessions started in it and every session whose workedIn names it;
- * - a directory below a root that isn't in a repo lists every session started in it, as a repo
- *   does, so one that also worked in repos shows in both;
- * - a root's own group lists only the sessions started in the root itself with no workedIn: one
- *   that worked in repos is listed under those repos only.
- * A group with no sessions is left out. Labels each group, and sorts the sessions in each group and
- * the groups themselves.
+ * The groups, each listing the sessions started in it and only those (SessionGroup's comments,
+ * W39): a repo, its worktrees and subdirectories included; a directory below a root that's in no
+ * repo; or a root's own directory. A session is in exactly one group, whatever its workedIn names,
+ * so a repo that sessions only worked in has no group. A group with no sessions is left out. Labels
+ * each group, and sorts the sessions in each group and the groups themselves.
  */
 export function buildGroups(sessions: readonly PlacedSession[], home: string): SessionGroup[] {
   const groups = new Map<string, SessionGroup>();
-  const add = (root: string, key: string, kind: GroupKey['kind'], summary: SessionSummary) => {
-    const id = `${root}\0${key}`;
+  for (const { root, group, summary } of sessions) {
+    const id = `${root}\0${group.key}`;
     let entry = groups.get(id);
     if (entry === undefined) {
-      entry = { key, label: groupLabel(key, root, home), kind, root, sessions: [] };
+      entry = { key: group.key, label: groupLabel(group.key, root, home), kind: group.kind, root, sessions: [] };
       groups.set(id, entry);
     }
-    // Each session once in a group, whatever lists it there twice.
-    if (!entry.sessions.includes(summary)) entry.sessions.push(summary);
-  };
-  for (const { root, group, summary, workedIn = [] } of sessions) {
-    const rootItself = group.kind === 'directory' && group.key === root;
-    if (!(rootItself && workedIn.length > 0)) add(root, group.key, group.kind, summary);
-    for (const repo of workedIn) add(repo.root, repo.key, 'git', summary);
+    entry.sessions.push(summary);
   }
   const result = [...groups.values()];
   for (const group of result) group.sessions.sort(compareSessions);
