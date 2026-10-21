@@ -87,6 +87,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Why:** most sessions start in the folder that holds the repos, so grouping by start alone put most of them in one group.
 - **How:** a background scanner reads each session's transcripts, sub-agents' included, and the poll never waits on it. It keeps what it finds in memory only, and runs read-only git at repo boundaries, at most two processes at once. A session sits where it started until its first scan finishes.
 - **Counts:** a repo's count is its number of distinct sessions, so the repos' counts can add up to more than All sessions.
+- **Hiding** (Phil, 2026-10-21): a repo or directory can be hidden from the repo list, and the hidden ones are listed at its foot, to select or unhide. It changes only the repo list: every session still shows in Needs you, All sessions and every other group that lists it. Chosen over ageing old repos out, after the try-out found a long session still listed under a repo it last worked in 44 days before its latest work.
 
 ### D10 - pitwall's own design system, inspired by Hookdeck's UX
 
@@ -119,4 +120,4 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** until M3, every snapshot sent to the browser held each session's latest reply, though the UI showed none of it. That's gone.
 - **What it still carries:** what the list and the session view's header show: each session's title, its newest prompt (up to 300 characters), what it asked you, and the reply to a message you relayed. The conversation itself leaves the server only when you open it, through the token-gated conversation route.
-- **Browser storage:** no token and no session content. The token is in `sessionStorage`. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1` and `pitwall.groups.v1`.
+- **Browser storage:** no token and no session content. The token is in `sessionStorage`. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1` and `pitwall.hidden.v1:<root>`. The last is one key per root, holding each hidden group's path, label and kind, so pitwalls watching different roots keep separate lists. Storage is also per origin, so a pitwall on a fallback port starts with none.
