@@ -865,11 +865,12 @@ describe('the indexer against temporary directories', () => {
     const outsidePage = await indexer.conversation(ids.outside);
     indexer.stop();
 
-    // The session view reads the whole reply from the transcript.
+    // The session view reads the whole reply from the transcript, as the markdown it was written in (W36).
     expect(askedPage?.entries[askedPage.entries.length - 1]).toEqual({
       kind: 'assistant',
       at: '2026-10-16T11:51:00.000Z',
-      text: 'Done\n\nOpen questions:\n- Should I push it?\n\nNext steps:\n1. You review.',
+      text: '## Done\n\n**Open questions:**\n- Should I push it?\n\n**Next steps:**\n1. You review.',
+      markdown: true,
     });
     // Its transcript exists, but the session is outside the root.
     expect(outsidePage).toBeUndefined();
