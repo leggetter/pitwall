@@ -231,10 +231,7 @@ describe('applyEntry', () => {
     expect(fields.assistantText).toHaveLength(ASSISTANT_TEXT_KEEP);
   });
 
-  it('keeps a cut message at 64 KiB as more blocks arrive, and records when its latest text block was written', () => {
-    const short = assistant([text('short')], 'm1');
-    expect(fieldsOf(short)).toMatchObject({ assistantAtMs: Date.parse(short.timestamp as string) });
-
+  it('keeps a cut message at 64 KiB as more blocks arrive, and starts again with a new message', () => {
     const exact = fieldsOf(assistant([text('e'.repeat(ASSISTANT_TEXT_KEEP))], 'm1'));
     expect(exact.assistantText).toHaveLength(ASSISTANT_TEXT_KEEP);
 
@@ -243,12 +240,10 @@ describe('applyEntry', () => {
     const third = assistant([text('c')], 'm2');
     const cut = fieldsOf(first, second, third);
     expect(cut.assistantText).toHaveLength(ASSISTANT_TEXT_KEEP);
-    expect(cut.assistantAtMs).toBe(Date.parse(third.timestamp as string));
 
     // A new message starts again.
-    const next = fieldsOf(first, second, assistant([text('fresh')], 'm3', { timestamp: undefined }));
+    const next = fieldsOf(first, second, assistant([text('fresh')], 'm3'));
     expect(next.assistantText).toBe('fresh');
-    expect(next.assistantAtMs).toBeUndefined();
   });
 
   it("keeps the newest ai-title entry's title, which is not activity", () => {

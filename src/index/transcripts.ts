@@ -324,8 +324,6 @@ export interface Fields {
   assistantMessageId?: string;
   /** The newest assistant message's raw text, its text blocks joined, capped at 64 KiB. */
   assistantText?: string;
-  /** When the newest assistant message's latest text block was written. */
-  assistantAtMs?: number;
   userPrompt?: string;
   /** True when a prompt came after the newest assistant text, in file order. */
   promptAfterText?: boolean;
@@ -369,12 +367,8 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     const sameMessage =
       text.id !== undefined && text.id === fields.assistantMessageId && fields.assistantText !== undefined;
     const joined = sameMessage ? `${fields.assistantText}\n${text.text}` : text.text;
-    if (!sameMessage) {
-      fields.assistantMessageId = text.id;
-      fields.assistantAtMs = undefined;
-    }
+    if (!sameMessage) fields.assistantMessageId = text.id;
     fields.assistantText = cap(joined, ASSISTANT_TEXT_KEEP);
-    if (at !== undefined) fields.assistantAtMs = at;
     fields.promptAfterText = false;
     return;
   }
