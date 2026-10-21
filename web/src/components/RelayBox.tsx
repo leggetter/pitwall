@@ -29,6 +29,7 @@ import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
 import { InfoTip } from './InfoTip.js';
 import { KeyCaps, modEnter } from './KeyCaps.js';
+import { ScrollBox } from './ScrollBox.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 import '../relay.css';
@@ -279,9 +280,10 @@ export function RelayExchangeNote({ exchange, showReply = true }: RelayExchangeN
       </p>
       {reply && (
         <Tooltip content={`Replied ${absoluteTime(reply.at)}`} relation="none">
-          <p className="relay-reply">
+          {/* Three lines at most (two on short windows), then it scrolls: a Tab stop while it does (ScrollBox). */}
+          <ScrollBox as="p" className="relay-reply" label="Reply">
             <span className="relay-reply-label">Reply:</span> {plainText(reply.text)}
-          </p>
+          </ScrollBox>
         </Tooltip>
       )}
     </div>

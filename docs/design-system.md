@@ -705,7 +705,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ### Session list
 
 - **Fill:** `--pw-surface`. Its header stays put; its rows scroll.
-- **Page alerts** come first, above the header, full column width, with 12 px 16 px 0 around them and 12 px between them (see [App strip and page alerts](#app-strip-and-page-alerts)). They take at most half the column; past that, they scroll inside themselves, so the header and some rows always show.
+- **Page alerts** come first, above the header, full column width, with 12 px 16 px 0 around them and 12 px between them (see [App strip and page alerts](#app-strip-and-page-alerts)). They take at most half the column; past that, they scroll inside themselves, so the header and some rows always show. While they do, their box is a Tab stop, a region named "Alerts" with the inset focus ring, since Safari and Firefox scroll a box from the keyboard only once it has focus (`ScrollBox`, W31).
 - **Header** (padding 12 px 16 px, a bottom `--pw-border`):
   - **Line 1:**
     - The selection's name, as the column's `<h2>` (l 16/24, 600).
@@ -1026,7 +1026,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
 
 - **Region:** a `<section>` named by a visually hidden heading "Message this session".
 - **Order, top to bottom:**
-  1. **The latest exchange:** "Message from pitwall · 5m ago: *status*" (meta, `--pw-text-muted`; the status in `--pw-warning-fg` while waiting, `--pw-danger-fg` if it failed, with no band behind it). Below it, the reply (body, after "Reply:" in `--pw-text-muted`, 500, so it isn't read as the message pitwall sent), at most three lines (two on short windows), scrolling past that.
+  1. **The latest exchange:** "Message from pitwall · 5m ago: *status*" (meta, `--pw-text-muted`; the status in `--pw-warning-fg` while waiting, `--pw-danger-fg` if it failed, with no band behind it). Below it, the reply (body, after "Reply:" in `--pw-text-muted`, 500, so it isn't read as the message pitwall sent), at most three lines (two on short windows), scrolling past that. While it scrolls, it's a Tab stop, a region named "Reply", as the page alerts are (`ScrollBox`).
      - Show the reply once: when the conversation already shows it, the footer shows only the status line. It does when one of Claude's entries since the send has the reply's text, whitespace collapsed: the whole entry, or, for a reply of 40 characters or more, part of one. A reply that's only in the session's `SendMessage` call isn't in its conversation, which shows a tool call by its name, so it stays in the footer.
   2. **The result of the last send,** as an inline alert. The text is the relay's status sentence, then the server's detail in code style. `role="status"` for delivered, `role="alert"` otherwise.
 

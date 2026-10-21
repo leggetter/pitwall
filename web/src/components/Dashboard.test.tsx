@@ -581,7 +581,7 @@ describe('the session list', () => {
     const { container } = renderDashboard(mixedSnapshot(), { serverError: 'index crashed' });
 
     const list = container.querySelector('main.session-list')!;
-    expect(list.firstElementChild?.className).toBe('session-list-alerts');
+    expect(list.firstElementChild?.classList.contains('session-list-alerts')).toBe(true);
     expect(list.firstElementChild?.querySelector('.inline-alert.danger')?.textContent).toContain('index crashed');
     expect(list.firstElementChild?.nextElementSibling?.className).toBe('session-list-head');
   });
