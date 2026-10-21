@@ -12,6 +12,7 @@ import {
   browserCommand,
   claimOpenMarker,
   currentDirectory,
+  fallbackPortMessage,
   parseCliArgs,
   resolveRoots,
   resolveToken,
@@ -101,6 +102,16 @@ describe('parseCliArgs', () => {
   it('rejects unknown options', () => {
     expect(() => parseCliArgs(['--host', '0.0.0.0'], {})).toThrow(UsageError);
     expect(() => parseCliArgs(['--token', 'x'], {})).toThrow(UsageError);
+  });
+});
+
+describe('fallbackPortMessage', () => {
+  it('says the port changes every run, and that --port keeps a pinned tab working', () => {
+    expect(fallbackPortMessage(4517, 53122)).toBe(
+      'pitwall: port 4517 is busy, so this run uses port 53122, which changes every time. ' +
+        'A pinned pitwall tab needs the same port every run, so start pitwall with --port <n> to keep one working.',
+    );
+    expect(USAGE.replace(/\s+/g, ' ')).toContain('A pinned tab needs the same port every run, so give one with --port if 4517 is often busy.');
   });
 });
 

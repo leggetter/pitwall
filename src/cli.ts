@@ -30,7 +30,9 @@ The roots default to the current directory.
 
 Options:
   --port <n>            Port on 127.0.0.1. Default ${DEFAULT_PORT}, or a free port if
-                        ${DEFAULT_PORT} is busy. 0 always picks a free port.
+                        ${DEFAULT_PORT} is busy. 0 always picks a free port. A pinned
+                        tab needs the same port every run, so give one with --port
+                        if ${DEFAULT_PORT} is often busy.
   --interval <seconds>  How often to poll claude agents, in whole seconds
                         from ${INTERVAL_MIN_SECONDS} to ${INTERVAL_MAX_SECONDS}. Default ${DEFAULT_POLL_INTERVAL_MS / 1000}.
   --no-open             Don't open the browser.
@@ -171,6 +173,17 @@ export function resolveToken(env: NodeJS.ProcessEnv = process.env): string {
     throw new UsageError('PITWALL_TOKEN may only contain A-Z, a-z, 0-9, "-" and "_"');
   }
   return fromEnv;
+}
+
+/**
+ * What the CLI prints when the default port was busy and it fell back to a
+ * free one: a pinned tab can't follow a port that changes every run.
+ */
+export function fallbackPortMessage(defaultPort: number, port: number): string {
+  return (
+    `pitwall: port ${defaultPort} is busy, so this run uses port ${port}, which changes every time. ` +
+    `A pinned pitwall tab needs the same port every run, so start pitwall with --port <n> to keep one working.`
+  );
 }
 
 /**
@@ -366,9 +379,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   process.on('SIGHUP', shutdown);
 
   const url = `${server.url}/#token=${token}`;
-  if (command.port === undefined && server.port !== DEFAULT_PORT) {
-    console.log(`pitwall: port ${DEFAULT_PORT} is busy, so using ${server.port}.`);
-  }
+  if (command.port === undefined && server.port !== DEFAULT_PORT) console.log(fallbackPortMessage(DEFAULT_PORT, server.port));
   console.log(`pitwall is running at ${url}`);
   console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}, polling every ${intervalMs / 1000}s`);
   // Only now that this process's own server is listening, so the browser is

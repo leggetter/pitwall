@@ -44,7 +44,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-const { CWD_GONE_MESSAGE, main, USAGE } = await import('./cli.js');
+const { CWD_GONE_MESSAGE, fallbackPortMessage, main, USAGE } = await import('./cli.js');
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
@@ -132,6 +132,17 @@ describe('main(): startup', () => {
       expect(seen.calls.map((call) => call.what)).toEqual(['relay', 'indexer', 'server']);
       expect(seen.calls[1]?.roots).toEqual([process.cwd()]);
       expect(console.log).toHaveBeenCalledWith(expect.stringContaining(`Watching root: ${process.cwd()},`));
+    });
+
+    it('says a fallback port changes every run, and that --port keeps a pinned tab working', async () => {
+      // The fake server listens on 45170, as the real one does on a free port when 4517 is busy.
+      expect(await main(['--no-open', tmpdir()])).toBe(0);
+      expect(console.log).toHaveBeenCalledWith(fallbackPortMessage(4517, 45170));
+    });
+
+    it('says nothing about the port when --port picked it', async () => {
+      expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining('is busy'));
     });
 
     it('resolves a relative root against the directory it read', async () => {
