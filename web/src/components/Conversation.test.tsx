@@ -454,6 +454,65 @@ describe('Conversation: following new entries', () => {
     expect(bar(view.body)).toBeNull();
   });
 
+  describe('the smooth jump ends (W31)', () => {
+    /** Scrolled up, with the bar, then a smooth jump that's on its way down, at 700 of 1,200. */
+    async function jumping() {
+      const sizes = layout({ scrollHeight: 1000, clientHeight: 400 });
+      const server = fakeServer(page(prompts(3)));
+      const view = await renderView(server);
+      scrollTo(view.body, 100);
+      server.newest(page(prompts(4)));
+      sizes.scrollHeight = 1200;
+      await view.refresh();
+      view.body.scrollTo = vi.fn() as unknown as HTMLElement['scrollTo'];
+      fireEvent.click(bar(view.body)!);
+      await settle();
+      return { view, server, sizes };
+    }
+
+    /** A position on the way down, then a new entry: following it means the jump still owns the scrolling. */
+    async function followed({ view, server }: Awaited<ReturnType<typeof jumping>>): Promise<boolean> {
+      scrollTo(view.body, 700);
+      server.newest(page(prompts(5)));
+      await view.refresh();
+      return bar(view.body) === null;
+    }
+
+    it.each([
+      ['a wheel', (body: HTMLElement) => fireEvent.wheel(body)],
+      ['a touch', (body: HTMLElement) => fireEvent.touchStart(body)],
+      ['a press', (body: HTMLElement) => fireEvent.pointerDown(body)],
+      ['a key', (body: HTMLElement) => fireEvent.keyDown(body, { key: 'ArrowUp' })],
+    ])("at the reader's own %s: where they scroll to is theirs again", async (_what, input) => {
+      const jump = await jumping();
+      input(jump.view.body);
+      expect(await followed(jump)).toBe(false);
+      expect(bar(jump.view.body)!.textContent).toBe('1 new · Jump to latest');
+    });
+
+    it('after 1.5 s at most, even with no input, so a jump that never arrives stops owning the scrolling', async () => {
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      vi.setSystemTime(NOW);
+      const jump = await jumping();
+      await act(async () => {
+        vi.advanceTimersByTime(1_499);
+      });
+      // Still its own: a position on the way down isn't the reader's.
+      scrollTo(jump.view.body, 700);
+      expect(bar(jump.view.body)).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(await followed(jump)).toBe(false);
+    });
+
+    it('once it reaches the bottom, as it should: a scroll after that is the reader’s', async () => {
+      const jump = await jumping();
+      scrollTo(jump.view.body, 800);
+      expect(await followed(jump)).toBe(false);
+    });
+  });
+
   it("doesn't animate the jump under reduced motion", async () => {
     vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: query === '(prefers-reduced-motion: reduce)', media: query }) as MediaQueryList);
     const sizes = layout({ scrollHeight: 1000, clientHeight: 400 });
