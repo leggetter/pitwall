@@ -177,6 +177,7 @@ WCAG 2.x contrast ratios for the values above, checked by `web/src/contrast.test
 | `--pw-focus` on the five tints (a control's ring inside an inline alert, and a focused alert's inset ring) | 4.29 (info tint) | 4.41 (success tint) | 3:1 |
 | `--pw-selected-border` on neutral surfaces (the selected ring, and a checked checkbox's fill) | 6.53 (hover-bg) | 4.68 (hover) | 3:1 |
 | `--pw-warning-indicator` on surface, bg, muted, hover and selected (the bar of a row that needs you, as it is, hovered or open) | 3.45 (selected) | 6.28 (hover) | 3:1 |
+| `--pw-danger-fg` on `--pw-surface-muted` (the left bar of the Stop and Remove confirmations; `--pw-danger-solid` was 2.20:1 in dark) | 5.27 | 5.83 | 3:1 |
 
 - **The one exemption:** `--pw-text-disabled` is 2.62:1 (light) and 2.25:1 (dark) on `--pw-surface`. WCAG 1.4.3 exempts text in inactive controls. Use it only on controls that are `aria-disabled`, never for content.
 - **Decorative only:** `--pw-border`, `--pw-border-strong`, `--pw-border-dashed` and the tone `-border` tokens are below 3:1. They may never be the only thing that shows where a control is or what state it's in.
@@ -1134,7 +1135,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
 For a destructive or surprising action in the session view, without a dialog.
 
 - **Component:** `InlineConfirm` (`web/src/components/InlineConfirm.tsx`).
-- **Box:** for Stop and Remove, directly under the header (above the tabs), with 8 px 16 px around it. For the restart, at the top of the Terminal tab's panel, under its bar, since that tab's attach is what waits for it. `--pw-surface-muted` fill, `inset 0 0 0 1px var(--pw-border-strong)`, a left bar `inset 3px 0 0 var(--pw-danger-solid)` (or `--pw-warning-indicator` for the restart), `--pw-radius-md`, padding 12 px.
+- **Box:** for Stop and Remove, directly under the header (above the tabs), with 8 px 16 px around it. For the restart, at the top of the Terminal tab's panel, under its bar, since that tab's attach is what waits for it. `--pw-surface-muted` fill, `inset 0 0 0 1px var(--pw-border-strong)`, a left bar `inset 3px 0 0 var(--pw-danger-fg)` (or `--pw-warning-indicator` for the restart), each at least 3:1 on the fill (2.5), `--pw-radius-md`, padding 12 px.
 - **Content:** a question as the title (m 14/20, 500), the consequence (meta, `--pw-text-muted`), then the buttons at the right, wrapping under the text when there's no room: outline sm "Cancel", then the sm confirm button with its action's icon (`stop`, `remove`, `restart`), 8 px apart.
 
 | Action | Question | Consequence | Confirm button |

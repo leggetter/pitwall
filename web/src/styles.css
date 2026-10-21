@@ -2059,7 +2059,8 @@ mark.match {
 /*
  * Inline confirmations (section 4: Inline confirmation, and InlineConfirm.tsx): the question and its
  * consequence, then Cancel and the confirm button at the right, wrapping under them when there's no
- * room. A 3 px bar at the left: --pw-danger-solid, or --pw-warning-indicator for the restart.
+ * room. A 3 px bar at the left: --pw-danger-fg, or --pw-warning-indicator for the restart, each at
+ * least 3:1 on the --pw-surface-muted fill, as an indicator needs (2.5).
  */
 .inline-confirm {
   display: flex;
@@ -2072,7 +2073,7 @@ mark.match {
 }
 
 .inline-confirm.danger {
-  box-shadow: inset 3px 0 0 var(--pw-danger-solid), inset 0 0 0 1px var(--pw-border-strong);
+  box-shadow: inset 3px 0 0 var(--pw-danger-fg), inset 0 0 0 1px var(--pw-border-strong);
 }
 
 .inline-confirm.warning {

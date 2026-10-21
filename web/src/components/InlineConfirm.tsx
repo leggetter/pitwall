@@ -22,7 +22,7 @@ export interface InlineConfirmProps {
   busyLabel: string;
   icon?: IconName;
   variant: 'danger' | 'primary';
-  /** The left bar: --pw-danger-solid, or --pw-warning-indicator for the restart. */
+  /** The left bar: --pw-danger-fg, or --pw-warning-indicator for the restart. */
   tone?: 'danger' | 'warning';
   /** role="alertdialog" for the restart, which interrupts opening a tab; role="group" otherwise. */
   role?: 'group' | 'alertdialog';
