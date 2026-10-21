@@ -527,7 +527,7 @@ describe('createIndexer', () => {
   });
 });
 
-describe('createIndexer with the repos sessions worked in (W34)', () => {
+describe('createIndexer with the repos sessions worked in (W34, W39)', () => {
   const ROOT = '/work';
   /** Repos under the root; any other directory is in no repo. */
   const REPOS = ['/work/alpha', '/work/beta', '/work/gamma'];
@@ -603,64 +603,102 @@ describe('createIndexer with the repos sessions worked in (W34)', () => {
     indexer.stop();
   });
 
-  it('places each session by where it started, and under every repo it worked in', async () => {
+  it('lists each session only where it started, whatever it worked in (W39)', async () => {
     const { deps, found } = setup();
     found.set('in-alpha', [repo('/work/beta'), repo('/work/gamma', 5)]);
-    found.set('in-root', [repo('/work/alpha')]);
+    found.set('in-root', [repo('/work/alpha'), repo('/work/gamma', 3)]);
     found.set('in-notes', [repo('/work/gamma')]);
     const indexer = createIndexer({ roots: [ROOT] }, deps);
     await flush();
     expect(placement(indexer.latest())).toEqual({
-      // Started in it, and the root-started session that worked in it.
-      'alpha (git)': ['in-alpha', 'in-root'],
-      'beta (git)': ['in-alpha', 'in-beta'],
-      // A repo reached only through workedIn, labelled as any other.
-      'gamma (git)': ['in-alpha', 'in-notes'],
-      // A directory below the root that's in no repo keeps its group, with every session started in it.
+      // Started in alpha's subdirectory; not under beta, the sibling it worked in.
+      'alpha (git)': ['in-alpha'],
+      'beta (git)': ['in-beta'],
+      // A directory below the root that's in no repo lists the session started in it, and only that.
       'notes (directory)': ['in-notes'],
-      // Only the root-started session that worked in no repo.
-      'work (directory)': ['in-root-alone'],
+      // The root's own group: every session started in the root, the one that worked in repos too.
+      'work (directory)': ['in-root', 'in-root-alone'],
     });
+    // gamma had only sessions that worked in it, so it has no group.
+    expect(indexer.latest()?.groups.some((g) => g.key === '/work/gamma')).toBe(false);
     indexer.stop();
   });
 
-  it('adds workedIn to the summary, without the roots, in the scanner’s order', async () => {
+  it('adds workedIn to the summary, each repo with the label its group has or would have, in the scanner’s order', async () => {
     const { deps, found } = setup();
-    found.set('in-alpha', [repo('/work/beta'), repo('/work/gamma', 5)]);
+    found.set('in-root', [repo('/work/alpha'), repo('/work/gamma', 5)]);
     const indexer = createIndexer({ roots: [ROOT] }, deps);
     await flush();
     const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
-    const inAlpha = sessions.filter((s) => s.sessionId === 'in-alpha');
-    // The same session in three groups, each with the same summary.
-    expect(inAlpha).toHaveLength(3);
-    for (const s of inAlpha) {
-      expect(s.workedIn).toEqual([
-        { key: '/work/beta', calls: 12, changes: 1, lastAt: new Date(NOW - 60_000).toISOString() },
-        { key: '/work/gamma', calls: 12, changes: 1, lastAt: new Date(NOW - 5 * 60_000).toISOString() },
-      ]);
-    }
+    // Listed once, in the root's group.
+    expect(sessions.filter((s) => s.sessionId === 'in-root')).toHaveLength(1);
+    expect(indexer.latest()?.groups.find((g) => g.key === ROOT)?.sessions.map((s) => s.sessionId)).toContain('in-root');
+    expect(sessions.find((s) => s.sessionId === 'in-root')?.workedIn).toEqual([
+      // alpha has a group, labelled the same; gamma has none.
+      { key: '/work/alpha', label: 'alpha', calls: 12, changes: 1, lastAt: new Date(NOW - 60_000).toISOString() },
+      { key: '/work/gamma', label: 'gamma', calls: 12, changes: 1, lastAt: new Date(NOW - 5 * 60_000).toISOString() },
+    ]);
+    expect(indexer.latest()?.groups.find((g) => g.key === '/work/alpha')?.label).toBe('alpha');
     expect(sessions.find((s) => s.sessionId === 'in-beta')).not.toHaveProperty('workedIn');
     indexer.stop();
   });
 
-  it('leaves the root’s group out once every session started there worked in repos', async () => {
+  it("labels a worked-in repo from its own root, as buildGroups would label its group, with ~ outside every root", async () => {
+    const { state, deps, found } = setup();
+    state.result = { ok: true, rows: [row('in-root', ROOT)] };
+    // A repo under a second root, one nested below a directory, and a worktree whose main repo is outside the roots.
+    found.set('in-root', [
+      { ...repo('/other/service'), root: '/other' },
+      repo('/work/projects/delta'),
+      { ...repo('/home/someone/elsewhere/main'), root: ROOT },
+    ]);
+    const indexer = createIndexer({ roots: [ROOT, '/other'] }, deps);
+    await flush();
+    const summary = indexer.latest()?.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === 'in-root');
+    expect(summary?.workedIn?.map((r) => [r.key, r.label])).toEqual([
+      ['/other/service', 'service'],
+      ['/work/projects/delta', 'projects/delta'],
+      ['/home/someone/elsewhere/main', '~/elsewhere/main'],
+    ]);
+    expect(summary?.workedIn?.[0]).not.toHaveProperty('root');
+    indexer.stop();
+  });
+
+  it('keeps a worktree’s and a subdirectory’s sessions under their repo, and nowhere else', async () => {
+    const { state, deps, found } = setup();
+    const resolve = deps.groups.resolve;
+    // The real resolver gives a worktree its main repo's key, from git's common dir.
+    deps.groups = { resolve: async (cwd) => (cwd.startsWith('/work/alpha-worktrees/') ? { key: '/work/alpha', kind: 'git' } : resolve(cwd)), prune() {} };
+    state.result = { ok: true, rows: [row('in-alpha', '/work/alpha/src'), row('in-worktree', '/work/alpha-worktrees/feature'), row('in-beta', '/work/beta')] };
+    found.set('in-alpha', [repo('/work/beta')]);
+    found.set('in-worktree', [repo('/work/beta'), repo('/work/gamma')]);
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    expect(placement(indexer.latest())).toEqual({ 'alpha (git)': ['in-alpha', 'in-worktree'], 'beta (git)': ['in-beta'] });
+    indexer.stop();
+  });
+
+  it("keeps the root's group once every session started there has worked in repos", async () => {
     const { deps, found } = setup();
     found.set('in-root', [repo('/work/alpha')]);
     found.set('in-root-alone', [repo('/work/beta')]);
     const indexer = createIndexer({ roots: [ROOT] }, deps);
     await flush();
-    expect(indexer.latest()?.groups.some((g) => g.key === ROOT)).toBe(false);
+    expect(placement(indexer.latest())['work (directory)']).toEqual(['in-root', 'in-root-alone']);
     indexer.stop();
   });
 
-  it('keeps a session where it started until its scan finishes, then moves it', async () => {
+  it('keeps a session where it started once its scan finishes, and adds what the scan found', async () => {
     const { deps, found } = setup();
     const indexer = createIndexer({ roots: [ROOT], intervalMs: 1000 }, deps);
     await flush();
-    expect(placement(indexer.latest())['work (directory)']).toEqual(['in-root', 'in-root-alone']);
+    const before = placement(indexer.latest());
+    expect(before['work (directory)']).toEqual(['in-root', 'in-root-alone']);
     found.set('in-root', [repo('/work/gamma')]);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(placement(indexer.latest())).toMatchObject({ 'work (directory)': ['in-root-alone'], 'gamma (git)': ['in-root'] });
+    expect(placement(indexer.latest())).toEqual(before);
+    const inRoot = indexer.latest()?.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === 'in-root');
+    expect(inRoot?.workedIn).toMatchObject([{ key: '/work/gamma', label: 'gamma' }]);
     indexer.stop();
   });
 
@@ -736,11 +774,11 @@ describe('the indexer with a real scanner', () => {
     await scanner.settled();
     const before = snapshots.length;
     while (snapshots.length === before) await new Promise((resolve) => setTimeout(resolve, 10));
-    const moved = snapshots.at(-1);
+    const scanned = snapshots.at(-1);
     indexer.stop();
-    // The session started in the root and changed api, so it's listed there alone.
-    expect(moved?.groups.map((g) => [g.key, g.sessions.map((x) => x.sessionId)])).toEqual([[repoDir, ['s']]]);
-    expect(moved?.groups[0]?.sessions[0]?.workedIn).toMatchObject([{ key: repoDir, calls: 1, changes: 1 }]);
+    // The session started in the root and changed api: it stays in the root's group, with api in its workedIn.
+    expect(scanned?.groups.map((g) => [g.key, g.sessions.map((x) => x.sessionId)])).toEqual([[root, ['s']]]);
+    expect(scanned?.groups[0]?.sessions[0]?.workedIn).toMatchObject([{ key: repoDir, label: 'api', calls: 1, changes: 1 }]);
   });
 });
 
@@ -967,8 +1005,11 @@ describe('a root inside a repo', () => {
     expect(view).toEqual({
       // The root and its plain directory are in outer, a repo like any other, labelled outside the root.
       [outer]: { label: '~/outer', kind: 'git', ids: [ids.root, ids.notes].sort() },
-      [app]: { label: 'app', kind: 'git', ids: [ids.root, ids.app].sort() },
+      // Only the session started in app: the root's session worked in it, which its workedIn says.
+      [app]: { label: 'app', kind: 'git', ids: [ids.app] },
     });
+    const rootSession = snapshot.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === ids.root);
+    expect(rootSession?.workedIn).toMatchObject([{ key: app, label: 'app', changes: 1 }]);
   });
 });
 

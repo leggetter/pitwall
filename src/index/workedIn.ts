@@ -43,8 +43,11 @@ import { placesOf, slugsIn, type CallPlaces } from './toolCalls.js';
 /** The share of a session's tool calls that makes a repo count, in percent (spike 004). */
 export const WORKED_IN_PERCENT = 5;
 
-/** One repo a session worked in, with the configured root its group sits under. */
-export interface RepoWorkedIn extends WorkedIn {
+/**
+ * One repo a session worked in, with the configured root its group sits under, or would: the index
+ * labels it from that root (WorkedIn.label), as it labels groups.
+ */
+export interface RepoWorkedIn extends Omit<WorkedIn, 'label'> {
   root: string;
 }
 
