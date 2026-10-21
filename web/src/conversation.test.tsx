@@ -175,9 +175,85 @@ describe('getConversation', () => {
     expect(await getConversation(api, SID)).toEqual({ kind });
   });
 
-  it.each([400, 429, 500, 503])('reports a %i as failed, with its status for the page to show', async (status) => {
+  it.each([400, 500, 503])('reports a %i as failed, with its status for the page to show', async (status) => {
     const { api } = client(() => new Response(null, { status }));
     expect(await getConversation(api, SID)).toEqual({ kind: 'failed', status });
+  });
+
+  describe('a 429, too many reads at once (W31)', () => {
+    const busy = (retryAfter?: string) => () => new Response(null, { status: 429, headers: retryAfter === undefined ? {} : { 'Retry-After': retryAfter } });
+    /** A fetch that answers with each response in turn, then the last one again. */
+    function answers(...responses: (() => Response)[]) {
+      let call = 0;
+      const fetch = vi.fn<FetchLike>(async () => responses[Math.min(call++, responses.length - 1)]!());
+      return { fetch, api: createApiClient({ apiKey: API_KEY, fetch }) };
+    }
+    const flush = () => vi.advanceTimersByTimeAsync(0);
+
+    it('asks once more after the Retry-After the server gave, and gets the page', async () => {
+      vi.useFakeTimers();
+      try {
+        const { fetch, api } = answers(busy('1'), json(PAGE));
+        const result = getConversation(api, SID);
+        await flush();
+        expect(fetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(999);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await result).toEqual({ kind: 'ok', page: PAGE });
+        expect(fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('fails with the 429 when the second ask is busy too, and asks no more', async () => {
+      vi.useFakeTimers();
+      try {
+        const { fetch, api } = answers(busy('1'));
+        const result = getConversation(api, SID);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await result).toEqual({ kind: 'failed', status: 429 });
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('waits a second without a Retry-After, and at most five seconds whatever it says', async () => {
+      vi.useFakeTimers();
+      try {
+        const none = answers(busy(), json(PAGE));
+        const first = getConversation(none.api, SID);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await first).toEqual({ kind: 'ok', page: PAGE });
+        const long = answers(busy('120'), json(PAGE));
+        const second = getConversation(long.api, SID);
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(long.fetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await second).toEqual({ kind: 'ok', page: PAGE });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops waiting, and asks no more, when the view closes meanwhile', async () => {
+      vi.useFakeTimers();
+      try {
+        const { fetch, api } = answers(busy('1'), json(PAGE));
+        const closing = new AbortController();
+        const result = getConversation(api, SID, undefined, closing.signal);
+        await flush();
+        closing.abort();
+        expect(await result).toEqual({ kind: 'failed', status: 429 });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(fetch).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('keeps the reason an error body gives, trimmed, for the page to show after its own sentence', async () => {

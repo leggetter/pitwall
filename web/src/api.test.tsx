@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiGet, apiPost, createApiClient, type FetchLike } from './api.js';
+import { apiGet, apiPost, createApiClient, retryAfterSeconds, type FetchLike } from './api.js';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -15,6 +15,25 @@ function fakeFetch(...responses: (() => Response | Promise<Response>)[]) {
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe('Retry-After (W31)', () => {
+  it('is read in whole seconds, and nothing else', () => {
+    expect(retryAfterSeconds('1')).toBe(1);
+    expect(retryAfterSeconds(' 30 ')).toBe(30);
+    expect(retryAfterSeconds(null)).toBeUndefined();
+    expect(retryAfterSeconds('')).toBeUndefined();
+    expect(retryAfterSeconds('1.5')).toBeUndefined();
+    expect(retryAfterSeconds('-1')).toBeUndefined();
+    expect(retryAfterSeconds('Wed, 21 Oct 2026 07:28:00 GMT')).toBeUndefined();
+  });
+
+  it("comes with a failure that has one, as the server's 429 does", async () => {
+    const fetch = fakeFetch(() => new Response(null, { status: 429, headers: { 'Retry-After': '1' } }));
+    expect(await apiGet('/api/sessions/x/conversation', 'k', { fetch })).toEqual({ kind: 'failed', status: 429, retryAfter: 1 });
+    const without = fakeFetch(() => new Response(null, { status: 503 }));
+    expect(await apiGet('/api/snapshot', 'k', { fetch: without })).toEqual({ kind: 'failed', status: 503 });
+  });
+});
 
 describe('apiGet', () => {
   it('sends only the apiKey as a bearer token, uncached, and parses the JSON body', async () => {
