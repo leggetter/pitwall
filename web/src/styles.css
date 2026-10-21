@@ -1904,6 +1904,30 @@ mark.match {
   cursor: help;
 }
 
+/*
+ * Line 3, once the session has worked in repos beyond where it started (W34): "Started in app · worked
+ * in api, docs", meta text that wraps, the repos' labels in --pw-text-muted, then the rule's info button.
+ */
+.session-view-worked {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-view-worked-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-view-repo {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-medium);
+}
+
 /* A copy from the actions menu that the clipboard refused: the text, selected, so it can be copied by hand. */
 .session-view-copy-fallback {
   color: var(--pw-text-muted);

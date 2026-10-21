@@ -11,6 +11,7 @@ import {
   filterListed,
   filterNeedle,
   groupLabel,
+  groupsOf,
   holdOrder,
   isRootGroup,
   listScope,
@@ -19,12 +20,17 @@ import {
   needsAttention,
   NO_FILTERS,
   noMatchText,
+  primaryGroup,
   repoListGroups,
   rowStatusBadge,
   sessionCount,
   SORT_LABELS,
   SORT_ORDERS,
+  startGroup,
+  startLabel,
   statusBadge,
+  uniqueSessions,
+  workedInLabels,
   type FilterChip,
   type Filters,
   type Listed,
@@ -335,5 +341,70 @@ describe('sessionCount', () => {
     expect(sessionCount(1)).toBe('1 session');
     expect(sessionCount(12)).toBe('12 sessions');
     expect(sessionCount(0)).toBe('0 sessions');
+  });
+});
+
+describe('sessions in several groups (W34)', () => {
+  const ROOT = '/Users/example/code';
+  const worked = (...keys: string[]) => keys.map((key, index) => ({ key: `${ROOT}/${key}`, calls: 10, changes: 0, lastAt: minutesAgo(index) }));
+  const inApp = session({ name: 'in-app', cwd: `${ROOT}/app`, status: 'waiting', workedIn: worked('api') });
+  const fromRoot = session({ name: 'from-root', cwd: ROOT, workedIn: worked('docs', 'api') });
+  const inNotes = session({ name: 'in-notes', cwd: `${ROOT}/notes`, workedIn: worked('docs') });
+  const app = group({ key: `${ROOT}/app`, label: 'app', sessions: [inApp] });
+  const api = group({ key: `${ROOT}/api`, label: 'api', sessions: [inApp, fromRoot] });
+  const docs = group({ key: `${ROOT}/docs`, label: 'docs', sessions: [fromRoot, inNotes] });
+  const notes = group({ key: `${ROOT}/notes`, label: 'notes', kind: 'directory', sessions: [inNotes] });
+  const groups = [api, app, docs, notes];
+
+  it('uniqueSessions: each session once, in the order first listed', () => {
+    expect(uniqueSessions(groups).map((s) => s.name)).toEqual(['in-app', 'from-root', 'in-notes']);
+    expect(uniqueSessions([])).toEqual([]);
+  });
+
+  it('groupsOf: every group listing a session', () => {
+    expect(groupsOf(groups, fromRoot.sessionId).map((g) => g.label)).toEqual(['api', 'docs']);
+  });
+
+  it("startGroup and startLabel: the group its workedIn doesn't name, or the root's path for one started in the root", () => {
+    expect(startGroup(groups, inApp)?.label).toBe('app');
+    expect(startGroup(groups, inNotes)?.label).toBe('notes');
+    expect(startGroup(groups, fromRoot)).toBeUndefined();
+    expect(startLabel(groups, inApp)).toBe('app');
+    expect(startLabel(groups, fromRoot)).toBe('~/code');
+  });
+
+  it('primaryGroup: where it started, or the repo a root-started session touched most recently', () => {
+    expect(primaryGroup(groups, inApp)?.label).toBe('app');
+    expect(primaryGroup(groups, inNotes)?.label).toBe('notes');
+    expect(primaryGroup(groups, fromRoot)?.label).toBe('docs');
+  });
+
+  it("workedInLabels: the repos' labels, newest touch first", () => {
+    expect(workedInLabels(groups, fromRoot)).toEqual(['docs', 'api']);
+    expect(workedInLabels(groups, session({ name: 'none' }))).toEqual([]);
+  });
+
+  it('listScope: All sessions and Needs you list each session once, under its primary group', () => {
+    const all = listScope(groups, { kind: 'all' });
+    expect(all.current.map(({ session: s, group: g }) => [s.name, g.label])).toEqual([
+      ['in-app', 'app'],
+      ['from-root', 'docs'],
+      ['in-notes', 'notes'],
+    ]);
+    expect(listScope(groups, { kind: 'needs-you' }).current.map(({ session: s }) => s.name)).toEqual(['in-app']);
+  });
+
+  it("listScope: a group's list says where each session it lists through workedIn started", () => {
+    expect(listScope(groups, { kind: 'group', group: api }).current.map(({ session: s, startedIn }) => [s.name, startedIn])).toEqual([
+      ['in-app', 'app'],
+      ['from-root', '~/code'],
+    ]);
+    expect(listScope(groups, { kind: 'group', group: app }).current.map(({ startedIn }) => startedIn)).toEqual([undefined]);
+  });
+
+  it("filterListed: a match on any of a row's groups lets it through in All sessions", () => {
+    const all = listScope(groups, { kind: 'all' }).current;
+    expect(names(filterListed(all, filters('api')))).toEqual(['in-app', 'from-root']);
+    expect(names(filterListed(all, filters('notes')))).toEqual(['in-notes']);
   });
 });

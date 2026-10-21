@@ -1,5 +1,6 @@
 // A session row (docs/design-system.md, 4: Session rows), two lines at most: which session it is,
-// its badges and when it was last active; then what it asked, or what it was last asked. The rest,
+// its badges and when it was last active; then what it asked, or what it was last asked, after its
+// group's label in Needs you and All sessions, or where it started in a repo it worked in. The rest,
 // such as its replies, its relay exchange, its directory and the message box, is in the session
 // view, one click away.
 //
@@ -75,6 +76,12 @@ export interface SessionRowProps {
   group: Pick<SessionGroup, 'root' | 'key' | 'label'>;
   /** Start line 2 with the group's label: in Needs you and All sessions, which list every group. */
   showGroup?: boolean;
+  /**
+   * In a group's list, for a session listed there because it worked in that repo: where it started.
+   * Line 2 starts with it, as it would with the group's label in All sessions, so the row says it
+   * began elsewhere (W34). Screen readers hear "Started in" before it.
+   */
+  startedIn?: string | undefined;
   /** Opens the session view. Clicking the name, or anywhere on the row that isn't a control, calls it. */
   onOpen?: ((sessionId: string) => void) | undefined;
   /** ↑ or ↓ on the name: the next or previous row (docs/design-system.md, 6.2). */
@@ -83,13 +90,15 @@ export interface SessionRowProps {
   isOpen?: boolean;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, startedIn, onOpen, onStep, isOpen = false }: SessionRowProps) {
   const attention = needsAttention(session);
   const { finished } = session;
   const badge = rowStatusBadge(session);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
   const wants = whatItWants(session);
+  // Line 2's label: the group's, in Needs you and All sessions; in a group's list, where it started, when that's elsewhere.
+  const label = showGroup ? plainText(groupLabel(group)) : startedIn !== undefined ? plainText(startedIn) : undefined;
 
   const openFromRow = (event: MouseEvent<HTMLLIElement>) => {
     if (!onOpen) return;
@@ -157,13 +166,14 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {badges.length > 0 && <span className="session-badges">{badges}</span>}
         {session.lastActivityAt && <Timestamp className="activity" at={session.lastActivityAt} />}
       </div>
-      {(showGroup || wants) && (
+      {(label !== undefined || wants) && (
         <Tooltip content={wants?.hint} relation="none" onlyIfCut>
           <p className="session-what">
-            {showGroup && (
+            {label !== undefined && (
               <>
-                <span className="session-group">
-                  <Highlight text={plainText(groupLabel(group))} />
+                <span className={showGroup ? 'session-group' : 'session-group session-started'}>
+                  {!showGroup && <span className="visually-hidden">Started in </span>}
+                  <Highlight text={label} />
                 </span>
                 {wants && (
                   <span className="session-what-sep" aria-hidden="true">

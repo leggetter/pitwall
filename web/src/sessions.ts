@@ -190,7 +190,79 @@ export type Scope = { kind: 'needs-you' } | { kind: 'all' } | { kind: 'group'; g
 /** A session, with the group it's listed under. */
 export interface Listed {
   session: SessionSummary;
+  /** The group it's listed under: in a group's list, that group; in Needs you and All sessions, its primaryGroup(). */
   group: SessionGroup;
+  /**
+   * In a group's list, for a session listed there because it worked in that repo: where it started,
+   * as startLabel() says. Line 2 starts with it, so the row says it began elsewhere.
+   */
+  startedIn?: string;
+  /** Every group the session is listed under, for the filter: a label that matches any of them lets it through. */
+  groups?: readonly SessionGroup[];
+}
+
+// Sessions in several groups (W34): a repo lists the sessions started in it and those that worked in
+// it, so one session can be in several groups, and every count of sessions counts each once.
+
+/** Every session in the snapshot's groups, each once, by sessionId, in the order first listed. */
+export function uniqueSessions(groups: readonly SessionGroup[]): SessionSummary[] {
+  const seen = new Map<string, SessionSummary>();
+  for (const group of groups) for (const session of group.sessions) if (!seen.has(session.sessionId)) seen.set(session.sessionId, session);
+  return [...seen.values()];
+}
+
+/** The groups that list a session, in the snapshot's order. */
+export function groupsOf(groups: readonly SessionGroup[], sessionId: string): SessionGroup[] {
+  return groups.filter((group) => group.sessions.some((session) => session.sessionId === sessionId));
+}
+
+/** Whether a group lists a session because the session worked in it, rather than started there. */
+export function workedInHere(session: SessionSummary, group: Pick<SessionGroup, 'key'>): boolean {
+  return session.workedIn?.some((repo) => repo.key === group.key) ?? false;
+}
+
+/**
+ * The group a session started in: the one listing it that its workedIn doesn't name. Undefined for
+ * one started in the root itself that worked in repos, which the root's own group doesn't list.
+ */
+export function startGroup(groups: readonly SessionGroup[], session: SessionSummary): SessionGroup | undefined {
+  return groupsOf(groups, session.sessionId).find((group) => !workedInHere(session, group));
+}
+
+/**
+ * Where a session started, as the repo list labels it: its start group's label, or for one started
+ * in the root itself that isn't listed there, the root's path, home as ~, as the root's group shows it.
+ */
+export function startLabel(groups: readonly SessionGroup[], session: SessionSummary): string {
+  const start = startGroup(groups, session);
+  return start ? groupLabel(start) : shortenHome(session.cwd);
+}
+
+/**
+ * The group a session's row names in Needs you and All sessions: where it started, or, for one
+ * started in the root that worked in repos, the repo it touched most recently.
+ */
+export function primaryGroup(groups: readonly SessionGroup[], session: SessionSummary): SessionGroup | undefined {
+  const listing = groupsOf(groups, session.sessionId);
+  const start = listing.find((group) => !workedInHere(session, group));
+  if (start) return start;
+  for (const repo of session.workedIn ?? []) {
+    const group = listing.find((candidate) => candidate.key === repo.key);
+    if (group) return group;
+  }
+  return listing[0];
+}
+
+/**
+ * The repos a session worked in, as their groups' labels, newest touch first, for the session view.
+ * One with no group in the snapshot is left out.
+ */
+export function workedInLabels(groups: readonly SessionGroup[], session: SessionSummary): string[] {
+  const listing = groupsOf(groups, session.sessionId);
+  return (session.workedIn ?? []).flatMap((repo) => {
+    const group = listing.find((candidate) => candidate.key === repo.key) ?? groups.find((candidate) => candidate.key === repo.key);
+    return group ? [groupLabel(group)] : [];
+  });
 }
 
 /** When a session was last active, or started, in ms; 0 when neither parses. */
@@ -261,7 +333,16 @@ export function listScope(
   scope: Scope,
   order: SortOrder = 'urgency',
 ): { current: Listed[]; finished: Listed[] } {
-  const listed = (scope.kind === 'group' ? [scope.group] : groups).flatMap((group) => group.sessions.map((session) => ({ session, group })));
+  const listed: Listed[] =
+    scope.kind === 'group'
+      ? scope.group.sessions.map((session) =>
+          workedInHere(session, scope.group) ? { session, group: scope.group, startedIn: startLabel(groups, session) } : { session, group: scope.group },
+        )
+      : // Each session once, under the group its row names.
+        uniqueSessions(groups).map((session) => {
+          const listing = groupsOf(groups, session.sessionId);
+          return { session, group: primaryGroup(groups, session) ?? (listing[0] as SessionGroup), groups: listing };
+        });
   const sorted = (items: Listed[], finished: boolean) => {
     const compare = sessionOrder(order, finished);
     return items.sort((a, b) => compare(a.session, b.session));
@@ -293,14 +374,17 @@ export function holdOrder(shown: readonly string[], next: readonly string[]): st
   return held;
 }
 
-/** The listed sessions that pass the filters, in the order given. A group whose label matches lets all its sessions through. */
+/**
+ * The listed sessions that pass the filters, in the order given. A group whose label matches lets all
+ * its sessions through, in Needs you and All sessions too, whichever group a row names.
+ */
 export function filterListed(listed: readonly Listed[], filters: Filters): Listed[] {
   const needle = filterNeedle(filters.text);
-  return listed.filter(({ session, group }) => {
+  return listed.filter(({ session, group, groups }) => {
     if (!matchesChips(session, filters.chips)) return false;
     if (needle === '') return true;
     return (
-      groupLabel(group).toLowerCase().includes(needle) ||
+      (groups ?? [group]).some((listing) => groupLabel(listing).toLowerCase().includes(needle)) ||
       session.name.toLowerCase().includes(needle) ||
       (session.title?.toLowerCase().includes(needle) ?? false) ||
       session.cwd.toLowerCase().includes(needle)

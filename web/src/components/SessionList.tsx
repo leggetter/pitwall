@@ -82,6 +82,9 @@ export function Summary({ total, shown, attention }: SessionListSummary) {
   );
 }
 
+/** The rows' name buttons in the order shown, without those in a collapsed Finished section. */
+const rowButtons = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>('[data-open-session]')].filter((button) => !button.closest('[hidden]'));
+
 const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, index) => id === b[index]);
 
 /**
@@ -122,12 +125,13 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
         {asked > 0 && <span className="finished-asked"> · {asked} asked you</span>}
       </button>
       <ul className="sessions finished-sessions" id={listId} hidden={collapsed}>
-        {finished.map(({ session, group }) => (
+        {finished.map(({ session, group, startedIn }) => (
           <SessionRow
             key={session.sessionId}
             session={session}
             group={group}
             showGroup={showGroup}
+            startedIn={startedIn}
             onOpen={onOpen}
             onStep={onStep}
             isOpen={session.sessionId === openSessionId}
@@ -165,10 +169,32 @@ export function SessionList({
   const shownCurrent = useHeldOrder(current, holding, orderKey);
   const shownFinished = useHeldOrder(finished, holding, orderKey);
 
-  // A focused row that a snapshot removes takes focus with it, and no blur says so.
+  // A focused row that a snapshot removes, such as a session that moved to the repos it worked in
+  // (W34), takes focus with it, and no blur says so. Focus goes to the row that took its place, or
+  // the one before it if it was last, or else the list's heading, rather than to the page.
+  const focusedRow = useRef<{ id: string; index: number } | undefined>(undefined);
   useEffect(() => {
-    if (focusInside && !main.current?.contains(document.activeElement)) setFocusInside(false);
+    if (!focusInside || main.current?.contains(document.activeElement)) return;
+    const was = focusedRow.current;
+    const active = document.activeElement;
+    const lost = active === null || active === document.body;
+    const rows = main.current ? rowButtons(main.current) : [];
+    if (lost && was !== undefined && !rows.some((row) => row.dataset.openSession === was.id)) {
+      const next = rows[Math.min(was.index, rows.length - 1)] ?? headingRef?.current ?? undefined;
+      if (next) {
+        next.focus();
+        return;
+      }
+    }
+    setFocusInside(false);
   });
+
+  const onFocusIn = (event: FocusEvent<HTMLElement>) => {
+    setFocusInside(true);
+    const id = event.target instanceof HTMLElement ? event.target.dataset.openSession : undefined;
+    if (id !== undefined && main.current) focusedRow.current = { id, index: rowButtons(main.current).indexOf(event.target as HTMLElement) };
+    else focusedRow.current = undefined;
+  };
 
   const onBlur = (event: FocusEvent<HTMLElement>) => {
     if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setFocusInside(false);
@@ -181,7 +207,7 @@ export function SessionList({
       aria-labelledby={headingId}
       onPointerEnter={() => setPointerInside(true)}
       onPointerLeave={() => setPointerInside(false)}
-      onFocus={() => setFocusInside(true)}
+      onFocus={onFocusIn}
       onBlur={onBlur}
       inert={inert || undefined}
     >
@@ -206,12 +232,13 @@ export function SessionList({
       <div className="session-list-body">
         {empty ?? (
           <ul className="sessions">
-            {shownCurrent.map(({ session, group }) => (
+            {shownCurrent.map(({ session, group, startedIn }) => (
               <SessionRow
                 key={session.sessionId}
                 session={session}
                 group={group}
                 showGroup={showGroup}
+                startedIn={startedIn}
                 onOpen={onOpen}
                 onStep={onStep}
                 isOpen={session.sessionId === openSessionId}

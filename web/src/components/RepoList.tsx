@@ -8,7 +8,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent
 import type { SessionGroup } from '../../../src/shared/protocol.js';
 import { plainText, shortenHome } from '../format.js';
 import { ALL_SESSIONS, groupSelection, NEEDS_YOU, sameSelection, selectionHref, type Selection } from '../selection.js';
-import { allFinished, countAttention, groupId, groupLabel, repoListGroups } from '../sessions.js';
+import { allFinished, countAttention, groupId, groupLabel, repoListGroups, uniqueSessions } from '../sessions.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { Tooltip } from './Tooltip.js';
@@ -27,6 +27,7 @@ interface Item {
   muted: boolean;
 }
 
+/** A group's item: its sessions, each once, and how many of them need you, whether they started there or worked in it. */
 function groupItem(group: SessionGroup, roots: readonly string[]): Item {
   return {
     id: groupId(group),
@@ -56,7 +57,8 @@ export interface RepoListProps {
 export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false }: RepoListProps) {
   const rootId = useId();
   const nav = useRef<HTMLElement>(null);
-  const sessions = groups?.flatMap((group) => group.sessions) ?? [];
+  // Each session once, though one can be under several repos: the views count sessions, not listings.
+  const sessions = uniqueSessions(groups ?? []);
   const views: Item[] = [
     { id: 'view:needs-you', selection: NEEDS_YOU, label: 'Needs you', attention: countAttention(sessions), count: undefined, muted: false },
     // The total, never a badge: Needs you, just above, has that.
