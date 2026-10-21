@@ -868,7 +868,7 @@ const TERMINAL_CASES: TerminalCase[] = [
   },
   {
     title: 'Attached',
-    note: 'A subtle success badge with a dot, and xterm.js in JetBrains Mono, its colours from the --pw-term-* tokens, with made-up output. F6 leaves it, for the Terminal tab.',
+    note: "A subtle success badge with a dot, and xterm.js in JetBrains Mono, its colours from the --pw-term-* tokens, with made-up output. F6 leaves it, for the Terminal tab. Shift+↵ sends a line feed, a new line in Claude Code's prompt; the shortcuts dialog lists it, since the hint has no room for it at 375 px.",
     script: 'attached',
     state: 'attached',
     session: working('terminal-attached'),

@@ -42,6 +42,7 @@ const RIGHT = key('→', 'Right arrow');
 const HOME = key('Home');
 const END = key('End');
 const ENTER = key('↵', 'Enter');
+const SHIFT_ENTER: Combo = { keys: ['Shift', '↵'], label: 'Shift Enter' };
 const ESCAPE = key('Esc', 'Escape');
 
 /** The keyboard map (6.2), in the dialog's groups, with ⌘ on Apple platforms and Ctrl elsewhere. */
@@ -103,6 +104,7 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
         },
         { doc: { key: '⌘/Ctrl + Enter', where: 'The message box' }, what: 'In the message box: send', keys: [[modEnter]] },
         { doc: { key: 'F6', where: 'The terminal' }, what: 'In the terminal: leave it, for the Terminal tab', keys: [[key('F6')]] },
+        { doc: { key: 'Shift + Enter', where: 'The terminal' }, what: "In the terminal: a new line in Claude Code's prompt", keys: [[SHIFT_ENTER]] },
       ],
     },
     {

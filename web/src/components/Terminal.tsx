@@ -9,8 +9,10 @@
 // is an inline alert above the screen, neutral when it ended as asked and danger when it failed.
 //
 // Keys: every key goes to the terminal, Escape included (it interrupts Claude), so Escape never
-// closes the view from here. F6 is the one exception: it moves focus to the Terminal tab, so the
-// terminal isn't a keyboard trap (WCAG 2.1.2), and never reaches the session.
+// closes the view from here. Two are taken before xterm.js sees them. F6 moves focus to the Terminal
+// tab, so the terminal isn't a keyboard trap (WCAG 2.1.2), and never reaches the session. Shift+Enter
+// sends a line feed (Ctrl+J), a new line in Claude Code's prompt (W41), where xterm.js would send
+// Enter's carriage return, which submits.
 //
 // A session that isn't running asks first, as an inline confirmation under the bar (W24): Cancel
 // takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
@@ -101,6 +103,31 @@ export function noticeTone(end: AttachEnd): 'neutral' | 'danger' {
 /** Ignores F6 with a modifier, which goes to the terminal like any other key. */
 function isLeaveKey(event: KeyboardEvent): boolean {
   return event.key === LEAVE_KEY && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+}
+
+/**
+ * What Shift+Enter sends: a line feed, which is Ctrl+J. Claude Code's terminal docs give Ctrl+J as
+ * the way to add a line break without submitting, in every terminal with no setup
+ * (code.claude.com/docs/en/terminal-config, "Enter multiline prompts"). xterm.js sends a carriage
+ * return for Enter with or without Shift, and that submits.
+ */
+export const NEW_LINE = '\n';
+
+/**
+ * Whether an input method is composing, so the key is the IME's: `isComposing`, or keyCode 229,
+ * which Safari gives the key that ends a composition after its compositionend, with `isComposing`
+ * already false. xterm.js handles both itself.
+ */
+function isComposing(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
+/**
+ * Shift+Enter with no other modifier, and not while an input method composes. With Ctrl, Alt or ⌘
+ * too, or while composing, it goes to xterm.js like any other key.
+ */
+function isNewLineKey(event: KeyboardEvent): boolean {
+  return event.key === 'Enter' && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !isComposing(event);
 }
 
 export interface SessionTerminalProps {
@@ -219,22 +246,32 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
   useEffect(() => {
     const element = container.current;
     if (!element) return;
-    // F6, before xterm.js sees it: capturing on the screen runs ahead of xterm.js's own listener on
-    // its textarea, so the key never reaches the session.
-    const onLeaveKey = (event: KeyboardEvent) => {
-      if (!isLeaveKey(event)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onLeaveRef.current?.();
+    // F6 and Shift+Enter, before xterm.js sees them: capturing on the screen runs ahead of xterm.js's
+    // own listener on its textarea. Cancelling the keydown also stops the keypress and the textarea's
+    // input that would follow it.
+    const onScreenKey = (event: KeyboardEvent) => {
+      if (isLeaveKey(event)) {
+        // F6 never reaches the session.
+        event.preventDefault();
+        event.stopPropagation();
+        onLeaveRef.current?.();
+      } else if (isNewLineKey(event)) {
+        // A line feed alone, never xterm.js's carriage return too. Held down, it repeats as Enter
+        // does: one line feed for each keydown, the repeats included. Before the attach has started,
+        // or after it has ended, it goes nowhere, as every key does then.
+        event.preventDefault();
+        event.stopPropagation();
+        session.current?.input(NEW_LINE);
+      }
     };
     // Escape belongs to the terminal (it interrupts Claude), so it doesn't close the view.
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') event.preventDefault();
     };
-    element.addEventListener('keydown', onLeaveKey, true);
+    element.addEventListener('keydown', onScreenKey, true);
     element.addEventListener('keydown', onKey);
     return () => {
-      element.removeEventListener('keydown', onLeaveKey, true);
+      element.removeEventListener('keydown', onScreenKey, true);
       element.removeEventListener('keydown', onKey);
     };
   }, []);
