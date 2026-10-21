@@ -59,7 +59,7 @@ function dialogRows() {
 describe('the keyboard shortcuts dialog', () => {
   it("lists every row of 6.2's keyboard map, and no other", () => {
     const rows = docRows();
-    expect(rows.length).toBe(17);
+    expect(rows.length).toBe(18);
     const listed = keyboardMap(true).flatMap((group) => group.rows.map((row) => row.doc));
     expect(listed).toHaveLength(rows.length);
     expect(new Set(listed.map((row) => `${row.key} | ${row.where}`))).toEqual(new Set(rows.map((row) => `${row.key} | ${row.where}`)));
@@ -68,7 +68,7 @@ describe('the keyboard shortcuts dialog', () => {
   it('shows each row with its key caps, read out in words', () => {
     renderDialog();
     const rows = dialogRows();
-    expect(rows).toHaveLength(17);
+    expect(rows).toHaveLength(18);
     const byWhat = new Map(rows.map((row) => [row.what, row]));
     expect(byWhat.get('Focus the filter field')).toEqual({ what: 'Focus the filter field', caps: '/', heard: 'Slash' });
     expect(byWhat.get('Open the New session dialog')?.caps).toBe('n');
@@ -78,8 +78,15 @@ describe('the keyboard shortcuts dialog', () => {
     expect(byWhat.get('In an open menu: move, jump to either end, choose, close')?.caps).toBe('↑ ↓ Home End ↵ Esc');
     expect(byWhat.get('In the root tabs, with several roots: move between them. Enter or Space opens one')).toMatchObject({ caps: '← → Home End' });
     expect(byWhat.get('In the terminal: leave it, for the Terminal tab')?.caps).toBe('F6');
+    expect(byWhat.get("In the terminal: a new line in Claude Code's prompt")).toEqual({ what: "In the terminal: a new line in Claude Code's prompt", caps: 'Shift ↵', heard: 'Shift Enter' });
     expect(byWhat.get('Move between the header, the repo list, the session list and the session view')).toMatchObject({ caps: 'Tab Shift Tab', heard: 'Tab or Shift Tab' });
     for (const row of rows) expect(row.caps, row.what ?? '').not.toBe('');
+  });
+
+  it("lists Shift ↵ under Session view, after F6, the terminal's other key (W41)", () => {
+    const session = keyboardMap(true).find((group) => group.title === 'Session view');
+    expect(session?.rows.filter((row) => row.doc.where === 'The terminal').map((row) => row.doc.key)).toEqual(['F6', 'Shift + Enter']);
+    expect(session?.rows.at(-1)?.keys).toEqual([[{ keys: ['Shift', '↵'], label: 'Shift Enter' }]]);
   });
 
   it('shows ⌘ on Apple platforms and Ctrl elsewhere', () => {

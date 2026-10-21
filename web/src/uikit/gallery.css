@@ -165,9 +165,12 @@
   height: 920px;
 }
 
-/* For the keyboard shortcuts dialog, whose whole map shows in a tall enough window. */
+/*
+ * For the keyboard shortcuts dialog, whose whole map shows in a tall enough window: at 375 px, where
+ * its rows wrap most, with about 48 px to spare below it (W41's Shift+Enter row took 53 px).
+ */
 .uikit-frame-dialog-tall {
-  height: 1480px;
+  height: 1540px;
 }
 
 /* A window 560 px tall, which the app fills, so its list scrolls inside as it does in the app. */

@@ -18,7 +18,7 @@ import { fakeSockets, group, NOW, session, snapshot, type FakeSocket } from '../
 import { descriptionOf } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
-import type { TerminalHandle } from './Terminal.js';
+import { NEW_LINE, type TerminalHandle } from './Terminal.js';
 
 // Made-up sessions only. xterm.js is replaced by FakeTerminal, through the
 // module the view loads it from, and ResizeObserver by one the tests trigger.
@@ -39,7 +39,17 @@ class FakeTerminal implements TerminalHandle {
   constructor(readonly container: HTMLElement) {
     this.screen = document.createElement('textarea');
     this.screen.className = 'fake-terminal';
-    this.screen.addEventListener('keydown', (event) => this.keys.push(`${event.shiftKey ? 'Shift+' : ''}${event.key}`), true);
+    this.screen.addEventListener(
+      'keydown',
+      (event) => {
+        const held = `${event.ctrlKey ? 'Ctrl+' : ''}${event.altKey ? 'Alt+' : ''}${event.metaKey ? 'Meta+' : ''}${event.shiftKey ? 'Shift+' : ''}`;
+        this.keys.push(`${held}${event.key}`);
+        // Enter, as xterm.js sends it whatever else is held (Keyboard.ts): a carriage return, after
+        // ESC with Alt. keyCode 229 is its composition helper's, which sends nothing for it.
+        if (event.key === 'Enter' && event.keyCode !== 229) this.type(event.altKey ? '\u001b\r' : '\r');
+      },
+      true,
+    );
     container.append(this.screen);
   }
   write(data: Uint8Array) {
@@ -658,6 +668,118 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
       expect(document.activeElement).toBe(detach);
       expect(terminal.keys).toEqual([]);
     });
+  });
+});
+
+describe("SessionView: Shift+Enter, a new line in Claude Code's prompt (W41)", () => {
+  async function attached() {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket, terminal } = await attach(view, fake);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    expect(document.activeElement).toBe(terminal.screen);
+    return { view, socket, terminal, from: socket.sent.length };
+  }
+
+  /** The input the session got since `from`, one entry for each message. */
+  const inputs = (socket: FakeSocket, from: number) => sent(socket).slice(from).map((message) => (message.type === 'input' ? message.data : message.type));
+
+  const ENTER = { key: 'Enter', code: 'Enter', keyCode: 13 };
+
+  it('Enter goes to xterm.js, which sends a carriage return', async () => {
+    const { socket, terminal, from } = await attached();
+    expect(fireEvent.keyDown(terminal.screen, ENTER)).toBe(true);
+    expect(terminal.keys).toEqual(['Enter']);
+    expect(inputs(socket, from)).toEqual(['\r']);
+  });
+
+  it('Shift+Enter sends one line feed and no carriage return, taken before xterm.js sees it', async () => {
+    const { view, socket, terminal, from } = await attached();
+    expect(NEW_LINE).toBe('\n');
+    // Cancelled, so no keypress or input follows it into xterm.js's textarea.
+    expect(fireEvent.keyDown(terminal.screen, { ...ENTER, shiftKey: true })).toBe(false);
+    expect(terminal.keys).toEqual([]);
+    expect(sent(socket).slice(from)).toEqual([{ type: 'input', data: '\n' }]);
+    expect(inputs(socket, from).join('')).not.toContain('\r');
+    // It stays in the terminal: focus, the open view, the Terminal tab and the attach.
+    expect(document.activeElement).toBe(terminal.screen);
+    expect(screen.getByRole('dialog')).toBe(view);
+    expect(tab(view, 'Terminal').getAttribute('aria-selected')).toBe('true');
+    expect(socket.closedByClient).toBe(false);
+    expect(terminal.disposed).toBe(false);
+  });
+
+  it('held down, Shift+Enter repeats as Enter does: one line feed for each keydown', async () => {
+    const { socket, terminal, from } = await attached();
+    for (const repeat of [false, true, true]) fireEvent.keyDown(terminal.screen, { ...ENTER, shiftKey: true, repeat });
+    expect(inputs(socket, from)).toEqual(['\n', '\n', '\n']);
+    expect(terminal.keys).toEqual([]);
+    const after = socket.sent.length;
+    for (const repeat of [false, true, true]) fireEvent.keyDown(terminal.screen, { ...ENTER, repeat });
+    expect(inputs(socket, after)).toEqual(['\r', '\r', '\r']);
+  });
+
+  it('Shift+Enter with Ctrl, Alt or ⌘ goes to xterm.js like any other key', async () => {
+    const { socket, terminal, from } = await attached();
+    for (const held of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { ctrlKey: true, altKey: true, metaKey: true }]) {
+      expect(fireEvent.keyDown(terminal.screen, { ...ENTER, shiftKey: true, ...held })).toBe(true);
+    }
+    expect(terminal.keys).toEqual(['Ctrl+Shift+Enter', 'Alt+Shift+Enter', 'Meta+Shift+Enter', 'Ctrl+Alt+Meta+Shift+Enter']);
+    expect(inputs(socket, from)).toEqual(['\r', '\u001b\r', '\r', '\u001b\r']);
+  });
+
+  it('while an input method composes, every key goes to xterm.js, Shift+Enter and Enter included', async () => {
+    const { socket, terminal, from } = await attached();
+    const composing = [
+      { key: 'Process', code: 'KeyK', keyCode: 229, isComposing: true },
+      { ...ENTER, shiftKey: true, isComposing: true },
+      { ...ENTER, isComposing: true },
+      // Safari: the key that ends a composition comes after compositionend, so isComposing is false, with keyCode 229.
+      { ...ENTER, keyCode: 229, shiftKey: true },
+    ];
+    for (const init of composing) expect(fireEvent.keyDown(terminal.screen, init)).toBe(true);
+    expect(terminal.keys).toEqual(['Process', 'Shift+Enter', 'Enter', 'Shift+Enter']);
+    expect(inputs(socket, from)).not.toContain('\n');
+    expect(inputs(socket, from)).toEqual(['\r', '\r']);
+  });
+
+  it('F6 and Escape are as they were, next to Shift+Enter', async () => {
+    const { view, socket, terminal, from } = await attached();
+    fireEvent.keyDown(terminal.screen, { ...ENTER, shiftKey: true });
+    fireEvent.keyDown(terminal.screen, { key: 'Escape' });
+    expect(terminal.keys).toEqual(['Escape']);
+    expect(screen.getByRole('dialog')).toBe(view);
+    expect(fireEvent.keyDown(terminal.screen, { key: 'F6' })).toBe(false);
+    expect(document.activeElement).toBe(tab(view, 'Terminal'));
+    expect(terminal.keys).toEqual(['Escape']);
+    expect(inputs(socket, from)).toEqual(['\n']);
+  });
+
+  it('outside the screen, on the Terminal tab or the bar, Shift+Enter does nothing of its own', async () => {
+    const { view, socket, terminal, from } = await attached();
+    fireEvent.keyDown(terminal.screen, { key: 'F6' });
+    const termTab = tab(view, 'Terminal');
+    expect(document.activeElement).toBe(termTab);
+    fireEvent.keyDown(termTab, { ...ENTER, shiftKey: true });
+    const detach = within(view).getByRole('button', { name: 'Detach' });
+    detach.focus();
+    fireEvent.keyDown(detach, { ...ENTER, shiftKey: true });
+    expect(terminal.keys).toEqual([]);
+    expect(socket.sent.length).toBe(from);
+    expect(termTab.getAttribute('aria-selected')).toBe('true');
+    expect(socket.closedByClient).toBe(false);
+  });
+
+  it('before the attach has started, Shift+Enter still never reaches xterm.js, and sends nothing', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket, terminal } = await attach(view, fake);
+    expect(fireEvent.keyDown(terminal.screen, { ...ENTER, shiftKey: true })).toBe(false);
+    expect(terminal.keys).toEqual([]);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    expect(sent(socket).map((message) => message.type)).toEqual(['auth', 'open']);
   });
 });
 
