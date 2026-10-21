@@ -14,6 +14,34 @@ import type { ApiClient } from './api.js';
 /** The status the server answers for a cursor made for another version of the transcript. */
 export const STALE_CURSOR_STATUS = CONVERSATION_STALE_STATUS;
 
+/**
+ * The server reads at most four pages at once, server-wide, and answers 429 with Retry-After (1 s
+ * today) past that, as fast j or k through the list can reach. A page that gets one is asked for once
+ * more after that wait, at most this long, before the view says it failed.
+ */
+export const BUSY_STATUS = 429;
+export const BUSY_WAIT_DEFAULT_MS = 1_000;
+export const BUSY_WAIT_MAX_MS = 5_000;
+
+/** Waits `ms`, or until `signal` aborts: true if the time passed, false if it was aborted. */
+function pause(ms: number, signal: AbortSignal | undefined): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 export type ConversationResult =
   | { kind: 'ok'; page: ConversationPage }
   /** The cursor no longer matches the transcript, which was replaced or rewritten: reload the newest page. */
@@ -40,7 +68,14 @@ export async function getConversation(
   before?: string,
   signal?: AbortSignal,
 ): Promise<ConversationResult> {
-  const result = await api.get(conversationPath(sessionId, before), signal ? { signal } : {});
+  const path = conversationPath(sessionId, before);
+  const options = signal ? { signal } : {};
+  let result = await api.get(path, options);
+  // Too many reads at once: once more, after the wait the server asked for, before it counts as a failure.
+  if (result.kind === 'failed' && result.status === BUSY_STATUS) {
+    const wait = Math.min(BUSY_WAIT_MAX_MS, result.retryAfter === undefined ? BUSY_WAIT_DEFAULT_MS : result.retryAfter * 1000);
+    if (await pause(wait, signal)) result = await api.get(path, options);
+  }
   if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
   if (result.kind === 'failed') {
     if (result.status === 404) return { kind: 'not-found' };
