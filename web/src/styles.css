@@ -348,6 +348,15 @@ textarea {
  * The page alerts, above the header: at most half the column, then they scroll inside themselves, so
  * the header and some rows always show, as the session view's footer does.
  */
+/*
+ * A box that scrolls inside itself, while its content overflows and it's a Tab stop (ScrollBox.tsx):
+ * the inset ring, since what's around it may clip an outer one.
+ */
+.scroll-box:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
 .session-list-alerts {
   display: flex;
   flex: none;

@@ -11,6 +11,7 @@ import type { SessionGroup } from '../../../src/shared/protocol.js';
 import { plainText, shortenHome } from '../format.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
 import { Icon } from './Icon.js';
+import { ScrollBox } from './ScrollBox.js';
 import { SessionRow } from './SessionRow.js';
 
 export interface SessionListHeading {
@@ -184,7 +185,12 @@ export function SessionList({
       onBlur={onBlur}
       inert={inert || undefined}
     >
-      {alerts && <div className="session-list-alerts">{alerts}</div>}
+      {/* At most half the column, then it scrolls: a Tab stop while it does (ScrollBox). */}
+      {alerts && (
+        <ScrollBox className="session-list-alerts" label="Alerts">
+          {alerts}
+        </ScrollBox>
+      )}
       <div className="session-list-head">
         <div className="session-list-title-row">
           <h2 className="session-list-title" id={headingId} ref={headingRef} tabIndex={-1}>
