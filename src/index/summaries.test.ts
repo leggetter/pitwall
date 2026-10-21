@@ -116,7 +116,7 @@ describe('toSessionSummary', () => {
   it('maps an interactive row with a readable transcript', () => {
     const summary = toSessionSummary(
       row({ status: 'busy' }),
-      { transcript: 'ok', lastActivityAt: iso(NOW - 1000), lastAssistantText: 'working on it', lastUserPrompt: 'go' },
+      { transcript: 'ok', lastActivityAt: iso(NOW - 1000), lastUserPrompt: 'go' },
       NOW,
     );
     expect(summary).toEqual({
@@ -131,7 +131,6 @@ describe('toSessionSummary', () => {
       stale: false,
       finished: false,
       lastActivityAt: iso(NOW - 1000),
-      lastAssistantText: 'working on it',
       lastUserPrompt: 'go',
       transcript: 'ok',
     });

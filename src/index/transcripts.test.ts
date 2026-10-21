@@ -1,8 +1,7 @@
 import { appendFile, chmod, mkdir, mkdtemp, rename, rm, truncate as truncateFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { stripMarkdownBounded } from './text.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   aiTitleOf,
   applyEntry,
@@ -21,12 +20,6 @@ import {
 } from './transcripts.js';
 
 // Synthetic transcript entries, shaped like Claude Code 2.1.301's JSONL. No real content.
-
-// Wrapped, so a test can count how often the full text is stripped. It still strips.
-vi.mock('./text.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./text.js')>();
-  return { ...actual, stripMarkdownBounded: vi.fn(actual.stripMarkdownBounded) };
-});
 
 let clock = Date.parse('2026-10-16T10:00:00.000Z');
 function nextTimestamp(): string {
@@ -238,24 +231,23 @@ describe('applyEntry', () => {
     expect(fields.assistantText).toHaveLength(ASSISTANT_TEXT_KEEP);
   });
 
-  it('records whether the newest message was cut at 64 KiB, and when its latest text block was written', () => {
+  it('keeps a cut message at 64 KiB as more blocks arrive, and records when its latest text block was written', () => {
     const short = assistant([text('short')], 'm1');
-    expect(fieldsOf(short)).toMatchObject({ assistantTextTruncated: false, assistantAtMs: Date.parse(short.timestamp as string) });
+    expect(fieldsOf(short)).toMatchObject({ assistantAtMs: Date.parse(short.timestamp as string) });
 
     const exact = fieldsOf(assistant([text('e'.repeat(ASSISTANT_TEXT_KEEP))], 'm1'));
-    expect(exact.assistantTextTruncated).toBe(false);
+    expect(exact.assistantText).toHaveLength(ASSISTANT_TEXT_KEEP);
 
     const first = assistant([text('a'.repeat(40_000))], 'm2');
     const second = assistant([text('b'.repeat(40_000))], 'm2');
     const third = assistant([text('c')], 'm2');
     const cut = fieldsOf(first, second, third);
     expect(cut.assistantText).toHaveLength(ASSISTANT_TEXT_KEEP);
-    expect(cut.assistantTextTruncated).toBe(true);
     expect(cut.assistantAtMs).toBe(Date.parse(third.timestamp as string));
 
     // A new message starts again.
     const next = fieldsOf(first, second, assistant([text('fresh')], 'm3', { timestamp: undefined }));
-    expect(next).toMatchObject({ assistantText: 'fresh', assistantTextTruncated: false });
+    expect(next.assistantText).toBe('fresh');
     expect(next.assistantAtMs).toBeUndefined();
   });
 
@@ -396,41 +388,28 @@ describe('createTranscriptReader', () => {
     expect(await reader().read(SID, [CWD])).toEqual({
       transcript: 'ok',
       lastActivityAt: reply.timestamp,
-      lastAssistantText: 'Added the test.',
       lastUserPrompt: 'add a test',
     });
   });
 
-  it('truncates the assistant text to 500 characters', async () => {
-    await writeFile(file, jsonl(assistant([text(`  ${'a'.repeat(800)}  `)])));
-    const info = await reader().read(SID, [CWD]);
-    expect(info.lastAssistantText).toHaveLength(500);
-    expect(info.lastAssistantText?.endsWith('…')).toBe(true);
-  });
-
-  it('strips markdown from the assistant text before truncating it', async () => {
+  it('strips markdown from the question it finds in the assistant text', async () => {
     const code = `\`\`\`\n${'x'.repeat(2000)}\n\`\`\``;
-    await writeFile(file, jsonl(assistant([text(`## Result\n\n${code}\n\n**All** tests \`pass\`.`)])));
-    expect((await reader().read(SID, [CWD])).lastAssistantText).toBe('Result\n\n[code]\n\nAll tests pass.');
+    await writeFile(file, jsonl(assistant([text(`## Result\n\n${code}\n\n**All** tests \`pass\`. Merge it?`)])));
+    expect((await reader().read(SID, [CWD])).askedYou).toEqual({ reason: 'question', excerpt: 'All tests pass. Merge it?' });
   });
 
-  it('shows the prose after a long code block at the start', async () => {
+  it('finds the question after a long code block at the start', async () => {
     const code = `\`\`\`diff\n${'+ added line\n'.repeat(2000)}\`\`\``;
     await writeFile(file, jsonl(assistant([text(`${code}\n\nShould I apply this?`)])));
-    expect((await reader().read(SID, [CWD])).lastAssistantText).toBe('[code]\n\nShould I apply this?');
+    expect((await reader().read(SID, [CWD])).askedYou).toEqual({ reason: 'question', excerpt: 'Should I apply this?' });
   });
 
-  it('strips a hostile 64 KiB message quickly, reading only the start it shows', async () => {
+  it('reads a hostile 64 KiB message quickly', async () => {
     await writeFile(file, jsonl(assistant([text('['.repeat(ASSISTANT_TEXT_KEEP))])));
     const started = performance.now();
     const info = await reader().read(SID, [CWD]);
     expect(performance.now() - started).toBeLessThan(FAST_MS);
-    expect(info.lastAssistantText).toBe(`${'['.repeat(499)}…`);
-  });
-
-  it('drops assistant text that is only markdown syntax', async () => {
-    await writeFile(file, jsonl(assistant([text('---')])));
-    expect(await reader().read(SID, [CWD])).toEqual({ transcript: 'ok', lastActivityAt: expect.any(String) });
+    expect(info).toEqual({ transcript: 'ok', lastActivityAt: expect.any(String) });
   });
 
   describe('titles', () => {
@@ -452,17 +431,21 @@ describe('createTranscriptReader', () => {
     it('widens the window once for a title outside the first one', async () => {
       const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 4096 });
       // The title is ~2 KB from the end, past the first window; everything else is inside it.
-      await writeFile(file, jsonl(aiTitle('Further back'), filler(2000), user('the prompt'), assistant([text('the answer')])));
+      const prompt = user('the prompt');
+      const answer = assistant([text('the answer')]);
+      await writeFile(file, jsonl(aiTitle('Further back'), filler(2000), prompt, answer));
       const info = await r.read(SID, [CWD]);
-      expect(info).toMatchObject({ aiTitle: 'Further back', lastUserPrompt: 'the prompt', lastAssistantText: 'the answer' });
+      expect(info).toMatchObject({ aiTitle: 'Further back', lastUserPrompt: 'the prompt', lastActivityAt: answer.timestamp });
     });
 
     it('leaves the title unset when the wider window does not have it either', async () => {
       const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 4096 });
-      await writeFile(file, jsonl(aiTitle('Too far back'), ...Array.from({ length: 6 }, () => filler(1000)), user('p'), assistant([text('a')])));
+      const prompt = user('p');
+      const answer = assistant([text('a')]);
+      await writeFile(file, jsonl(aiTitle('Too far back'), ...Array.from({ length: 6 }, () => filler(1000)), prompt, answer));
       const info = await r.read(SID, [CWD]);
       expect(info.aiTitle).toBeUndefined();
-      expect(info).toMatchObject({ transcript: 'ok', lastUserPrompt: 'p', lastAssistantText: 'a' });
+      expect(info).toMatchObject({ transcript: 'ok', lastUserPrompt: 'p', lastActivityAt: answer.timestamp });
     });
   });
 
@@ -492,111 +475,6 @@ describe('createTranscriptReader', () => {
     });
   });
 
-  describe('lastMessage', () => {
-    const stripped = vi.mocked(stripMarkdownBounded);
-
-    it('is the newest assistant message in full, stripped of markdown, past the 500 characters shown', async () => {
-      const paragraph = `**Bold** start. ${'Some detail with `code`. '.repeat(40)}`;
-      const reply = assistant([text(`## Report\n\n${paragraph}\n\n\`\`\`\nnpm test\n\`\`\`\n\n- one\n* two`)], 'm1');
-      await writeFile(file, jsonl(user('go'), assistant([text('an older reply')], 'm0'), reply));
-      const r = reader();
-      expect((await r.read(SID, [CWD])).lastAssistantText).toHaveLength(500);
-      expect(r.lastMessage(SID)).toEqual({
-        sessionId: SID,
-        text: `Report\n\nBold start. ${'Some detail with code. '.repeat(40)}\n\n[code]\n\n- one\n- two`,
-        truncated: false,
-        at: reply.timestamp,
-      });
-    });
-
-    it('joins the text blocks of the message, dated by the latest one', async () => {
-      const last = assistant([text('part two')], 'm1');
-      await writeFile(file, jsonl(assistant([text('part one')], 'm1'), assistant([toolUse('Bash')], 'm1'), last));
-      const r = reader();
-      await r.read(SID, [CWD]);
-      expect(r.lastMessage(SID)).toEqual({ sessionId: SID, text: 'part one\npart two', truncated: false, at: last.timestamp });
-    });
-
-    it('is marked truncated when the message was longer than the 64 KiB kept', async () => {
-      await writeFile(file, jsonl(assistant([text('x'.repeat(ASSISTANT_TEXT_KEEP + 10))])));
-      const r = reader();
-      await r.read(SID, [CWD]);
-      const message = r.lastMessage(SID);
-      expect(message?.truncated).toBe(true);
-      expect(message?.text).toHaveLength(ASSISTANT_TEXT_KEEP);
-    });
-
-    it('leaves out at when the message has no timestamp', async () => {
-      await writeFile(file, jsonl(assistant([text('undated')], 'm1', { timestamp: undefined })));
-      const r = reader();
-      await r.read(SID, [CWD]);
-      expect(r.lastMessage(SID)).toEqual({ sessionId: SID, text: 'undated', truncated: false });
-    });
-
-    it('is undefined for a session not read, with no assistant text, or with text that is only syntax', async () => {
-      const r = reader();
-      expect(r.lastMessage(SID)).toBeUndefined();
-      await writeFile(file, jsonl(user('only a prompt'), assistant([toolUse('Bash')])));
-      await r.read(SID, [CWD]);
-      expect(r.lastMessage(SID)).toBeUndefined();
-      await appendFile(file, jsonl(assistant([text('---')], 'm2')));
-      await r.read(SID, [CWD]);
-      expect(r.lastMessage(SID)).toBeUndefined();
-      expect(r.lastMessage('../escape')).toBeUndefined();
-    });
-
-    it('reads no files: it answers from what the last read kept, until the session is forgotten', async () => {
-      const r = reader();
-      await writeFile(file, jsonl(assistant([text('kept in memory')])));
-      await r.read(SID, [CWD]);
-      await rm(file);
-      expect(r.lastMessage(SID)?.text).toBe('kept in memory');
-      r.retain(new Set());
-      expect(r.lastMessage(SID)).toBeUndefined();
-    });
-
-    it('strips the text once per message, and again when the message changes', async () => {
-      const r = reader();
-      await writeFile(file, jsonl(assistant([text('**first** reply')], 'm1')));
-      await r.read(SID, [CWD]);
-      stripped.mockClear();
-      expect(r.lastMessage(SID)?.text).toBe('first reply');
-      expect(r.lastMessage(SID)?.text).toBe('first reply');
-      expect(stripped).toHaveBeenCalledTimes(1);
-
-      // A poll that brings nothing new keeps the cached text.
-      await appendFile(file, jsonl(user([toolResult('ok')])));
-      await r.read(SID, [CWD]);
-      expect(r.lastMessage(SID)?.text).toBe('first reply');
-      expect(stripped).toHaveBeenCalledTimes(1);
-
-      await appendFile(file, jsonl(assistant([text('_second_ reply')], 'm2')));
-      await r.read(SID, [CWD]);
-      expect(r.lastMessage(SID)?.text).toBe('second reply');
-      expect(stripped).toHaveBeenCalledTimes(2);
-    });
-
-    it('strips a hostile 64 KiB message quickly', async () => {
-      const N = ASSISTANT_TEXT_KEEP;
-      for (const hostile of ['['.repeat(N), `[a](${'x '.repeat(N / 2 - 4)}`, '*a\\* '.repeat(N / 5), '\\*\n'.repeat(N / 3)]) {
-        await writeFile(file, jsonl(assistant([text(hostile)])));
-        let best = Number.POSITIVE_INFINITY;
-        // CPU time, the best of three readers each stripping afresh, so other
-        // processes and a garbage collection on a busy machine don't fail it.
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const r = reader();
-          await r.read(SID, [CWD]);
-          const start = process.cpuUsage();
-          const length = r.lastMessage(SID)?.text.length;
-          const used = process.cpuUsage(start);
-          expect(length).toBeGreaterThan(0);
-          best = Math.min(best, (used.user + used.system) / 1000);
-        }
-        expect(best, hostile.slice(0, 10)).toBeLessThan(FAST_MS);
-      }
-    });
-  });
-
   describe('askedYou', () => {
     const crossSession = () =>
       user('Another Claude session sent a message:\n<cross-session-message from="x">status?</cross-session-message>', {
@@ -609,11 +487,10 @@ describe('createTranscriptReader', () => {
       expect((await reader().read(SID, [CWD])).askedYou).toEqual({ reason: 'open-questions', excerpt: 'Should I push it?' });
     });
 
-    it('reads the question from the whole message, not the 500 characters shown', async () => {
+    it('reads the question from the whole message, not only its start', async () => {
       const long = `${'Long report line.\n'.repeat(100)}\nWant me to open the PR?`;
       await writeFile(file, jsonl(user('report'), assistant([text(long)])));
       const info = await reader().read(SID, [CWD]);
-      expect(info.lastAssistantText?.length).toBe(500);
       expect(info.askedYou).toEqual({ reason: 'question', excerpt: 'Want me to open the PR?' });
     });
 
@@ -747,21 +624,22 @@ describe('createTranscriptReader', () => {
       // line. Only the new line should be seen.
       const rewritten = first.replace('first prompt', 'other prompt');
       expect(rewritten.length).toBe(first.length);
-      await writeFile(file, rewritten + jsonl(assistant([text('reply')])));
+      const reply = assistant([text('reply')]);
+      await writeFile(file, rewritten + jsonl(reply));
 
       const info = await r.read(SID, [CWD]);
       expect(info.lastUserPrompt).toBe('first prompt');
-      expect(info.lastAssistantText).toBe('reply');
+      expect(info.lastActivityAt).toBe(reply.timestamp);
     });
 
     it('keeps earlier fields when new lines do not replace them', async () => {
       const r = reader();
-      await writeFile(file, jsonl(user('the prompt'), assistant([text('the answer')])));
+      await writeFile(file, jsonl(user('the prompt'), assistant([text('Should I ship the answer?')])));
       await r.read(SID, [CWD]);
       await appendFile(file, jsonl(assistant([toolUse('Bash')], 'm2'), user([toolResult('ok')])));
       const info = await r.read(SID, [CWD]);
       expect(info.lastUserPrompt).toBe('the prompt');
-      expect(info.lastAssistantText).toBe('the answer');
+      expect(info.askedYou?.excerpt).toBe('Should I ship the answer?');
     });
 
     it('carries a partial last line over to the next read', async () => {
@@ -818,10 +696,11 @@ describe('createTranscriptReader', () => {
 
     it('joins text blocks of one message written across two reads', async () => {
       const r = reader();
-      await writeFile(file, jsonl(assistant([text('part one')], 'm1')));
-      await r.read(SID, [CWD]);
-      await appendFile(file, jsonl(assistant([toolUse('Bash')], 'm1'), assistant([text('part two')], 'm1')));
-      expect((await r.read(SID, [CWD])).lastAssistantText).toBe('part one\npart two');
+      await writeFile(file, jsonl(assistant([text('Done.\n\n**Open questions:**\n- Should I push it?')], 'm1')));
+      expect((await r.read(SID, [CWD])).askedYou?.excerpt).toBe('Should I push it?');
+      // The second block asks nothing on its own, so the question stays only if the blocks are joined.
+      await appendFile(file, jsonl(assistant([toolUse('Bash')], 'm1'), assistant([text('**Next steps:**\n1. You review.')], 'm1')));
+      expect((await r.read(SID, [CWD])).askedYou).toEqual({ reason: 'open-questions', excerpt: 'Should I push it?' });
     });
 
     it('starts again when the file shrinks', async () => {
@@ -862,18 +741,22 @@ describe('createTranscriptReader', () => {
     it('reads only the last window the first time, and widens it once for a missing field', async () => {
       const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 4096 });
       // The prompt is ~2.5 KB from the end: outside the first window, inside the wider one.
-      await writeFile(file, jsonl(filler(2000), user('the prompt'), filler(1200), filler(1200), assistant([text('the answer')])));
+      const prompt = user('the prompt');
+      const answer = assistant([text('the answer')]);
+      await writeFile(file, jsonl(filler(2000), prompt, filler(1200), filler(1200), answer));
       const info = await r.read(SID, [CWD]);
       expect(info.lastUserPrompt).toBe('the prompt');
-      expect(info.lastAssistantText).toBe('the answer');
+      expect(info.lastActivityAt).toBe(answer.timestamp);
     });
 
     it('gives up on a field the wider window does not have, until new lines bring it', async () => {
       const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 4096 });
-      await writeFile(file, jsonl(user('too far back'), ...Array.from({ length: 6 }, () => filler(1000)), assistant([text('recent')])));
+      const prompt = user('too far back');
+      const recent = assistant([text('recent')]);
+      await writeFile(file, jsonl(prompt, ...Array.from({ length: 6 }, () => filler(1000)), recent));
       const info = await r.read(SID, [CWD]);
       expect(info.lastUserPrompt).toBeUndefined();
-      expect(info.lastAssistantText).toBe('recent');
+      expect(info.lastActivityAt).toBe(recent.timestamp);
       expect(info.transcript).toBe('ok');
 
       await appendFile(file, jsonl(user('a new prompt')));
@@ -906,9 +789,11 @@ describe('createTranscriptReader', () => {
       const r = reader({ initialWindowBytes: 1024, maxWindowBytes: 4096 });
       await writeFile(file, jsonl(user('before the burst')));
       await r.read(SID, [CWD]);
-      await appendFile(file, jsonl(user('start of burst'), ...Array.from({ length: 6 }, () => filler(1000)), assistant([text('end of burst')])));
+      const start = user('start of burst');
+      const end = assistant([text('end of burst')]);
+      await appendFile(file, jsonl(start, ...Array.from({ length: 6 }, () => filler(1000)), end));
       const info = await r.read(SID, [CWD]);
-      expect(info.lastAssistantText).toBe('end of burst');
+      expect(info.lastActivityAt).toBe(end.timestamp);
       // The burst's prompt is more than 4 KB back, so it was not read.
       expect(info.lastUserPrompt).toBeUndefined();
     });
@@ -917,17 +802,21 @@ describe('createTranscriptReader', () => {
       const r = reader();
       const big = (n: number) => Array.from({ length: n }, () => filler(10_000));
       // Prompt ~1 MB from the end: found by the widened window.
-      await writeFile(file, jsonl(...big(100), user('a megabyte back'), ...big(100), assistant([text('latest')])));
+      const megabyte = user('a megabyte back');
+      const latest = assistant([text('latest')]);
+      await writeFile(file, jsonl(...big(100), megabyte, ...big(100), latest));
       const found = await r.read(SID, [CWD]);
       expect(found.lastUserPrompt).toBe('a megabyte back');
-      expect(found.lastAssistantText).toBe('latest');
+      expect(found.lastActivityAt).toBe(latest.timestamp);
 
       // Prompt ~3 MB from the end: past 2 MiB, so it is given up on.
       r.retain(new Set());
-      await writeFile(file, jsonl(user('three megabytes back'), ...big(300), assistant([text('latest')])));
+      const farther = user('three megabytes back');
+      const newest = assistant([text('latest')]);
+      await writeFile(file, jsonl(farther, ...big(300), newest));
       const missing = await r.read(SID, [CWD]);
       expect(missing.lastUserPrompt).toBeUndefined();
-      expect(missing.lastAssistantText).toBe('latest');
+      expect(missing.lastActivityAt).toBe(newest.timestamp);
     });
   });
 });

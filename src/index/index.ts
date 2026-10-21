@@ -3,7 +3,6 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   type ConversationPage,
   type IndexSnapshot,
-  type LastMessage,
   type RelayAlert,
   type RelayExchange,
   type RelayOff,
@@ -47,13 +46,6 @@ export interface Indexer {
   latest(): IndexSnapshot | undefined;
   /** Called with every new snapshot. Returns an unsubscribe function. */
   subscribe(listener: (snapshot: IndexSnapshot) => void): () => void;
-  /**
-   * The full newest assistant message of a session in the latest snapshot.
-   * Undefined for any other session id, and for a session with no message.
-   * Synchronous and file-free: it strips what the last poll kept, once per
-   * change of message, in time bounded however hostile the text is.
-   */
-  lastMessage(sessionId: string): LastMessage | undefined;
   /**
    * One page of a session's conversation, read from its transcript backwards:
    * the newest page, or the one before the `before` cursor. Undefined for a
@@ -106,7 +98,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   let latest: IndexSnapshot | undefined;
-  /** The session ids in `latest`: the only ones lastMessage() answers for. */
+  /** The session ids in `latest`: the only ones conversation() answers for. */
   let current = new Set<string>();
   let running = false;
   let stopped = false;
@@ -157,10 +149,6 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       return () => {
         listeners.delete(listener);
       };
-    },
-    lastMessage(sessionId) {
-      if (!current.has(sessionId)) return undefined;
-      return deps.transcripts.lastMessage(sessionId);
     },
     async conversation(sessionId, before) {
       if (!current.has(sessionId)) return undefined;

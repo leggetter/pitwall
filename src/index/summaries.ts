@@ -60,7 +60,6 @@ export function toSessionSummary(
   if (row.state !== undefined) summary.state = row.state;
   if (row.waitingFor !== undefined) summary.waitingFor = row.waitingFor;
   if (transcript.lastActivityAt !== undefined) summary.lastActivityAt = transcript.lastActivityAt;
-  if (transcript.lastAssistantText !== undefined) summary.lastAssistantText = transcript.lastAssistantText;
   if (transcript.lastUserPrompt !== undefined) summary.lastUserPrompt = transcript.lastUserPrompt;
   if (transcript.askedYou !== undefined && turnIsOver(row, stale)) summary.askedYou = transcript.askedYou;
   if (transcript.aiTitle !== undefined && !sameTitle(transcript.aiTitle, row.name)) {

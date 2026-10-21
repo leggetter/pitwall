@@ -47,7 +47,6 @@ export function session(name: string, overrides: Partial<SessionSummary> = {}): 
     finished: false,
     lastActivityAt: ago(4),
     lastUserPrompt: 'Add a retry with backoff to the export job.',
-    lastAssistantText: 'Done. The export job retries three times with backoff, and the tests pass.',
     transcript: 'ok',
     ...overrides,
   };
@@ -87,7 +86,6 @@ export const STATUS_ROWS: SessionSummary[] = [
     status: 'waiting',
     waitingFor: 'permission prompt',
     lastUserPrompt: 'Add a retry with backoff to the export job.',
-    lastAssistantText: 'I need permission to edit src/export/retry.ts.',
     lastActivityAt: ago(1),
   }),
   background('blocked', {
@@ -95,7 +93,6 @@ export const STATUS_ROWS: SessionSummary[] = [
     status: 'idle',
     waitingFor: 'input needed',
     lastUserPrompt: 'Move failed exports somewhere we can inspect them.',
-    lastAssistantText: 'Which queue should failed exports go to: the default one, or a new dead-letter queue?',
     lastActivityAt: ago(2),
   }),
   session('asked-you', {
@@ -103,23 +100,21 @@ export const STATUS_ROWS: SessionSummary[] = [
     titleSource: 'claude-code',
     askedYou: { reason: 'open-questions', excerpt: 'Should the CSV export include archived projects?' },
     lastUserPrompt: 'Add a CSV export to the projects page.',
-    lastAssistantText: 'The projects page has an Export CSV button now. Open questions: Should the CSV export include archived projects?',
     lastActivityAt: ago(3),
   }),
-  session('busy', { status: 'busy', lastActivityAt: ago(0.1), lastAssistantText: 'Running the export tests again with the new fixture.' }),
-  background('working', { state: 'working', lastActivityAt: ago(0.4), lastAssistantText: 'Reading the three loaders before changing any of them.' }),
+  session('busy', { status: 'busy', lastActivityAt: ago(0.1) }),
+  background('working', { state: 'working', lastActivityAt: ago(0.4) }),
   session('idle', { lastActivityAt: ago(6) }),
-  session('unknown', { status: undefined, lastActivityAt: ago(9), lastAssistantText: 'Claude Code reported no status for this session.' }),
+  session('unknown', { status: undefined, lastActivityAt: ago(9) }),
   session('not-running', {
     alive: false,
     pid: undefined,
     status: undefined,
     lastActivityAt: ago(40),
-    lastAssistantText: 'The session ended. Its process is gone, so it can only be resumed.',
   }),
-  background('done', { state: 'done', lastActivityAt: ago(12), lastAssistantText: 'Finished: the migration ran on the test database.' }),
-  background('stopped', { state: 'stopped', lastActivityAt: ago(14), lastAssistantText: 'Stopped before the second batch.' }),
-  background('failed', { state: 'failed', lastActivityAt: ago(16), lastAssistantText: 'The build failed: a type error in src/export/csv.ts.' }),
+  background('done', { state: 'done', lastActivityAt: ago(12) }),
+  background('stopped', { state: 'stopped', lastActivityAt: ago(14) }),
+  background('failed', { state: 'failed', lastActivityAt: ago(16) }),
   background('stale', {
     state: 'blocked',
     waitingFor: 'permission prompt',
@@ -128,20 +123,18 @@ export const STATUS_ROWS: SessionSummary[] = [
     pid: undefined,
     startedAt: ago(60 * 24 * 30),
     lastActivityAt: ago(60 * 24 * 12),
-    lastAssistantText: 'May I run the migration against the staging database?',
   }),
 ];
 
 /** Finished rows, which sit in a group's "Finished" list. */
 export const FINISHED_ROWS: SessionSummary[] = [
-  finished('finished-done', 'done', { cwd: JOBS_DIR, lastAssistantText: 'All 214 fixtures regenerated.' }),
+  finished('finished-done', 'done', { cwd: JOBS_DIR }),
   finished('finished-asked', 'done', {
     cwd: JOBS_DIR,
     askedYou: { reason: 'question', excerpt: 'Do you want the old fixtures kept in a backup folder?' },
-    lastAssistantText: 'The fixtures are regenerated. Do you want the old fixtures kept in a backup folder?',
   }),
   finished('finished-stopped', 'stopped', { cwd: JOBS_DIR, lastActivityAt: ago(240) }),
-  finished('finished-failed', 'failed', { cwd: JOBS_DIR, lastActivityAt: ago(60 * 26), lastAssistantText: 'npm ci failed: the lock file is out of date.' }),
+  finished('finished-failed', 'failed', { cwd: JOBS_DIR, lastActivityAt: ago(60 * 26) }),
 ];
 
 export function exchange(status: RelayExchange['status'], reply?: string): RelayExchange {
@@ -154,7 +147,6 @@ export const AWKWARD_ROWS: SessionSummary[] = [
     title:
       'Investigate why the nightly export sometimes writes duplicate rows when two workers pick up the same batch after a retry',
     titleSource: 'claude-code',
-    lastAssistantText: LONG_REPLY,
   }),
   session('a-session-name-that-is-much-longer-than-most-names-are', {
     title: 'A title pitwall generated',
@@ -179,11 +171,10 @@ export const AWKWARD_ROWS: SessionSummary[] = [
   background('unbroken', {
     state: 'working',
     lastUserPrompt: `Check this id: pitwall-test-${'0123456789abcdef'.repeat(8)}`,
-    lastAssistantText: `It isn't valid: pitwall-test-${'0123456789abcdef'.repeat(8)} is longer than 64 characters.`,
   }),
   session('no-prompt', { lastUserPrompt: undefined }),
-  session('transcript-missing', { transcript: 'missing', lastUserPrompt: undefined, lastAssistantText: undefined }),
-  session('transcript-unreadable', { transcript: 'unreadable', lastUserPrompt: undefined, lastAssistantText: undefined }),
+  session('transcript-missing', { transcript: 'missing', lastUserPrompt: undefined }),
+  session('transcript-unreadable', { transcript: 'unreadable', lastUserPrompt: undefined }),
 ];
 
 /** A row in each of the states in the Session rows table, named after it. */
@@ -196,7 +187,6 @@ export const STATE_ROWS = {
     status: 'waiting',
     waitingFor: 'permission prompt',
     lastUserPrompt: 'Delete the old export files.',
-    lastAssistantText: 'Choose an option in the dialog to go on.',
   }),
   finished: finished('finished', 'done', { cwd: JOBS_DIR }),
 };

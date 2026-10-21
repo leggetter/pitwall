@@ -808,7 +808,7 @@ describe('session rows', () => {
       snapshot([
         group({
           sessions: [
-            session({ name: 'chatty', relay, lastAssistantText: 'A reply long enough to need Show more.', cwd: '/Users/example/code/demo-app/packages/worker' }),
+            session({ name: 'chatty', relay, cwd: '/Users/example/code/demo-app/packages/worker' }),
             session({ name: 'job', kind: 'background', shortId: 'bg7f3a', state: 'working', status: undefined, cwdMissing: true }),
           ],
         }),
@@ -898,7 +898,7 @@ describe('session rows', () => {
       snapshot([
         group({
           sessions: [
-            session({ name: 'gone', transcript: 'missing', lastUserPrompt: 'old prompt', lastAssistantText: 'old reply' }),
+            session({ name: 'gone', transcript: 'missing', lastUserPrompt: 'old prompt' }),
             session({ name: 'garbled', transcript: 'unreadable', lastActivityAt: undefined }),
           ],
         }),
@@ -1026,7 +1026,6 @@ describe('sessions that asked you something', () => {
             name: 'asks',
             status: 'idle',
             askedYou: asked('Should I push it?'),
-            lastAssistantText: 'Fixed the test. Open questions: - Should I push it?',
           }),
           session({ name: 'calm', status: 'idle' }),
         ],
