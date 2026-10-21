@@ -13,6 +13,8 @@ import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
+import { ViewPreferences } from '../components/ViewPreferences.js';
+import type { GroupBy } from '../groupBy.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { startLabel, workedInLabels } from '../sessions.js';
 import {
@@ -155,7 +157,7 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Worked in other repos"
-        note="Line 3: the group it started in, the only one that lists it, and the repos it worked in, newest first, each by its label, pitwall-test-docs too, which has no group. The names are text: selecting one does nothing. The info button has the rule, and how to find every session that worked in a repo. It shows once a scan finds a repo beyond the start; rows stay two lines."
+        note="Line 3: the group it started in, the same whatever View preferences lists it under, and the repos it worked in, newest first, each by its label, pitwall-test-docs too, which has no group. The names are text: selecting one does nothing. The info button has the rule, and how to find every session that worked in a repo. It shows once a scan finds a repo beyond the start; rows stay two lines."
         frame="short"
       >
         <Stubbed>
@@ -929,9 +931,17 @@ const SAMPLE_MENU: MenuEntry[] = [
 ];
 
 /** A menu button's frame: the space below it that the open menu needs. */
-function MenuStage({ children }: { children: ReactNode }) {
-  return <div className="uikit-menu-stage">{children}</div>;
+function MenuStage({ children, prefs = false }: { children: ReactNode; prefs?: boolean }) {
+  return <div className={prefs ? 'uikit-menu-stage uikit-menu-stage-prefs' : 'uikit-menu-stage'}>{children}</div>;
 }
+
+/** The header's View preferences menu with a mode of its own, so choosing one checks it (W42). */
+function LivePreferences({ start }: { start: GroupBy }) {
+  const [groupBy, setGroupBy] = useState(start);
+  return <ViewPreferences groupBy={groupBy} onGroupBy={setGroupBy} />;
+}
+
+const clickMenuButton = async (root: HTMLElement) => (await element<HTMLButtonElement>(root, 'button[aria-haspopup="menu"]')).click();
 
 export function Menus() {
   return (
@@ -945,9 +955,26 @@ export function Menus() {
         title="Open"
         note="An item, a disabled item (its reason in a tooltip, on hover and when ↑ ↓ reach it), a separator, then a danger item. Below its button, aligned to its end; ↑ ↓ Home End move, Enter or Space activates, Escape or Tab closes."
       >
-        <Scenario run={async (root) => (await element<HTMLButtonElement>(root, 'button[aria-haspopup="menu"]')).click()}>
+        <Scenario run={clickMenuButton}>
           <MenuStage>
             <MenuButton label="Session actions" icon="more" entries={SAMPLE_MENU} />
+          </MenuStage>
+        </Scenario>
+      </Specimen>
+      <Specimen
+        title="View preferences, open (W42)"
+        note="The header's menu: a ghost md preferences icon button, named View preferences by its tooltip, opening one radio group, Group sessions by. Each mode has one line saying what it does; the chosen one, Main repo by default, has the check mark and takes focus as the menu opens. ↑ ↓ Home End move, Enter, Space or a click chooses and closes, Escape or Tab closes."
+      >
+        <Scenario run={clickMenuButton}>
+          <MenuStage prefs>
+            <LivePreferences start="main-repo" />
+          </MenuStage>
+        </Scenario>
+      </Specimen>
+      <Specimen title="View preferences, Every repo it worked in chosen" note="Opened on the mode that's chosen.">
+        <Scenario run={clickMenuButton}>
+          <MenuStage prefs>
+            <LivePreferences start="every-repo" />
           </MenuStage>
         </Scenario>
       </Specimen>

@@ -1,6 +1,7 @@
-// The app shell's pieces (W21, W23, W35, W38): the real Header, with a tab per root when there are
-// several, RepoList with its Hidden section, RepoDrawer, SessionList with a group's Hide from repo
-// list, the filters and the Sort setting, with fixture props. The header is shown in windows of each
+// The app shell's pieces (W21, W23, W35, W38, W42): the real Header, with a tab per root when there
+// are several and View preferences, RepoList with its Hidden section and in each mode of Group
+// sessions by, RepoDrawer, SessionList with a group's Hide from repo list, the filters and the Sort
+// setting, with fixture props. The header is shown in windows of each
 // width, since its compact rule is a container query on the app (docs/design-system.md, 2.12). The
 // root tabs, the repo lists and the filters keep their own state, so they can be clicked and typed into.
 
@@ -14,6 +15,8 @@ import { RepoList } from '../components/RepoList.js';
 import { SessionList, type SessionListHeading, type SessionListSummary } from '../components/SessionList.js';
 import { SortSelect } from '../components/SortSelect.js';
 import type { ConnectionState } from '../connection.js';
+import { shortenHome } from '../format.js';
+import { groupSessions, type GroupBy } from '../groupBy.js';
 import { useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { tabGroups } from '../rootTabs.js';
 import { ALL_SESSIONS, groupSelection, NEEDS_YOU, viewIn, type Selection } from '../selection.js';
@@ -28,6 +31,7 @@ import {
   LONG_ROOTS,
   NOTES_GROUP,
   OTHER_ROOT,
+  PREFS_SNAPSHOT,
   REPO_LIST_SNAPSHOT,
   ROOT,
   SERVICE_GROUP,
@@ -41,6 +45,12 @@ import { memoryShortcuts, memoryStorage, storedHidden } from './stubs.js';
 
 const noop = () => {};
 const UPDATED = ago(0.05);
+
+/** View preferences with a mode of its own, so its menu can be opened and a mode chosen (W42). */
+function usePreferences(start: GroupBy = 'main-repo') {
+  const [groupBy, onGroupBy] = useState<GroupBy>(start);
+  return { groupBy, onGroupBy };
+}
 
 /** The Sort setting, with state of its own. */
 function LiveSort({ start = 'urgency' }: { start?: SortOrder }) {
@@ -84,6 +94,7 @@ export interface TabbedHeaderProps {
 export function TabbedHeader({ roots, attention = {}, start, state = 'live', repos = false }: TabbedHeaderProps) {
   const [active, setActive] = useState(start ?? roots[0] ?? '');
   const id = useId();
+  const preferences = usePreferences();
   return (
     <Header
       state={state}
@@ -92,6 +103,7 @@ export function TabbedHeader({ roots, attention = {}, start, state = 'live', rep
       onNewSession={noop}
       onRepos={repos ? noop : undefined}
       onShortcuts={noop}
+      preferences={preferences}
       tabs={{ tabs: roots.map((root) => ({ root, attention: attention[root] ?? 0 })), active, onSelect: setActive, tabId: (root) => `${id}-tab-${roots.indexOf(root)}` }}
     />
   );
@@ -104,21 +116,27 @@ const WORK_NEEDS_YOU = { [OTHER_ROOT]: 2 };
 const GIT_ROOTS = ['/Users/example/work/git', '/Users/example/personal/git', '/Users/example/scratch/git'];
 
 export function Headers() {
+  // One mode for these headers' View preferences, as the app has one.
+  const preferences = usePreferences();
   return (
     <>
       {BREAKPOINTS.map((breakpoint) => (
         <Specimen key={breakpoint.width} title={breakpoint.title} note={breakpoint.note} width={breakpoint.width}>
-          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} onShortcuts={noop} />
+          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} onShortcuts={noop} preferences={preferences} />
         </Specimen>
       ))}
-      <Specimen title="Before the first snapshot" note="No roots, no New session and no time yet; the keyboard shortcuts button is there from the start." width={1100}>
-        <Header state="connecting" onShortcuts={noop} />
+      <Specimen
+        title="Before the first snapshot"
+        note="No roots, no New session and no time yet; View preferences and the keyboard shortcuts button are there from the start."
+        width={1100}
+      >
+        <Header state="connecting" onShortcuts={noop} preferences={preferences} />
       </Specimen>
       <Specimen title="A long root" note="The start is cut short with an ellipsis and the last segment stays; the full path, home and all, is in a tooltip." width={800}>
-        <Header state="live" roots={[LONG_ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={noop} onShortcuts={noop} />
+        <Header state="live" roots={[LONG_ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={noop} onShortcuts={noop} preferences={preferences} />
       </Specimen>
       <Specimen title="A long root, 600 px and narrower" width={375}>
-        <Header state="reconnecting" roots={[LONG_ROOT]} updatedAt={ago(0.9)} onNewSession={noop} onRepos={noop} onShortcuts={noop} />
+        <Header state="reconnecting" roots={[LONG_ROOT]} updatedAt={ago(0.9)} onNewSession={noop} onRepos={noop} onShortcuts={noop} preferences={preferences} />
       </Specimen>
       <Specimen
         title="Two roots"
@@ -165,6 +183,21 @@ interface LiveRepoListProps {
   hiding?: { groups: readonly HiddenGroup[]; open: boolean };
   /** With several roots, the open root tab, whose groups and hidden groups alone it lists (W38). */
   tab?: string;
+}
+
+/** Each root tab's repo list, side by side, with the groups as `mode` groups them (W42). */
+function ModeLists({ mode }: { mode: GroupBy }) {
+  const snap = { ...PREFS_SNAPSHOT, groups: groupSessions(PREFS_SNAPSHOT.groups, mode).groups };
+  return (
+    <div className="uikit-mode-lists">
+      {PREFS_SNAPSHOT.roots.map((root) => (
+        <div key={root} className="uikit-mode-list">
+          <p className="uikit-meta">{shortenHome(root)}'s tab</p>
+          <LiveRepoList snapshot={snap} tab={root} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** A repo list with a selection and hidden groups of its own: clicking an item selects it, and Unhide and the Hidden toggle work. */
@@ -229,6 +262,24 @@ export function RepoLists() {
         width={240}
       >
         <LiveRepoList snapshot={WORKED_SNAPSHOT} start={groupSelection(WORKED_ROOT_GROUP, [ROOT])} />
+      </Specimen>
+      <Specimen
+        title="Grouped by main repo, the default (W42)"
+        note="pitwall-test-delivery-plan started in ~/code itself and changed pitwall-test-docs most, so it's listed there, in a group built for a repo nothing started in, with its need-you badge. ~/code keeps the session that worked in no repo. It changed pitwall-test-service, under ~/work, less, so ~/work's tab is as it was. Each session is in one group, so the counts add up."
+      >
+        <ModeLists mode="main-repo" />
+      </Specimen>
+      <Specimen
+        title="Grouped by where it started"
+        note="The snapshot's groups as they are (W39): ~/code holds both sessions started in it, and pitwall-test-docs, where one only worked, has no item."
+      >
+        <ModeLists mode="where-started" />
+      </Specimen>
+      <Specimen
+        title="Grouped by every repo it worked in"
+        note="pitwall-test-delivery-plan is under pitwall-test-docs in ~/code's tab and under pitwall-test-service in ~/work's, whose Needs you and All sessions count it too. ~/code's own group keeps only the session that worked in no repo. A group counts its distinct sessions, so the counts can add up to more than All sessions."
+      >
+        <ModeLists mode="every-repo" />
       </Specimen>
       <Specimen
         title="Hidden groups, the section closed"
