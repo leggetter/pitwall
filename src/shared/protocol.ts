@@ -112,17 +112,21 @@ export interface SessionSummary {
    * The repos under a configured root that this session worked in, other than
    * the one it started in, newest touch first (W34, spike 004). A repo counts
    * when the session changed it, or when at least 5% of its tool calls,
-   * sub-agents' included, touched it. Each is a group in IndexSnapshot.groups
-   * that lists this session. Absent until the session's transcripts have been
-   * scanned, when they can't be read, and when no repo passes the rule.
+   * sub-agents' included, touched it. It's shown in the session view only: a
+   * session is listed under the group it started in and nowhere else (W39,
+   * Phil, 2026-10-21), so a repo here may have no group in IndexSnapshot.groups.
+   * Absent until the session's transcripts have been scanned, when they can't
+   * be read, and when no repo passes the rule.
    */
   workedIn?: WorkedIn[];
 }
 
 /** One repo a session worked in, beyond its start (SessionSummary.workedIn). */
 export interface WorkedIn {
-  /** The repo's group: SessionGroup.key. */
+  /** The repo's top-level directory: the SessionGroup.key its group has when it has one. */
   key: string;
+  /** The repo's label, as its group's SessionGroup.label is or would be. */
+  label: string;
   /** Tool calls that touched the repo, sub-agents' included. */
   calls: number;
   /** Edits and writes in the repo, commits and pushes there, and PRs created or merged for it. */
@@ -150,21 +154,18 @@ export interface SessionGroup {
    */
   label: string;
   /**
-   * 'git' for a repo. 'directory' for a directory in no repo, which is one of:
-   * - a directory below a root: like a repo, it lists every session started
-   *   in it, including those that also worked in repos;
-   * - a root itself: it lists only the sessions started in the root that have
-   *   no `workedIn`. A session that started in the root and worked in repos
-   *   is listed under those repos, not here (Phil, 2026-10-21).
+   * 'git' for a repo. 'directory' for a directory in no repo: a directory
+   * below a root, or a root itself. Every group lists the sessions started in
+   * it, and only those (W39).
    */
   kind: 'git' | 'directory';
   /** The configured root this group sits under. */
   root: string;
   /**
-   * Every session shown under the group, each once. For a repo, that's the
-   * sessions started in it and the sessions whose `workedIn` names it, so one
-   * session can be in several groups. A group with no sessions is left out,
-   * the root's own group included.
+   * The sessions started in the group, each once. A session is in exactly one
+   * group: the one it started in (W39, Phil, 2026-10-21: "The problem is
+   * duplication"). A group with no sessions is left out, the root's own group
+   * included.
    *
    * Sorted: sessions that need the user first (status 'waiting', or a background
    * job that is blocked and not stale), then askedYou, then busy, then by
