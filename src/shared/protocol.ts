@@ -108,6 +108,27 @@ export interface SessionSummary {
    * session's reply when one came back through the relay.
    */
   relay?: RelayExchange;
+  /**
+   * The repos under a configured root that this session worked in, other than
+   * the one it started in, newest touch first (W34, spike 004). A repo counts
+   * when the session changed it, or when at least 5% of its tool calls,
+   * sub-agents' included, touched it. Each is a group in IndexSnapshot.groups
+   * that lists this session. Absent until the session's transcripts have been
+   * scanned, when they can't be read, and when no repo passes the rule.
+   */
+  workedIn?: WorkedIn[];
+}
+
+/** One repo a session worked in, beyond its start (SessionSummary.workedIn). */
+export interface WorkedIn {
+  /** The repo's group: SessionGroup.key. */
+  key: string;
+  /** Tool calls that touched the repo, sub-agents' included. */
+  calls: number;
+  /** Edits and writes in the repo, commits and pushes there, and PRs created or merged for it. */
+  changes: number;
+  /** ISO 8601: the newest call that touched the repo. */
+  lastAt: string;
 }
 
 /** One relayed message and its outcome, shown on the target session's row. */
@@ -120,7 +141,7 @@ export interface RelayExchange {
 }
 
 export interface SessionGroup {
-  /** Absolute path: the repo's top-level directory for git, otherwise the session's cwd. */
+  /** Absolute path: the repo's top-level directory for git, or the configured root for its own group. */
   key: string;
   /**
    * `key` relative to the configured root it sits under, or the root's basename
@@ -128,10 +149,21 @@ export interface SessionGroup {
    * root whose main repo isn't), the key with the home directory shortened to `~`.
    */
   label: string;
+  /**
+   * 'git' for a repo. 'directory' for a root's own group, when the root isn't
+   * itself in a repo. That group holds the root's sessions that are in no
+   * repo: started outside every repo under it, including in a directory below
+   * it that isn't a repo, and with no `workedIn`. So a session that started
+   * in the root and worked in repos is listed under those repos, not here.
+   */
   kind: 'git' | 'directory';
   /** The configured root this group sits under. */
   root: string;
   /**
+   * Every session shown under the group, each once. For a repo, that's the
+   * sessions started in it and the sessions whose `workedIn` names it, so one
+   * session can be in several groups. A group with no sessions is left out.
+   *
    * Sorted: sessions that need the user first (status 'waiting', or a background
    * job that is blocked and not stale), then askedYou, then busy, then by
    * lastActivityAt descending (startedAt when there's none). Stale sessions
