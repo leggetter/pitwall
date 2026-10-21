@@ -81,14 +81,18 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** each attach is a PTY and a `claude attach` process. Closing the view or the tab detaches, and the session keeps running. `claude attach` restarts a background session that isn't running, which is an action, so the UI asks first.
 
-### D6 - Group sessions by the repo they started in, and name the repos they worked in
+### D6 - Group sessions by repo, as the viewer chooses: by main repo, where they started, or every repo they worked in
 
 - **Start group:** the repo of the session's working directory, by `git rev-parse --git-common-dir`, so worktrees sit under the repo they belong to. A directory below a root that isn't in a repo groups as itself.
-- **One group each** (Phil, 2026-10-21): a session is listed only under the group it started in. The root's own group lists every session started in the root.
+- **The snapshot:** the server lists each session once, under the group it started in (Phil, 2026-10-21: "The problem is duplication"), and names the repos it worked in. The page groups it again for the viewer's View preferences, so switching is instant.
+- **View preferences** (Phil, 2026-10-21, after git-76, started in `~/hookdeck/git` itself, didn't show under evals, where it made 1,642 tool calls and 183 changes): Group sessions by, in a header menu, kept as `pitwall.group-by.v1`.
+  - **Main repo, the default:** a session started in a root's own directory that worked in repos is listed under the one it changed most, ties broken by tool calls, the newest touch, then the path. It may be under another root, and so in that root's tab. A root-started session that worked in no repo stays under the root, and every other session stays where it started.
+  - **Where it started:** the snapshot as it is.
+  - **Every repo it worked in:** each session under where it started and every repo it worked in, except that the root's own group keeps only root-started sessions that worked in no repo.
 - **Worked in:** the session view names every repo under a configured root that the session changed (an edit or write, a commit or push, a PR created or merged), or that at least 5% of its tool calls touched, sub-agents' included. The filter finds a session by any of them, so typing a repo's name in All sessions lists every session that started or worked there. Spike 004 scored that rule at 1 false positive and 3 misses on 28 hand-judged repos.
 - **Why not list it under each repo it worked in:** M3 did that at first (W34), because most sessions start in the folder that holds the repos. In the try-out, 12 of 20 sessions were in more than one group, and Phil found the duplication worse than a large root group ("The problem is duplication").
 - **How:** a background scanner reads each session's transcripts, sub-agents' included, and the poll never waits on it. It keeps what it finds in memory only, and runs read-only git at repo boundaries, at most two processes at once. A scan never moves a session.
-- **Counts:** a group's count is the sessions started in it, so the groups' counts under a root add up to that root's sessions.
+- **Counts:** in Main repo and Where it started, each session is in one group, so the groups' counts under a root add up to that root's sessions. In Every repo it worked in, a repo's count is its distinct sessions, so the counts can add up to more than All sessions. Needs you, All sessions and the root tabs' badges count each session once in every mode.
 - **Hiding** (Phil, 2026-10-21): a repo or directory can be hidden from the repo list, and the hidden ones are listed at its foot, to select or unhide. It changes only the repo list: its sessions still show in Needs you and All sessions. Chosen over ageing old repos out, after the try-out found a long session still listed under a repo it last worked in 44 days before its latest work.
 
 ### D10 - pitwall's own design system, inspired by Hookdeck's UX
