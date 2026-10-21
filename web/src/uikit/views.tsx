@@ -530,6 +530,27 @@ const BOX_CASES: Case[] = [
   },
 ];
 
+const KEPT_RUNNING = session('box-kept-stopped');
+const KEPT_LISTED = session('box-kept-unlisted');
+
+/**
+ * A message box whose session stops running, or leaves the list, as soon as a draft is typed into it,
+ * as a poll would say while the draft is being written: the draft stays, with why it can't be sent.
+ */
+function GoesWhileDrafting({ session: shown, goes }: { session: SessionSummary; goes: 'stops' | 'unlisted' }) {
+  const [gone, setGone] = useState(false);
+  const current = gone && goes === 'stops' ? { ...shown, alive: false, pid: undefined, status: undefined } : shown;
+  return (
+    <RelayBox
+      session={current}
+      listed={!(gone && goes === 'unlisted')}
+      onDraftChange={(has) => {
+        if (has) setGone(true);
+      }}
+    />
+  );
+}
+
 export function MessageBoxes() {
   return (
     <div className="uikit-panel-width">
@@ -544,6 +565,30 @@ export function MessageBoxes() {
           </Stubbed>
         </Specimen>
       ))}
+      <Specimen title="A draft, when the session stops" note="The draft stays, and can be edited or copied; Send is off, and the note says why. Cleared, the box gives way to the not-running note.">
+        <Stubbed>
+          <Scenario run={async (root) => {
+            await typeIn(DRAFT)(root);
+            await element(root, '.relay-kept');
+          }}>
+            <footer className="session-view-foot">
+              <GoesWhileDrafting session={KEPT_RUNNING} goes="stops" />
+            </footer>
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen title="A draft, when the session leaves the list" note="The footer stays while the draft does, under the header's no-longer-listed alert. Cleared, the footer goes.">
+        <Stubbed>
+          <Scenario run={async (root) => {
+            await typeIn(DRAFT)(root);
+            await element(root, '.relay-kept');
+          }}>
+            <footer className="session-view-foot">
+              <GoesWhileDrafting session={KEPT_LISTED} goes="unlisted" />
+            </footer>
+          </Scenario>
+        </Stubbed>
+      </Specimen>
     </div>
   );
 }

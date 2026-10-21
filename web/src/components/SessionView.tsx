@@ -206,8 +206,10 @@ export function SessionView({
   const [attachStatus, setAttachStatus] = useState<AttachStatus>();
   // The terminal's restart confirmation, open or busy, for Escape's layering.
   const [restart, setRestart] = useState<RestartPhase>();
-  // Whether the message box has a draft: Escape never closes the view then (6.2).
+  // Whether the message box has a draft: Escape never closes the view then (6.2). As state too, so a
+  // draft keeps the footer when the session leaves the list, rather than going with it.
   const draft = useRef(false);
+  const [drafting, setDrafting] = useState(false);
   const copyText = useCopy();
   const toast = useToast();
   const [refused, setRefused] = useState<Refused>();
@@ -465,13 +467,15 @@ export function SessionView({
         )}
       </div>
 
-      {session.kind === 'interactive' && listed && (
+      {session.kind === 'interactive' && (listed || drafting) && (
         <footer className="session-view-foot">
           <RelayBox
             session={session}
+            listed={listed}
             replyShown={replyShown}
             onDraftChange={(has) => {
               draft.current = has;
+              setDrafting(has);
               onDraftChange?.(has);
             }}
           />
