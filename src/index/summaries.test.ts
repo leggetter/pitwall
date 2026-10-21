@@ -458,8 +458,8 @@ describe('buildGroups', () => {
     });
 
     it('gives a repo reached only through workedIn a group of its own, labelled as any other', () => {
-      const groups = buildGroups([worked('s', `${root}/alpha`, 'git', [`${root}/clients/delta`])], home);
-      expect(groups.find((g) => g.key === `${root}/clients/delta`)).toMatchObject({ label: 'clients/delta', kind: 'git', root, sessions: [{ sessionId: 's' }] });
+      const groups = buildGroups([worked('s', `${root}/alpha`, 'git', [`${root}/projects/delta`])], home);
+      expect(groups.find((g) => g.key === `${root}/projects/delta`)).toMatchObject({ label: 'projects/delta', kind: 'git', root, sessions: [{ sessionId: 's' }] });
     });
 
     it("keeps a session started in the root with no workedIn in the root's group", () => {
