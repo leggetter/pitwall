@@ -6,7 +6,7 @@
 
 .shortcuts-switch .field-hint {
   /* Under the label, past the 16 px box and its 6 px gap. */
-  padding-left: calc(16px + var(--pw-space-1-5));
+  padding-left: calc(var(--pw-icon-sm) + var(--pw-space-1-5));
 }
 
 .shortcuts-group-title {

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import designSystem from '../../docs/design-system.md?raw';
 import indexHtml from '../index.html?raw';
-import { block, darkBlock, defaultBlocks, systemDarkBlock, tokens, withoutComments } from './test/css.js';
+import { block, darkBlock, declarations, defaultBlocks, systemDarkBlock, tokens, withoutComments } from './test/css.js';
 
 /** Every stylesheet under web/src, by path, as text. */
 const stylesheets = import.meta.glob<string>('./**/*.css', { query: '?raw', import: 'default', eager: true });
@@ -47,7 +47,7 @@ describe('tokens.css', () => {
   });
 
   it('points every state alias at a token, never at a colour of its own', () => {
-    const aliases = defaultBlocks.filter(([property]) => /^--pw-(?:state-|live$|pending$|broken$)/.test(property));
+    const aliases = defaultBlocks.filter(([property]) => /^--pw-state-/.test(property));
     expect(aliases.length).toBeGreaterThan(0);
     expect(aliases.filter(([, value]) => !/^var\(--pw-[\w-]+\)$/.test(value))).toEqual([]);
     // The aliases are the same in both themes: the tone tokens they point at change instead.
@@ -80,6 +80,48 @@ describe('the components', () => {
 
   it.each(sources)('%s names only tokens that tokens.css defines', (_path, source) => {
     expect(varsIn(source).filter((name) => name.startsWith('--pw-') && !defined.has(name))).toEqual([]);
+  });
+});
+
+describe('sizes that have a token (W31)', () => {
+  const css = (path: string) => withoutComments(stylesheets[path] ?? '');
+  const rule = (path: string, selector: RegExp) => Object.fromEntries(declarations(block(css(path), selector)));
+
+  it('use it, not the raw px', () => {
+    expect(rule('./styles.css', /\n\.menu\s*\{/)['min-width']).toBe('var(--pw-menu-min-w)');
+    expect(rule('./styles.css', /\n\.empty-state\s*\{/)['max-width']).toBe('var(--pw-dialog-sm)');
+    const checkbox = rule('./actions.css', /\n\.checkbox input\s*\{/);
+    expect([checkbox.width, checkbox.height]).toEqual(['var(--pw-icon-sm)', 'var(--pw-icon-sm)']);
+    expect(rule('./actions.css', /\n\.session-actions\s*\{/).gap).toBe('var(--pw-space-2)');
+    expect(rule('./components/ShortcutsDialog.css', /\n\.shortcuts-switch \.field-hint\s*\{/)['padding-left']).toBe('calc(var(--pw-icon-sm) + var(--pw-space-1-5))');
+  });
+});
+
+describe('every token', () => {
+  /** The code that reads a token by name rather than with var(), such as a delay or the terminal's colours, without its comments. */
+  const code = Object.entries(import.meta.glob<string>(['./**/*.ts', './**/*.tsx', '!./**/*.test.tsx', '!./test/**'], { query: '?raw', import: 'default', eager: true }));
+  const noComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
+
+  /** Tokens that belong to a set the doc keeps whole (2.4, 2.6), whether or not each step is used yet. */
+  const SETS: [RegExp, string][] = [
+    [/^--pw-space-/, 'the 4 px spacing scale'],
+    [/^--pw-icon-/, 'the icon sizes'],
+    [/^--pw-(?:on-)?(?:neutral|info|success|warning|danger)-/, 'the five tones, six tokens each'],
+    [/^--pw-code-/, "the code palette, for code blocks (2.4)"],
+  ];
+  /** Mirrored by a constant in code rather than read by name, and why. */
+  const MIRRORED: Record<string, string> = { '--pw-panel-min-w': "panelWidth.ts's PANEL_MIN, which the divider and the menu clamp to" };
+
+  it('is used, by a stylesheet, another token or the code that reads it, unless it belongs to a set or is mirrored in code (W31)', () => {
+    const used = new Set([
+      ...varsIn(withoutComments(tokens.replace(/(--pw-[\w-]+)\s*:/g, ''))),
+      ...others.flatMap(([, css]) => varsIn(withoutComments(css))),
+      ...code.flatMap(([, source]) => [...noComments(source).matchAll(/--pw-[\w-]+/g)].map((match) => match[0])),
+    ]);
+    const unused = [...defined].filter((name): name is string => name !== undefined && !used.has(name));
+    expect(unused.filter((name) => !SETS.some(([set]) => set.test(name)) && !(name in MIRRORED))).toEqual([]);
+    // And nothing is excused that's in use after all.
+    expect(Object.keys(MIRRORED).filter((name) => used.has(name))).toEqual([]);
   });
 });
 

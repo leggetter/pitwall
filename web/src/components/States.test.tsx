@@ -191,7 +191,8 @@ describe('empty states', () => {
     expect(icon).toBe('24×24');
     expect(element.firstElementChild?.getAttribute('aria-hidden')).toBe('true');
     const rule = declarations(block(styles, /(?:^|\})\s*\.empty-state\s*\{/));
-    expect(rule).toEqual(expect.arrayContaining([['max-width', '408px'], ['text-align', 'center'], ['align-items', 'center'], ['margin', 'auto']]));
+    // 408 px, as the token that holds it, --pw-dialog-sm, a small dialog's width.
+    expect(rule).toEqual(expect.arrayContaining([['max-width', 'var(--pw-dialog-sm)'], ['text-align', 'center'], ['align-items', 'center'], ['margin', 'auto']]));
     expect(block(styles, /(?:^|\})\s*\.empty-state-icon\s*\{/)).toContain('color: var(--pw-text-subtle)');
   });
 

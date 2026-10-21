@@ -51,7 +51,6 @@
   --pw-z-dropdown: 30;
   --pw-z-backdrop: 40;
   --pw-z-dialog: 41;
-  --pw-z-popover: 50;
   --pw-z-tooltip: 60;
   --pw-z-toast: 70;
 
@@ -278,9 +277,6 @@
   --pw-state-failed-border: var(--pw-danger-border);
   --pw-state-offline-fg: var(--pw-text-subtle);
   --pw-state-offline-border: var(--pw-border-dashed);
-  --pw-live: var(--pw-success-fg);
-  --pw-pending: var(--pw-warning-fg);
-  --pw-broken: var(--pw-danger-fg);
 }
 
 /* 5. Reduced motion */
