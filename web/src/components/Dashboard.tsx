@@ -537,7 +537,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   );
   const hasAlerts = pollFailed !== undefined || (relayAlert && alertText) || showError || (snapshot && state === 'reconnecting');
 
-  const name = selectionName(groups, selection);
+  const name = selectionName(groups, selection, roots);
   const heading: SessionListHeading =
     'view' in selection
       ? { label: name }
