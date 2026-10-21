@@ -387,9 +387,10 @@ const LAYOUTS: PageCase[] = [
   },
   {
     title: 'Three columns, the actions menu',
-    note: 'In three columns the menu can resize the view without a drag (WCAG 2.5.7): Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px. In this 1,440 px window it is at 760 px, its usual width, so Reset view width is off, and says why in its tooltip.',
-    width: 1440,
+    note: 'In three columns the menu can resize the view without a drag (WCAG 2.5.7): Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px, or what the window allows. Here the view is 600 px in a 1,280 px window, so all three can act; at a limit, an item is off, and says why in its tooltip.',
+    width: 1280,
     search: OPEN,
+    stored: { [PANEL_WIDTH_KEY]: '600' },
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
     run: async (root) => {
       if (!laidOut(root)) return;
