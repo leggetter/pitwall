@@ -18,6 +18,7 @@ import {
   APP_DIR,
   background,
   exchange,
+  LINKS_IN_CODE,
   MARKDOWN_CONVERSATION,
   MARKDOWN_EDGES,
   MARKDOWN_ELEMENTS,
@@ -285,6 +286,9 @@ const MARKDOWN_AS_TEXT = background('conversation-markdown-as-text', { state: 'w
 const MARKDOWN_NARROW = background('conversation-markdown-narrow', { state: 'working' });
 const MARKDOWN_COPY = background('conversation-markdown-copy', { state: 'working' });
 const MARKDOWN_STUB: StubOptions = { entries: MARKDOWN_CONVERSATION };
+const CODE_LINKS = background('conversation-code-links', { state: 'working' });
+const CODE_LINKS_NARROW = background('conversation-code-links-narrow', { state: 'working' });
+const CODE_LINKS_STUB: StubOptions = { entries: LINKS_IN_CODE };
 
 /** The event that moves a Refreshing session's activity, as the index does when the session does something. */
 const REFRESH = 'uikit-refresh';
@@ -411,6 +415,29 @@ export function Conversations() {
         <Stubbed options={MARKDOWN_STUB}>
           <Scenario run={scrolledTo('.md-code')}>
             <SessionView session={MARKDOWN_NARROW} listed onClose={noop} compact />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Links in code"
+        note="Bare http and https URLs in a code block and in inline code are links, as in text, kept in the code's mono face and underlined: at a line's end, in brackets, and before a full stop, which stays out. A javascript: URL and markdown's own link syntax stay text, as code does. Another session's code, on --pw-surface, links the same way. Scrolled to the top."
+        frame="tall"
+      >
+        <Stubbed options={CODE_LINKS_STUB}>
+          <Scenario run={scrolledTo()}>
+            <SessionView session={CODE_LINKS} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Links in code, 600 px and narrower"
+        note="The code block with links still scrolls sideways in its own box, and the page doesn't. Scrolled to the code block."
+        frame="view"
+        width={375}
+      >
+        <Stubbed options={CODE_LINKS_STUB}>
+          <Scenario run={scrolledTo('.md-code')}>
+            <SessionView session={CODE_LINKS_NARROW} listed onClose={noop} compact />
           </Scenario>
         </Stubbed>
       </Specimen>

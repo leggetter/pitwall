@@ -488,6 +488,41 @@ export const MARKDOWN_EDGES: ConversationEntry[] = [
 /** All of markdown in messages, as one conversation. */
 export const MARKDOWN_CONVERSATION: ConversationEntry[] = [...MARKDOWN_ELEMENTS, ...MARKDOWN_EDGES];
 
+// Links in code (W37). Made up, in the shape of a draft Claude wrote for a chat channel.
+
+/**
+ * A draft in a code block, with its pull requests' URLs: one at a line's end, one in brackets, one
+ * before a full stop; a javascript: URL and markdown's own link syntax, which stay text; and a line
+ * long enough to scroll sideways. Then inline code holding a URL.
+ */
+export const DRAFT_WITH_LINKS = [
+  "Here's the draft for the channel, with the three pull requests in it:",
+  '',
+  '```text',
+  'Export retries are ready for review:',
+  '- the retry loop: https://github.com/example/export-app/pull/41',
+  '- its tests (https://github.com/example/export-app/pull/42)',
+  '- and the docs, last: https://github.com/example/export-app/pull/43.',
+  'Not a link: javascript:alert(1)',
+  'Markdown stays as written in code: [the notes](https://example.com/notes) and <https://example.com/changelog>',
+  '```',
+  '',
+  'The CI run is `https://example.com/ci/runs/1234`, and `npm test -- export` runs the tests here.',
+].join('\n');
+
+/** The draft from Claude, then another session's message with links in its code, which is on --pw-surface there. */
+export const LINKS_IN_CODE: ConversationEntry[] = [
+  { kind: 'user', at: ago(7), text: 'Draft the review request for the channel, with the pull requests.' },
+  { kind: 'assistant', at: ago(6), text: DRAFT_WITH_LINKS, markdown: true },
+  {
+    kind: 'cross-session',
+    at: ago(5),
+    from: 'pitwall-test-reviewer',
+    text: 'Reviewed the first one. Open it with:\n\n```sh\ngh pr view https://github.com/example/export-app/pull/41 --web\n```\n\nor see `https://github.com/example/export-app/pull/41/files`.',
+    markdown: true,
+  },
+];
+
 /** What the terminal shows once attached: made up, with colours, in the shape of Claude Code's output. */
 export const TERMINAL_OUTPUT =
   '\x1b[1mpitwall-test-terminal\x1b[0m · Export retries\r\n\r\n' +
