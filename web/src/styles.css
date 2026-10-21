@@ -2578,3 +2578,91 @@ mark.match {
 .jump-latest-button:focus-visible {
   box-shadow: inset 0 0 0 1px var(--pw-info-border), var(--pw-ring-focus);
 }
+
+/*
+ * Forced colours, such as Windows' contrast themes (docs/design-system.md, 6.1 rule 17). The browser
+ * drops every box-shadow and replaces the palette with the system's, keeping only colours written as
+ * system colours, such as Highlight and CanvasText. So whatever a shadow or a fill drew that says
+ * something is drawn again here: an open row, a pressed chip, the selected repo, the open tab, the
+ * divider, the edges of what sits over the page, and the edges of fields and buttons. A state is drawn
+ * with a border where the element can also take focus, so its focus outline still shows.
+ */
+@media (forced-colors: active) {
+  /* The open session's row: its fill and ring are gone. Focus is on its button, whose own outline shows. */
+  .session.open,
+  .session.open:hover {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  /* Chips: an edge, and a thicker one in Highlight while pressed, the padding giving back what the border takes. */
+  .chip {
+    border: 1px solid ButtonText;
+    padding: 0 calc(var(--pw-space-2) - 1px);
+  }
+
+  .chip[aria-pressed='true'] {
+    border: 2px solid Highlight;
+    padding: 0 calc(var(--pw-space-2) - 2px);
+  }
+
+  /* The selected repo list item, and the theme switch's selected option. */
+  .repo-item.selected {
+    border: 2px solid Highlight;
+    padding: calc(var(--pw-space-1-5) - 2px) calc(var(--pw-space-2) - 2px);
+  }
+
+  .theme-switch {
+    border: 1px solid ButtonText;
+  }
+
+  .theme-switch-option[aria-pressed='true'] {
+    border: 2px solid Highlight;
+  }
+
+  /* The open tab's underline, which is a fill. */
+  .session-tab[aria-selected='true']::after {
+    background: Highlight;
+  }
+
+  /* The divider's line, which is a fill too: the system's text colour, and Highlight while it's in use. */
+  .session-divider::before {
+    background: CanvasText;
+  }
+
+  .session-divider:focus-visible::before,
+  .session-divider[data-dragging]::before {
+    background: Highlight;
+  }
+
+  @media (hover: hover) {
+    .session-divider:hover::before {
+      background: Highlight;
+    }
+  }
+
+  /* What sits over the page: the session view over the list, the drawer, dialogs, menus, toasts and tooltips. */
+  .session-view.overlay {
+    border-left: 1px solid CanvasText;
+  }
+
+  .repo-drawer,
+  .dialog,
+  .menu,
+  .toast,
+  .tooltip {
+    outline: 1px solid CanvasText;
+  }
+
+  /* Fields, buttons with an edge, and the boxes whose edge is a ring: an inline alert, a confirmation, the Jump to latest bar. */
+  .field-input,
+  .select-input,
+  .filter-input,
+  .button:not(.ghost),
+  .icon-button:not(.ghost),
+  .jump-latest-button,
+  .inline-alert,
+  .inline-confirm {
+    border: 1px solid ButtonText;
+  }
+}

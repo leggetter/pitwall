@@ -493,7 +493,7 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 - **Edges are rings:** controls are outlined with `box-shadow: 0 0 0 1px …`, not `border`, so they line up with elements that have no edge. Dividers between rows and sections are a real `1px solid var(--pw-border)`.
 - **Focus:** `:focus-visible { box-shadow: <own shadow>, var(--pw-ring-focus); outline: 2px solid transparent; }`.
   - The ring is a 2 px gap in the surface colour and a 2 px ring in `--pw-focus`.
-  - The transparent outline becomes visible in Windows forced-colours mode, where shadows are dropped.
+  - The transparent outline becomes visible in Windows forced-colours mode, where shadows are dropped. What else a shadow draws is drawn again there in system colours: see [6.1](#61-rules), rule 17.
   - Inside a card with `overflow: hidden`, a full-width control uses `--pw-ring-focus-inset` and `outline-offset: -2px` instead, so neither is clipped. The 2 px ring sits on the control's own fill, so there's no gap; `--pw-focus` is at least 3:1 on every surface it's drawn on (2.5).
   - Never remove focus styles without that replacement.
 - **No other shadows,** and only one elevation per element.
@@ -1445,6 +1445,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 14. **The terminal** isn't a keyboard trap: F6 leaves it.
 15. **Single-key shortcuts** can be turned off, and are ignored while typing (see below).
 16. **Text is text:** session names, titles, prompts, replies and server messages render as plain text, never HTML.
+17. **Forced colours** (Windows' contrast themes, `@media (forced-colors: active)`): the browser drops every box-shadow and forces every colour that isn't a system colour. So what a shadow or a fill says is drawn again there, in system colours (W31): the open row as a 2 px `Highlight` outline; a chip's edge as a 1 px `ButtonText` border, 2 px `Highlight` while pressed; the selected repo item and the theme switch's selected option as a 2 px `Highlight` border; the open tab's underline and the divider's line in `Highlight` and `CanvasText`; the session view over the list, the drawer, dialogs, menus, toasts and tooltips with a 1 px `CanvasText` edge; and fields, buttons with an edge, inline alerts, confirmations and the Jump to latest bar with a 1 px `ButtonText` border. A state is a border where its element can also take focus, so the focus outline still shows; padding gives back what a border takes. `web/src/forcedColors.test.tsx` checks the rules use only system colours.
 
 ### 6.2 Keyboard map
 
