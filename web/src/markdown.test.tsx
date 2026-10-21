@@ -457,3 +457,206 @@ describe('bounded on hostile input', () => {
     expect(links.map((found) => (found.type === 'link' ? found.href : ''))).toEqual(['https://ok.example/']);
   });
 });
+
+describe('links in code (W37)', () => {
+  /** A code span, with its bare URLs as links when it has any. */
+  const span = (written: string, ...linked: Inline[]): Inline => (linked.length > 0 ? { type: 'code', text: written, linked } : { type: 'code', text: written });
+  const url = (href: string, written = href): Inline => link(href, text(written));
+  /** The code block a fence of `code` parses to. */
+  const block = (code: string): Block | undefined => parseMarkdown(`\`\`\`\n${code}\n\`\`\``)[0];
+  /** What a code node shows: its linked parts joined, or its text. */
+  const codeShown = (node: Block | Inline | undefined): string =>
+    node?.type === 'code' ? (node.linked ? shown(node.linked) : node.text) : `not code: ${JSON.stringify(node)}`;
+
+  it('makes links of bare URLs in a code span: several, at its start and its end', () => {
+    expect(parseInline('`https://example.com/a and https://example.com/b`')).toEqual([
+      span('https://example.com/a and https://example.com/b', url('https://example.com/a'), text(' and '), url('https://example.com/b')),
+    ]);
+    expect(parseInline('Run `gh pr view https://github.com/example/app/pull/41 --web` now.')).toEqual([
+      text('Run '),
+      span('gh pr view https://github.com/example/app/pull/41 --web', text('gh pr view '), url('https://github.com/example/app/pull/41'), text(' --web')),
+      text(' now.'),
+    ]);
+  });
+
+  it('makes links of bare URLs in a code block: at the start and end of a line, several on one, after a bracket or a quote', () => {
+    const code = [
+      'https://example.com/start of a line',
+      'the end of one: https://example.com/end',
+      'two: https://example.com/one https://example.com/two',
+      '(https://example.com/paren) [https://example.com/square] "https://example.com/double" \'https://example.com/single\'',
+    ].join('\n');
+    expect(block(code)).toEqual({
+      type: 'code',
+      language: '',
+      text: code,
+      closed: true,
+      linked: [
+        url('https://example.com/start'),
+        text(' of a line\nthe end of one: '),
+        url('https://example.com/end'),
+        text('\ntwo: '),
+        url('https://example.com/one'),
+        text(' '),
+        url('https://example.com/two'),
+        text('\n('),
+        url('https://example.com/paren'),
+        text(') ['),
+        url('https://example.com/square'),
+        text('] "'),
+        url('https://example.com/double'),
+        text('" \''),
+        url('https://example.com/single'),
+        text("'"),
+      ],
+    });
+  });
+
+  it('leaves trailing punctuation and a bracket the URL did not open out of the link, as in text', () => {
+    const code = 'See https://example.com/a. Or https://example.com/b, https://example.com/c; (https://example.com/d), https://example.com/e?! https://en.example.org/wiki/A_(b)';
+    expect(block(code)).toEqual({
+      type: 'code',
+      language: '',
+      text: code,
+      closed: true,
+      linked: [
+        text('See '),
+        url('https://example.com/a'),
+        text('. Or '),
+        url('https://example.com/b'),
+        text(', '),
+        url('https://example.com/c'),
+        text('; ('),
+        url('https://example.com/d'),
+        text('), '),
+        url('https://example.com/e'),
+        text('?! '),
+        url('https://en.example.org/wiki/A_(b)'),
+      ],
+    });
+  });
+
+  it('links to the URL as the browser parsed it, an internationalised host in punycode', () => {
+    expect(parseInline('`https://EXÄMPLE.com/login`')).toEqual([span('https://EXÄMPLE.com/login', url('https://xn--exmple-cua.com/login', 'https://EXÄMPLE.com/login'))]);
+  });
+
+  it('keeps javascript:, data:, file:, relative and other URLs in code as text', () => {
+    for (const written of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,<script>alert(1)</script>', 'file:///etc/hosts', './src/a.ts', '/abs/path', '../up', '#top', 'www.example.com', 'ftp://example.com/a', 'mailto:a@example.com', 'xhttps://example.com', '2https://example.com', 'https://', 'http://']) {
+      expect(parseInline(`\`${written}\``), written).toEqual([span(written)]);
+      expect(block(written), written).toEqual({ type: 'code', language: '', text: written, closed: true });
+    }
+  });
+
+  it("keeps markdown's own link syntax in code as text, as the rest of code is", () => {
+    for (const written of [
+      '[the notes](https://example.com/notes)',
+      '[the notes](https://example.com/notes "Notes")',
+      '<https://example.com/changelog>',
+      '[a](<https://example.com/a>)',
+      '![a chart](https://example.com/c.png)',
+      '[https://example.com/same](https://example.com/same)',
+      '[see https://example.com/a](https://example.com/b)',
+    ]) {
+      expect(parseInline(`\`${written}\``), written).toEqual([span(written)]);
+      expect(block(written), written).toEqual({ type: 'code', language: '', text: written, closed: true });
+    }
+    // A bare URL beside it is still a link.
+    expect(parseInline('`[x](https://example.com/x) or https://example.com/y`')).toEqual([
+      span('[x](https://example.com/x) or https://example.com/y', text('[x](https://example.com/x) or '), url('https://example.com/y')),
+    ]);
+  });
+
+  it('keeps a code span inside a link plain code, so links never nest', () => {
+    expect(parseInline('[`https://example.com/a`](https://example.com/b)')).toEqual([link('https://example.com/b', span('https://example.com/a'))]);
+    expect(parseInline('[**`https://example.com/a`** and `https://example.com/c`](https://example.com/b)')).toEqual([
+      link('https://example.com/b', { type: 'strong', children: [span('https://example.com/a')] }, text(' and '), span('https://example.com/c')),
+    ]);
+  });
+
+  it("keeps the code's text exactly as written, beside the links", () => {
+    const code = '\t$ curl -s "https://example.com/api?q=1&r=2"   \n\n  # then https://example.com/next.\n<b>https://example.com/html</b> **https://example.com/bold**';
+    const parsed = block(code);
+    expect(parsed?.type === 'code' && parsed.text).toBe(code);
+    expect(codeShown(parsed)).toBe(code);
+    expect(parsed?.type === 'code' && parsed.linked?.filter((part) => part.type === 'link').map((part) => (part.type === 'link' ? part.href : ''))).toEqual([
+      'https://example.com/api?q=1&r=2',
+      'https://example.com/next',
+      'https://example.com/html',
+      'https://example.com/bold',
+    ]);
+    // In a code span, as written too, and in a fence that never closes, as in a message cut short.
+    const cut = parseMarkdown('Draft:\n\n```text\nReview https://example.com/pull/1\nand');
+    expect(cut[1]).toEqual({ type: 'code', language: 'text', text: 'Review https://example.com/pull/1\nand', closed: false, linked: [text('Review '), url('https://example.com/pull/1'), text('\nand')] });
+  });
+
+  it('reads links in code wherever code is: lists, quotes, tables and headings', () => {
+    const blocks = parseMarkdown('- `https://example.com/item`\n\n> ```\n> https://example.com/quote\n> ```\n\n| a |\n|---|\n| `https://example.com/cell` |\n\n# `https://example.com/heading`');
+    const hrefs: string[] = [];
+    const walkInline = (inlines: Inline[]) => {
+      for (const inline of inlines) {
+        if (inline.type === 'code' && inline.linked) walkInline(inline.linked);
+        if (inline.type === 'link') hrefs.push(inline.href);
+        if ('children' in inline) walkInline(inline.children);
+      }
+    };
+    const walk = (list: Block[]) => {
+      for (const item of list) {
+        if (item.type === 'paragraph' || item.type === 'heading') walkInline(item.children);
+        else if (item.type === 'code' && item.linked) walkInline(item.linked);
+        else if (item.type === 'quote') walk(item.children);
+        else if (item.type === 'list') item.items.forEach(walk);
+        else if (item.type === 'table') [...item.head, ...item.rows.flat()].forEach(walkInline);
+      }
+    };
+    walk(blocks);
+    expect(hrefs).toEqual(['https://example.com/item', 'https://example.com/quote', 'https://example.com/cell', 'https://example.com/heading']);
+  });
+
+  it('counts the links in code towards the element cap, as links in text are counted', () => {
+    expect(elementCount(parseMarkdown('`https://example.com/a`'))).toBe(1 + 1 + 4);
+    expect(elementCount(parseMarkdown('```\nhttps://example.com/a https://example.com/b\n```'))).toBe(10 + 4 + 4);
+    expect(elementCount(parseMarkdown('```\nhttps://example.com/a\n```'))).toBe(elementCount(parseMarkdown('```\na\n```')) + elementCount(parseMarkdown('https://example.com/a')) - 1);
+    // A code block with one URL a line: past the cap it shows as written.
+    const lines = (count: number) => `\`\`\`\n${Array.from({ length: count }, (_, i) => `https://example.com/${i}`).join('\n')}\n\`\`\``;
+    const under = Math.floor((MAX_ELEMENTS - 10) / 4);
+    expect(elementCount(parseMarkdown(lines(under)), MAX_ELEMENTS)).toBeLessThanOrEqual(MAX_ELEMENTS);
+    expect(elementCount(parseMarkdown(lines(under + 1)), MAX_ELEMENTS)).toBeGreaterThan(MAX_ELEMENTS);
+  });
+});
+
+describe('links in code, bounded on hostile input (W37)', () => {
+  function bestOf5(fn: () => unknown): number {
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 5; run++) {
+      const start = performance.now();
+      fn();
+      best = Math.min(best, performance.now() - start);
+    }
+    return best;
+  }
+  const FRAME_MS = 16;
+  const N = 32 * 1024;
+  const fill = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+  const fence = (body: string) => `\`\`\`\n${body.slice(0, N - 8)}\n\`\`\``;
+
+  it.each([
+    ['a code block packed with URLs', fence(fill('https://a.example/x '))],
+    ['a code block of URLs, one a line', fence(fill('https://a.example/x\n'))],
+    ['a code block of long URLs, under the cap', fence(fill(`https://example.com/${'a'.repeat(60)}\n`))],
+    ['a code block of schemes only', fence(fill('https://'))],
+    ['a code block of URLs in link syntax', fence(fill('[a](https://a.example/x) <https://b.example/y> '))],
+    ['a code block of one URL with thousands of brackets', fence(`https://a.example/${fill('(]')}`)],
+    ['a code block of URLs after letters', fence(fill('xhttps://a.example/'))],
+    ['thousands of code spans holding URLs', fill('`https://a.example/x` ')],
+    ['a code span holding thousands of URLs', `\`${fill('https://a.example/x ').slice(0, N - 2)}\``],
+  ])('parses 32 KiB of %s within a frame', (_name, hostile) => {
+    expect(hostile.length).toBeLessThanOrEqual(N);
+    expect(bestOf5(() => parseMarkdown(hostile))).toBeLessThan(FRAME_MS);
+  });
+
+  it('shows a code block packed with URLs as written, and formats one of long URLs, under the cap', () => {
+    expect(elementCount(parseMarkdown(fence(fill('https://a.example/x '))), MAX_ELEMENTS)).toBeGreaterThan(MAX_ELEMENTS);
+    expect(elementCount(parseMarkdown(fill('`https://a.example/x` ')), MAX_ELEMENTS)).toBeGreaterThan(MAX_ELEMENTS);
+    expect(elementCount(parseMarkdown(fence(fill(`https://example.com/${'a'.repeat(60)}\n`))), MAX_ELEMENTS)).toBeLessThanOrEqual(MAX_ELEMENTS);
+  });
+});

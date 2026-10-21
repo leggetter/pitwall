@@ -290,3 +290,172 @@ describe('Markdown: bounded on hostile input', () => {
     expect(took).toBeLessThan(RENDER_MS);
   });
 });
+
+describe('Markdown: links in code (W37)', () => {
+  /** Claude's draft for a channel, in a code block, with its pull requests' URLs. Made up. */
+  const DRAFT = [
+    'Export retries are ready for review:',
+    '\t- the loop: https://github.com/example/app/pull/41',
+    '  - its tests (https://github.com/example/app/pull/42)',
+    '',
+    '  - the docs, last: https://github.com/example/app/pull/43.',
+    'Not links: javascript:alert(1) [notes](https://example.com/notes) <https://example.com/log>',
+  ].join('\n');
+  const PULLS = ['https://github.com/example/app/pull/41', 'https://github.com/example/app/pull/42', 'https://github.com/example/app/pull/43'];
+
+  it('renders bare URLs in a code block as links, a new tab with no opener or referrer, the URL in their tooltip', async () => {
+    const { root } = renderMarkdown(`\`\`\`text\n${DRAFT}\n\`\`\``);
+    const links = [...root.querySelectorAll<HTMLAnchorElement>('pre.md-code-scroll > code > a')];
+    expect(links.map((a) => [a.getAttribute('href'), a.textContent, a.getAttribute('target'), a.getAttribute('rel'), a.className])).toEqual(
+      PULLS.map((href) => [href, href, '_blank', 'noopener noreferrer', 'md-link']),
+    );
+    expect(links.some((a) => a.hasAttribute('title'))).toBe(false);
+    expect(await tooltipText(links[1]!)).toBe(PULLS[1]);
+    expect(descriptionOf(links[2]!)).toBe(PULLS[2]);
+    act(() => links[0]!.focus());
+    await pass(0);
+    expect(document.querySelector('[role="tooltip"]:not([hidden]) .tooltip-text')?.textContent).toBe(PULLS[0]);
+    act(() => links[0]!.blur());
+  });
+
+  it('renders a bare URL in inline code as a link inside the code span', () => {
+    const { root } = renderMarkdown('The run is `https://example.com/ci/runs/1234`, and `npm test` runs it here.');
+    const p = root.querySelector('p')!;
+    expect([...p.querySelectorAll('code.md-code-span')].map((code) => code.innerHTML)).toEqual([
+      expect.stringMatching(/^<a class="md-link" href="https:\/\/example\.com\/ci\/runs\/1234" target="_blank" rel="noopener noreferrer" aria-describedby="[^"]+">https:\/\/example\.com\/ci\/runs\/1234<\/a>$/),
+      'npm test',
+    ]);
+    expect(p.textContent).toBe('The run is https://example.com/ci/runs/1234, and npm test runs it here.');
+  });
+
+  it('keeps javascript:, data:, file:, relative URLs and markdown link syntax in code as text', () => {
+    const written = 'javascript:alert(1) data:text/html,<script>alert(1)</script> file:///etc/hosts ./src/a.ts /abs [x](https://example.com/x) <https://example.com/y> ![i](https://example.com/i.png)';
+    const { root } = renderMarkdown(`\`${written}\`\n\n\`\`\`\n${written}\n\`\`\``);
+    expect(root.querySelector('a, script, img')).toBeNull();
+    expect(root.querySelector('code.md-code-span')!.textContent).toBe(written);
+    expect(root.querySelector('pre code')!.textContent).toBe(written);
+  });
+
+  it('keeps the code as written: its whitespace, line breaks and language, and a fence that never closes', () => {
+    const { root } = renderMarkdown(`\`\`\`text\n${DRAFT}\n\`\`\``);
+    const code = root.querySelector('pre.md-code-scroll > code')!;
+    expect(code.textContent).toBe(DRAFT);
+    expect(root.querySelector('.md-code-language')!.textContent).toBe('text');
+    // Only text and the links: nothing else in the code, and no tooltip text in it.
+    expect([...code.querySelectorAll('*')].map((el) => el.tagName.toLowerCase())).toEqual(['a', 'a', 'a']);
+    expect(root.querySelector('pre [role="tooltip"], pre .tooltip')).toBeNull();
+    const cut = renderMarkdown('Draft:\n\n```text\nReview https://example.com/pull/1\nand the').root;
+    expect(cut.querySelector('pre code')!.textContent).toBe('Review https://example.com/pull/1\nand the');
+    expect(cut.querySelector('pre code a')!.getAttribute('href')).toBe('https://example.com/pull/1');
+  });
+
+  it('gives the code exactly as written when its text is selected and copied by hand, with no tooltip in it', async () => {
+    const { root } = renderMarkdown(`\`\`\`\n${DRAFT}\n\`\`\``);
+    const pre = root.querySelector('pre')!;
+    // A tooltip shown on a link is in document.body, outside the code, so a selection can't take it in.
+    await hover(pre.querySelector('a')!);
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(selection.toString()).toBe(DRAFT);
+    unhover(pre.querySelector('a')!);
+    selection.removeAllRanges();
+  });
+
+  it('copies the code exactly as written with Copy code, inside the click, with the copied icon and a Copied toast', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const writeText = vi.fn(async () => {});
+      const { root } = renderMarkdown(`\`\`\`text\n${DRAFT}\n\`\`\``, { writeText });
+      const button = root.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]')!;
+      fireEvent.click(button);
+      expect(writeText).toHaveBeenCalledWith(DRAFT);
+      await settle();
+      expect(button.dataset.copy).toBe('copied');
+      expect(toastMessages()).toEqual([COPIED]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('selects the code, links and all, when the clipboard refuses', async () => {
+    const { root } = renderMarkdown(`\`\`\`\n${DRAFT}\n\`\`\``, { writeText: () => Promise.reject(new Error('made up: refused')) });
+    fireEvent.click(root.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]')!);
+    await settle();
+    expect(toastMessages()).toEqual([COPY_FAILED]);
+    expect(window.getSelection()?.toString()).toBe(DRAFT);
+  });
+
+  it("puts each link in the Tab order after the code block's Copy button and its scroll box, in the code's order", async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(() => 900);
+    const client = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => 300);
+    try {
+      const { root } = renderMarkdown(`\`\`\`text\n${DRAFT}\n\`\`\`\n\nThen \`https://example.com/after\`.`);
+      await settle();
+      const stops = [...root.querySelectorAll<HTMLElement>('a[href], button, [tabindex]')].filter((el) => el.tabIndex >= 0);
+      expect(stops.map((el) => el.getAttribute('aria-label') ?? el.getAttribute('href'))).toEqual(['Copy code', 'Code, text', ...PULLS, 'https://example.com/after']);
+    } finally {
+      width.mockRestore();
+      client.mockRestore();
+    }
+    // While the code fits, the box isn't a stop: the links follow Copy.
+    const { root } = renderMarkdown('```\ngh pr view https://github.com/example/app/pull/41\n```');
+    await settle();
+    const stops = [...root.querySelectorAll<HTMLElement>('a[href], button, [tabindex]')].filter((el) => el.tabIndex >= 0);
+    expect(stops.map((el) => el.getAttribute('aria-label') ?? el.getAttribute('href'))).toEqual(['Copy code', PULLS[0]]);
+  });
+
+  it('never puts a link inside a link: a code span in a link\'s text stays plain code', () => {
+    const { root } = renderMarkdown('[`https://example.com/a`](https://example.com/b) and [**`https://example.com/c`**](https://example.com/d)');
+    expect(root.querySelector('a a')).toBeNull();
+    expect([...root.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.querySelector('code.md-code-span')?.textContent])).toEqual([
+      ['https://example.com/b', 'https://example.com/a'],
+      ['https://example.com/d', 'https://example.com/c'],
+    ]);
+  });
+
+  it('counts the links in code towards MAX_ELEMENTS: a code block with one too many shows as written', () => {
+    const lines = (count: number) => Array.from({ length: count }, (_, i) => `https://a.example/${i}`).join('\n');
+    const under = Math.floor((MAX_ELEMENTS - 10) / 4);
+    const fits = renderMarkdown(`\`\`\`\n${lines(under)}\n\`\`\``).root;
+    expect(fits.querySelectorAll('pre a')).toHaveLength(under);
+    expect(fits.querySelector('.md-as-written')).toBeNull();
+    const over = `\`\`\`\n${lines(under + 1)}\n\`\`\``;
+    const shown = renderMarkdown(over).root;
+    expect(shown.querySelector('a, pre')).toBeNull();
+    expect(shown.querySelector('p.md-as-written')!.textContent).toBe(over);
+    expect(shown.querySelector('p.md-as-written-note')!.textContent).toBe(AS_WRITTEN);
+  });
+});
+
+describe('Markdown: links in code, bounded on hostile input (W37)', () => {
+  function bestOf3(fn: () => void): number {
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run++) {
+      const start = process.cpuUsage();
+      fn();
+      const used = process.cpuUsage(start);
+      best = Math.min(best, (used.user + used.system) / 1000);
+    }
+    return best;
+  }
+  const N = 32 * 1024;
+  const fill = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+  const fence = (body: string) => `\`\`\`\n${body.slice(0, N - 8)}\n\`\`\``;
+  /** As W36's render limit: happy-dom is several times slower than a browser; headless Chrome's times are in the app check. */
+  const RENDER_MS = 500;
+
+  it.each([
+    ['a code block packed with URLs, shown as written', fence(fill('https://a.example/x '))],
+    ['a code block of 1,247 URLs, one a line, just under the cap', fence(Array.from({ length: 1247 }, (_, i) => `https://a.example/${String(i).padStart(4, '0')}`).join('\n'))],
+    ['thousands of code spans holding URLs', fill('`https://a.example/x` ')],
+  ])('renders 32 KiB of %s', (_name, hostile) => {
+    const took = bestOf3(() => {
+      const { unmount } = renderMarkdown(hostile);
+      unmount();
+    });
+    expect(took).toBeLessThan(RENDER_MS);
+  });
+});

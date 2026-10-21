@@ -9,6 +9,9 @@
 //   table scrolls sideways in its own box too. Each box is a Tab stop while it scrolls (ScrollBox).
 // - A link opens in a new tab with noopener and noreferrer, and its tooltip, on hover and on focus,
 //   is the URL it opens, as the browser parsed it, since its text can say anything (links.ts).
+// - A bare URL in code is the same link, in the code's mono face and size (W37). The code's text is
+//   unchanged: Copy copies it as written, and a link's tooltip is rendered into document.body, so
+//   text selected in the code and copied by hand holds none of it.
 //
 // - A message whose markdown would take more than MAX_ELEMENTS elements is shown as the text it was
 //   written in, with a note saying so, so no message, however hostile, takes long to draw.
@@ -60,7 +63,7 @@ function renderBlock(block: Block, key: number): ReactNode {
         </p>
       );
     case 'code':
-      return <CodeBlock key={key} language={block.language} text={block.text} />;
+      return <CodeBlock key={key} language={block.language} text={block.text} linked={block.linked} />;
     case 'list': {
       const items = block.items.map((item, index) => <li key={index}>{renderBlocks(item)}</li>);
       return block.ordered ? (
@@ -105,7 +108,7 @@ function renderInline(inline: Inline, key: number): ReactNode {
     case 'code':
       return (
         <code key={key} className="md-code-span">
-          {inline.text}
+          {inline.linked ? renderInlines(inline.linked) : inline.text}
         </code>
       );
     case 'link':
@@ -128,8 +131,11 @@ function Link({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
-/** A fenced code block: its language and a Copy button above the code, which scrolls sideways on its own. */
-function CodeBlock({ language, text }: { language: string; text: string }) {
+/**
+ * A fenced code block: its language and a Copy button above the code, which scrolls sideways on its
+ * own. Its bare URLs are links (`linked`), but Copy always copies `text`, the code as written.
+ */
+function CodeBlock({ language, text, linked }: { language: string; text: string; linked: Inline[] | undefined }) {
   const code = useRef<HTMLElement>(null);
   return (
     <div className="md-code">
@@ -138,7 +144,7 @@ function CodeBlock({ language, text }: { language: string; text: string }) {
         <CopyButton text={text} label="Copy code" target={code} />
       </div>
       <ScrollBox as="pre" axis="x" label={language === '' ? 'Code' : `Code, ${language}`} className="md-code-scroll">
-        <code ref={code}>{text}</code>
+        <code ref={code}>{linked ? renderInlines(linked) : text}</code>
       </ScrollBox>
     </div>
   );

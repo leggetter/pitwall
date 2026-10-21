@@ -2745,6 +2745,17 @@ ol.md-list {
 }
 
 /*
+ * A bare URL in code is a link (W37), in the code's own mono face and size, told apart from the code
+ * by its underline as well as --pw-link. A code block's box clips what's drawn past it, so a link in
+ * one takes the inset focus ring, as the box itself does: the outer ring would lose its top on the
+ * code's first line, which has no padding above it.
+ */
+.md-code-scroll .md-link:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+/*
  * A table: header cells 600 on --pw-surface-muted, 1 px borders, cells wrapping at spaces only, so a
  * table too wide for the message scrolls sideways in its own box rather than breaking its words.
  */
