@@ -110,7 +110,8 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Shortcuts:** `/`, `n`, `?` and `j`/`k`. They're ignored while you type, in the terminal, with ⌘, Ctrl or Alt held, and while an input method composes. A setting in the shortcuts dialog turns them off (WCAG 2.1.4), and the browser remembers it.
 - **Leaving the terminal:** F6 moves focus from the attached terminal to its tab, so the terminal isn't a keyboard trap (WCAG 2.1.2). Claude Code's docs bind nothing to F6 (checked 2026-10-21).
 
-### D14 - The live snapshot carries no reply text
+### D14 - The live snapshot carries only what the list shows
 
-- **Why:** until M3, every snapshot sent to the browser held each session's latest reply, though the UI showed none of it. Now session content leaves the server only when you open a session's conversation, through the token-gated conversation route.
+- **Why:** until M3, every snapshot sent to the browser held each session's latest reply, though the UI showed none of it. That's gone.
+- **What it still carries:** what the list and the session view's header show: each session's title, its newest prompt (up to 300 characters), what it asked you, and the reply to a message you relayed. The conversation itself leaves the server only when you open it, through the token-gated conversation route.
 - **Browser storage:** no token and no session content. The token is in `sessionStorage`. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1` and `pitwall.groups.v1`.

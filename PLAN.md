@@ -212,7 +212,7 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 - **Sending stays ⌘↵,** and Enter adds a line (Phil, 2026-10-20). Each message starts a turn on the target's model and can't be taken back.
 - **Disabled text is the one contrast exemption** (coordinator, 2026-10-20), as WCAG 1.4.3 allows for inactive controls.
 - **W20's judgement calls stand** (coordinator, 2026-10-20). Each old type size moved to the scale step its role in the doc's 2.7 picks, and the danger button is solid, as section 4 says. The 16 px icons draw the 20 px optical size, Material's nearest. The gallery dropped its "no `data-theme`" option, because `tokens.test.tsx` checks the no-JavaScript dark block is an exact copy.
-- **Settled decisions** are in the README as D10 to D14 (2026-10-21): the design system, fonts and icons; the three columns and their widths; two-line rows, no tint, no idle badge and the urgency sort; ⌘↵, the shortcuts and F6; and the snapshot without reply text.
+- **Settled decisions** are in the README as D10 to D14 (2026-10-21): the design system, fonts and icons; the three columns and their widths; two-line rows, no tint, no idle badge and the urgency sort; ⌘↵, the shortcuts and F6; and a snapshot that carries only what the list shows, without each session's latest reply.
 
 ### M4 - My open pull requests
 
