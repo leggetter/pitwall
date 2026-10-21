@@ -475,6 +475,71 @@ describe('Conversation: following new entries', () => {
     expect(bar(view.body)!.textContent).toBe('1 new · Jump to latest');
   });
 
+  /** The text of each entry shown, in order. */
+  const texts = (body: HTMLElement) => rows(body).map((row) => row.querySelector('.entry-text')?.textContent);
+
+  it('scrolled up, keeps the place and what is shown when more arrives than a page holds, and offers the newest behind the bar (W31)', async () => {
+    const sizes = layout({ scrollHeight: 1000, clientHeight: 400 });
+    const server = fakeServer(page(prompts(3)));
+    const view = await renderView(server);
+    scrollTo(view.body, 100);
+    const heard = announcements(view.body);
+
+    // A newest page that shares nothing with what's shown: more arrived than it holds.
+    server.newest(page([claude(50), claude(51)], 'after-the-gap'));
+    await view.refresh();
+    expect(view.body.scrollTop).toBe(100);
+    expect(texts(view.body)).toEqual(['prompt 0', 'prompt 1', 'prompt 2']);
+    expect(bar(view.body)!.textContent).toBe('2+ new · Jump to latest');
+    expect(announced(view.body)).toBe('2+ new');
+
+    // A later refresh joins the page that's waiting; what's shown still stays.
+    server.newest(page([claude(50), claude(51), claude(52)], 'after-the-gap'));
+    await view.refresh();
+    expect(texts(view.body)).toEqual(['prompt 0', 'prompt 1', 'prompt 2']);
+    expect(bar(view.body)!.textContent).toBe('3+ new · Jump to latest');
+
+    // Jump to latest: the newest replaces what's shown, at its bottom, with Load earlier from its cursor.
+    const shown = bar(view.body)!;
+    shown.focus();
+    sizes.scrollHeight = 1100;
+    fireEvent.click(shown);
+    await settle();
+    expect(texts(view.body)).toEqual(['reply 50', 'reply 51', 'reply 52']);
+    expect(view.body.scrollTop).toBe(1100);
+    expect(bar(view.body)).toBeNull();
+    expect(document.activeElement).toBe(view.body);
+    expect(within(view.body).getByRole('button', { name: 'Load earlier' })).toBeTruthy();
+    heard.stop();
+    expect(heard.said).toEqual(['2+ new', '3+ new']);
+  });
+
+  it('shows the newest page that was waiting once the reader scrolls to the end of what is shown (W31)', async () => {
+    layout({ scrollHeight: 1000, clientHeight: 400 });
+    const server = fakeServer(page(prompts(3)));
+    const view = await renderView(server);
+    scrollTo(view.body, 100);
+    server.newest(page([claude(50), claude(51)]));
+    await view.refresh();
+    expect(texts(view.body)).toEqual(['prompt 0', 'prompt 1', 'prompt 2']);
+    scrollTo(view.body, 590);
+    await settle();
+    expect(texts(view.body)).toEqual(['reply 50', 'reply 51']);
+    expect(bar(view.body)).toBeNull();
+    expect(view.body.scrollTop).toBe(1000);
+  });
+
+  it('at the bottom, lets a newest page that shares nothing replace what is shown, and follows it', async () => {
+    layout({ scrollHeight: 1000, clientHeight: 400 });
+    const server = fakeServer(page(prompts(3)));
+    const view = await renderView(server);
+    server.newest(page([claude(50), claude(51)]));
+    await view.refresh();
+    expect(texts(view.body)).toEqual(['reply 50', 'reply 51']);
+    expect(bar(view.body)).toBeNull();
+    expect(view.body.scrollTop).toBe(1000);
+  });
+
   it('goes when the reader gets to the bottom by any other means: scrolling there, or a fold closing above', async () => {
     const sizes = layout({ scrollHeight: 1000, clientHeight: 400 });
     const server = fakeServer(page([tool(1, 'Read: a.ts'), tool(2, 'Read: b.ts'), ...prompts(3)]));
