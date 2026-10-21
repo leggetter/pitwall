@@ -306,14 +306,14 @@ describe('createIndexer', () => {
     const { state, deps } = harness();
     state.result = {
       ok: true,
-      rows: [row('in', '/work/repo/x'), row('out', '/workshop/repo/y'), row('nested', '/work/clients/acme/z')],
+      rows: [row('in', '/work/repo/x'), row('out', '/workshop/repo/y'), row('nested', '/work/projects/site/z')],
     };
-    const indexer = createIndexer({ roots: ['/work', '/work/clients'] }, deps);
+    const indexer = createIndexer({ roots: ['/work', '/work/projects'] }, deps);
     await flush();
     const snapshot = indexer.latest();
     expect(snapshot?.groups.map((g) => [g.root, g.label]).sort()).toEqual([
       ['/work', 'repo'],
-      ['/work/clients', 'acme'],
+      ['/work/projects', 'site'],
     ]);
     expect(snapshot?.groups.flatMap((g) => g.sessions.map((s) => s.sessionId)).sort()).toEqual(['in', 'nested']);
     expect(state.reads.sort()).toEqual(['in', 'nested']);
