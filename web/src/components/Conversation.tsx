@@ -37,7 +37,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import type { ConversationEntry } from '../../../src/shared/protocol.js';
+import type { ConversationEntry, ConversationPage } from '../../../src/shared/protocol.js';
 import {
   conversationRows,
   countAdded,
@@ -85,6 +85,12 @@ interface ConversationState {
   reloaded: boolean;
   /** How many entries arrived while the reader was scrolled up: the count on "Jump to latest". */
   unseen: number;
+  /**
+   * A newer page arrived that doesn't meet what's shown (more arrived than a page holds) while the
+   * reader was scrolled up. What's shown stays, and the newest waits behind "Jump to latest", whose
+   * count is then at least `unseen`: "50+ new".
+   */
+  gap: boolean;
   /**
    * Why the newest page last failed, until one arrives: the first page (status 'failed', nothing
    * shown), or a refresh, which keeps what's shown, which may now be out of date.
@@ -175,8 +181,11 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     earlier: 'idle',
     reloaded: false,
     unseen: 0,
+    gap: false,
     retrying: false,
   }));
+  // The newest page, while it waits behind "Jump to latest" because it doesn't meet what's shown (`gap`).
+  const waitingPage = useRef<ConversationPage | undefined>(undefined);
   // The state as last committed, for the async loads to build on.
   const stateRef = useRef(state);
   // Bumped whenever the entries are replaced, so an older page asked for before then is dropped.
@@ -202,16 +211,39 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     jumping.current = undefined;
   }, []);
 
-  /** At the bottom: nothing is unseen any more, and the bar goes. Focus on it moves to the panel first. */
-  const reachedBottom = useCallback(() => {
-    const current = stateRef.current;
-    if (current.unseen === 0) return;
+  /** Focus on the "Jump to latest" bar, which is going, moves to the panel first, so the keyboard carries on from there. */
+  const leaveBar = useCallback(() => {
     const element = scroller.current;
     if (element && document.activeElement instanceof Element && document.activeElement.closest('.jump-latest') && element.contains(document.activeElement)) {
       element.focus({ preventScroll: true });
     }
+  }, []);
+
+  /**
+   * The newest page that was waiting behind the bar takes the place of what's shown, at the bottom, as
+   * a page that doesn't overlap does when the reader is already there. Older pages asked for before
+   * then are dropped, and Load earlier goes on from the newest page's cursor.
+   */
+  const showWaitingPage = useCallback((): boolean => {
+    const waiting = waitingPage.current;
+    if (!waiting) return false;
+    waitingPage.current = undefined;
+    leaveBar();
+    epoch.current += 1;
+    scrollIntent.current = { kind: 'bottom' };
+    commit(withBefore({ status: 'ready', entries: waiting.entries, earlier: 'idle', reloaded: false, unseen: 0, gap: false, retrying: false }, waiting.before));
+    return true;
+  }, [commit, leaveBar]);
+
+  /** At the bottom: nothing is unseen any more, and the bar goes. Focus on it moves to the panel first. */
+  const reachedBottom = useCallback(() => {
+    const current = stateRef.current;
+    // At the end of what's shown, with a newer page waiting beyond a gap: that's where they go on reading.
+    if (showWaitingPage()) return;
+    if (current.unseen === 0) return;
+    leaveBar();
     commit({ ...current, unseen: 0 });
-  }, [commit]);
+  }, [commit, leaveBar, showWaitingPage]);
 
   /**
    * Before an alert goes, as one does once its Try again works: focus on its button moves to the
@@ -246,14 +278,32 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
       if (result.kind === 'ok') {
         if (current.failure !== undefined) keepFocus();
         const settled = withFailure({ ...current, retrying: false }, 'failure', undefined);
-        const merged = options.replace || current.status !== 'ready' ? undefined : mergeNewest(current.entries, result.page.entries);
+        const fresh = options.replace || current.status !== 'ready';
+        if (fresh) waitingPage.current = undefined;
+        const waiting = waitingPage.current;
+        if (waiting) {
+          // A page is already waiting beyond a gap: the newer one joins it, and what's shown stays.
+          const joined = mergeNewest(waiting.entries, result.page.entries);
+          const next: ConversationPage = joined === undefined ? result.page : { ...waiting, entries: joined };
+          waitingPage.current = next;
+          commit({ ...settled, unseen: current.unseen + countAdded(waiting.entries, next.entries), gap: true });
+          return;
+        }
+        const merged = fresh ? undefined : mergeNewest(current.entries, result.page.entries);
+        if (merged === undefined && !fresh && !atBottom.current) {
+          // More arrived than a page holds while the reader was scrolled up: their place and what's shown
+          // stay, and the newest page waits behind "Jump to latest", counted as at least what it holds.
+          waitingPage.current = result.page;
+          commit({ ...settled, unseen: current.unseen + countAdded(current.entries, result.page.entries), gap: true });
+          return;
+        }
         if (merged === undefined) {
           epoch.current += 1;
           // After a stale cursor, the reader was at the top, pressing Load earlier: they stay there, under the notice.
           scrollIntent.current = { kind: options.reloaded === true ? 'top' : 'bottom' };
           commit(
             withBefore(
-              { status: 'ready', entries: result.page.entries, earlier: 'idle', reloaded: options.reloaded === true, unseen: 0, retrying: false },
+              { status: 'ready', entries: result.page.entries, earlier: 'idle', reloaded: options.reloaded === true, unseen: 0, gap: false, retrying: false },
               result.page.before,
             ),
           );
@@ -372,13 +422,18 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     const element = scroller.current;
     if (!element) return;
     endJump();
+    // Beyond a gap, the newest page replaces what's shown, at its bottom: there's nothing to scroll through.
+    if (showWaitingPage()) {
+      atBottom.current = true;
+      return;
+    }
     atBottom.current = true;
     reachedBottom();
     const smooth = !prefersReducedMotion();
     if (smooth) jumping.current = setTimeout(endJump, JUMP_MS);
     if (typeof element.scrollTo === 'function') element.scrollTo({ top: element.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
     else element.scrollTop = element.scrollHeight;
-  }, [endJump, reachedBottom]);
+  }, [endJump, reachedBottom, showWaitingPage]);
 
   const restorePlace = useCallback(() => {
     const element = scroller.current;
@@ -646,13 +701,14 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
           {/* It goes as it's used; focus on it moves to the panel first, so the keyboard carries on from there. */}
           <button type="button" className="jump-latest-button" onClick={jumpToLatest}>
             <Icon name="latest" />
-            {state.unseen} new · Jump to latest
+            {state.unseen}
+            {state.gap ? '+' : ''} new · Jump to latest
           </button>
         </div>
       )}
       {/* Once per batch that adds to the count, never per entry, and never the entries' text. */}
       <p className="visually-hidden" role="status">
-        {state.unseen > 0 ? `${state.unseen} new` : ''}
+        {state.unseen > 0 ? `${state.unseen}${state.gap ? '+' : ''} new` : ''}
       </p>
     </div>
   );
