@@ -634,16 +634,16 @@ describe('createIndexer with the repos sessions worked in (W34, W39)', () => {
     expect(sessions.filter((s) => s.sessionId === 'in-root')).toHaveLength(1);
     expect(indexer.latest()?.groups.find((g) => g.key === ROOT)?.sessions.map((s) => s.sessionId)).toContain('in-root');
     expect(sessions.find((s) => s.sessionId === 'in-root')?.workedIn).toEqual([
-      // alpha has a group, labelled the same; gamma has none.
-      { key: '/work/alpha', label: 'alpha', calls: 12, changes: 1, lastAt: new Date(NOW - 60_000).toISOString() },
-      { key: '/work/gamma', label: 'gamma', calls: 12, changes: 1, lastAt: new Date(NOW - 5 * 60_000).toISOString() },
+      // alpha has a group, labelled the same; gamma has none. Each names the root its group sits under, or would (W42).
+      { key: '/work/alpha', label: 'alpha', root: ROOT, calls: 12, changes: 1, lastAt: new Date(NOW - 60_000).toISOString() },
+      { key: '/work/gamma', label: 'gamma', root: ROOT, calls: 12, changes: 1, lastAt: new Date(NOW - 5 * 60_000).toISOString() },
     ]);
     expect(indexer.latest()?.groups.find((g) => g.key === '/work/alpha')?.label).toBe('alpha');
     expect(sessions.find((s) => s.sessionId === 'in-beta')).not.toHaveProperty('workedIn');
     indexer.stop();
   });
 
-  it("labels a worked-in repo from its own root, as buildGroups would label its group, with ~ outside every root", async () => {
+  it("labels a worked-in repo from its own root, and names that root, as buildGroups would label and place its group, with ~ outside every root", async () => {
     const { state, deps, found } = setup();
     state.result = { ok: true, rows: [row('in-root', ROOT)] };
     // A repo under a second root, one nested below a directory, and a worktree whose main repo is outside the roots.
@@ -655,12 +655,13 @@ describe('createIndexer with the repos sessions worked in (W34, W39)', () => {
     const indexer = createIndexer({ roots: [ROOT, '/other'] }, deps);
     await flush();
     const summary = indexer.latest()?.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === 'in-root');
-    expect(summary?.workedIn?.map((r) => [r.key, r.label])).toEqual([
-      ['/other/service', 'service'],
-      ['/work/projects/delta', 'projects/delta'],
-      ['/home/someone/elsewhere/main', '~/elsewhere/main'],
+    expect(summary?.workedIn?.map((r) => [r.key, r.label, r.root])).toEqual([
+      // Under the other root: its group would sit under /other, so the web UI can list the session in that root's tab (W42).
+      ['/other/service', 'service', '/other'],
+      ['/work/projects/delta', 'projects/delta', ROOT],
+      // A worktree touched under /work whose main repo is outside the roots: its group would sit under /work.
+      ['/home/someone/elsewhere/main', '~/elsewhere/main', ROOT],
     ]);
-    expect(summary?.workedIn?.[0]).not.toHaveProperty('root');
     indexer.stop();
   });
 
@@ -778,7 +779,41 @@ describe('the indexer with a real scanner', () => {
     indexer.stop();
     // The session started in the root and changed api: it stays in the root's group, with api in its workedIn.
     expect(scanned?.groups.map((g) => [g.key, g.sessions.map((x) => x.sessionId)])).toEqual([[root, ['s']]]);
-    expect(scanned?.groups[0]?.sessions[0]?.workedIn).toMatchObject([{ key: repoDir, label: 'api', calls: 1, changes: 1 }]);
+    expect(scanned?.groups[0]?.sessions[0]?.workedIn).toMatchObject([{ key: repoDir, label: 'api', root, calls: 1, changes: 1 }]);
+  });
+
+  it('names the root a worked-in repo sits under, another root’s included, from the real scanner (W42)', async () => {
+    const root = path.join(dir, 'code');
+    const other = path.join(dir, 'other');
+    const here = path.join(root, 'api');
+    const there = path.join(other, 'service');
+    for (const repo of [here, there]) await mkdir(path.join(repo, '.git'), { recursive: true });
+    const file = path.join(dir, 'made-up.jsonl');
+    // Started in the first root itself: one edit in its repo, and two in a repo under the other root.
+    const edit = (n: number, target: string) => ({ type: 'assistant', timestamp: new Date(NOW + n).toISOString(), cwd: root, message: { content: [{ type: 'tool_use', id: `t${n}`, name: 'Edit', input: { file_path: path.join(target, `f${n}.ts`) } }] } });
+    await writeFile(file, [edit(1, here), edit(2, there), edit(3, there)].map((line) => JSON.stringify(line)).join('\n') + '\n');
+    const scanner = createWorkedInScanner({ home: dir, run: async (_file, args) => `${path.join(args[1] ?? '', '.git')}\n` });
+    const { state, deps } = harness();
+    deps.workedIn = scanner;
+    deps.groups = { resolve: async (cwd) => ({ key: cwd, kind: 'directory' }), prune() {} };
+    state.files.set('s', file);
+    state.result = { ok: true, rows: [row('s', root)] };
+    const snapshots: IndexSnapshot[] = [];
+    const indexer = createIndexer({ roots: [root, other], intervalMs: 50 }, deps);
+    indexer.subscribe((snapshot) => snapshots.push(snapshot));
+    while (snapshots.length === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+    await scanner.settled();
+    const before = snapshots.length;
+    while (snapshots.length === before) await new Promise((resolve) => setTimeout(resolve, 10));
+    indexer.stop();
+    const scanned = snapshots.at(-1);
+    // Still listed where it started; each repo names the root its group would sit under.
+    expect(scanned?.groups.map((g) => [g.key, g.root, g.sessions.map((x) => x.sessionId)])).toEqual([[root, root, ['s']]]);
+    const workedIn = scanned?.groups[0]?.sessions[0]?.workedIn ?? [];
+    expect(workedIn.map(({ key, label, root: repoRoot, changes }) => ({ key, label, root: repoRoot, changes })).sort((a, b) => (a.key < b.key ? -1 : 1))).toEqual([
+      { key: here, label: 'api', root, changes: 1 },
+      { key: there, label: 'service', root: other, changes: 2 },
+    ]);
   });
 });
 
@@ -1009,7 +1044,7 @@ describe('a root inside a repo', () => {
       [app]: { label: 'app', kind: 'git', ids: [ids.app] },
     });
     const rootSession = snapshot.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === ids.root);
-    expect(rootSession?.workedIn).toMatchObject([{ key: app, label: 'app', changes: 1 }]);
+    expect(rootSession?.workedIn).toMatchObject([{ key: app, label: 'app', root, changes: 1 }]);
   });
 });
 

@@ -44,12 +44,10 @@ import { placesOf, slugsIn, type CallPlaces } from './toolCalls.js';
 export const WORKED_IN_PERCENT = 5;
 
 /**
- * One repo a session worked in, with the configured root its group sits under, or would: the index
- * labels it from that root (WorkedIn.label), as it labels groups.
+ * One repo a session worked in, with the configured root its group sits under, or would
+ * (WorkedIn.root): the index labels it from that root (WorkedIn.label), as it labels groups.
  */
-export interface RepoWorkedIn extends Omit<WorkedIn, 'label'> {
-  root: string;
-}
+export type RepoWorkedIn = Omit<WorkedIn, 'label'>;
 
 /** A session the index lists, as the scanner needs it. */
 export interface TrackedSession {

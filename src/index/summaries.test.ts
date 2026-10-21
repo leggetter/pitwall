@@ -433,7 +433,7 @@ describe('buildGroups', () => {
   describe('each session in one group, the one it started in (W39)', () => {
     /** A session placed by where it started, whose summary names the repos under `root` it worked in. */
     function worked(id: string, key: string, kind: 'git' | 'directory', repos: string[], overrides: Partial<SessionSummary> = {}): PlacedSession {
-      const workedIn = repos.map((repo) => ({ key: repo, label: repo.slice(root.length + 1), calls: 10, changes: 1, lastAt: iso(NOW) }));
+      const workedIn = repos.map((repo) => ({ key: repo, label: repo.slice(root.length + 1), root, calls: 10, changes: 1, lastAt: iso(NOW) }));
       return placed(id, key, { ...overrides, ...(workedIn.length > 0 ? { workedIn } : {}) }, root, kind);
     }
     const view = (groups: ReturnType<typeof buildGroups>) =>

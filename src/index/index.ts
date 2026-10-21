@@ -220,9 +220,10 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
 
 /**
  * Hands the scanner this poll's sessions, which queues their scans without waiting for them, and
- * adds what earlier scans found to their summaries, each repo labelled as its group is or would be.
- * It never moves a session: each is listed only where it started (W39). A session seen for the
- * first time has no workedIn until a later poll. Nothing here can fail the poll.
+ * adds what earlier scans found to their summaries, each repo labelled as its group is or would be,
+ * with the root that group sits under or would (W42). It never moves a session: the snapshot lists
+ * each only where it started (W39), and the web UI groups it by the viewer's View preferences. A
+ * session seen for the first time has no workedIn until a later poll. Nothing here can fail the poll.
  */
 function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: IndexerDeps): void {
   const scanner = deps.workedIn;
@@ -240,8 +241,9 @@ function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: Inde
     for (const { summary } of kept) {
       const repos = scanner.workedIn(summary.sessionId);
       if (repos === undefined || repos.length === 0) continue;
-      // The label buildGroups would give the repo's group, under the root that group would sit under.
-      summary.workedIn = repos.map(({ key, root, calls, changes, lastAt }) => ({ key, label: groupLabel(key, root, deps.home), calls, changes, lastAt }));
+      // The label buildGroups would give the repo's group, and the root that group would sit under,
+      // which the web UI needs to list the session under a repo with no group (W42).
+      summary.workedIn = repos.map(({ key, root, calls, changes, lastAt }) => ({ key, label: groupLabel(key, root, deps.home), root, calls, changes, lastAt }));
     }
   } catch {
     // What was added stays, and the poll goes on: a scanner failure only leaves workedIn out.
