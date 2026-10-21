@@ -16,11 +16,12 @@
 // takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
 // has started or failed.
 
-import { useContext, useEffect, useRef, useState } from 'react';
-import { AttachContext, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachSession, type AttachStatus } from '../attach.js';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { ATTACH_COMMAND, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachEnv, type AttachSession, type AttachStatus, type EndNotice } from '../attach.js';
 import { plainText } from '../format.js';
 import type { BadgeLook } from '../sessions.js';
-import { Alert } from './Alert.js';
+import type { XtermOptions } from '../xterm.js';
+import { Alert, Detail } from './Alert.js';
 import { Badge, type BadgeProps } from './Badge.js';
 import { Button } from './Button.js';
 import { InlineConfirm } from './InlineConfirm.js';
@@ -55,8 +56,29 @@ export interface TerminalHandle {
 }
 
 /** xterm.js (xterm.ts), loaded on first use so the dashboard doesn't download it up front. */
-async function createTerminal(container: HTMLElement): Promise<TerminalHandle> {
-  return (await import('../xterm.js')).createXterm(container);
+async function createTerminal(container: HTMLElement, options: XtermOptions): Promise<TerminalHandle> {
+  return (await import('../xterm.js')).createXterm(container, options);
+}
+
+/** A notice's text, with `claude attach` in code style wherever it's named, then the server's reason as its detail. */
+function NoticeText({ notice }: { notice: EndNotice }): ReactNode {
+  const parts = plainText(notice.text).split(ATTACH_COMMAND);
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={index}>
+          {index > 0 && <code>{ATTACH_COMMAND}</code>}
+          {part}
+        </span>
+      ))}
+      {notice.detail !== undefined && (
+        <>
+          {' '}
+          <Detail>{plainText(notice.detail)}</Detail>
+        </>
+      )}
+    </>
+  );
 }
 
 /** The bar's status badge for each attach status (4: Terminal). */
@@ -83,6 +105,8 @@ function isLeaveKey(event: KeyboardEvent): boolean {
 
 export interface SessionTerminalProps {
   sessionId: string;
+  /** The token and socket factory for the attach. The view shows the Terminal tab only when it has one. */
+  env: AttachEnv;
   /** Leaves the terminal for the conversation. Unmounting detaches. */
   onClose: () => void;
   /** F6 in the terminal: focus goes to the Terminal tab, and the terminal stays attached. */
@@ -93,9 +117,10 @@ export interface SessionTerminalProps {
   onRestartChange?: (phase: RestartPhase | undefined) => void;
 }
 
-export function SessionTerminal({ sessionId, onClose, onLeave, onStatus, onRestartChange }: SessionTerminalProps) {
-  const env = useContext(AttachContext);
+export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, onRestartChange }: SessionTerminalProps) {
   const container = useRef<HTMLDivElement>(null);
+  // The F6 hint, which describes xterm.js's textarea, so a screen reader in the terminal hears how to leave.
+  const hintId = useId();
   const session = useRef<AttachSession | undefined>(undefined);
   const [status, setStatus] = useState<AttachStatus>({ kind: 'connecting' });
   const onStatusRef = useRef(onStatus);
@@ -128,14 +153,20 @@ export function SessionTerminal({ sessionId, onClose, onLeave, onStatus, onResta
 
   useEffect(() => {
     const element = container.current;
-    if (!env || !element) return;
+    if (!element) return;
     let disposed = false;
     let terminal: TerminalHandle | undefined;
     let observer: ResizeObserver | undefined;
     setStatus({ kind: 'connecting' });
 
     Promise.resolve()
-      .then(() => createTerminal(element))
+      .then(() =>
+        createTerminal(element, {
+          describedBy: hintId,
+          // A font that arrived late changed the cells' size: the session gets the new one.
+          onResize: (cols, rows) => session.current?.resize(cols, rows),
+        }),
+      )
       .then(
         (created) => {
           if (disposed) {
@@ -183,7 +214,7 @@ export function SessionTerminal({ sessionId, onClose, onLeave, onStatus, onResta
       session.current = undefined;
       terminal?.dispose();
     };
-  }, [env, sessionId, attempt]);
+  }, [env, sessionId, attempt, hintId]);
 
   useEffect(() => {
     const element = container.current;
@@ -209,22 +240,20 @@ export function SessionTerminal({ sessionId, onClose, onLeave, onStatus, onResta
   }, []);
 
   const ended = status.kind === 'ended';
-  const notice = !env ? 'Attach is unavailable here.' : ended ? endMessage(status.end) : undefined;
+  const notice = ended ? endMessage(status.end) : undefined;
   const tone = ended ? noticeTone(status.end) : 'neutral';
   const badge = STATUS_BADGES[status.kind];
 
   return (
     <div className="attach">
       <div className="attach-bar">
-        {env && (
-          // A status region, so each change is announced, as the connection badge's is.
-          <span className="attach-status" data-status={status.kind} role="status">
-            <Badge look={badge.look} lead={badge.lead}>
-              {badge.label}
-            </Badge>
-          </span>
-        )}
-        <span className="attach-hint">
+        {/* A status region, so each change is announced, as the connection badge's is. */}
+        <span className="attach-status" data-status={status.kind} role="status">
+          <Badge look={badge.look} lead={badge.lead}>
+            {badge.label}
+          </Badge>
+        </span>
+        <span className="attach-hint" id={hintId}>
           <KeyCaps keys={[LEAVE_KEY]} label={LEAVE_KEY} /> to leave the terminal
         </span>
         <span className="attach-actions">
@@ -234,7 +263,7 @@ export function SessionTerminal({ sessionId, onClose, onLeave, onStatus, onResta
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={onClose}>
-            {ended || !env ? 'Back to the conversation' : 'Detach'}
+            {ended ? 'Back to the conversation' : 'Detach'}
           </Button>
         </span>
       </div>
@@ -259,7 +288,7 @@ export function SessionTerminal({ sessionId, onClose, onLeave, onStatus, onResta
       {notice && (
         // It arrives live: an alert when it failed, a status when it ended as asked (4: Alerts and banners).
         <Alert tone={tone} role={tone === 'danger' ? 'alert' : 'status'} className="attach-notice">
-          {plainText(notice)}
+          <NoticeText notice={notice} />
         </Alert>
       )}
       <div className="attach-terminal" ref={container} />

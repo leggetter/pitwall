@@ -213,7 +213,8 @@ describe('startAttach', () => {
       const attach = begin();
       await attach.ready();
       attach.socket.receive({ type: 'error', error: "That session isn't listed under pitwall's roots." });
-      expect(attach.status()).toEqual({ kind: 'ended', end: { kind: 'error', error: "That session isn't listed under pitwall's roots." } });
+      // As the server's own words, apart from the page's, so the notice can show them as its detail.
+      expect(attach.status()).toEqual({ kind: 'ended', end: { kind: 'server', reason: "That session isn't listed under pitwall's roots." } });
     });
 
     it(`ends as too-many on close ${WS_CLOSE_TOO_MANY}, unauthorized on ${WS_CLOSE_UNAUTHORIZED}, and closed otherwise`, async () => {
@@ -254,11 +255,13 @@ describe('startAttach', () => {
 
 describe('endMessage', () => {
   it('says what happened, in a short notice', () => {
-    expect(endMessage({ kind: 'too-many' })).toBe(`${MAX_ATTACHED} sessions are already attached; detach one first.`);
-    expect(endMessage({ kind: 'too-many' })).toBe('4 sessions are already attached; detach one first.');
-    expect(endMessage({ kind: 'exit', code: 0 })).toBe('claude attach ended.');
-    expect(endMessage({ kind: 'exit', code: 1 })).toBe('claude attach ended with exit code 1.');
-    expect(endMessage({ kind: 'error', error: 'boom' })).toBe("Couldn't attach: boom");
+    expect(endMessage({ kind: 'too-many' })).toEqual({ text: `${MAX_ATTACHED} sessions are already attached; detach one first.` });
+    expect(endMessage({ kind: 'too-many' })).toEqual({ text: '4 sessions are already attached; detach one first.' });
+    expect(endMessage({ kind: 'exit', code: 0 })).toEqual({ text: 'claude attach ended.' });
+    expect(endMessage({ kind: 'exit', code: 1 })).toEqual({ text: 'claude attach ended with exit code 1.' });
+    // The page's own words are its text; the server's are the detail, apart from it (W31).
+    expect(endMessage({ kind: 'error', error: 'the page made up this reason.' })).toEqual({ text: "Couldn't attach: the page made up this reason." });
+    expect(endMessage({ kind: 'server', reason: 'A made-up reason from the server.' })).toEqual({ text: "Couldn't attach:", detail: 'A made-up reason from the server.' });
     expect(endMessage({ kind: 'detached' })).toBeUndefined();
   });
 });

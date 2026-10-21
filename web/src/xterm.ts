@@ -57,42 +57,75 @@ export function terminalFontFamily(root: Element = document.documentElement): st
 /** What waitForFont() needs from document.fonts. */
 export type FontLoader = Pick<FontFaceSet, 'load'>;
 
+const documentFonts = (): FontLoader | undefined => (typeof document === 'undefined' ? undefined : document.fonts);
+
 /**
- * Waits until the family's regular and medium faces have loaded, or `timeout` has passed, so xterm.js
- * measures its cells in that font rather than in the fallback: it measures a cell once, as it opens,
- * so a font that arrived later would draw in cells sized for another. Bold text asks for 700, which
- * the bundled 500 face serves.
- *
- * A family list loads only the families that have an @font-face (fonts.css); the fallbacks after them
- * are ignored. A load that fails, or a browser with no document.fonts, opens the terminal at once.
+ * Loads the family's regular and medium faces: true once both have, false when either can't, or
+ * there's no family or no document.fonts. Never rejects. A family list loads only the families that
+ * have an @font-face (fonts.css); the fallbacks after them are ignored.
  */
-export async function waitForFont(
-  family: string | undefined,
-  fonts: FontLoader | undefined = typeof document === 'undefined' ? undefined : document.fonts,
-  timeout = FONT_WAIT_MS,
-): Promise<void> {
-  if (family === undefined || fonts === undefined) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  // A load that fails, even after the timeout, settles quietly: the terminal opens with the fallback,
-  // and measures its cells in that.
-  const loads = Promise.resolve()
+export function loadFont(family: string | undefined, fonts: FontLoader | undefined = documentFonts()): Promise<boolean> {
+  if (family === undefined || fonts === undefined) return Promise.resolve(false);
+  // A load that fails, even after the wait is over, settles quietly.
+  return Promise.resolve()
     .then(() => Promise.all([400, 500].map((weight) => fonts.load(`${weight} ${TERMINAL_FONT_SIZE}px ${family}`))))
     .then(
-      () => undefined,
-      () => undefined,
+      () => true,
+      () => false,
     );
-  await Promise.race([loads, new Promise<void>((resolve) => (timer = setTimeout(resolve, timeout)))]);
-  clearTimeout(timer);
 }
 
-/** Creates the terminal in `container` once its font has loaded (waitForFont), sized to fill it. */
-export async function createXterm(container: HTMLElement): Promise<TerminalHandle> {
+/** Whether `promise` settles within `timeout` ms. */
+async function settlesWithin(promise: Promise<unknown>, timeout: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settled = await Promise.race([promise.then(() => true), new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), timeout)))]);
+  clearTimeout(timer);
+  return settled;
+}
+
+/**
+ * Waits until the family's regular and medium faces have loaded, or `timeout` has passed, so xterm.js
+ * measures its cells in that font rather than in the fallback: it measures them as it opens. A load
+ * that fails, or a browser with no document.fonts, opens the terminal at once.
+ */
+export async function waitForFont(family: string | undefined, fonts: FontLoader | undefined = documentFonts(), timeout = FONT_WAIT_MS): Promise<void> {
+  await settlesWithin(loadFont(family, fonts), timeout);
+}
+
+/**
+ * The same family list, written differently: xterm.js measures its cells again only when its
+ * fontFamily option changes to another string, so a font that arrived late is measured by setting
+ * this. A trailing space changes nothing about which font is used.
+ */
+export function sameFamilyAgain(family: string): string {
+  return family.endsWith(' ') ? family.trimEnd() : `${family} `;
+}
+
+/** What createXterm() needs from the session view. */
+export interface XtermOptions {
+  /** The id of what describes the terminal, the F6 hint, for xterm.js's textarea, which is what has focus. */
+  describedBy?: string | undefined;
+  /** The cells were measured again, for a font that arrived after the wait, and the terminal fitted: its new size. */
+  onResize?: ((cols: number, rows: number) => void) | undefined;
+  /** Where the fonts load from: document.fonts, or a test's stand-in. */
+  fonts?: FontLoader | undefined;
+}
+
+/**
+ * Creates the terminal in `container` once its font has loaded, or after FONT_WAIT_MS, sized to fill
+ * it. A font that arrives after that makes it measure its cells again, so they fit the font, not the
+ * fallback, and fit the container again (onResize says so, for the attach's size).
+ */
+export async function createXterm(container: HTMLElement, options: XtermOptions = {}): Promise<TerminalHandle> {
   const fontFamily = terminalFontFamily();
-  await waitForFont(fontFamily);
+  const loading = loadFont(fontFamily, 'fonts' in options ? options.fonts : documentFonts());
+  const inTime = await settlesWithin(loading, FONT_WAIT_MS);
   const terminal = new Terminal({
     cursorBlink: true,
     ...(fontFamily === undefined ? {} : { fontFamily }),
     fontSize: TERMINAL_FONT_SIZE,
+    // Bold is the 500 face, the heaviest bundled (fonts.css), so the browser never synthesises a 700 from it.
+    fontWeightBold: 500,
     scrollback: 5000,
     theme: terminalTheme(),
     // Only http: and https: links, opened with noopener and noreferrer (links.ts).
@@ -101,7 +134,18 @@ export async function createXterm(container: HTMLElement): Promise<TerminalHandl
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(container);
+  // The textarea xterm.js focuses is what a screen reader is on: the F6 hint describes it.
+  if (options.describedBy !== undefined) terminal.textarea?.setAttribute('aria-describedby', options.describedBy);
   fit.fit();
+  let disposed = false;
+  if (!inTime && fontFamily !== undefined) {
+    void loading.then((loaded) => {
+      if (!loaded || disposed) return;
+      terminal.options.fontFamily = sameFamilyAgain(fontFamily);
+      fit.fit();
+      options.onResize?.(terminal.cols, terminal.rows);
+    });
+  }
   return {
     get cols() {
       return terminal.cols;
@@ -115,6 +159,9 @@ export async function createXterm(container: HTMLElement): Promise<TerminalHandl
     },
     fit: () => fit.fit(),
     focus: () => terminal.focus(),
-    dispose: () => terminal.dispose(),
+    dispose: () => {
+      disposed = true;
+      terminal.dispose();
+    },
   };
 }

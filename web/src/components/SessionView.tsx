@@ -474,9 +474,10 @@ export function SessionView({
         aria-labelledby={ids.terminalTab}
         hidden={tab !== 'terminal'}
       >
-        {tab === 'terminal' && (
+        {tab === 'terminal' && attachEnv && (
           <SessionTerminal
             sessionId={sessionId}
+            env={attachEnv}
             onClose={leaveTerminal}
             onLeave={focusTerminalTab}
             onStatus={setAttachStatus}
