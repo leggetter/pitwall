@@ -64,7 +64,8 @@ export type ActionOutcome =
   /** The server or Claude Code refused, with why: for example, `claude rm` kept a worktree with unpushed commits. */
   | { kind: 'refused'; error: string }
   | { kind: 'unauthorized' }
-  | { kind: 'failed'; error: string };
+  /** No answer pitwall understands. `status` is the HTTP status, when the server answered. */
+  | { kind: 'failed'; error: string; status?: number };
 
 /** Stops or removes a background session with POST stopPath() or removePath(). Never rejects. */
 export async function sessionAction(api: ApiClient, sessionId: string, action: SessionAction): Promise<ActionOutcome> {
@@ -73,7 +74,8 @@ export async function sessionAction(api: ApiClient, sessionId: string, action: S
   const body = asRecord(result.body);
   if (result.kind === 'ok' && body?.ok === true) return { kind: 'done' };
   if (result.kind === 'failed' && body?.ok === false && typeof body.error === 'string') return { kind: 'refused', error: body.error };
-  return { kind: 'failed', error: couldNot(`${action} the session`, result.status) };
+  const failed: ActionOutcome = { kind: 'failed', error: couldNot(`${action} the session`, result.status) };
+  return result.status === undefined ? failed : { ...failed, status: result.status };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

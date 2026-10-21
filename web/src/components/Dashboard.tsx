@@ -144,6 +144,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Whether the open session's message box has a draft: no shortcut replaces or closes the view then,
   // just as Escape doesn't (6.2).
   const draft = useRef(false);
+  // Whether the open session's Stop or Remove is running: j, k, ↑ and ↓ wait for it, so its result isn't moved away from (6.2).
+  const actionRunning = useRef(false);
+  /** Whether changing the open session now would lose something: a draft, or a running action's place. */
+  const holding = () => draft.current || actionRunning.current;
 
   // Before the first snapshot: the skeletons after --pw-delay-spinner, and what's slow after --pw-delay-long.
   const waiting = useWaiting(app, snapshot === undefined);
@@ -232,9 +236,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   // ↑ and ↓ on a row: focus moves to the next or previous row, and stays in the list. With the view
   // open, it shows that session too, replacing the history entry. Nothing while the message box has a
-  // draft, which changing session would lose, as `j` and `k` do (6.2).
+  // draft, which changing session would lose, or while a Stop or Remove runs, as `j` and `k` do (6.2).
   const stepFromRow = (sessionId: string, by: 1 | -1) => {
-    if (openId !== undefined && draft.current) return;
+    if (openId !== undefined && holding()) return;
     const next = rowFrom(sessionId, by);
     const id = next?.dataset.openSession;
     if (!next || id === undefined) return;
@@ -243,9 +247,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   };
 
   // ↑ and ↓ in the view's header: the next or previous session, with focus on its heading. Nothing
-  // while the message box has a draft, as on a row.
+  // while the message box has a draft or a Stop or Remove runs, as on a row.
   const stepFromView = (by: 1 | -1) => {
-    if (openId === undefined || draft.current) return;
+    if (openId === undefined || holding()) return;
     const next = rowFrom(openId, by);
     const id = next?.dataset.openSession;
     if (!next || id === undefined) return;
@@ -274,7 +278,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       next.focus();
       return true;
     }
-    if (draft.current) return false;
+    if (holding()) return false;
     const inList = active instanceof Element && active.closest('.session-list') !== null;
     const inConversation = active instanceof Element && active.closest('.session-view-body') !== null;
     closeMenus(root);
@@ -614,6 +618,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         animate={animate}
         onDraftChange={(has) => {
           draft.current = has;
+        }}
+        onRunningChange={(running) => {
+          actionRunning.current = running;
         }}
       />
     );

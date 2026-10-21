@@ -4,16 +4,21 @@
 // toast (W25): "Stopped. Its conversation is kept.", or "Removed name" as the view closes. Refused, the
 // result shows in the confirmation's place, with Claude Code's message, such as `claude rm` keeping a
 // worktree with unpushed commits.
+//
+// The result still arrives when the view has gone while the request was out, as Close, Back or the
+// browser's back button take it away: as a toast from the app's stack, which outlives the view,
+// naming the session, and an error toast with Claude Code's message, as text, for a refusal. j, k,
+// ↑ and ↓ do nothing while one runs (onRunningChange), so they never move the view away from it.
 
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { plainText } from '../format.js';
-import { sessionAction, type SessionAction } from '../spawn.js';
+import { couldNot, plainText } from '../format.js';
+import { sessionAction, type ActionOutcome, type SessionAction } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import type { IconName } from './Icon.js';
 import { InlineConfirm } from './InlineConfirm.js';
-import { useToast } from './Toast.js';
+import { useToast, type ToastInput } from './Toast.js';
 import '../actions.css';
 
 export const CONFIRM: Record<
@@ -41,6 +46,27 @@ export const CONFIRM: Record<
 export const STOPPED = 'Stopped. Its conversation is kept.';
 /** The toast once a session is removed: its name, as written. */
 export const removedText = (name: string) => `Removed ${plainText(name)}`;
+/** The toast once a session is stopped after its view has gone: which one, since the view no longer says. */
+export const stoppedText = (name: string) => `Stopped ${plainText(name)}. Its conversation is kept.`;
+
+/**
+ * The toast for a result that arrived after the session's view had gone, or nothing for one the app
+ * already shows (unauthorized). It names the session, since nothing on screen says which it was. A
+ * refusal is an error toast with Claude Code's message after pitwall's sentence, as text.
+ */
+export function resultToast(action: SessionAction, name: string, outcome: ActionOutcome): ToastInput | undefined {
+  const named = `${action} ${plainText(name)}`;
+  switch (outcome.kind) {
+    case 'done':
+      return { tone: 'success', message: action === 'remove' ? removedText(name) : stoppedText(name) };
+    case 'refused':
+      return { tone: 'error', message: `${couldNot(named, undefined)} ${plainText(outcome.error)}` };
+    case 'failed':
+      return { tone: 'error', message: couldNot(named, outcome.status) };
+    case 'unauthorized':
+      return undefined;
+  }
+}
 
 /** What went wrong. `detail` is Claude Code's own message, when it refused. Success is a toast instead. */
 export type ActionResult = { text: string; detail?: string };
@@ -106,7 +132,12 @@ export function useSessionActions(session: SessionSummary, onRemoved: () => void
       setRunning(action);
       const outcome = await sessionAction(api, sessionId, action);
       runningRef.current = undefined;
-      if (!alive.current) return 'failed';
+      if (!alive.current) {
+        // The view went while the request was out: the result is a toast from the app's stack, which is still there.
+        const gone = resultToast(action, name, outcome);
+        if (gone) toast(gone);
+        return outcome.kind === 'done' ? (action === 'remove' ? 'removed' : 'stopped') : 'failed';
+      }
       setRunning(undefined);
       setConfirming(undefined);
       if (outcome.kind === 'done') {

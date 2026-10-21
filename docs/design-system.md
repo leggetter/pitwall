@@ -1133,6 +1133,8 @@ For a destructive or surprising action in the session view, without a dialog.
   - Stopped: a [toast](#toasts), "Stopped. Its conversation is kept."
   - Removed: a toast, "Removed *name*", as the view closes.
   - Refused: an inline danger alert, `role="alert"`: "Couldn't stop the session." (or remove), then Claude Code's message in code style.
+  - **When the view has gone** while the request was out (Close, Back, `/` or the browser's back button), the result still arrives, from the app's toasts, which outlive the view, and names the session, since nothing on screen says which it was: "Stopped *name*. Its conversation is kept.", "Removed *name*", or an error toast, "Couldn't stop *name*. *Claude Code's message*" (or remove), its message as text, or "Couldn't stop *name* (HTTP 502)." when the server gave no reason.
+  - `j`, `k`, ↑ and ↓ do nothing while the action runs, as they do for a draft, so they never move the view away from it.
   - A restart that fails ends the attach, whose notice says why, and Attach again takes focus.
 - **No type-to-confirm.** pitwall's destructive actions are recoverable or guarded by Claude Code.
 
@@ -1196,7 +1198,7 @@ For a destructive or surprising action in the session view, without a dialog.
   - Error toasts stay until dismissed.
   - The same message again replaces the toast that says it, so it's announced again without stacking.
 - **Live region:** the stack is an `aria-live="polite"` region that always exists in the DOM, so a toast's text arrives in a region that was already there and is announced; error toasts use `role="alert"`.
-- **Use them for** results the user isn't looking at: "Copied", "Couldn't copy; the text is selected" (an error), "Stopped. Its conversation is kept.", "Started *name*. Its view opens when it shows up in the list.", "Removed *name*".
+- **Use them for** results the user isn't looking at: "Copied", "Couldn't copy; the text is selected" (an error), "Stopped. Its conversation is kept.", "Started *name*. Its view opens when it shows up in the list.", "Removed *name*", and a Stop or Remove's result, a refusal included, when its view has gone (see [Inline confirmation](#inline-confirmation)).
 - **Don't use them for** form errors, the relay's delivery result, or anything that needs a decision. Those stay inline.
 
 ### Tooltips
@@ -1439,9 +1441,9 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 | `/` | Anywhere | Focus the filter field. Below 1,200 px, close the session view first, since it covers the list |
 | `n` | Anywhere | Open the New session dialog |
 | `?` | Anywhere | Open the keyboard shortcuts dialog |
-| `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (shows it if a session is open) |
-| ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session. Nothing while the message box has a draft |
-| ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading. Nothing while the message box has a draft |
+| `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (shows it if a session is open). Nothing while the message box has a draft or a Stop or Remove runs |
+| ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session. Nothing while the message box has a draft or a Stop or Remove runs |
+| ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading. Nothing while the message box has a draft or a Stop or Remove runs |
 | Enter | On a session row | Open the session |
 | ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
 | Escape | Layered, nearest first | Close a tooltip or menu (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, or the restart before attaching) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
@@ -1458,7 +1460,7 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 - **Where focus goes:** with no session open, to the row. With one open, the view shows that session, replacing the history entry as ↑/↓ do, and focus stays in the list if it was there, stays in the conversation if it was there, and otherwise goes to the new heading.
 - **In the conversation's body,** ↑/↓ scroll it, as in any scrolling region; use `j` / `k` there to change session.
 - **An open menu** closes first when a shortcut moves focus (see [Menus](#menus)).
-- **A draft is never lost to a key:** while the message box has a draft, `j` and `k` do nothing, nor do ↑ and ↓ on a session row or in the view's header, nor `/` or the app strip's Details where they would close the view, just as Escape does nothing then. Changing session would discard the draft. ↑ and ↓ on a row are still taken, so the list doesn't scroll either.
+- **A draft is never lost to a key:** while the message box has a draft, `j` and `k` do nothing, nor do ↑ and ↓ on a session row or in the view's header, nor `/` or the app strip's Details where they would close the view, just as Escape does nothing then. Changing session would discard the draft. ↑ and ↓ on a row are still taken, so the list doesn't scroll either. `j`, `k`, ↑ and ↓ wait for a running Stop or Remove the same way, so its result shows in the view it was asked from.
 
 ---
 
