@@ -141,7 +141,7 @@ export interface RelayExchange {
 }
 
 export interface SessionGroup {
-  /** Absolute path: the repo's top-level directory for git, or the configured root for its own group. */
+  /** Absolute path: the repo's top-level directory for git, otherwise the directory: sessions' cwd, or the configured root for its own group. */
   key: string;
   /**
    * `key` relative to the configured root it sits under, or the root's basename
@@ -150,11 +150,12 @@ export interface SessionGroup {
    */
   label: string;
   /**
-   * 'git' for a repo. 'directory' for a root's own group, when the root isn't
-   * itself in a repo. That group holds the root's sessions that are in no
-   * repo: started outside every repo under it, including in a directory below
-   * it that isn't a repo, and with no `workedIn`. So a session that started
-   * in the root and worked in repos is listed under those repos, not here.
+   * 'git' for a repo. 'directory' for a directory in no repo, which is one of:
+   * - a directory below a root: like a repo, it lists every session started
+   *   in it, including those that also worked in repos;
+   * - a root itself: it lists only the sessions started in the root that have
+   *   no `workedIn`. A session that started in the root and worked in repos
+   *   is listed under those repos, not here (Phil, 2026-10-21).
    */
   kind: 'git' | 'directory';
   /** The configured root this group sits under. */
@@ -162,7 +163,8 @@ export interface SessionGroup {
   /**
    * Every session shown under the group, each once. For a repo, that's the
    * sessions started in it and the sessions whose `workedIn` names it, so one
-   * session can be in several groups. A group with no sessions is left out.
+   * session can be in several groups. A group with no sessions is left out,
+   * the root's own group included.
    *
    * Sorted: sessions that need the user first (status 'waiting', or a background
    * job that is blocked and not stale), then askedYou, then busy, then by
