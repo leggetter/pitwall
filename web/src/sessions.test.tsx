@@ -344,7 +344,7 @@ describe('sessionCount', () => {
 
 describe('each session in one group (W39)', () => {
   const ROOT = '/Users/example/code';
-  const worked = (...keys: string[]) => keys.map((key, index) => ({ key: `${ROOT}/${key}`, label: key, calls: 10, changes: 0, lastAt: minutesAgo(index) }));
+  const worked = (...keys: string[]) => keys.map((key, index) => ({ key: `${ROOT}/${key}`, label: key, root: ROOT, calls: 10, changes: 0, lastAt: minutesAgo(index) }));
   // As the index sends them: each session in the group it started in alone. docs has no group, since
   // no session started there.
   const inApp = session({ name: 'in-app', cwd: `${ROOT}/app`, status: 'waiting', workedIn: worked('api') });
@@ -386,7 +386,7 @@ describe('each session in one group (W39)', () => {
 
   it("workedInLabels: a repo that is itself a root shows the root's path, as the repo list does", () => {
     const other = '/Users/example/work';
-    const nested = session({ name: 'nested', cwd: `${other}/vendor/lib`, workedIn: [{ key: other, label: 'work', calls: 5, changes: 1, lastAt: minutesAgo(1) }] });
+    const nested = session({ name: 'nested', cwd: `${other}/vendor/lib`, workedIn: [{ key: other, label: 'work', root: other, calls: 5, changes: 1, lastAt: minutesAgo(1) }] });
     expect(workedInLabels(nested, [ROOT, other])).toEqual(['~/work']);
   });
 

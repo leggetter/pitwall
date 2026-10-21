@@ -58,13 +58,13 @@ export const TERMINAL_INTERACTIVE_NOTE =
 export const STOP_INTERACTIVE_HINT =
   "An interactive session can't be stopped here. Type /bg in its terminal to move it to the background, then stop it here.";
 export const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
-/** The worked-in line's info icon: the rule behind it (W34, spike 004), and where to find the sessions that worked in a repo (W39). */
+/** The worked-in line's info icon: the rule behind it (W34, spike 004), and where to find the sessions that worked in a repo (W39, W42). */
 export const WORKED_IN_NOTE =
-  "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. The session is listed only where it started: to find every session that worked in a repo, type the repo's name in the filter on All sessions.";
+  "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. View preferences, in the header, sets which of these repos list the session; to find every session that worked in a repo, type its name in the filter on All sessions.";
 
 /** Where a session started and the repos it worked in, as the repo list labels them. */
 export interface SessionPlacement {
-  /** Its group's label, the one it's listed under, or a root's path for one started in the root itself. */
+  /** Its start group's label, from the snapshot, whatever View preferences says, or a root's path for one started in the root itself. */
   startedIn: string;
   /** The repos it worked in beyond that, newest touch first, each by its label, whether or not it has a group (W39). */
   workedIn: readonly string[];
@@ -477,7 +477,7 @@ export function SessionView({
           )}
         </div>
         {placement && placement.workedIn.length > 0 && (
-          // Line 3: where it started, and the repos it worked in beyond that, which don't list it (W39).
+          // Line 3: where it started, and the repos it worked in beyond that, the same in every mode of View preferences (W42).
           // The names are text, never markup or links: selecting one does nothing.
           <p className="session-view-worked">
             <span className="session-view-worked-text">

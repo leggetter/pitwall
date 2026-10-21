@@ -1,10 +1,17 @@
 // A menu button and its menu (docs/design-system.md, 4: Menus): an icon button with
 // aria-haspopup="menu" that opens a role="menu" panel below it, aligned to its end edge, flipping up
-// when there's no room. ↑ and ↓ move between items, wrapping; Home and End jump to the ends; Enter or
-// Space activates; Escape and Tab close it. Focus goes back to the button whenever it closes from the
+// when there's no room, and moved in from the window's start edge when aligning would cut it off
+// there. ↑ and ↓ move between items, wrapping; Home and End jump to the ends; Enter or Space
+// activates; Escape and Tab close it. Focus goes back to the button whenever it closes from the
 // keyboard or an item, before the item runs, so an item that opens something can move focus on from
 // there. A press outside closes it without moving focus; focus moving away by itself doesn't, so a
 // page can show several open menus, as the #uikit gallery does.
+//
+// A radio group (W42, View preferences) is a role="group" of role="menuitemradio" items, named by
+// its title, which shows above them. Each option has a label and may have one line saying what it
+// does, which describes it; the chosen one is aria-checked, with a check mark. Opening focuses the
+// chosen option, and choosing one closes the menu as any item does, then calls onChange when the
+// choice changed. The arrows go through a group's options as through any items.
 //
 // The button's name is its tooltip. A disabled item says why in a tooltip, on hover and when the
 // arrows reach it, and is described by it; Escape still closes the menu, its tooltip with it.
@@ -38,7 +45,29 @@ export interface MenuSeparator {
   id: string;
 }
 
-export type MenuEntry = MenuItem | MenuSeparator;
+/** One choice in a radio group. */
+export interface MenuRadioOption<V extends string = string> {
+  value: V;
+  /** Sentence case, short: the option's accessible name. */
+  label: string;
+  /** One plain line saying what it does, under the label, which describes the option. */
+  description?: string;
+}
+
+/** A set of options, one of them chosen: role="group" of role="menuitemradio" items (W42). */
+export interface MenuRadioGroup<V extends string = string> {
+  kind: 'radio-group';
+  id: string;
+  /** The group's name, shown above its options. */
+  title: string;
+  options: readonly MenuRadioOption<V>[];
+  /** The chosen option's value. */
+  value: V;
+  /** Runs after the menu has closed and focus is back on its button, when the choice changed. */
+  onChange: (value: V) => void;
+}
+
+export type MenuEntry = MenuItem | MenuSeparator | MenuRadioGroup;
 
 export interface MenuButtonProps {
   /** The button's accessible name and tooltip, and the menu's name. */
@@ -51,10 +80,16 @@ export interface MenuButtonProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-const isItem = (entry: MenuEntry): entry is MenuItem => entry.kind !== 'separator';
+const isItem = (entry: MenuEntry): entry is MenuItem => entry.kind === undefined || entry.kind === 'item';
 
 /** The gap between the button and the panel, in px. */
 const GAP = 4;
+
+/** How close the panel may come to the window's start edge, in px, when it's moved in from there. */
+const EDGE = 8;
+
+/** Everything the arrows move through: items and radio options alike. */
+const FOCUSABLE = '[role="menuitem"], [role="menuitemradio"]';
 
 /** Each open menu: where it is, and how to close it. */
 const openMenus = new Map<() => void, () => Element | null>();
@@ -83,10 +118,12 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
   const menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [up, setUp] = useState(false);
+  // How far the panel is moved in from the window's start edge, which aligning it to the button's end cut off.
+  const [shift, setShift] = useState(0);
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
 
-  const items = () => [...(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+  const items = () => [...(menu.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
 
   const show = useCallback((next: boolean) => {
     setOpen(next);
@@ -100,20 +137,28 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
     focusQuietly(button.current);
   }, [show, button]);
 
-  // On open: below the button unless there's no room there and there is above, then the first item takes focus.
+  // On open: below the button unless there's no room there and there is above, moved in from the
+  // window's start edge if it would cross it, then the chosen radio option, or the first item, takes focus.
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setShift(0);
+      return;
+    }
     const panel = menu.current;
     const trigger = button.current;
     if (panel && trigger) {
-      const height = panel.getBoundingClientRect().height + GAP;
+      const rect = panel.getBoundingClientRect();
+      const height = rect.height + GAP;
       const { top, bottom } = trigger.getBoundingClientRect();
       // Only a button on screen can run out of room; one scrolled out of view opens below, as usual.
       const onScreen = bottom > 0 && top < window.innerHeight;
       setUp(onScreen && window.innerHeight - bottom < height && top >= height);
+      // A button near the start of a narrow window: the panel, aligned to its end, would start off screen.
+      setShift(onScreen && rect.left < EDGE ? EDGE - rect.left : 0);
     }
     // Without scrolling: the menu opens where its button already is, in view.
-    items()[0]?.focus({ preventScroll: true });
+    const list = items();
+    (list.find((item) => item.getAttribute('aria-checked') === 'true') ?? list[0])?.focus({ preventScroll: true });
   }, [open, button]);
 
   // While open, a shortcut can close it (closeMenus).
@@ -180,13 +225,62 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
     }
   };
 
-  const iconRoom = entries.some((entry) => isItem(entry) && entry.icon !== undefined);
+  // Radio options keep an icon's room for the check mark, so labels line up with any items' too.
+  const iconRoom = entries.some((entry) => (isItem(entry) && entry.icon !== undefined) || entry.kind === 'radio-group');
+  const described = entries.some((entry) => entry.kind === 'radio-group' && entry.options.some((option) => option.description !== undefined));
 
   const activate = (item: MenuItem) => {
     if (item.disabled) return;
     closeToButton();
     // In the same event as the click or key, so a copy to the clipboard is still allowed (4: Copy).
     item.onSelect();
+  };
+
+  const choose = (group: MenuRadioGroup, value: string) => {
+    closeToButton();
+    if (value !== group.value) group.onChange(value);
+  };
+
+  const radioGroup = (group: MenuRadioGroup) => {
+    const base = `${menuId}-${group.id}`;
+    return (
+      // Named by its title; the title shown is hidden from assistive technology, which hears the name once.
+      <div key={group.id} role="group" aria-label={group.title} className="menu-group">
+        <div className="menu-group-title" aria-hidden="true">
+          {group.title}
+        </div>
+        {group.options.map((option, index) => {
+          const checked = option.value === group.value;
+          const labelId = `${base}-${index}-label`;
+          const descriptionId = `${base}-${index}-description`;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={checked}
+              tabIndex={-1}
+              className="menu-item menu-radio"
+              aria-labelledby={labelId}
+              aria-describedby={option.description === undefined ? undefined : descriptionId}
+              onClick={() => choose(group, option.value)}
+            >
+              {checked ? <Icon name="checked" /> : <span className="menu-item-icon-room" aria-hidden="true" />}
+              <span className="menu-radio-text">
+                <span className="menu-item-label" id={labelId}>
+                  {option.label}
+                </span>
+                {option.description !== undefined && (
+                  <span className="menu-radio-description" id={descriptionId}>
+                    {option.description}
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -205,10 +299,20 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
         </button>
       </Tooltip>
       {open && (
-        <div ref={menu} id={menuId} className={up ? 'menu up' : 'menu'} role="menu" aria-label={label} onKeyDown={onMenuKeyDown}>
+        <div
+          ref={menu}
+          id={menuId}
+          className={['menu', up && 'up', described && 'described'].filter(Boolean).join(' ')}
+          role="menu"
+          aria-label={label}
+          onKeyDown={onMenuKeyDown}
+          style={shift > 0 ? { right: `${-shift}px` } : undefined}
+        >
           {/* An item with no icon of its own keeps the room for one, so the labels line up. */}
           {entries.map((entry) =>
-            isItem(entry) ? (
+            entry.kind === 'radio-group' ? (
+              radioGroup(entry)
+            ) : isItem(entry) ? (
               <Tooltip key={entry.id} content={entry.disabled ? entry.hint : undefined} relation="description">
                 <button
                   type="button"

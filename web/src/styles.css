@@ -2598,6 +2598,57 @@ mark.match {
 }
 
 /*
+ * A radio group in a menu (W42, View preferences): its title in label type, then its options, the
+ * chosen one with a check mark in the icon's place. An option's line saying what it does wraps under
+ * its label, so the panel is as wide as its content up to 20rem, and never wider than the window
+ * leaves, 16 px each side, with no sideways scroll at 320 px.
+ */
+.menu.described {
+  width: max-content;
+  max-width: min(20rem, calc(100vw - 2 * var(--pw-space-4)));
+}
+
+.menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.menu-group-title {
+  padding: var(--pw-space-1-5) var(--pw-space-2) var(--pw-space-1);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+}
+
+.menu-radio {
+  align-items: flex-start;
+  white-space: normal;
+}
+
+/* The check mark and the icon's room sit on the label's line. */
+.menu-radio > svg,
+.menu-radio > .menu-item-icon-room {
+  margin-top: var(--pw-space-0-5);
+}
+
+.menu-radio-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.menu-radio[aria-checked='true'] .menu-item-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+.menu-radio-description {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/*
  * The conversation (section 4: Conversation): an <ol>, oldest first, 12 px between entries. Text
  * entries have a speaker line; tool calls, two or more in a row, fold into one toggle.
  */

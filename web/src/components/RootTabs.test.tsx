@@ -59,7 +59,7 @@ function sessions() {
     name: 'w-shared',
     cwd: at(WORK, 'api'),
     askedYou: { reason: 'question', excerpt: 'Keep the made-up flag?' },
-    workedIn: [{ key: at(WORK, 'web'), label: 'web', calls: 12, changes: 1, lastAt: minutesAgo(3) }],
+    workedIn: [{ key: at(WORK, 'web'), label: 'web', root: WORK, calls: 12, changes: 1, lastAt: minutesAgo(3) }],
     lastActivityAt: minutesAgo(3),
   });
   const w3 = session({ sessionId: id(4), name: 'w-three', cwd: at(WORK, 'web'), lastActivityAt: minutesAgo(4) });

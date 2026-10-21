@@ -1,6 +1,6 @@
 // The menu button and its menu (docs/design-system.md, 4: Menus): its semantics, keyboard and focus.
 
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { descriptionOf, shownTooltip, tooltipText } from '../test/tooltips.js';
 import { closeMenus, MenuButton, type MenuEntry } from './Menu.js';
@@ -240,5 +240,133 @@ describe('MenuButton', () => {
       closed = closeMenus(document.body);
     });
     expect(closed).toBe(false);
+  });
+});
+
+// A radio group in a menu (W42, View preferences): its semantics, focus on the chosen option, the
+// keyboard through its options, choosing, and the panel kept inside the window.
+describe('MenuButton with a radio group (W42)', () => {
+  function radio(value = 'b') {
+    const changes: { value: string; focused: Element | null }[] = [];
+    const entries: MenuEntry[] = [
+      {
+        kind: 'radio-group',
+        id: 'pick',
+        title: 'Group sessions by',
+        value,
+        options: [
+          { value: 'a', label: 'Alpha', description: 'The first made-up mode.' },
+          { value: 'b', label: 'Beta', description: 'The second made-up mode.' },
+          { value: 'c', label: 'Gamma' },
+        ],
+        onChange: (next) => changes.push({ value: next, focused: document.activeElement }),
+      },
+    ];
+    render(
+      <>
+        <MenuButton label="View preferences" icon="preferences" entries={entries} />
+        <button type="button">After</button>
+      </>,
+    );
+    const button = screen.getByRole('button', { name: 'View preferences' });
+    const options = () => screen.getAllByRole('menuitemradio');
+    return { button, options, changes };
+  }
+
+  const describedBy = (element: Element) => {
+    const id = element.getAttribute('aria-describedby');
+    return id === null ? undefined : document.getElementById(id)?.textContent;
+  };
+
+  it('is a group named by its title, of radio options named by their labels, the chosen one checked, each described by its line', () => {
+    const { button, options } = radio();
+    fireEvent.click(button);
+    const menu = screen.getByRole('menu', { name: 'View preferences' });
+    const group = within(menu).getByRole('group', { name: 'Group sessions by' });
+    expect(options().every((option) => group.contains(option))).toBe(true);
+    expect(options().map((option) => option.getAttribute('aria-label') ?? document.getElementById(option.getAttribute('aria-labelledby') ?? '')?.textContent)).toEqual(['Alpha', 'Beta', 'Gamma']);
+    expect(options().map((option) => option.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false']);
+    expect(options().map(describedBy)).toEqual(['The first made-up mode.', 'The second made-up mode.', undefined]);
+    expect(options().every((option) => option.tabIndex === -1)).toBe(true);
+    // The title shows once, and is heard once, as the group's name.
+    const title = menu.querySelector('.menu-group-title');
+    expect(title?.textContent).toBe('Group sessions by');
+    expect(title?.getAttribute('aria-hidden')).toBe('true');
+    // The chosen one has the check mark; the others keep its room, so the labels line up.
+    expect(options()[1]?.querySelector('svg')).not.toBeNull();
+    expect(options()[0]?.querySelector('svg')).toBeNull();
+    expect(options()[0]?.querySelector('.menu-item-icon-room')?.getAttribute('aria-hidden')).toBe('true');
+    expect(menu.classList.contains('described')).toBe(true);
+  });
+
+  it('focuses the chosen option as it opens, and the arrows, Home and End move through the options, wrapping', () => {
+    const { button, options } = radio('c');
+    fireEvent.click(button);
+    expect(document.activeElement).toBe(options()[2]);
+    fireEvent.keyDown(options()[2]!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(options()[0]);
+    fireEvent.keyDown(options()[0]!, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(options()[2]);
+    fireEvent.keyDown(options()[2]!, { key: 'Home' });
+    expect(document.activeElement).toBe(options()[0]);
+    fireEvent.keyDown(options()[0]!, { key: 'End' });
+    expect(document.activeElement).toBe(options()[2]);
+  });
+
+  it('chooses an option with a click, Enter or Space: the menu closes, focus is back on the button, then onChange runs', () => {
+    const { button, options, changes } = radio();
+    fireEvent.click(button);
+    fireEvent.keyDown(options()[1]!, { key: 'ArrowDown' });
+    // Enter and Space reach a <button> as a click.
+    fireEvent.click(options()[2]!);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(changes).toEqual([{ value: 'c', focused: button }]);
+  });
+
+  it('closes on the chosen option without calling onChange, since nothing changed', () => {
+    const { button, options, changes } = radio();
+    fireEvent.click(button);
+    fireEvent.click(options()[1]!);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    expect(changes).toEqual([]);
+  });
+
+  it('closes on Escape or Tab with focus on the button, choosing nothing', () => {
+    const { button, options, changes } = radio();
+    fireEvent.click(button);
+    fireEvent.keyDown(options()[1]!, { key: 'ArrowDown' });
+    fireEvent.keyDown(options()[2]!, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    fireEvent.click(button);
+    fireEvent.keyDown(options()[1]!, { key: 'Tab' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    expect(changes).toEqual([]);
+  });
+
+  it('moves the panel in from the window’s start edge when aligning it to the button’s end would cut it off there', () => {
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    // The panel would start 40 px off screen; the button is on screen, near the start of a narrow window.
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('role') === 'menu') return { left: -40, right: 248, top: 60, bottom: 200, width: 288, height: 140, x: -40, y: 60, toJSON: () => ({}) } as DOMRect;
+      if (this.getAttribute('aria-haspopup') === 'menu') return { left: 216, right: 248, top: 20, bottom: 52, width: 32, height: 32, x: 216, y: 20, toJSON: () => ({}) } as DOMRect;
+      return real.call(this);
+    });
+    try {
+      const { button } = radio();
+      fireEvent.click(button);
+      // 8 px from the edge: 48 px further in than aligned.
+      expect(screen.getByRole('menu').style.right).toBe('-48px');
+      fireEvent.keyDown(screen.getAllByRole('menuitemradio')[1]!, { key: 'Escape' });
+    } finally {
+      spy.mockRestore();
+    }
+    // A menu that fits stays aligned to its button's end.
+    fireEvent.click(screen.getByRole('button', { name: 'View preferences' }));
+    expect(screen.getByRole('menu').style.right).toBe('');
   });
 });

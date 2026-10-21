@@ -71,11 +71,11 @@ function whatItWants(session: SessionSummary): { content: ReactNode; hint?: stri
 
 export interface SessionRowProps {
   session: SessionSummary;
-  /** The group it's listed under. */
+  /** The group it's listed under: in Needs you and All sessions, its home group as View preferences says (W42). */
   group: Pick<SessionGroup, 'root' | 'key' | 'label'>;
   /**
    * Start line 2 with the group's label: in Needs you and All sessions, which list every group. In a
-   * group's own list there's no label, since every session there started in it (W39).
+   * group's own list there's no label, since the heading names the group.
    */
   showGroup?: boolean;
   /** Opens the session view. Clicking the name, or anywhere on the row that isn't a control, calls it. */

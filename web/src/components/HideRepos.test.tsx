@@ -16,7 +16,7 @@ import { HIDE_LABEL, SHOW_LABEL } from './HideButton.js';
 const ROOT = '/Users/example/code';
 const WORK = '/Users/example/work';
 const key = (name: string, root = ROOT) => `${root}/${name}`;
-const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), label: name, calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
+const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), label: name, root: ROOT, calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
 
 /**
  * Six sessions in four groups, three of which need you. `multi` started in app and worked in old, and

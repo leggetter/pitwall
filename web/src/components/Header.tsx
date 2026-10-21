@@ -1,6 +1,7 @@
 // The app's header (docs/design-system.md, 3): the Repos button below the sidebar breakpoint, the
 // wordmark and the roots on the left; New session, the connection badge, when the list was updated,
-// the theme switch and the keyboard shortcuts button on the right. At 600 px and narrower the right
+// the theme switch, View preferences (W42, ViewPreferences.tsx) and the keyboard shortcuts button on
+// the right. At 600 px and narrower the right
 // side wraps under the wordmark. The roots show home as ~, with the full paths in a tooltip; the
 // update time ticks on the shared clock, with the absolute time in its tooltip.
 //
@@ -29,6 +30,7 @@ import { RootTabs, type RootTabsProps } from './RootTabs.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
+import { ViewPreferences, type ViewPreferencesProps } from './ViewPreferences.js';
 
 export interface HeaderProps {
   state: ConnectionState;
@@ -48,11 +50,13 @@ export interface HeaderProps {
   onShortcuts?: (() => void) | undefined;
   /** With two or more roots, a tab for each, in place of the roots' path (W38). */
   tabs?: RootTabsProps | undefined;
+  /** The View preferences menu, after the theme switch (W42). It shows only when this is given. */
+  preferences?: ViewPreferencesProps | undefined;
 }
 
 export const SHORTCUTS_LABEL = 'Keyboard shortcuts';
 
-export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs }: HeaderProps) {
+export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, preferences }: HeaderProps) {
   const shortcuts = useShortcuts();
   const tabbed = tabs !== undefined && tabs.tabs.length > 1;
   return (
@@ -88,6 +92,7 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
         <ConnectionBadge state={state} />
         {updatedAt && <Timestamp className="updated" at={updatedAt} format="updated" />}
         <ThemeSwitch />
+        {preferences && <ViewPreferences {...preferences} />}
         {onShortcuts && (
           <Tooltip content={SHORTCUTS_LABEL} keys={SHORTCUT_KEYS.shortcuts} relation="label">
             <button
