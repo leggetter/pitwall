@@ -1024,7 +1024,19 @@ The composer in the session view's footer, for interactive sessions. Messages go
 - **Order, top to bottom:**
   1. **The latest exchange:** "Message from pitwall · 5m ago: *status*" (meta, `--pw-text-muted`; the status in `--pw-warning-fg` while waiting, `--pw-danger-fg` if it failed, with no band behind it). Below it, the reply (body, after "Reply:" in `--pw-text-muted`, 500, so it isn't read as the message pitwall sent), at most three lines (two on short windows), scrolling past that.
      - Show the reply once: when the conversation already shows it, the footer shows only the status line. It does when one of Claude's entries since the send has the reply's text, whitespace collapsed: the whole entry, or, for a reply of 40 characters or more, part of one. A reply that's only in the session's `SendMessage` call isn't in its conversation, which shows a tool call by its name, so it stays in the footer.
-  2. **The result of the last send,** as an inline alert: delivered (success), held for approval (warning), may have arrived (warning), refused (danger), not sent (danger), and pitwall's own failure before the relay answered (danger). The text is the relay's status sentence, then the server's detail in code style. `role="status"` for delivered, `role="alert"` otherwise.
+  2. **The result of the last send,** as an inline alert. The text is the relay's status sentence, then the server's detail in code style. `role="status"` for delivered, `role="alert"` otherwise.
+
+     | Result | Tone | Text |
+     |---|---|---|
+     | Delivered | success | "Delivered. It's in the session's inbox: …" |
+     | Held for approval | warning | "Held for approval in that session's own terminal. …" |
+     | May have arrived (the relay's `uncertain`) | warning | "May have reached the session. Check its conversation before sending again." |
+     | Refused | danger | "Refused: that session's settings don't accept messages from other sessions." |
+     | Not sent (the relay's `failed`) | danger | "Not sent." |
+     | pitwall didn't answer, or answered with a server error (5xx) or a success with no result | warning | "pitwall didn't answer, so it may have reached the session. Check its conversation before sending again.", or "pitwall answered with an error (HTTP 502), so …" |
+     | pitwall refused the request (any other status), before the relay ran | danger | "Not sent: pitwall refused the request (HTTP 403)." |
+
+     - **Only what pitwall knows** (5: Errors): with no answer, or a server error, the message may have gone, so it's the uncertain wording and tone rather than danger, which would invite a resend, and each resend is another turn on that session's model.
   3. **The text row:** the textarea (auto-growing, one to eight lines), then the primary md "Send" button (`send` icon), aligned to the textarea's bottom.
   4. **The help line** (meta, `--pw-text-subtle`), linked to the textarea with `aria-describedby`:
      - Left: "⌘ ↵ to send" as key caps (Ctrl on other platforms), then an info button (`InfoTip`) whose name and tooltip are the limits note ("Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts.").
