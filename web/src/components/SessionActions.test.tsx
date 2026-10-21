@@ -4,6 +4,8 @@ import { removePath, stopPath, type IndexSnapshot, type SessionSummary } from '.
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
+import stylesCss from '../styles.css?raw';
+import { block, declarations, withoutComments } from '../test/css.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
 import { descriptionOf } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
@@ -417,6 +419,16 @@ describe('a result that arrives after the view has gone (W31)', () => {
     await release({ status: 200, body: { ok: true } });
     expect(toastMessages()).toEqual(['Removed pitwall-test-bg']);
     expect(document.getElementById('session-view')).toBeNull();
+  });
+});
+
+describe('the confirmations’ left bar (W31)', () => {
+  it('is --pw-danger-fg for Stop and Remove, the pair 2.5 checks at 3:1 on the muted fill, and --pw-warning-indicator for the restart', () => {
+    const css = withoutComments(stylesCss);
+    const shadow = (selector: RegExp) => Object.fromEntries(declarations(block(css, selector)))['box-shadow'];
+    expect(shadow(/\n\.inline-confirm\.danger\s*\{/)).toBe('inset 3px 0 0 var(--pw-danger-fg), inset 0 0 0 1px var(--pw-border-strong)');
+    expect(shadow(/\n\.inline-confirm\.warning\s*\{/)).toBe('inset 3px 0 0 var(--pw-warning-indicator), inset 0 0 0 1px var(--pw-border-strong)');
+    expect(Object.fromEntries(declarations(block(css, /\n\.inline-confirm\s*\{/))).background).toBe('var(--pw-surface-muted)');
   });
 });
 

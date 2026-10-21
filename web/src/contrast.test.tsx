@@ -63,6 +63,8 @@ const PAIRS: Pair[] = [
   edge('--pw-selected-border', NEUTRAL),
   // The bar of a row that needs you, on the row as it is, hovered or open, and the restart confirmation's bar.
   edge('--pw-warning-indicator', ['--pw-surface', '--pw-bg', '--pw-surface-muted', '--pw-surface-hover', '--pw-selected']),
+  // The left bar of the Stop and Remove confirmations, on their muted fill (W31: --pw-danger-solid was 2.20:1 in dark).
+  edge('--pw-danger-fg', ['--pw-surface-muted']),
 ];
 
 /**
