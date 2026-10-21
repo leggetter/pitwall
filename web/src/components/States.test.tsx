@@ -527,6 +527,73 @@ describe("the conversation's errors", () => {
     expect(document.activeElement).toBe(body);
   });
 
+  /** Counts the role="alert" elements added to `body`, each of which a screen reader announces. */
+  function alertsAdded(body: HTMLElement) {
+    const added: Element[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof Element && node.getAttribute('role') === 'alert') added.push(node);
+    });
+    observer.observe(body, { childList: true, subtree: true });
+    return { added, stop: () => observer.disconnect() };
+  }
+
+  it('a Try again that fails the same way again is a new alert, announced again, with focus on its Try again (W31)', async () => {
+    const fetch = server([status(500), status(500), status(500)]);
+    const { body } = await renderView(fetch);
+    const first = alerts(body)[0]!;
+    const said = first.querySelector('.inline-alert-body')?.textContent;
+    const heard = alertsAdded(body);
+    const button = tryAgain(first);
+    button.focus();
+    await act(async () => fireEvent.click(button));
+    const second = alerts(body)[0]!;
+    // The same words, so only a new element is announced.
+    expect(second.querySelector('.inline-alert-body')?.textContent).toBe(said);
+    expect(second).not.toBe(first);
+    expect(second.getAttribute('role')).toBe('alert');
+    expect(document.activeElement).toBe(tryAgain(second));
+    await act(async () => fireEvent.click(tryAgain(second)));
+    expect(alerts(body)[0]).not.toBe(second);
+    expect(document.activeElement).toBe(tryAgain(alerts(body)[0]!));
+    heard.stop();
+    expect(heard.added).toHaveLength(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('leaves focus where it is when Try again fails again with focus elsewhere', async () => {
+    const { body } = await renderView(server([status(500), status(500)]));
+    await act(async () => fireEvent.click(tryAgain(alerts(body)[0]!)));
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('re-announces a refresh that fails the same way only after Try again, never on each poll (W31)', async () => {
+    const view = await renderView(server([page([you(1)]), status(500), status(500), status(500)]));
+    await view.refresh();
+    const first = alerts(view.body)[0]!;
+    const said = first.querySelector('.inline-alert-body')?.textContent;
+    // A later poll that fails the same way leaves the alert as it is.
+    await view.refresh();
+    expect(alerts(view.body)[0]).toBe(first);
+    await act(async () => fireEvent.click(tryAgain(first)));
+    const again = alerts(view.body)[0]!;
+    expect(again).not.toBe(first);
+    expect(again.querySelector('.inline-alert-body')?.textContent).toBe(said);
+    expect(again.className).toContain('end');
+  });
+
+  it('makes a Load earlier that fails the same way again a new alert, with focus on its Try again (W31)', async () => {
+    const { body } = await renderView(server([page([you(3)], 'cursor-1')], [status(500), status(500)]));
+    await act(async () => fireEvent.click(within(body).getByRole('button', { name: 'Load earlier' })));
+    const first = alerts(body)[0]!;
+    const said = first.querySelector('.inline-alert-body')?.textContent;
+    tryAgain(first).focus();
+    await act(async () => fireEvent.click(tryAgain(first)));
+    const second = alerts(body)[0]!;
+    expect(second).not.toBe(first);
+    expect(second.querySelector('.inline-alert-body')?.textContent).toBe(said);
+    expect(document.activeElement).toBe(tryAgain(second));
+  });
+
   it('a failed Try again leaves the alert and an idle Try again', async () => {
     const fetch = server([status(503), 'network']);
     const { body } = await renderView(fetch);
