@@ -116,10 +116,11 @@ export function asConversationPage(body: unknown, sessionId: string): Conversati
 
 function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const { kind, at, text, toolName, toolError, from, truncated } = value as Record<string, unknown>;
+  const { kind, at, text, markdown, toolName, toolError, from, truncated } = value as Record<string, unknown>;
   if (typeof kind !== 'string' || !KINDS.has(kind as ConversationEntryKind) || typeof text !== 'string') return undefined;
   const entry: ConversationEntry = { kind: kind as ConversationEntryKind, text };
   if (typeof at === 'string') entry.at = at;
+  if (markdown === true) entry.markdown = true;
   if (typeof toolName === 'string') entry.toolName = toolName;
   if (typeof toolError === 'boolean') entry.toolError = toolError;
   if (typeof from === 'string') entry.from = from;
@@ -128,13 +129,20 @@ function asEntry(value: unknown): ConversationEntry | undefined {
 }
 
 /**
+ * How much of an entry's text its key holds: less than the 512 characters the server keeps of an
+ * entry once a page's text budget is spent, so one sent in full on one page and cut on the next is
+ * the same entry (W36). The server cuts it as it is, so the shorter is the start of the longer.
+ */
+export const KEY_TEXT_MAX = 500;
+
+/**
  * What identifies an entry across fetches. Entries have no id, so it's their
- * kind, time and sender, plus their text where it can't change. An assistant
- * entry's text grows as more of its message is written, and a tool entry
- * gains its error flag when the result arrives, so neither of those counts.
+ * kind, time and sender, plus the start of their text where it can't change. An
+ * assistant entry's text grows as more of its message is written, and a tool
+ * entry gains its error flag when the result arrives, so neither of those counts.
  */
 export function entryKey(entry: ConversationEntry): string {
-  const text = entry.kind === 'assistant' && entry.at !== undefined ? '' : entry.text;
+  const text = entry.kind === 'assistant' && entry.at !== undefined ? '' : entry.text.slice(0, KEY_TEXT_MAX);
   return [entry.kind, entry.at ?? '', entry.toolName ?? '', entry.from ?? '', text].join('\u0000');
 }
 

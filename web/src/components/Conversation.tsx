@@ -13,7 +13,8 @@
 //   browser drop its scroll position. Nothing counts as the reader's place while it's hidden, and
 //   shown again it goes back to the place they left, or to the bottom if they were there (W29).
 // - A fold stays open or closed across refreshes and "Load earlier" while it has a call it had.
-// - Everything is text, never markup (6.1, rule 16).
+// - Claude's messages and other sessions' are markdown, shown as pitwall's own elements (Markdown.tsx);
+//   your prompts, notices and tool calls are plain text. Nothing is ever HTML (6.1, rule 16).
 //
 // Its states (4: Empty states and Skeletons and spinners, and 5: Errors):
 // - Waiting for the first page: "Loading the conversation…" after --pw-delay-spinner, and what's
@@ -53,6 +54,7 @@ import { Alert, Detail } from './Alert.js';
 import { Badge } from './Badge.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
+import { Markdown } from './Markdown.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 import { useWaiting } from './Waiting.js';
@@ -542,7 +544,15 @@ function Fold({ calls, open, onToggle }: FoldProps) {
 
 const SPEAKERS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'You', assistant: 'Claude' };
 
-/** One entry that isn't folded, as text only: never markup. Line breaks are kept by CSS. */
+/** Claude's messages and other sessions' carry markdown; nothing else is ever rendered as markdown. */
+function isMarkdown(entry: ConversationEntry): boolean {
+  return entry.markdown === true && (entry.kind === 'assistant' || entry.kind === 'cross-session');
+}
+
+/**
+ * One entry that isn't folded. Markdown as pitwall's own elements, and anything else as text, its line
+ * breaks and spaces kept by CSS. Never HTML.
+ */
 function Entry({ entry }: { entry: ConversationEntry }) {
   if (entry.kind === 'tool') {
     return (
@@ -563,6 +573,13 @@ function Entry({ entry }: { entry: ConversationEntry }) {
   }
   const speaker = entry.kind === 'cross-session' ? `From ${plainText(entry.from ?? 'another session')}` : SPEAKERS[entry.kind];
   const time = entry.at !== undefined && clockTime(entry.at) !== undefined ? entry.at : undefined;
+  const body = isMarkdown(entry) ? (
+    <div className="entry-text entry-markdown">
+      <Markdown text={text} />
+    </div>
+  ) : (
+    <p className="entry-text">{text}</p>
+  );
   return (
     <li className={`entry entry-${entry.kind}`}>
       <p className="entry-speaker">
@@ -574,7 +591,7 @@ function Entry({ entry }: { entry: ConversationEntry }) {
           </span>
         )}
       </p>
-      <p className="entry-text">{text}</p>
+      {body}
       {cut}
     </li>
   );

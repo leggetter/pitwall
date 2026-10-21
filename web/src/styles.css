@@ -2578,6 +2578,229 @@ mark.match {
   line-height: var(--pw-leading-s);
 }
 
+/*
+ * Markdown in messages (section 4: Markdown in messages): Claude's messages and other sessions' as
+ * pitwall's own elements. Text wraps as the message's text does; only a code block and a table
+ * scroll sideways, each in its own box. The spacing between blocks is at the end of this part, after
+ * the elements' own margins.
+ */
+.entry-markdown {
+  white-space: normal;
+}
+
+/* A message with too much formatting to show: its text as written, as your prompts are, then a note. */
+.md-as-written {
+  white-space: pre-wrap;
+}
+
+.md-as-written-note {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* Headings are styled text from the type scale, not h1 to h6: the page's outline is pitwall's (6.1, rule 6). */
+.md-heading {
+  font-weight: var(--pw-weight-bold);
+}
+
+.md-h1,
+.md-h2 {
+  font-size: var(--pw-text-l);
+  line-height: var(--pw-leading-l);
+}
+
+/* Bold is 600, the heaviest weight pitwall loads (2.7). */
+.entry-markdown strong {
+  font-weight: var(--pw-weight-bold);
+}
+
+.md-list {
+  margin: 0;
+  padding-inline-start: var(--pw-space-6);
+}
+
+/* Bullets by depth, whatever lists the conversation's own markup puts around them. */
+ul.md-list {
+  list-style-type: disc;
+}
+
+.md-list ul.md-list {
+  list-style-type: circle;
+}
+
+.md-list .md-list ul.md-list {
+  list-style-type: square;
+}
+
+ol.md-list {
+  list-style-type: decimal;
+}
+
+.md-list > li::marker {
+  color: var(--pw-text-muted);
+}
+
+/* A quote: muted text, after a 3 px bar that's a real border, so forced colours keep it. */
+.md-quote {
+  margin: 0;
+  padding-inline-start: var(--pw-space-3);
+  border-inline-start: 3px solid var(--pw-border-strong);
+  color: var(--pw-text-muted);
+}
+
+.md-rule {
+  height: 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--pw-border-strong);
+}
+
+/* Inline code (2.7): mono s on --pw-surface-sunken, or --pw-surface inside another session's message, which is sunken. */
+.md-code-span {
+  padding: 0 var(--pw-space-1);
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
+}
+
+.entry-cross-session .md-code-span {
+  background: var(--pw-surface);
+}
+
+.md-link {
+  border-radius: var(--pw-radius-xs);
+  color: var(--pw-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .md-link:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
+/*
+ * A code block: --pw-surface-muted (--pw-surface inside another session's message), a 1 px border,
+ * the language and a Copy button in a bar above the code, and the code in code style, as written,
+ * scrolling sideways in its own box.
+ */
+.md-code {
+  min-width: 0;
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-muted);
+}
+
+.entry-cross-session .md-code {
+  background: var(--pw-surface);
+}
+
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-md);
+  padding: var(--pw-space-0-5) var(--pw-space-0-5) 0 var(--pw-space-3);
+}
+
+.md-code-language {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-code-bar .copy-button {
+  margin-inline-start: auto;
+}
+
+.md-code-scroll {
+  margin: 0;
+  padding: 0 var(--pw-space-3) var(--pw-space-2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-radius: 0 0 var(--pw-radius-md) var(--pw-radius-md);
+  color: var(--pw-text);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-ligatures: none;
+  tab-size: 4;
+  white-space: pre;
+}
+
+.md-code-scroll code {
+  font-size: inherit;
+}
+
+/*
+ * A table: header cells 600 on --pw-surface-muted, 1 px borders, cells wrapping at spaces only, so a
+ * table too wide for the message scrolls sideways in its own box rather than breaking its words.
+ */
+.md-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.md-table {
+  border-collapse: collapse;
+  overflow-wrap: normal;
+}
+
+.md-table th,
+.md-table td {
+  padding: var(--pw-space-1) var(--pw-space-2);
+  border: 1px solid var(--pw-border-strong);
+  text-align: start;
+  vertical-align: top;
+}
+
+.md-table th {
+  background: var(--pw-surface-muted);
+  font-weight: var(--pw-weight-bold);
+}
+
+.md-table .md-align-left {
+  text-align: left;
+}
+
+.md-table .md-align-center {
+  text-align: center;
+}
+
+.md-table .md-align-right {
+  text-align: right;
+}
+
+/*
+ * Between blocks: 8 px, and 12 px above a heading. Inside a list item, 4 px, so a list nested in an
+ * item stays with it; items are 2 px apart.
+ */
+.entry-markdown > * + *,
+.md-quote > * + * {
+  margin-top: var(--pw-space-2);
+}
+
+.entry-markdown > * + .md-heading,
+.md-quote > * + .md-heading {
+  margin-top: var(--pw-space-3);
+}
+
+.md-list > li > * + * {
+  margin-top: var(--pw-space-1);
+}
+
+.md-list > li + li {
+  margin-top: var(--pw-space-0-5);
+}
+
 /* A tool call: one line of code text, cut with an ellipsis, then its error badge. */
 .entry-tool,
 .tool-call {
