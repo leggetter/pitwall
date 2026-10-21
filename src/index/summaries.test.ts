@@ -429,4 +429,97 @@ describe('buildGroups', () => {
   it('is empty without sessions', () => {
     expect(buildGroups([], home)).toEqual([]);
   });
+
+  describe('with the repos sessions worked in (W34)', () => {
+    /** A session placed by where it started, with the repos it worked in under `root`. */
+    function worked(id: string, key: string, kind: 'git' | 'directory', repos: string[], overrides: Partial<SessionSummary> = {}, sessionRoot = root): PlacedSession {
+      return { ...placed(id, key, overrides, sessionRoot, kind), workedIn: repos.map((repo) => ({ key: repo, root })) };
+    }
+    const view = (groups: ReturnType<typeof buildGroups>) =>
+      groups.map((g) => [g.label, g.kind, g.sessions.map((s) => s.sessionId)] as const).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+
+    it('lists a session under the repo it started in, and under every repo it worked in', () => {
+      const groups = buildGroups(
+        [
+          worked('started-in-alpha', `${root}/alpha`, 'git', [`${root}/beta`, `${root}/gamma`]),
+          worked('only-alpha', `${root}/alpha`, 'git', []),
+          worked('started-in-beta', `${root}/beta`, 'git', []),
+        ],
+        home,
+      );
+      expect(view(groups)).toEqual([
+        ['alpha', 'git', ['only-alpha', 'started-in-alpha']],
+        ['beta', 'git', ['started-in-alpha', 'started-in-beta']],
+        ['gamma', 'git', ['started-in-alpha']],
+      ]);
+      // One session in three groups, each listing it once.
+      for (const group of groups) expect(new Set(group.sessions.map((s) => s.sessionId)).size).toBe(group.sessions.length);
+      expect(groups.filter((g) => g.sessions.some((s) => s.sessionId === 'started-in-alpha')).map((g) => g.label).sort()).toEqual(['alpha', 'beta', 'gamma']);
+    });
+
+    it('gives a repo reached only through workedIn a group of its own, labelled as any other', () => {
+      const groups = buildGroups([worked('s', `${root}/alpha`, 'git', [`${root}/clients/delta`])], home);
+      expect(groups.find((g) => g.key === `${root}/clients/delta`)).toMatchObject({ label: 'clients/delta', kind: 'git', root, sessions: [{ sessionId: 's' }] });
+    });
+
+    it("keeps a session started in the root with no workedIn in the root's group", () => {
+      const groups = buildGroups([worked('in-root', root, 'directory', [])], home);
+      expect(view(groups)).toEqual([['git', 'directory', ['in-root']]]);
+    });
+
+    it("takes a session started in the root that worked in repos out of the root's group, which is left out once empty", () => {
+      const groups = buildGroups([worked('in-root', root, 'directory', [`${root}/alpha`, `${root}/beta`])], home);
+      expect(view(groups)).toEqual([
+        ['alpha', 'git', ['in-root']],
+        ['beta', 'git', ['in-root']],
+      ]);
+      expect(groups.some((g) => g.key === root)).toBe(false);
+    });
+
+    it("keeps the root's group for the root-started sessions that worked in no repo", () => {
+      const groups = buildGroups([worked('moved', root, 'directory', [`${root}/alpha`]), worked('stays', root, 'directory', [])], home);
+      expect(view(groups)).toEqual([
+        ['alpha', 'git', ['moved']],
+        ['git', 'directory', ['stays']],
+      ]);
+    });
+
+    it('keeps a directory below the root that is in no repo as a group of its own', () => {
+      const groups = buildGroups([worked('in-notes', `${root}/notes`, 'directory', []), worked('in-root', root, 'directory', [])], home);
+      expect(view(groups)).toEqual([
+        ['git', 'directory', ['in-root']],
+        ['notes', 'directory', ['in-notes']],
+      ]);
+    });
+
+    it('lists a session started in such a directory there and under the repos it worked in', () => {
+      const groups = buildGroups([worked('in-notes', `${root}/notes`, 'directory', [`${root}/alpha`])], home);
+      expect(view(groups)).toEqual([
+        ['alpha', 'git', ['in-notes']],
+        ['notes', 'directory', ['in-notes']],
+      ]);
+    });
+
+    it("puts a repo's group under the root the repo is in, whichever root the session is under", () => {
+      const other = '/Users/someone/work';
+      const groups = buildGroups(
+        [{ ...placed('s', `${root}/alpha`), workedIn: [{ key: `${other}/service`, root: other }] }],
+        home,
+      );
+      expect(groups.find((g) => g.key === `${other}/service`)).toMatchObject({ root: other, label: 'service', sessions: [{ sessionId: 's' }] });
+    });
+
+    it('sorts the sessions in a repo reached through workedIn as any group, and the groups as before', () => {
+      const groups = buildGroups(
+        [
+          worked('quiet', `${root}/alpha`, 'git', [`${root}/shared`], { lastActivityAt: iso(NOW - 90_000) }),
+          worked('waiting', `${root}/beta`, 'git', [`${root}/shared`], { status: 'waiting', lastActivityAt: iso(NOW - 99_000) }),
+          worked('recent', `${root}/shared`, 'git', [], { lastActivityAt: iso(NOW - 1000) }),
+        ],
+        home,
+      );
+      expect(groups.find((g) => g.key === `${root}/shared`)?.sessions.map((s) => s.sessionId)).toEqual(['waiting', 'recent', 'quiet']);
+      expect(groups.map((g) => g.label)).toEqual(['shared', 'alpha', 'beta']);
+    });
+  });
 });
