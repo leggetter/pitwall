@@ -164,12 +164,20 @@ describe('Markdown: inline', () => {
     expect(root.textContent).toBe('a chart local data:image/png;base64,AAAA');
   });
 
-  it('shows raw HTML, entities and unsupported syntax as the text they are', () => {
+  it('shows raw HTML, entities and unsupported syntax as the text they are', async () => {
     const written = '<b>bold</b> <img src=x onerror="alert(1)"> <script>alert(2)</script> <a href="https://example.com">a</a> &amp; [ref][1] [^1] ~one~';
     const { root } = renderMarkdown(written);
-    expect(root.querySelector('b, img, script, a, del')).toBeNull();
+    expect(root.querySelector('b, img, script, del')).toBeNull();
     expect(root.textContent).toBe(written);
     expect(root.innerHTML).toContain('&lt;script&gt;');
+    // The raw <a> is text. Its URL is a bare one, which ends at the quote (W37), so the one link is
+    // pitwall's own, to just the URL, and the HTML around it is still the text it was written as.
+    const links = [...root.querySelectorAll('a')];
+    expect(links.map((a) => [a.getAttribute('href'), a.textContent, a.getAttribute('target'), a.getAttribute('rel'), a.className])).toEqual([
+      ['https://example.com/', 'https://example.com', '_blank', 'noopener noreferrer', 'md-link'],
+    ]);
+    expect(await tooltipText(links[0]!)).toBe('https://example.com/');
+    expect(descriptionOf(links[0]!)).toBe('https://example.com/');
   });
 });
 
