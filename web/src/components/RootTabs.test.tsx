@@ -478,6 +478,20 @@ describe("each tab's own place", () => {
     expect(viewName()).toBe('p-new');
   });
 
+  it("moves j from the conversation to the next session's conversation, past another tab's hidden view", async () => {
+    renderDashboard();
+    await open('w-one');
+    switchTo('~/personal');
+    await open('p-one');
+    const body = view()!.querySelector<HTMLElement>('.session-view-body[role="tabpanel"]')!;
+    body.focus();
+    fireEvent.keyDown(body, { key: 'j' });
+    await settle();
+    expect(viewName()).toBe('p-three');
+    expect(document.activeElement).toBe(view()!.querySelector('.session-view-body[role="tabpanel"]'));
+    expect(views().find((each) => each.name === 'w-one')?.hidden).toBe(true);
+  });
+
   it("ignores Escape in a hidden view: only the open tab's view closes", async () => {
     renderDashboard();
     await open('w-one');

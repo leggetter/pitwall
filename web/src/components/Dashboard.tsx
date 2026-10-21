@@ -287,7 +287,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const target = focusView.current;
     if (target === undefined || target.id !== openId) return;
     focusView.current = undefined;
-    const conversation = target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('.session-view-body[role="tabpanel"]') : undefined;
+    // The shown view's, not one kept hidden for another root tab (W38).
+    const conversation = target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('section.session-view:not([hidden]) .session-view-body[role="tabpanel"]') : undefined;
     (conversation ?? viewHeading.current)?.focus();
   });
 
