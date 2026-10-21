@@ -14,7 +14,7 @@ import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
-import { APP_DIR, background, exchange, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE } from './fixtures.js';
+import { APP_DIR, background, exchange, ROOT, session, VIEW_BACKGROUND, VIEW_BACKGROUND_DONE, VIEW_INTERACTIVE, WORKED_FROM_ROOT, WORKED_MULTI } from './fixtures.js';
 import { element, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
 import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
@@ -123,6 +123,20 @@ export function SessionViews() {
       >
         <Stubbed>
           <SessionView session={STALE_VIEW} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Worked in other repos"
+        note="Line 3: where it started and the repos it worked in, newest first, as the repo list labels them, with the rule behind an info button. It shows once a scan finds a repo beyond the start; rows stay two lines."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={WORKED_MULTI} placement={{ startedIn: 'pitwall-test-app', workedIn: ['pitwall-test-api', 'pitwall-test-docs'] }} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Worked in repos, started in the root" note="It started in the root itself, so it's listed under the repos it worked in alone." frame="short">
+        <Stubbed>
+          <SessionView session={WORKED_FROM_ROOT} placement={{ startedIn: '~/code', workedIn: ['pitwall-test-api'] }} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="Finished, and it asked you" note="The row's outlined Asked you, with its explanation behind an info button too." frame="short">

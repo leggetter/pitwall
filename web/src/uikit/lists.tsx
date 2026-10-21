@@ -7,8 +7,8 @@ import { useState } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { FinishedSection } from '../components/SessionList.js';
 import { SessionRow } from '../components/SessionRow.js';
-import type { Listed } from '../sessions.js';
-import { APP_DIR, AWKWARD_ROWS, FINISHED_ROWS, group, JOBS_DIR, ROOT, STATE_ROWS, STATUS_ROWS } from './fixtures.js';
+import { listScope, type Listed } from '../sessions.js';
+import { APP_DIR, AWKWARD_ROWS, FINISHED_ROWS, group, JOBS_DIR, ROOT, STATE_ROWS, STATUS_ROWS, WORKED_API_GROUP, WORKED_SNAPSHOT } from './fixtures.js';
 import { Specimen } from './kit.js';
 
 /** Rows all in one group, as a group's own list has them. */
@@ -38,12 +38,13 @@ function Rows({ rows, showGroup = false, openSessionId }: { rows: Listed[]; show
     <div className="session-list uikit-rows">
       <div className="session-list-body">
         <ul className="sessions">
-          {rows.map(({ session, group: shown }) => (
+          {rows.map(({ session, group: shown, startedIn }) => (
             <SessionRow
               key={session.sessionId}
               session={session}
               group={shown}
               showGroup={showGroup}
+              startedIn={startedIn}
               onOpen={(id) => setOpen((current) => (current === id ? undefined : id))}
               isOpen={session.sessionId === open}
             />
@@ -129,6 +130,18 @@ export function SessionRows() {
       </Specimen>
       <Specimen title="Long and awkward text, in Needs you and All sessions">
         <Rows rows={acrossGroups(AWKWARD_ROWS)} showGroup />
+      </Specimen>
+      <Specimen
+        title="A session listed under several repos, in one it worked in"
+        note="pitwall-test-api's list: line 2 starts with where a session started when it's listed here because it worked in this repo (pitwall-test-app; ~/code, the root itself), and screen readers hear “Started in” first. One started here has no label, as in any group. Rows stay two lines."
+      >
+        <Rows rows={listScope(WORKED_SNAPSHOT.groups, { kind: 'group', group: WORKED_API_GROUP }).current} />
+      </Specimen>
+      <Specimen
+        title="Sessions in several repos, in All sessions"
+        note="Each session once, its line 2 naming where it started, or for one started in the root that worked in repos, the repo it touched last."
+      >
+        <Rows rows={listScope(WORKED_SNAPSHOT.groups, { kind: 'all' }).current} showGroup />
       </Specimen>
       <Specimen title="360 px wide" note="The session list's width at 1,200 px. Line 1 stays one line: the title gives way first, then the name." width={360}>
         <Rows rows={acrossGroups(NARROW_ROWS)} showGroup />
