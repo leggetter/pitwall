@@ -16,6 +16,7 @@ import type { RefObject } from 'react';
 import type { ConnectionState } from '../connection.js';
 import { formatRoots, plainText } from '../format.js';
 import { SHORTCUT_KEYS, useShortcuts } from '../shortcuts.js';
+import { Button } from './Button.js';
 import { ConnectionBadge } from './ConnectionBadge.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
@@ -69,16 +70,9 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
         {onNewSession && (
           // Its name is its label, which the tooltip repeats only to show the shortcut.
           <Tooltip content={shortcuts.on ? 'New session' : undefined} keys={SHORTCUT_KEYS.newSession} relation="label">
-            <button
-              type="button"
-              className="button primary md"
-              aria-haspopup="dialog"
-              aria-keyshortcuts={shortcuts.on ? 'n' : undefined}
-              onClick={onNewSession}
-            >
-              <Icon name="add" />
+            <Button variant="primary" icon="add" aria-haspopup="dialog" aria-keyshortcuts={shortcuts.on ? 'n' : undefined} onClick={onNewSession}>
               New session
-            </button>
+            </Button>
           </Tooltip>
         )}
         <ConnectionBadge state={state} />
