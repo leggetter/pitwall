@@ -310,15 +310,16 @@ export interface ConversationEntry {
   /** ISO 8601, when known. */
   at?: string;
   /**
-   * At most 32 KiB, by kind (W36, Phil, 2026-10-21):
+   * At most 32 Ki UTF-16 code units, as `String.length` counts them, by kind
+   * (W36, Phil, 2026-10-21):
    * - 'assistant' and 'cross-session': the markdown as written, with `markdown`
    *   set. A client renders it as text and its own elements, never as HTML.
    * - 'user': the prompt as typed, with nothing stripped.
    * - 'tool': a one-line summary of the call, such as `Bash: npm test` or
    *   `Edit: src/cli.ts`.
    * - 'notice': plain text.
-   * A page carries at most 256 KiB of its entries' text in full, newest entries
-   * first. Entries past that are cut to 512 characters and marked `truncated`.
+   * A page carries at most 256 Ki code units of its entries' text in full, newest
+   * entries first. Entries past that are cut to 512 and marked `truncated`.
    */
   text: string;
   /** True when `text` is markdown: set on 'assistant' and 'cross-session' entries. */
