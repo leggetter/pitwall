@@ -358,42 +358,135 @@ const UNBROKEN = `/Users/example/code/pitwall-test-app/packages/exports/src/jobs
 /**
  * The conversation every session view shows: one of each kind of entry, three tool calls folded with
  * an error, two folded without, one on its own, a reply cut short, a line with no break in it, and
- * markup, which shows as the text it is.
+ * markup, which shows as the text it is. Claude's messages and the other session's are markdown, as
+ * the server sends them (W36).
  */
 export const CONVERSATION: ConversationEntry[] = [
   { kind: 'user', at: ago(30), text: 'Add a retry with backoff to the export job. Keep the existing 30 second timeout.' },
-  { kind: 'assistant', at: ago(29.5), text: "I'll read how the export job runs a batch before changing it." },
+  { kind: 'assistant', at: ago(29.5), text: "I'll read how the export job runs a batch before changing it.", markdown: true },
   { kind: 'tool', at: ago(29), toolName: 'Read', text: 'Read: src/export/job.ts' },
   { kind: 'tool', at: ago(28.8), toolName: 'Grep', text: 'Grep: retry in src/export' },
   { kind: 'tool', at: ago(28), toolName: 'Bash', text: 'Bash: npm test -- export', toolError: true },
   {
     kind: 'assistant',
     at: ago(27),
-    text: 'One test fails before any change: it expects a batch to be written once.\nI kept that, and made a retry replace the batch rather than append to it.',
+    text: 'One test fails before any change: it expects a batch to be written **once**.\nI kept that, and made a retry replace the batch rather than append to it.',
+    markdown: true,
   },
   { kind: 'tool', at: ago(26), toolName: 'Edit', text: 'Edit: src/export/job.ts' },
   { kind: 'tool', at: ago(25.5), toolName: 'Bash', text: `Bash: npx vitest run src/export --reporter=verbose --testNamePattern="retries a failed batch" ${UNBROKEN}` },
-  { kind: 'cross-session', at: ago(20), from: 'pitwall-test-reviewer', text: 'Please log each retry at debug level, with the attempt number.' },
+  { kind: 'cross-session', at: ago(20), from: 'pitwall-test-reviewer', text: 'Please log each retry at `debug` level, with the attempt number.', markdown: true },
   { kind: 'notice', at: ago(18), text: 'Conversation compacted.' },
-  { kind: 'assistant', at: ago(10), text: LONG_REPLY, truncated: true },
+  { kind: 'assistant', at: ago(10), text: LONG_REPLY, truncated: true, markdown: true },
   { kind: 'user', at: ago(8), text: `Does the log line escape <b>tags</b> and <script>alert(1)</script> in a batch name? The test file is ${UNBROKEN}` },
   { kind: 'tool', at: ago(7.5), toolName: 'Bash', text: 'Bash: npm test -- export' },
   { kind: 'user', at: ago(6), text: 'Looks good. Any open questions?' },
-  { kind: 'assistant', at: ago(5), text: 'None.' },
+  { kind: 'assistant', at: ago(5), text: 'None.', markdown: true },
 ];
 
 /** What arrives after the conversation above, for "Jump to latest". */
 export const NEWER_CONVERSATION: ConversationEntry[] = [
   { kind: 'user', at: ago(3), text: 'Then open a pull request for it.' },
   { kind: 'tool', at: ago(2.5), toolName: 'Bash', text: 'Bash: git push -u origin pitwall-test-export-retries' },
-  { kind: 'assistant', at: ago(2), text: 'Pushed. The pull request is open, with the retry tests in its description.' },
+  { kind: 'assistant', at: ago(2), text: 'Pushed. The pull request is open, with the retry tests in its description.', markdown: true },
 ];
 
 /** An older page, for "Load earlier". */
 export const OLDER_CONVERSATION: ConversationEntry[] = [
   { kind: 'user', at: ago(90), text: 'What does the export job do when a batch fails?' },
-  { kind: 'assistant', at: ago(89), text: 'It logs the error and moves on, so a failed batch is lost.' },
+  { kind: 'assistant', at: ago(89), text: 'It logs the error and moves on, so a failed batch is lost.', markdown: true },
 ];
+
+// Markdown in messages (W36). Made up, in the shape of Claude's replies.
+
+/** A message from Claude with every element of the subset in it. */
+export const EVERY_ELEMENT = [
+  '## Export retries',
+  '',
+  'The export job now retries a failed batch **three times**, waiting *1, 4 and 16 seconds*, and ***gives up*** with the last error. ~~It used to retry forever.~~',
+  'A single newline is a line break, as in the terminal. `withRetry()` is inline code, and so is ``a `tick` inside``; an escaped \\*star\\* stays a star.',
+  '',
+  '### What changed',
+  '',
+  '1. `src/export/job.ts` calls `withRetry()`:',
+  '   - each attempt reuses the batch id,',
+  '   - so a half-written batch is replaced.',
+  '2. Tests, with task markers left as text:',
+  '   - [x] a batch that fails once',
+  '   - [ ] a batch that times out',
+  '',
+  '```ts',
+  'export const DELAYS_MS = [1_000, 4_000, 16_000]; // a long line, so the block scrolls sideways on its own, not the page',
+  'for (const delay of DELAYS_MS) await sleep(delay);',
+  '```',
+  '',
+  '| Attempt | Wait | Outcome | Batch file |',
+  '|:--|--:|:-:|:--|',
+  '| 1 | 1 s | failed | `/Users/example/code/pitwall-test-app/exports/batch-0042.csv` |',
+  '| 2 | 4 s | **passed** | the same file, replaced |',
+  '',
+  '> The 30 second timeout is unchanged, as you asked.',
+  '> > A quote inside a quote.',
+  '',
+  '---',
+  '',
+  'See [the retry notes](https://example.com/docs/retries), <https://example.com/changelog>, or https://example.com/export-retries.',
+].join('\n');
+
+/** A long message the server cut short inside a code block: the block runs to the end. */
+export const CUT_IN_CODE = [
+  'Here is the draft for the channel, ready to copy:',
+  '',
+  '```text',
+  'Export retries are merged.',
+  'A failed batch is retried three times, waiting 1, 4 and 16 seconds, and',
+].join('\n');
+
+/** Raw HTML and syntax the renderer doesn't support, all shown as the text it is. */
+export const AS_TEXT = [
+  'Raw HTML is text: <b>not bold</b> <img src=x onerror="alert(1)"> <details><summary>not a summary</summary></details>',
+  '',
+  'So are links to anything but http and https: [a script](javascript:alert(1)), [a file](src/export/job.ts), [data](data:text/html,hi), and <mailto:someone@example.com>. An image is its alt text, never loaded: ![a chart of retries](chart.png).',
+  '',
+  'Setext headings',
+  '===',
+  '',
+  'Reference links [like this][1], footnotes[^1], entities &amp; and a ~single tilde~.',
+].join('\n');
+
+/** A prompt you typed, shown as typed: its indents and blank lines kept, and no markdown. */
+export const TYPED_PROMPT = [
+  'Please post this to the channel exactly as laid out:',
+  '',
+  '    Export retries: merged',
+  '      - three attempts',
+  '      - waits of 1, 4 and 16 s',
+  '',
+  '',
+  '**Not bold**: what you type is shown as you typed it.',
+].join('\n');
+
+/** Your prompt as typed, then Claude's message with every element. */
+export const MARKDOWN_ELEMENTS: ConversationEntry[] = [
+  { kind: 'user', at: ago(12), text: TYPED_PROMPT },
+  { kind: 'assistant', at: ago(11), text: EVERY_ELEMENT, markdown: true },
+];
+
+/** A message cut short in a code block, one whose HTML and other syntax is text, and another session's message in markdown. */
+export const MARKDOWN_EDGES: ConversationEntry[] = [
+  { kind: 'assistant', at: ago(10), text: CUT_IN_CODE, markdown: true, truncated: true },
+  { kind: 'assistant', at: ago(9), text: AS_TEXT, markdown: true },
+  {
+    kind: 'cross-session',
+    at: ago(8),
+    from: 'pitwall-test-reviewer',
+    text: 'Looks good. Could you also log **each** retry with its `attempt`?\n\n```sh\nnpm test -- export\n```',
+    markdown: true,
+  },
+];
+
+/** All of markdown in messages, as one conversation. */
+export const MARKDOWN_CONVERSATION: ConversationEntry[] = [...MARKDOWN_ELEMENTS, ...MARKDOWN_EDGES];
 
 /** What the terminal shows once attached: made up, with colours, in the shape of Claude Code's output. */
 export const TERMINAL_OUTPUT =
