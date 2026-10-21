@@ -98,6 +98,11 @@ interface ConversationState {
   failure?: LoadFailure;
   /** Try again on the newest page is out: its button is busy. */
   retrying: boolean;
+  /**
+   * How many times Try again has failed, for the newest page and for Load earlier: each alert is keyed
+   * by its count, so a failure that says the same as the last one is a new alert, and announced again.
+   */
+  attempts: { newest: number; earlier: number };
 }
 
 /** Fetches one page of the session's conversation: the newest, or the one before `before`. Never rejects. */
@@ -183,7 +188,10 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     unseen: 0,
     gap: false,
     retrying: false,
+    attempts: { newest: 0, earlier: 0 },
   }));
+  // Which alert's Try again had focus when its attempt failed again: the new alert's button takes it.
+  const refocus = useRef<'newest' | 'earlier' | undefined>(undefined);
   // The newest page, while it waits behind "Jump to latest" because it doesn't meet what's shown (`gap`).
   const waitingPage = useRef<ConversationPage | undefined>(undefined);
   // The state as last committed, for the async loads to build on.
@@ -231,7 +239,8 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     leaveBar();
     epoch.current += 1;
     scrollIntent.current = { kind: 'bottom' };
-    commit(withBefore({ status: 'ready', entries: waiting.entries, earlier: 'idle', reloaded: false, unseen: 0, gap: false, retrying: false }, waiting.before));
+    const { attempts } = stateRef.current;
+    commit(withBefore({ status: 'ready', entries: waiting.entries, earlier: 'idle', reloaded: false, unseen: 0, gap: false, retrying: false, attempts }, waiting.before));
     return true;
   }, [commit, leaveBar]);
 
@@ -254,6 +263,12 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     const active = document.activeElement;
     if (element && active instanceof Element && active.closest('.conversation-alert') && element.contains(active)) element.focus({ preventScroll: true });
   }, []);
+
+  /** Whether focus is inside the alert for the newest page's failure, or Load earlier's. */
+  const focusIn = (which: 'newest' | 'earlier') => {
+    const active = document.activeElement;
+    return active instanceof Element && scroller.current?.contains(active) === true && active.closest(`.conversation-alert.${which}`) !== null;
+  };
 
   const sync = useCallback(() => {
     const element = scroller.current;
@@ -303,7 +318,16 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
           scrollIntent.current = { kind: options.reloaded === true ? 'top' : 'bottom' };
           commit(
             withBefore(
-              { status: 'ready', entries: result.page.entries, earlier: 'idle', reloaded: options.reloaded === true, unseen: 0, gap: false, retrying: false },
+              {
+                status: 'ready',
+                entries: result.page.entries,
+                earlier: 'idle',
+                reloaded: options.reloaded === true,
+                unseen: 0,
+                gap: false,
+                retrying: false,
+                attempts: current.attempts,
+              },
               result.page.before,
             ),
           );
@@ -319,13 +343,17 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
         if (atBottom.current && current.entries.length > 0) scrollIntent.current = { kind: 'bottom' };
         commit(withFailure({ ...current, status: 'missing', retrying: false }, 'failure', undefined));
       } else if (result.kind === 'failed') {
+        // A Try again that failed: its alert is a new one, announced again even when it says the same.
+        const again = current.retrying;
+        if (again && focusIn('newest')) refocus.current = 'newest';
+        const attempts = again ? { ...current.attempts, newest: current.attempts.newest + 1 } : current.attempts;
         if (current.entries.length > 0) {
           // A refresh that fails keeps what's on screen, and says it may be out of date, at the end,
           // where the reader at the bottom sees it. The next change of activity, or Try again, tries again.
           if (atBottom.current) scrollIntent.current = { kind: 'bottom' };
-          commit(withFailure({ ...current, retrying: false }, 'failure', failureOf(result)));
+          commit(withFailure({ ...current, retrying: false, attempts }, 'failure', failureOf(result)));
         } else {
-          commit(withFailure({ ...current, status: 'failed', retrying: false }, 'failure', failureOf(result)));
+          commit(withFailure({ ...current, status: 'failed', retrying: false, attempts }, 'failure', failureOf(result)));
         }
       } else {
         // On 'unauthorized' the app has already replaced the dashboard with the token notice.
@@ -358,7 +386,11 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     } else {
       // A 404 here means the transcript has gone: it's still a failed read, never "nothing earlier".
       const failure = result.kind === 'failed' ? failureOf(result) : { status: 404 };
-      commit(withFailure({ ...latest, earlier: 'failed' }, 'earlierFailure', failure));
+      // From the alert's Try again: a new alert, announced again even when it says the same.
+      const again = latest.earlierFailure !== undefined;
+      if (again && focusIn('earlier')) refocus.current = 'earlier';
+      const attempts = again ? { ...latest.attempts, earlier: latest.attempts.earlier + 1 } : latest.attempts;
+      commit(withFailure({ ...latest, earlier: 'failed', attempts }, 'earlierFailure', failure));
     }
   }, [loader, commit, loadNewest, keepFocus]);
 
@@ -378,6 +410,10 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
   // Follow new entries only when already at the bottom; keep the place when older ones arrive above.
   // A notice or an alert at the end, at the bottom, is followed the same way.
   useLayoutEffect(() => {
+    // A Try again that failed again: its alert was replaced, so its button's focus goes to the new one's.
+    const again = refocus.current;
+    refocus.current = undefined;
+    if (again) scroller.current?.querySelector<HTMLElement>(`.conversation-alert.${again} button`)?.focus();
     const intent = scrollIntent.current;
     const element = scroller.current;
     scrollIntent.current = undefined;
@@ -643,7 +679,13 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
       hidden={hidden}
     >
       {state.status === 'failed' && (
-        <Alert tone="danger" role="alert" className="conversation-alert" actions={<TryAgain busy={state.retrying} onClick={retry} />}>
+        <Alert
+          key={`newest-${state.attempts.newest}`}
+          tone="danger"
+          role="alert"
+          className="conversation-alert newest"
+          actions={<TryAgain busy={state.retrying} onClick={retry} />}
+        >
           {failedText('load the conversation', state.failure)}
         </Alert>
       )}
@@ -655,9 +697,10 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
       {state.earlierFailure !== undefined ? (
         // In Load earlier's place, until it works.
         <Alert
+          key={`earlier-${state.attempts.earlier}`}
           tone="warning"
           role="alert"
-          className="conversation-alert"
+          className="conversation-alert earlier"
           actions={<TryAgain busy={state.earlier === 'loading'} onClick={() => void loadEarlier()} />}
         >
           {failedText('load earlier messages', state.earlierFailure)}
@@ -682,7 +725,13 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
       )}
       {entries.length > 0 && state.failure !== undefined && (
         // At the end, where new entries would have come: what's shown is kept.
-        <Alert tone="warning" role="alert" className="conversation-alert end" actions={<TryAgain busy={state.retrying} onClick={retry} />}>
+        <Alert
+          key={`newest-${state.attempts.newest}`}
+          tone="warning"
+          role="alert"
+          className="conversation-alert newest end"
+          actions={<TryAgain busy={state.retrying} onClick={retry} />}
+        >
           {failedText('refresh the conversation', state.failure, ', so it may be out of date.')}
         </Alert>
       )}
