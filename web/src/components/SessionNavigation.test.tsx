@@ -299,6 +299,8 @@ describe('focus', () => {
   });
 
   it('leaves focus alone when the back button closes the view while focus is elsewhere', async () => {
+    // In three columns, where the filter field beside the view can have focus.
+    setWidth(1280);
     const { history } = renderDashboard();
     await open('demo-a');
     const filter = screen.getByRole('searchbox', { name: 'Filter sessions' });
@@ -307,6 +309,86 @@ describe('focus', () => {
     await nextFrame();
     expect(view()).toBeUndefined();
     expect(document.activeElement).toBe(filter);
+  });
+});
+
+/** Whether `element` is inside an inert subtree: the browser gives it neither focus nor clicks. */
+const inInert = (element: Element) => element.closest('[inert]') !== null;
+const repoNav = () => screen.queryByRole('navigation', { name: 'Repos' });
+const headerButton = (name: string) => within(document.querySelector<HTMLElement>('.app-header')!).getByRole('button', { name });
+
+describe('over the list, below 1,200 px', () => {
+  it('covers the session list, which is inert while the view is open, and leaves the header usable', async () => {
+    setWidth(1100);
+    renderDashboard();
+    expect(inInert(rowButton('demo-b'))).toBe(false);
+    await open('demo-a');
+    expect(screen.getByRole('main').hasAttribute('inert')).toBe(true);
+    expect(inInert(rowButton('demo-b'))).toBe(true);
+    expect(inInert(screen.getByRole('searchbox', { name: 'Filter sessions' }))).toBe(true);
+    // From 1,000 px the repo list is clear of the view, and stays usable.
+    expect(inInert(repoNav()!)).toBe(false);
+    // The header is above the view, never under it.
+    for (const name of ['New session', 'Keyboard shortcuts', 'System theme']) expect(inInert(headerButton(name))).toBe(false);
+    expect(inInert(view()!)).toBe(false);
+    fireEvent.click(within(view()!).getByRole('button', { name: 'Close' }));
+    await nextFrame();
+    expect(view()).toBeUndefined();
+    expect(document.querySelector('[inert]')).toBeNull();
+    expect(document.activeElement).toBe(rowButton('demo-a'));
+  });
+
+  it('covers part of the repo list too below 1,000 px, which is inert as well', async () => {
+    setWidth(950);
+    renderDashboard();
+    await open('demo-a');
+    expect(inInert(repoNav()!)).toBe(true);
+    expect(inInert(rowButton('demo-b'))).toBe(true);
+    setWidth(1000);
+    expect(inInert(repoNav()!)).toBe(false);
+    expect(inInert(rowButton('demo-b'))).toBe(true);
+  });
+
+  it('below 900 px, covers the list, and the header still opens the drawer, whose repo list is usable', async () => {
+    setWidth(375);
+    renderDashboard();
+    await open('demo-a');
+    expect(inInert(rowButton('demo-b'))).toBe(true);
+    fireEvent.click(headerButton('Repos'));
+    await settle();
+    const drawer = screen.getByRole('dialog', { name: 'Repos' });
+    expect(inInert(drawer)).toBe(false);
+    expect(drawer.contains(document.activeElement)).toBe(true);
+  });
+
+  it('makes nothing inert in three columns, where the view is a column beside the list', async () => {
+    setWidth(1280);
+    renderDashboard();
+    await open('demo-a');
+    expect(document.querySelector('[inert]')).toBeNull();
+  });
+
+  it("moves focus that was in what the view comes to cover to the view's heading, as when the window narrows past 1,200 px", async () => {
+    setWidth(1280);
+    renderDashboard();
+    await open('demo-a');
+    rowButton('demo-b').focus();
+    expect(document.activeElement).toBe(rowButton('demo-b'));
+    setWidth(1100);
+    await settle();
+    expect(document.activeElement).toBe(heading());
+    expect(viewName()).toBe('demo-a');
+  });
+
+  it('still changes the session with j and k, with focus on the heading', async () => {
+    setWidth(1024);
+    renderDashboard();
+    await open('demo-a');
+    fireEvent.keyDown(heading(), { key: 'j' });
+    await settle();
+    expect(viewName()).toBe('demo-b');
+    expect(document.activeElement).toBe(heading());
+    expect(inInert(rowButton('demo-b'))).toBe(true);
   });
 });
 
@@ -335,6 +417,8 @@ describe('↑ and ↓', () => {
   });
 
   it('on a row with the view open, also show that session, with focus left in the list', async () => {
+    // In three columns: below 1,200 px the view covers the list, which is inert, so focus can't be there.
+    setWidth(1280);
     const { fetch } = renderDashboard();
     await open('demo-a');
     rowButton('demo-a').focus();
@@ -363,6 +447,7 @@ describe('↑ and ↓', () => {
   });
 
   it("do nothing while the open session's message box has a draft, on a row or in the header, as j and k do", async () => {
+    setWidth(1280);
     const { history } = renderDashboard();
     await open('demo-a');
     const box = within(view()!).getByRole('textbox', { name: 'Message to demo-a' });

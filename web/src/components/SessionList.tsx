@@ -60,6 +60,8 @@ export interface SessionListProps {
   /** ↑ or ↓ on a row's name: the next or previous row in the list as shown. */
   onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   openSessionId?: string | undefined;
+  /** Covered by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
+  inert?: boolean;
 }
 
 /** "4 sessions", or "2 of 4 sessions" while the filters hide some, then the need-you badge or "Nothing needs you". */
@@ -152,6 +154,7 @@ export function SessionList({
   onOpen,
   onStep,
   openSessionId,
+  inert = false,
 }: SessionListProps) {
   const headingId = useId();
   const main = useRef<HTMLElement>(null);
@@ -179,6 +182,7 @@ export function SessionList({
       onPointerLeave={() => setPointerInside(false)}
       onFocus={() => setFocusInside(true)}
       onBlur={onBlur}
+      inert={inert || undefined}
     >
       {alerts && <div className="session-list-alerts">{alerts}</div>}
       <div className="session-list-head">

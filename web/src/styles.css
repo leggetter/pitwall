@@ -116,22 +116,37 @@ textarea {
   position: relative;
 }
 
+/*
+ * The columns are placed by name, so the session view over the list (below) can share their row
+ * rather than being placed after them.
+ */
 .columns {
   grid-area: columns;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   /* One row, the window's height less the header's, whatever a column holds: the columns scroll instead. */
   grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: 'list';
   min-height: 0;
 }
 
 .app[data-layout='sidebar'] .columns {
   grid-template-columns: var(--pw-sidebar-w) minmax(0, 1fr);
+  grid-template-areas: 'repos list';
 }
 
 /* The session view's column takes the width its pane has: see .session-pane below. */
 .app[data-layout='three-columns'] .columns {
   grid-template-columns: var(--pw-sidebar-w) minmax(var(--pw-list-min-w), 1fr) auto;
+  grid-template-areas: 'repos list view';
+}
+
+.columns > .repo-list {
+  grid-area: repos;
+}
+
+.columns > .session-list {
+  grid-area: list;
 }
 
 /*
@@ -149,6 +164,7 @@ textarea {
  */
 .app[data-layout='three-columns'] .session-pane {
   position: relative;
+  grid-area: view;
   display: flex;
   width: var(--pw-panel-w);
   min-width: 0;
@@ -173,6 +189,7 @@ textarea {
     overflow-y: visible;
   }
 
+  /* The session view's column sticks to the top of the window, one window tall; so does the view over the list (below). */
   .app[data-layout='three-columns'] .session-pane {
     position: sticky;
     top: 0;
@@ -759,11 +776,6 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Over the list, the session view starts below the strip, so the strip shows in every layout. */
-.app:has(> .app-strip) .session-view.overlay {
-  top: var(--pw-strip-h);
 }
 
 .link-button.app-strip-link {
@@ -1701,8 +1713,9 @@ mark.match {
 /*
  * The session view (sections 3 and 4): a column of the header, the actions' confirmation, the tabs,
  * the body, which is all that scrolls, and for an interactive session the footer with the message box.
- * In the third column from 1,200 px; below that, fixed over the right of the session list, as wide as
- * the panel or the app, whichever is less (100cqw is the app's width: it's the query container).
+ * In the third column from 1,200 px. Below that, over the right of the columns, in their row, so it
+ * starts below the header and the app strip, whatever their height: as wide as the panel or the app,
+ * whichever is less. What it covers is inert while it's open (Dashboard.tsx).
  */
 .session-view {
   display: flex;
@@ -1711,14 +1724,25 @@ mark.match {
 }
 
 .session-view.overlay {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
   z-index: var(--pw-z-panel);
-  width: min(var(--pw-panel-w), 100vw);
-  width: min(var(--pw-panel-w), 100cqw);
+  grid-area: 1 / 1 / 2 / -1;
+  justify-self: end;
+  width: min(var(--pw-panel-w), 100%);
+  min-width: 0;
+  min-height: 0;
   box-shadow: var(--pw-shadow-overlay);
+}
+
+/* On a short window, where the page scrolls as a whole, it sticks to the top of the window, one window tall, as the third column does. */
+@media (max-height: 480px) {
+  .session-view.overlay {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    height: 100dvh;
+  }
 }
 
 /* Sliding in from the right as it opens over the list; not when the window crosses 1,200 px. */

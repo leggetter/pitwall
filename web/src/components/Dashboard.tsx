@@ -1,6 +1,7 @@
 // The app (docs/design-system.md, 3): the header, then three columns, the repo list, the session list
 // and the session view. The page doesn't scroll; each column does. Below 1,200 px the session view
-// overlays the session list, and below 900 px the repo list is a drawer opened from the header.
+// overlays the session list, below the header, and what it covers is inert while it's open; below
+// 900 px the repo list is a drawer opened from the header.
 //
 // The session view is always rendered in the same place, the third column's pane, whatever the
 // layout: CSS takes it out of the grid and over the list below 1,200 px. So crossing 1,200 px with a
@@ -23,7 +24,8 @@
 // they act only on this dashboard's keys, never over a dialog or the repo drawer, and only while
 // they're on. One that moves focus closes an open menu first.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
 import { formatRoots, plainText } from '../format.js';
@@ -120,7 +122,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const source = view.lastPoll?.source ?? snapshot?.source;
   const toasts = useToastStack();
   const app = useRef<HTMLDivElement>(null);
-  const { layout, compact } = useLayout(app);
+  const { layout, compact, overlayCoversRepos } = useLayout(app);
   const [selection, choose] = useSelection(snapshot, { navigation, storage });
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   // Urgency, Recent or Name, for every selection.
@@ -164,6 +166,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   }, [allSessions]);
   const listedOpen = openId === undefined ? undefined : allSessions.find((session) => session.sessionId === openId);
   const shownOpen = listedOpen ?? (openId === undefined ? undefined : known.current.get(openId));
+  // Below 1,200 px the open session's view covers the session list, and below 1,000 px part of the
+  // repo list beside it too (3: Session view). What it covers is inert while it's open, so nothing
+  // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
+  const overlaid = layout !== 'three-columns' && openId !== undefined;
+  const reposCovered = overlaid && overlayCoversRepos;
   // The New session dialog, and the session it started, opened once it's listed.
   const [newSession, setNewSession] = useState(false);
   const openStarted = useCallback((session: SessionSummary) => opened.open(session.sessionId), [opened.open]);
@@ -180,6 +187,22 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const conversation = target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('.session-view-body[role="tabpanel"]') : undefined;
     (conversation ?? viewHeading.current)?.focus();
   });
+
+  // Focus in what the view has just covered, as when the back button opens it or the window narrows
+  // past 1,200 px, would be lost as that goes inert: it moves to the view's heading instead. Before
+  // the browser's own fix-up, which would put it on the page.
+  useLayoutEffect(() => {
+    if (!overlaid) return;
+    const active = document.activeElement;
+    const covered = active instanceof Element && (active.closest('.session-list') !== null || (reposCovered && active.closest('.columns > .repo-list') !== null));
+    if (covered && app.current?.contains(active)) viewHeading.current?.focus();
+  }, [overlaid, reposCovered]);
+
+  /**
+   * The session list's heading, where focus goes when what had it goes away (a dismissed toast, the
+   * drawer closing), or the view's heading while the view covers the list.
+   */
+  const focusList = () => (overlaid ? viewHeading.current : listHeading.current)?.focus();
 
   /** The session list's row buttons, in the order shown, without those in a collapsed Finished section. */
   const rowButtons = useCallback(
@@ -314,18 +337,18 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   useEffect(() => {
     if (drawerOpen || !focusHeading.current) return;
     focusHeading.current = false;
-    listHeading.current?.focus();
+    focusList();
   }, [drawerOpen]);
 
   // `/`: the filter field. Below 1,200 px the view covers the list and its filter, so it closes first,
-  // as Close would, unless the message box has a draft; focus goes to the field, not the row.
+  // as Close would, unless the message box has a draft; focus goes to the field, not the row. The
+  // close is applied at once, so the list is no longer inert when the field takes focus.
   const focusFilter = (root: HTMLElement): boolean => {
     const field = filterField.current;
     if (!field) return false;
-    const covered = openId !== undefined && layout !== 'three-columns';
-    if (covered && draft.current) return false;
+    if (overlaid && draft.current) return false;
     closeMenus(root);
-    if (covered) opened.close();
+    if (overlaid) flushSync(() => opened.close());
     field.focus();
     try {
       field.setSelectionRange(field.value.length, field.value.length);
@@ -564,6 +587,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       onSelect={(next) => select(next, from)}
       autoFocus={from === 'drawer'}
       skeletons={waiting.shown}
+      inert={from === 'list' && reposCovered}
     />
   );
 
@@ -666,6 +690,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             onOpen={openSession}
             onStep={stepFromRow}
             openSessionId={openId}
+            inert={overlaid}
           />
         </HighlightContext.Provider>
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
@@ -691,8 +716,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 
-      {/* Last, so it's above everything; focus that a dismissed toast had goes to the list's heading. */}
-      <ToastRegion {...toasts.region} onFocusLost={() => listHeading.current?.focus()} />
+      {/* Last, so it's above everything; focus that a dismissed toast had goes to the list's heading, or the view's while it covers the list. */}
+      <ToastRegion {...toasts.region} onFocusLost={focusList} />
     </div>
     </ToastContext.Provider>
   );

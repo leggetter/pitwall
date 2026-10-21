@@ -508,14 +508,15 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 
 | Name | Query | What changes |
 |---|---|---|
-| **three columns** | `(min-width: 1200px)` | The session view is the third column. Below it, the view overlays the session list |
+| **three columns** | `(min-width: 1200px)` | The session view is the third column. Below it, the view overlays the session list, below the header, and the list is inert while it's open |
+| **overlay clears the sidebar** | `(min-width: 1000px)`, from `layout.ts` | Below it, in the sidebar layout, the view over the list reaches into the repo list, which is inert while it's open too. 1,000 px is `--pw-sidebar-w` plus `--pw-panel-w` |
 | **sidebar** | `(min-width: 900px)` | The repo list sits beside the session list. Below it, the repo list is a drawer opened from the header |
 | **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark; the session list's header wraps; the overlay session view is full width, with Back; toasts are full width |
 | **short** | `(max-height: 760px)` | The session view's footer padding tightens and the latest reply shows two lines, not three |
-| **low** | `(max-height: 480px)` | The page scrolls as a whole, header and all, so the lists keep their room on a phone held sideways or at 200 % zoom on a laptop. The session view's column sticks to the top of the window, one window tall |
+| **low** | `(max-height: 480px)` | The page scrolls as a whole, header and all, so the lists keep their room on a phone held sideways or at 200 % zoom on a laptop. The session view, as the third column or over the list, sticks to the top of the window, one window tall |
 
 - **The shell follows the app's width, not the window's:**
-  - `web/src/layout.ts` measures `.app` and sets `data-layout` on it to `three-columns`, `sidebar` or `drawer`, from the three columns and sidebar rows above. The CSS reads `data-layout`, so the columns and the components that change with them (the session view's semantics, the drawer) can't disagree.
+  - `web/src/layout.ts` measures `.app` and sets `data-layout` on it to `three-columns`, `sidebar` or `drawer`, from the three columns and sidebar rows above. The CSS reads `data-layout`, so the columns and the components that change with them (the session view's semantics, the drawer) can't disagree. It also says when the view over the list reaches into the repo list (the 1,000 px row), for which of them is inert.
   - It also says whether the app is compact (600 px or narrower), for the session view's markup: Back to sessions takes Close's place there. It changes state only at a breakpoint, so resizing doesn't re-render the app at every pixel.
   - The compact rule is a container query: `.app` is `container: pitwall / inline-size`, and the header uses `@container pitwall (max-width: 600px)`.
   - The app spans the window, so this is the window's width. In the `#uikit` gallery, a frame of a set width gets that width's layout, so each layout can be shown at any window width. The gallery's stages are `pitwall` containers too.
@@ -738,9 +739,13 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - The session list stays interactive and keeps its scroll position.
   - With nothing open, the column stays and shows the "Select a session" empty state, so the layout doesn't jump. While a `?session=` from the URL waits for the first snapshot, the column shows the view's waiting state (below).
 - **Below 1,200 px: over the session list.**
-  - Fixed to the right edge, `width: min(var(--pw-panel-w), 100cqw)` (`100cqw` is the app's width, which in the app is the window's), `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right when it opens.
-  - It's non-modal: no backdrop, and the visible part of the lists stays usable.
+  - At the right edge of the columns, in their grid row, so it starts below the header, and the app strip while that shows, whatever their height: `width: min(var(--pw-panel-w), 100%)` of the app's width, `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right when it opens. The header is never under it, so New session, the connection badge, "updated", the theme switch and the keyboard shortcuts button are always there (coordinator, W31).
+  - **What it covers is `inert` while it's open,** so nothing hidden can take focus or a click: the session list always, and the repo list beside it below 1,000 px (`--pw-sidebar-w` plus `--pw-panel-w`), where the view reaches into it. From 1,000 to 1,199 px the repo list is clear of it and stays usable, and so does the repo drawer, which opens over it from the header. A list it covers only in part is inert too: its controls at the right, such as the chips and Sort, are under the view.
+  - `j` and `k` still change the session it shows, as ↑ and ↓ in its header do. Close, Back, Escape and `/` close it, and the list is usable again.
+  - Focus in what it comes to cover, as when the window narrows past 1,200 px or the back button opens it, moves to its heading before the browser would drop it on the page.
+  - It's a non-modal dialog with no backdrop (6.1, item 7): the header, and a repo list it doesn't reach, stay usable beside it.
   - At ≤ 600 px it's full width, with a "Back to sessions" ghost button (`back` icon) at the start of its header in place of the close icon.
+  - On a short window (the low row in 2.12), it sticks to the top of the window, one window tall, as the third column does.
 - **Divider** (three columns only, with or without a session open):
   - An 8 px hit area along the view's left edge, with a 1 px `--pw-border` line at the edge; on hover, focus or while dragging the line becomes 2 px `--pw-focus`, which is the focus indicator, so there's no ring. The hit area is on the view's side, over its 16 px gutter, so it never covers the list's scrollbar.
   - `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (the view's width in px, as shown), `aria-valuemin`, `aria-valuemax`, `aria-label="Resize the session view"`, `tabindex="0"`.
@@ -758,7 +763,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ### App strip and page alerts
 
 - **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert. Today that's one: the relay is off until restart, which the snapshot's `relayOff` says. See [Alerts and banners](#alerts-and-banners).
-  - Below 1,200 px the session view over the list starts just below the strip, so the strip shows in every layout.
+  - Below 1,200 px the session view over the list starts below the header, which is below the strip, so both show in every layout.
 - **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert and "Lost the connection". "Started *name*" is a [toast](#toasts).
 
 ---
@@ -1185,7 +1190,7 @@ For a destructive or surprising action in the session view, without a dialog.
 - **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-md`, `--pw-toast-w` wide, padding 8 px.
   - A 28 px icon tile (`--pw-<tone>-tint` with `inset 0 0 0 1px var(--pw-<tone>-border)`, `--pw-radius-sm`, a 16 px icon in `--pw-<tone>-tint-fg`): `success`, `info`, or `error` on the danger tokens.
   - The message (m 14/20, 500), 12 px after the tile, as text.
-  - A ghost sm `close` button, named "Dismiss" by its tooltip. Focus it had goes to the next toast's Dismiss, or the one before, or the session list's heading.
+  - A ghost sm `close` button, named "Dismiss" by its tooltip. Focus it had goes to the next toast's Dismiss, or the one before, or the session list's heading (the view's, while the view covers the list).
 - **Timing:**
   - Success and info toasts dismiss after `--pw-toast-timeout` (4 s). The time stops while the pointer is over the stack or focus is inside it, and goes on from where it was.
   - Error toasts stay until dismissed.
@@ -1394,10 +1399,11 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - The filter is in `role="search"`.
 7. **The session view's semantics:**
    - As the third column, a `<section aria-labelledby>` region.
-   - In overlay mode, `role="dialog"` with `aria-modal="false"`, because the list stays usable.
+   - In overlay mode, `role="dialog"` with `aria-modal="false"`, because the header, and a repo list it doesn't reach, stay usable. What it covers is `inert` instead (see [Session view](#session-view)).
 8. **Focus management:**
-   - Opening a session from a row (click or Enter) moves focus to the view's heading, and so does opening the open session's row again. Closing it (Close, Back or Escape) returns focus to that session's row button, waiting a frame below 1,200 px so the row exists again, or to the session list's heading when the row isn't shown (filtered out, or in a collapsed Finished section).
-   - Opening from the URL or the back button takes no focus. Closing by the back button returns focus to the row only when it was in the view.
+   - Opening a session from a row (click or Enter) moves focus to the view's heading, and so does opening the open session's row again. Closing it (Close, Back or Escape) returns focus to that session's row button, waiting a frame below 1,200 px so the row exists again and the list is no longer inert, or to the session list's heading when the row isn't shown (filtered out, or in a collapsed Finished section).
+   - Opening from the URL or the back button takes no focus, unless focus was in what the view covers below 1,200 px, which goes inert: then it moves to the view's heading. Closing by the back button returns focus to the row only when it was in the view.
+   - Where focus would go to the session list's heading (a dismissed toast, a choice in the drawer), it goes to the view's heading while the view covers the list.
    - Moving between sessions with ↑/↓ while focus is in the list leaves focus in the list.
    - Choosing in the repo list leaves focus there; in the drawer, focus moves to the session list's heading.
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
@@ -1445,7 +1451,7 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 | ← / →, Home / End | The divider | Resize the session view by 16 px; jump to the minimum or maximum |
 | ↑ / ↓, Home / End, Enter, Escape | An open menu | Move, jump, activate, close |
 | F6 | The terminal | Leave the terminal, to the Terminal tab |
-| Tab / Shift + Tab | Everywhere but the terminal | Header → repo list → session list (header, rows) → session view (header, tabs, body, footer) |
+| Tab / Shift + Tab | Everywhere but the terminal | Header → repo list → session list (header, rows) → session view (header, tabs, body, footer). Below 1,200 px with a session open, the session list is skipped, and below 1,000 px the repo list too: the view covers them, and they're inert |
 
 - **"Next" and "previous"** follow the session list's visible order, including an order that's being held while focus or the pointer is in the list. Rows in a closed Finished section and rows hidden by the filter are skipped, and it stops at either end without wrapping.
 - **Where `j` and `k` start:** the focused row; or else the open session; or else, with nothing open, the first row, for either key. An open session the list doesn't show (filtered out, in a collapsed Finished section, or not listed) has no next or previous, so they do nothing.
