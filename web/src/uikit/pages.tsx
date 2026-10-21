@@ -593,10 +593,10 @@ export function Notices() {
           ))}
         </p>
       </Specimen>
-      <Specimen title="No token" frame="page">
+      <Specimen title="No token" note="This tab has no token: opened without one, or after a browser restart lost it. It says to paste the link pitwall prints, and that a fixed PITWALL_TOKEN keeps a pinned tab working (W40)." frame="page">
         <NoTokenNotice />
       </Specimen>
-      <Specimen title="Token rejected" frame="page">
+      <Specimen title="Token rejected" note="The server refused this tab's token, usually the last run's. The same two ways back." frame="page">
         <TokenRejectedNotice />
       </Specimen>
     </>
