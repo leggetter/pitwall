@@ -120,7 +120,7 @@
 
 /*
  * A frame stands in for the window. Its transform makes it the containing block for anything the
- * app fixes to the window (the session view, a dialog's backdrop), so those stay inside it, and its
+ * app fixes to the window (a dialog's backdrop, the repo drawer), so those stay inside it, and its
  * overflow makes it the scroller that sticky headers stick to.
  */
 .uikit-frame {

@@ -49,9 +49,11 @@ export interface RepoListProps {
   autoFocus?: boolean;
   /** Before the first snapshot, once --pw-delay-spinner has passed: four skeleton items below the views. */
   skeletons?: boolean;
+  /** Covered, in part, by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
+  inert?: boolean;
 }
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false }: RepoListProps) {
   const rootId = useId();
   const nav = useRef<HTMLElement>(null);
   const sessions = groups?.flatMap((group) => group.sessions) ?? [];
@@ -134,7 +136,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
   };
 
   return (
-    <nav ref={nav} className="repo-list" aria-label="Repos" onKeyDown={onKeyDown}>
+    <nav ref={nav} className="repo-list" aria-label="Repos" onKeyDown={onKeyDown} inert={inert || undefined}>
       <ul className="repo-items">{views.map(render)}</ul>
       {(sections.length > 0 || (skeletons && !groups)) && <hr className="repo-divider" />}
       {skeletons && !groups && <SkeletonItems />}

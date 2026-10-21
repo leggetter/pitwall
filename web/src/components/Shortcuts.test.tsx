@@ -342,6 +342,8 @@ describe('j and k', () => {
   });
 
   it('with a session open, show the next or previous one; from the list, focus stays in the list', async () => {
+    // In three columns: below 1,200 px the view covers the list, which is inert, so focus can't be there.
+    setWidth(1300);
     const { history, fetch } = renderDashboard();
     await open('demo-a');
     const entries = history.entries.length;
