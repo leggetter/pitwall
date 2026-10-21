@@ -130,6 +130,17 @@
   transform: translateZ(0);
 }
 
+/*
+ * A session view on its own, in a view frame. In the app the view over the list fills the columns'
+ * grid row (styles.css); here there's no row, so it fills the frame, at its right edge, as the window.
+ */
+:is(.uikit-frame-view, .uikit-frame-short, .uikit-frame-tall) .session-view.overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+}
+
 .uikit-frame-view {
   height: 640px;
 }
