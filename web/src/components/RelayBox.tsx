@@ -148,7 +148,8 @@ export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBo
     if (active === null || active === document.body || form.current?.contains(active)) field.current?.focus();
     if (outcome.kind === 'unauthorized') return;
     if (outcome.kind === 'failed') {
-      setShown({ status: 'error', text: outcome.error });
+      // Uncertain is a warning, as the relay's own is: a resend would start another turn if this one arrived.
+      setShown({ status: outcome.uncertain ? 'uncertain' : 'error', text: outcome.error });
       return;
     }
     const { status, detail } = outcome.result;

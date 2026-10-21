@@ -198,13 +198,36 @@ describe('the message box', () => {
     expect(within(view).getByRole('alert').textContent).toBe('Not sent. The relay is busy with other messages. Try again in a moment.');
   });
 
-  it('says when pitwall itself couldn’t be reached, or answered something else', async () => {
-    renderDashboard(fakeServer(new TypeError('network down'), { status: 500 }));
+  it('says a message may have reached the session, as a warning, when pitwall didn’t answer or answered with a server error, and keeps the draft', async () => {
+    renderDashboard(fakeServer(new TypeError('network down'), { status: 502 }, { status: 200 }));
     const view = await openView();
     await sendFrom(view, 'hello');
-    expect(within(view).getByRole('alert').textContent).toBe("Couldn't reach pitwall, so it may not have been sent.");
+    let alert = within(view).getByRole('alert');
+    expect(alert.textContent).toBe("pitwall didn't answer, so it may have reached the session. Check its conversation before sending again.");
+    // The uncertain look, never danger: a resend would start another turn if this one arrived.
+    expect(alert.className).toContain('warning');
+    expect(alert.className).not.toContain('danger');
+    expect(textarea(view).value).toBe('hello');
     await sendFrom(view, 'hello');
-    expect(within(view).getByRole('alert').textContent).toBe('pitwall answered 500, so it may not have been sent.');
+    alert = within(view).getByRole('alert');
+    expect(alert.textContent).toBe('pitwall answered with an error (HTTP 502), so it may have reached the session. Check its conversation before sending again.');
+    expect(alert.className).toContain('warning');
+    expect(textarea(view).value).toBe('hello');
+    // A success that isn't a RelayResult says nothing about what happened either.
+    await sendFrom(view, 'hello');
+    expect(within(view).getByRole('alert').textContent).toBe(
+      'pitwall answered without saying what happened (HTTP 200), so it may have reached the session. Check its conversation before sending again.',
+    );
+  });
+
+  it('says a message wasn’t sent, as danger, when pitwall refused the request before the relay ran', async () => {
+    renderDashboard(fakeServer({ status: 403 }));
+    const view = await openView();
+    await sendFrom(view, 'hello');
+    const alert = within(view).getByRole('alert');
+    expect(alert.textContent).toBe('Not sent: pitwall refused the request (HTTP 403).');
+    expect(alert.className).toContain('danger');
+    expect(textarea(view).value).toBe('hello');
   });
 
   it('can’t send nothing, only whitespace, or more than 8,192 characters', async () => {
@@ -425,11 +448,15 @@ describe('the message box’s rules (W24)', () => {
     expect(result.querySelector('.alert-detail')?.textContent).toBe(status === 'delivered' ? undefined : 'A made-up detail.');
   });
 
-  it('shows pitwall’s own failure, before the relay answered, as a danger alert', async () => {
-    renderDashboard(fakeServer(new TypeError('network down')));
+  it('shows pitwall’s own failure, before the relay answered, as a warning alert when it may have gone, and danger when pitwall refused it', async () => {
+    renderDashboard(fakeServer(new TypeError('network down'), { status: 400 }));
     const view = await openView();
     await sendFrom(view, 'hello');
-    const result = box(view).querySelector('.relay-result')!;
+    let result = box(view).querySelector('.relay-result')!;
+    expect(result.getAttribute('role')).toBe('alert');
+    expect(result.className).toContain('warning');
+    await sendFrom(view, 'hello');
+    result = box(view).querySelector('.relay-result')!;
     expect(result.getAttribute('role')).toBe('alert');
     expect(result.className).toContain('danger');
   });

@@ -53,8 +53,8 @@ export interface StubOptions {
     | 'refresh-failed'
     | 'refresh-failed-retrying'
     | 'gone';
-  /** What the relay answers a message with. `sending` never answers; `unreachable` is a network error. */
-  relay?: RelayResult | 'sending' | 'unreachable';
+  /** What the relay answers a message with. `sending` never answers; `unreachable` is a network error; `refused-request` is pitwall refusing the request, as its API checks would. */
+  relay?: RelayResult | 'sending' | 'unreachable' | 'refused-request';
   /** What starting a session gets. `trust` is Claude Code refusing an untrusted directory. */
   spawn?: 'started' | 'trust' | 'failed' | 'starting';
   /** What Stop and Remove get. `busy` never answers. */
@@ -132,6 +132,7 @@ function conversation(sessionId: string, kind: NonNullable<StubOptions['conversa
 function relay(result: NonNullable<StubOptions['relay']>): Promise<ApiResult> {
   if (result === 'sending') return forever();
   if (result === 'unreachable') return Promise.resolve(failed());
+  if (result === 'refused-request') return Promise.resolve(failed(403));
   return Promise.resolve(ok(result));
 }
 

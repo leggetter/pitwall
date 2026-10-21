@@ -23,8 +23,12 @@ export type RelayOutcome =
   | { kind: 'result'; result: RelayResult }
   /** The connection was refused (WebSocket 4401). The app is already showing that the token was rejected. */
   | { kind: 'unauthorized' }
-  /** No answer pitwall understands: a network error, or a response that isn't a RelayResult. */
-  | { kind: 'failed'; error: string };
+  /**
+   * No answer pitwall understands: a network error, or a response that isn't a RelayResult. `uncertain`
+   * when the message may have gone: pitwall didn't answer, or answered with a server error or a
+   * success it didn't explain. Otherwise pitwall refused the request before the relay ran.
+   */
+  | { kind: 'failed'; error: string; uncertain: boolean };
 
 const STATUSES: readonly RelayStatus[] = ['delivered', 'held', 'refused', 'failed', 'uncertain'];
 
@@ -46,16 +50,34 @@ export function outgoingText(text: string): string {
   return text.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
 }
 
+/** What pitwall can say, after its own sentence, when a send's outcome isn't known (5: Errors). */
+export const CHECK_BEFORE_RESENDING = 'Check its conversation before sending again.';
+
+/**
+ * What a send with no RelayResult means (docs/design-system.md, 4: Message box, and 5: Errors). The
+ * relay route answers every request it handles with one, so without one pitwall knows only this:
+ * - no answer, a server error or an unexplained success: the message may have gone, so it says so,
+ *   as the relay's own "uncertain" does, rather than inviting a resend, which starts another turn;
+ * - any other status: pitwall refused the request before the relay ran, so nothing was sent.
+ */
+export function unexplainedSend(status: number | undefined): Extract<RelayOutcome, { kind: 'failed' }> {
+  if (status === undefined) {
+    return { kind: 'failed', uncertain: true, error: `pitwall didn't answer, so it may have reached the session. ${CHECK_BEFORE_RESENDING}` };
+  }
+  if (status >= 500 || (status >= 200 && status < 300)) {
+    const what = status >= 500 ? `with an error (HTTP ${status})` : `without saying what happened (HTTP ${status})`;
+    return { kind: 'failed', uncertain: true, error: `pitwall answered ${what}, so it may have reached the session. ${CHECK_BEFORE_RESENDING}` };
+  }
+  return { kind: 'failed', uncertain: false, error: `Not sent: pitwall refused the request (HTTP ${status}).` };
+}
+
 /** Sends `text` to a session with POST relayPath(), as outgoingText() makes it. Never rejects. */
 export async function sendRelay(api: ApiClient, sessionId: string, text: string, signal?: AbortSignal): Promise<RelayOutcome> {
   const result = await api.post(relayPath(sessionId), { text: outgoingText(text) }, signal ? { signal } : {});
   if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
   const relayed = asRelayResult(result.body);
   if (relayed !== undefined) return { kind: 'result', result: relayed };
-  return {
-    kind: 'failed',
-    error: result.kind === 'failed' && result.status !== undefined ? `pitwall answered ${result.status}, so it may not have been sent.` : "Couldn't reach pitwall, so it may not have been sent.",
-  };
+  return unexplainedSend(result.status);
 }
 
 /** Whether a session can be messaged: interactive, with a live process. */
