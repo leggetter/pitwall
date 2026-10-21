@@ -673,7 +673,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - The roots: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full list in a tooltip.
 - **Right, 12 px apart:** New session (primary, md, `add` icon, with `n` in its tooltip); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular, a [timestamp](#timestamps) with the absolute time in its tooltip); the theme switch; the keyboard shortcuts button (ghost md `keyboard` [icon button](#icon-buttons), "Keyboard shortcuts", with `?` in its tooltip), which opens the [keyboard shortcuts dialog](#keyboard-shortcuts-dialog).
   - The shortcuts button is there from the first render, before the first snapshot, and stays while the single-key shortcuts are off, so they can be turned back on.
-  - Each says its key in `aria-keyshortcuts` (`n`, `?`) while the single-key shortcuts are on.
+  - New session says its key in `aria-keyshortcuts="n"` while the single-key shortcuts are on. The shortcuts button has none: ARIA 1.2 wants the keys as pressed, modifiers and all, and `?` is Shift and a key that differs by keyboard layout (`/` on a US one), so no value is right everywhere. Its tooltip's key cap and the dialog's map say it.
 - **Compact (≤ 600 px):** the right side wraps under the wordmark, and the header grows to fit.
 
 ### Repo list

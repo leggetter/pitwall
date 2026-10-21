@@ -267,7 +267,8 @@ describe('?', () => {
 
     const button = within(document.querySelector<HTMLElement>('.app-header')!).getByRole('button', { name: 'Keyboard shortcuts' });
     expect(button.getAttribute('aria-haspopup')).toBe('dialog');
-    expect(button.getAttribute('aria-keyshortcuts')).toBe('?');
+    // Not aria-keyshortcuts="?": ARIA 1.2 wants the keys pressed, and ? is Shift and a key that differs by layout.
+    expect(button.hasAttribute('aria-keyshortcuts')).toBe(false);
     button.focus();
     fireEvent.click(button);
     expect(dialog('Keyboard shortcuts')).not.toBeNull();
