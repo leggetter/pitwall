@@ -115,6 +115,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **When a send's outcome is unknown:** no answer, a server error or a success pitwall can't read. The UI says the message may have reached the session and to check its conversation, rather than inviting a resend that would start another turn.
 - **Shortcuts:** `/`, `n`, `?` and `j`/`k`. They're ignored while you type, in the terminal, with ⌘, Ctrl or Alt held, and while an input method composes. A setting in the shortcuts dialog turns them off (WCAG 2.1.4), and the browser remembers it.
 - **Leaving the terminal:** F6 moves focus from the attached terminal to its tab, so the terminal isn't a keyboard trap (WCAG 2.1.2). Claude Code's docs bind nothing to F6 (checked 2026-10-21).
+- **A new line in the terminal** (Phil, 2026-10-21): Shift+Enter sends a line feed (Ctrl+J), which Claude Code's docs give as a new line in every terminal with no setup. xterm.js would send Enter's carriage return, which submits. Not with Ctrl, Alt or ⌘ as well, nor while an input method composes.
 
 ### D14 - The live snapshot carries only what the list shows
 
