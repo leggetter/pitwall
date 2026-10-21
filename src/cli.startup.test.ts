@@ -44,7 +44,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-const { CWD_GONE_MESSAGE, fallbackPortMessage, main, USAGE } = await import('./cli.js');
+const { CWD_GONE_MESSAGE, fallbackPortMessage, fixedTokenNotice, main, USAGE } = await import('./cli.js');
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
@@ -138,6 +138,28 @@ describe('main(): startup', () => {
       // The fake server listens on 45170, as the real one does on a free port when 4517 is busy.
       expect(await main(['--no-open', tmpdir()])).toBe(0);
       expect(console.log).toHaveBeenCalledWith(fallbackPortMessage(4517, 45170));
+    });
+
+    it('with PITWALL_TOKEN set, says once, on stderr, that the token is fixed, never with the token (W40)', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      process.env.PITWALL_TOKEN = TOKEN;
+      delete process.env.PITWALL_OPEN_MARKER;
+      expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      expect(errors.mock.calls).toEqual([[`pitwall: ${fixedTokenNotice()}`]]);
+      expect(fixedTokenNotice()).toBe(
+        'the token is fixed by PITWALL_TOKEN, so every run that uses it has the same one. Use this only on a single-user machine or for development.',
+      );
+      expect(JSON.stringify(errors.mock.calls)).not.toContain(TOKEN);
+    });
+
+    it('says nothing about a fixed token without PITWALL_TOKEN, or under npm run dev, which says it itself (W40)', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      delete process.env.PITWALL_TOKEN;
+      expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      process.env.PITWALL_TOKEN = TOKEN;
+      process.env.PITWALL_OPEN_MARKER = join(tmpdir(), `pitwall-test-marker-${process.pid}`);
+      expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      expect(errors).not.toHaveBeenCalled();
     });
 
     it('says nothing about the port when --port picked it', async () => {
