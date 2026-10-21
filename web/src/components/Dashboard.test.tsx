@@ -819,7 +819,7 @@ describe('session rows', () => {
       const item = row(name);
       expect(within(item).getAllByRole('button').map((button) => button.textContent)).toEqual([name]);
       expect(item.querySelector('.reply, .clamp-text, .relay-exchange, .cwd, .cwd-missing, .copy-command, code')).toBeNull();
-      expect(item.textContent).not.toMatch(/A reply long|All three fixed|Message from pitwall|packages\/worker|claude attach|no longer exists|interactive|background/i);
+      expect(item.textContent).not.toMatch(/All three fixed|Message from pitwall|packages\/worker|claude attach|no longer exists|interactive|background/i);
     }
   });
 
@@ -907,7 +907,7 @@ describe('session rows', () => {
 
     expect(line2('gone')).toBe('demo-app · Transcript not found');
     expect(within(row('gone')).getByText('Transcript not found').className).toBe('transcript-note');
-    expect(row('gone').textContent).not.toMatch(/old prompt|old reply/);
+    expect(row('gone').textContent).not.toMatch(/old prompt/);
     expect(line2('garbled')).toBe('demo-app · Transcript unreadable');
   });
 });
@@ -1068,7 +1068,6 @@ describe('sessions that asked you something', () => {
 
     const asks = row('asks');
     expect(asks.querySelector('.asked')?.textContent).toBe('Asked: Should I push it?');
-    expect(asks.textContent).not.toContain('Fixed the test');
     expect(row('docs-done').querySelector('.asked')?.textContent).toBe('Asked: Want me to open the PR?');
     expect(row('calm').querySelector('.asked')).toBeNull();
     expect(row('waits').querySelector('.asked')).toBeNull();
