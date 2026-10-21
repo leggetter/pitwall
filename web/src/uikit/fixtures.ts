@@ -272,7 +272,7 @@ export const API_DIR = `${ROOT}/pitwall-test-api`;
 export const DOCS_DIR = `${ROOT}/pitwall-test-docs`;
 export const SCRATCH_DIR = `${ROOT}/pitwall-test-scratch`;
 const touched = (...keys: string[]) =>
-  keys.map((key, index) => ({ key, label: key.slice(ROOT.length + 1), calls: 40 - 10 * index, changes: index === 0 ? 3 : 0, lastAt: ago(2 + 20 * index) }));
+  keys.map((key, index) => ({ key, label: key.slice(ROOT.length + 1), root: ROOT, calls: 40 - 10 * index, changes: index === 0 ? 3 : 0, lastAt: ago(2 + 20 * index) }));
 
 /** Started in the app, then changed the API and read the docs: under the app alone. */
 export const WORKED_MULTI = session('across-repos', {

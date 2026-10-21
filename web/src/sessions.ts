@@ -193,28 +193,47 @@ export type Scope = { kind: 'needs-you' } | { kind: 'all' } | { kind: 'group'; g
 /** A session, with the group it's listed under. */
 export interface Listed {
   session: SessionSummary;
-  /** The group it's listed under: the one it started in, its only one (W39). */
+  /**
+   * In a group's list, that group. In Needs you and All sessions, its home group (groupBy.ts): the one
+   * View preferences lists it under, or for Every repo it worked in, where it started, or a
+   * root-started session's main repo (W42).
+   */
   group: SessionGroup;
 }
 
-// Each session in one group (W39, Phil, 2026-10-21): a session is listed only under the group it
-// started in, so a group's count is the sessions started there, and the groups' counts under a root
-// add up to that root's sessions. The repos it worked in (SessionSummary.workedIn) are named in the
-// session view and matched by the filter, and a repo that sessions only worked in has no group.
+// The snapshot lists each session only under the group it started in (W39, Phil, 2026-10-21). The
+// page groups it again by View preferences (groupBy.ts, W42): in Main repo and Where it started each
+// session is in one group, so a group's count is its sessions and the groups' counts under a root add
+// up to that root's; in Every repo it worked in a session can be in several, and a group counts its
+// distinct sessions. Needs you, All sessions and every other count count each session once. The repos
+// a session worked in (SessionSummary.workedIn) are named in the session view and matched by the filter.
 
-/** Every session in the groups, in the groups' order. Each is in exactly one group, so each is here once. */
+/** Every session in the groups, each once, in the order the groups first list them. */
 export function sessionsIn(groups: readonly SessionGroup[]): SessionSummary[] {
-  return groups.flatMap((group) => group.sessions);
+  const seen = new Set<string>();
+  const sessions: SessionSummary[] = [];
+  for (const group of groups) {
+    for (const session of group.sessions) {
+      if (seen.has(session.sessionId)) continue;
+      seen.add(session.sessionId);
+      sessions.push(session);
+    }
+  }
+  return sessions;
 }
 
-/** The group a session is listed under, which is the one it started in, or undefined when the snapshot no longer lists it. */
+/**
+ * The first group that lists a session, or undefined when none does. With the snapshot's groups,
+ * that's the one it started in, its only one there (W39).
+ */
 export function startGroup(groups: readonly SessionGroup[], session: SessionSummary): SessionGroup | undefined {
   return groups.find((group) => group.sessions.some((listed) => listed.sessionId === session.sessionId));
 }
 
 /**
- * Where a session started, as the repo list labels it: its group's label, the root's own directory
- * as its path. For one the snapshot no longer lists, its working directory, with home as ~.
+ * Where a session started, as the repo list labels it, from the snapshot's groups (W39), whatever View
+ * preferences says: its group's label, the root's own directory as its path. For one the snapshot no
+ * longer lists, its working directory, with home as ~.
  */
 export function startLabel(groups: readonly SessionGroup[], session: SessionSummary): string {
   const start = startGroup(groups, session);
@@ -294,18 +313,21 @@ export function sessionOrder(order: SortOrder, finished: boolean): (a: SessionSu
 /**
  * The scope's sessions, split into the rows and the Finished section, each in `order`. Needs you is
  * every session that needs you, from every group, with no Finished section; All sessions is every
- * session, finished ones in one section at the end. The index's order is Urgency, so it's sorted here.
+ * session, finished ones in one section at the end. Both list each session once, under its home group
+ * in `home` (groupBy.ts), or the first group that lists it. The index's order is Urgency, so it's
+ * sorted here.
  */
 export function listScope(
   groups: readonly SessionGroup[],
   scope: Scope,
   order: SortOrder = 'urgency',
+  home?: ReadonlyMap<string, SessionGroup>,
 ): { current: Listed[]; finished: Listed[] } {
   const listed: Listed[] =
     scope.kind === 'group'
       ? scope.group.sessions.map((session) => ({ session, group: scope.group }))
-      : // Each session under the one group it's in, which its row names.
-        groups.flatMap((group) => group.sessions.map((session) => ({ session, group })));
+      : // Each session once, under its home group, which its row names.
+        listedOnce(groups, home);
   const sorted = (items: Listed[], finished: boolean) => {
     const compare = sessionOrder(order, finished);
     return items.sort((a, b) => compare(a.session, b.session));
@@ -315,6 +337,20 @@ export function listScope(
     current: sorted(listed.filter(({ session }) => !session.finished), false),
     finished: sorted(listed.filter(({ session }) => session.finished), true),
   };
+}
+
+/** Each session in the groups once, with its home group, or the first group that lists it. */
+function listedOnce(groups: readonly SessionGroup[], home: ReadonlyMap<string, SessionGroup> | undefined): Listed[] {
+  const seen = new Set<string>();
+  const listed: Listed[] = [];
+  for (const group of groups) {
+    for (const session of group.sessions) {
+      if (seen.has(session.sessionId)) continue;
+      seen.add(session.sessionId);
+      listed.push({ session, group: home?.get(session.sessionId) ?? group });
+    }
+  }
+  return listed;
 }
 
 /**

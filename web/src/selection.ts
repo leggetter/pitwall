@@ -186,16 +186,24 @@ export interface SelectionExtras {
 /**
  * The selection, from the URL, and a way to choose another. A URL with none takes the stored one, or
  * All sessions, and is replaced to match, except that ?session= with no selection waits for the
- * snapshot and selects that session's group, the one it started in. Choosing pushes a history entry;
+ * snapshot and selects that session's group: its home group in `home`, the one View preferences lists
+ * it under (groupBy.ts, W42), or else the first group that lists it. Choosing pushes a history entry;
  * popstate follows the URL. With more than one root, once the snapshot is in, a selection is given the
  * root of the tab it opens, as rootedSelection() says, and the URL is replaced to match.
+ *
+ * `snapshot` is the snapshot's roots with the groups as View preferences groups them, so a group the
+ * page built for a repo with none in the snapshot opens its own tab.
  */
 export function useSelection(
-  snapshot: IndexSnapshot | undefined,
-  { navigation = browserNavigation, storage = browserStorage }: { navigation?: NavigationEnv; storage?: StorageSource } = {},
+  snapshot: Pick<IndexSnapshot, 'roots' | 'groups'> | undefined,
+  {
+    navigation = browserNavigation,
+    storage = browserStorage,
+    home,
+  }: { navigation?: NavigationEnv; storage?: StorageSource; home?: ReadonlyMap<string, SessionGroup> | undefined } = {},
 ): [Selection, (next: Selection) => void, SelectionExtras] {
   const url = (search: string) => `${navigation.location.pathname}${search}${navigation.location.hash}`;
-  // ?session=, with no selection: the session's group, once the snapshot says which it is.
+  // ?session=, with no selection: the session's home group, once the snapshot says which it is.
   const pending = useRef<string | undefined>(undefined);
   const [selection, setSelection] = useState<Selection>(() => {
     const fromUrl = parseSelection(navigation.location.search);
@@ -223,9 +231,9 @@ export function useSelection(
     const sessionId = pending.current;
     if (sessionId !== undefined) {
       pending.current = undefined;
-      // The group it started in, its only one (W39).
+      // The group View preferences lists it under (W42), or the first that lists it.
       const listed = snapshot.groups.flatMap((candidate) => candidate.sessions).find((session) => session.sessionId === sessionId);
-      const group = listed ? startGroup(snapshot.groups, listed) : undefined;
+      const group = listed ? (home?.get(sessionId) ?? startGroup(snapshot.groups, listed)) : undefined;
       if (group) next = groupSelection(group, snapshot.roots);
     }
     // With several roots, the selection names its tab; with one, a view names none.
@@ -233,7 +241,7 @@ export function useSelection(
     if (sessionId === undefined && next === selection) return;
     navigation.history.replaceState(navigation.history.state, '', url(withSelection(navigation.location.search, next)));
     setSelection(next);
-  }, [snapshot, selection, navigation]);
+  }, [snapshot, selection, navigation, home]);
 
   const follow = useCallback(() => {
     const fromUrl = parseSelection(navigation.location.search);

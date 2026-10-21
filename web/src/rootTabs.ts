@@ -3,12 +3,14 @@
 // narrows the repo list, the session list, the filter, `j` and `k`, and the New session dialog's
 // directories to its root. With one root there are no tabs, and nothing here applies.
 //
-// Which root a session or group is under is the server's call, never the page's: a group's
-// SessionGroup.root, which the index chose with src/index/roots.ts's matchRoot(), the longest
-// configured root that holds the directory. So with one root inside another, a session under the
-// inner one is in the inner root's tab alone, as the index lists it. A tab's sessions are those its
-// groups list, so Needs you, All sessions and their counts are its own; since each session is in one
-// group, the one it started in (W39), each is in one tab.
+// Which root a group is under is the server's call, never the page's: a group's SessionGroup.root,
+// which the index chose with src/index/roots.ts's matchRoot(), the longest configured root that holds
+// the directory, or a worked-in repo's WorkedIn.root for a group the page built (W42). So with one
+// root inside another, a session under the inner one is in the inner root's tab alone, as the index
+// lists it. A tab's sessions are those its groups list, as View preferences groups them (groupBy.ts),
+// so Needs you, All sessions and their counts are its own, each session once. In Main repo a
+// root-started session can move to a repo under another root, and so to that root's tab; in Every
+// repo it worked in, a session can be in more than one tab.
 //
 // The open tab is the selection's root, in the URL (selection.ts): ?view=all&root=<root>, as
 // ?repo=<key>&root=<root> already was with several roots. It's kept in localStorage as
@@ -71,7 +73,7 @@ export function tabGroups(groups: readonly SessionGroup[], tab: string | undefin
   return tab === undefined ? groups : groups.filter((group) => group.root === tab);
 }
 
-/** How many of a root's sessions need you: an inactive tab's badge. Each session is in one group (W39), so this is its groups' badges added up. */
+/** How many of a root's sessions need you, each counted once, though in Every repo it worked in it may be in several of the root's groups: an inactive tab's badge. */
 export function tabAttention(groups: readonly SessionGroup[], root: string): number {
   return countAttention(sessionsIn(tabGroups(groups, root)));
 }

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IndexSnapshot, SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionState, ConnectionView } from '../connection.js';
+import { GROUP_BY_KEY } from '../groupBy.js';
 import { FINISHED_STATE_KEY, type StorageSource } from '../groupState.js';
 import { memoryNavigation, VIEW_STATE_KEY, type NavigationEnv } from '../selection.js';
 import { SORT_KEY } from '../sort.js';
@@ -19,11 +20,22 @@ interface RenderOptions {
 }
 
 function renderDashboard(snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}, options: RenderOptions = {}) {
+  return renderWith(snap, overrides, options);
+}
+
+function renderWith(snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}, options: RenderOptions = {}) {
   const view: ConnectionView = { state: 'live', snapshot: snap, ...overrides };
   const navigation = options.navigation ?? memoryNavigation(options.search ?? '');
   const result = render(<Dashboard view={view} navigation={navigation} {...(options.storage ? { storage: options.storage } : {})} />);
   if (options.expand !== false) expandFinished();
   return { ...result, navigation };
+}
+
+/** Storage of its own, starting with `entries`. */
+function storageWith(entries: Record<string, string>): StorageSource {
+  const values = new Map(Object.entries(entries));
+  const store = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => void values.set(k, v) };
+  return () => store;
 }
 
 function expandFinished() {
@@ -126,15 +138,17 @@ describe('Dashboard header', () => {
     expect(screen.getByText('updated 5s ago')).toBeTruthy();
   });
 
-  it('ends the header with the theme switch, then the keyboard shortcuts button, before and after the first snapshot', () => {
+  it('ends the header with the theme switch, View preferences, then the keyboard shortcuts button, before and after the first snapshot', () => {
     const { container, rerender } = render(<Dashboard view={{ state: 'connecting', snapshot: undefined }} />);
     const status = () => container.querySelector('header .app-header-end');
-    const lastTwo = () => [...(status()?.children ?? [])].slice(-2).map((element) => element.getAttribute('aria-label'));
+    // The View preferences menu's anchor holds its button, which has the name (W42).
+    const name = (element: Element) => element.getAttribute('aria-label') ?? element.querySelector('button[aria-haspopup="menu"]')?.getAttribute('aria-label');
+    const lastThree = () => [...(status()?.children ?? [])].slice(-3).map(name);
     expect(within(status() as HTMLElement).getByRole('group', { name: 'Theme' })).toBeTruthy();
-    expect(lastTwo()).toEqual(['Theme', 'Keyboard shortcuts']);
+    expect(lastThree()).toEqual(['Theme', 'View preferences', 'Keyboard shortcuts']);
 
     rerender(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
-    expect(lastTwo()).toEqual(['Theme', 'Keyboard shortcuts']);
+    expect(lastThree()).toEqual(['Theme', 'View preferences', 'Keyboard shortcuts']);
   });
 
   it("shows a heartbeat's time as the update age, newer than the snapshot's", () => {
@@ -1762,11 +1776,16 @@ describe('untrusted session text', () => {
   });
 });
 
-describe('each session in one group (W39)', () => {
+// Where it started, in View preferences (W42): the snapshot's groups as they are, W39's listing. The
+// other modes are in ViewPreferences.test.tsx.
+describe('Where it started: each session in one group (W39)', () => {
+  const whereStarted = () => storageWith({ [GROUP_BY_KEY]: 'where-started' });
+  const renderDashboard = (snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}, options: RenderOptions = {}) =>
+    renderWith(snap, overrides, { storage: whereStarted(), ...options });
   const ROOT = '/Users/example/code';
   const WORK = '/Users/example/work';
   const key = (name: string, root = ROOT) => `${root}/${name}`;
-  const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), label: name, calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
+  const worked = (...names: string[]) => names.map((name, index) => ({ key: key(name), label: name, root: ROOT, calls: 20 - index, changes: 1, lastAt: minutesAgo(index + 1) }));
 
   /**
    * What the index sends once sessions have been scanned: each session in the group it started in
@@ -1888,7 +1907,7 @@ describe('each session in one group (W39)', () => {
     expect(line()?.querySelectorAll('a, button:not(.info-tip)')).toHaveLength(0);
     const info = within(line() as HTMLElement).getByRole('button');
     expect(info.getAttribute('aria-label')).toBe(
-      "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. The session is listed only where it started: to find every session that worked in a repo, type the repo's name in the filter on All sessions.",
+      "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. View preferences, in the header, sets which of these repos list the session; to find every session that worked in a repo, type its name in the filter on All sessions.",
     );
     // Rows keep their two lines.
     expect(row('from-root').children).toHaveLength(2);
@@ -1913,7 +1932,7 @@ describe('each session in one group (W39)', () => {
 
   it('falls back as before when a saved selection names a group that has gone, such as a directory that emptied', () => {
     const storage = (() => {
-      const values = new Map([[VIEW_STATE_KEY, `repo=${key('scratch')}`]]);
+      const values = new Map([[VIEW_STATE_KEY, `repo=${key('scratch')}`], [GROUP_BY_KEY, 'where-started']]);
       const store = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => void values.set(k, v), removeItem: (k: string) => void values.delete(k) };
       return () => store as unknown as Storage;
     })();
@@ -1929,7 +1948,7 @@ describe('each session in one group (W39)', () => {
   it("names the root's group by its path once its sessions have gone, with the fallback any group that has gone has", () => {
     const navigation = memoryNavigation(`?repo=${ROOT}`);
     const elsewhere = session({ name: 'elsewhere', cwd: key('api'), workedIn: worked('docs') });
-    render(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ key: key('api'), label: 'api', sessions: [elsewhere] })]) }} navigation={navigation} />);
+    render(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ key: key('api'), label: 'api', sessions: [elsewhere] })]) }} navigation={navigation} storage={whereStarted()} />);
     expect(listHeading().textContent).toBe('~/code');
     expect(screen.getByText('No sessions in ~/code now')).toBeTruthy();
     expect(screen.getByText('Its sessions are no longer listed under these roots.')).toBeTruthy();
@@ -1941,7 +1960,8 @@ describe('each session in one group (W39)', () => {
     const navigation = memoryNavigation(`?repo=${ROOT}`);
     const alone = session({ name: 'alone', cwd: ROOT });
     const other = session({ name: 'other', cwd: ROOT });
-    const ui = (snap: IndexSnapshot) => <Dashboard view={{ state: 'live', snapshot: snap }} navigation={navigation} />;
+    const storage = whereStarted();
+    const ui = (snap: IndexSnapshot) => <Dashboard view={{ state: 'live', snapshot: snap }} navigation={navigation} storage={storage} />;
     const zeta = group({ key: key('zeta'), label: 'zeta', sessions: [session({ name: 'z' })] });
     const { rerender } = render(ui(snapshot([zeta, group({ key: ROOT, label: 'code', kind: 'directory', sessions: [alone, other] })])));
     expect(visibleRowNames()).toEqual(['alone', 'other']);

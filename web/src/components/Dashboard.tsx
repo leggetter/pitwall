@@ -30,6 +30,15 @@
 // they act only on this dashboard's keys, never over a dialog or the repo drawer, and only while
 // they're on. One that moves focus closes an open menu first.
 //
+// View preferences (W42, groupBy.ts), in the header, sets how sessions are grouped: Main repo, the
+// default, Where it started, or Every repo it worked in. The page groups the snapshot for the chosen
+// mode, and everything that lists groups or sessions, the repo list, the views, the root tabs and
+// their badges, ?session= and the document title, uses those groups, each session counted once. The
+// session view's "Started in" line and the New session dialog's directories use the snapshot's own,
+// where each session started. A switch keeps the selected group when the new mode has it; when it
+// hasn't, All sessions in the same root tab is selected instead, a toast says so, and focus stays on
+// the View preferences button. An open session view stays open.
+//
 // With two or more roots, the header has a tab per root (W38, rootTabs.ts), and the open tab narrows
 // the repo list, the session list, the filter, `j` and `k`, and the New session dialog to its root.
 // Each tab keeps its own place, its selection, its open session and its filter, and the open session
@@ -42,6 +51,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
+import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } from '../groupBy.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
@@ -68,13 +78,11 @@ import {
   countAttention,
   filterListed,
   filterNeedle,
-  groupId,
   groupLabel,
   listScope,
   NO_FILTERS,
   noMatchText,
   sessionsIn,
-  startGroup,
   startLabel,
   workedInLabels,
   type Filters,
@@ -119,6 +127,13 @@ export const startedText = (name: string) => `Started ${plainText(name)}. Its vi
 export const hiddenText = (label: string) => `Hid ${plainText(label)}. It's under Hidden, at the foot of the repo list.`;
 export const unhiddenText = (label: string, listed: boolean) =>
   `Unhid ${plainText(label)}. ${listed ? "It's back in the repo list." : "It's back in the repo list once it has sessions."}`;
+
+/**
+ * The toast when a switch of View preferences leaves the selected group out of the repo list, so All
+ * sessions is selected instead (W42).
+ */
+export const groupGoneText = (label: string, mode: GroupBy) =>
+  `Selected All sessions: ${plainText(label)} has no sessions when grouped by ${groupByPhrase(mode)}.`;
 
 /**
  * What's slow when the first snapshot takes long (4: Skeletons and spinners): the index's first poll,
@@ -167,8 +182,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const { layout, compact, overlayCoversRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
   const [panelWidth] = useState(() => createPanelWidthStore(storage));
+  // Group sessions by, from View preferences (W42): the snapshot's groups, grouped again for the mode.
+  const [groupBy, setGroupBy] = useGroupBy(storage);
+  const startGroups = snapshot?.groups;
+  const grouped = useMemo(() => groupSessions(startGroups ?? [], groupBy), [startGroups, groupBy]);
+  const viewSnapshot = useMemo(() => (snapshot ? { roots: snapshot.roots, groups: grouped.groups } : undefined), [snapshot, grouped]);
   // With two or more roots, `tab` is the open root tab: the selection's root (W38).
-  const [selection, choose, { tab, follow: followSelection }] = useSelection(snapshot, { navigation, storage });
+  const [selection, choose, { tab, follow: followSelection }] = useSelection(viewSnapshot, { navigation, storage, home: grouped.home });
   // Each root tab's own filter; with one root, the one filter.
   const [filtersByTab, setFiltersByTab] = useState<ReadonlyMap<string, Filters>>(() => new Map());
   const filterKey = tab ?? '';
@@ -203,12 +223,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const waiting = useWaiting(app, snapshot === undefined);
   const slow = slowFirstSnapshot(state);
 
-  // Every root's groups, and the open root tab's alone (W38): those the index put under its root.
-  const groups = snapshot?.groups ?? [];
+  // Every root's groups as View preferences groups them, and the open root tab's alone (W38): those
+  // under its root.
+  const groups = grouped.groups;
   const roots = snapshot?.roots ?? [];
   const shownGroups = useMemo(() => tabGroups(groups, tab), [groups, tab]);
-  // Each session is in one group, the one it started in (W39), and so in one root tab.
-  // Every root's, for the open session and the document title; the open tab's, for the lists.
+  // Each session once, whichever groups and root tabs list it. Every root's, for the open session and
+  // the document title; the open tab's, for the lists.
   const everySession = useMemo(() => sessionsIn(groups), [groups]);
   const allSessions = useMemo(() => (tab === undefined ? everySession : sessionsIn(shownGroups)), [tab, everySession, shownGroups]);
   const attention = countAttention(everySession);
@@ -219,7 +240,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const shownHidden = tab === undefined ? hidden.groups : hidden.groups.filter((group) => group.root === tab);
   const selectedHidden = 'view' in selection ? undefined : hidden.find(selection.repo, selection.root);
   const scope = scopeFor(shownGroups, selection);
-  const listed = useMemo(() => (scope ? listScope(shownGroups, scope, sort) : { current: [], finished: [] }), [shownGroups, scope?.kind, selectedGroup, sort]);
+  const listed = useMemo(
+    () => (scope ? listScope(shownGroups, scope, sort, grouped.home) : { current: [], finished: [] }),
+    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home],
+  );
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
   const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
   // What pitwall last knew of each session, for one that leaves the snapshot while it's open, or that
@@ -264,7 +288,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // unless the view open there has a draft or a running action, which it would replace (W38).
   const openStarted = useCallback(
     (session: SessionSummary) => {
-      const root = startGroup(groups, session)?.root;
+      // The root of the group it's listed under: a session just started has worked in no repo yet, so where it started.
+      const root = grouped.home.get(session.sessionId)?.root;
       if (tab !== undefined && root !== undefined && root !== tab) {
         const there = places.get(root)?.session;
         if (there !== undefined && holding(there)) return;
@@ -275,7 +300,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       if (active === null || active === document.body) focusView.current = { id: session.sessionId, on: 'heading' };
       opened.open(session.sessionId);
     },
-    [opened.open, groups, tab, places],
+    [opened.open, grouped.home, tab, places],
   );
   const started = useOpenWhenListed(everySession, openStarted);
 
@@ -570,13 +595,47 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     }
   };
 
+  // View preferences (W42). The selected group stays when the new mode lists it. One that's listed now
+  // and won't be gives way to All sessions in its root tab: the open tab's with a toast, since the
+  // menu's button keeps focus; another tab's quietly, for when that tab is back.
+  const chooseGroupBy = (next: GroupBy) => {
+    if (next === groupBy) return;
+    setGroupBy(next);
+    if (!snapshot) return;
+    const after = groupSessions(snapshot.groups, next).groups;
+    const instead = (current: Selection, root: string | undefined): Selection | undefined =>
+      'view' in current || findGroup(groups, current) === undefined || findGroup(after, current) !== undefined ? undefined : viewIn('all', root);
+    if (tab !== undefined) {
+      setPlaces((current) => {
+        let changed = false;
+        const updated = new Map(current);
+        for (const [root, place] of current) {
+          const replacement = root === tab ? undefined : instead(place.selection, root);
+          if (replacement === undefined) continue;
+          updated.set(root, { ...place, selection: replacement });
+          changed = true;
+        }
+        return changed ? updated : current;
+      });
+    }
+    const replacement = instead(selection, tab);
+    if (replacement === undefined) return;
+    const gone = selectionName(groups, selection, roots);
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.replaceState(navigation.history.state, '', `${pathname}${withSelection(search, replacement)}${hash}`);
+    writeStoredSelection(replacement, storage);
+    followSelection();
+    toasts.show({ tone: 'info', message: groupGoneText(gone, next) });
+  };
+
   const finishedId = finishedStateId(selection, selectedGroup);
   const toggleFinished = () => {
     if (finishedId === undefined) return;
     const next = new Map(finishedOpen);
     next.set(finishedId, !(finishedOpen.get(finishedId) ?? false));
     setFinishedOpen(next);
-    writeGroupState(next, new Set([...groups.map(groupId), 'view:all']), storage, FINISHED_STATE_KEY);
+    // Every group of every mode, so a switch of View preferences doesn't forget one's state.
+    writeGroupState(next, new Set([...everyGroupId(startGroups ?? []), 'view:all']), storage, FINISHED_STATE_KEY);
   };
 
   const showError = serverError !== undefined && serverError !== dismissedError;
@@ -728,7 +787,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   } else if (!scope) {
-    // A group, a root's own included, goes once no session started in it is listed.
+    // A group, a root's own included, goes once no session is listed under it, as View preferences groups them.
     empty = (
       <EmptyState
         icon="directory"
@@ -807,7 +866,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     <SessionView
       key={session.sessionId}
       session={session}
-      placement={{ startedIn: startLabel(groups, session), workedIn: workedInLabels(session, roots) }}
+      placement={{ startedIn: startLabel(startGroups ?? [], session), workedIn: workedInLabels(session, roots) }}
       listed={listedSession(session.sessionId) !== undefined}
       onClose={hiddenIn === undefined ? closeSession : () => closeIn(hiddenIn)}
       layout={viewLayout}
@@ -896,6 +955,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         reposOpen={drawerOpen}
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
+        preferences={{ groupBy, onGroupBy: chooseGroupBy }}
         tabs={
           tab === undefined
             ? undefined

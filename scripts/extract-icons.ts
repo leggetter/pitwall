@@ -70,6 +70,9 @@ const ICONS: Readonly<Record<string, string>> = {
   // Hide from the repo list, and show in it again (W35).
   hide: 'visibility_off',
   show: 'visibility',
+  // The header's View preferences menu, and the mark on its chosen option (W42).
+  preferences: 'tune',
+  checked: 'check',
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',
