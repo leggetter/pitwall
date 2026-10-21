@@ -278,6 +278,17 @@ describe('createWorkedInScanner', () => {
       expect(await scan(s)).toEqual([]);
     });
 
+    it('a removed repo below a root that is itself inside a repo, which would otherwise count for the enclosing repo', async () => {
+      const outer = path.join(dir, 'outer');
+      const root = path.join(outer, 'code');
+      await mkdir(path.join(outer, '.git'), { recursive: true });
+      await mkdir(path.join(root, 'kept'), { recursive: true });
+      await writeFile(main, call('Edit', { file_path: path.join(root, 'removed-repo', 'src', 'a.ts') }, root) + call('Edit', { file_path: path.join(root, 'kept', 'b.ts') }, root));
+      // Both calls ran in the root, which is in the enclosing repo, so both touch it. The edit in a directory that's there
+      // changes it, as the root's own group is that repo; the edit in the removed repo changes nothing.
+      expect(await scan(start({ run: fakeGit().run }), path.join(dir, 'elsewhere'), [root])).toMatchObject([{ key: outer, root, calls: 2, changes: 1 }]);
+    });
+
     it('a repo under another configured root, with that root', async () => {
       const work = path.join(dir, 'work');
       await mkdir(path.join(work, 'service', '.git'), { recursive: true });
