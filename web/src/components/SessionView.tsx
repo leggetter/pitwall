@@ -1,6 +1,7 @@
 // The session view (docs/design-system.md, 3: Session view, and 4: Session view: header, tabs and
 // footer): one session, as the third column from 1,200 px or over the session list below that. A
-// header with its name and title, status, kind, last activity and directory, and the actions menu;
+// header with its name and title, status, kind, last activity and directory, where it started and
+// the repos it worked in when there are any (W34), and the actions menu;
 // the Conversation and Terminal tabs; the body, which is all that scrolls; and, for an interactive
 // session, the message box in the footer.
 //
@@ -47,6 +48,17 @@ export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, s
 export const TERMINAL_INTERACTIVE_NOTE =
   "An interactive session can't be attached here. Typing /bg in its terminal moves it to the background, so pitwall can attach to it.";
 export const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
+/** The worked-in line's info icon: the rule behind it (W34, spike 004). */
+export const WORKED_IN_NOTE =
+  "A session is also listed under each repo it changed, or that at least 5% of its tool calls touched, its sub-agents' included. One started in a root's own directory is listed under those repos alone.";
+
+/** Where a session started and the repos it worked in, as the repo list labels them. */
+export interface SessionPlacement {
+  /** Its start group's label, or a root's path for one started in the root itself. */
+  startedIn: string;
+  /** The repos it worked in beyond that, newest touch first. */
+  workedIn: readonly string[];
+}
 
 /** The actions menu's width items' tooltips, when they can't do anything. */
 export const WIDTH_HINTS = {
@@ -144,6 +156,8 @@ function Top({ compact, onClose, children, end }: TopProps) {
 
 export interface SessionViewProps {
   session: SessionSummary;
+  /** Where it started and the repos it worked in: a line of the header, when it worked in any. */
+  placement?: SessionPlacement | undefined;
   /** False once the session has left the snapshot. The view keeps what it showed. */
   listed: boolean;
   onClose: () => void;
@@ -178,6 +192,7 @@ type Refused = { label: string; text: string };
 
 export function SessionView({
   session,
+  placement,
   listed,
   onClose,
   layout = 'overlay',
@@ -450,6 +465,24 @@ export function SessionView({
             </Tooltip>
           )}
         </div>
+        {placement && placement.workedIn.length > 0 && (
+          // Line 3: the repos it's listed under beyond where it started. Labels are text, never markup.
+          <p className="session-view-worked">
+            <span className="session-view-worked-text">
+              Started in <span className="session-view-repo">{plainText(placement.startedIn)}</span>
+              <span aria-hidden="true"> · </span>
+              <span className="visually-hidden">, and </span>
+              worked in{' '}
+              {placement.workedIn.map((label, index) => (
+                <span key={label}>
+                  {index > 0 && ', '}
+                  <span className="session-view-repo">{plainText(label)}</span>
+                </span>
+              ))}
+            </span>
+            <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
+          </p>
+        )}
         {refused && (
           <p className="session-view-copy-fallback">
             {refused.label}: <code ref={fallbackRef}>{plainText(refused.text)}</code>

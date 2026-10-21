@@ -45,7 +45,19 @@ import {
   type NavigationEnv,
   type Selection,
 } from '../selection.js';
-import { countAttention, filterListed, filterNeedle, groupId, listScope, NO_FILTERS, noMatchText, type Filters } from '../sessions.js';
+import {
+  countAttention,
+  filterListed,
+  filterNeedle,
+  groupId,
+  listScope,
+  NO_FILTERS,
+  noMatchText,
+  startLabel,
+  uniqueSessions,
+  workedInLabels,
+  type Filters,
+} from '../sessions.js';
 import { useSort } from '../sort.js';
 import { shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
 import { useOpenWhenListed } from '../spawn.js';
@@ -157,7 +169,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   const groups = snapshot?.groups ?? [];
   const roots = snapshot?.roots ?? [];
-  const allSessions = useMemo(() => groups.flatMap((group) => group.sessions), [groups]);
+  // Each session once: a session that worked in several repos is listed under each of them (W34).
+  const allSessions = useMemo(() => uniqueSessions(groups), [groups]);
   const attention = countAttention(allSessions);
   const selectedGroup = findGroup(groups, selection);
   const scope = scopeFor(groups, selection);
@@ -644,6 +657,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       <SessionView
         key={shownOpen.sessionId}
         session={shownOpen}
+        placement={{ startedIn: startLabel(groups, shownOpen), workedIn: workedInLabels(groups, shownOpen) }}
         listed={listedOpen !== undefined}
         onClose={closeSession}
         layout={viewLayout}
