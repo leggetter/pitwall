@@ -1,5 +1,6 @@
-// The app shell's pieces (W21, W23): the real Header, RepoList, RepoDrawer, SessionList, the filters
-// and the Sort setting, with fixture props. The header is shown in windows of each width, since its compact rule is a container
+// The app shell's pieces (W21, W23, W35): the real Header, RepoList with its Hidden section,
+// RepoDrawer, SessionList with a group's Hide from repo list, the filters and the Sort setting, with
+// fixture props. The header is shown in windows of each width, since its compact rule is a container
 // query on the app (docs/design-system.md, 2.12). The repo lists and filters keep their own state,
 // so they can be clicked and typed into.
 
@@ -7,16 +8,31 @@ import { useState } from 'react';
 import type { IndexSnapshot } from '../../../src/shared/protocol.js';
 import { FilterControls } from '../components/Filters.js';
 import { Header } from '../components/Header.js';
+import { HideButton } from '../components/HideButton.js';
 import { RepoDrawer } from '../components/RepoDrawer.js';
 import { RepoList } from '../components/RepoList.js';
 import { SessionList, type SessionListHeading, type SessionListSummary } from '../components/SessionList.js';
 import { SortSelect } from '../components/SortSelect.js';
+import { useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { ALL_SESSIONS, groupSelection, NEEDS_YOU, type Selection } from '../selection.js';
 import { ShortcutsStoreContext } from '../shortcuts.js';
 import { NO_FILTERS, SORT_ORDERS, type FilterChip, type Filters, type SortOrder } from '../sessions.js';
-import { ago, APP_GROUP, LONG_ROOTS, REPO_LIST_SNAPSHOT, ROOT, SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT, WORKED_ROOT_GROUP, WORKED_SNAPSHOT } from './fixtures.js';
+import {
+  ago,
+  ALL_FINISHED_GROUP,
+  APP_GROUP,
+  GONE_HIDDEN,
+  LONG_ROOTS,
+  NOTES_GROUP,
+  REPO_LIST_SNAPSHOT,
+  ROOT,
+  SERVICE_GROUP,
+  TWO_ROOTS_LIST_SNAPSHOT,
+  WORKED_ROOT_GROUP,
+  WORKED_SNAPSHOT,
+} from './fixtures.js';
 import { Reopenable, Specimen } from './kit.js';
-import { memoryShortcuts } from './stubs.js';
+import { memoryShortcuts, memoryStorage, storedHidden } from './stubs.js';
 
 const noop = () => {};
 const UPDATED = ago(0.05);
@@ -69,10 +85,28 @@ export function Headers() {
   );
 }
 
-/** A repo list with a selection of its own: clicking an item selects it. */
-function LiveRepoList({ snapshot, start = ALL_SESSIONS }: { snapshot: IndexSnapshot | undefined; start?: Selection }) {
+interface LiveRepoListProps {
+  snapshot: IndexSnapshot | undefined;
+  start?: Selection;
+  /** Groups hidden from it, in storage of its own, and whether the Hidden section starts open (W35). */
+  hiding?: { groups: readonly HiddenGroup[]; open: boolean };
+}
+
+/** A repo list with a selection and hidden groups of its own: clicking an item selects it, and Unhide and the Hidden toggle work. */
+function LiveRepoList({ snapshot, start = ALL_SESSIONS, hiding }: LiveRepoListProps) {
   const [selection, setSelection] = useState(start);
-  return <RepoList groups={snapshot?.groups} roots={snapshot?.roots ?? [ROOT]} selection={selection} onSelect={setSelection} />;
+  const roots = snapshot?.roots ?? [ROOT];
+  const [storage] = useState(() => memoryStorage(hiding ? storedHidden(hiding.groups, hiding.open) : {}));
+  const hidden = useHiddenGroups(roots, storage);
+  return (
+    <RepoList
+      groups={snapshot?.groups}
+      roots={roots}
+      selection={selection}
+      onSelect={setSelection}
+      hidden={{ groups: hidden.groups, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: hidden.unhide }}
+    />
+  );
 }
 
 export function RepoLists() {
@@ -111,42 +145,108 @@ export function RepoLists() {
       >
         <LiveRepoList snapshot={WORKED_SNAPSHOT} start={groupSelection(WORKED_ROOT_GROUP, [ROOT])} />
       </Specimen>
+      <Specimen
+        title="Hidden groups, the section closed"
+        note="Two groups hidden from the list with the session list header's Hide from repo list. They're listed at its foot behind Hidden (2), collapsed by default, its own Tab stop outside the list's one."
+        width={240}
+      >
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} hiding={{ groups: [NOTES_GROUP, ALL_FINISHED_GROUP], open: false }} />
+      </Specimen>
+      <Specimen
+        title="Hidden groups, the section open"
+        note="Each hidden group muted, with its count, as a link that selects it, here pitwall-test-notes, and an Unhide button. Unhide puts the group back in its place, with focus on its item. The open state is remembered."
+        width={240}
+      >
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} start={groupSelection(NOTES_GROUP, [ROOT])} hiding={{ groups: [NOTES_GROUP, ALL_FINISHED_GROUP], open: true }} />
+      </Specimen>
+      <Specimen
+        title="A hidden group that needs you"
+        note="The disclosure carries the need-you badge, counting each session once, so nothing that needs you is out of sight. Opened, the group's own badge shows, as in the list."
+        width={240}
+      >
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} hiding={{ groups: [APP_GROUP], open: false }} />
+      </Specimen>
+      <Specimen
+        title="A hidden group with no sessions"
+        note="pitwall-test-old-clone is in no snapshot, so it shows No sessions, and stays until it's unhidden. Next to it, a hidden group that needs you, open."
+        width={240}
+      >
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} hiding={{ groups: [GONE_HIDDEN, APP_GROUP], open: true }} />
+      </Specimen>
+      <Specimen title="Hidden groups under several roots" note="Each root's hidden groups under its path, as the list has them; each root's are kept under its own key." width={240}>
+        <LiveRepoList snapshot={TWO_ROOTS_LIST_SNAPSHOT} hiding={{ groups: [NOTES_GROUP, SERVICE_GROUP], open: true }} />
+      </Specimen>
     </>
   );
 }
 
-/** The drawer, with a selection of its own. */
-function Drawer({ onClose }: { onClose: () => void }) {
-  const [selection, setSelection] = useState<Selection>(ALL_SESSIONS);
+/** The drawer, with a selection, and any hidden groups, of its own. */
+function Drawer({ onClose, hiding }: { onClose: () => void; hiding?: LiveRepoListProps['hiding'] }) {
   return (
     <RepoDrawer onClose={onClose}>
-      <RepoList groups={REPO_LIST_SNAPSHOT.groups} roots={REPO_LIST_SNAPSHOT.roots} selection={selection} onSelect={setSelection} />
+      <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} {...(hiding ? { hiding } : {})} />
     </RepoDrawer>
   );
 }
 
 export function RepoDrawers() {
   return (
-    <Specimen title="Open" note="Below 900 px. Escape or a click on the backdrop closes it here too." frame="view">
-      <Reopenable>{(close) => <Drawer onClose={close} />}</Reopenable>
-    </Specimen>
+    <>
+      <Specimen title="Open" note="Below 900 px. Escape or a click on the backdrop closes it here too." frame="view">
+        <Reopenable>{(close) => <Drawer onClose={close} />}</Reopenable>
+      </Specimen>
+      <Specimen
+        title="Open, with hidden groups"
+        note="The Hidden section, open, at its foot. Tab stays inside, through the section's controls; choosing a hidden group closes the drawer, as any item does."
+        frame="view"
+      >
+        <Reopenable>{(close) => <Drawer onClose={close} hiding={{ groups: [NOTES_GROUP, GONE_HIDDEN], open: true }} />}</Reopenable>
+      </Specimen>
+    </>
   );
 }
 
 interface HeadCase {
   title: string;
+  note?: string;
   heading: SessionListHeading;
   summary: SessionListSummary;
   start?: Filters;
   sort?: SortOrder;
+  /** A group's Hide from repo list, or Show in repo list when it's hidden (W35). */
+  hidden?: boolean;
+}
+
+/** Hide from repo list, which turns into Show in repo list when pressed, and back. */
+function LiveHideButton({ start }: { start: boolean }) {
+  const [hidden, setHidden] = useState(start);
+  return <HideButton hidden={hidden} onClick={() => setHidden(!hidden)} />;
 }
 
 const HEADS: HeadCase[] = [
   { title: 'All sessions', heading: { label: 'All sessions' }, summary: { total: 10, shown: 10, attention: 2 } },
   { title: 'Needs you', heading: { label: 'Needs you' }, summary: { total: 2, shown: 2, attention: 2 } },
-  { title: 'A group', heading: { label: 'pitwall-test-app', kind: 'git' }, summary: { total: 4, shown: 4, attention: 2 } },
-  { title: 'A directory, with nothing that needs you', heading: { label: 'pitwall-test-notes', kind: 'directory' }, summary: { total: 1, shown: 1, attention: 0 } },
-  { title: 'A group under one of several roots', heading: { label: 'pitwall-test-service', kind: 'git', root: '/Users/example/work' }, summary: { total: 1, shown: 1, attention: 0 } },
+  {
+    title: 'A group',
+    note: 'Hide from repo list, after the summary: a ghost sm icon button, named by its tooltip. Press it to see Show in repo list.',
+    heading: { label: 'pitwall-test-app', kind: 'git' },
+    summary: { total: 4, shown: 4, attention: 2 },
+    hidden: false,
+  },
+  {
+    title: 'A hidden group',
+    note: 'Show in repo list, in the same place: the same button, so focus stays on it.',
+    heading: { label: 'pitwall-test-notes', kind: 'directory' },
+    summary: { total: 1, shown: 1, attention: 0 },
+    hidden: true,
+  },
+  { title: 'A directory, with nothing that needs you', heading: { label: 'pitwall-test-notes', kind: 'directory' }, summary: { total: 1, shown: 1, attention: 0 }, hidden: false },
+  {
+    title: 'A group under one of several roots',
+    heading: { label: 'pitwall-test-service', kind: 'git', root: '/Users/example/work' },
+    summary: { total: 1, shown: 1, attention: 0 },
+    hidden: false,
+  },
   {
     title: 'Filtered',
     heading: { label: 'All sessions' },
@@ -160,10 +260,11 @@ export function SessionListHeads() {
   return (
     <>
       {HEADS.map((head) => (
-        <Specimen key={head.title} title={head.title}>
+        <Specimen key={head.title} title={head.title} note={head.note}>
           <SessionList
             heading={head.heading}
             summary={head.summary}
+            headingAction={head.hidden === undefined ? undefined : <LiveHideButton start={head.hidden} />}
             filters={<LiveFilters start={head.start} sort={head.sort} />}
             current={[]}
             finished={[]}
@@ -183,10 +284,11 @@ export function SessionListHeads() {
           onToggleFinished={noop}
         />
       </Specimen>
-      <Specimen title="In a narrow window" note="The summary and the filters wrap." width={320}>
+      <Specimen title="In a narrow window" note="The summary and the filters wrap; Hide from repo list goes with the summary." width={320}>
         <SessionList
           heading={{ label: 'pitwall-test-app/packages/a-package-directory-with-a-long-name', kind: 'git' }}
           summary={{ total: 4, shown: 4, attention: 2 }}
+          headingAction={<LiveHideButton start={false} />}
           filters={<LiveFilters start={filters('export', 'interactive')} />}
           current={[]}
           finished={[]}

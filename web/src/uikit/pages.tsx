@@ -23,9 +23,11 @@ import {
   CALM_SNAPSHOT,
   DIALOG_SNAPSHOT,
   EMPTY_SNAPSHOT,
+  GONE_HIDDEN,
   HIGHLIGHT_SNAPSHOT,
   JOBS_DIR,
   LIST_SNAPSHOT,
+  NOTES_DIR,
   NOTES_GROUP,
   OTHER_ROOT,
   POLL_FAILED_SNAPSHOT,
@@ -44,7 +46,7 @@ import {
   WORKED_SNAPSHOT,
 } from './fixtures.js';
 import { choose, element, laidOut, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
-import { memoryShortcuts, memoryStorage, type StubOptions } from './stubs.js';
+import { memoryShortcuts, memoryStorage, storedHidden, type StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
 
 const PROMPT = 'Add a retry with backoff to the export job. Keep the existing 30 second timeout.';
@@ -240,6 +242,24 @@ const PAGES: PageCase[] = [
     note: 'Only the session started in the root that worked in no repo. The directory below it, pitwall-test-scratch, keeps its own group.',
     search: repo(ROOT),
     view: { state: 'live', snapshot: WORKED_SNAPSHOT },
+  },
+  {
+    title: 'Hiding a group',
+    note: 'Hide from repo list, pressed on pitwall-test-app: it leaves the repo list and stays selected, the Hidden section opens on it, and a toast says where it went. Its sessions, the views and their counts are as they were. The toast stays here.',
+    search: repo(APP_DIR),
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+    lasting: true,
+    run: async (root) => {
+      (await element<HTMLButtonElement>(root, 'button[aria-label="Hide from repo list"]')).click();
+      await text(root, 'Hid pitwall-test-app.');
+    },
+  },
+  {
+    title: 'A hidden group selected',
+    note: 'From its link in the Hidden section, or a URL: its sessions show as usual, and the header offers Show in repo list. pitwall-test-old-clone is in no snapshot, so it shows No sessions.',
+    search: repo(NOTES_DIR),
+    stored: storedHidden([NOTES_GROUP, GONE_HIDDEN], true),
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   { title: 'Connection lost', view: { state: 'reconnecting', snapshot: LIST_SNAPSHOT } },
   { title: 'Poll failed', view: { state: 'live', snapshot: POLL_FAILED_SNAPSHOT } },
