@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28), then the terminal: its bar on `Badge`, `KeyCaps` and `Button`, the screen's font and colours from the tokens and its edge, F6 to leave it, its notices as inline alerts, and the conversation's place kept across the Terminal tab (W29), then the fixes from the integrated branch's review (W31). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28), then the terminal: its bar on `Badge`, `KeyCaps` and `Button`, the screen's font and colours from the tokens and its edge, F6 to leave it, its notices as inline alerts, and the conversation's place kept across the Terminal tab (W29), then the fixes from the integrated branch's review (W31), then sessions under the repos they worked in: distinct counts, the root's group, line 2's start label and the session view's worked-in line (W34). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -517,6 +517,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
   - It also says whether the app is compact (600 px or narrower), for the session view's markup: Back to sessions takes Close's place there. It changes state only at a breakpoint, so resizing doesn't re-render the app at every pixel.
   - The compact rule is a container query: `.app` is `container: pitwall / inline-size`, and the header uses `@container pitwall (max-width: 600px)`.
   - The app spans the window, so this is the window's width. In the `#uikit` gallery, a frame of a set width gets that width's layout, so each layout can be shown at any window width. The gallery's stages are `pitwall` containers too.
+  - A gallery frame wider than its stage is laid out at its own width and scaled down to fit, whole, rather than cut off at the stage's edge (W34). So `layout.ts` reads the layout width (`offsetWidth`) when a transform on an ancestor scales the app, and the width on screen otherwise.
   - The other rows here are still media queries: they belong to components that only ever fill the window.
 
 - **Fixed widths:**
@@ -682,11 +683,16 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   1. Two views: "Needs you", every session that needs you under any root, and "All sessions".
   2. A 1 px `--pw-border` divider, 8 px above and below.
   3. Every group: a git repo, or a directory that isn't in one. With more than one root, each root's groups sit under a heading: the root's path, label style, `--pw-text-subtle`, home as `~`.
+- **A session is under every repo it worked in** (W34, spike 004), as well as where it started, so one session can be in several groups:
+  - **A repo** lists the sessions started in it and every session that worked in it: one that changed it, or whose tool calls touched it at least 5% of the time, its sub-agents' included (`SessionSummary.workedIn`). A repo reached only that way is a group like any other, in its place.
+  - **A directory below a root that isn't in a repo** lists every session started in it, including those that also worked in repos, which show in both.
+  - **The root's own directory** lists only the sessions started in the root itself that worked in no repo. One started there that worked in repos is under those repos alone. When none is left, the group goes, as any empty group does.
+  - Until a session's transcripts have been scanned, a few seconds after pitwall starts or first sees it, it's only where it started; then it shows under its repos too.
 - **Group order:** alphanumeric by label, so the column never moves as sessions change (Phil, 2026-10-20).
   - Case-insensitive, with numbers compared as numbers, so `repo-2` comes before `repo-10` (`Intl.Collator` with `numeric: true`).
   - Within each root, the root's own directory comes first, then the rest.
   - A group whose sessions have all finished keeps its place, with its label muted. New groups appear in their place, and removed ones leave it.
-- **The root's own directory** is a group like any other, labelled with its path (`~/git`) rather than its last segment, so it doesn't read as a repo called "git".
+- **The root's own directory** is labelled with its path (`~/git`) rather than its last segment, so it doesn't read as a repo called "git", and is first among its root's groups.
 - **Below the sidebar breakpoint (900 px): a drawer.**
   - It slides in from the left with the same content, `--pw-sidebar-w` wide (or the window, if that's narrower), opened from the header's `menu` button.
   - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
@@ -696,8 +702,8 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - Other parameters, such as `?session=`, are kept as the selection changes.
   - Choosing pushes a history entry; `popstate` makes the columns match the URL.
   - A URL with no selection uses the last one, saved in `localStorage` as `pitwall.view.v1`, or All sessions the first time, and replaces the URL to match.
-  - Loading `?session=` with no selection selects that session's group.
-  - A selected group that leaves the snapshot stays selected, with the "No sessions in *group* now" empty state.
+  - Loading `?session=` with no selection selects the group that session started in, or, for one started in the root that worked in repos, the repo it touched most recently.
+  - A selected group that leaves the snapshot stays selected, with the "No sessions in *group* now" empty state. That includes a saved selection in `pitwall.view.v1` whose group has since emptied, such as the root's own directory once its sessions are listed under their repos.
 
 ### Session list
 
@@ -720,10 +726,12 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - **Name:** alphanumeric by name, as the repo list sorts its groups. It never moves as sessions change.
   - The setting applies to every selection, and is saved in `localStorage` as `pitwall.sort.v1`. Finished sections use it too, except that Urgency orders finished sessions by activity alone.
   - **A group:** its unfinished sessions, then its [Finished section](#finished-section).
-  - **Needs you:** every session that needs you, from every group. There's no Finished section, because a finished session never needs you.
-  - **All sessions:** every unfinished session from every group, then one Finished section for all of them.
+  - **Needs you:** every session that needs you, from every group, each once, however many groups it's in. There's no Finished section, because a finished session never needs you.
+  - **All sessions:** every unfinished session from every group, each once, then one Finished section for all of them.
+  - The summary's counts, and the document title's, count each session once.
 - **Live updates:** each snapshot updates rows in place. If it would reorder rows (under Urgency or Recent) while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it.
-  - Added and removed rows apply at once: a new row goes in after the row it follows in the new order, or first.
+  - Added and removed rows apply at once: a new row goes in after the row it follows in the new order, or first. A session that moves out of the selected group, as one started in the root does once its scan lists it under its repos, leaves at once too.
+  - A focused row that leaves takes focus with it, so focus goes to the row that took its place, or the one before it when it was last, or the list's heading when none is left, never to the page.
   - The Finished section is held the same way.
   - A sort or selection the reader chooses applies at once, whatever the pointer and focus.
   - Nothing in the list is a live region, so none of this is announced.
@@ -922,7 +930,8 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
      - "Asked: *excerpt*" (meta, the label in `--pw-warning-fg` 500, the excerpt in `--pw-text`); or
      - "You: *last prompt*" (meta, `--pw-text-muted`).
      - The full text is in a tooltip when it's cut short.
-     - In Needs you and All sessions, the line starts with the group's label (meta, `--pw-text-subtle`; the root's own directory as its path) and " · ". A session with neither a question nor a prompt shows only the label there, and no line 2 in a group.
+     - In Needs you and All sessions, the line starts with the group's label (meta, `--pw-text-subtle`; the root's own directory as its path) and " · ". For a session in several groups that's where it started, or, for one started in the root that worked in repos, the repo it touched most recently. A session with neither a question nor a prompt shows only the label there, and no line 2 in a group.
+     - In a repo's own list, a session listed there because it worked in that repo starts the line with where it started, in the same style, and " · ": the start group's label, or the root's path. Screen readers hear "Started in" before it (visually hidden). It's the label alone on screen, as in All sessions, because line 2's room is for what the session asked; the session view's worked-in line says the rest (W34). A session started in the repo shows no label, as before.
 - **Not in the row:** the last reply, the relay exchange, the cwd, the attach command and a Message button. They're in the session view: the conversation, the message box, the header and the actions menu. A row stays two lines however long the session's replies are.
 - **Opening:** the name is a `<button>` with `aria-controls="session-view"`, `aria-current="true"` when its session is open, and `data-open-session`. The session view has `id="session-view"`.
   - A click anywhere on the row that isn't a control (and isn't the end of a text selection) opens the session too. Keyboard users use the button.
@@ -952,6 +961,7 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
     3. At the right, one count, each with a visually hidden noun so it reads as "2 need you" or "4 sessions":
        - a solid warning badge with how many need you, when any do;
        - otherwise, how many sessions there are (meta, `--pw-text-subtle`, tabular).
+       - A group's counts are its distinct sessions, those started in it and those that worked in it, so a session in three repos counts once in each, and its badge shows in each. The repos' counts can add up to more than All sessions'; Needs you and All sessions count each session once.
        - Needs you shows its badge, or nothing when nothing needs you.
        - All sessions always shows how many sessions there are, as in the layout above: the badge would only repeat Needs you's, just above it.
        - Before the first snapshot, the two views show no count.
@@ -984,7 +994,8 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
    - "Active 5m ago" (meta, `--pw-text-subtle`, a [timestamp](#timestamps), the absolute time in its tooltip).
    - The cwd (path type, `--pw-text-subtle`, middle ellipsis, the full path, home and all, in a tooltip) with a [copy button](#copy), "Copy path". It takes the rest of the line, or a line of its own below 16em.
    - When the directory no longer exists (`cwdMissing`): "Directory no longer exists" (meta, `--pw-text-muted`), its own item so it wraps rather than squeezing the path, with "The working directory no longer exists, for example after a worktree was removed." in a tooltip.
-3. **When the session has left the snapshot:** an inline neutral alert, `role="status"`: "This session is no longer listed, so this is what it showed last."
+3. **Where it worked** (W34), once its scan finds repos beyond where it started: "Started in *start* · worked in *repo*, *repo*", meta in `--pw-text-subtle`, the labels in `--pw-text-muted` 500, as the repo list labels them (the root's own directory as its path), newest touch first. It wraps; nothing in it is cut. The " · " is drawn, and screen readers hear ", and" instead. Then an info button (`InfoTip`) whose name and tooltip are the rule: "A session is also listed under each repo it changed, or that at least 5% of its tool calls touched, its sub-agents' included. One started in a root's own directory is listed under those repos alone." A session that worked in no other repo, or hasn't been scanned yet, has no line 3. Labels are text, never markup.
+4. **When the session has left the snapshot:** an inline neutral alert, `role="status"`: "This session is no longer listed, so this is what it showed last."
 
 **Actions menu** (`more`, "Session actions", a [menu](#menus)): Copy session ID (`copy`), Copy attach command (`terminal`); then, in three columns, a separator and Make view wider, Make view narrower and Reset view width (no icons; see the [divider](#session-view)); then a separator, then Stop session (`stop`) and Remove session (`remove`, in danger text).
 
@@ -1425,6 +1436,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - Opening from the URL or the back button takes no focus, unless focus was in what the view covers below 1,200 px, which goes inert: then it moves to the view's heading. Closing by the back button returns focus to the row only when it was in the view.
    - Where focus would go to the session list's heading (a dismissed toast, a choice in the drawer), it goes to the view's heading while the view covers the list.
    - Moving between sessions with ↑/↓ while focus is in the list leaves focus in the list.
+   - A focused row that a snapshot takes out of the list, such as a session that moved to its repos, hands focus to the row that took its place, or the one before it, or the session list's heading (see [Session list](#session-list)).
    - Choosing in the repo list leaves focus there; in the drawer, focus moves to the session list's heading.
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
 9. **Announcements:**
