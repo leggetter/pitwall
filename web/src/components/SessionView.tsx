@@ -21,7 +21,7 @@ import { formatRoots, plainText, shortenHome } from '../format.js';
 import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
-import { StatusBadge } from './Badge.js';
+import { Badge, StatusBadge } from './Badge.js';
 import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
 import { EmptyState } from './EmptyState.js';
@@ -31,7 +31,7 @@ import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
-import { SESSION_VIEW_ID } from './SessionRow.js';
+import { FINISHED_ASKED_HINT, SESSION_VIEW_ID, STALE_HINT } from './SessionRow.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
 import { Timestamp } from './Timestamp.js';
 import { useToast } from './Toast.js';
@@ -370,6 +370,24 @@ export function SessionView({
         <div className="session-view-meta">
           {/* Idle shows here, though not in the list. */}
           <StatusBadge badge={badge} />
+          {/*
+            The row's other badges, each with an info button after it, so its explanation, which is a
+            hover-only tooltip in the row, is reachable here by keyboard and screen readers.
+          */}
+          {session.finished && session.askedYou && (
+            <span className="session-view-badge">
+              <Badge look="outline">Asked you</Badge>
+              <InfoTip text={FINISHED_ASKED_HINT} className="session-view-info" />
+            </span>
+          )}
+          {session.stale && (
+            <span className="session-view-badge">
+              <Badge look="subtle-neutral" className="stale">
+                Stale
+              </Badge>
+              <InfoTip text={STALE_HINT} className="session-view-info" />
+            </span>
+          )}
           <span className="session-view-kind">
             {KIND_LABELS[session.kind]}
             {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. */}

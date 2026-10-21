@@ -68,6 +68,14 @@ const CONVERSATION_STATES = (
   session: background(waited === 'long' ? 'view-loading-long' : `view-${conversation}`, { state: 'working' }),
 }));
 const RETRYING = background('view-failed-retrying', { state: 'working' });
+const STALE_VIEW = background('view-stale', { state: 'blocked', stale: true, waitingFor: 'a question from last month' });
+const FINISHED_ASKED_VIEW = background('view-finished-asked', {
+  state: 'done',
+  alive: false,
+  pid: undefined,
+  finished: true,
+  askedYou: { reason: 'open-questions', excerpt: 'Should the made-up export keep archived projects?' },
+});
 const NO_API = background('view-no-api', { state: 'working' });
 
 /** Opens the session view's actions menu. */
@@ -106,6 +114,20 @@ export function SessionViews() {
       >
         <Stubbed>
           <SessionView session={VIEW_INTERACTIVE} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Stale"
+        note="The row's Stale badge, after the status, with an info button whose name and tooltip are its explanation, so the keyboard and screen readers reach it; in the row it's a hover-only tooltip."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={STALE_VIEW} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Finished, and it asked you" note="The row's outlined Asked you, with its explanation behind an info button too." frame="short">
+        <Stubbed>
+          <SessionView session={FINISHED_ASKED_VIEW} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="Background" note="The actions menu in the header, no message box, and older entries behind Load earlier." frame="view">

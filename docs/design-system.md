@@ -890,7 +890,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
   - **Counts:** subtle neutral ("4", "2 of 5").
   - **Needs-you counts:** solid warning ("2 need you").
   - **Errors in folded tool calls:** subtle danger: "1 error" or "3 errors" on a fold's toggle, and "error" on each failed call.
-- **Stale** carries its explanation in a tooltip, on hover (`Badge`'s `hint`): "Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters."
+- **Stale** carries its explanation in a tooltip, on hover (`Badge`'s `hint`): "Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters." A badge isn't focusable, so in a row that tooltip is hover-only; the session view shows Stale, and a finished session's Asked you, with an info button after each whose name and tooltip are the explanation, so the keyboard and screen readers reach it (W31).
 
 ### Status dot
 
@@ -980,6 +980,7 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
    - A copy's result is a [toast](#toasts): "Copied", or "Couldn't copy; the text is selected" as an error toast. When the copied text isn't on screen (the session ID, the attach command), a refusal also shows it, selected, below line 2, "Session ID: *id*" in code style, until the next copy.
 2. **Line 2, 8 px gaps, wrapping:**
    - The status badge.
+   - Then the row's other badges: "Asked you" (outline) for a finished session that asked, and "Stale" (subtle neutral), each followed by an info button (`InfoTip`) whose name and tooltip are its explanation, the row's hover-only hint.
    - The kind as meta text in `--pw-text-subtle` ("Interactive" or "Background"). An interactive session adds an info button (`InfoTip`), so Tab reaches it: its name and its tooltip say that typing `/bg` in its terminal moves it to the background, so pitwall can drive it fully.
    - "Active 5m ago" (meta, `--pw-text-subtle`, a [timestamp](#timestamps), the absolute time in its tooltip).
    - The cwd (path type, `--pw-text-subtle`, middle ellipsis, the full path, home and all, in a tooltip) with a [copy button](#copy), "Copy path". It takes the rest of the line, or a line of its own below 16em.
