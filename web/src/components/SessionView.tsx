@@ -23,6 +23,7 @@ import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
 import { Badge, StatusBadge } from './Badge.js';
+import { Button } from './Button.js';
 import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
 import { EmptyState } from './EmptyState.js';
@@ -124,10 +125,9 @@ function Top({ compact, onClose, children, end }: TopProps) {
   return (
     <div className="session-view-top">
       {compact && (
-        <button type="button" className="button ghost session-view-back" onClick={onClose} aria-keyshortcuts="Escape">
-          <Icon name="back" />
+        <Button variant="ghost" icon="back" className="session-view-back" onClick={onClose} aria-keyshortcuts="Escape">
           Back to sessions
-        </button>
+        </Button>
       )}
       {children}
       {end}

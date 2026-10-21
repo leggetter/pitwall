@@ -789,7 +789,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 - **Anatomy:** an optional 16 px leading icon, 6 px before the label; `--pw-radius-md`; `white-space: nowrap`.
 - **Pressed:** `--pw-surface-strong` fill (outline and ghost), or `--pw-accent-hover` (primary).
 - **Focus:** `--pw-ring-focus` added to the variant's shadow.
-- **Component:** `Button` (`web/src/components/Button.tsx`), with `variant`, `size`, `icon`, `disabled`, `busy` and `busyLabel`. Every button with a disabled or busy state uses it.
+- **Component:** `Button` (`web/src/components/Button.tsx`), with `variant`, `size`, `icon`, `disabled`, `busy` and `busyLabel`. Every button with a disabled or busy state uses it, and so do the header's New session and the session view's Back to sessions (W31). Icon-only buttons, such as Close, Repos and the keyboard button, are [icon buttons](#icon-buttons), which `Button` doesn't draw.
 - **Disabled:**
   - Uses `aria-disabled="true"`, not `disabled`, so it stays focusable, Tab reaches it, and its tooltip can say why. Activation does nothing: the click handler ignores the click that Enter and Space bring too, and a submit button doesn't submit its form.
   - Text and icon `--pw-text-disabled`; fill `--pw-surface-sunken` (primary, outline and danger), or none (ghost).

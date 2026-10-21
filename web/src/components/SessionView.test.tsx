@@ -391,6 +391,17 @@ describe('SessionView: the badges a row has, with their explanations (W31)', () 
   });
 });
 
+describe('SessionView: Back to sessions (W31)', () => {
+  it('is a ghost Button with the back icon at 600 px and narrower, in place of Close, saying Escape does the same', () => {
+    render(<SessionView session={target()} listed onClose={() => {}} compact />);
+    const back = screen.getByRole('button', { name: 'Back to sessions' });
+    expect(back.className).toBe('button ghost md session-view-back');
+    expect(back.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(back.getAttribute('aria-keyshortcuts')).toBe('Escape');
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+  });
+});
+
 describe('SessionView: the /bg note', () => {
   it("is an info button after an interactive session's kind, named and tooltipped with how /bg lets pitwall drive it fully", async () => {
     renderDashboard(fakeServer(ok([])));
