@@ -72,6 +72,12 @@ function openDialog(): HTMLElement {
   return screen.getByRole('dialog', { name: 'New session' });
 }
 
+/** Fills in a first prompt and returns the dialog, for a submit. */
+function fill2(dialog: HTMLElement): HTMLElement {
+  fill(dialog, { prompt: 'Reply with: ready' });
+  return dialog;
+}
+
 function fill(dialog: HTMLElement, fields: { prompt?: string; name?: string }) {
   if (fields.prompt !== undefined) fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: fields.prompt } });
   if (fields.name !== undefined) fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: fields.name } });
@@ -283,6 +289,39 @@ describe('New session: starting one', () => {
     update(snap([session({ name: 'demo-docs' }), spawned]));
     await settle();
     expect(screen.getByRole('dialog', { name: 'pitwall-test-spawn' })).toBeTruthy();
+  });
+
+  it("started from the no-sessions empty state, focuses the new session's heading once it's listed, since the button it came from has gone (W31)", async () => {
+    const server = fakeServer(started);
+    const { update } = renderDashboard(server, snapshot([]));
+    const fromEmpty = within(screen.getByRole('main')).getByRole('button', { name: 'New session' });
+    // A click focuses the button it's on, as a browser's does.
+    fromEmpty.focus();
+    fireEvent.click(fromEmpty);
+    const dialog = screen.getByRole('dialog', { name: 'New session' });
+    fill(dialog, { prompt: 'Reply with: ready' });
+    await submit(dialog);
+    expect(document.activeElement).toBe(fromEmpty);
+
+    const spawned = session({ name: 'pitwall-test-spawn', kind: 'background', shortId: 'c0ffee12', state: 'working', cwd: REPO });
+    update(snapshot([group({ key: REPO, label: 'demo-app', sessions: [spawned] })]));
+    await settle();
+    const view = screen.getByRole('dialog', { name: 'pitwall-test-spawn' });
+    expect(document.activeElement).toBe(document.getElementById(view.getAttribute('aria-labelledby')!));
+  });
+
+  it('started from the header, leaves focus on its New session button when the view opens', async () => {
+    const server = fakeServer(started);
+    const { update } = renderDashboard(server);
+    const header = within(document.querySelector<HTMLElement>('.app-header')!).getByRole('button', { name: 'New session' });
+    header.focus();
+    await submit(fill2(openDialog()));
+    expect(document.activeElement).toBe(header);
+    const spawned = session({ name: 'pitwall-test-spawn', kind: 'background', shortId: 'c0ffee12', state: 'working', cwd: REPO });
+    update(snap([session({ name: 'demo-docs' }), spawned]));
+    await settle();
+    expect(screen.getByRole('dialog', { name: 'pitwall-test-spawn' })).toBeTruthy();
+    expect(document.activeElement).toBe(header);
   });
 
   it('leaves out an empty name and the default model, and uses a typed directory and model', async () => {

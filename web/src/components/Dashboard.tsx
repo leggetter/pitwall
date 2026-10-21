@@ -177,7 +177,16 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const reposCovered = overlaid && overlayCoversRepos;
   // The New session dialog, and the session it started, opened once it's listed.
   const [newSession, setNewSession] = useState(false);
-  const openStarted = useCallback((session: SessionSummary) => opened.open(session.sessionId), [opened.open]);
+  // Its view takes no focus, unless focus has nowhere to be: started from the no-sessions empty state,
+  // whose New session button goes as the session is listed, focus would otherwise be left on the page.
+  const openStarted = useCallback(
+    (session: SessionSummary) => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) focusView.current = { id: session.sessionId, on: 'heading' };
+      opened.open(session.sessionId);
+    },
+    [opened.open],
+  );
   const started = useOpenWhenListed(allSessions, openStarted);
 
   // The view's heading, which takes focus when a session is opened from a row or the view's header;
