@@ -403,10 +403,10 @@ describe('SessionView: Back to sessions (W31)', () => {
 });
 
 describe('SessionView: the /bg note', () => {
-  it("is an info button after an interactive session's kind, named and tooltipped with how /bg lets pitwall drive it fully", async () => {
+  it("is an info button after an interactive session's kind, named and tooltipped with how /bg lets pitwall attach to it and stop it", async () => {
     renderDashboard(fakeServer(ok([])));
     const view = await openView();
-    const note = 'Typing /bg in its terminal moves it to the background, so pitwall can drive it fully.';
+    const note = 'Typing /bg in its terminal moves it to the background, so pitwall can attach to it and stop it.';
     // A button, so Tab reaches it, whose name is its tooltip.
     const info = within(view).getByRole('button', { name: note });
     expect(info.tabIndex).toBe(0);

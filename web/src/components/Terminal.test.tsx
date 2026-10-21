@@ -201,7 +201,9 @@ describe('SessionView: attach, from the Terminal tab', () => {
     const off = tab(view, 'Terminal');
     expect(off.getAttribute('aria-disabled')).toBe('true');
     // Why, in a tooltip that describes it, and in the DOM before it shows; no title.
-    expect(descriptionOf(off)).toMatch(/Typing \/bg in its terminal moves it to the background/);
+    expect(descriptionOf(off)).toBe(
+      "An interactive session can't be attached here. Type /bg in its terminal to move it to the background, then attach to it here.",
+    );
     expect(off.hasAttribute('title')).toBe(false);
     fireEvent.click(off);
     await settle();

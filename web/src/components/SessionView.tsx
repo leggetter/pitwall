@@ -49,10 +49,14 @@ import { SkeletonHeading, SkeletonMeta, WaitingStatus, type Waiting } from './Wa
 
 const KIND_LABELS: Record<SessionSummary['kind'], string> = { interactive: 'Interactive', background: 'Background' };
 
-/** The interactive session's info icon: what /bg does. */
-export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, so pitwall can drive it fully.';
+/** The interactive session's info icon: what /bg does, which the disabled Terminal tab and Stop session each say how to use. */
+export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, so pitwall can attach to it and stop it.';
+/** The Terminal tab's tooltip for an interactive session, where the tab is off. */
 export const TERMINAL_INTERACTIVE_NOTE =
-  "An interactive session can't be attached here. Typing /bg in its terminal moves it to the background, so pitwall can attach to it.";
+  "An interactive session can't be attached here. Type /bg in its terminal to move it to the background, then attach to it here.";
+/** Stop session's tooltip for an interactive session, where the item is off (W40). */
+export const STOP_INTERACTIVE_HINT =
+  "An interactive session can't be stopped here. Type /bg in its terminal to move it to the background, then stop it here.";
 export const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
 /** The worked-in line's info icon: the rule behind it (W34, spike 004), and where to find the sessions that worked in a repo (W39). */
 export const WORKED_IN_NOTE =
@@ -371,6 +375,13 @@ export function SessionView({
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...widthEntries,
+    // An interactive session can't be stopped from here, so Stop session is off, saying how /bg changes that.
+    ...(!background && listed
+      ? [
+          { kind: 'separator' as const, id: 'separator' },
+          { id: 'stop', label: 'Stop session', icon: 'stop' as const, disabled: true, hint: STOP_INTERACTIVE_HINT, onSelect: () => {} },
+        ]
+      : []),
     ...(canAct
       ? [
           { kind: 'separator' as const, id: 'separator' },
