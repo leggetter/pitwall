@@ -1015,6 +1015,7 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
 - Interactive sessions: the [message box](#message-box).
 - A session that can't be messaged: a meta note, "It isn't running, so it can't be messaged."
 - Background sessions, and sessions that are no longer listed: no footer. The header's alert says why for the second.
+- **A draft is never lost to the session going** (W31): when the session stops running, or leaves the list, while the message box has a draft, the box stays, with the draft in it, still editable, so it can be copied. A meta note above it says why it can't be sent, linked to the textarea: "It isn't running any more, so this can't be sent. Your text stays here until you clear it." or "It's no longer listed, so this can't be sent. …", and Send is `aria-disabled`, its tooltip saying the same. Escape and the shortcuts still keep it (6.2). Cleared, the note or no footer takes its place, as above.
 
 ### Message box
 
@@ -1047,6 +1048,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
   - While sending: the busy state ("Sending…"), and the textarea is read-only.
   - After a send, focus stays in the textarea, or comes back to it from Send, unless it was moved somewhere else while the message was out. The draft clears when the message was delivered, held or refused; it stays when it wasn't sent or may not have been.
   - Escape with a draft does nothing, wherever focus is in the view, so a draft is never lost to the shortcut that closes the view.
+  - A draft stays when its session stops running or leaves the list, with a note saying why it can't be sent (see the footer, above).
   - Rows have no Message button: the message box is always at the foot of an interactive session's view.
 
 ### Conversation

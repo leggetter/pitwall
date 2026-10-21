@@ -51,6 +51,14 @@ export const sendTooLong = (over: number) =>
   `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${MAX_RELAY_TEXT_LENGTH.toLocaleString('en')}.`;
 export const SEND_UNAVAILABLE = "Messages can't be sent from here.";
 
+/**
+ * Why a draft that was being written can't be sent any more: its session stopped running, or left the
+ * list. The text stays, so it isn't lost, until it's cleared; Send says the same in its tooltip.
+ */
+export const KEPT_NOT_RUNNING = "It isn't running any more, so this can't be sent. Your text stays here until you clear it.";
+export const KEPT_NOT_LISTED = "It's no longer listed, so this can't be sent. Your text stays here until you clear it.";
+export const SEND_NOT_LISTED = "It's no longer listed, so it can't be messaged.";
+
 export interface RelayBoxProps {
   /** An interactive session. */
   session: SessionSummary;
@@ -58,11 +66,13 @@ export interface RelayBoxProps {
   replyShown?: boolean;
   /** Whether there's a draft, for the view, which ignores Escape while there is one (6.2). */
   onDraftChange?: (hasDraft: boolean) => void;
+  /** False once the session has left the snapshot: a draft stays, but can't be sent. */
+  listed?: boolean;
 }
 
-export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBoxProps) {
+export function RelayBox({ session, replyShown = false, onDraftChange, listed = true }: RelayBoxProps) {
   const api = useContext(ApiContext);
-  const ids = { heading: useId(), text: useId(), keys: useId(), count: useId() };
+  const ids = { heading: useId(), text: useId(), keys: useId(), count: useId(), kept: useId() };
   const alive = useRef(true);
   const form = useRef<HTMLFormElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -83,9 +93,12 @@ export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBo
     };
   }, []);
 
-  const messageable = canMessage(session);
-  // Only while the text box is there: a session that stopped running shows its note instead.
-  const hasDraft = messageable && text !== '';
+  const messageable = canMessage(session) && listed;
+  // A session that stopped running, or left the list, shows its note instead of the text box, unless
+  // there's a draft: that stays, editable, so it isn't lost, with a note saying why it can't be sent.
+  const formShown = messageable || text !== '';
+  const kept = !messageable && text !== '' ? (listed ? KEPT_NOT_RUNNING : KEPT_NOT_LISTED) : undefined;
+  const hasDraft = text !== '';
   const onDraftRef = useRef(onDraftChange);
   onDraftRef.current = onDraftChange;
   useEffect(() => {
@@ -101,7 +114,7 @@ export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBo
     element.style.height = 'auto';
     element.style.height = `${element.scrollHeight}px`;
   };
-  useLayoutEffect(grow, [text, messageable]);
+  useLayoutEffect(grow, [text, formShown]);
   useEffect(() => {
     const element = field.current;
     if (!element || typeof ResizeObserver === 'undefined') return;
@@ -119,7 +132,7 @@ export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBo
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [messageable]);
+  }, [formShown]);
 
   const length = outgoingText(text).length;
   const tooLong = length > MAX_RELAY_TEXT_LENGTH;
@@ -128,7 +141,11 @@ export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBo
   // Why Send does nothing, while it doesn't. Busy says so itself, with its label.
   const sendOff = sending
     ? undefined
-    : api === undefined
+    : !messageable
+      ? listed
+        ? NOT_RUNNING_NOTE
+        : SEND_NOT_LISTED
+      : api === undefined
       ? SEND_UNAVAILABLE
       : tooLong
         ? sendTooLong(length - MAX_RELAY_TEXT_LENGTH)
@@ -175,7 +192,7 @@ export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBo
 
   const look = shown ? resultLook(shown.status) : undefined;
   const keys = modEnter();
-  const describedBy = [ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
+  const describedBy = [kept && ids.kept, ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
 
   return (
     <section className="relay-box" aria-labelledby={ids.heading}>
@@ -195,8 +212,13 @@ export function RelayBox({ session, replyShown = false, onDraftChange }: RelayBo
           )}
         </Alert>
       )}
-      {messageable ? (
+      {formShown ? (
         <form className="relay-form" ref={form} onSubmit={onSubmit}>
+          {kept && (
+            <p className="relay-note relay-kept" id={ids.kept}>
+              {kept}
+            </p>
+          )}
           <label className="visually-hidden" htmlFor={ids.text}>
             Message to {plainText(session.name)}
           </label>

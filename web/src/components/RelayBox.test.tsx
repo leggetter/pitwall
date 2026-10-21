@@ -4,7 +4,7 @@ import { relayPath, type IndexSnapshot, type SessionSummary } from '../../../src
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
-import { tooltipText } from '../test/tooltips.js';
+import { descriptionOf, tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import { usesCommandKey } from './KeyCaps.js';
 
@@ -87,6 +87,55 @@ async function sendFrom(view: HTMLElement, text: string) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
+});
+
+describe('a draft whose session can no longer be messaged (W31)', () => {
+  it('stays, editable, when the session stops running, says why it can’t be sent, and goes to the note once cleared', async () => {
+    const { update } = renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    fireEvent.change(textarea(view), { target: { value: 'a made-up draft' } });
+    update(snap(interactive({ alive: false, pid: undefined, status: undefined })));
+    await settle();
+    expect(textarea(view).value).toBe('a made-up draft');
+    const kept = box(view).querySelector('.relay-kept')!;
+    expect(kept.textContent).toBe("It isn't running any more, so this can't be sent. Your text stays here until you clear it.");
+    expect(textarea(view).getAttribute('aria-describedby')?.split(' ')).toContain(kept.id);
+    const send = within(view).getByRole('button', { name: 'Send' });
+    expect(send.getAttribute('aria-disabled')).toBe('true');
+    expect(descriptionOf(send)).toBe("It isn't running, so it can't be messaged.");
+    // Escape keeps it, as for any draft.
+    fireEvent.keyDown(textarea(view), { key: 'Escape' });
+    await settle();
+    expect(screen.getByRole('dialog', { name: NAME })).toBe(view);
+
+    fireEvent.change(textarea(view), { target: { value: '' } });
+    expect(within(view).queryByRole('textbox')).toBeNull();
+    expect(box(view).querySelector('.relay-note')?.textContent).toBe("It isn't running, so it can't be messaged.");
+  });
+
+  it('keeps the footer, with the draft, when the session leaves the list, and lets it go once cleared', async () => {
+    const { update } = renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    fireEvent.change(textarea(view), { target: { value: 'a made-up draft' } });
+    update(snapshot([group({ sessions: [session({ sessionId: BG, name: 'pitwall-test-bg', kind: 'background', shortId: 'b3899da0', state: 'working' })] })]));
+    await settle();
+    expect(view.querySelector('.session-view-head')?.textContent).toContain('This session is no longer listed');
+    expect(textarea(view).value).toBe('a made-up draft');
+    expect(box(view).querySelector('.relay-kept')?.textContent).toBe("It's no longer listed, so this can't be sent. Your text stays here until you clear it.");
+    expect(descriptionOf(within(view).getByRole('button', { name: 'Send' }))).toBe("It's no longer listed, so it can't be messaged.");
+
+    fireEvent.change(textarea(view), { target: { value: '' } });
+    await settle();
+    expect(view.querySelector('.session-view-foot')).toBeNull();
+  });
+
+  it('has no footer when the session leaves the list with no draft, as before', async () => {
+    const { update } = renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const view = await openView();
+    update(snapshot([group({ sessions: [session({ sessionId: BG, name: 'pitwall-test-bg', kind: 'background', shortId: 'b3899da0', state: 'working' })] })]));
+    await settle();
+    expect(view.querySelector('.session-view-foot')).toBeNull();
+  });
 });
 
 describe('the message box', () => {
