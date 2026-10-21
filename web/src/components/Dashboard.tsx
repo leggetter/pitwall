@@ -18,6 +18,12 @@
 // the first render, so its live region is there before any toast (4: Toasts). Relative times tick on
 // the shared clock (clock.ts), each on its own, so the dashboard doesn't re-render every second.
 //
+// A group can be hidden from the repo list with the session list header's Hide from repo list button,
+// and shown again there or from the Hidden section at the list's foot (W35, hidden.ts). Hiding changes
+// the repo list alone: the views, their counts, other groups and the session view are as they were.
+// Each hide and unhide is confirmed by a toast that says where the group went, and the button keeps
+// focus, as the same button with its other name.
+//
 // The single-key shortcuts (6.2) are handled here: `/` focuses the filter field, `n` opens the New
 // session dialog, `?` the keyboard shortcuts dialog, and `j` and `k` move through the session list as
 // shown. shortcuts.ts says which key is which, and when a key isn't one, such as while typing; here,
@@ -29,6 +35,7 @@ import type { SessionSummary } from '../../../src/shared/protocol.js';
 import type { ConnectionView } from '../connection.js';
 import { formatRoots, plainText } from '../format.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
+import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
 import { useOpenSession } from '../openSession.js';
 import { createPanelWidthStore } from '../panelWidth.js';
@@ -51,6 +58,7 @@ import {
   filterListed,
   filterNeedle,
   groupId,
+  groupLabel,
   listScope,
   NO_FILTERS,
   noMatchText,
@@ -69,6 +77,7 @@ import { Divider } from './Divider.js';
 import { EmptyState } from './EmptyState.js';
 import { FilterControls } from './Filters.js';
 import { Header } from './Header.js';
+import { HideButton } from './HideButton.js';
 import { HighlightContext } from './Highlight.js';
 import { closeMenus } from './Menu.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
@@ -95,6 +104,11 @@ export const ROOT_GROUP_GONE = 'Sessions started here that worked in repos are l
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
+
+/** The toasts for hiding a group from the repo list and showing it again, saying where it went (W35). */
+export const hiddenText = (label: string) => `Hid ${plainText(label)}. It's under Hidden, at the foot of the repo list.`;
+export const unhiddenText = (label: string, listed: boolean) =>
+  `Unhid ${plainText(label)}. ${listed ? "It's back in the repo list." : "It's back in the repo list once it has sessions."}`;
 
 /**
  * What's slow when the first snapshot takes long (4: Skeletons and spinners): the index's first poll,
@@ -179,6 +193,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const allSessions = useMemo(() => uniqueSessions(groups), [groups]);
   const attention = countAttention(allSessions);
   const selectedGroup = findGroup(groups, selection);
+  // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
+  const hidden = useHiddenGroups(roots, storage);
+  const selectedHidden = 'view' in selection ? undefined : hidden.find(selection.repo, selection.root);
   const scope = scopeFor(groups, selection);
   const listed = useMemo(() => (scope ? listScope(groups, scope, sort) : { current: [], finished: [] }), [groups, scope?.kind, selectedGroup, sort]);
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
@@ -547,7 +564,38 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const heading: SessionListHeading =
     'view' in selection
       ? { label: name }
-      : { label: name, kind: selectedGroup?.kind, root: roots.length > 1 ? (selectedGroup?.root ?? selection.root) : undefined };
+      : { label: name, kind: selectedGroup?.kind ?? selectedHidden?.kind, root: roots.length > 1 ? (selectedGroup?.root ?? selection.root) : undefined };
+  // A group's Hide from repo list, or Show in repo list once it's hidden, whether or not it's in the snapshot.
+  const unhide = (group: HiddenGroup) => {
+    hidden.unhide(group);
+    const listed = groups.some((candidate) => candidate.root === group.root && candidate.key === group.key);
+    toasts.show({ tone: 'success', message: unhiddenText(groupLabel(absentGroup(group)), listed) });
+  };
+  let headingAction: ReactNode;
+  if (selectedHidden) {
+    const group = selectedHidden;
+    headingAction = (
+      <HideButton
+        hidden
+        onClick={() => {
+          unhide(group);
+          // A group that has left the snapshot can't be hidden again, so the button goes: focus goes to the heading, not the page.
+          if (!selectedGroup) listHeading.current?.focus();
+        }}
+      />
+    );
+  } else if (selectedGroup) {
+    const group = selectedGroup;
+    headingAction = (
+      <HideButton
+        hidden={false}
+        onClick={() => {
+          hidden.hide(group);
+          toasts.show({ tone: 'success', message: hiddenText(groupLabel(group)) });
+        }}
+      />
+    );
+  }
   const total = listed.current.length + listed.finished.length;
   const shown = current.length + finished.length;
   // No summary where it would only repeat the empty state below it: "0 sessions · Nothing needs you"
@@ -651,6 +699,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       autoFocus={from === 'drawer'}
       skeletons={waiting.shown}
       inert={from === 'list' && reposCovered}
+      hidden={{ groups: hidden.groups, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: unhide }}
     />
   );
 
@@ -739,6 +788,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             alerts={hasAlerts ? alerts : undefined}
             heading={heading}
             headingRef={listHeading}
+            headingAction={headingAction}
             summary={summarised ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session)) } : undefined}
             filters={
               allSessions.length > 0 && (

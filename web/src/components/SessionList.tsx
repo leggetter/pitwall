@@ -1,6 +1,7 @@
 // The session list (docs/design-system.md, 3: Session list): the page alerts, then a header that
-// stays put, with the selection's name, its summary, the filters and the Sort setting, then the
-// two-line rows, which scroll, and a Finished section, collapsed by default, at the end.
+// stays put, with the selection's name, its summary, a group's Hide from repo list button, the
+// filters and the Sort setting, then the two-line rows, which scroll, and a Finished section,
+// collapsed by default, at the end.
 //
 // The rows come sorted. While the pointer is over the list or focus is inside it, a snapshot that
 // would reorder them waits until both have left, so nothing moves under the reader; rows that are
@@ -40,6 +41,8 @@ export interface SessionListProps {
   headingRef?: RefObject<HTMLHeadingElement | null>;
   /** Undefined before the first snapshot. */
   summary?: SessionListSummary | undefined;
+  /** At the end of the heading's line, after the summary: a group's Hide from repo list, or Show in repo list (W35). */
+  headingAction?: ReactNode;
   /** The filter field, the chips and the Sort setting, once there are sessions to filter. */
   filters?: ReactNode;
   current: readonly Listed[];
@@ -147,6 +150,7 @@ export function SessionList({
   heading,
   headingRef,
   summary,
+  headingAction,
   filters,
   current,
   finished,
@@ -225,7 +229,14 @@ export function SessionList({
             {heading.kind && <span className="visually-hidden">, {heading.kind === 'git' ? 'git repo' : 'directory'}</span>}
             {heading.root && <span className="session-list-root">in {plainText(shortenHome(heading.root))}</span>}
           </h2>
-          {summary && <Summary {...summary} />}
+          {headingAction ? (
+            <div className="session-list-end">
+              {summary && <Summary {...summary} />}
+              {headingAction}
+            </div>
+          ) : (
+            summary && <Summary {...summary} />
+          )}
         </div>
         {filters && <div className="session-list-filters">{filters}</div>}
       </div>

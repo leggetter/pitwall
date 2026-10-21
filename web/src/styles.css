@@ -299,6 +299,101 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * The Hidden section, at the repo list's foot (W35; section 4: Hidden groups): a disclosure the size
+ * of a repo list item, in the Finished toggle's type, then each hidden group's link, muted, and its
+ * Unhide icon button. On --pw-bg in the sidebar, where hovers are --pw-surface-hover-bg (2.3).
+ */
+.repo-hidden-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  width: 100%;
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: transparent;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.repo-hidden-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repo-hidden-toggle > .badge {
+  flex: none;
+}
+
+.repo-hidden-toggle .chevron {
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.repo-hidden-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.repo-hidden-list {
+  padding-top: var(--pw-space-0-5);
+}
+
+.repo-hidden-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+}
+
+.repo-hidden-entry > .repo-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repo-item.hidden-item:not(.selected) .repo-item-label {
+  color: var(--pw-text-muted);
+}
+
+/* A hidden group the snapshot hasn't: "No sessions" under its label, which keeps the item's width. */
+.repo-item-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.repo-item-text > .repo-item-label {
+  flex: none;
+}
+
+.repo-item-note {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+@media (hover: hover) {
+  .repo-hidden-toggle:hover {
+    background: var(--pw-surface-hover-bg);
+    color: var(--pw-text);
+  }
+
+  .repo-drawer .repo-hidden-toggle:hover {
+    background: var(--pw-surface-hover);
+  }
+
+  .columns > .repo-list .icon-button.ghost:hover {
+    background: var(--pw-surface-hover-bg);
+  }
+}
+
 /* The drawer, below 900 px: over a backdrop, like a dialog, sliding in from the left. */
 
 .repo-drawer-backdrop {
@@ -596,6 +691,19 @@ textarea {
   line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/*
+ * The summary and a group's Hide from repo list, or Show in repo list (W35), together at the right of
+ * the heading's line, and wrapping together. The button is sm, 24 px, the line's height, so the header
+ * is as tall for a group as for a view.
+ */
+.session-list-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-2);
+  margin-left: auto;
 }
 
 /* The filters: the field, the chips and Clear filters. */
