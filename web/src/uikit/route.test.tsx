@@ -13,6 +13,9 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
+    options = {};
+    // The parser hooks that keep the cursor steady (W45).
+    parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) };
     loadAddon() {}
     open() {}
     onData() {}
