@@ -257,6 +257,84 @@ describe('Conversation: markdown in messages (W36)', () => {
   });
 });
 
+describe('Conversation: messages to pitwall (W46)', () => {
+  const toPitwall = (second: number, text: string): ConversationEntry => ({ kind: 'to-pitwall', at: at(second), text, markdown: true });
+  const REPLY = 'Both flows:\n\n```sh\nnpm test -- export\n```\n\nSee [the notes](https://example.com/notes) and https://example.com/runs/7.';
+
+  it('shows a message to pitwall as its own entry, with its speaker line and time, never folded with the calls around it', async () => {
+    const { body } = await renderView(
+      fakeServer(
+        page([
+          { kind: 'cross-session', at: at(1), from: 'pitwall-relay', text: 'Which flows did you change?', markdown: true },
+          tool(2, 'Read: src/export/job.ts'),
+          tool(3, 'Grep: flow in src'),
+          toPitwall(4, 'Both flows.'),
+          tool(5, 'Bash: npm test'),
+          tool(6, 'Bash: npm run build'),
+          claude(7, 'So I sent it both flows.'),
+        ]),
+      ),
+    );
+    const items = rows(body);
+    expect(items.map((item) => item.className)).toEqual([
+      'entry entry-cross-session',
+      'entry entry-fold',
+      'entry entry-to-pitwall',
+      'entry entry-fold',
+      'entry entry-assistant',
+    ]);
+    expect(folds(body).map((fold) => fold.textContent)).toEqual(['2 tool calls', '2 tool calls']);
+    const entry = items[2]!;
+    // The name the call addressed, as a message from another session names its sender: never more than the transcript shows.
+    expect(entry.querySelector('.entry-speaker')?.textContent).toBe(`To pitwall-relay · ${clockTime(at(4))}`);
+    expect(entry.querySelector('time')?.getAttribute('datetime')).toBe(at(4));
+    expect(entry.querySelector('.entry-markdown')?.textContent).toBe('Both flows.');
+  });
+
+  it("renders its markdown as pitwall's own elements, with Copy code, and links only to http and https", async () => {
+    const { body } = await renderView(fakeServer(page([toPitwall(1, `${REPLY}\n\n[a script](javascript:alert(1)) <javascript:alert(2)>`)])));
+    const [entry] = rows(body);
+    expect([...entry!.children].map((child) => child.className)).toEqual(['entry-speaker', 'entry-text entry-markdown']);
+    expect(entry!.querySelector('pre code')?.textContent).toBe('npm test -- export');
+    expect(entry!.querySelector('button[aria-label="Copy code"]')).not.toBeNull();
+    const links = [...entry!.querySelectorAll('a')];
+    expect(links.map((link) => link.getAttribute('href'))).toEqual(['https://example.com/notes', 'https://example.com/runs/7']);
+    for (const link of links) {
+      expect(link.target).toBe('_blank');
+      expect(link.rel).toBe('noopener noreferrer');
+    }
+    expect(entry!.querySelector('a[href^="javascript"]')).toBeNull();
+    expect(entry!.textContent).toContain('[a script](javascript:alert(1))');
+  });
+
+  it('shows HTML in the message as the text it is, never as elements', async () => {
+    const html = '<b>bold</b> <img src=x onerror="alert(1)"> <script>alert(2)</script>';
+    const { body } = await renderView(fakeServer(page([toPitwall(1, html)])));
+    expect(body.querySelector('b, img, script')).toBeNull();
+    expect(body.querySelector('.entry-markdown')?.textContent).toBe(html);
+  });
+
+  it('renders a message at the 32 Ki cap through Markdown alone, cut short, as the server sends it', async () => {
+    const long = `**Start.** ${'A made-up line of the reply, with \`code\` in it.\n'.repeat(700)}`.slice(0, 32 * 1024);
+    const { body } = await renderView(fakeServer(page([{ ...toPitwall(1, long), truncated: true }])));
+    const [entry] = rows(body);
+    expect(entry!.querySelectorAll('.entry-markdown')).toHaveLength(1);
+    expect(entry!.querySelector('p.entry-text:not(.entry-markdown)')).toBeNull();
+    expect(entry!.querySelector('.entry-markdown strong')?.textContent).toBe('Start.');
+    expect(entry!.querySelectorAll('.entry-markdown .md-code-span').length).toBeGreaterThan(500);
+    expect(entry!.lastElementChild?.textContent).toBe('Cut short.');
+  });
+
+  it('says when the server cut it short, and shows one without the markdown flag as plain text', async () => {
+    const { body } = await renderView(fakeServer(page([{ ...toPitwall(1, '**cut**'), truncated: true }, { kind: 'to-pitwall', at: at(2), text: '**plain**' }])));
+    const [cut, plain] = rows(body);
+    expect(cut!.lastElementChild?.textContent).toBe('Cut short.');
+    expect(cut!.querySelector('strong')?.textContent).toBe('cut');
+    expect(plain!.querySelector('.entry-markdown, strong')).toBeNull();
+    expect(plain!.querySelector('p.entry-text')?.textContent).toBe('**plain**');
+  });
+});
+
 describe('Conversation: folded tool calls', () => {
   const entries = (): ConversationEntry[] => [
     tool(1, 'Read: src/export/job.ts'),

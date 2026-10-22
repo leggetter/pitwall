@@ -70,6 +70,49 @@ describe('replyInConversation', () => {
     expect(replyInConversation(exchange(LONG), [{ kind: 'user', at: '2026-03-02T11:51:00.000Z', text: LONG }])).toBe(false);
     expect(replyInConversation(exchange(LONG), [{ kind: 'tool', at: '2026-03-02T11:51:00.000Z', text: 'SendMessage', toolName: 'SendMessage' }])).toBe(false);
   });
+
+  describe('a message to pitwall in the conversation (W46)', () => {
+    const toPitwall = (at: string | undefined, text = LONG, truncated = false): ConversationEntry => ({
+      kind: 'to-pitwall',
+      text,
+      markdown: true,
+      ...(at === undefined ? {} : { at }),
+      ...(truncated ? { truncated: true as const } : {}),
+    });
+    const after = '2026-03-02T11:51:00.000Z';
+
+    it('is true for one at or after the send whose text is the reply the relay received, whitespace aside', () => {
+      expect(replyInConversation(exchange(LONG), [toPitwall(after)])).toBe(true);
+      expect(replyInConversation(exchange(LONG), [toPitwall(sentAt)])).toBe(true);
+      expect(replyInConversation(exchange('Done.'), [toPitwall(after, '\n  Done.\n\n')])).toBe(true);
+      expect(replyInConversation({ ...exchange(LONG), status: 'held' }, [toPitwall(after)])).toBe(true);
+    });
+
+    it('matches the start of the message when the relay cut its copy, and an entry the server cut by what it kept', () => {
+      const whole = `${LONG} ${'More words in the made-up reply. '.repeat(80)}`;
+      expect(replyInConversation(exchange(`${whole.slice(0, 2000)}…`), [toPitwall(after, whole)])).toBe(true);
+      expect(replyInConversation(exchange(whole), [toPitwall(after, whole.slice(0, 512), true)])).toBe(true);
+    });
+
+    it("is false for a different message, as from a session that took the relay's name, so the relay's own copy stays in the footer", () => {
+      expect(replyInConversation(exchange(LONG), [toPitwall(after, 'Something else entirely, sent to whoever took the name.')])).toBe(false);
+      // Only the whole reply: a message that merely starts like an uncut one isn't it.
+      expect(replyInConversation(exchange('Done.'), [toPitwall(after, 'Done. And something else.')])).toBe(false);
+    });
+
+    it('is false with no reply from the relay, for one before the send, one with no time or a time that is not one, and for no entries', () => {
+      expect(replyInConversation({ sentAt, status: 'delivered' }, [toPitwall(after)])).toBe(false);
+      expect(replyInConversation(exchange(LONG), [toPitwall('2026-03-02T11:49:59.999Z')])).toBe(false);
+      expect(replyInConversation(exchange(LONG), [toPitwall(undefined)])).toBe(false);
+      expect(replyInConversation(exchange(LONG), [toPitwall('not a time')])).toBe(false);
+      // Before the conversation loads: the reply stays in the footer.
+      expect(replyInConversation(exchange(LONG), [])).toBe(false);
+    });
+
+    it('keeps the text match on Claude’s entries as the fallback', () => {
+      expect(replyInConversation(exchange(LONG), [toPitwall('2026-03-02T11:40:00.000Z'), said(LONG)])).toBe(true);
+    });
+  });
 });
 
 describe('relayAlertText', () => {

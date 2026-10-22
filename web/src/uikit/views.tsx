@@ -29,6 +29,8 @@ import {
   MARKDOWN_ELEMENTS,
   ROOT,
   session,
+  TO_PITWALL_CONVERSATION,
+  TO_PITWALL_EXCHANGE,
   VIEW_BACKGROUND,
   VIEW_BACKGROUND_DONE,
   VIEW_INTERACTIVE,
@@ -381,6 +383,9 @@ const MARKDOWN_STUB: StubOptions = { entries: MARKDOWN_CONVERSATION };
 const CODE_LINKS = background('conversation-code-links', { state: 'working' });
 const CODE_LINKS_NARROW = background('conversation-code-links-narrow', { state: 'working' });
 const CODE_LINKS_STUB: StubOptions = { entries: LINKS_IN_CODE };
+const TO_PITWALL = session('conversation-to-pitwall', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
+const TO_PITWALL_NARROW = session('conversation-to-pitwall-narrow', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
+const TO_PITWALL_STUB: StubOptions = { entries: TO_PITWALL_CONVERSATION };
 
 /** The event that moves a Refreshing session's activity, as the index does when the session does something. */
 const REFRESH = 'uikit-refresh';
@@ -530,6 +535,29 @@ export function Conversations() {
         <Stubbed options={CODE_LINKS_STUB}>
           <Scenario run={scrolledTo('.md-code')}>
             <SessionView session={CODE_LINKS_NARROW} listed onClose={noop} compact />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Messages to pitwall"
+        note="The session's SendMessage replies to pitwall's relay, each in full, as markdown, in its call's place, after the message from pitwall that asked: a short one between folded tool calls, never folded with them; a long one; and one with a code block and links. Speaker line To pitwall-relay, the name each call addressed, on --pw-surface-sunken with the info inset at its end edge. The first is the reply pitwall's relay received, so the footer keeps only its status line, which says the reply is in the conversation. Scrolled to the message from pitwall."
+        frame="tall"
+      >
+        <Stubbed options={TO_PITWALL_STUB}>
+          <Scenario run={scrolledTo('.entry-cross-session')}>
+            <SessionView session={TO_PITWALL} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Messages to pitwall, 600 px and narrower"
+        note="The long message wraps, and the code block scrolls sideways in its own box; the page doesn't. Scrolled to the first message to pitwall."
+        frame="view"
+        width={375}
+      >
+        <Stubbed options={TO_PITWALL_STUB}>
+          <Scenario run={scrolledTo('.entry-to-pitwall')}>
+            <SessionView session={TO_PITWALL_NARROW} listed onClose={noop} compact />
           </Scenario>
         </Stubbed>
       </Specimen>
@@ -787,8 +815,14 @@ const BOX_CASES: Case[] = [
   { title: 'With the latest exchange', note: 'The last message from pitwall, and the reply that came back.', session: VIEW_INTERACTIVE },
   {
     title: 'The reply already in the conversation',
-    note: 'Shown once: the footer keeps only the status line.',
+    note: 'Shown once, in full, in the conversation, as the message the session sent pitwall’s relay (W46): the footer keeps only the status line, which says so.',
     session: session('box-reply-shown', { relay: exchange('delivered', 'Yes: the export job retries now, and the tests pass.') }),
+    replyShown: true,
+  },
+  {
+    title: 'The reply in the conversation, held',
+    note: 'The status keeps its tone; the words after it are the line’s own.',
+    session: session('box-reply-shown-held', { relay: exchange('held', 'Approved, and done.') }),
     replyShown: true,
   },
   { title: 'The latest exchange, held', note: 'Its status in --pw-warning-fg.', session: session('box-exchange-held', { relay: exchange('held') }) },

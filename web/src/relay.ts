@@ -153,19 +153,42 @@ function squash(text: string): string {
 /** Replies at least this long may sit inside a longer entry; shorter ones must be the whole entry, or "Done." would match everything. */
 const CONTAINED_FROM = 40;
 
+/** What the status line adds once the conversation shows the reply, after the exchange's status (W46). */
+export const REPLY_IN_CONVERSATION = 'It replied, and the reply is in the conversation.';
+
+/**
+ * Whether a message to pitwall is the relay's copy of the reply, whitespace collapsed: the same text, or,
+ * when the relay cut its copy (`cut`), text that starts with it. An entry the server cut shorter than
+ * the reply, past its page's budget, counts when it's the start of the reply.
+ */
+function isReply(entry: ConversationEntry, reply: string, cut: boolean): boolean {
+  const text = squash(entry.text);
+  if (text === reply || (cut && text.startsWith(reply))) return true;
+  return entry.truncated === true && text.length >= CONTAINED_FROM && reply.startsWith(text);
+}
+
 /**
  * Whether the conversation already shows the exchange's reply, so the message box shows only its
- * status line (docs/design-system.md, 4: Message box). It does when one of Claude's entries since
- * the send has the reply's text: the whole entry, or for a reply of 40 characters or more, part of
- * one. A reply only in the session's SendMessage call isn't in its conversation, which shows a tool
- * call by its name alone, so it stays in the footer.
+ * status line, which says so (docs/design-system.md, 4: Message box). Only the reply pitwall's relay
+ * received counts, `exchange.reply`, and it does when:
+ * - a message the session sent to pitwall's relay (`to-pitwall`, W46: its SendMessage, in full) at or
+ *   after the send is the reply's text, whitespace collapsed, or starts with it when the relay cut its
+ *   copy at 2 KiB. The text, not the address alone, is what says it's the reply the relay received,
+ *   since any local session can take the relay's name (W48). A message to pitwall with no time isn't
+ *   known to be since the send, so it doesn't count; or,
+ * - as before W46, one of Claude's entries since the send has the reply's text: the whole entry, or
+ *   for a reply of 40 characters or more, part of one.
+ * Before the conversation loads there are no entries, so the reply shows in the footer until it does.
  */
 export function replyInConversation(exchange: RelayExchange, entries: readonly ConversationEntry[]): boolean {
   if (!exchange.reply) return false;
   // The relay cuts a long reply with an ellipsis; the rest is a prefix of what was sent.
+  const cut = exchange.reply.text.endsWith('…');
   const reply = squash(exchange.reply.text.replace(/…$/, ''));
   if (reply === '') return false;
   const sent = Date.parse(exchange.sentAt);
+  const since = (at: string | undefined) => at !== undefined && Date.parse(at) >= sent;
+  if (entries.some((entry) => entry.kind === 'to-pitwall' && since(entry.at) && isReply(entry, reply, cut))) return true;
   return entries.some((entry) => {
     if (entry.kind !== 'assistant') return false;
     if (entry.at !== undefined && Date.parse(entry.at) < sent) return false;
