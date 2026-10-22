@@ -118,25 +118,28 @@ function press(key: string, target: EventTarget | null = document.body, init: Pa
 }
 
 describe('which key presses are shortcuts', () => {
-  it('maps /, n, ?, j and k, and nothing else', () => {
+  it('maps /, n, ?, j, k and s, and nothing else', () => {
     expect(press('/')).toBe('filter');
     expect(press('n')).toBe('new-session');
     expect(press('?')).toBe('shortcuts');
     expect(press('j')).toBe('next');
     expect(press('k')).toBe('previous');
-    for (const key of ['N', 'J', 'K', 'a', 'Enter', 'Escape', 'ArrowDown', 'F6', 'constructor', ' ']) expect(press(key)).toBeUndefined();
+    expect(press('s')).toBe('star');
+    for (const key of ['N', 'J', 'K', 'S', 'a', 'Enter', 'Escape', 'ArrowDown', 'F6', 'constructor', ' ']) expect(press(key)).toBeUndefined();
   });
 
   it('never with ⌘, Ctrl or Alt held; Shift is allowed, since ? needs it', () => {
     for (const modifier of ['metaKey', 'ctrlKey', 'altKey'] as const) {
-      for (const key of ['/', 'n', '?', 'j', 'k']) expect(press(key, document.body, { [modifier]: true })).toBeUndefined();
+      for (const key of ['/', 'n', '?', 'j', 'k', 's']) expect(press(key, document.body, { [modifier]: true })).toBeUndefined();
     }
     expect(press('?', document.body)).toBe('shortcuts');
   });
 
-  it('ignores n and ? repeating as the key is held, but lets j and k repeat', () => {
+  it('ignores n, ? and s repeating as the key is held, but lets j and k repeat', () => {
     expect(press('n', document.body, { repeat: true })).toBeUndefined();
     expect(press('?', document.body, { repeat: true })).toBeUndefined();
+    // Held, s would star and unstar over and over (W53).
+    expect(press('s', document.body, { repeat: true })).toBeUndefined();
     expect(press('j', document.body, { repeat: true })).toBe('next');
     expect(press('k', document.body, { repeat: true })).toBe('previous');
   });
@@ -166,7 +169,7 @@ describe('which key presses are shortcuts', () => {
     ];
     for (const target of typing) {
       expect(isTyping(target)).toBe(true);
-      for (const key of ['/', 'n', '?', 'j', 'k']) expect(press(key, target)).toBeUndefined();
+      for (const key of ['/', 'n', '?', 'j', 'k', 's']) expect(press(key, target)).toBeUndefined();
     }
     const notTyping = [document.body, make('<button>Go</button>'), make('<input type="checkbox">'), make('<div tabindex="0"></div>'), make('<div contenteditable="false"></div>')];
     for (const target of notTyping) {

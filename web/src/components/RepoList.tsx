@@ -1,5 +1,5 @@
-// The repo list (docs/design-system.md, 3 and 4: Repo list and Repo list items): the Needs you and
-// All sessions views, a divider, then every group. Each item is a link to its selection, one count at
+// The repo list (docs/design-system.md, 3 and 4: Repo list and Repo list items): the Needs you, All
+// sessions and Starred views, a divider, then every group. Each item is a link to its selection, one count at
 // the right, and the list is one Tab stop: ↓ and ↑ move between items, Home and End jump to the ends,
 // and Enter selects. Before the first snapshot, four skeleton items stand in for the groups (4:
 // Skeletons and spinners).
@@ -7,7 +7,12 @@
 // The groups are the ones View preferences makes (W42, groupBy.ts). In Main repo and Where it started
 // each session is in one group, so the groups' counts add up to All sessions'; in Every repo it worked
 // in a session can be in several, and each group counts its distinct sessions, so they can add up to
-// more. Needs you, All sessions and the Hidden section's badge count each session once.
+// more. Needs you, All sessions, Starred and the Hidden section's badge count each session once.
+//
+// Starred (W53) is there whether or not anything is starred, so the list never jumps as the first star
+// comes or the last goes. It counts the starred sessions under the root, as a group counts its own: a
+// need-you badge when any need you, otherwise how many, and nothing while none is starred, as Needs you
+// shows nothing while nothing needs you.
 //
 // With two or more roots, the list is the open root tab's (W38): the dashboard passes that root's
 // groups and hidden groups alone, so the views, their counts and the Hidden section are the root's
@@ -29,7 +34,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, t
 import type { SessionGroup } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { absentGroup, sameGroup, type HiddenGroup } from '../hidden.js';
-import { groupSelection, sameSelection, selectionHref, viewIn, type Selection } from '../selection.js';
+import { groupSelection, sameSelection, selectionHref, VIEW_NAMES, viewIn, type Selection } from '../selection.js';
 import { allFinished, countAttention, groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
@@ -90,20 +95,32 @@ export interface RepoListProps {
   hidden?: HiddenListProps | undefined;
   /** With two or more roots, the open root tab: `groups` and `hidden` are its alone, and the views' links name it too (W38). */
   tab?: string | undefined;
+  /** The starred sessions' ids, under any root, for Starred's count (W53). Nothing is starred when it's undefined. */
+  starred?: ReadonlySet<string> | undefined;
 }
 
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session once, though in Every repo it worked in it may be in several groups (W42).
   const sessions = sessionsIn(groups ?? []);
+  const starredSessions = starred ? sessions.filter((session) => starred.has(session.sessionId)) : [];
   const views: Item[] = [
-    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: 'Needs you', attention: countAttention(sessions), count: undefined, muted: false },
+    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: VIEW_NAMES['needs-you'], attention: countAttention(sessions), count: undefined, muted: false },
     // The total, never a badge: Needs you, just above, has that.
-    { id: 'view:all', selection: viewIn('all', tab), label: 'All sessions', attention: 0, count: groups ? sessions.length : undefined, muted: false },
+    { id: 'view:all', selection: viewIn('all', tab), label: VIEW_NAMES.all, attention: 0, count: groups ? sessions.length : undefined, muted: false },
+    // As a group counts: its badge, or how many; nothing while none is starred.
+    {
+      id: 'view:starred',
+      selection: viewIn('starred', tab),
+      label: VIEW_NAMES.starred,
+      attention: countAttention(starredSessions),
+      count: groups && starredSessions.length > 0 ? starredSessions.length : undefined,
+      muted: false,
+    },
   ];
   // Before the first snapshot there's nothing to hide yet.
   const hiddenGroups = groups ? (hidden?.groups ?? []) : [];

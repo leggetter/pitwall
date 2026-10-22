@@ -1,5 +1,5 @@
-// The app shell's pieces (W21, W23, W35, W38, W42): the real Header, with a tab per root when there
-// are several and View preferences, RepoList with its Hidden section and in each mode of Group
+// The app shell's pieces (W21, W23, W35, W38, W42, W53): the real Header, with a tab per root when there
+// are several and View preferences, RepoList with its Hidden section, its Starred view and in each mode of Group
 // sessions by, RepoDrawer, SessionList with a group's Hide from repo list, the filters and the Sort
 // setting, with fixture props. The header is shown in windows of each
 // width, since its compact rule is a container query on the app (docs/design-system.md, 2.12). The
@@ -34,6 +34,7 @@ import {
   PREFS_SNAPSHOT,
   REPO_LIST_SNAPSHOT,
   ROOT,
+  ROOT_GROUP,
   SERVICE_GROUP,
   THREE_ROOTS,
   TWO_ROOTS_LIST_SNAPSHOT,
@@ -183,6 +184,8 @@ interface LiveRepoListProps {
   hiding?: { groups: readonly HiddenGroup[]; open: boolean };
   /** With several roots, the open root tab, whose groups and hidden groups alone it lists (W38). */
   tab?: string;
+  /** The starred sessions, for Starred's count (W53). */
+  starred?: readonly string[];
 }
 
 /** Each root tab's repo list, side by side, with the groups as `mode` groups them (W42). */
@@ -201,7 +204,8 @@ function ModeLists({ mode }: { mode: GroupBy }) {
 }
 
 /** A repo list with a selection and hidden groups of its own: clicking an item selects it, and Unhide and the Hidden toggle work. */
-function LiveRepoList({ snapshot, start, hiding, tab }: LiveRepoListProps) {
+function LiveRepoList({ snapshot, start, hiding, tab, starred }: LiveRepoListProps) {
+  const [stars] = useState<ReadonlySet<string>>(() => new Set(starred));
   const [selection, setSelection] = useState(start ?? (tab === undefined ? ALL_SESSIONS : viewIn('all', tab)));
   const roots = snapshot?.roots ?? [ROOT];
   const [storage] = useState(() => memoryStorage(hiding ? storedHidden(hiding.groups, hiding.open) : {}));
@@ -219,6 +223,7 @@ function LiveRepoList({ snapshot, start, hiding, tab }: LiveRepoListProps) {
         onUnhide: hidden.unhide,
       }}
       tab={tab}
+      starred={stars}
     />
   );
 }
@@ -246,7 +251,21 @@ export function RepoLists() {
       >
         <LiveRepoList snapshot={TWO_ROOTS_LIST_SNAPSHOT} start={groupSelection(SERVICE_GROUP, TWO_ROOTS_LIST_SNAPSHOT.roots)} tab={OTHER_ROOT} />
       </Specimen>
-      <Specimen title="Before the first snapshot" note="The two views, with no counts." width={240}>
+      <Specimen
+        title="Starred, with sessions starred (W53)"
+        note="Starred counts the starred sessions under the root as a group counts its own: here one of the three needs you, so it carries the badge."
+        width={240}
+      >
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} starred={[APP_GROUP.sessions[0]!.sessionId, NOTES_GROUP.sessions[0]!.sessionId, ROOT_GROUP.sessions[0]!.sessionId]} />
+      </Specimen>
+      <Specimen
+        title="Starred selected, nothing needing you"
+        note="Two starred sessions, neither needing you, so the count. With nothing starred, as in the other specimens, Starred shows no count, as Needs you shows none while nothing needs you."
+        width={240}
+      >
+        <LiveRepoList snapshot={REPO_LIST_SNAPSHOT} start={{ view: 'starred' }} starred={[NOTES_GROUP.sessions[0]!.sessionId, ROOT_GROUP.sessions[0]!.sessionId]} />
+      </Specimen>
+      <Specimen title="Before the first snapshot" note="The three views, with no counts." width={240}>
         <LiveRepoList snapshot={undefined} />
       </Specimen>
       <Specimen

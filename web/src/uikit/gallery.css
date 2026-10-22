@@ -471,6 +471,11 @@
   background: var(--pw-surface-hover);
 }
 
+/* A hovered row shows its star toggle, as the pointer would (W53). */
+.uikit-hovered .session-star {
+  opacity: 1;
+}
+
 /* The Buttons table: a busy button's spinner has no text, so line the cells up by their middles, not their baselines. */
 .uikit-buttons td {
   vertical-align: middle;

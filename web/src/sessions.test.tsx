@@ -114,6 +114,17 @@ describe('listScope', () => {
     expect(finished).toEqual([]);
   });
 
+  it('lists only the starred sessions under Starred, from every group, each once, finished ones apart, in the order chosen (W53)', () => {
+    const ids = new Set([SESSIONS['interactive-idle'].sessionId, SESSIONS['background-blocked'].sessionId, SESSIONS['background-finished'].sessionId, 'not-in-the-snapshot']);
+    const { current, finished } = listScope([app, jobs], { kind: 'starred', ids });
+    expect(names(current)).toEqual(['background-blocked', 'interactive-idle']);
+    expect(names(finished)).toEqual(['background-finished']);
+    expect(current.find(({ session: shown }) => shown.name === 'background-blocked')?.group).toBe(jobs);
+    expect(names(listScope([app, jobs], { kind: 'starred', ids }, 'name').current)).toEqual(['background-blocked', 'interactive-idle']);
+    expect(names(listScope([app, jobs], { kind: 'starred', ids }, 'recent').current)).toEqual(['interactive-idle', 'background-blocked']);
+    expect(listScope([app, jobs], { kind: 'starred', ids: new Set() })).toEqual({ current: [], finished: [] });
+  });
+
   it('sorts as the index does within a group, so a group listed alone and under All agree', () => {
     for (const listed of [app, jobs]) expect([...listed.sessions].sort(compareSessions)).toEqual(listed.sessions);
   });

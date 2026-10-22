@@ -1584,7 +1584,7 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 
 - **Component:** `ShortcutsDialog` (`web/src/components/ShortcutsDialog.tsx`), on `Dialog` with `size="sm"` (`--pw-dialog-sm`, 408 px), titled "Keyboard shortcuts". With nothing to submit, it has no footer; Close and Escape close it, and focus goes back to whatever opened it.
 - **Opened** by `?` or the header's `keyboard` icon button.
-- **The off switch** comes first, and takes focus as the dialog opens: a [checkbox](#inputs-textareas-and-selects), "Single-key shortcuts", that turns off `/`, `?`, `n`, `j` and `k` (WCAG 2.1.4, Character Key Shortcuts), with help text below it, indented to the label, linked with `aria-describedby`: "The keys under Anywhere, which are ignored while you type in a field. While they're off, the keyboard button in the header opens this dialog."
+- **The off switch** comes first, and takes focus as the dialog opens: a [checkbox](#inputs-textareas-and-selects), "Single-key shortcuts", that turns off `/`, `?`, `n`, `j`, `k` and `s` (WCAG 2.1.4, Character Key Shortcuts), with help text below it, indented to the label, linked with `aria-describedby`: "The keys under Anywhere, which are ignored while you type in a field. While they're off, the keyboard button in the header opens this dialog."
   - On by default. Stored in `localStorage` as `pitwall.shortcuts.v1`, `on` or `off`; anything else, nothing stored, or storage that's missing or throws reads as on, and a choice that can't be stored lasts until the page reloads.
   - One store holds it (`web/src/shortcuts.ts`), as the theme's does, so the checkbox, the filter field's key cap and every tooltip agree, and a change made in another tab arrives with the window's `storage` event.
   - While it's off, the Anywhere heading adds "Off" (meta, `--pw-text-muted`), and the rest of the map still works.
@@ -1698,14 +1698,14 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 
 ### 6.2 Keyboard map
 
-Single-key shortcuts (`/`, `?`, `n`, `j`, `k`) work only while they're switched on in the [shortcuts dialog](#keyboard-shortcuts-dialog), and never:
+Single-key shortcuts (`/`, `?`, `n`, `j`, `k`, `s`) work only while they're switched on in the [shortcuts dialog](#keyboard-shortcuts-dialog), and never:
 
 - while focus is in a text field, a textarea, a select, something contenteditable or the terminal (`.xterm`), so typing is typing;
-- with ⌘, Ctrl or Alt held, so the browser's and the system's shortcuts are untouched (Shift is allowed, since `?` needs it on most layouts; `N`, `J` and `K` aren't shortcuts);
+- with ⌘, Ctrl or Alt held, so the browser's and the system's shortcuts are untouched (Shift is allowed, since `?` needs it on most layouts; `N`, `J`, `K` and `S` aren't shortcuts);
 - while a dialog or the repo drawer is open, since both are modal (the session view over the list isn't);
 - for a key that something nearer already handled, or while an input method is composing.
 
-Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're handled in `Dashboard.tsx`, on the document, after every handler inside the app; `web/src/shortcuts.ts` decides which key is which.
+Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They're handled in `Dashboard.tsx`, on the document, after every handler inside the app; `web/src/shortcuts.ts` decides which key is which.
 
 | Key | Where | What it does |
 |---|---|---|
@@ -1713,6 +1713,7 @@ Holding `n` or `?` down doesn't repeat them; holding `j` or `k` does. They're ha
 | `n` | Anywhere | Open the New session dialog |
 | `?` | Anywhere | Open the keyboard shortcuts dialog |
 | `j` / `k` | Anywhere, including the conversation | Next / previous session in the session list (shows it if a session is open). Nothing while the message box has a draft or a Stop or Remove runs |
+| `s` | Anywhere, with a session open | Star or unstar the open session, as its view's [star toggle](#starred-sessions) does, with a toast that says which, since focus isn't on the toggle (W53). Nothing with no session open |
 | ↓ / ↑ | On a session row | Move focus to the next / previous row; with the view open, also show that session. Nothing while the message box has a draft or a Stop or Remove runs |
 | ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading. Nothing while the message box has a draft or a Stop or Remove runs |
 | Enter | On a session row | Open the session |

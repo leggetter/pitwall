@@ -20,6 +20,7 @@ import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
 import { writeHidden, type HiddenGroup } from '../hidden.js';
 import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
+import { writeStarred } from '../starred.js';
 import { CONVERSATION, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
@@ -222,6 +223,13 @@ export function storedHidden(groups: readonly HiddenGroup[], open: boolean): Rec
   const values: Record<string, string> = {};
   const into: StorageSource = () => ({ getItem: () => null, setItem: (key, value) => void (values[key] = value) });
   for (const root of new Set(groups.map((group) => group.root))) writeHidden(root, groups, open, into);
+  return values;
+}
+
+/** What pitwall.starred.v1 holds with these sessions starred, for a specimen's own storage (W53). */
+export function storedStarred(ids: readonly string[]): Record<string, string> {
+  const values: Record<string, string> = {};
+  writeStarred(ids, () => ({ getItem: () => null, setItem: (key, value) => void (values[key] = value) }));
   return values;
 }
 

@@ -26,6 +26,7 @@ import {
   GONE_HIDDEN,
   HIGHLIGHT_SNAPSHOT,
   JOBS_DIR,
+  JOBS_GROUP,
   LIST_SNAPSHOT,
   NOTES_DIR,
   NOTES_GROUP,
@@ -42,6 +43,7 @@ import {
   REPO_LIST_SNAPSHOT,
   ROOT,
   SERVICE_DIR,
+  SERVICE_GROUP,
   snapshot,
   STATUS_ROWS,
   THIRD_ROOT,
@@ -52,7 +54,7 @@ import {
   WORKED_SNAPSHOT,
 } from './fixtures.js';
 import { choose, element, laidOut, press, Reopenable, Scenario, Specimen, text, type, until } from './kit.js';
-import { memoryShortcuts, memoryStorage, storedHidden, type StubOptions } from './stubs.js';
+import { memoryShortcuts, memoryStorage, storedHidden, storedStarred, type StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
 
 const PROMPT = 'Add a retry with backoff to the export job. Keep the existing 30 second timeout.';
@@ -210,6 +212,9 @@ interface PageCase {
 
 const repo = (key: string, root?: string) => `?repo=${key}${root ? `&root=${root}` : ''}`;
 
+/** Three starred sessions in LIST_SNAPSHOT: one that needs you, a calm one, and a finished one (W53). */
+const STARRED_IDS = [APP_GROUP.sessions[0], NOTES_GROUP.sessions[0], JOBS_GROUP.sessions.at(-1)].flatMap((listed) => (listed ? [listed.sessionId] : []));
+
 const PAGES: PageCase[] = [
   {
     title: 'Connecting',
@@ -236,6 +241,26 @@ const PAGES: PageCase[] = [
   },
   { title: 'A group', search: repo(APP_DIR), view: { state: 'live', snapshot: LIST_SNAPSHOT } },
   { title: 'Needs you', search: '?view=needs-you', view: { state: 'live', snapshot: LIST_SNAPSHOT } },
+  {
+    title: 'Starred',
+    note: 'The starred sessions under the root, each with its group on line 2, sorted by the Sort setting, a finished one in its own Finished section (W53). Press a star to unstar: the row leaves at once. Stars on the other rows show on hover and focus.',
+    search: '?view=starred',
+    stored: storedStarred(STARRED_IDS),
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'Starred, with nothing starred',
+    note: 'The empty state says how to star; Show all sessions selects All sessions, with focus on the heading. Starred stays in the repo list, so the list never jumps as the first star comes.',
+    search: '?view=starred',
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'Starred in a root’s tab',
+    note: 'Two roots, a session starred under each: ~/work’s tab lists and counts its own alone. The stars are every root’s, in one key.',
+    search: `?view=starred&root=${OTHER_ROOT}`,
+    stored: storedStarred([APP_GROUP.sessions[0]?.sessionId ?? '', SERVICE_GROUP.sessions[0]?.sessionId ?? '']),
+    view: { state: 'live', snapshot: TWO_ROOTS_SNAPSHOT },
+  },
   {
     title: 'Two roots',
     note: 'A tab per root in the header. ~/work is open, with a group under it selected: the repo list, its counts and the session list are ~/work’s alone. ~/code’s tab carries its need-you badge.',
@@ -485,6 +510,14 @@ const LAYOUTS: PageCase[] = [
     width: 1280,
     search: `${repo(ROOT)}&session=${WORKED_FROM_ROOT.sessionId}`,
     view: { state: 'live', snapshot: WORKED_SNAPSHOT },
+  },
+  {
+    title: 'Three columns, a starred session open',
+    note: 'The view’s star toggle, filled, before the actions menu, and the row’s too: both say the same, and either unstars it. s does as well, with a toast, while the single-key shortcuts are on.',
+    width: 1280,
+    search: `?view=starred&session=${APP_GROUP.sessions[0]?.sessionId ?? ''}`,
+    stored: storedStarred(STARRED_IDS),
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   {
     title: 'The divider at its minimum',

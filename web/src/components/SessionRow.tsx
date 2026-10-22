@@ -1,6 +1,6 @@
 // A session row (docs/design-system.md, 4: Session rows), two lines at most: which session it is,
-// its badges and when it was last active; then what it asked, or what it was last asked, after its
-// group's label in Needs you and All sessions. The rest, such as its replies, its relay exchange, its
+// its badges, when it was last active and its star toggle (W53); then what it asked, or what it was
+// last asked, after its group's label in Needs you, All sessions and Starred. The rest, such as its replies, its relay exchange, its
 // directory, the repos it worked in and the message box, is in the session view, one click away.
 //
 // Tooltips, on hover only, since none of them is on the name's button: the session's id and start
@@ -16,6 +16,7 @@ import { absoluteTime, plainText } from '../format.js';
 import { groupLabel, needsAttention, rowStatusBadge } from '../sessions.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
+import { StarButton } from './StarButton.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 
@@ -84,9 +85,13 @@ export interface SessionRowProps {
   onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   /** This session's view is open. */
   isOpen?: boolean;
+  /** Whether it's starred (W53), for its star toggle. */
+  starred?: boolean;
+  /** Stars or unstars it: the star toggle at the end of line 1, which there's none without. */
+  onStar?: ((sessionId: string, on: boolean) => void) | undefined;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar }: SessionRowProps) {
   const attention = needsAttention(session);
   const { finished } = session;
   const badge = rowStatusBadge(session);
@@ -110,7 +115,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     event.preventDefault();
     onStep(session.sessionId, event.key === 'ArrowDown' ? 1 : -1);
   };
-  const className = ['session', attention && 'attention', finished && 'finished', onOpen && 'openable', isOpen && 'open']
+  const className = ['session', attention && 'attention', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
     .filter(Boolean)
     .join(' ');
   const badges = [
@@ -161,6 +166,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         </div>
         {badges.length > 0 && <span className="session-badges">{badges}</span>}
         {session.lastActivityAt && <Timestamp className="activity" at={session.lastActivityAt} />}
+        {/* Always shown while it's starred; otherwise on hover and focus, so the list stays calm. */}
+        {onStar && <StarButton sessionId={session.sessionId} name={session.name} starred={starred} onStar={onStar} size="sm" className="session-star" />}
       </div>
       {(label !== undefined || wants) && (
         <Tooltip content={wants?.hint} relation="none" onlyIfCut>

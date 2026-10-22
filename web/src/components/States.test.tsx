@@ -79,7 +79,7 @@ describe('first connect: skeletons', () => {
     expect(items.getAttribute('aria-hidden')).toBe('true');
     expect(items.querySelectorAll('.skeleton-item')).toHaveLength(4);
     // Below the two views and the divider, which stay real.
-    expect([...repoList().querySelectorAll('a[data-repo-item]')].map((link) => link.textContent)).toEqual(['Needs you', 'All sessions']);
+    expect([...repoList().querySelectorAll('a[data-repo-item]')].map((link) => link.textContent)).toEqual(['Needs you', 'All sessions', 'Starred']);
     expect(repoList().querySelector('hr.repo-divider')).toBeTruthy();
     const status = within(listBody()).getByRole('status');
     expect(status.textContent).toBe('Loading sessions');

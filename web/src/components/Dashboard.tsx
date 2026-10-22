@@ -24,9 +24,14 @@
 // Each hide and unhide is confirmed by a toast that says where the group went, and the button keeps
 // focus, as the same button with its other name.
 //
+// Sessions can be starred (W53, starred.ts), from the star toggle on each row and in the session
+// view's header, and the repo list's Starred view lists the starred sessions under the open root tab.
+// Starring never selects or opens a session. Unstarred in Starred, a row leaves at once, and focus
+// goes to the star toggle of the row that took its place (SessionList.tsx).
+//
 // The single-key shortcuts (6.2) are handled here: `/` focuses the filter field, `n` opens the New
-// session dialog, `?` the keyboard shortcuts dialog, and `j` and `k` move through the session list as
-// shown. shortcuts.ts says which key is which, and when a key isn't one, such as while typing; here,
+// session dialog, `?` the keyboard shortcuts dialog, `j` and `k` move through the session list as
+// shown, and `s` stars or unstars the open session, with a toast, since focus isn't on its toggle. shortcuts.ts says which key is which, and when a key isn't one, such as while typing; here,
 // they act only on this dashboard's keys, never over a dialog or the repo drawer, and only while
 // they're on. One that moves focus closes an open menu first.
 //
@@ -89,6 +94,7 @@ import {
 } from '../sessions.js';
 import { useSort } from '../sort.js';
 import { shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
+import { useStarred } from '../starred.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import { AppStrip } from './AppStrip.js';
@@ -129,6 +135,12 @@ export const groupMovedText = (mode: GroupBy) =>
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
+
+/** The toast for `s`, which stars or unstars the open session while focus is elsewhere (W53). */
+export const starredText = (name: string, on: boolean) => (on ? `Starred ${plainText(name)}. It's in Starred, in the repo list.` : `Unstarred ${plainText(name)}.`);
+
+/** Starred's empty state, with nothing starred under the root (W53, 4: Empty states). */
+export const NO_STARRED = { title: 'No starred sessions', sentence: 'Star a session from its row or its view to keep it here.' } as const;
 
 /** The toasts for hiding a group from the repo list and showing it again, saying where it went (W35). */
 export const hiddenText = (label: string) => `Hid ${plainText(label)}. It's under Hidden, at the foot of the repo list.`;
@@ -246,10 +258,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const hidden = useHiddenGroups(roots, storage);
   const shownHidden = tab === undefined ? hidden.groups : hidden.groups.filter((group) => group.root === tab);
   const selectedHidden = 'view' in selection ? undefined : hidden.find(selection.repo, selection.root);
-  const scope = scopeFor(shownGroups, selection);
+  // The starred sessions' ids, every root's, whether or not they're in the snapshot (W53).
+  const starred = useStarred(storage);
+  const scope = scopeFor(shownGroups, selection, starred.set);
   const listed = useMemo(
     () => (scope ? listScope(shownGroups, scope, sort, grouped.home) : { current: [], finished: [] }),
-    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home],
+    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set],
   );
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
   const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
@@ -397,7 +411,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const stepByKey = (root: HTMLElement, by: 1 | -1): boolean => {
     const buttons = rowButtons();
     const active = document.activeElement;
-    const onRow = active instanceof HTMLElement && buttons.includes(active) ? active.dataset.openSession : undefined;
+    // A row's name button, or its star toggle (W53).
+    const onRow =
+      active instanceof HTMLElement && active.closest('.session-list') !== null
+        ? buttons.includes(active)
+          ? active.dataset.openSession
+          : buttons.find((button) => active.dataset.starSession !== undefined && button.dataset.openSession === active.dataset.starSession)?.dataset.openSession
+        : undefined;
     const from = onRow ?? openId;
     const at = from === undefined ? -1 : buttons.findIndex((button) => button.dataset.openSession === from);
     // A session open that the list doesn't show, filtered out or in a collapsed Finished section, has no next.
@@ -561,6 +581,16 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return true;
   };
 
+  // `s`: stars or unstars the open session, as its view's toggle does, and says so in a toast. Focus
+  // stays where it is. Nothing with no session open.
+  const starOpen = (): boolean => {
+    if (!shownOpen) return false;
+    const on = !starred.set.has(shownOpen.sessionId);
+    starred.star(shownOpen.sessionId, on);
+    toasts.show({ tone: 'success', message: starredText(shownOpen.name, on) });
+    return true;
+  };
+
   // The latest of each, for the one key listener. Each says whether it did anything.
   const actions = useRef<Record<Shortcut, (root: HTMLElement) => boolean> | undefined>(undefined);
   actions.current = {
@@ -569,6 +599,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     shortcuts: openShortcuts,
     next: (root) => stepByKey(root, 1),
     previous: (root) => stepByKey(root, -1),
+    star: starOpen,
   };
 
   // On the document, after every handler inside the app, so a key one of them handled isn't a shortcut.
@@ -642,7 +673,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     next.set(finishedId, !(finishedOpen.get(finishedId) ?? false));
     setFinishedOpen(next);
     // Every group of every mode, so a switch of View preferences doesn't forget one's state.
-    writeGroupState(next, new Set([...everyGroupId(startGroups ?? []), 'view:all']), storage, FINISHED_STATE_KEY);
+    writeGroupState(next, new Set([...everyGroupId(startGroups ?? []), 'view:all', 'view:starred']), storage, FINISHED_STATE_KEY);
   };
 
   const showError = serverError !== undefined && serverError !== dismissedError;
@@ -755,8 +786,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const total = listed.current.length + listed.finished.length;
   const shown = current.length + finished.length;
   // No summary where it would only repeat the empty state below it: "0 sessions · Nothing needs you"
-  // over no sessions at all, or "Nothing needs you" over Needs you's own "Nothing needs you right now".
-  const summarised = snapshot !== undefined && scope !== undefined && allSessions.length > 0 && !(scope.kind === 'needs-you' && total === 0);
+  // over no sessions at all, or "Nothing needs you" over Needs you's own "Nothing needs you right now",
+  // or over Starred's "No starred sessions".
+  const summarised =
+    snapshot !== undefined && scope !== undefined && allSessions.length > 0 && !((scope.kind === 'needs-you' || scope.kind === 'starred') && total === 0);
   // The empty states' actions take their button away, so focus goes where the reader carries on: the
   // filter field after a filter action, the session list's heading otherwise.
   const focusField = () => filterField.current?.focus();
@@ -814,6 +847,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         actions={showAll}
       />
     );
+  } else if (scope.kind === 'starred' && total === 0) {
+    empty = <EmptyState icon="star" title={NO_STARRED.title} sentence={NO_STARRED.sentence} actions={showAll} />;
   } else if (shown === 0 && total > 0) {
     const { title, sentence } = noMatchText(filters, plainText(name));
     empty = (
@@ -859,6 +894,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       inert={from === 'list' && reposCovered}
       hidden={{ groups: shownHidden, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: unhide }}
       tab={tab}
+      starred={starred.set}
     />
   );
 
@@ -891,6 +927,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       onRunningChange={(busy) => {
         running.current.set(session.sessionId, busy);
       }}
+      star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
     />
   );
   let sessionView: ReactNode;
@@ -1000,6 +1037,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             onOpen={openSession}
             onStep={stepFromRow}
             openSessionId={openId}
+            starred={starred.set}
+            onStar={starred.star}
             inert={overlaid}
           />
         </HighlightContext.Provider>

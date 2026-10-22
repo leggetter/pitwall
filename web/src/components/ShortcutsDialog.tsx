@@ -61,6 +61,7 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
           what: 'Next or previous session in the list, showing it if a session is open',
           keys: [[key('j', 'J'), key('k', 'K')]],
         },
+        { doc: { key: '`s`', where: 'Anywhere, with a session open' }, what: 'Star or unstar the open session', keys: [[key('s', 'S')]] },
       ],
     },
     {

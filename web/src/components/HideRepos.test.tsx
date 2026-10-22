@@ -155,7 +155,7 @@ describe('Hide from repo list, in the session list header', () => {
   it('hides a git repo: only its entry leaves the repo list, and the views, their counts, other groups and every list stay as they were', () => {
     renderDashboard(several().snap);
     const before = repoItems();
-    expect(before).toEqual(['Needs you3 need you', 'All sessions6 sessions', '~/code, directory1 session', 'app, git repo2 need you', 'notes, directory1 session', 'old, git repo1 needs you']);
+    expect(before).toEqual(['Needs you3 need you', 'All sessions6 sessions', 'Starred', '~/code, directory1 session', 'app, git repo2 need you', 'notes, directory1 session', 'old, git repo1 needs you']);
     choose('All sessions');
     const allRows = visibleRowNames().sort();
     choose('Needs you');
@@ -183,7 +183,7 @@ describe('Hide from repo list, in the session list header', () => {
     renderDashboard(several().snap);
     hide('notes');
     hide('~/code');
-    expect(repoItems()).toEqual(['Needs you3 need you', 'All sessions6 sessions', 'app, git repo2 need you', 'old, git repo1 needs you']);
+    expect(repoItems()).toEqual(['Needs you3 need you', 'All sessions6 sessions', 'Starred', 'app, git repo2 need you', 'old, git repo1 needs you']);
     expect(hiddenItems()).toEqual(['~/code, directory1 session', 'notes, directory1 session']);
     // The rows of All sessions still name their groups.
     choose('All sessions');
