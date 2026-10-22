@@ -2,7 +2,7 @@
 
 pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design system, not Hookdeck's, and it uses no Hookdeck logos, illustrations or other artwork.
 
-- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28), then the terminal: its bar on `Badge`, `KeyCaps` and `Button`, the screen's font and colours from the tokens and its edge, F6 to leave it, its notices as inline alerts, and the conversation's place kept across the Terminal tab (W29), then the fixes from the integrated branch's review (W31), then sessions under the repos they worked in: distinct counts, the root's group, line 2's start label and the session view's worked-in line (W34), then hiding a repo or directory from the repo list: the session list header's Hide from repo list and the Hidden section at the list's foot (W35), then markdown in the session view: Claude's messages and other sessions' as pitwall's own elements, and your prompts as typed (W36), then links in code: bare URLs in code blocks and inline code open as links (W37), then each session in one group, the one it started in, with the repos it worked in in the session view and the filter, which replaces W34's listing under those repos, its start label and its distinct counts (W39), then roots as tabs: with two or more roots, a tab per root in the header, each narrowing the columns to its root, with its own place, and a need-you badge on the tabs that aren't open (W38), then Shift+Enter in the terminal: a line feed, a new line in Claude Code's prompt (W41), then the page notices: No token and Token rejected say how to bring a tab back, and an interactive session's actions menu has Stop session, off, saying how `/bg` makes it possible (W40), then View preferences: a header menu to group sessions by Main repo, the default, Where it started, or Every repo it worked in, which the page applies to the snapshot itself, and a menu's radio group (W42). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
+- **Status:** being applied in M3. The tokens, type, radii, edges, focus ring, theme switch and icons are in the web UI (W20), and so is the shell: the header, the three columns, the repo list and the filters (W21), then the two-line session rows, the badges, the connection badge, the Finished section and the Sort setting (W23), then the session view: its column and overlay, the divider, its header and actions menu, the menu component, the tabs, the footer and `?session=` (W22), then buttons' disabled and busy states, the spinner, inline alerts, the page alerts and the app strip, the message box, key caps and inline confirmations (W24), then tooltips, toasts, the dialog and the New session dialog on it, copy buttons and command chips, and timestamps on one clock (W25), then the single-key shortcuts, the keyboard shortcuts dialog with their off switch, the filter field's `/` key cap and the header's keyboard button (W26), then the conversation: speaker lines with their times, folded tool calls, Load earlier and Jump to latest (W27), then the waiting, empty and error states: skeletons and the long-wait line before the first snapshot, `EmptyState` for every empty state, the session view's waiting and unlisted states, and the conversation's errors with Try again (W28), then the terminal: its bar on `Badge`, `KeyCaps` and `Button`, the screen's font and colours from the tokens and its edge, F6 to leave it, its notices as inline alerts, and the conversation's place kept across the Terminal tab (W29), then the fixes from the integrated branch's review (W31), then sessions under the repos they worked in: distinct counts, the root's group, line 2's start label and the session view's worked-in line (W34), then hiding a repo or directory from the repo list: the session list header's Hide from repo list and the Hidden section at the list's foot (W35), then markdown in the session view: Claude's messages and other sessions' as pitwall's own elements, and your prompts as typed (W36), then links in code: bare URLs in code blocks and inline code open as links (W37), then each session in one group, the one it started in, with the repos it worked in in the session view and the filter, which replaces W34's listing under those repos, its start label and its distinct counts (W39), then roots as tabs: with two or more roots, a tab per root in the header, each narrowing the columns to its root, with its own place, and a need-you badge on the tabs that aren't open (W38), then Shift+Enter in the terminal: a line feed, a new line in Claude Code's prompt (W41), then the page notices: No token and Token rejected say how to bring a tab back, and an interactive session's actions menu has Stop session, off, saying how `/bg` makes it possible (W40), then View preferences: a header menu to group sessions by Main repo, the default, Where it started, or Every repo it worked in, which the page applies to the snapshot itself, and a menu's radio group (W42), then starred sessions: a star toggle on each row and in the session view, the repo list's Starred view, and `s` (W53). The components take the shapes and layouts in sections 3 and 4 as W21 to W29 rebuild them. [Mapping from today's CSS](#215-mapping-from-todays-css) records how today's styles moved onto the tokens.
 - **Scope:** the web UI in `web/`. The CLI's terminal output isn't covered.
 - **Living reference:** the `#uikit` gallery. Run `npm run dev` and open `http://127.0.0.1:4517/#uikit`.
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
@@ -652,14 +652,14 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 ├─ header, 52 px ───────────────────────────────────────────────────────────────────────────┤
 │ pitwall  ~/git                                 [+ New session]  ● Live  7s ago  ◐  ⚙  ⌨   │
 ├─ repo list, 240 px ─┬─ session list (≥ 360 px) ─────────────┬┬─ session view ─────────────┤
-│ Needs you       [2] │ ⑂ pitwall      4 sessions [2 need you] ││ name · title        ⋯  ✕  │
+│ Needs you       [2] │ ⑂ pitwall      4 sessions [2 need you] ││ name · title     ★  ⋯  ✕  │
 │ All sessions     12 │ [Filter sessions   /] [Interactive]    ││ badge · kind · 5m · cwd   │
-│ ─────────────────── │ [Background]         Sort [Urgency ▾]  │├ Conversation | Terminal ──┤
-│ ▢ ~/git           3 │────────────────────────────────────────││ body (scrolls)            │
-│ ⑂ pitwall       [2] │▌name · title             [waiting] 1m  ││                           │
-│ ⑂ api-server      4 │  Asked: Which queue should failed…     ││                           │
-│ ▢ scratch         1 │ name · title                [busy] 6s  ││                           │
-│                     │ Finished (3)  ›                        │├ footer: message box ──────┤
+│ Starred           2 │ [Background]         Sort [Urgency ▾]  │├ Conversation | Terminal ──┤
+│ ─────────────────── │────────────────────────────────────────││ body (scrolls)            │
+│ ▢ ~/git           3 │▌name · title           [waiting] 1m  ★ ││                           │
+│ ⑂ pitwall       [2] │  Asked: Which queue should failed…     ││                           │
+│ ⑂ api-server      4 │ name · title                [busy] 6s  ││                           │
+│ ▢ scratch         1 │ Finished (3)  ›                        │├ footer: message box ──────┤
 └─────────────────────┴────────────────────────────────────────┴┴───────────────────────────┘
 ```
 
@@ -706,15 +706,17 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
 ### Repo list
 
 - **Fill and size:** `--pw-bg`, `--pw-sidebar-w` (240 px) wide, a right `1px solid var(--pw-border)`, padding 8 px. It scrolls on its own.
-- **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of the two views, an `<hr>` divider, then a `<ul>` of [repo list items](#repo-list-items) for each root's groups, then, while any group is hidden, another `<hr>` and the [Hidden section](#hidden-groups).
+- **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of the three views, an `<hr>` divider, then a `<ul>` of [repo list items](#repo-list-items) for each root's groups, then, while any group is hidden, another `<hr>` and the [Hidden section](#hidden-groups).
   - With two or more roots, it's the open [root tab](#root-tabs)'s: that root's groups and hidden groups alone, under no heading, since the tab names the root.
 - **Contents, top to bottom:**
-  1. Two views: "Needs you", every session that needs you under the root (the open tab's, with several), and "All sessions".
+  1. Three views: "Needs you", every session that needs you under the root (the open tab's, with several), "All sessions", and "Starred", the [starred sessions](#starred-sessions) under the root (W53).
   2. A 1 px `--pw-border` divider, 8 px above and below.
   3. Every group: a git repo, or a directory that isn't in one.
   4. While any group is hidden, the same divider, then the [Hidden section](#hidden-groups): "Hidden (*n*)", collapsed by default, listing the hidden groups.
-- **Hiding a group** (Phil, 2026-10-21, W35): any group, a git repo or a directory, the root's own included, can be hidden from the list with the session list header's Hide from repo list (see [Session list](#session-list)), and shown again there or from the Hidden section. Needs you and All sessions can't be.
-  - It takes out only that group's item. Its sessions still show in the group, Needs you and All sessions, with line 2 naming their group as before; the views' counts, the other groups' counts, the document title's and the session view's "Started in … · worked in …" line don't change.
+- **Starred** (Phil, 2026-10-22, W53: "it would be good to be able to pin or star sessions. they then live under a pinned/starred group. Then you can easily switch between those you are actively working on."): the sessions starred with the star toggle on their rows or in their views, under the root, wherever they're grouped. See [Starred sessions](#starred-sessions).
+  - It's always there, starred or not, so the list never jumps as the first star comes or the last goes, and its empty state says how to star.
+- **Hiding a group** (Phil, 2026-10-21, W35): any group, a git repo or a directory, the root's own included, can be hidden from the list with the session list header's Hide from repo list (see [Session list](#session-list)), and shown again there or from the Hidden section. The views can't be.
+  - It takes out only that group's item. Its sessions still show in the group, Needs you, All sessions and Starred, with line 2 naming their group as before; the views' counts, the other groups' counts, the document title's and the session view's "Started in … · worked in …" line don't change.
   - It's by the group's root and key, so a group the page builds for a repo hides like any other and stays hidden in every [View preferences](#view-preferences) mode. In a mode that doesn't list it, the Hidden section shows it with "No sessions".
   - It's kept for each root, so two pitwalls watching different roots keep separate lists: see [Hidden groups](#hidden-groups) for the key and what it holds.
   - Rather than an age limit: on Phil's try-out a long-running session was listed under a repo it last worked in weeks earlier, which the grouping rule had read correctly.
@@ -736,7 +738,7 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - It slides in from the left with the same content, `--pw-sidebar-w` wide (or the window, if that's narrower), opened from the header's `menu` button.
   - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
   - Choosing an item closes it. Escape, or a click on the backdrop, closes it and returns focus to the menu button.
-- **The selection is in the URL:** `?view=needs-you`, `?view=all`, or `?repo=<key>`.
+- **The selection is in the URL:** `?view=needs-you`, `?view=all`, `?view=starred`, or `?repo=<key>`.
   - The group's key, plus `&root=<root>` when pitwall watches more than one root, since a worktree's group can share its main repo's key under another root. With more than one, the views name their root too, which is the open [root tab](#root-tabs). Stable across reloads, and readable: `/`, `~`, `:`, `@` and `,` aren't escaped. Never the token.
   - Other parameters, such as `?session=`, are kept as the selection changes.
   - Choosing pushes a history entry; `popstate` makes the columns match the URL.
@@ -754,15 +756,15 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - **Line 1:**
     - The selection's name, as the column's `<h2>` (l 16/24, 600).
       - A group shows its kind icon and label. With two or more roots, the open [root tab](#root-tabs) says which root it's under, so the heading doesn't (until W38, it added "in *root*").
-      - The views show "Needs you" or "All sessions".
+      - The views show "Needs you", "All sessions" or "Starred".
     - At the right, the summary: "4 sessions", or "2 of 4 sessions" while the filter hides some, then a solid warning "2 need you" badge, or " · Nothing needs you" in meta text. The counts are the selection's; Needs you never counts a finished session.
     - **For a group** (W35), after the summary, 8 px from it: Hide from repo list, a ghost sm `hide` [icon button](#icon-buttons) named by its tooltip. For a hidden group it's Show in repo list, with the `show` icon, in the same place. sm is 24 px, the line's height, so the header is as tall for a group as for a view.
       - The summary and the button sit together at the right, and wrap together onto the next line when the heading needs the room.
       - Either one acts at once, with a [toast](#toasts) saying where the group went: "Hid *group*. It's under Hidden, at the foot of the repo list." or "Unhid *group*. It's back in the repo list." (for one with no sessions in the snapshot, "… once it has sessions."). It's one click because it's easy to undo, and the toast and the Hidden section say where the group is.
       - It's the same button with its other name, so focus stays on it. Hiding keeps the group selected, and opens the Hidden section on its entry, scrolled into view in the repo list.
       - A selected group that has left the snapshot and isn't hidden has no button: there's no item to hide. One that's hidden has Show in repo list; once that's pressed the button goes, and focus goes to the heading.
-      - Needs you and All sessions have none.
-    - No summary where it would only repeat the empty state below it (W31): over no sessions at all ("0 sessions · Nothing needs you" above "No Claude Code sessions under *roots*"), and over Needs you with nothing in it ("Nothing needs you" above "Nothing needs you right now"). The filter's no-match state keeps it, since "0 of 4 sessions" says what the filter hides.
+      - The views have none.
+    - No summary where it would only repeat the empty state below it (W31): over no sessions at all ("0 sessions · Nothing needs you" above "No Claude Code sessions under *roots*"), over Needs you with nothing in it ("Nothing needs you" above "Nothing needs you right now"), and over Starred with nothing in it (W53). The filter's no-match state keeps it, since "0 of 4 sessions" says what the filter hides.
   - **Line 2,** 8 px below, wrapping:
     - the [filter field](#search), at least 200 px wide and growing;
     - then the [filter chips](#filter-chips) and "Clear filters";
@@ -775,6 +777,7 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - **A group:** its unfinished sessions, then its [Finished section](#finished-section).
   - **Needs you:** every session that needs you, from every group, each once, though in Every repo it worked in one may be in several groups. There's no Finished section, because a finished session never needs you.
   - **All sessions:** every unfinished session from every group, each once, then one Finished section for all of them.
+  - **Starred** (W53): the starred sessions among All sessions', each once, then a Finished section for the finished ones, collapsed by default and remembered as `view:starred`, as All sessions' is as `view:all`. Line 2 starts with the group's label, as in the other views. A row unstarred here leaves at once (see [Starred sessions](#starred-sessions)).
   - With two or more roots, "every group" is the open [root tab](#root-tabs)'s.
   - The summary's counts, and the document title's, count each session once. A group's summary is the sessions listed under it in the [View preferences](#view-preferences) mode, as its repo list item says.
 - **Live updates:** each snapshot updates rows in place. If it would reorder rows (under Urgency or Recent) while the pointer is over the list or focus is inside it, keep the current order until both have left, then apply it.
@@ -983,8 +986,9 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
 - **Two lines,** 2 px apart:
   1. **Identity:**
      - The name (m 14/20, 500, `--pw-text`), then " · " and the title (m 14/20, 400, `--pw-text-muted`), on one line with an ellipsis. The full title and where it came from are in a tooltip; a title whose source isn't known has one only when it's cut. The name has the session's id and start time in a tooltip.
-     - These tooltips, and those below, open on hover only: in a row, only the name's button is focusable, and the tooltip on its heading doesn't open for the button's focus. The full title and line 2 are in the DOM, so screen readers have them, and the session view shows them all.
+     - These tooltips, and those below, open on hover only: in a row, only the name's button and the star toggle are focusable, and the tooltip on its heading doesn't open for the button's focus. The star toggle's own tooltip, its name, opens on focus too, as every icon button's does. The full title and line 2 are in the DOM, so screen readers have them, and the session view shows them all.
      - Then, at the right, the status badge(s) and the relative time (meta, `--pw-text-subtle`, tabular). The badges sit just before the time, so they line up down the list.
+     - Last, the [star toggle](#starred-sessions) (W53): a ghost sm icon button, filled and always shown while the session is starred, outlined and shown only on the row's hover and focus otherwise, and always on a touch screen. Its slot is kept on every row, so nothing moves as it shows, and its negative block margins keep line 1 20 px tall. It's after the time, which is where the eye already goes down the list, and outside the name's button, so pressing it never opens the session.
      - **Line 1 never wraps.** The title gives way first, then the name, then the status badge, which leaves the name and the time at least 10em. "Stale" and a finished session's "Asked you" are short and stay whole. The " · " is drawn with the title (CSS `::before`, not read out), so it goes when the title has.
   2. **What it wants or did last,** on one line with an ellipsis, when the transcript is readable:
      - "Asked: *excerpt*" (meta, the label in `--pw-warning-fg` 500, the excerpt in `--pw-text`); or
@@ -994,6 +998,7 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
      - In a group's own list, the line has no label: the heading names the group. W34's "started in" label went with W39, and Every repo it worked in doesn't bring it back: the session view's line 3 says where a session started and the repos it worked in.
 - **Not in the row:** the last reply, the relay exchange, the cwd, the attach command and a Message button. They're in the session view: the conversation, the message box, the header and the actions menu. A row stays two lines however long the session's replies are.
 - **Opening:** the name is a `<button>` with `aria-controls="session-view"`, `aria-current="true"` when its session is open, and `data-open-session`. The session view has `id="session-view"`.
+  - **Two Tab stops a row:** the name's button, then the star toggle. ↓ and ↑ move between names; `j` and `k` from a star toggle start at its row.
   - A click anywhere on the row that isn't a control (and isn't the end of a text selection) opens the session too. Keyboard users use the button.
   - **Focus:** the name's ellipsis would clip its button's ring, so the row shows `--pw-ring-focus-inset` while the button has focus, on top of the bar when there is one. The button keeps the transparent outline, inset, for forced colours.
 - **States:**
@@ -1016,7 +1021,7 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
 - **Item:** a link, `<a href="?repo=…">` (or `?view=…`), in the repo list's `<ul>`, with `aria-current="page"` when it's the selection. The page handles the click, with no reload.
   - At least 32 px tall, padding 6 px 8 px, `--pw-radius-md`, 8 px gaps. It grows with zoom and text spacing.
   - Left to right:
-    1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`). The two views have no icon.
+    1. A group's kind icon (`repo` or `directory`, 16 px, `--pw-text-subtle`). The three views have no icon.
     2. The label (m 14/20, 400), on one line with a middle ellipsis; the full label is in a tooltip when the ellipsis cuts it, on hover and on focus. Then a visually hidden ", git repo" or ", directory", after the label so the link's name starts with what it shows.
     3. At the right, one count, each with a visually hidden noun so it reads as "2 need you" or "4 sessions":
        - a solid warning badge with how many need you, when any do;
@@ -1025,7 +1030,8 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
        - In Every repo it worked in, a session counts in each group it's under, so the groups' counts can add up to more than All sessions', and their badges to more than Needs you's. All sessions and Needs you still count each session once, and so do the root tabs' badges.
        - Needs you shows its badge, or nothing when nothing needs you.
        - All sessions always shows how many sessions there are, as in the layout above: the badge would only repeat Needs you's, just above it.
-       - Before the first snapshot, the two views show no count.
+       - Starred counts as a group does (W53): the badge while any starred session needs you, which says, as Needs you's can't, that one you're working on does; otherwise how many are starred; and nothing while none is, as Needs you shows nothing while nothing needs you. It counts each session once, and only those under the root.
+       - Before the first snapshot, the three views show no count.
 - **States:**
   - Hover: `--pw-surface-hover-bg` in the sidebar, which is on `--pw-bg`, and `--pw-surface-hover` in the drawer, which is a surface (2.3).
   - Selected: `--pw-selected` with `--pw-ring-selected`, and the label at 500 in `--pw-text`.
@@ -1055,6 +1061,29 @@ The groups hidden from the [repo list](#repo-list) (W35), at its foot, after the
   - Storage is per origin too, so a pitwall on a fallback port starts with nothing hidden; a fixed `--port` keeps the list.
 - **Below 900 px** it's in the drawer with the rest of the list, and the drawer's Tab trap goes through its controls, skipping them while it's closed. Below 1,200 px the session view over the list makes it inert with the rest of the repo list where it reaches it, below 1,000 px (see [Session view](#session-view)).
 
+### Starred sessions
+
+Sessions you star (W53), from their rows or their views, listed together in the repo list's Starred view, so you can switch between the ones you're working on (Phil, 2026-10-22). "Starred", not "pinned": "pinned tab" already means a browser tab that keeps its token (D7). Starring is a viewer's preference, so it's kept in the browser, as hidden groups are, and the server knows nothing of it.
+
+- **The star toggle:** `StarButton` (`web/src/components/StarButton.tsx`), a ghost [icon button](#icon-buttons) with `aria-pressed`, `false` or `true`: `star` (outlined) while it's off, `starred` (the same glyph filled, 2.14) while it's on, in the button's text colour, as any ghost icon button. The fill and `aria-pressed` say the state, never colour alone.
+  - **Its name** is its tooltip, "Star *session*", the session's name as its row shows it, as text. The name stays the same in both states and the pressed state says which, so a screen reader hears "Star pitwall-test-app, toggle button, pressed" and voice control finds it by one name.
+  - **On a row:** sm, at the end of line 1, after the time: see [Session rows](#session-rows).
+  - **In the session view:** md, in line 1, before the actions menu: see [Session view](#session-view-header-tabs-and-footer).
+  - **It never selects or opens a session.** The row's click opens the session only off its controls, and the selection and the URL stay as they are. It never closes or changes an open view either.
+  - Starring needs no confirmation and no toast: one press undoes it, and the toggle shows the result where it was pressed.
+- **The view:** [Starred](#repo-list), after Needs you and All sessions, `?view=starred` (with `&root=` when there are several roots), stored in `pitwall.view.v1` like any selection. It lists the starred sessions under the open [root tab](#root-tabs), sorted by the Sort setting, filtered by the filter, with `j` and `k` through them, as [Session list](#session-list) says, and its [empty state](#empty-states) when none is starred there.
+  - **Finished sessions** follow the Finished section's rule: a starred finished session is in Starred's own Finished section, collapsed by default and remembered as `view:starred` in `pitwall.finished.v1`.
+  - **Unstarring in Starred** takes the row out at once, as it's no longer starred; focus goes to the next row's star toggle, so Space can unstar it too (see [6.1](#61-rules), item 8). A session open in the view stays open, with its toggle off, and can be starred again there.
+- **The key:** `s` stars or unstars the open session, while the single-key shortcuts are on ([6.2](#62-keyboard-map)), with a toast, "Starred *session*." or "Unstarred *session*.", since focus isn't on the toggle. It doesn't repeat as it's held. Nothing with no session open.
+- **Storage:** `localStorage`, one key, `pitwall.starred.v1`, holding `{"v":1,"ids":["00000000-0000-4000-8000-000000000001"]}`: each starred session's id, oldest star first. Ids only: never a session's name, title or prompt.
+  - **Shared across roots and tabs** on the origin: session ids are unique, and each root tab's Starred lists only the sessions under its root, so one key serves them all.
+  - **Never pruned** because a session is missing from a snapshot: a failed poll can empty the list, and a star should outlast it. It stays until it's unstarred.
+  - **At most 100 ids:** starring a 101st drops the oldest star. A hundred is five times the 20 sessions of Phil's try-out (W39), so the cap should only ever drop stars on sessions long gone, and at about 40 bytes an id the key stays near 4 KB.
+  - **Other tabs:** a star made or cleared in another of pitwall's tabs arrives with the window's `storage` event, and the stars are read again; never written back, so two tabs can't echo a change.
+  - **Read with validation:** a value that isn't version 1's shape stars nothing, an entry that isn't a string of 1 to 256 characters is skipped, and an id listed twice counts once. When storage is missing or throws, nothing starts starred, starring still works for the page's life, and nothing throws.
+  - Storage is per origin too, so a pitwall on a fallback port starts with nothing starred; a fixed `--port` keeps the stars.
+- **Known limit:** the star is keyed on `sessionId`, as drafts are. If Claude Code ever gave a running session a new id, its star wouldn't follow it.
+
 ### Finished section
 
 - **Toggle row:** at the bottom of the session list, a `<button aria-expanded aria-controls>` "Finished (*n*)", plus " · *n* asked you" when any did.
@@ -1068,7 +1097,8 @@ The groups hidden from the [repo list](#repo-list) (W35), at its foot, after the
 
 1. **Line 1:**
    - The name (l 16/24, 600), then " · " and the title (l 16/24, 400, `--pw-text-muted`), on one line: the title gives way first, then the name, each with an ellipsis, and the full title is in a tooltip when it's cut. The " · " is drawn with the title (`::before`, not read out), so it goes when the title has; screen readers get it from visually hidden text.
-   - At the right: the `more` icon button (md, ghost) opening the actions menu, then the `close` icon button ("Close", Escape in its tooltip). At ≤ 600 px, "Back to sessions" at the start replaces Close.
+   - At the right: the [star toggle](#starred-sessions) (md, ghost, W53), then the `more` icon button (md, ghost) opening the actions menu, then the `close` icon button ("Close", Escape in its tooltip). At ≤ 600 px, "Back to sessions" at the start replaces Close.
+     - The star is a button of its own, not an item in the actions menu, so whether the session is starred shows at a glance and one press changes it, as on its row. Its tooltip has `s`'s key cap, and it says `aria-keyshortcuts="s"`, while the single-key shortcuts are on.
    - The heading is the region's label (`aria-labelledby`) and takes focus when the view is opened from a row (`tabindex="-1"`, no visible ring on the heading itself).
    - A copy's result is a [toast](#toasts): "Copied", or "Couldn't copy; the text is selected" as an error toast. When the copied text isn't on screen (the session ID, the attach command), a refusal also shows it, selected, below line 2, "Session ID: *id*" in code style, until the next copy.
 2. **Line 2, 8 px gaps, wrapping:**
@@ -1476,7 +1506,7 @@ The header's menu of how the page shows sessions (W42, Phil, 2026-10-21: "can we
   4. One action, on `Button`, 16 px below; two, 8 px apart and wrapping, where the table gives two.
 - **No illustrations.**
 - **Names, roots and filter text** are text, never markup (6.1 rule 16).
-- **Focus after an action,** since the action's button goes with the empty state: Clear filters and Search all sessions put it in the filter field; Show all sessions on the session list's heading. New session opens its dialog, which returns focus to it; once the session it started is listed, the empty state goes and its button with it, so focus moves to the new session view's heading.
+- **Focus after an action,** since the action's button goes with the empty state: Clear filters and Search all sessions put it in the filter field; Show all sessions on the session list's heading. Unstarring the last row in Starred puts it on the heading too. New session opens its dialog, which returns focus to it; once the session it started is listed, the empty state goes and its button with it, so focus moves to the new session view's heading.
 
 | Where | Icon | Title | Sentence | Action |
 |---|---|---|---|---|
@@ -1485,6 +1515,7 @@ The header's menu of how the page shows sessions (W42, Phil, 2026-10-21: "can we
 | A selected group has left the snapshot | `directory` | "No sessions in *group* now" | "Its sessions are no longer listed under these roots." In Where it started a root's own group lists every session started in the root (W39), so it empties only when they've gone. | outline "Show all sessions", which selects All sessions |
 | A selected root's own group the [View preferences](#view-preferences) mode empties | `directory` | "No sessions in *group* now" | "Its sessions are listed under the repos they changed most, as View preferences groups them." In Every repo it worked in, "… the repos they worked in, …". The snapshot still has the group: every session started there worked in repos (W42). | outline "Show all sessions" |
 | Needs you, and nothing does | `success` | "Nothing needs you right now" | "Sessions that are waiting for you, or asked you something, show here." | outline "Show all sessions" |
+| Starred, and nothing under the root is (W53) | `star` | "No starred sessions" | "Star a session from its row or its view to keep it here." Also when the starred sessions are none of the snapshot's, as after they've been removed | outline "Show all sessions", where the rows and their stars are |
 | The session view column, nothing open | `conversation` | "Select a session" | "Its conversation, terminal and actions open here." | none |
 | The session view, unlisted (see [Session view](#session-view)) | `info` | "This session isn't listed under these roots", the view's heading | "pitwall lists no session with the id `<id>` under *roots*; it may have been removed, or run outside these roots." | none; Close is in the header |
 | Conversation, nothing yet | | | "Nothing to show yet." (status line) | none |
@@ -1676,12 +1707,13 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - A focused row that a snapshot takes out of the list, such as a session that moved to its repos, hands focus to the row that took its place, or the one before it, or the session list's heading (see [Session list](#session-list)).
    - Choosing in the repo list leaves focus there; in the drawer, focus moves to the session list's heading.
    - Hide from repo list and Show in repo list keep focus: it's the same button with its other name. Show in repo list for a group in no snapshot takes its button away, so focus goes to the session list's heading. Unhide in the Hidden section moves focus to the group's item, back in the list, or for a group with no sessions to the next Unhide, the one before, or the list's Tab stop (see [Hidden groups](#hidden-groups)). A focused repo list item that leaves the list hands focus to the one that took its place, or the one before it.
+   - A star toggle keeps focus as it stars and unstars. Unstarring a row in Starred takes the row away, so focus goes to the star toggle of the row that took its place, so the next can be unstarred too, or the one before it when it was last, or the session list's heading when none is left (see [Starred sessions](#starred-sessions)).
    - Opening a [root tab](#root-tabs) leaves focus on it. The back button switching tabs with focus in what that hides moves focus to the open tab.
    - Choosing a mode in [View preferences](#view-preferences) leaves focus on its button, whatever the switch does to the selection and the lists.
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
 9. **Announcements:**
    - The connection badge is `role="status"`.
-   - Results the user asked for are announced: send results, stop and remove results, copy, and a View preferences switch that replaces the selection. Stop, remove, copy, a started session and that switch are toasts, announced by the toasts' live region, which is always in the DOM.
+   - Results the user asked for are announced: send results, stop and remove results, copy, and a View preferences switch that replaces the selection. Stop, remove, copy, a started session and that switch are toasts, announced by the toasts' live region, which is always in the DOM. A star toggle's result is its own pressed state, announced on the toggle; `s`, pressed with focus elsewhere, says it in a toast (W53).
    - Snapshot updates, ticking times and the list's re-sorting are never announced. The one exception is the conversation's count of new entries while you're scrolled up ("3 new"), once per batch (see [Conversation](#conversation)).
    - The document title carries the count: "(2) pitwall". With [root tabs](#root-tabs), the open tab's root follows: "(2) pitwall · ~/work"; the count is still every root's.
 10. **Forms:**
