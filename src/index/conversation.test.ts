@@ -1014,13 +1014,20 @@ describe('readConversationPage: messages to pitwall (W46)', () => {
     const file = await transcript(jsonl(...lines));
     const first = await readConversationPage(file, SID, undefined, options);
     expect(first?.page.entries.map((e) => e.kind)).toEqual(['to-pitwall']);
-    // Same size, same place, but a peer's socket now: the book notices and reads again.
-    const replaced = jsonl(fromRelay('Go.', 'uds:/tmp/cc-socks/9999.sock'), ...lines.slice(1));
-    await rm(file);
-    await writeFile(file, replaced);
+    // Rewritten in place, so the same inode and the same size, with only its first line changed: a
+    // peer's socket now. The book notices by the file's start and reads it again.
+    const rewritten = jsonl(fromRelay('Go.', 'uds:/tmp/cc-socks/9999.sock'), ...lines.slice(1));
+    expect(Buffer.byteLength(rewritten)).toBe((await stat(file)).size);
+    await writeFile(file, rewritten);
     const second = await readConversationPage(file, SID, undefined, options);
     expect(second?.stats.addressBytesRead).toBeGreaterThan(0);
     expect(second?.page.entries.map((e) => e.kind)).toEqual(['tool']);
+    // Replaced by another file, which a file system may give the same inode: read again, and the relay's socket is back.
+    await rm(file);
+    await writeFile(file, jsonl(...lines));
+    const third = await readConversationPage(file, SID, undefined, options);
+    expect(third?.stats.addressBytesRead).toBeGreaterThan(0);
+    expect(third?.page.entries.map((e) => e.kind)).toEqual(['to-pitwall']);
   });
 
   it('remembers at most 64 addresses for a transcript, the first ones', async () => {
