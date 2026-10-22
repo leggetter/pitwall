@@ -17,7 +17,7 @@
  * U+202F and U+205F. Not zero-width characters, U+3000 or U+1680, which
  * don't look like a plain space, nor any other character.
  */
-const LOOK_ALIKE_SPACES = /[  -   ]/g;
+const LOOK_ALIKE_SPACES = /[\u00a0\u2000-\u200a\u202f\u205f]/g;
 
 /**
  * The text as pitwall relays it: each look-alike space as U+0020, and each
