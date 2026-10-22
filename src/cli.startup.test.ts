@@ -8,11 +8,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const seen = vi.hoisted(() => ({ calls: [] as { what: string; env: NodeJS.ProcessEnv; roots?: string[] }[] }));
+const seen = vi.hoisted(() => ({ calls: [] as { what: string; env: NodeJS.ProcessEnv; roots?: string[]; relayName?: string }[] }));
 
 vi.mock('./index/index.js', () => ({
-  startIndexer: vi.fn((options: { roots: string[] }) => {
-    seen.calls.push({ what: 'indexer', env: { ...process.env }, roots: options.roots });
+  startIndexer: vi.fn((options: { roots: string[]; relayName?: string }) => {
+    seen.calls.push({ what: 'indexer', env: { ...process.env }, roots: options.roots, relayName: options.relayName });
     return { latest: () => undefined, subscribe: () => () => {}, conversation: async () => undefined, stop: () => {} };
   }),
 }));
@@ -45,6 +45,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 const { CWD_GONE_MESSAGE, fallbackPortMessage, fixedTokenNotice, main, USAGE } = await import('./cli.js');
+const { RELAY_NAME } = await import('./server/relayPrompt.js');
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
@@ -132,6 +133,12 @@ describe('main(): startup', () => {
       expect(seen.calls.map((call) => call.what)).toEqual(['relay', 'indexer', 'server']);
       expect(seen.calls[1]?.roots).toEqual([process.cwd()]);
       expect(console.log).toHaveBeenCalledWith(expect.stringContaining(`Watching root: ${process.cwd()},`));
+    });
+
+    it("gives the indexer the relay's name, so a session's messages to it show in its conversation (W46)", async () => {
+      expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      expect(seen.calls[1]).toMatchObject({ what: 'indexer', relayName: RELAY_NAME });
+      expect(RELAY_NAME).toBe('pitwall-relay');
     });
 
     it('says a fallback port changes every run, and that --port keeps a pinned tab working', async () => {

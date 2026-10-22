@@ -9,7 +9,7 @@ import {
   type SourceHealth,
 } from '../shared/protocol.js';
 import { createAgentsSource, type AgentRow, type AgentsSource } from './agents.js';
-import { ConversationCursorError, readConversationPage } from './conversation.js';
+import { ConversationCursorError, readConversationPage, RelayAddressBook } from './conversation.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, groupLabel, type GroupResolver } from './grouping.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
@@ -40,6 +40,11 @@ export interface IndexerOptions {
   relayAlert?: () => RelayAlert | undefined;
   /** Why pitwall stopped using its relay for this run (D8), shown as the snapshot's `relayOff`. A hook that throws adds nothing. */
   relayOff?: () => RelayOff | undefined;
+  /**
+   * The relay's session name, RELAY_NAME (D8), passed in: a session's SendMessage calls to it show in
+   * its conversation as 'to-pitwall' entries (W46). Without it, they stay tool calls.
+   */
+  relayName?: string;
 }
 
 export interface Indexer {
@@ -107,6 +112,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   let latest: IndexSnapshot | undefined;
   /** The session ids in `latest`: the only ones conversation() answers for. */
   let current = new Set<string>();
+  /** Where the relay's messages came from, per transcript, for the conversation's 'to-pitwall' entries. */
+  const relayBook = options.relayName === undefined ? undefined : new RelayAddressBook(options.relayName);
   let running = false;
   let stopped = false;
 
@@ -134,6 +141,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       if (off !== undefined) snapshot.relayOff = off;
       latest = snapshot;
       current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
+      relayBook?.retain(current);
       for (const listener of [...listeners]) {
         try {
           listener(snapshot);
@@ -164,7 +172,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       // The newest page is tried twice, in case the file shrank while it was read.
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          return (await readConversationPage(file, sessionId, before))?.page;
+          return (await readConversationPage(file, sessionId, before, relayBook === undefined ? {} : { relay: relayBook }))?.page;
         } catch (err) {
           if (err instanceof ConversationCursorError) throw err;
           if (before !== undefined) return undefined;

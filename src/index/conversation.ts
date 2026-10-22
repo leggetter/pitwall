@@ -6,6 +6,17 @@
 // chunks, until it has 50 entries or has read about 8 MiB. The cursor says
 // where the older page ends, which file it belongs to, and which tool results
 // the newer pages have seen whose calls are further back.
+//
+// A SendMessage call to pitwall's relay is a 'to-pitwall' entry, its message in
+// full, in place of the call (W46). A call is to the relay when its `to` is the
+// relay's name, or a `uds:` address that a cross-session message from the
+// relay's name came from earlier in the transcript. That's what the transcript
+// shows, and all it shows: any local session can take the relay's name, so the
+// entry says who the call addressed, not that pitwall's own relay received it. The page itself answers
+// that when the message is on it, as a reply a second later usually is. When
+// it isn't, the relay's address book (RelayAddressBook, below) reads the
+// transcript forward up to the page, once per transcript, and remembers where
+// the relay's messages came from.
 
 import { createHash } from 'node:crypto';
 import { open, type FileHandle } from 'node:fs/promises';
@@ -45,6 +56,21 @@ const EMPTY = Buffer.alloc(0);
 const CROSS_SESSION_PREFIX = 'Another Claude session sent a message:';
 const CROSS_SESSION_TAGS = ['cross-session-message', 'agent-message'] as const;
 
+/** The tool one session messages another with. */
+const SEND_MESSAGE = 'SendMessage';
+/** How a socket address starts, in a SendMessage call's `to` and a cross-session message's `from`. */
+const SOCKET_PREFIX = 'uds:';
+/** The longest `to` or sender address read. Real ones are under 100 characters; SendMessage takes names up to 300. */
+const ADDRESS_MAX = 512;
+/** The most addresses the relay's messages came from that are remembered for one transcript. A relay has one, and a new one each time pitwall starts. */
+export const RELAY_ADDRESSES_MAX = 64;
+/** A tool result longer than this is never read as JSON. SendMessage's are under 1 KiB. */
+const RESULT_JSON_MAX = 4 * KIB;
+/** The longest line the relay's address book reads. A relay message is at most 8 Ki characters. */
+const ADDRESS_LINE_MAX = PAGE_READ_BUDGET;
+/** How much the relay's address book reads at a time. */
+const ADDRESS_CHUNK_BYTES = MIB;
+
 export interface ConversationReadOptions {
   /** Default 50. */
   pageEntries?: number;
@@ -52,11 +78,23 @@ export interface ConversationReadOptions {
   chunkBytes?: number;
   /** Default 8 MiB. Most of a real transcript's bytes are internal request records, so 2 MiB filled only 7-43 entries a page. */
   readBudget?: number;
+  /**
+   * pitwall's relay (D8), by its name, with what's known of where its messages came from: a
+   * SendMessage call to it becomes a 'to-pitwall' entry (W46). Without it, every call stays a 'tool'
+   * entry.
+   */
+  relay?: RelayAddressBook;
 }
 
 /** What one page cost, for tests and calibration. */
 export interface ConversationReadStats {
   bytesRead: number;
+  /**
+   * What the relay's address book read forward for this page: nothing unless a call to a socket
+   * address had no message from the relay before it on its own page, and then only what no earlier
+   * page had read.
+   */
+  addressBytesRead: number;
 }
 
 /**
@@ -108,7 +146,7 @@ export async function readConversationPage(
     const identity = { dev: info.dev.toString(), ino: info.ino.toString() };
     let end = size;
     let midLine = false;
-    let pending = new Map<string, boolean>();
+    let pending = new Map<string, ResultState>();
     if (cursor !== undefined) {
       if (cursor.dev !== identity.dev || cursor.ino !== identity.ino || cursor.offset > size) {
         throw new ConversationCursorError('stale');
@@ -120,7 +158,18 @@ export async function readConversationPage(
     }
     try {
       const result = await readBackwards(handle, end, midLine, pending, options);
-      const page: ConversationPage = { sessionId, entries: result.builder.finish() };
+      // A call to a socket address whose request isn't on this page: what came before the page says.
+      let earlier: ((address: string, offset: number) => boolean) | undefined;
+      let addressBytesRead = 0;
+      const relay = options.relay;
+      if (relay !== undefined && result.stop !== undefined && result.builder.unresolved()) {
+        const known = await relay.addressesBefore(sessionId, file, handle, identity, result.stop.offset);
+        if (known !== undefined) {
+          addressBytesRead = known.bytesRead;
+          earlier = (address, offset) => (known.addresses.get(address) ?? Number.POSITIVE_INFINITY) < offset;
+        }
+      }
+      const page: ConversationPage = { sessionId, entries: result.builder.finish(earlier) };
       if (result.stop !== undefined) {
         page.before = encodeCursor({
           offset: result.stop.offset,
@@ -130,7 +179,7 @@ export async function readConversationPage(
           pending: [...result.builder.pending].slice(-MAX_PENDING),
         });
       }
-      return { page, stats: { bytesRead: result.bytesRead } };
+      return { page, stats: { bytesRead: result.bytesRead, addressBytesRead } };
     } catch (err) {
       if (err instanceof TranscriptChangedError && cursor !== undefined) throw new ConversationCursorError('stale');
       throw err;
@@ -156,12 +205,12 @@ async function readBackwards(
   handle: FileHandle,
   end: number,
   startsMidLine: boolean,
-  pending: Map<string, boolean>,
+  pending: Map<string, ResultState>,
   options: ConversationReadOptions,
 ): Promise<{ builder: PageBuilder; stop?: Stop; bytesRead: number }> {
   const chunkBytes = Math.max(1, options.chunkBytes ?? CHUNK_BYTES);
   const budget = Math.max(chunkBytes, options.readBudget ?? PAGE_READ_BUDGET);
-  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES);
+  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES, options.relay?.name);
   let lo = end;
   let hi = end;
   let buf: Buffer = EMPTY;
@@ -184,7 +233,7 @@ async function readBackwards(
       if (k === -1 && lo > 0) break;
       const start = k === -1 ? 0 : lo + k + 1;
       const contentEnd = hi > start && buf[hi - 1 - lo] === NEWLINE ? hi - 1 : hi;
-      const verdict = builder.offer(buf.toString('utf8', start - lo, contentEnd - lo));
+      const verdict = builder.offer(buf.toString('utf8', start - lo, contentEnd - lo), start);
       if (verdict === 'full') return { builder, stop: { offset: hi, midLine: false }, bytesRead };
       hi = start;
     }
@@ -246,9 +295,13 @@ interface Cursor {
   dev: string;
   ino: string;
   fingerprint: string;
-  /** Tool results seen on newer pages, by tool_use_id: whether each was an error. */
-  pending: [string, boolean][];
+  /** Tool results seen on newer pages, by tool_use_id: whether each was an error, or reported a failure. */
+  pending: [string, ResultState][];
 }
+
+/** A pending result as the cursor writes it. 2 is newer than the cursor's first version, which only had 0 and 1. */
+const RESULT_CODES: Record<ResultState, number> = { ok: 0, error: 1, failed: 2 };
+const RESULT_STATES: readonly ResultState[] = ['ok', 'error', 'failed'];
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const DECIMAL = /^\d{1,20}$/;
@@ -259,7 +312,7 @@ function encodeCursor(cursor: Cursor): string {
   const body: Record<string, unknown> = { v: 1, o: cursor.offset, d: cursor.dev, i: cursor.ino, f: cursor.fingerprint };
   if (cursor.midLine) body.m = 1;
   const pending = cursor.pending.filter(([id]) => TOOL_USE_ID.test(id));
-  if (pending.length > 0) body.p = pending.map(([id, isError]) => [id, isError ? 1 : 0]);
+  if (pending.length > 0) body.p = pending.map(([id, state]) => [id, RESULT_CODES[state]]);
   return Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
 }
 
@@ -280,14 +333,15 @@ function decodeCursor(text: string): Cursor | undefined {
   if (typeof d !== 'string' || !DECIMAL.test(d) || typeof i !== 'string' || !DECIMAL.test(i)) return undefined;
   if (typeof f !== 'string' || !FINGERPRINT.test(f)) return undefined;
   if (m !== undefined && m !== 1) return undefined;
-  const pending: [string, boolean][] = [];
+  const pending: [string, ResultState][] = [];
   if (p !== undefined) {
     if (!Array.isArray(p) || p.length > MAX_PENDING) return undefined;
     for (const item of p) {
       if (!Array.isArray(item) || item.length !== 2) return undefined;
-      const [id, isError] = item as unknown[];
-      if (typeof id !== 'string' || !TOOL_USE_ID.test(id) || (isError !== 0 && isError !== 1)) return undefined;
-      pending.push([id, isError === 1]);
+      const [id, code] = item as unknown[];
+      const state = typeof code === 'number' && Number.isInteger(code) ? RESULT_STATES[code] : undefined;
+      if (typeof id !== 'string' || !TOOL_USE_ID.test(id) || state === undefined) return undefined;
+      pending.push([id, state]);
     }
   }
   return { offset: o, midLine: m === 1, dev: d, ino: i, fingerprint: f, pending };
@@ -302,20 +356,200 @@ export function isWellFormedCursor(text: string): boolean {
   return decodeCursor(text) !== undefined;
 }
 
+// --- The relay's address book ----------------------------------------------------
+
+/** How far the address book has read one session's transcript, and what it found. */
+interface AddressScan {
+  file: string;
+  dev: string;
+  ino: string;
+  /** Every line that starts before this offset has been read. */
+  offset: number;
+  /** The offset is inside a line too long to read, whose rest is skipped. */
+  midLine: boolean;
+  /** Of the bytes before `offset`, as a cursor's is, so a file rewritten in place is read again. */
+  fingerprint: string;
+  /** The addresses the relay's messages came from, each with the offset of the first line that had it. */
+  addresses: Map<string, number>;
+}
+
+/** What the address book knows of the transcript before an offset, and what it read to know it. */
+export interface KnownAddresses {
+  addresses: ReadonlyMap<string, number>;
+  bytesRead: number;
+}
+
+/**
+ * Where pitwall's relay's messages came from, transcript by transcript (W46): the `uds:` addresses
+ * that cross-session messages from the relay's name came from, each with where the first such line
+ * starts. A SendMessage call to one of them, after that line, is to pitwall. One per indexer, which
+ * passes the relay's name in (RELAY_NAME, D8).
+ *
+ * A page asks only when a call on it is to a socket address and no message from the relay on the
+ * page came from that address before it: a reply whose request is on an older page, or a message to
+ * another session's socket. The book then reads the transcript forward, from where it last stopped
+ * up to the page's start, so it reads each byte of a transcript at most once while pitwall runs,
+ * however many pages ask. It parses only lines that name the relay. A transcript that was replaced,
+ * shrank or was rewritten before where the book stopped is read again from the start.
+ *
+ * In memory only, for the sessions in the latest snapshot: an offset, a fingerprint and at most 64
+ * addresses each. It fails soft: a transcript it can't read leaves those calls as tool calls.
+ */
+export class RelayAddressBook {
+  private readonly scans = new Map<string, AddressScan>();
+  /** One read at a time per session, so two pages never read the same bytes. */
+  private readonly busy = new Map<string, Promise<KnownAddresses | undefined>>();
+  /** The relay's name as it's written inside a transcript line's JSON. */
+  private readonly marker: Buffer;
+
+  constructor(
+    readonly name: string,
+    private readonly options: { chunkBytes?: number } = {},
+  ) {
+    this.marker = Buffer.from(JSON.stringify(name).slice(1, -1), 'utf8');
+  }
+
+  /** Forgets every session but these. */
+  retain(sessionIds: ReadonlySet<string>): void {
+    for (const id of this.scans.keys()) if (!sessionIds.has(id)) this.scans.delete(id);
+  }
+
+  /**
+   * For readConversationPage: the addresses in the lines of `file` that start before `offset`, after
+   * reading whatever of them this book hasn't. Undefined when the file couldn't be read.
+   */
+  addressesBefore(sessionId: string, file: string, handle: FileHandle, identity: { dev: string; ino: string }, offset: number): Promise<KnownAddresses | undefined> {
+    const previous = this.busy.get(sessionId) ?? Promise.resolve(undefined);
+    const run = previous
+      .then(() => this.readTo(sessionId, file, handle, identity, offset))
+      .catch(() => {
+        this.scans.delete(sessionId);
+        return undefined;
+      });
+    this.busy.set(sessionId, run);
+    void run.then(() => {
+      if (this.busy.get(sessionId) === run) this.busy.delete(sessionId);
+    });
+    return run;
+  }
+
+  private async readTo(sessionId: string, file: string, handle: FileHandle, identity: { dev: string; ino: string }, offset: number): Promise<KnownAddresses> {
+    const size = Number((await handle.stat({ bigint: true })).size);
+    let scan = this.scans.get(sessionId);
+    if (
+      scan !== undefined &&
+      !(scan.file === file && scan.dev === identity.dev && scan.ino === identity.ino && scan.offset <= size && (await fingerprint(handle, scan.offset)) === scan.fingerprint)
+    ) {
+      scan = undefined;
+    }
+    if (scan === undefined) {
+      scan = { file, ...identity, offset: 0, midLine: false, fingerprint: await fingerprint(handle, 0), addresses: new Map() };
+      this.scans.set(sessionId, scan);
+    }
+    const target = Math.min(offset, size);
+    const bytesRead = scan.offset < target ? await this.readForward(handle, scan, target) : 0;
+    return { addresses: scan.addresses, bytesRead };
+  }
+
+  /**
+   * Reads [scan.offset, target) a chunk at a time and notes the relay's addresses in the lines there.
+   * The target is where a page starts: a line's start, or inside a line too long to read, which is
+   * skipped, as the page skips it.
+   */
+  private async readForward(handle: FileHandle, scan: AddressScan, target: number): Promise<number> {
+    const chunkBytes = Math.max(1, this.options.chunkBytes ?? ADDRESS_CHUNK_BYTES);
+    const start = scan.offset;
+    let pos = start;
+    let lineStart = pos;
+    let skipping = scan.midLine;
+    let parts: Buffer[] = [];
+    let partBytes = 0;
+    while (pos < target) {
+      const want = Math.min(chunkBytes, target - pos);
+      const chunk = await readRange(handle, pos, pos + want);
+      if (chunk.length !== want) throw new TranscriptChangedError();
+      let from = 0;
+      for (let newline = chunk.indexOf(NEWLINE); newline !== -1; newline = chunk.indexOf(NEWLINE, from)) {
+        if (skipping) skipping = false;
+        else this.take(scan, partBytes === 0 ? chunk.subarray(from, newline) : Buffer.concat([...parts, chunk.subarray(from, newline)]), lineStart);
+        parts = [];
+        partBytes = 0;
+        from = newline + 1;
+        lineStart = pos + from;
+      }
+      if (!skipping && from < chunk.length) {
+        if (partBytes + chunk.length - from > ADDRESS_LINE_MAX) {
+          parts = [];
+          partBytes = 0;
+          skipping = true;
+        } else {
+          // readRange gives a new buffer every time, so the part needn't be copied.
+          parts.push(chunk.subarray(from));
+          partBytes += chunk.length - from;
+        }
+      }
+      pos += want;
+    }
+    scan.offset = target;
+    // A line that runs on past the target is one the page skipped as too long to read: so is its rest.
+    scan.midLine = skipping || partBytes > 0;
+    scan.fingerprint = await fingerprint(handle, target);
+    return target - start;
+  }
+
+  /** Notes the address a message from the relay on this line came from, if it's the first from there. */
+  private take(scan: AddressScan, line: Buffer, offset: number): void {
+    if (scan.addresses.size >= RELAY_ADDRESSES_MAX || line.indexOf(this.marker) === -1) return;
+    for (const item of itemsOfLine(line.toString('utf8'))) {
+      const address = item.kind === 'entry' ? relayAddress(item.sender, this.name) : undefined;
+      if (address !== undefined && !scan.addresses.has(address) && scan.addresses.size < RELAY_ADDRESSES_MAX) scan.addresses.set(address, offset);
+    }
+  }
+}
+
 // --- Building a page -------------------------------------------------------------
+
+/**
+ * What a tool result says: 'error' when it's marked as one; 'failed' when it's JSON whose `success`
+ * is false, as SendMessage's is when it couldn't send; otherwise 'ok'.
+ */
+type ResultState = 'ok' | 'error' | 'failed';
+
+/** A SendMessage call with a message: its `to`, trimmed, and its `message` as written. */
+interface SendCall {
+  to: string;
+  message: string;
+}
+
+/** Who sent a cross-session message, as it says: a name, and the socket address it came from. */
+interface Sender {
+  name?: string;
+  address?: string;
+}
 
 /** What one transcript line contributes, in file order. */
 type Item =
   | { kind: 'text'; messageId: string | undefined; text: string; at: string | undefined }
-  | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined }
-  | { kind: 'result'; id: string; isError: boolean }
-  | { kind: 'entry'; entry: ConversationEntry };
+  | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined; send?: SendCall }
+  | { kind: 'result'; id: string; state: ResultState }
+  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender };
+
+/** A SendMessage call on the page whose result, if it has one yet, didn't fail, and where its line starts. */
+interface SendDraft extends SendCall {
+  offset: number;
+}
 
 /** An entry being built. Assistant text keeps its blocks until the page is finished. */
 type Draft =
   | { kind: 'assistant'; messageId: string | undefined; at: string | undefined; parts: string[] }
-  | { kind: 'tool'; id: string | undefined; entry: ConversationEntry }
+  | { kind: 'tool'; id: string | undefined; entry: ConversationEntry; send?: SendDraft }
   | { kind: 'entry'; entry: ConversationEntry };
+
+/** The socket address a message from pitwall's relay came from, or undefined for any other message. */
+function relayAddress(sender: Sender | undefined, relayName: string): string | undefined {
+  // Claude Code's own record of the sender's name, which is the relay's --name exactly (spike 003).
+  return sender?.address !== undefined && sender.name === relayName ? sender.address : undefined;
+}
 
 /**
  * Collects entries from lines handed over newest first.
@@ -325,23 +559,30 @@ type Draft =
  *   that only join its oldest entry.
  * - A tool result is met before its call. It waits in `pending` until the
  *   call turns up, on this page or, through the cursor, an older one.
+ * - A SendMessage call to pitwall's relay is a 'to-pitwall' entry. It's to the
+ *   relay by name at once; by a socket address once a message from the relay
+ *   that came from it is found before it: on this page, or, through
+ *   `finish()`, earlier in the transcript.
  */
 class PageBuilder {
   /** Newest first. */
   private readonly drafts: Draft[] = [];
+  /** The addresses the relay's messages on this page came from, each with the offset of the earliest such line. */
+  private readonly relayFrom = new Map<string, number>();
 
   constructor(
-    readonly pending: Map<string, boolean>,
+    readonly pending: Map<string, ResultState>,
     private readonly maxEntries: number,
+    private readonly relayName?: string,
   ) {}
 
-  /** Takes a line, or says the page is full and the line belongs to the older page. */
-  offer(line: string): 'taken' | 'full' {
+  /** Takes a line, which starts at `offset` in the file, or says the page is full and the line belongs to the older page. */
+  offer(line: string, offset: number): 'taken' | 'full' {
     const items = itemsOfLine(line);
     if (items.length === 0) return 'taken';
     const added = this.newEntries(items);
     if (this.drafts.length > 0 && this.drafts.length + added > this.maxEntries) return 'full';
-    for (let i = items.length - 1; i >= 0; i--) this.apply(items[i] as Item);
+    for (let i = items.length - 1; i >= 0; i--) this.apply(items[i] as Item, offset);
     return 'taken';
   }
 
@@ -365,11 +606,11 @@ class PageBuilder {
     return { assistant: oldest.kind === 'assistant', messageId: oldest.kind === 'assistant' ? oldest.messageId : undefined };
   }
 
-  private apply(item: Item): void {
+  private apply(item: Item, offset: number): void {
     switch (item.kind) {
       case 'result':
         this.pending.delete(item.id);
-        this.pending.set(item.id, item.isError);
+        this.pending.set(item.id, item.state);
         // Results whose calls never turn up are dropped, the oldest seen first.
         while (this.pending.size > MAX_PENDING) {
           const first = this.pending.keys().next().value;
@@ -393,17 +634,26 @@ class PageBuilder {
         if (this.full()) return;
         const entry: ConversationEntry = { kind: 'tool', text: item.summary, toolName: item.name };
         if (item.at !== undefined) entry.at = item.at;
+        let state: ResultState | undefined;
         if (item.id !== undefined && this.pending.has(item.id)) {
-          entry.toolError = this.pending.get(item.id) === true;
+          state = this.pending.get(item.id);
+          entry.toolError = state === 'error';
           this.pending.delete(item.id);
         }
-        this.drafts.push({ kind: 'tool', id: item.id, entry });
+        const draft: Draft = { kind: 'tool', id: item.id, entry };
+        // A call whose result was an error, or said it didn't send, stays a tool call. One with no result yet doesn't.
+        if (item.send !== undefined && this.relayName !== undefined && state !== 'error' && state !== 'failed') draft.send = { ...item.send, offset };
+        this.drafts.push(draft);
         return;
       }
-      case 'entry':
+      case 'entry': {
+        // Noted for every line the page takes, so a call after it on the page knows where the relay's messages came from.
+        const address = this.relayName === undefined ? undefined : relayAddress(item.sender, this.relayName);
+        if (address !== undefined) this.relayFrom.set(address, Math.min(offset, this.relayFrom.get(address) ?? offset));
         if (this.full()) return;
         this.drafts.push({ kind: 'entry', entry: item.entry });
         return;
+      }
     }
   }
 
@@ -412,15 +662,39 @@ class PageBuilder {
     return this.drafts.length >= this.maxEntries;
   }
 
+  /** True when a call on the page is to a socket address that no message from the relay on the page came from before it. */
+  unresolved(): boolean {
+    return this.drafts.some((draft) => draft.kind === 'tool' && draft.send !== undefined && !this.byName(draft.send) && this.bySocket(draft.send) === undefined);
+  }
+
+  /**
+   * The `to` (trimmed) is the relay's name exactly. Not ignoring case: the web UI names the recipient
+   * as the call addressed it, "To pitwall-relay", and claims no more than that (W48).
+   */
+  private byName(send: SendDraft): boolean {
+    return this.relayName !== undefined && send.to === this.relayName;
+  }
+
+  /** True when a message from the relay on this page came from the call's address before it; false when none did; undefined when the call isn't to a socket. */
+  private bySocket(send: SendDraft): boolean | undefined {
+    if (!send.to.startsWith(SOCKET_PREFIX)) return false;
+    const first = this.relayFrom.get(send.to);
+    return first !== undefined && first < send.offset ? true : undefined;
+  }
+
   /**
    * The entries, oldest first, each with at most 32 KiB of text. The newest
    * keep theirs in full while the page's 256 KiB budget lasts; once an entry
    * doesn't fit what's left, it keeps only its first 512 characters.
+   * `earlier` says whether a message from the relay came from an address
+   * before the page, and before the call's offset.
    */
-  finish(): ConversationEntry[] {
+  finish(earlier?: (address: string, offset: number) => boolean): ConversationEntry[] {
+    const toRelay = (send: SendDraft) =>
+      this.byName(send) || (send.to.startsWith(SOCKET_PREFIX) && (this.bySocket(send) === true || earlier?.(send.to, send.offset) === true));
     const entries: ConversationEntry[] = [];
     const budget = { chars: PAGE_TEXT_BUDGET };
-    for (const draft of this.drafts) entries.push(withinBudget(finishDraft(draft), budget));
+    for (const draft of this.drafts) entries.push(withinBudget(finishDraft(draft, toRelay), budget));
     return entries.reverse();
   }
 }
@@ -429,9 +703,12 @@ function joins(oldest: { assistant: boolean; messageId: string | undefined } | u
   return oldest !== undefined && oldest.assistant && messageId !== undefined && oldest.messageId === messageId;
 }
 
-function finishDraft(draft: Draft): ConversationEntry {
+function finishDraft(draft: Draft, toRelay: (send: SendDraft) => boolean): ConversationEntry {
   switch (draft.kind) {
     case 'tool':
+      // The message as the session wrote it, at the call's time, in the call's place (W46).
+      if (draft.send !== undefined && toRelay(draft.send)) return withAt({ kind: 'to-pitwall', text: draft.send.message, markdown: true }, draft.entry.at);
+      return draft.entry;
     case 'entry':
       return draft.entry;
     case 'assistant':
@@ -513,10 +790,55 @@ function assistantItems(entry: Record<string, unknown>, at: string | undefined):
     } else if (block.type === 'tool_use') {
       const name = typeof block.name === 'string' && block.name !== '' ? block.name : 'tool';
       const id = typeof block.id === 'string' ? block.id : undefined;
-      items.push({ kind: 'tool', id, name, summary: toolSummary(name, block.input), at });
+      const item: Extract<Item, { kind: 'tool' }> = { kind: 'tool', id, name, summary: toolSummary(name, block.input), at };
+      const send = name === SEND_MESSAGE ? sendCall(block.input) : undefined;
+      if (send !== undefined) item.send = send;
+      items.push(item);
     }
   }
   return items;
+}
+
+/**
+ * A SendMessage call's `to`, trimmed, and its `message` as written, capped as entries are. Undefined
+ * without both, or with a message that's only whitespace. Its `content` is only a short preview, so
+ * it's never read; nor are `summary`, `recipient` and `recipient_kind`.
+ */
+function sendCall(input: unknown): SendCall | undefined {
+  if (!isRecord(input)) return undefined;
+  const { to, message } = input;
+  if (typeof to !== 'string' || typeof message !== 'string' || !/\S/.test(message)) return undefined;
+  const address = to.trim();
+  if (address === '' || address.length > ADDRESS_MAX) return undefined;
+  return { to: address, message: cap(message, ENTRY_TEXT_MAX + 1) };
+}
+
+/** A tool result's state (ResultState). Only a short result is read as JSON, and only one that starts like an object with a `success`. */
+function resultState(block: Record<string, unknown>): ResultState {
+  if (block.is_error === true) return 'error';
+  const text = shortText(block.content, RESULT_JSON_MAX)?.trim();
+  if (text === undefined || !text.startsWith('{') || !text.includes('"success"')) return 'ok';
+  try {
+    const value: unknown = JSON.parse(text);
+    return isRecord(value) && value.success === false ? 'failed' : 'ok';
+  } catch {
+    return 'ok';
+  }
+}
+
+/** A string content, or the text blocks of an array content joined with newlines, when that's at most `max` long. */
+function shortText(content: unknown, max: number): string | undefined {
+  if (typeof content === 'string') return content.length <= max ? content : undefined;
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  let length = 0;
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== 'text' || typeof block.text !== 'string') continue;
+    length += block.text.length + (parts.length > 0 ? 1 : 0);
+    if (length > max) return undefined;
+    parts.push(block.text);
+  }
+  return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
 function userItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
@@ -534,7 +856,7 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
       if (!isRecord(block)) continue;
       if (block.type === 'tool_result') {
         isResult = true;
-        if (typeof block.tool_use_id === 'string') results.push({ kind: 'result', id: block.tool_use_id, isError: block.is_error === true });
+        if (typeof block.tool_use_id === 'string') results.push({ kind: 'result', id: block.tool_use_id, state: resultState(block) });
       } else if (block.type === 'image') {
         images++;
       }
@@ -625,6 +947,7 @@ function crossSession(text: string, at: string | undefined): Item {
   }
   let body = rest;
   let from: string | undefined;
+  let address: string | undefined;
   if (tag !== undefined) {
     const openEnd = rest.indexOf('>', open);
     if (openEnd !== -1) {
@@ -632,15 +955,20 @@ function crossSession(text: string, at: string | undefined): Item {
       const attributes = rest.slice(open + 1 + tag.length, Math.min(openEnd, open + 2048));
       const fromName = /(?:^|\s)from-name="([^"]*)"/.exec(attributes)?.[1];
       const fromAttr = /(?:^|\s)from="([^"]*)"/.exec(attributes)?.[1];
-      from = fromName ?? (fromAttr !== undefined && !fromAttr.startsWith('uds:') ? fromAttr : undefined);
+      const isSocket = fromAttr?.startsWith(SOCKET_PREFIX) === true;
+      from = fromName ?? (fromAttr !== undefined && !isSocket ? fromAttr : undefined);
+      // Where it came from, which a reply's `to` names (W46).
+      if (isSocket && fromAttr !== undefined && fromAttr.length <= ADDRESS_MAX) address = decodeEntities(fromAttr);
       const close = rest.lastIndexOf(`</${tag}>`);
       body = close > openEnd ? rest.slice(openEnd + 1, close) : rest.slice(openEnd + 1);
     }
   }
   const entry: ConversationEntry = withAt({ kind: 'cross-session', text: cap(body.trim(), ENTRY_TEXT_MAX + 1), markdown: true }, at);
-  const sender = from === undefined ? '' : oneLine(decodeEntities(from), 120);
+  const name = from === undefined ? undefined : decodeEntities(from);
+  const sender = name === undefined ? '' : oneLine(name, 120);
   if (sender !== '') entry.from = sender;
-  return { kind: 'entry', entry };
+  if (address === undefined) return { kind: 'entry', entry };
+  return { kind: 'entry', entry, sender: name === undefined ? { address } : { name, address } };
 }
 
 function notice(text: string, at: string | undefined): Item {
