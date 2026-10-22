@@ -1108,7 +1108,7 @@ The groups hidden from the [repo list](#repo-list) (W35), at its foot, after the
 - Interactive sessions: the [message box](#message-box).
 - A session that can't be messaged: a meta note, "It isn't running, so it can't be messaged."
 - Background sessions, and sessions that are no longer listed: no footer. The header's alert says why for the second.
-- **A draft is never lost to the session going** (W31): when the session stops running, or leaves the list, while the message box has a draft, the box stays, with the draft in it, still editable, so it can be copied. A meta note above it says why it can't be sent, linked to the textarea: "It isn't running any more, so this can't be sent. Your text stays here until you clear it." or "It's no longer listed, so this can't be sent. …", and Send is `aria-disabled`, its tooltip saying the same. Escape and the shortcuts still keep it (6.2). Cleared, the note or no footer takes its place, as above.
+- **A draft is never lost to the session going** (W31): when the session stops running, or leaves the list, while the message box has a draft, the box stays, with the draft in it, still editable, so it can be copied. A meta note above it says why it can't be sent, linked to the textarea: "It isn't running any more, so this can't be sent. Your text stays here until you clear it." or "It's no longer listed, so this can't be sent. …", and Send is `aria-disabled`, its tooltip saying the same. Escape and the shortcuts still keep it (6.2). Cleared, the note or no footer takes its place, as above. A draft the tab kept (W44, [message box](#message-box)) keeps the footer the same way, in a view opened again after its session left the list.
 
 ### Message box
 
@@ -1131,6 +1131,10 @@ The composer in the session view's footer, for interactive sessions. Messages go
      | pitwall refused the request (any other status), before the relay ran | danger | "Not sent: pitwall refused the request (HTTP 403)." |
 
      - **Only what pitwall knows** (5: Errors): with no answer, or a server error, the message may have gone, so it's the uncertain wording and tone rather than danger, which would invite a resend, and each resend is another turn on that session's model.
+     - **A send pitwall never heard the end of, after a reload** (W44): when the page reloaded, or the view closed, while a send was out, the draft comes back with a warning inline alert in this place: "pitwall started sending this *5m ago*, but the page reloaded or the view closed before it had an answer, so it may have reached the session. Check its conversation before sending again." After an uncertain answer (the relay's `uncertain`, or pitwall's own no answer, server error or unexplained success) and then a reload: "pitwall tried to send this *5m ago* and couldn't tell whether it reached the session. Check its conversation before sending again."
+       - The time is when the send went out, a [timestamp](#timestamps).
+       - No role, since it was there when the box appeared ([Alerts and banners](#alerts-and-banners)). It's linked to the textarea with `aria-describedby`, first, so it's heard before a resend.
+       - It goes once the draft is edited or sent. Send is as it is for any draft: there's no resend action, and nothing sends by itself.
   3. **The text row:** the textarea (auto-growing, one to eight lines), then the primary md "Send" button (`send` icon), aligned to the textarea's bottom.
   4. **The help line** (meta, `--pw-text-subtle`), linked to the textarea with `aria-describedby`:
      - Left: "⌘ ↵ to send" as key caps (Ctrl on other platforms), then an info button (`InfoTip`) whose name and tooltip are the limits note ("Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts.").
@@ -1140,8 +1144,14 @@ The composer in the session view's footer, for interactive sessions. Messages go
   - Its tooltip, which describes it, says why it's off: "Type a message to send it.", "Shorten it by *n* characters to send it: the limit is 8,192.", or "Messages can't be sent from here." While it's sending, its busy label says so instead.
   - While sending: the busy state ("Sending…"), and the textarea is read-only.
   - After a send, focus stays in the textarea, or comes back to it from Send, unless it was moved somewhere else while the message was out. The draft clears when the message was delivered, held or refused; it stays when it wasn't sent or may not have been.
-  - Escape with a draft does nothing, wherever focus is in the view, so a draft is never lost to the shortcut that closes the view.
-  - A draft stays when its session stops running or leaves the list, with a note saying why it can't be sent (see the footer, above).
+  - **A draft survives a reload in this tab** (W44, `web/src/drafts.ts`). Each conversation has its own, kept in the tab's `sessionStorage` under `pitwall.draft.v1:<sessionId>`. The box starts with it after a reload, or when its session is opened again later in the tab, and one session's draft never shows in another's box.
+    - **Written as it's typed,** in the same event, so a reload straight after a keystroke keeps it. Removed when the box empties, and by the rule above: delivered, held or refused. Kept when it wasn't sent or may not have been.
+    - **The value:** `{"v":1,"text":"…"}`. A send adds `"send":{"at":"<ISO time>","state":"out"}` as it goes, until its answer; an answer that couldn't tell leaves `"state":"uncertain"`. Either one brings the warning above.
+    - **`sessionStorage`, not `localStorage`** (Phil, 2026-10-22): a draft lasts as long as the tab, as the token does, through reloads and pitwall restarts. It isn't on disk once the tab has gone, and two tabs never overwrite each other's. It's never pruned for a session missing from a snapshot, since a failed poll can empty the list.
+    - **It's session content:** the text goes nowhere but that key. Never a log, a URL, or any request but Send's.
+    - **Storage that fails** (blocked, a private window, over its quota): the box works from memory, as before, with no notice. Without `sessionStorage` the token doesn't survive a reload either (D7), so the page already says more than a notice would. A write that fails removes what was stored, so a reload never brings back an older copy than the one on screen.
+  - Escape with a draft does nothing, wherever focus is in the view, so a draft is never lost to the shortcut that closes the view. A kept draft counts from the moment the box appears, for Escape and every shortcut that waits for a draft (6.2).
+  - A draft stays when its session stops running or leaves the list, with a note saying why it can't be sent (see the footer, above). A kept draft comes back with that note when it happened meanwhile.
   - Rows have no Message button: the message box is always at the foot of an interactive session's view.
 
 ### Conversation
