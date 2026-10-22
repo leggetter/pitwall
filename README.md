@@ -39,10 +39,12 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Why:** an interactive session in Warp or Cursor belongs to that terminal. The only documented way in from outside is cross-session messaging. The receiving session sees such a message as coming from another session, "not typed by your user", so it can't approve a permission prompt or change configuration.
 - **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a headless session pitwall runs, limited to `SendMessage` behind a gate (D8), which the M5 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
 - **Rejected:** posting to a session's inbox socket directly. Only the socket's auth line is documented, not the message format.
+- **Waiting on you:** while an interactive session waits on you, its view says to answer in its terminal; a relayed message seems to wait until then (W47; not yet confirmed on a live dialog).
 
 ### D3 - Background sessions are driven through a PTY running `claude attach <id>`, shown with xterm.js
 
 - **Why:** it gives the full Claude Code interface, including permission prompts and dialogs, without pitwall modeling any of it. `node-pty` works on Node 25. Closing the PTY detaches without stopping the session.
+- **In the view:** a background session's footer, where an interactive one has its message box, says to type to it in its Terminal tab, which attaches. There's no button for it, because opening the tab is what attaches (D9) (W47).
 - **Rejected:** a custom chat UI over the transcript plus `claude --resume <id> --bg "prompt"`. It would look better but can't answer dialogs. It may come back later as a read-only view.
 
 ### D4 - The supervisor is a background Claude Code session, not an Agent SDK app
