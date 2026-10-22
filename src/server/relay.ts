@@ -65,7 +65,10 @@
 // blocked call for one of pitwall's own requests that didn't match it
 // restarts the relay once its turn ends, because its conversation may have
 // been poisoned. A call that got past the gate when it shouldn't have stops
-// pitwall using the relay until pitwall restarts.
+// pitwall using the relay until pitwall restarts. One for your message that
+// matched it, but ran without the gate checking it, raises no alert: nothing
+// unrequested or changed was sent, and the snapshot's relayOff says why
+// messaging is off.
 //
 // The gate needs Claude Code 2.1.295 or later, for the hooks' `onFailure`,
 // so pitwall checks `claude --version` before it first starts the relay.
@@ -867,8 +870,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     recordOutcome(job, 'delivered');
     if (job.gateId !== undefined && gate.pending(job.gateId)) {
       // It ran, and the gate never claimed the expectation: the gate isn't in the way of SendMessage.
-      // A call for your message, which matched it: 'changed' is the nearer of the two causes, since it wasn't unrequested.
-      raiseAlert("The relay's SendMessage ran without pitwall's gate checking it. It was the message you sent, but the relay isn't safe to use.", false, 'changed');
+      // It was your message, as asked, so nothing unrequested or changed was sent: no alert. relayOff says messaging is off, and why.
+      log("The relay's SendMessage ran without pitwall's gate checking it. It was the message you sent, but the relay isn't safe to use.");
       breakGate("its gate didn't check a SendMessage call.");
     }
     // Counted in polls rather than by the clock, so the wait is the same whatever the time does.
