@@ -202,8 +202,10 @@ export interface IndexSnapshot {
   source: SourceHealth;
   /**
    * Set once pitwall's relay has tried to do something nobody asked for in
-   * this run, such as a SendMessage with no pending request. That usually
-   * means another session messaged the relay. Absent until the first one.
+   * this run: a SendMessage with no pending request, which usually means
+   * another session messaged the relay, or one for your message that didn't
+   * match it and that pitwall's gate may not have stopped. Absent until the
+   * first one.
    */
   relayAlert?: RelayAlert;
   /**
@@ -237,6 +239,15 @@ export interface RelayAlert {
    * False when pitwall saw it only afterwards, so it may have been sent.
    */
   blocked: boolean;
+  /**
+   * What the latest one was (W43). 'unrequested': a SendMessage call with no
+   * request of pitwall's behind it, which usually means another session
+   * messaged the relay. 'changed': the call for one of your messages didn't
+   * match it, such as text the relay changed or another recipient. A changed
+   * call that the gate blocked raises no alert: that message's own result
+   * says what changed, after pitwall has tried it once more.
+   */
+  cause: 'unrequested' | 'changed';
 }
 
 /**
@@ -397,7 +408,9 @@ export type RelayStatus =
   /**
    * Not sent: no live session answers to the target's name, the name is
    * ambiguous, the relay couldn't start, or pitwall's gate denied the relay's
-   * SendMessage call because it didn't match the request.
+   * SendMessage call because it didn't match the request, on the first try
+   * and on pitwall's one retry (W43). Then `detail` says where the call first
+   * differed, by line and character code, never with the text.
    */
   | 'failed'
   /**
@@ -407,7 +420,13 @@ export type RelayStatus =
    */
   | 'uncertain';
 
-/** Body of a POST to relayPath(). `text` is 1 to 8,192 characters, sent verbatim. */
+/**
+ * Body of a POST to relayPath(). `text` is 1 to 8,192 characters, sent
+ * verbatim except that spaces that look like a space, such as a no-break
+ * space, become a plain space, and a CRLF line break becomes LF (W43): the
+ * relay's model tends to write those as plain ones, and its gate then blocks
+ * the copy.
+ */
 export interface RelayRequest {
   text: string;
 }
