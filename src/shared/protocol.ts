@@ -339,8 +339,37 @@ export type ConversationEntryKind =
    * error, or that has no `message` text, stays a 'tool' entry.
    */
   | 'to-pitwall'
+  /**
+   * A question Claude Code asked in its dialog (the AskUserQuestion tool), with
+   * its options and the answers, in place of that tool call (W49). Claude Code
+   * seems to write the call to the transcript only once it's answered, so an
+   * open dialog has no entry. A call whose result was an error, such as a
+   * dismissed dialog, keeps its questions, has no answers and sets
+   * `toolError`. A call whose input isn't the shape below stays a 'tool' entry.
+   */
+  | 'question'
   /** Anything else worth showing: a compaction summary, a task notification, a command's output. */
   | 'notice';
+
+/** One question in a 'question' entry (W49). Every string is plain text, never markdown or HTML. */
+export interface AskedQuestion {
+  /** The question, as asked. At most 2 Ki code units. */
+  question: string;
+  /** Its short label, when it has one. At most 256 code units. */
+  header?: string;
+  /** The choices offered, in order, at most 8. Each label at most 256 code units, each description at most 1 Ki. */
+  options: Array<{ label: string; description?: string }>;
+  /** True when more than one option could be chosen. */
+  multiSelect?: boolean;
+  /**
+   * The answer as Claude Code recorded it, once answered: an option's label,
+   * several labels for a multi-select, or text typed in place of an option.
+   * At most 2 Ki code units.
+   */
+  answer?: string;
+  /** Notes typed with the answer, when there are any. At most 2 Ki code units. */
+  notes?: string;
+}
 
 export interface ConversationEntry {
   kind: ConversationEntryKind;
@@ -356,6 +385,8 @@ export interface ConversationEntry {
    * - 'tool': a one-line summary of the call, such as `Bash: npm test` or
    *   `Edit: src/cli.ts`.
    * - 'notice': plain text.
+   * - 'question': the first question, as a one-line summary; `questions` has
+   *   them all (W49).
    * A page carries at most 256 Ki code units of its entries' text in full, newest
    * entries first. Entries past that are cut to 512 and marked `truncated`.
    */
@@ -364,10 +395,16 @@ export interface ConversationEntry {
   markdown?: true;
   /** For 'tool': the tool's name. */
   toolName?: string;
-  /** For 'tool': whether the result was an error. */
+  /** For 'tool' and 'question': whether the result was an error. */
   toolError?: boolean;
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
+  /**
+   * For 'question': the questions asked, in order, at most 8 (W49). Their text
+   * counts toward the page's budget, and past it each string is cut to 512 and
+   * the entry marked `truncated`.
+   */
+  questions?: AskedQuestion[];
   /** True when `text` was cut to the limit. */
   truncated?: boolean;
 }
