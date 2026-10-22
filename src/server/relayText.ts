@@ -1,4 +1,4 @@
-// The relay's copy of a message (W43). Two pure functions:
+// The relay's copy of a message (W43, W52). Three pure functions:
 //
 // - plainSpaces() is the text pitwall relays: spaces that look like a space
 //   become a plain space, and a CRLF line break becomes LF. The relay's model
@@ -8,9 +8,14 @@
 //   call against this text, so all three use the same one.
 // - describeCopyDifference() says where the relay's copy first differed from
 //   that text, by line and by character code, for the message's result and
-//   the server's log. Never with the text itself, not even one character of
-//   it: a visible character is only its code, such as U+0107, and whitespace
-//   and invisible characters also get a short name.
+//   the server's log. Never with the text written out: it names at most the
+//   two characters where the copy first differed, one from each side, and
+//   each by its code, such as U+0107, never as itself. Whitespace and
+//   invisible characters also get a short name. A code still says which
+//   character it is, so a description gives away that one character.
+// - isCopyingSlip() says whether the copy differs from the text only as a
+//   copying slip, in whitespace or by leaving out invisible characters: the
+//   one difference pitwall tries again without an alert (W52, W48's F3).
 
 /**
  * No-break, typographic and mathematical spaces: U+00A0, U+2000 to U+200A,
@@ -142,8 +147,9 @@ function span(count: number, part: string, more: boolean): string {
  *
  * Counts are of characters, a surrogate pair being one. A change counts as
  * one character changed, added or left out when the copy agrees with the
- * text again right after it. Never contains the text: characters are named
- * by characterName().
+ * text again right after it. Never contains the text written out: the
+ * characters it names, at most one from each side, are named by
+ * characterName(), by their code.
  */
 export function describeCopyDifference(text: string, copy: string): string | undefined {
   if (copy === text) return undefined;
@@ -201,4 +207,50 @@ export function describeCopyDifference(text: string, copy: string): string | und
     }
   }
   return `${where}: the copy differs from here, with ${characterName(now)} in place of ${characterName(was)}`;
+}
+
+/** Whitespace, by Unicode's White_Space property: tabs, line breaks and every space character, but no zero-width character. */
+const WHITESPACE = /\p{White_Space}/u;
+/** Characters that show nothing: format characters and default-ignorable ones, such as zero-width spaces, joiners, bidirectional controls and tag characters. */
+const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
+
+/**
+ * The text's visible characters, in order, and how many of each invisible
+ * character it has. Whitespace counts as neither.
+ */
+function visibleParts(text: string): { visible: string; invisible: Map<string, number> } {
+  const visible: string[] = [];
+  const invisible = new Map<string, number>();
+  for (const character of text) {
+    if (WHITESPACE.test(character)) continue;
+    if (INVISIBLE.test(character)) invisible.set(character, (invisible.get(character) ?? 0) + 1);
+    else visible.push(character);
+  }
+  return { visible: visible.join(''), invisible };
+}
+
+/**
+ * Whether the relay's copy differs from the text pitwall asked it to send
+ * only as a copying slip (W52): in its whitespace, or by leaving out
+ * invisible characters the text has. Every visible character is there, in
+ * order, and nothing is added that shows or could be read: an invisible
+ * character the text doesn't have, such as a tag character, can carry words
+ * a model reads and a person doesn't see, so it isn't a slip. False for an
+ * exact copy, which isn't a difference at all. Linear in the two lengths.
+ *
+ * - a no-break or ideographic space for a space, a tab for spaces, a line
+ *   break added, left out or as CRLF, a trailing newline dropped: a slip
+ * - a zero-width space or joiner the text has, left out or moved: a slip
+ * - one letter, a full stop, a word, another text, or an invisible
+ *   character the text doesn't have: not a slip
+ */
+export function isCopyingSlip(text: string, copy: string): boolean {
+  if (copy === text) return false;
+  const asked = visibleParts(text);
+  const copied = visibleParts(copy);
+  if (copied.visible !== asked.visible) return false;
+  for (const [character, count] of copied.invisible) {
+    if (count > (asked.invisible.get(character) ?? 0)) return false;
+  }
+  return true;
 }

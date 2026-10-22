@@ -1,7 +1,8 @@
-// The relay's copy of a message (W43): the text pitwall relays, and where the
-// relay's copy first differed from it. Made-up text only.
+// The relay's copy of a message (W43, W52): the text pitwall relays, where the
+// relay's copy first differed from it, and whether that was only a copying
+// slip. Made-up text only.
 import { describe, expect, it } from 'vitest';
-import { characterName, describeCopyDifference, plainSpaces } from './relayText.js';
+import { characterName, describeCopyDifference, isCopyingSlip, plainSpaces } from './relayText.js';
 
 /** Every code point plainSpaces() makes a plain space. */
 const LOOK_ALIKES = [0x00a0, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x202f, 0x205f];
@@ -161,7 +162,7 @@ describe('describeCopyDifference', () => {
     expect(describeCopyDifference('one\n\n\nfour x', 'one\n\n\nfour y')).toBe('line 4: U+0078 became U+0079');
   });
 
-  it('never includes the text, not even one character of it', () => {
+  it('never writes out the text: at most the two characters where it first differed, each by its code (W48’s F10)', () => {
     // Letters and marks a description never uses, so any of them in one would be the text.
     const alphabet = ['ж', 'ψ', 'é', 'ł', '✓', '\u2013', 'ß', '中', '\u{1f600}'];
     const word = (n: number) => Array.from({ length: 3 + (n % 5) }, (_, i) => alphabet[(n * 7 + i) % alphabet.length]).join('');
@@ -186,5 +187,68 @@ describe('describeCopyDifference', () => {
     for (const copy of [words.replace('quokka', 'quakka'), words.slice(0, 9), `${words} pangolin`, 'okapi']) {
       expect(describeCopyDifference(words, copy)).not.toMatch(/zeb|quo|qua|nar|axo|pan|oka/);
     }
+  });
+});
+
+describe('isCopyingSlip (W52)', () => {
+  const text = 'Line one, with words.\n\tLine two,\u200b with a zero-width space.\nThe end.';
+
+  it('says no for an exact copy, which isn’t a difference', () => {
+    expect(isCopyingSlip(text, text)).toBe(false);
+  });
+
+  it.each([
+    ['a line break added at the end', `${text}\n`],
+    ['the text with no line breaks', text.replace(/\n/g, ' ')],
+    ['a CRLF for each line break', text.replace(/\n/g, '\r\n')],
+    ['a lone carriage return added', text.replace('\n', '\r\n\r')],
+    ['spaces for a tab', text.replace('\t', '    ')],
+    ['a tab for a space', text.replace(' ', '\t')],
+    ['two spaces for one', text.replace(' ', '  ')],
+    ['every space left out', text.replace(/ /g, '')],
+    ['a no-break space for a space', text.replace(' ', '\u00a0')],
+    ['an ideographic space for a space', text.replace(' ', '\u3000')],
+    ['a line separator for a line break', text.replace('\n', '\u2028')],
+    ['a zero-width space the text has, left out', text.replace('\u200b', '')],
+    ['a zero-width space the text has, moved', text.replace('\u200b ', ' \u200b')],
+    ['whitespace and the zero-width space, both changed', text.replace('\u200b', '').replace(/\n/g, '\r\n')],
+  ])('counts %s as a slip', (_name, copy) => {
+    expect(isCopyingSlip(text, copy)).toBe(true);
+  });
+
+  it.each([
+    ['one letter changed', text.replace('words', 'wards')],
+    ['a letter left out', text.replace('words', 'word')],
+    ['a full stop added', `${text}.`],
+    ['a word added', text.replace('with words', 'with some words')],
+    ['the end left out', text.slice(0, -8)],
+    ['a different text', 'A made-up instruction the user never wrote.'],
+    ['nothing at all', ''],
+    ['two lines swapped', text.split('\n').reverse().join('\n')],
+    ['a zero-width space the text doesn’t have', text.replace('one', 'o\u200bne')],
+    ['a second zero-width space', text.replace('\u200b', '\u200b\u200b')],
+    ['a zero-width joiner the text doesn’t have', text.replace('two', 't\u200dwo')],
+    ['tag characters, which can carry words a model reads and a person doesn’t see', `${text}\u{e0052}\u{e0055}\u{e004e}`],
+    ['a bidirectional control', text.replace('one', '\u202eone')],
+    ['a soft hyphen', text.replace('words', 'wo\u00adrds')],
+  ])('doesn’t count %s as a slip', (_name, copy) => {
+    expect(isCopyingSlip(text, copy)).toBe(false);
+  });
+
+  it('doesn’t count a typographic look-alike, which isn’t whitespace, as a slip', () => {
+    expect(isCopyingSlip("It's done - all of it.", 'It\u2019s done - all of it.')).toBe(false);
+    expect(isCopyingSlip("It's done - all of it.", "It's done \u2013 all of it.")).toBe(false);
+  });
+
+  it('counts a surrogate pair as one character, like any other', () => {
+    expect(isCopyingSlip('A \u{1f600} here.', 'A\u{1f600}\nhere.')).toBe(true);
+    expect(isCopyingSlip('A \u{1f600} here.', 'A \u{1f601} here.')).toBe(false);
+  });
+
+  it('takes time linear in the length, for the longest text the server accepts', () => {
+    const long = 'Retry each batch three times.\n'.repeat(280).slice(0, 8192);
+    const started = performance.now();
+    for (let i = 0; i < 20; i++) isCopyingSlip(long, long.replace(/\n/g, ' '));
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });
