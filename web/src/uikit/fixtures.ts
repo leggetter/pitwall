@@ -357,27 +357,48 @@ export const LONG_ROOTS = [
   '/srv/pitwall-test/shared/checkouts',
 ];
 
+/** A message nobody asked for, which may have been sent. */
 export const RELAY_ALERT_SENT: RelayAlert = {
   at: ago(2),
-  detail: 'a SendMessage to pitwall-test-relay-delivered with no request waiting for it',
+  detail: 'The relay tried to send a message when pitwall hadn’t asked it to. The relay stopped before pitwall saw whether its gate blocked it.',
   count: 1,
   blocked: false,
+  cause: 'unrequested',
 };
+/** A message nobody asked for, which the gate blocked. */
 export const RELAY_ALERT_BLOCKED: RelayAlert = {
   at: ago(1),
-  detail: 'a SendMessage to pitwall-test-idle that no request asked for',
+  detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it, so nothing was sent.",
   count: 3,
   blocked: true,
+  cause: 'unrequested',
 };
-/** The alert that comes with the relay going off: its gate let a call through unchecked. */
-export const RELAY_ALERT_OFF: RelayAlert = {
-  at: ago(2),
-  detail: "The relay's SendMessage ran without pitwall's gate checking it. It was the message you sent, but the relay isn't safe to use.",
+/** A changed copy of your message, which may have been sent (W43). */
+export const RELAY_ALERT_CHANGED: RelayAlert = {
+  at: ago(1),
+  detail: "The relay changed the text before sending it, first at line 33: the copy has 25 more characters from here, including a line break. pitwall couldn't tell whether its gate stopped it.",
   count: 1,
   blocked: false,
+  cause: 'changed',
+};
+/** A changed copy the gate blocked. pitwall raises none today, since the message's own result says so (W43), but relayAlertText() has words for one. */
+export const RELAY_ALERT_CHANGED_BLOCKED: RelayAlert = {
+  at: ago(1),
+  detail: "The relay changed the text before sending it, first at line 12: U+0107 became U+0063. pitwall's gate blocked it, so nothing was sent.",
+  count: 2,
+  blocked: true,
+  cause: 'changed',
+};
+/** The alert that comes with the relay going off: its gate let a changed copy through. */
+export const RELAY_ALERT_OFF: RelayAlert = {
+  at: ago(2),
+  detail: "The relay changed the text before sending it, first at line 4: U+2013 became U+002D. pitwall's gate didn't stop it.",
+  count: 1,
+  blocked: false,
+  cause: 'changed',
 };
 /** The relay is off until pitwall restarts: the app strip shows. */
-export const RELAY_OFF: RelayOff = { since: ago(2), reason: "its gate didn't check a SendMessage call." };
+export const RELAY_OFF: RelayOff = { since: ago(2), reason: 'its gate let through a SendMessage call that didn’t match the request.' };
 
 // Sessions for the session view, the message box and the terminal.
 

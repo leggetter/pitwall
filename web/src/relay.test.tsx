@@ -1,6 +1,6 @@
 // The message box's and the relay alert's words and looks (W24). Made-up text only.
 import { describe, expect, it } from 'vitest';
-import type { ConversationEntry, RelayExchange } from '../../src/shared/protocol.js';
+import type { ConversationEntry, RelayAlert, RelayExchange } from '../../src/shared/protocol.js';
 import { characterCount, relayAlertText, replyInConversation, resultLook } from './relay.js';
 
 describe('characterCount', () => {
@@ -73,22 +73,49 @@ describe('replyInConversation', () => {
 });
 
 describe('relayAlertText', () => {
-  const alert = { at: '2026-03-02T11:50:00.000Z', detail: 'made up', count: 1, blocked: false };
+  const alert: RelayAlert = { at: '2026-03-02T11:50:00.000Z', detail: 'made up', count: 1, blocked: false, cause: 'unrequested' };
   const off = { since: '2026-03-02T11:50:00.000Z', reason: "its gate didn't check a SendMessage call." };
 
-  it('says a blocked one sent nothing', () => {
+  it('says a blocked one nobody asked for sent nothing, and usually came from another session', () => {
     const text = relayAlertText({ ...alert, blocked: true, count: 2 });
-    expect(text.title).toBe("pitwall blocked a message you didn't ask for");
-    expect(text.summary).toContain('so nothing was sent.');
-    expect(text.count).toBe('2 times since pitwall started.');
+    expect(text).toEqual({
+      title: "pitwall blocked a message you didn't ask for",
+      summary: "Its relay tried to send it, and pitwall's gate stopped it, so nothing was sent. That usually means another session messaged the relay.",
+      count: '2 times since pitwall started.',
+    });
   });
 
-  it('says one that wasn’t blocked may have been sent, and says messaging is off only with relayOff', () => {
+  it('says one nobody asked for that wasn’t blocked may have been sent, and says messaging is off only with relayOff', () => {
     const text = relayAlertText(alert);
-    expect(text.title).toBe("pitwall's relay may have sent a message you didn't ask for");
-    expect(text.summary).toContain("Check your sessions' conversations for a message from pitwall-relay.");
-    expect(text.summary).not.toMatch(/off|stopped using/);
-    expect(text.count).toBe('Once since pitwall started.');
+    expect(text).toEqual({
+      title: "pitwall's relay may have sent a message you didn't ask for",
+      summary: "That usually means another session messaged the relay. Check your sessions' conversations for a message from pitwall-relay.",
+      count: 'Once since pitwall started.',
+    });
     expect(relayAlertText(alert, off).summary).toMatch(/Messaging is off until you restart pitwall\.$/);
+  });
+
+  it('says a changed copy that wasn’t blocked may have been sent, to the session you messaged, and never blames another session (W43)', () => {
+    const text = relayAlertText({ ...alert, cause: 'changed' });
+    expect(text).toEqual({
+      title: "pitwall's relay may have sent a changed copy of your message",
+      summary: "pitwall's gate may not have stopped it. Check the conversation of the session you messaged for a message from pitwall-relay.",
+      count: 'Once since pitwall started.',
+    });
+    expect(relayAlertText({ ...alert, cause: 'changed' }, off).summary).toMatch(/pitwall-relay\. Messaging is off until you restart pitwall\.$/);
+  });
+
+  it('says a blocked changed copy sent nothing, and never blames another session (W43)', () => {
+    const text = relayAlertText({ ...alert, cause: 'changed', blocked: true, count: 3 });
+    expect(text).toEqual({
+      title: 'pitwall blocked a changed copy of your message',
+      summary: "Its relay's copy didn't match what you sent, so pitwall's gate stopped it, and nothing was sent.",
+      count: '3 times since pitwall started.',
+    });
+  });
+
+  it('uses the same count, of every alert, for both causes', () => {
+    expect(relayAlertText({ ...alert, count: 1200 }).count).toBe('1,200 times since pitwall started.');
+    expect(relayAlertText({ ...alert, cause: 'changed', count: 1200 }).count).toBe('1,200 times since pitwall started.');
   });
 });

@@ -176,14 +176,31 @@ export function replyInConversation(exchange: RelayExchange, entries: readonly C
 
 /**
  * The page alert for the snapshot's relayAlert (docs/design-system.md, 4: Alerts and banners): what
- * pitwall's relay tried that nobody asked for. Blocked is a warning, since nothing was sent; otherwise
- * it's danger, since pitwall saw it only afterwards. It says messaging is off only when the snapshot's
- * relayOff says so: some alerts only restart the relay. `detail` is pitwall's own words, never a
- * message's text.
+ * pitwall's relay tried that you didn't ask for. Its `cause` says which: 'unrequested', a message
+ * nobody asked for, which usually means another session messaged the relay, or 'changed', a copy of
+ * your message that didn't match it (W43). Blocked is a warning, since nothing was sent; otherwise
+ * it's danger, since pitwall saw it only afterwards. The server raises none for a changed copy its
+ * gate blocked, whose message's own result says so, but the words are here for one. It says
+ * messaging is off only when the snapshot's relayOff says so: some alerts only restart the relay.
+ * `detail` is pitwall's own words, never a message's text.
  */
 export function relayAlertText(alert: RelayAlert, off?: RelayOff): { title: string; summary: string; count: string } {
   const offNote = off ? ' Messaging is off until you restart pitwall.' : '';
   const count = alert.count === 1 ? 'Once since pitwall started.' : `${alert.count.toLocaleString('en')} times since pitwall started.`;
+  if (alert.cause === 'changed') {
+    if (alert.blocked) {
+      return {
+        title: 'pitwall blocked a changed copy of your message',
+        summary: `Its relay's copy didn't match what you sent, so pitwall's gate stopped it, and nothing was sent.${offNote}`,
+        count,
+      };
+    }
+    return {
+      title: "pitwall's relay may have sent a changed copy of your message",
+      summary: `pitwall's gate may not have stopped it. Check the conversation of the session you messaged for a message from pitwall-relay.${offNote}`,
+      count,
+    };
+  }
   if (alert.blocked) {
     return {
       title: "pitwall blocked a message you didn't ask for",

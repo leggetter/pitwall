@@ -32,6 +32,8 @@ import {
   OTHER_ROOT,
   POLL_FAILED_SNAPSHOT,
   RELAY_ALERT_BLOCKED,
+  RELAY_ALERT_CHANGED,
+  RELAY_ALERT_CHANGED_BLOCKED,
   RELAY_ALERT_OFF,
   RELAY_ALERT_SENT,
   RELAY_OFF,
@@ -287,6 +289,16 @@ const PAGES: PageCase[] = [
   { title: 'Poll failed', view: { state: 'live', snapshot: POLL_FAILED_SNAPSHOT } },
   { title: "Relay sent a message nobody asked for", view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_SENT }) } },
   { title: 'Relay blocked one', view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_BLOCKED }) } },
+  {
+    title: 'Relay may have sent a changed copy',
+    note: 'W43: a copy of your message that didn’t match it, which the gate may not have stopped. It points at the session you messaged, never at another session.',
+    view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_CHANGED }) },
+  },
+  {
+    title: 'Relay blocked a changed copy',
+    note: 'pitwall raises none today: the message’s own result says where the copy differed. The words are there for one.',
+    view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_CHANGED_BLOCKED }) },
+  },
   {
     title: 'The relay off until restart',
     note: 'The snapshot’s relayOff: the app strip above the header, and the relay alert says messaging is off.',
