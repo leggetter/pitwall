@@ -1742,6 +1742,11 @@ mark.match {
   transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
+/* The name and the time keep their 10em, with the star's slot taken out of the badges' share. */
+.session-line:has(> .session-star) .session-badges {
+  max-width: calc(100% - 10em - var(--pw-control-sm));
+}
+
 @media (hover: hover) {
   .session-star[aria-pressed='false'] {
     opacity: 0;
