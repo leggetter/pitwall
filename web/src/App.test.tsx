@@ -59,10 +59,11 @@ describe('App', () => {
     const { container } = render(<App createSocket={fake.factory} />);
 
     expect(screen.getByText('This tab has no token for pitwall.')).toBeTruthy();
+    // Right for either kind of token: a per-run one is in the printed link, a fixed one never is (W51).
     expect(container.querySelector('.notice-detail')?.textContent).toBe(
-      'Paste the link pitwall prints when it starts into this tab. On a single-user machine, a fixed PITWALL_TOKEN keeps a pinned tab working when pitwall restarts.',
+      'In this tab, open the link pitwall printed when it started, or, if PITWALL_TOKEN is set, add #token= and that token to the address. On a single-user machine, a fixed PITWALL_TOKEN keeps a pinned tab working when pitwall restarts.',
     );
-    expect([...container.querySelectorAll('.notice-detail code')].map((code) => code.textContent)).toEqual(['PITWALL_TOKEN']);
+    expect([...container.querySelectorAll('.notice-detail code')].map((code) => code.textContent)).toEqual(['PITWALL_TOKEN', '#token=', 'PITWALL_TOKEN']);
     expect(fake.sockets).toHaveLength(0);
   });
 
@@ -245,8 +246,9 @@ describe('App', () => {
 
     expect(screen.getByText("pitwall rejected this tab's token.")).toBeTruthy();
     expect(document.querySelector('.notice-detail')?.textContent).toBe(
-      "Each run of pitwall has its own token, so this usually follows a restart. Paste the link pitwall printed when it started into this tab; on a single-user machine, a fixed PITWALL_TOKEN keeps a pinned tab working when pitwall restarts.",
+      'Unless PITWALL_TOKEN is set, each run of pitwall has its own token, so this usually follows a restart. In this tab, open the link pitwall printed when it started, or, if PITWALL_TOKEN is set, add #token= and that token to the address.',
     );
+    expect([...document.querySelectorAll('.notice-detail code')].map((code) => code.textContent)).toEqual(['PITWALL_TOKEN', 'PITWALL_TOKEN', '#token=']);
     expect(fake.sockets).toHaveLength(1);
   });
 

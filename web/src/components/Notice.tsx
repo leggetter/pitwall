@@ -22,6 +22,20 @@ export function Notice({ lead, detail }: NoticeProps) {
   );
 }
 
+/**
+ * The two ways to give this tab the token, for either kind (W51). A per-run token is in the link pitwall
+ * printed. A fixed one isn't printed, so it's added to the address by hand. The page can't tell which
+ * kind this run has before the tab authenticates, so it says both.
+ */
+function WaysBack() {
+  return (
+    <>
+      In this tab, open the link pitwall printed when it started, or, if <code>PITWALL_TOKEN</code> is set, add <code>#token=</code> and
+      that token to the address.
+    </>
+  );
+}
+
 /** The page was opened without a token, or its tab lost it, as a browser restart can. */
 export function NoTokenNotice() {
   return (
@@ -29,8 +43,7 @@ export function NoTokenNotice() {
       lead="This tab has no token for pitwall."
       detail={
         <>
-          Paste the link pitwall prints when it starts into this tab. On a single-user machine, a fixed <code>PITWALL_TOKEN</code> keeps a
-          pinned tab working when pitwall restarts.
+          <WaysBack /> On a single-user machine, a fixed <code>PITWALL_TOKEN</code> keeps a pinned tab working when pitwall restarts.
         </>
       }
     />
@@ -44,8 +57,7 @@ export function TokenRejectedNotice() {
       lead="pitwall rejected this tab's token."
       detail={
         <>
-          Each run of pitwall has its own token, so this usually follows a restart. Paste the link pitwall printed when it started into
-          this tab; on a single-user machine, a fixed <code>PITWALL_TOKEN</code> keeps a pinned tab working when pitwall restarts.
+          Unless <code>PITWALL_TOKEN</code> is set, each run of pitwall has its own token, so this usually follows a restart. <WaysBack />
         </>
       }
     />

@@ -84,7 +84,10 @@ export function endMessage(end: AttachEnd): EndNotice | undefined {
     case 'too-many':
       return { text: `${MAX_ATTACHED} sessions are already attached; detach one first.` };
     case 'unauthorized':
-      return { text: 'pitwall refused the sign-in proof. Reopen pitwall from the URL the command printed.' };
+      // Right for either kind of token: a fixed one is never printed (W51).
+      return {
+        text: 'pitwall refused the sign-in proof. Reopen pitwall from the link it printed, or, if PITWALL_TOKEN is set, add #token= and that token to the address.',
+      };
     case 'closed':
       return { text: 'The connection to pitwall closed, so this terminal is detached.' };
     case 'detached':
