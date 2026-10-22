@@ -7,19 +7,27 @@
 // new token and open another browser tab, this script generates one random
 // token per `npm run dev` run, passes it to the CLI as PITWALL_TOKEN (the
 // environment, which other users can't read, never the command line), and pins
-// the port. Every security check stays on. After each restart the web UI
+// the port. It also sets PITWALL_TOKEN_PER_RUN=1, so the CLI knows the token
+// dies with this dev run and prints its link, on every restart, as for any
+// per-run token. Every security check stays on. After each restart the web UI
 // reconnects, answers a fresh challenge with the token it already has, and
 // gets the new server's apiKey.
 //
 // A fixed token, opt-in (W40), for a single-user machine or for development:
 // PITWALL_TOKEN from the environment, or from the pitwall repo's own .env,
 // is used instead, for every dev run, and this script says so in one line,
-// never with the token. The .env is found from this file's location, never
-// from the current directory, and loaded only when it exists; the environment
-// wins over it, and its other variables reach the watchers too. The token is
-// checked as the CLI checks it (resolveToken in src/cli.ts): an empty one counts
-// as unset, and one that's set but not valid is refused. .env.example says
-// how to make one. The CLI itself never reads a .env.
+// never with the token. The CLI then never prints it either, on any restart
+// (W51): only the address, and that the token is PITWALL_TOKEN's. The .env is
+// found from this file's location, never from the current directory, and read
+// only when it exists, and only when it's a file of yours that no one else can
+// read or change (mode 0600, W51); otherwise this script stops, saying chmod
+// 600, and never shows what's in it. The environment wins over it. Its other
+// variables reach the tsx watcher, and the Vite watcher gets the environment
+// pitwall gives any child (childEnvironment), without PITWALL_* or anything
+// holding the token. The token is checked as the CLI checks it (resolveToken
+// in src/cli.ts): an empty one counts as unset, and one that's set but not
+// valid, or obviously weak, is refused. .env.example says how to make one.
+// The CLI itself never reads a .env.
 //
 // The browser is opened once per dev run, by the CLI child itself, through its
 // launch file, and only after that child's own server is listening on the
@@ -43,19 +51,21 @@
 // PITWALL_TOKEN set, from the environment or .env, it never dies: every later
 // run that uses it, dev or not, accepts it.
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fixedTokenNotice, hasFixedToken, resolveToken, UsageError } from '../src/cli.js';
+import { parseEnv } from 'node:util';
+import { envFileProblem, fixedTokenNotice, hasFixedToken, resolveToken, UsageError } from '../src/cli.js';
+import { childEnvironment } from '../src/server/command.js';
 
 const DEFAULT_DEV_PORT = 4517;
 
 // PITWALL_DEV_PORT exists for the npm run dev tests in src/cli.test.ts, so they never need 4517.
 const PORT = devPort(process.env.PITWALL_DEV_PORT);
 const roots = process.argv.slice(2);
-const token = devToken();
+const { token, fixed } = devToken();
 
 // With a fixed port, a busy one would make every restart fail. Check before starting.
 if (!(await portIsFree(PORT))) {
@@ -70,11 +80,14 @@ process.on('exit', () => rmSync(markerDir, { recursive: true, force: true }));
 const children: ChildProcess[] = [
   // Development mode builds in the #uikit gallery (web/src/App.tsx). Everything else is the same
   // build as npm run build's: Vite's mode doesn't change NODE_ENV, so React stays its production build.
-  run('vite', ['build', '--watch', '--mode', 'development'], process.env),
+  // The build needs no PITWALL_* variable, and must not hold a fixed token (W48 F7).
+  run('vite', ['build', '--watch', '--mode', 'development'], childEnvironment(process.env, token)),
   run('tsx', ['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(PORT), ...roots], {
     ...process.env,
     PITWALL_TOKEN: token,
     PITWALL_OPEN_MARKER: join(markerDir, 'opened'),
+    // This dev run's own token, which the CLI prints; never set for a fixed one.
+    ...(fixed ? {} : { PITWALL_TOKEN_PER_RUN: '1' }),
   }),
 ];
 
@@ -108,13 +121,15 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
  * PITWALL_TOKEN from the environment or the pitwall repo's .env, checked as the CLI checks it, or
  * else one random token for this run. Exits 1 with the CLI's message for one that isn't valid.
  */
-function devToken(): string {
+function devToken(): { token: string; fixed: boolean } {
+  // Only this script says a token is its own, below; one already in the environment would hide a fixed token.
+  delete process.env.PITWALL_TOKEN_PER_RUN;
   // An empty PITWALL_TOKEN counts as unset (resolveToken), so the repo's .env can still set it.
   if (process.env.PITWALL_TOKEN === '') delete process.env.PITWALL_TOKEN;
   const fromEnvironment = process.env.PITWALL_TOKEN !== undefined;
   // The repo's root, from this file's own place: never the current directory, whose .env isn't ours.
   const envFile = join(fileURLToPath(new URL('..', import.meta.url)), '.env');
-  if (existsSync(envFile)) process.loadEnvFile(envFile);
+  loadPrivateEnvFile(envFile);
   let resolved: string;
   try {
     resolved = resolveToken(process.env);
@@ -123,8 +138,39 @@ function devToken(): string {
     console.error(`pitwall dev: ${error.message}${fromEnvironment ? '' : ` (from ${envFile})`}`);
     process.exit(1);
   }
-  if (hasFixedToken(process.env)) console.error(`pitwall dev: ${fixedTokenNotice(fromEnvironment ? undefined : '.env')}`);
-  return resolved;
+  const fixed = hasFixedToken(process.env);
+  if (fixed) console.error(`pitwall dev: ${fixedTokenNotice(fromEnvironment ? undefined : '.env')}`);
+  return { token: resolved, fixed };
+}
+
+/**
+ * Adds the variables in `file`, when it exists, to process.env, without replacing any already set,
+ * as process.loadEnvFile() does. It's opened first and checked through that open file, so what's
+ * checked is what's read: a file that isn't yours, or that group or others can read or change, stops
+ * the script before anything in it is read (envFileProblem in src/cli.ts). O_NONBLOCK, so a FIFO in
+ * its place is refused rather than waited on.
+ */
+function loadPrivateEnvFile(file: string): void {
+  let fd: number;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.error(`pitwall dev: couldn't open ${file} (${(error as Error).message})`);
+    process.exit(1);
+  }
+  try {
+    const problem = envFileProblem(file, fstatSync(fd));
+    if (problem !== undefined) {
+      console.error(`pitwall dev: ${problem}`);
+      process.exit(1);
+    }
+    for (const [name, value] of Object.entries(parseEnv(readFileSync(fd, 'utf8')))) {
+      if (value !== undefined && process.env[name] === undefined) process.env[name] = value;
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function devPort(raw: string | undefined): number {
