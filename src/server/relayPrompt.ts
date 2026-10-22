@@ -23,7 +23,7 @@
 import { randomBytes } from 'node:crypto';
 import { isRecord } from '../index/guards.js';
 import { DENIAL_PREFIX, KNOWN_INPUT_FIELDS } from './relayGateHook.mjs';
-import { describeCopyDifference, isCopyingSlip } from './relayText.js';
+import { describeCopyDifference } from './relayText.js';
 
 /** The relay's session name: what a target sees as the sender. */
 export const RELAY_NAME = 'pitwall-relay';
@@ -215,16 +215,11 @@ export interface CallMismatch {
   reason: string;
   /**
    * Set only when the call differs from the request in its text alone: where
-   * the copy first differed (relayText.ts describeCopyDifference()).
+   * the copy first differed (relayText.ts describeCopyDifference()). The one
+   * mismatch pitwall tries once more, without an alert, when the gate blocks
+   * it (W52).
    */
   where?: string;
-  /**
-   * With `where`: the copy differs only as a copying slip, in whitespace or
-   * by leaving out invisible characters (relayText.ts isCopyingSlip()). When
-   * the gate blocks a call with `where`, pitwall tries it once more either
-   * way, but raises an alert only when this isn't set (W52).
-   */
-  slip?: boolean;
 }
 
 /**
@@ -245,7 +240,7 @@ export function callMismatch(input: unknown, to: string, text: string): CallMism
   }
   if (typeof input.message !== 'string') return { reason: "The relay's SendMessage call had no text." };
   const where = describeCopyDifference(text, input.message);
-  if (where !== undefined) return { reason: `The relay changed the text before sending it, first at ${where}.`, where, slip: isCopyingSlip(text, input.message) };
+  if (where !== undefined) return { reason: `The relay changed the text before sending it, first at ${where}.`, where };
   return undefined;
 }
 

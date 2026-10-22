@@ -478,7 +478,7 @@ describe('the relay: which blocked calls restart it', () => {
     const result = h.relay.send(TARGET, 'hello');
     await eventually('the first call', () => endTurn.length === 1);
     await wait(20);
-    // Not mid-turn: only once the turn has ended. Then a copying slip is tried once more, on a new relay.
+    // Not mid-turn: only once the turn has ended. Then a changed text is tried once more, on a new relay.
     expect(h.child().signals).toEqual([]);
     expect(h.children).toHaveLength(1);
     endTurn[0]!();
@@ -489,7 +489,7 @@ describe('the relay: which blocked calls restart it', () => {
     endTurn[1]!();
     expect(h.children[1]!.signals).toEqual(['SIGTERM']);
     expect((await result).status).toBe('failed');
-    // A copying slip, blocked, so nothing was sent: no alert. The message's own result says why.
+    // A changed text, blocked, so nothing was sent: no alert. The message's own result says why.
     expect(h.relay.alert()).toBeUndefined();
   });
 
@@ -1027,8 +1027,8 @@ const lowerFirst = (reason: string) => reason.charAt(0).toLowerCase() + reason.s
 const RETRIED =
   "pitwall's gate stopped the relay's first copy of your message, because it didn't match, so pitwall tried once more, on a new relay, and the second copy went through. The first time, ";
 
-describe('the relay: one more try for a copying slip the gate blocked (W43, W52)', () => {
-  it('tries a blocked copying slip once more on a new relay, with a new request id and expectation, and answers delivered, saying so', async () => {
+describe('the relay: one more try for a changed text the gate blocked (W43, W52)', () => {
+  it('tries a blocked changed text once more on a new relay, with a new request id and expectation, and answers delivered, saying so', async () => {
     const h = harness();
     let attempt = 0;
     h.behaviour = (request, child) => (++attempt === 1 ? copies((t) => t.replace(' ', '　'))(request, child) : child.relay(request));
@@ -1054,7 +1054,7 @@ describe('the relay: one more try for a copying slip the gate blocked (W43, W52)
     expect(`${h.logs.join('\n')}\n${result.detail}`).not.toMatch(/made-up|note|export/);
   });
 
-  describe('still tries each kind of copying slip once more, with no alert', () => {
+  describe('tries each kind of slip in the spacing once more, with no alert', () => {
     const text = 'Line one, with words.\nLine two,​ with a zero-width space.\n';
     it.each([
       ['a line break added', (t: string) => `${t}\n`],
@@ -1291,7 +1291,7 @@ describe('the relay: one more try for a copying slip the gate blocked (W43, W52)
       expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'changed', detail: expect.stringMatching(/couldn't tell whether its gate stopped it\.$/) });
     });
 
-    it('after a copying slip pitwall stopped before it ran, which raises no alert and says where in the result', async () => {
+    it('after a changed text pitwall stopped before it ran, which raises no alert and says where in the result', async () => {
       const h = harness();
       const result = await once(h, (request, child) => {
         child.init();
@@ -1305,9 +1305,17 @@ describe('the relay: one more try for a copying slip the gate blocked (W43, W52)
       });
       expect(h.relay.alert()).toBeUndefined();
       expect(h.logs).toContain('The relay changed the text before sending it, first at line 1: the copy adds a line break (U+000A). pitwall stopped the relay before it ran.');
+      // Any text, not only spacing (W52).
+      const words = harness();
+      await once(words, (request, child) => {
+        child.init();
+        child.toolUse('SendMessage', { to: request.to, message: `${request.text}.` });
+        child.exit(1);
+      });
+      expect(words.relay.alert()).toBeUndefined();
     });
 
-    it('after a call that isn’t a copying slip, which pitwall stopped before it ran, which raises a blocked alert (W52)', async () => {
+    it('after a call to another session, which pitwall stopped before it ran, which raises a blocked alert (W52)', async () => {
       const h = harness();
       const result = await once(h, (request, child) => {
         child.init();
@@ -1329,9 +1337,9 @@ describe('the relay: one more try for a copying slip the gate blocked (W43, W52)
 
 // W48's proof of concept (F3), made-up data: a first call that a peer could have caused. W43 tried each
 // once more, with no alert, and answered delivered. Now (W52) one that differs in more than its text
-// raises a blocked alert and isn't tried again, and one whose text alone differs, but not as a copying
-// slip, is still tried once more, and raises a blocked alert that says so.
-describe('the relay: a blocked call that isn’t a copying slip (W52, W48’s F3)', () => {
+// raises a blocked alert and isn't tried again. One whose text alone differs is still tried once more,
+// with no alert, as the relay's model does that in long copies, and the result says so.
+describe('the relay: a blocked call for your message (W52, W48’s F3)', () => {
   const firstCall = (input: (request: Request) => Record<string, unknown>) => (request: Request, child: FakeChild) => {
     if (child !== h0.children[0]) return child.relay(request);
     child.init();
@@ -1346,7 +1354,7 @@ describe('the relay: a blocked call that isn’t a copying slip (W52, W48’s F3
       ['addressed to another session', (request) => ({ to: OTHER.name, message: request.text }), 'The relay addressed the message to another session.'],
       ['asking to be told when the target goes idle', (request) => ({ to: request.to, message: request.text, notify_when_idle: true }), 'The relay asked to be told when the session goes idle.'],
       ['with a field the gate doesn’t know', (request) => ({ to: request.to, message: request.text, made_up_field: 'x' }), "The relay's SendMessage call had a field pitwall doesn't check."],
-      ['with a slip in its spacing, and asking for idle notices', (request) => ({ to: request.to, message: `${request.text}\n`, notify_when_idle: true }), 'The relay asked to be told when the session goes idle.'],
+      ['with a changed text, and asking for idle notices', (request) => ({ to: request.to, message: `${request.text}\n`, notify_when_idle: true }), 'The relay asked to be told when the session goes idle.'],
       ['with other words, and another session', () => ({ to: OTHER.name, message: 'A made-up instruction the user never wrote.' }), 'The relay addressed the message to another session.'],
     ];
     for (const [name, input, reason] of cases) {
@@ -1370,32 +1378,26 @@ describe('the relay: a blocked call that isn’t a copying slip (W52, W48’s F3
     }
   });
 
-  describe('only its text differs, but not as a copying slip: an alert, and still one more try', () => {
+  describe('only its text differs: no alert, and one more try', () => {
     const cases: [string, (request: Request) => Record<string, unknown>, string][] = [
       ['with a different text entirely', () => ({ to: TARGET.name, message: 'A made-up instruction the user never wrote.' }), 'line 1: the copy differs from here, with U+0069 in place of U+006E'],
-      // W43's own cases: slips a model makes when it copies, which W43 tried again.
+      // W43's own cases: slips a model makes when it copies.
       ['with an accent dropped', (request) => ({ to: request.to, message: request.text.replace('ć', 'c') }), 'line 1: U+0107 became U+0063'],
       ['with a full stop added', (request) => ({ to: request.to, message: `${request.text}.` }), 'line 1: the copy adds U+002E'],
       ['with an exclamation mark added', (request) => ({ to: request.to, message: `${request.text}!` }), 'line 1: the copy adds U+0021'],
       ['with 10 characters added', (request) => ({ to: request.to, message: `${request.text} (relayed)` }), 'line 1: the copy has 10 more characters from here'],
       ['with a word added', (request) => ({ to: request.to, message: request.text.replace('note', 'urgent note') }), 'line 1: the copy has 7 more characters from here'],
-      ['with tag characters, which a model can read and a person can’t see', (request) => ({ to: request.to, message: `${request.text}\u{e0052}\u{e0055}\u{e004e}` }), 'line 1: the copy has 3 more characters from here'],
+      ['with tag characters', (request) => ({ to: request.to, message: `${request.text}\u{e0052}\u{e0055}\u{e004e}` }), 'line 1: the copy has 3 more characters from here'],
       ['with a zero-width joiner the text doesn’t have', (request) => ({ to: request.to, message: request.text.replace('up', 'u‍p') }), 'line 1: the copy adds a zero-width joiner (U+200D)'],
     ];
     for (const [name, input, where] of cases) {
-      it(`W48: a first call ${name} is blocked, raises a blocked alert that says pitwall tried once more, and the second copy goes`, async () => {
+      it(`W48: a first call ${name} is blocked, raises no alert, and the second copy goes`, async () => {
         h0 = harness();
         h0.behaviour = firstCall(input);
         const result = await h0.relay.send(TARGET, 'A made-up note about krać.');
         const reason = `The relay changed the text before sending it, first at ${where}.`;
         expect(result).toEqual({ status: 'delivered', detail: `${RETRIED}${lowerFirst(reason)}` });
-        expect(h0.relay.alert()).toEqual({
-          at: expect.any(String),
-          count: 1,
-          blocked: true,
-          cause: 'changed',
-          detail: `${reason} pitwall's gate blocked it, so nothing was sent, and pitwall tried once more, on a new relay.`,
-        });
+        expect(h0.relay.alert()).toBeUndefined();
         expect(h0.relay.off()).toBeUndefined();
         expect(h0.relay.exchange(TARGET.sessionId)?.status).toBe('delivered');
         // One more try, on a new relay, with the same text, as W43 does it.
@@ -1403,11 +1405,27 @@ describe('the relay: a blocked call that isn’t a copying slip (W52, W48’s F3
         const written = allWritten(h0);
         expect(written).toHaveLength(2);
         expect(written[1]!.text).toBe(written[0]!.text);
-        expect(`${h0.logs.join('\n')}\n${result.detail}\n${h0.relay.alert()?.detail}`).not.toMatch(/made-up|note|instruction|kra/i);
+        expect(h0.logs).toContain(`${reason} pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.`);
+        expect(`${h0.logs.join('\n')}\n${result.detail}`).not.toMatch(/made-up|note|instruction|kra/i);
       });
     }
 
-    it('answers failed when the second copy is changed too, says where each first differed, and alerts for each', async () => {
+    it('W52’s live check: a long copy that dropped 447 characters is tried once more, with no alert, and goes', async () => {
+      // About 6,000 made-up characters on 74 lines, as in the live check, and a first copy missing 447 of them from line 34.
+      const long = Array.from({ length: 74 }, (_, i) => `Line ${String(i + 1).padStart(2, '0')} of a made-up note about the export job, and its retries.`.padEnd(80, '.')).join('\n');
+      const at = long.split('\n').slice(0, 33).join('\n').length + 1 + 10;
+      const h = harness();
+      h.behaviour = (request, child) => (h.children.length === 1 ? copies((t) => t.slice(0, at) + t.slice(at + 447))(request, child) : child.relay(request));
+      const result = await h.relay.send(TARGET, long);
+      expect(result).toEqual({
+        status: 'delivered',
+        detail: `${RETRIED}the relay changed the text before sending it, first at line 34: the copy is missing 447 characters from here, including 5 line breaks.`,
+      });
+      expect(h.relay.alert()).toBeUndefined();
+      expect(allWritten(h)).toHaveLength(2);
+    });
+
+    it('answers failed when the second copy is changed too, says where each first differed, and raises no alert', async () => {
       const h = harness();
       h.behaviour = copies((t) => `${t} (relayed)`);
       expect(await h.relay.send(TARGET, 'secret plan')).toEqual({
@@ -1415,26 +1433,11 @@ describe('the relay: a blocked call that isn’t a copying slip (W52, W48’s F3
         detail:
           "pitwall's gate stopped the relay's copy of your message twice, because it didn't match, so nothing was sent. Both times, the relay changed the text before sending it, first at line 1: the copy has 10 more characters from here.",
       });
-      expect(h.relay.alert()).toMatchObject({
-        blocked: true,
-        cause: 'changed',
-        count: 2,
-        detail: "The relay changed the text before sending it, first at line 1: the copy has 10 more characters from here. pitwall's gate blocked the second copy too, so nothing was sent.",
-      });
+      expect(h.relay.alert()).toBeUndefined();
       await wait(60);
       expect(allWritten(h)).toHaveLength(2);
       expect(h.relay.exchange(TARGET.sessionId)).toBeUndefined();
       expect(h.logs.join('\n')).not.toContain('secret');
-    });
-
-    it('raises one alert when the first copy is changed and the second is only a slip', async () => {
-      const h = harness();
-      let attempt = 0;
-      h.behaviour = copies((t) => (++attempt === 1 ? `${t}.` : `${t}\n`));
-      expect((await h.relay.send(TARGET, 'hello')).detail).toBe(
-        "pitwall's gate stopped the relay's copy of your message twice, because it didn't match, so nothing was sent. The first time, the relay changed the text before sending it, first at line 1: the copy adds U+002E. The second time, the relay changed the text before sending it, first at line 1: the copy adds a line break (U+000A).",
-      );
-      expect(h.relay.alert()).toMatchObject({ count: 1, detail: expect.stringMatching(/tried once more, on a new relay\.$/) });
     });
 
     it('counts one restart for the first copy, as W43 did, and one for a second the gate blocks too', async () => {
@@ -1451,7 +1454,7 @@ describe('the relay: a blocked call that isn’t a copying slip (W52, W48’s F3
 describe('the relay: a repeat after a denial (W52, W48’s F8)', () => {
   const REPEATED = 'The relay tried again to send one of your messages, in the same turn, after pitwall’s gate had blocked its copy.';
 
-  it('calls a send the relay repeats after the gate blocked a copying slip a repeat, never another session’s, and still delivers the second try', async () => {
+  it('calls a send the relay repeats after the gate blocked a changed text a repeat, never another session’s, and still delivers the second try', async () => {
     const h = harness();
     h.behaviour = (request, child) => {
       if (h.children.length > 1) return child.relay(request);

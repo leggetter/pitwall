@@ -198,25 +198,13 @@ describe('callMismatch', () => {
     expect(callMismatch({ to, message: text.replace('\n', '\n\u00a0') }, to, text)).toEqual({
       reason: 'The relay changed the text before sending it, first at line 2: the copy adds a no-break space (U+00A0).',
       where: 'line 2: the copy adds a no-break space (U+00A0)',
-      slip: true,
     });
     expect(reason({ to, message: text.replace('this', 'thus') })).toBe('The relay changed the text before sending it, first at line 1: U+0069 became U+0075.');
     expect(reason({ to, message: text.trimEnd() })).not.toMatch(/Exactly|leading|trailing/);
   });
 
-  it('says whether a changed text is only a copying slip, the one difference pitwall tries again (W52)', () => {
-    expect(callMismatch({ to, message: text.trimEnd() }, to, text)?.slip).toBe(true);
-    expect(callMismatch({ to, message: text.replace('\n', '\r\n') }, to, text)?.slip).toBe(true);
-    expect(callMismatch({ to, message: text.replace('this', 'thus') }, to, text)).toEqual({
-      reason: 'The relay changed the text before sending it, first at line 1: U+0069 became U+0075.',
-      where: 'line 1: U+0069 became U+0075',
-      slip: false,
-    });
-    expect(callMismatch({ to, message: 'A made-up instruction the user never wrote.' }, to, text)?.slip).toBe(false);
-  });
-
   it('describes the text only when nothing else differs, so `where` means a text alone (W52)', () => {
-    // A slip in the spacing, with another difference: the other difference is the reason, with no `where`.
+    // A changed text, with another difference: the other difference is the reason, with no `where`.
     expect(callMismatch({ to, message: `${text}\n`, notify_when_idle: true }, to, text)).toEqual({ reason: 'The relay asked to be told when the session goes idle.' });
     expect(callMismatch({ to: 'someone-else', message: `${text}\n` }, to, text)).toEqual({ reason: 'The relay addressed the message to another session.' });
     expect(callMismatch({ to, message: `${text}\n`, made_up_field: 1 }, to, text)).toEqual({ reason: "The relay's SendMessage call had a field pitwall doesn't check." });
