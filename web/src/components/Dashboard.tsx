@@ -137,7 +137,7 @@ export const groupMovedText = (mode: GroupBy) =>
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
 
 /** The toast for `s`, which stars or unstars the open session while focus is elsewhere (W53). */
-export const starredText = (name: string, on: boolean) => (on ? `Starred ${plainText(name)}. It's in Starred, in the repo list.` : `Unstarred ${plainText(name)}.`);
+export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'Unstarred'} ${plainText(name)}.`;
 
 /** Starred's empty state, with nothing starred under the root (W53, 4: Empty states). */
 export const NO_STARRED = { title: 'No starred sessions', sentence: 'Star a session from its row or its view to keep it here.' } as const;

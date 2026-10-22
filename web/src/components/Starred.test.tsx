@@ -488,7 +488,7 @@ describe('s', () => {
     expect(pressed(rowStar('beta'))).toBe('true');
     expect(stars(items).ids).toEqual([id(2)]);
     expect(toastMessages()).toContain(starredText('beta', true));
-    expect(toastMessages()).toContain("Starred beta. It's in Starred, in the repo list.");
+    expect(toastMessages()).toContain('Starred beta.');
     expect(document.activeElement).toBe(heading);
 
     const body = view()!.querySelector<HTMLElement>('.session-view-body[role="tabpanel"]')!;
