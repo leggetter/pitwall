@@ -23,6 +23,7 @@ import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import { getConversation } from '../conversation.js';
 import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
+import { DraftStorageContext, hasStoredDraft } from '../drafts.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
@@ -256,9 +257,12 @@ export function SessionView({
   // The terminal's restart confirmation, open or busy, for Escape's layering.
   const [restart, setRestart] = useState<RestartPhase>();
   // Whether the message box has a draft: Escape never closes the view then (6.2). As state too, so a
-  // draft keeps the footer when the session leaves the list, rather than going with it.
-  const draft = useRef(false);
-  const [drafting, setDrafting] = useState(false);
+  // draft keeps the footer when the session leaves the list, rather than going with it. A draft the
+  // tab kept counts from the start (W44), so the footer is there for it in a view opened again once
+  // its session has left the list.
+  const draftStorage = useContext(DraftStorageContext);
+  const [drafting, setDrafting] = useState(() => session.kind === 'interactive' && hasStoredDraft(session.sessionId, draftStorage));
+  const draft = useRef(drafting);
   const copyText = useCopy();
   const toast = useToast();
   const [refused, setRefused] = useState<Refused>();
