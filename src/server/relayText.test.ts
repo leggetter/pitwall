@@ -16,20 +16,20 @@ describe('plainSpaces', () => {
   });
 
   it.each([
-    ['a zero-width space', '​'],
-    ['a zero-width non-joiner', '‌'],
-    ['a zero-width joiner', '‍'],
-    ['a word joiner', '⁠'],
-    ['a zero-width no-break space', '﻿'],
-    ['an ideographic space', '　'],
-    ['an Ogham space mark', ' '],
+    ['a zero-width space', '\u200b'],
+    ['a zero-width non-joiner', '\u200c'],
+    ['a zero-width joiner', '\u200d'],
+    ['a word joiner', '\u2060'],
+    ['a zero-width no-break space', '\ufeff'],
+    ['an ideographic space', '\u3000'],
+    ['an Ogham space mark', '\u1680'],
     ['a lone CR', '\r'],
     ['a tab', '\t'],
-    ['a line separator', ' '],
+    ['a line separator', '\u2028'],
     ['a next-line character', '\u0085'],
-    ['a soft hyphen', '­'],
-    ['straight and curly quotes', `'"‘’“”`],
-    ['dashes and hyphens', '-‐‑‒–—−'],
+    ['a soft hyphen', '\u00ad'],
+    ['straight and curly quotes', `'"\u2018\u2019\u201c\u201d`],
+    ['dashes and hyphens', '-\u2010\u2011\u2012\u2013\u2014\u2212'],
     ['accented letters', 'ćŠéü'],
     ['an emoji', '\u{1f600}'],
   ])('leaves %s as it is', (_what, characters) => {
@@ -44,7 +44,7 @@ describe('plainSpaces', () => {
   it('never makes a text longer, and leaves plain text alone', () => {
     const text = `${LOOK_ALIKES.map((code) => String.fromCodePoint(code)).join('a')}\r\n`.repeat(50);
     expect(plainSpaces(text).length).toBeLessThan(text.length);
-    const plain = 'Plain text, with "quotes" – a dash, and\nlines.';
+    const plain = 'Plain text, with "quotes" \u2013 a dash, and\nlines.';
     expect(plainSpaces(plain)).toBe(plain);
   });
 });
@@ -86,9 +86,9 @@ describe('describeCopyDifference', () => {
 
   it('describes one character that became another, on its line', () => {
     const text = lines();
-    text[32] = text[32]!.replace('export job', 'export job');
+    text[32] = text[32]!.replace('export job', 'export\u00a0job');
     const copy = [...text];
-    copy[32] = copy[32]!.replace(' ', ' ');
+    copy[32] = copy[32]!.replace('\u00a0', ' ');
     expect(describeCopyDifference(text.join('\n'), copy.join('\n'))).toBe('line 33: a no-break space (U+00A0) became a space (U+0020)');
     expect(describeCopyDifference('one\ntwo\nkrać', 'one\ntwo\nkrac')).toBe('line 3: U+0107 became U+0063');
     expect(describeCopyDifference('a\tb', 'a b')).toBe('line 1: a tab (U+0009) became a space (U+0020)');
@@ -96,9 +96,9 @@ describe('describeCopyDifference', () => {
 
   it('describes the first difference only, when the copy changes more after it', () => {
     const text = lines();
-    text[32] = text[32]!.replace('export job', 'export job');
+    text[32] = text[32]!.replace('export job', 'export\u00a0job');
     const copy = [...text];
-    copy[32] = copy[32]!.replace(' ', ' ');
+    copy[32] = copy[32]!.replace('\u00a0', ' ');
     // 25 more characters and a line further on, as the first of the two attempts in the report did.
     copy.splice(34, 0, 'twenty-five more letters.');
     expect(describeCopyDifference(text.join('\n'), copy.join('\n'))).toBe('line 33: a no-break space (U+00A0) became a space (U+0020)');
@@ -106,7 +106,7 @@ describe('describeCopyDifference', () => {
 
   it('describes one character added or left out', () => {
     expect(describeCopyDifference('one\ntwo\nthree', 'one\ntwo\r\nthree')).toBe('line 2: the copy adds a carriage return (U+000D)');
-    expect(describeCopyDifference('one​two', 'onetwo')).toBe('line 1: the copy leaves out a zero-width space (U+200B)');
+    expect(describeCopyDifference('one\u200btwo', 'onetwo')).toBe('line 1: the copy leaves out a zero-width space (U+200B)');
     expect(describeCopyDifference('one two', 'one, two')).toBe('line 1: the copy adds U+002C');
   });
 
@@ -157,20 +157,20 @@ describe('describeCopyDifference', () => {
   });
 
   it('counts lines by LF only', () => {
-    expect(describeCopyDifference('one\rtwo three x', 'one\rtwo three y')).toBe('line 1: U+0078 became U+0079');
+    expect(describeCopyDifference('one\rtwo\u2028three x', 'one\rtwo\u2028three y')).toBe('line 1: U+0078 became U+0079');
     expect(describeCopyDifference('one\n\n\nfour x', 'one\n\n\nfour y')).toBe('line 4: U+0078 became U+0079');
   });
 
   it('never includes the text, not even one character of it', () => {
     // Letters and marks a description never uses, so any of them in one would be the text.
-    const alphabet = ['ж', 'ψ', 'é', 'ł', '✓', '–', 'ß', '中', '\u{1f600}'];
+    const alphabet = ['ж', 'ψ', 'é', 'ł', '✓', '\u2013', 'ß', '中', '\u{1f600}'];
     const word = (n: number) => Array.from({ length: 3 + (n % 5) }, (_, i) => alphabet[(n * 7 + i) % alphabet.length]).join('');
     const text = Array.from({ length: 12 }, (_, line) => Array.from({ length: 6 }, (_, w) => word(line * 6 + w)).join(' ')).join('\n');
     const copies = [
       text.replace('ψ', 'ж'),
-      text.replace(' ', ' '),
+      text.replace(' ', '\u00a0'),
       text.replace('é', ''),
-      text.replace('\n', '\nł✓–'),
+      text.replace('\n', '\nł✓\u2013'),
       text.slice(0, 100),
       `${text}ßß中`,
       text.slice(0, 40) + [...text.slice(40)].reverse().join(''),
