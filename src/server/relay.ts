@@ -39,22 +39,22 @@
 // framed, the gate's expectation is written and the call is checked, so all
 // four use the same text, and the gate still compares it exactly.
 //
-// A call for the request that differs from it only by a copying slip, in
-// its text's whitespace or by leaving out invisible characters
-// (relayPrompt.ts callMismatch()'s `slip`, relayText.ts isCopyingSlip()),
-// which the gate denied, is tried once more (W43, W52): pitwall restarts the
-// relay once its turn ends, as before, and sends the same text on the new
-// one, with a new request id and expectation, while the HTTP request waits.
-// Only then, and at most once per message: `denied` comes only from Claude
-// Code's own tool result (parseSendResult()), which the relay's model can't
-// write, so nothing was sent. Never after a call the gate didn't stop, one
-// pitwall couldn't confirm, any other result, or any other difference: a call
-// to another session, one that asks for idle notices or has a field pitwall
-// doesn't check, or a text a slip doesn't explain, which a peer may have
-// talked the relay into (W48's F3). If the second copy goes through, the
-// result says the first was blocked. If it's blocked too, or the second try
-// fails, the result is 'failed', and says where the copy first differed
-// (relayText.ts describeCopyDifference()), never with the text.
+// A call for the request that differs from it only in its text
+// (relayPrompt.ts callMismatch()'s `where`), which the gate denied, is tried
+// once more (W43, W52): pitwall restarts the relay once its turn ends, as
+// before, and sends the same text on the new one, with a new request id and
+// expectation, while the HTTP request waits. The new relay is outside
+// whatever may have primed the old one. Only then, and at most once per
+// message: `denied` comes only from Claude Code's own tool result
+// (parseSendResult()), which the relay's model can't write, so nothing was
+// sent. Never after a call the gate didn't stop, one pitwall couldn't
+// confirm, any other result, or a call that differs in more than its text:
+// one to another session, one that asks for idle notices or has a field
+// pitwall doesn't check, which a peer may have talked the relay into (W48's
+// F3). If the second copy goes through, the result says the first was
+// blocked. If it's blocked too, or the second try fails, the result is
+// 'failed', and says where the copy first differed (relayText.ts
+// describeCopyDifference()), never with the text.
 //
 // What pitwall can't confirm is 'uncertain', never 'failed': 'failed' means
 // nothing was sent. A request that fails before anything was sent isn't
@@ -62,11 +62,13 @@
 //
 // A SendMessage call nobody asked for raises the snapshot's relayAlert, with
 // cause 'unrequested'. A call for one of your messages that didn't match it
-// raises it with cause 'changed', unless it was a copying slip that the gate
-// blocked or pitwall stopped before it ran: nothing was sent, and the
-// message's own result says what changed. Any other call for one of your
-// messages that the gate blocked or pitwall stopped raises it too, as
-// blocked, and isn't tried again. A second call in the turn in which the gate
+// raises it with cause 'changed', unless it was a copying slip, in
+// whitespace or by leaving out invisible characters (relayText.ts
+// isCopyingSlip()), that the gate blocked or pitwall stopped before it ran:
+// nothing was sent, and the message's own result says what changed. Any
+// other call for one of your messages that the gate blocked or pitwall
+// stopped raises it as blocked: one whose text alone differs is still tried
+// once more, and one that differs in more isn't. A second call in the turn in which the gate
 // blocked the call for one of your messages raises it with cause 'repeated'
 // (W48's F8): it's the relay trying again, not another session. A call
 // nobody asked for that the gate blocked leaves the relay sound, so it keeps
@@ -318,7 +320,7 @@ interface Job {
   gateId?: string;
   /** Why this attempt's SendMessage call didn't match the request, when it didn't. */
   mismatch?: CallMismatch;
-  /** Why the first attempt's call didn't match, once the gate blocked it as a copying slip: the message is tried once more, and only once. */
+  /** Why the first attempt's call didn't match, once the gate blocked it and only its text differed: the message is tried once more, and only once. */
   blockedOnce?: CallMismatch;
   /** The second try has started: the relay that blocked the first has gone. */
   secondTry: boolean;
@@ -937,24 +939,34 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
 
   /**
    * The result of the request's call, which didn't match the request: the
-   * gate should have denied it. Denied as a copying slip, it raises no alert,
-   * since nothing was sent: the first time, the message is tried once more on
-   * a new relay, and the second time, its result says so. Denied as anything
-   * else, which a slip doesn't explain and a peer may have caused, it raises
-   * a blocked 'changed' alert and isn't tried again (W52, W48's F3).
+   * gate should have denied it, so nothing was sent. Denied, and only its
+   * text differs: the first time, the message is tried once more on a new
+   * relay, outside whatever may have primed this one, and the second time,
+   * its result says so. A copying slip raises no alert; any other change to
+   * the text raises a blocked 'changed' alert as well, which says pitwall
+   * tried once more. Denied, and more than its text differs (another
+   * recipient, idle notices, a field pitwall doesn't check), which a peer may
+   * have caused: a blocked 'changed' alert, and never tried again (W52, W48's
+   * F3).
    */
   function onMismatchResult(p: Proc, job: Job, mismatch: CallMismatch, result: SendResult): void {
     if (result.kind === 'denied') {
       // Blocked, but the relay got pitwall's own request wrong: its conversation may have been poisoned, so it starts over.
       p.restartAfterTurn = true;
-      if (mismatch.slip !== true) raiseAlert(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent.`, true, 'changed');
-      if (job.blockedOnce === undefined) {
-        if (mismatch.slip !== true) return finish(job, failed(notTriedDetail(mismatch)));
-        log(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.`);
+      const again = job.blockedOnce !== undefined;
+      if (mismatch.where === undefined) {
+        raiseAlert(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent.`, true, 'changed');
+        if (!again) return finish(job, failed(notTriedDetail(mismatch)));
+      } else if (!again) {
+        if (mismatch.slip === true) log(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.`);
+        else raiseAlert(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent, and pitwall tried once more, on a new relay.`, true, 'changed');
         return tryOnceMore(p, job, mismatch);
+      } else if (mismatch.slip === true) {
+        log(`${mismatch.reason} pitwall's gate blocked it again, so nothing was sent.`);
+      } else {
+        raiseAlert(`${mismatch.reason} pitwall's gate blocked the second copy too, so nothing was sent.`, true, 'changed');
       }
-      if (mismatch.slip === true) log(`${mismatch.reason} pitwall's gate blocked it again, so nothing was sent.`);
-      const first = job.blockedOnce;
+      const first = job.blockedOnce!;
       // This is the whole story: finish() adds nothing to it.
       delete job.blockedOnce;
       return finish(job, failed(blockedTwiceDetail(first, mismatch)));
@@ -1201,9 +1213,9 @@ function blockedOnceDetail(first: CallMismatch): string {
   return `pitwall's gate stopped the relay's copy of your message, because it didn't match, so nothing was sent. ${first.reason}`;
 }
 
-/** A blocked copy that a slip doesn't explain (W52): nothing was sent, and pitwall didn't try again. */
+/** A blocked copy that differed in more than its text (W52): nothing was sent, and pitwall didn't try again. */
 function notTriedDetail(mismatch: CallMismatch): string {
-  return `${blockedOnceDetail(mismatch)} A copying slip doesn’t explain that, so pitwall didn’t try again.`;
+  return `${blockedOnceDetail(mismatch)} More than its text differed, so pitwall didn’t try again.`;
 }
 
 /** The second copy delivered (W52): the result says the first was blocked, and where it differed, never with the text. */

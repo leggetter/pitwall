@@ -14,8 +14,9 @@
 //   invisible characters also get a short name. A code still says which
 //   character it is, so a description gives away that one character.
 // - isCopyingSlip() says whether the copy differs from the text only as a
-//   copying slip, in whitespace or by leaving out invisible characters: the
-//   one difference pitwall tries again without an alert (W52, W48's F3).
+//   copying slip, in whitespace or by leaving out invisible characters.
+//   pitwall tries any blocked copy whose text alone differs once more, but
+//   raises an alert for one that isn't a slip (W52, W48's F3).
 
 /**
  * No-break, typographic and mathematical spaces: U+00A0, U+2000 to U+200A,

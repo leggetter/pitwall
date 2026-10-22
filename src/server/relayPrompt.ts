@@ -220,9 +220,9 @@ export interface CallMismatch {
   where?: string;
   /**
    * With `where`: the copy differs only as a copying slip, in whitespace or
-   * by leaving out invisible characters (relayText.ts isCopyingSlip()). The
-   * one mismatch pitwall tries again, without an alert, when the gate blocks
-   * it (W52).
+   * by leaving out invisible characters (relayText.ts isCopyingSlip()). When
+   * the gate blocks a call with `where`, pitwall tries it once more either
+   * way, but raises an alert only when this isn't set (W52).
    */
   slip?: boolean;
 }
