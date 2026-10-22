@@ -11,6 +11,11 @@
 //   the GitHub MCP tools' `owner` and `repo`.
 // Other absolute and relative paths in commands are left out: the spike found they add nothing.
 //
+// Every step is linear in the call's size, and long input is cut short: a word over MAX_PATH_WORD
+// names no path, and a command over MAX_SHELL_COMMAND is not read. The scanner runs this on the
+// main thread for every call in every transcript, which a session writes and pitwall rescans on
+// every start (W48 F1).
+//
 // Changes: an Edit, MultiEdit, Write or NotebookEdit changes its file's directory; a `git commit` or
 // `git push` changes the directory it ran in (its `-C` target, or the shell's directory at that point
 // of the command, after any `cd` before it); a `gh pr create` or `gh pr merge` changes the repo it
@@ -45,6 +50,16 @@ const FILE_ONLY = new Set(['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit',
 const CHANGE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const SHELL_TOOLS = new Set(['Bash', 'Monitor']);
 
+/**
+ * The longest Bash or Monitor command whose words are read, in UTF-16 code units. A longer one
+ * still counts toward the session's calls and its entry's cwd, but names no directory, change or
+ * repo of its own. The shell lexer takes 30 to 100 ms a MiB, so this keeps one call to about 10 ms
+ * on the main thread in the slowest shape measured, where a 16 MiB command, the longest line the
+ * scanner keeps, took 1.7 s. The longest real commands are here-documents that write a file, and
+ * 256 KiB is several thousand lines of one.
+ */
+export const MAX_SHELL_COMMAND = 256 * 1024;
+
 /** What one `tool_use` block names. `cwd` is the entry's `cwd`; `home` expands `~` and `$HOME`. */
 export function placesOf(name: string, input: unknown, cwd: unknown, home: string): CallPlaces {
   const found = new Collector();
@@ -68,7 +83,7 @@ export function placesOf(name: string, input: unknown, cwd: unknown, home: strin
     }
   }
 
-  if (SHELL_TOOLS.has(name) && typeof fields.command === 'string') parseShell(fields.command, here, home, found);
+  if (SHELL_TOOLS.has(name) && typeof fields.command === 'string' && fields.command.length <= MAX_SHELL_COMMAND) parseShell(fields.command, here, home, found);
   if (name === 'WebFetch' && typeof fields.url === 'string') for (const slug of slugsIn(fields.url)) found.slug(slug);
   if (/github/i.test(name) && typeof fields.owner === 'string' && typeof fields.repo === 'string') {
     const slug = slugOf(`${fields.owner}/${fields.repo}`);
@@ -157,15 +172,22 @@ function parseShell(command: string, cwd: string | undefined, home: string, foun
   }
 }
 
-/** Drops here-document bodies, which are file contents or messages, not commands. */
+/**
+ * Drops here-document bodies, which are file contents or messages, not commands. Linear: the
+ * terminators still to come are read with an index, since `shift()` on a long array copies the
+ * rest of it each time (W48 F9).
+ */
 export function stripHeredocs(text: string): string {
   const out: string[] = [];
   const pending: string[] = [];
+  let next = 0;
   for (const line of text.split('\n')) {
-    if (pending.length > 0) {
-      if (line.trim() === pending[0]) pending.shift();
+    if (next < pending.length) {
+      if (line.trim() === pending[next]) next++;
       continue;
     }
+    pending.length = 0;
+    next = 0;
     out.push(line);
     for (const match of line.matchAll(/(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g)) pending.push(match[2] ?? '');
   }
@@ -223,19 +245,41 @@ export function lexShell(text: string): string[][] {
 }
 
 /**
+ * The longest word resolveWord() reads, in UTF-16 code units. No path the system will open is
+ * longer: PATH_MAX is 4,096 bytes on Linux, counting the terminating NUL, and 1,024 on macOS, and a
+ * path's UTF-8 bytes are never fewer than its code units. A longer word is noise, or a call made to
+ * slow the scanner down (W48 F1), and every step below is then bounded by this length.
+ */
+export const MAX_PATH_WORD = 4096;
+
+/**
  * A word as an absolute path, with `~` and `$HOME` expanded, and a glob, a `:line` suffix and
  * trailing punctuation cut. Undefined for a word with any other variable or a command
- * substitution, and for a relative word when the directory it's relative to isn't known.
+ * substitution, for a relative word when the directory it's relative to isn't known, and for a
+ * word longer than MAX_PATH_WORD.
  */
 export function resolveWord(word: string, here: string | undefined, home: string): string | undefined {
+  if (word.length > MAX_PATH_WORD) return undefined;
   let w = word.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, home);
   if (/[$`]/.test(w)) return undefined;
   const glob = w.search(/[*?[{]/);
   if (glob !== -1) w = w.slice(0, glob);
-  w = w.replace(/:\d+(?::\d+)?$/, '').replace(/[.,;:)]+$/, '');
+  w = withoutTrailingPunctuation(w.replace(/:\d+(?::\d+)?$/, ''));
   if (w === '') return undefined;
   if (path.isAbsolute(w)) return path.resolve(w);
   return here === undefined ? undefined : path.resolve(here, w);
+}
+
+const TRAILING_PUNCTUATION = new Set(['.', ',', ';', ':', ')']);
+
+/**
+ * `w` without the `.` `,` `;` `:` and `)` at its end. By hand: `/[.,;:)]+$/` is quadratic on a long
+ * run of them that doesn't end the word, since it tries every start in the run (W48 F1).
+ */
+function withoutTrailingPunctuation(w: string): string {
+  let end = w.length;
+  while (end > 0 && TRAILING_PUNCTUATION.has(w.charAt(end - 1))) end--;
+  return w.slice(0, end);
 }
 
 // --- GitHub ----------------------------------------------------------------------------------------
