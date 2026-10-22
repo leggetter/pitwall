@@ -438,13 +438,14 @@ describe('the relay: its gate', () => {
     expect((await h.relay.send(TARGET, 'hello')).detail).toBe("pitwall's gate couldn't check the relay's send, so it was blocked and nothing was sent.");
   });
 
-  it('stops using the relay when a send ran without the gate claiming it', async () => {
+  it('stops using the relay, with relayOff and no alert, when your own send ran without the gate claiming it', async () => {
     const h = harness();
     h.gate.hookRuns = false;
     expect(h.relay.off()).toBeUndefined();
     await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
-    // A call for the message you sent, which matched it: not one nobody asked for.
-    expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'changed', count: 1, detail: expect.stringMatching(/ran without pitwall's gate checking it/) });
+    // The message you sent, as asked: nothing unrequested or changed went, so no alert. relayOff says messaging is off, and why.
+    expect(h.relay.alert()).toBeUndefined();
+    expect(h.logs).toContain("The relay's SendMessage ran without pitwall's gate checking it. It was the message you sent, but the relay isn't safe to use.");
     expect(h.relay.off()).toEqual({ since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), reason: "its gate didn't check a SendMessage call." });
     await wait(20);
     expect(h.children[0]!.signals).toEqual(['SIGTERM']);
