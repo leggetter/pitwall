@@ -39,36 +39,45 @@
 // framed, the gate's expectation is written and the call is checked, so all
 // four use the same text, and the gate still compares it exactly.
 //
-// A call for the request that didn't match it, which the gate denied, is
-// tried once more (W43): pitwall restarts the relay once its turn ends, as
-// before, and sends the same text on the new one, with a new request id and
-// expectation, while the HTTP request waits. Only then, and at most once per
-// message: `denied` comes only from Claude Code's own tool result
-// (parseSendResult()), which the relay's model can't write, so nothing was
-// sent. Never after a call the gate didn't stop, one pitwall couldn't
-// confirm, or any other result. If the second copy is blocked too, or the
-// second try fails, the result is 'failed', and says where the copy first
-// differed (relayText.ts describeCopyDifference()), never with the text.
+// A call for the request that differs from it only by a copying slip, in
+// its text's whitespace or by leaving out invisible characters
+// (relayPrompt.ts callMismatch()'s `slip`, relayText.ts isCopyingSlip()),
+// which the gate denied, is tried once more (W43, W52): pitwall restarts the
+// relay once its turn ends, as before, and sends the same text on the new
+// one, with a new request id and expectation, while the HTTP request waits.
+// Only then, and at most once per message: `denied` comes only from Claude
+// Code's own tool result (parseSendResult()), which the relay's model can't
+// write, so nothing was sent. Never after a call the gate didn't stop, one
+// pitwall couldn't confirm, any other result, or any other difference: a call
+// to another session, one that asks for idle notices or has a field pitwall
+// doesn't check, or a text a slip doesn't explain, which a peer may have
+// talked the relay into (W48's F3). If the second copy goes through, the
+// result says the first was blocked. If it's blocked too, or the second try
+// fails, the result is 'failed', and says where the copy first differed
+// (relayText.ts describeCopyDifference()), never with the text.
 //
 // What pitwall can't confirm is 'uncertain', never 'failed': 'failed' means
 // nothing was sent. A request that fails before anything was sent isn't
 // recorded as the session's exchange, so it never replaces one that was.
 //
 // A SendMessage call nobody asked for raises the snapshot's relayAlert, with
-// cause 'unrequested'. A call for one of your messages that didn't match it,
-// which the gate didn't stop or pitwall couldn't confirm it stopped, raises
-// it with cause 'changed'. A changed call the gate blocked, or that pitwall
-// stopped before it ran, raises none: nothing was sent, and the message's
-// own result says what changed. A call nobody asked for that the gate
-// blocked leaves the relay sound, so it keeps running: restarting it for each
-// one would let any session that can reach it use up the restart limit. A
-// blocked call for one of pitwall's own requests that didn't match it
-// restarts the relay once its turn ends, because its conversation may have
-// been poisoned. A call that got past the gate when it shouldn't have stops
-// pitwall using the relay until pitwall restarts. One for your message that
-// matched it, but ran without the gate checking it, raises no alert: nothing
-// unrequested or changed was sent, and the snapshot's relayOff says why
-// messaging is off.
+// cause 'unrequested'. A call for one of your messages that didn't match it
+// raises it with cause 'changed', unless it was a copying slip that the gate
+// blocked or pitwall stopped before it ran: nothing was sent, and the
+// message's own result says what changed. Any other call for one of your
+// messages that the gate blocked or pitwall stopped raises it too, as
+// blocked, and isn't tried again. A second call in the turn in which the gate
+// blocked the call for one of your messages raises it with cause 'repeated'
+// (W48's F8): it's the relay trying again, not another session. A call
+// nobody asked for that the gate blocked leaves the relay sound, so it keeps
+// running: restarting it for each one would let any session that can reach
+// it use up the restart limit. A blocked call for one of pitwall's own
+// requests that didn't match it restarts the relay once its turn ends,
+// because its conversation may have been poisoned. A call that got past the
+// gate when it shouldn't have stops pitwall using the relay until pitwall
+// restarts. One for your message that matched it, but ran without the gate
+// checking it, raises no alert: nothing unrequested or changed was sent, and
+// the snapshot's relayOff says why messaging is off.
 //
 // The gate needs Claude Code 2.1.295 or later, for the hooks' `onFailure`,
 // so pitwall checks `claude --version` before it first starts the relay.
@@ -269,12 +278,22 @@ interface Proc {
   ready: Promise<boolean>;
   /** The gate's SessionStart hook has marked it ready: its hooks loaded. */
   gateReady: boolean;
-  /** SendMessage calls nobody asked for, by tool_use id, waiting for their results. What each was, in pitwall's words. */
-  strays: Map<string, string>;
+  /** SendMessage calls nobody asked for, by tool_use id, waiting for their results. */
+  strays: Map<string, Stray>;
   /** The gate blocked a call for one of pitwall's requests that didn't match it: start over when the turn ends. */
   restartAfterTurn: boolean;
+  /** The gate blocked the call for one of pitwall's requests in this turn: another SendMessage in it is the relay trying again. */
+  blockedInTurn: boolean;
   /** Don't start another relay when this one exits; the next request will. */
   noRestart: boolean;
+}
+
+/** A SendMessage call nobody asked for, waiting for its result. */
+interface Stray {
+  /** It came after the call for a request, in that request's turn: a second call for one request. */
+  second: boolean;
+  /** The gate had already blocked that request's call in this turn: the relay trying again ('repeated'). */
+  repeated: boolean;
 }
 
 interface Job {
@@ -299,7 +318,7 @@ interface Job {
   gateId?: string;
   /** Why this attempt's SendMessage call didn't match the request, when it didn't. */
   mismatch?: CallMismatch;
-  /** Why the first attempt's call didn't match, once the gate blocked it: the message is tried once more, and only once. */
+  /** Why the first attempt's call didn't match, once the gate blocked it as a copying slip: the message is tried once more, and only once. */
   blockedOnce?: CallMismatch;
   /** The second try has started: the relay that blocked the first has gone. */
   secondTry: boolean;
@@ -382,7 +401,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   /**
    * Answers the request. Recording an exchange is separate: only something
    * that may have been sent is recorded. A message whose first copy the gate
-   * blocked, and that then wasn't sent, says both.
+   * blocked, and that then wasn't sent, says both. One whose second copy was
+   * delivered says the first was blocked (W52), so a retry is never silent.
    */
   function finish(job: Job, outcome: RelaySendOutcome): void {
     if (job.done) return;
@@ -392,6 +412,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (job.blockedOnce !== undefined && outcome.status === 'failed') {
       const again = job.secondTry ? 'pitwall tried once more, and that wasn’t sent either:' : 'pitwall couldn’t try again:';
       outcome = { ...outcome, detail: `${blockedOnceDetail(job.blockedOnce)} ${again} ${outcome.detail ?? 'no reason given.'}` };
+    } else if (job.blockedOnce !== undefined && outcome.status === 'delivered') {
+      outcome = { ...outcome, detail: retriedDetail(job.blockedOnce) };
     }
     job.resolve(outcome);
     if (current === job) {
@@ -515,9 +537,10 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (job.done) return;
     const reachedGate = job.gateId !== undefined && !gate.pending(job.gateId);
     if (!reachedGate) {
-      // A changed copy that never ran: nothing was sent, so no alert. The log and the result say what changed.
       if (job.mismatch === undefined) return finish(job, failed(`${detail} Nothing was sent.`));
-      log(`${job.mismatch.reason} pitwall stopped the relay before it ran.`);
+      // A call that never ran: nothing was sent. A copying slip raises no alert, as the gate blocking it wouldn't; anything else does (W52).
+      if (job.mismatch.slip === true) log(`${job.mismatch.reason} pitwall stopped the relay before it ran.`);
+      else raiseAlert(`${job.mismatch.reason} pitwall stopped the relay before it ran, so nothing was sent.`, true, 'changed');
       return finish(job, failed(`${detail} ${job.mismatch.reason} pitwall stopped it before it ran, so nothing was sent.`));
     }
     if (job.mismatch !== undefined) raiseAlert(`${job.mismatch.reason} pitwall couldn't tell whether its gate stopped it.`, false, 'changed');
@@ -546,7 +569,10 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     stopProcess('SIGTERM');
   }
 
-  /** `cause`: 'unrequested' for a call with no request behind it, 'changed' for one for a request that didn't match it. */
+  /**
+   * `cause`: 'unrequested' for a call with no request behind it, 'changed' for one for a request that didn't
+   * match it, 'repeated' for another call in the turn in which the gate blocked the call for a request.
+   */
   function raiseAlert(detail: string, blocked: boolean, cause: RelayAlert['cause']): void {
     latestAlert = { at: new Date(now()).toISOString(), detail, count: (latestAlert?.count ?? 0) + 1, blocked, cause };
     log(detail);
@@ -636,6 +662,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       gateReady: false,
       strays: new Map(),
       restartAfterTurn: false,
+      blockedInTurn: false,
       noRestart: false,
     };
     const events: RelayChildEvents = {
@@ -713,7 +740,10 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     lastError = said === undefined ? why : `${why}: ${said}`;
     if (!p.stopping) log(`it stopped (${lastError}).`);
     // Calls nobody asked for whose results never came.
-    for (const detail of p.strays.values()) raiseAlert(`${detail} The relay stopped before pitwall saw whether its gate blocked it.`, false, 'unrequested');
+    for (const stray of p.strays.values()) {
+      const said = strayWords(p, stray);
+      raiseAlert(`${said.detail} The relay stopped before pitwall saw whether its gate blocked it.`, false, said.cause);
+    }
     p.strays.clear();
     if (current !== undefined && current.phase === 'grace') {
       // SendMessage had already delivered it; only the wait for a notice was cut short.
@@ -807,6 +837,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   function onTurnStart(p: Proc, event: Record<string, unknown>): void {
     p.busy = true;
     p.turnText = '';
+    p.blockedInTurn = false;
     const sessionId = event.session_id;
     if (typeof sessionId !== 'string' || !isSafeSessionId(sessionId) || sessionId === p.sessionId) return;
     p.sessionId = sessionId;
@@ -837,9 +868,24 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       return;
     }
     // Nobody asked for this one. The gate has no expectation for it, so it should deny it.
-    // A request whose first copy was blocked is 'waiting' for the relay to go: a call in that turn is a second one for it.
-    const second = job !== undefined && (job.phase !== 'waiting' || (job.blockedOnce !== undefined && !job.secondTry));
-    p.strays.set(id, second ? 'The relay tried to send a second message for one request.' : 'The relay tried to send a message when pitwall hadn’t asked it to.');
+    // After the gate blocked the call for a request in this turn, it's the relay trying that request again (W48's F8),
+    // whether that request is now 'waiting' for its second try or has its answer. Otherwise, after the call for the
+    // request in flight, it's a second call for that request.
+    const repeated = p.blockedInTurn;
+    p.strays.set(id, { repeated, second: repeated || (job !== undefined && job.phase !== 'waiting') });
+  }
+
+  /**
+   * What a call nobody asked for was, in pitwall's words, and its alert's cause. Asked again when its
+   * result comes, so a repeat whose request's denial arrived after it, as with two calls in one message,
+   * is still called a repeat.
+   */
+  function strayWords(p: Proc, stray: Stray): { detail: string; cause: RelayAlert['cause'] } {
+    if (stray.repeated || (stray.second && p.blockedInTurn)) {
+      return { detail: 'The relay tried again to send one of your messages, in the same turn, after pitwall’s gate had blocked its copy.', cause: 'repeated' };
+    }
+    if (stray.second) return { detail: 'The relay tried to send a second message for one request.', cause: 'unrequested' };
+    return { detail: 'The relay tried to send a message when pitwall hadn’t asked it to.', cause: 'unrequested' };
   }
 
   function onToolResult(p: Proc, block: Record<string, unknown>): void {
@@ -847,12 +893,13 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     const stray = toolUseId === undefined ? undefined : p.strays.get(toolUseId);
     if (stray !== undefined) {
       p.strays.delete(toolUseId!);
-      return onStrayResult(stray, parseSendResult(block));
+      return onStrayResult(strayWords(p, stray), parseSendResult(block));
     }
     const job = current;
     if (job === undefined || job.phase !== 'sent') return;
     if (job.toolUseId !== undefined && toolUseId !== job.toolUseId) return;
     const result = parseSendResult(block);
+    if (result.kind === 'denied') p.blockedInTurn = true;
     if (job.mismatch !== undefined) return onMismatchResult(p, job, job.mismatch, result);
     switch (result.kind) {
       case 'denied':
@@ -890,19 +937,23 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
 
   /**
    * The result of the request's call, which didn't match the request: the
-   * gate should have denied it. Denied, it raises no alert, since nothing was
-   * sent: the first time, the message is tried once more on a new relay, and
-   * the second time, its result says so.
+   * gate should have denied it. Denied as a copying slip, it raises no alert,
+   * since nothing was sent: the first time, the message is tried once more on
+   * a new relay, and the second time, its result says so. Denied as anything
+   * else, which a slip doesn't explain and a peer may have caused, it raises
+   * a blocked 'changed' alert and isn't tried again (W52, W48's F3).
    */
   function onMismatchResult(p: Proc, job: Job, mismatch: CallMismatch, result: SendResult): void {
     if (result.kind === 'denied') {
       // Blocked, but the relay got pitwall's own request wrong: its conversation may have been poisoned, so it starts over.
       p.restartAfterTurn = true;
+      if (mismatch.slip !== true) raiseAlert(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent.`, true, 'changed');
       if (job.blockedOnce === undefined) {
+        if (mismatch.slip !== true) return finish(job, failed(notTriedDetail(mismatch)));
         log(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.`);
         return tryOnceMore(p, job, mismatch);
       }
-      log(`${mismatch.reason} pitwall's gate blocked it again, so nothing was sent.`);
+      if (mismatch.slip === true) log(`${mismatch.reason} pitwall's gate blocked it again, so nothing was sent.`);
       const first = job.blockedOnce;
       // This is the whole story: finish() adds nothing to it.
       delete job.blockedOnce;
@@ -957,10 +1008,10 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   }
 
   /** The result of a call nobody asked for. */
-  function onStrayResult(detail: string, result: SendResult): void {
+  function onStrayResult({ detail, cause }: { detail: string; cause: RelayAlert['cause'] }, result: SendResult): void {
     // Blocked, so the relay is still sound: no restart, which a peer could otherwise repeat until the restart limit.
-    if (result.kind === 'denied') return raiseAlert(`${detail} pitwall's gate blocked it, so nothing was sent.`, true, 'unrequested');
-    raiseAlert(`${detail} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}, so pitwall stopped the relay.`, false, 'unrequested');
+    if (result.kind === 'denied') return raiseAlert(`${detail} pitwall's gate blocked it, so nothing was sent.`, true, cause);
+    raiseAlert(`${detail} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}, so pitwall stopped the relay.`, false, cause);
     breakGate('its gate let through a SendMessage call nobody asked for.');
   }
 
@@ -978,12 +1029,18 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     }
     // A call nobody asked for whose result never came: pitwall can't tell what happened, so it starts over.
     if (p.strays.size > 0 && proc === p && !p.stopping) {
-      for (const detail of p.strays.values()) raiseAlert(`${detail} Its turn ended before pitwall saw whether its gate blocked it.`, false, 'unrequested');
+      for (const stray of p.strays.values()) {
+        const said = strayWords(p, stray);
+        raiseAlert(`${said.detail} Its turn ended before pitwall saw whether its gate blocked it.`, false, said.cause);
+      }
+      p.blockedInTurn = false;
       p.strays.clear();
       log('restarting it after a turn that ended before a call nobody asked for had its result.');
       stopProcess('SIGTERM');
       return;
     }
+    // A call in the next turn isn't a repeat. Calls still waiting for their results, on a relay that's going, keep it for onExit().
+    if (p.strays.size === 0) p.blockedInTurn = false;
     if (p.restartAfterTurn && proc === p && !p.stopping) {
       log("restarting it after it sent something other than pitwall's request, which its gate blocked.");
       stopProcess('SIGTERM');
@@ -1142,6 +1199,16 @@ function lowerFirst(reason: string): string {
 /** The first copy, which the gate blocked: what the result says before why the second try didn't go. */
 function blockedOnceDetail(first: CallMismatch): string {
   return `pitwall's gate stopped the relay's copy of your message, because it didn't match, so nothing was sent. ${first.reason}`;
+}
+
+/** A blocked copy that a slip doesn't explain (W52): nothing was sent, and pitwall didn't try again. */
+function notTriedDetail(mismatch: CallMismatch): string {
+  return `${blockedOnceDetail(mismatch)} A copying slip doesn’t explain that, so pitwall didn’t try again.`;
+}
+
+/** The second copy delivered (W52): the result says the first was blocked, and where it differed, never with the text. */
+function retriedDetail(first: CallMismatch): string {
+  return `pitwall's gate stopped the relay's first copy of your message, because it didn't match, so pitwall tried once more, on a new relay, and the second copy went through. The first time, ${lowerFirst(first.reason)}`;
 }
 
 /** Both copies blocked: nothing was sent, and where each first differed, or today's reason for another mismatch. */
