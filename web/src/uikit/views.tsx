@@ -749,7 +749,7 @@ const BOX_CASES: Case[] = [
   { title: 'Delivered', note: 'A success alert, role="status".', session: session('box-delivered'), options: { relay: { status: 'delivered' } }, run: send(result) },
   {
     title: 'Delivered on one more try',
-    note: 'W52: pitwall’s gate stopped the relay’s first copy, which differed only in its spacing, and the second went through. The server’s detail says so, in code style, as other results’ do.',
+    note: 'W52: pitwall’s gate stopped the relay’s first copy, whose text alone differed, here only in its spacing, and the second went through. The server’s detail says so, in code style, as other results’ do.',
     session: session('box-delivered-retried'),
     options: { relay: { status: 'delivered', detail: RETRIED_DETAIL } },
     run: send(result),

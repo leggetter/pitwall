@@ -183,7 +183,8 @@ describe('the relay alert', () => {
     next(live({ ...base(), relayAlert: { ...CHANGED, blocked: true, count: 3 } }));
     expect(relayAlert()?.className).toContain('warning');
     expect(relayAlert()?.querySelector('.inline-alert-title')?.textContent).toBe('pitwall blocked a changed copy of your message');
-    expect(relayAlert()?.textContent).toContain('nothing was sent.');
+    // A blocked copy whose text alone differed was tried once more (W52), so the words say only that this copy wasn't sent.
+    expect(relayAlert()?.textContent).toContain("that copy wasn't sent. When only its text differed, pitwall tried once more");
     expect(relayAlert()?.textContent).not.toMatch(/another session|didn't ask for/);
   });
 
