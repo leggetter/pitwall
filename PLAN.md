@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0, M1 and M2 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, is in progress on `m3/integration`: the design system doc, the `#uikit` gallery, the theme, the three-column shell, two-line rows, the session view, and the message box, alerts and confirmations are merged. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - W32: Phil finishes the try-out and approves M3's merge into main<br>- Then M4, my open pull requests |
+| **Next steps** | - W32: Phil reviews M3's pull request into main ([#51](https://github.com/leggetter/pitwall/pull/51)), finishes the try-out and approves the merge<br>- Then M4, my open pull requests |
 
 ## Who is this for
 
@@ -191,7 +191,7 @@ Open a session from its row, drive background sessions fully in the browser, sta
 - **Detect a transcript rewritten in place** within one poll (W6 finding 7), if Claude Code ever does that.
 - **Tests never touch a real session.** Anything that attaches, spawns, stops or removes uses throwaway `pitwall-test-*` sessions on Haiku, removed afterwards. Live checks stay behind `PITWALL_LIVE=1`. Since W31, `src/test/noClaude.ts` enforces it: without that flag, a server test that would run `claude`, through `child_process` or node-pty, fails.
 
-### M3 - Design system and restyle (in progress)
+### M3 - Design system and restyle (in review, [#51](https://github.com/leggetter/pitwall/pull/51))
 
 A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled to it. It's pitwall's own design system, not Hookdeck's. Requested by Phil on 2026-10-20 after trying M2, which also moved the message box to the foot of the session view ([#20](https://github.com/leggetter/pitwall/pull/20)). Whether pitwall is open-sourced, and how, is undecided.
 
