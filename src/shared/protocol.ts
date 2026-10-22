@@ -322,6 +322,15 @@ export type ConversationEntryKind =
   | 'tool'
   /** A message from another Claude session. */
   | 'cross-session'
+  /**
+   * A message this session sent to pitwall's relay with SendMessage, in full,
+   * in place of that tool call: usually its reply to a message from pitwall
+   * (W46). A call is to pitwall when its `to` is the relay's name, or a `uds:`
+   * address that a cross-session message from the relay's name came from
+   * earlier in the same transcript, on any page. A call whose result was an
+   * error, or that has no `message` text, stays a 'tool' entry.
+   */
+  | 'to-pitwall'
   /** Anything else worth showing: a compaction summary, a task notification, a command's output. */
   | 'notice';
 
@@ -332,8 +341,9 @@ export interface ConversationEntry {
   /**
    * At most 32 Ki UTF-16 code units, as `String.length` counts them, by kind
    * (W36, Phil, 2026-10-21):
-   * - 'assistant' and 'cross-session': the markdown as written, with `markdown`
-   *   set. A client renders it as text and its own elements, never as HTML.
+   * - 'assistant', 'cross-session' and 'to-pitwall': the markdown as written,
+   *   with `markdown` set. A client renders it as text and its own elements,
+   *   never as HTML. For 'to-pitwall' it's the SendMessage call's `message`.
    * - 'user': the prompt as typed, with nothing stripped.
    * - 'tool': a one-line summary of the call, such as `Bash: npm test` or
    *   `Edit: src/cli.ts`.
@@ -342,7 +352,7 @@ export interface ConversationEntry {
    * entries first. Entries past that are cut to 512 and marked `truncated`.
    */
   text: string;
-  /** True when `text` is markdown: set on 'assistant' and 'cross-session' entries. */
+  /** True when `text` is markdown: set on 'assistant', 'cross-session' and 'to-pitwall' entries. */
   markdown?: true;
   /** For 'tool': the tool's name. */
   toolName?: string;
