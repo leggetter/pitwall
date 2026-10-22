@@ -62,7 +62,10 @@ const SEND_MESSAGE = 'SendMessage';
 const SOCKET_PREFIX = 'uds:';
 /** The longest `to` or sender address read. Real ones are under 100 characters; SendMessage takes names up to 300. */
 const ADDRESS_MAX = 512;
-/** The most addresses the relay's messages came from that are remembered for one transcript. A relay has one, and a new one each time pitwall starts. */
+/**
+ * The most addresses the relay's messages came from that are remembered for one transcript: the newest
+ * ones. A relay has one, and a new one each time pitwall or its relay restarts, W43's retry included.
+ */
 export const RELAY_ADDRESSES_MAX = 64;
 /** A tool result longer than this is never read as JSON. SendMessage's are under 1 KiB. */
 const RESULT_JSON_MAX = 4 * KIB;
@@ -521,12 +524,22 @@ export class RelayAddressBook {
     return target - start;
   }
 
-  /** Notes the address a message from the relay on this line came from, if it's the first from there. */
+  /**
+   * Notes the address a message from the relay on this line came from, if it's the first from there.
+   * Past 64, the address first seen earliest goes, so the newest are kept: the relay gets a new socket
+   * each time it restarts, and a long-lived session's later replies would otherwise stop matching. The
+   * book reads forward, so the map's order is the order the addresses were first seen.
+   */
   private take(scan: AddressScan, line: Buffer, offset: number): void {
-    if (scan.addresses.size >= RELAY_ADDRESSES_MAX || line.indexOf(this.marker) === -1) return;
+    if (line.indexOf(this.marker) === -1) return;
     for (const item of itemsOfLine(line.toString('utf8'))) {
       const address = item.kind === 'entry' ? relayAddress(item.sender, this.name) : undefined;
-      if (address !== undefined && !scan.addresses.has(address) && scan.addresses.size < RELAY_ADDRESSES_MAX) scan.addresses.set(address, offset);
+      if (address === undefined || scan.addresses.has(address)) continue;
+      if (scan.addresses.size >= RELAY_ADDRESSES_MAX) {
+        const earliest = scan.addresses.keys().next().value;
+        if (earliest !== undefined) scan.addresses.delete(earliest);
+      }
+      scan.addresses.set(address, offset);
     }
   }
 }
