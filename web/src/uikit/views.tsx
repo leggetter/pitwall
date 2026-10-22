@@ -14,10 +14,12 @@ import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { ViewPreferences } from '../components/ViewPreferences.js';
+import { DraftStorageContext, type StoredDraft } from '../drafts.js';
 import type { GroupBy } from '../groupBy.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { startLabel, workedInLabels } from '../sessions.js';
 import {
+  ago,
   APP_DIR,
   background,
   exchange,
@@ -35,7 +37,7 @@ import {
   WORKED_SNAPSHOT,
 } from './fixtures.js';
 import { element, hoverFor, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
-import { scriptedAttach, stubApi, type AttachScript, type StubOptions } from './stubs.js';
+import { memoryDrafts, scriptedAttach, storedDraft, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
 const noop = () => {};
 
@@ -605,6 +607,14 @@ interface Case {
   run?: (root: HTMLElement) => Promise<unknown>;
   /** The conversation already shows the reply. */
   replyShown?: boolean;
+  /** The draft the tab kept for it, as a reload finds it (W44), in the specimen's own memory. */
+  kept?: StoredDraft;
+}
+
+/** The drafts a specimen's box finds, in memory of its own: as the tab would keep them, never the tab's. */
+function KeptDrafts({ sessionId, draft, children }: { sessionId: string; draft: StoredDraft | undefined; children: ReactNode }) {
+  const [drafts] = useState(() => memoryDrafts(draft ? storedDraft(sessionId, draft) : {}));
+  return <DraftStorageContext.Provider value={drafts}>{children}</DraftStorageContext.Provider>;
 }
 
 const BOX_CASES: Case[] = [
@@ -679,6 +689,30 @@ const BOX_CASES: Case[] = [
     options: { relay: 'refused-request' },
     run: send(result),
   },
+  {
+    title: 'Kept through a reload',
+    note: "The tab's sessionStorage kept the draft, so the box starts with it, editable, with Send as it was. Each conversation has its own.",
+    session: session('box-kept'),
+    kept: { text: DRAFT },
+  },
+  {
+    title: 'Being sent when the page reloaded',
+    note: 'A warning, with no role, since it was there when the box appeared, and linked to the text box. It goes once the draft is edited or sent; Send is as it was.',
+    session: session('box-kept-out'),
+    kept: { text: MESSAGE, send: { at: ago(2), state: 'out' } },
+  },
+  {
+    title: 'May have arrived, then a reload',
+    note: 'An uncertain answer, then a reload: the same warning, in its own words.',
+    session: session('box-kept-uncertain'),
+    kept: { text: MESSAGE, send: { at: ago(6), state: 'uncertain' } },
+  },
+  {
+    title: 'Kept, and its session has stopped',
+    note: 'A kept draft whose session stopped running meanwhile: the draft, with the note saying why it can’t be sent.',
+    session: session('box-kept-stopped-since', { alive: false, pid: undefined, status: undefined }),
+    kept: { text: DRAFT },
+  },
   { title: 'With the latest exchange', note: 'The last message from pitwall, and the reply that came back.', session: VIEW_INTERACTIVE },
   {
     title: 'The reply already in the conversation',
@@ -722,11 +756,13 @@ export function MessageBoxes() {
       {BOX_CASES.map((box) => (
         <Specimen key={box.title} title={box.title} note={box.note}>
           <Stubbed options={box.options}>
-            <MaybeScenario run={box.run}>
-              <footer className="session-view-foot">
-                <RelayBox session={box.session} replyShown={box.replyShown ?? false} />
-              </footer>
-            </MaybeScenario>
+            <KeptDrafts sessionId={box.session.sessionId} draft={box.kept}>
+              <MaybeScenario run={box.run}>
+                <footer className="session-view-foot">
+                  <RelayBox session={box.session} replyShown={box.replyShown ?? false} />
+                </footer>
+              </MaybeScenario>
+            </KeptDrafts>
           </Stubbed>
         </Specimen>
       ))}

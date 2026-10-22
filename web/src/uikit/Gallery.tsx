@@ -10,6 +10,7 @@ import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { ThemeSwitch } from '../components/ThemeSwitch.js';
 import { ClipboardContext } from '../copy.js';
+import { DraftStorageContext } from '../drafts.js';
 import { ShortcutsStoreContext } from '../shortcuts.js';
 import { Alerts, Buttons } from './controls.js';
 import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
@@ -18,7 +19,7 @@ import { FinishedSections, SessionRows } from './lists.js';
 import { Dialogs, Layouts, Notices, Pages, ShortcutsDialogs } from './pages.js';
 import { CopyButtons, Timestamps, Toasts, Tooltips } from './overlays.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
-import { memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
+import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
 import { Confirmations, Conversations, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import './gallery.css';
 
@@ -57,7 +58,7 @@ const SECTIONS: Section[] = [
     Content: Conversations,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and the header\'s View preferences, with a radio group.', Content: Menus },
-  { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, and a session that can't be messaged.", Content: MessageBoxes },
+  { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },
   {
     id: 'confirmations',
     title: 'Inline confirmations',
@@ -125,8 +126,9 @@ function showTarget(): void {
 export default function Gallery() {
   // One stub API, attach and clipboard for anything not given its own, such as a session view opened
   // from a row on one of the page specimens. Nothing in the gallery writes to the real clipboard. The
-  // single-key shortcuts are on, in memory, whatever the app's own setting is.
-  const [defaults] = useState(() => ({ api: stubApi(), attach: scriptedAttach('attached'), clipboard: stubClipboard('copied'), shortcuts: memoryShortcuts() }));
+  // single-key shortcuts are on, in memory, whatever the app's own setting is. Message box drafts are
+  // kept in memory too, never in the tab's sessionStorage (W44).
+  const [defaults] = useState(() => ({ api: stubApi(), attach: scriptedAttach('attached'), clipboard: stubClipboard('copied'), shortcuts: memoryShortcuts(), drafts: memoryDrafts() }));
 
   // Specimens take focus as they open (a session view's Close button, a dialog's first field),
   // which scrolls the page. Once every scenario has settled, put the page back where the address says.
@@ -156,6 +158,7 @@ export default function Gallery() {
 
   return (
     <SettleContext.Provider value={settle}>
+      <DraftStorageContext.Provider value={defaults.drafts}>
       <ShortcutsStoreContext.Provider value={defaults.shortcuts}>
       <ClipboardContext.Provider value={defaults.clipboard}>
       <ApiContext.Provider value={defaults.api}>
@@ -186,6 +189,7 @@ export default function Gallery() {
       </ApiContext.Provider>
       </ClipboardContext.Provider>
       </ShortcutsStoreContext.Provider>
+      </DraftStorageContext.Provider>
     </SettleContext.Provider>
   );
 }
