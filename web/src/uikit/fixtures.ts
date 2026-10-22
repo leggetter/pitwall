@@ -381,11 +381,20 @@ export const RELAY_ALERT_CHANGED: RelayAlert = {
   blocked: false,
   cause: 'changed',
 };
-/** A changed copy the gate blocked that no copying slip explains, here one to another session (W52). A slip in the spacing raises none. */
+/** A changed copy the gate blocked that differed in more than its text, here one to another session, which pitwall doesn't try again (W52). */
 export const RELAY_ALERT_CHANGED_BLOCKED: RelayAlert = {
   at: ago(1),
   detail: "The relay addressed the message to another session. pitwall's gate blocked it, so nothing was sent.",
   count: 2,
+  blocked: true,
+  cause: 'changed',
+};
+/** A changed copy the gate blocked whose text alone differed, not as a slip in the spacing: pitwall tried once more, and says so (W52). */
+export const RELAY_ALERT_CHANGED_RETRIED: RelayAlert = {
+  at: ago(1),
+  detail:
+    "The relay changed the text before sending it, first at line 12: U+0107 became U+0063. pitwall's gate blocked it, so nothing was sent, and pitwall tried once more, on a new relay.",
+  count: 1,
   blocked: true,
   cause: 'changed',
 };
