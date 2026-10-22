@@ -389,15 +389,6 @@ export const RELAY_ALERT_CHANGED_BLOCKED: RelayAlert = {
   blocked: true,
   cause: 'changed',
 };
-/** A changed copy the gate blocked whose text alone differed, not as a slip in the spacing: pitwall tried once more, and says so (W52). */
-export const RELAY_ALERT_CHANGED_RETRIED: RelayAlert = {
-  at: ago(1),
-  detail:
-    "The relay changed the text before sending it, first at line 12: U+0107 became U+0063. pitwall's gate blocked it, so nothing was sent, and pitwall tried once more, on a new relay.",
-  count: 1,
-  blocked: true,
-  cause: 'changed',
-};
 /** The relay trying your message again in the same turn, after the gate blocked its copy, which the gate blocked too (W52). */
 export const RELAY_ALERT_REPEATED_BLOCKED: RelayAlert = {
   at: ago(1),
