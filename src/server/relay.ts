@@ -62,13 +62,13 @@
 //
 // A SendMessage call nobody asked for raises the snapshot's relayAlert, with
 // cause 'unrequested'. A call for one of your messages that didn't match it
-// raises it with cause 'changed', unless it was a copying slip, in
-// whitespace or by leaving out invisible characters (relayText.ts
-// isCopyingSlip()), that the gate blocked or pitwall stopped before it ran:
-// nothing was sent, and the message's own result says what changed. Any
-// other call for one of your messages that the gate blocked or pitwall
-// stopped raises it as blocked: one whose text alone differs is still tried
-// once more, and one that differs in more isn't. A second call in the turn in which the gate
+// raises it with cause 'changed', unless only its text differed and the gate
+// blocked it or pitwall stopped it before it ran: nothing was sent, and the
+// message's own result says what changed. The relay's model drops or
+// changes text in long copies, so an alert there would be routine (W52's
+// live check: 447 characters dropped from a 6,000-character message). One
+// that differs in more than its text, which the gate blocked or pitwall
+// stopped, raises it as blocked. A second call in the turn in which the gate
 // blocked the call for one of your messages raises it with cause 'repeated'
 // (W48's F8): it's the relay trying again, not another session. A call
 // nobody asked for that the gate blocked leaves the relay sound, so it keeps
@@ -540,8 +540,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     const reachedGate = job.gateId !== undefined && !gate.pending(job.gateId);
     if (!reachedGate) {
       if (job.mismatch === undefined) return finish(job, failed(`${detail} Nothing was sent.`));
-      // A call that never ran: nothing was sent. A copying slip raises no alert, as the gate blocking it wouldn't; anything else does (W52).
-      if (job.mismatch.slip === true) log(`${job.mismatch.reason} pitwall stopped the relay before it ran.`);
+      // A call that never ran: nothing was sent. A changed text raises no alert, as the gate blocking it wouldn't; more than that does (W52).
+      if (job.mismatch.where !== undefined) log(`${job.mismatch.reason} pitwall stopped the relay before it ran.`);
       else raiseAlert(`${job.mismatch.reason} pitwall stopped the relay before it ran, so nothing was sent.`, true, 'changed');
       return finish(job, failed(`${detail} ${job.mismatch.reason} pitwall stopped it before it ran, so nothing was sent.`));
     }
@@ -940,14 +940,12 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   /**
    * The result of the request's call, which didn't match the request: the
    * gate should have denied it, so nothing was sent. Denied, and only its
-   * text differs: the first time, the message is tried once more on a new
-   * relay, outside whatever may have primed this one, and the second time,
-   * its result says so. A copying slip raises no alert; any other change to
-   * the text raises a blocked 'changed' alert as well, which says pitwall
-   * tried once more. Denied, and more than its text differs (another
-   * recipient, idle notices, a field pitwall doesn't check), which a peer may
-   * have caused: a blocked 'changed' alert, and never tried again (W52, W48's
-   * F3).
+   * text differs, which the relay's model does in long copies: no alert. The
+   * first time, the message is tried once more on a new relay, outside
+   * whatever may have primed this one, and the second time, its result says
+   * so. Denied, and more than its text differs (another recipient, idle
+   * notices, a field pitwall doesn't check), which a peer may have caused: a
+   * blocked 'changed' alert, and never tried again (W52, W48's F3).
    */
   function onMismatchResult(p: Proc, job: Job, mismatch: CallMismatch, result: SendResult): void {
     if (result.kind === 'denied') {
@@ -958,13 +956,10 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
         raiseAlert(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent.`, true, 'changed');
         if (!again) return finish(job, failed(notTriedDetail(mismatch)));
       } else if (!again) {
-        if (mismatch.slip === true) log(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.`);
-        else raiseAlert(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent, and pitwall tried once more, on a new relay.`, true, 'changed');
+        log(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.`);
         return tryOnceMore(p, job, mismatch);
-      } else if (mismatch.slip === true) {
-        log(`${mismatch.reason} pitwall's gate blocked it again, so nothing was sent.`);
       } else {
-        raiseAlert(`${mismatch.reason} pitwall's gate blocked the second copy too, so nothing was sent.`, true, 'changed');
+        log(`${mismatch.reason} pitwall's gate blocked it again, so nothing was sent.`);
       }
       const first = job.blockedOnce!;
       // This is the whole story: finish() adds nothing to it.
