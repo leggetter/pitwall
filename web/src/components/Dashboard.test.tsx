@@ -296,12 +296,13 @@ describe('Dashboard states', () => {
 describe('the repo list', () => {
   const ROOT = '/Users/example/code';
 
-  it('lists Needs you and All sessions, a divider, then every group alphanumerically, each with one count', () => {
+  it('lists Needs you, All sessions and Starred, a divider, then every group alphanumerically, each with one count', () => {
     renderDashboard(mixedSnapshot());
 
     expect(repoItems()).toEqual([
       'Needs you2 need you',
       'All sessions5 sessions',
+      'Starred',
       'demo-app, git repo2 need you',
       'legacy, git repo1 session',
       'notes, directory1 session',
@@ -331,7 +332,7 @@ describe('the repo list', () => {
 
   it("shows only the views, with no counts, before the first snapshot, and Needs you's count stays off when nothing needs you", () => {
     const { rerender } = render(<Dashboard view={{ state: 'connecting' }} navigation={memoryNavigation()} />);
-    expect(repoItems()).toEqual(['Needs you', 'All sessions']);
+    expect(repoItems()).toEqual(['Needs you', 'All sessions', 'Starred']);
 
     rerender(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [session({ name: 'calm' })] })]) }} navigation={memoryNavigation()} />);
     expect(repoItem('Needs you').textContent).toBe('Needs you');
@@ -347,7 +348,7 @@ describe('the repo list', () => {
       ]),
     );
 
-    expect(repoItems().slice(2)).toEqual(['~/code, directory1 session', 'archive, git repo1 session', 'zeta, git repo1 session']);
+    expect(repoItems().slice(3)).toEqual(['~/code, directory1 session', 'archive, git repo1 session', 'zeta, git repo1 session']);
     expect(repoItem('archive').className).toContain('finished');
     expect(repoItem('zeta').className).not.toContain('finished');
     choose('~/code');
@@ -370,12 +371,12 @@ describe('the repo list', () => {
 
     // No root headings in the list: the tab names the root (W38).
     expect(within(repoList()).getAllByRole('list').map((list) => list.getAttribute('aria-labelledby'))).toEqual([null, null]);
-    expect(repoItems().slice(2)).toEqual(['demo-app, git repo1 session']);
+    expect(repoItems().slice(3)).toEqual(['demo-app, git repo1 session']);
     choose('demo-app');
     expect(visibleRowNames()).toEqual(['in-main']);
     expect(listHeading().textContent).toBe('demo-app, git repo');
     fireEvent.click(screen.getAllByRole('tab')[1]!);
-    expect(repoItems().slice(2)).toEqual(['~/code/demo-app, git repo1 session']);
+    expect(repoItems().slice(3)).toEqual(['~/code/demo-app, git repo1 session']);
     choose('~/code/demo-app');
     expect(visibleRowNames()).toEqual(['in-worktree']);
     expect(listHeading().textContent).toBe('~/code/demo-app, git repo');
@@ -402,6 +403,8 @@ describe('the repo list', () => {
     expect(stops()).toEqual([repoItem('All sessions')]);
 
     repoItem('All sessions').focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(repoItem('Starred'));
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(repoItem('demo-app'));
     fireEvent.keyDown(document.activeElement!, { key: 'End' });
@@ -833,7 +836,8 @@ describe('session rows', () => {
 
     for (const name of ['chatty', 'job']) {
       const item = row(name);
-      expect(within(item).getAllByRole('button').map((button) => button.textContent)).toEqual([name]);
+      // The name, and the star toggle (W53), which is named by its tooltip.
+      expect(within(item).getAllByRole('button').map((button) => button.textContent || button.getAttribute('aria-label'))).toEqual([name, `Star ${name}`]);
       expect(item.querySelector('.reply, .clamp-text, .relay-exchange, .cwd, .cwd-missing, .copy-command, code')).toBeNull();
       expect(item.textContent).not.toMatch(/All three fixed|Message from pitwall|packages\/worker|claude attach|no longer exists|interactive|background/i);
     }
@@ -1754,6 +1758,7 @@ describe('untrusted session text', () => {
     expect([...container.querySelectorAll('a')].map((link) => link.getAttribute('href'))).toEqual([
       '?view=needs-you',
       '?view=all',
+      '?view=starred',
       '?repo=/Users/example/code/demo-app',
     ]);
     expect(container.textContent).toContain('<a href="javascript:alert(3)">name</a>');
@@ -1814,7 +1819,7 @@ describe('Where it started: each session in one group (W39)', () => {
 
   it('counts the sessions started in each group, so the groups’ badges add up to Needs you, and a repo sessions only worked in has no item', () => {
     renderDashboard(oneGroupEach().snap);
-    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions6 sessions', '~/code, directory1 needs you', 'api, git repo1 session', 'app, git repo1 needs you', 'notes, directory1 session']);
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions6 sessions', 'Starred', '~/code, directory1 needs you', 'api, git repo1 session', 'app, git repo1 needs you', 'notes, directory1 session']);
     expect(repoItems().some((item) => item.startsWith('docs'))).toBe(false);
     const badges = groupLinks(repoList()).reduce((sum, link) => sum + counted(link, '.badge-attention'), 0);
     expect(badges).toBe(counted(repoItem('Needs you'), '.badge-attention'));
@@ -1969,7 +1974,7 @@ describe('Where it started: each session in one group (W39)', () => {
     rerender(ui(snapshot([zeta, group({ key: ROOT, label: 'code', kind: 'directory', sessions: [{ ...alone, workedIn: worked('beta', 'zeta') }, other] })])));
     expect(visibleRowNames()).toEqual(['alone', 'other']);
     expect(repoItems()).toEqual(before);
-    expect(repoItems()).toEqual(['Needs you', 'All sessions3 sessions', '~/code, directory2 sessions', 'zeta, git repo1 session']);
+    expect(repoItems()).toEqual(['Needs you', 'All sessions3 sessions', 'Starred', '~/code, directory2 sessions', 'zeta, git repo1 session']);
   });
 
   it('moves focus to the row that takes its place when the focused row leaves the selected group, or to the heading when none is left', () => {

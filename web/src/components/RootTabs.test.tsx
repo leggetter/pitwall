@@ -255,14 +255,14 @@ describe('what a tab narrows to its root', () => {
   it("narrows the repo list's views, their counts and groups, the session list and its summary", () => {
     renderDashboard();
 
-    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', 'api, git repo2 need you', 'web, git repo2 sessions']);
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', 'Starred', 'api, git repo2 need you', 'web, git repo2 sessions']);
     expect(rows().sort()).toEqual(['w-job', 'w-one', 'w-shared', 'w-three', 'w-two']);
     expect(summary()).toBe('5 sessions2 need you');
     choose('Needs you');
     expect(rows().sort()).toEqual(['w-one', 'w-shared']);
 
     switchTo('~/personal');
-    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions3 sessions', '~/personal, directory1 session', 'blog, git repo1 needs you']);
+    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions3 sessions', 'Starred', '~/personal, directory1 session', 'blog, git repo1 needs you']);
     expect(rows().sort()).toEqual(['p-one', 'p-three', 'p-two']);
     expect(summary()).toBe('3 sessions1 needs you');
     choose('Needs you');
@@ -323,7 +323,7 @@ describe('what a tab narrows to its root', () => {
     switchTo('~/scratch');
     expect(openTab()).toBe('~/scratch');
     expect(screen.getByText('No Claude Code sessions under ~/scratch')).toBeTruthy();
-    expect(repoItems()).toEqual(['Needs you', 'All sessions0 sessions']);
+    expect(repoItems()).toEqual(['Needs you', 'All sessions0 sessions', 'Starred']);
     expect(screen.queryByRole('searchbox')).toBeNull();
   });
 
@@ -655,7 +655,7 @@ describe('one root inside another', () => {
     renderDashboard(nested());
     expect(labels()).toEqual(['~/code', '~/code/personal']);
     expect(rows()).toEqual(['outer-app']);
-    expect(repoItems()).toEqual(['Needs you', 'All sessions1 session', 'app, git repo1 session']);
+    expect(repoItems()).toEqual(['Needs you', 'All sessions1 session', 'Starred', 'app, git repo1 session']);
     expect(badge('~/code/personal')).toBe('1 needs you');
     switchTo('~/code/personal');
     expect(rows()).toEqual(['inner-blog']);

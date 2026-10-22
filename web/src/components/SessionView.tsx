@@ -30,6 +30,7 @@ import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
 import { attachCommand, statusBadge } from '../sessions.js';
+import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
 import { Alert } from './Alert.js';
 import { Badge, StatusBadge } from './Badge.js';
@@ -44,6 +45,7 @@ import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { FINISHED_ASKED_HINT, SESSION_VIEW_ID, STALE_HINT } from './SessionRow.js';
+import { StarButton } from './StarButton.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
 import { Timestamp } from './Timestamp.js';
 import { useToast } from './Toast.js';
@@ -282,6 +284,8 @@ export interface SessionViewProps {
   panel?: PanelWidthStore | undefined;
   /** In a root tab that isn't open (W38): kept, hidden, so its terminal, draft and sends carry on. */
   hidden?: boolean;
+  /** Its star toggle, before the actions menu (W53): whether it's starred, and a way to star or unstar it. */
+  star?: { starred: boolean; onStar: (sessionId: string, on: boolean) => void } | undefined;
 }
 
 type Tab = 'conversation' | 'terminal';
@@ -303,6 +307,7 @@ export function SessionView({
   onRunningChange,
   panel,
   hidden = false,
+  star,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -503,7 +508,12 @@ export function SessionView({
         <Top
           compact={compact}
           onClose={onClose}
-          end={<MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />}
+          end={
+            <>
+              {star && <StarButton sessionId={sessionId} name={session.name} starred={star.starred} onStar={star.onStar} size="md" shortcut={SHORTCUT_KEYS.star} />}
+              <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />
+            </>
+          }
         >
           {/* Focused when the view opens from a row, with no ring of its own (6.1, item 8). */}
           <h2 className="session-view-title" id={ids.title} ref={heading} tabIndex={-1}>

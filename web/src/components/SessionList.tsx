@@ -1,7 +1,7 @@
 // The session list (docs/design-system.md, 3: Session list): the page alerts, then a header that
 // stays put, with the selection's name, its summary, a group's Hide from repo list button, the
-// filters and the Sort setting, then the two-line rows, which scroll, and a Finished section,
-// collapsed by default, at the end.
+// filters and the Sort setting, then the two-line rows, each with its star toggle (W53), which
+// scroll, and a Finished section, collapsed by default, at the end.
 //
 // The rows come sorted. While the pointer is over the list or focus is inside it, a snapshot that
 // would reorder them waits until both have left, so nothing moves under the reader; rows that are
@@ -62,6 +62,10 @@ export interface SessionListProps {
   /** ↑ or ↓ on a row's name: the next or previous row in the list as shown. */
   onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   openSessionId?: string | undefined;
+  /** The starred sessions' ids, for each row's star toggle (W53). */
+  starred?: ReadonlySet<string> | undefined;
+  /** Stars or unstars a session from its row. Rows have no star toggle without it. */
+  onStar?: ((sessionId: string, on: boolean) => void) | undefined;
   /** Covered by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
   inert?: boolean;
 }
@@ -85,6 +89,14 @@ export function Summary({ total, shown, attention }: SessionListSummary) {
 
 /** The rows' name buttons in the order shown, without those in a collapsed Finished section. */
 const rowButtons = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>('[data-open-session]')].filter((button) => !button.closest('[hidden]'));
+
+/** A row's own control that can have focus: its name's button, or its star toggle (W53). */
+type RowPart = 'open' | 'star';
+
+/** The control in `row`'s row that's `part`, or its name's button when it has no such control. */
+function partOf(row: HTMLElement, part: RowPart): HTMLElement {
+  return (part === 'star' ? row.closest('li.session')?.querySelector<HTMLElement>('[data-star-session]') : null) ?? row;
+}
 
 const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, index) => id === b[index]);
 
@@ -111,10 +123,12 @@ export interface FinishedSectionProps {
   onOpen?: ((sessionId: string) => void) | undefined;
   onStep?: ((sessionId: string, by: 1 | -1) => void) | undefined;
   openSessionId?: string | undefined;
+  starred?: ReadonlySet<string> | undefined;
+  onStar?: ((sessionId: string, on: boolean) => void) | undefined;
 }
 
 /** "Finished (n)", plus how many of them asked you something, over the finished rows. */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar }: FinishedSectionProps) {
   const listId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
   const asked = finished.reduce((count, { session }) => count + (session.askedYou ? 1 : 0), 0);
@@ -135,6 +149,8 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
             onOpen={onOpen}
             onStep={onStep}
             isOpen={session.sessionId === openSessionId}
+            starred={starred?.has(session.sessionId) ?? false}
+            onStar={onStar}
           />
         ))}
       </ul>
@@ -160,6 +176,8 @@ export function SessionList({
   onOpen,
   onStep,
   openSessionId,
+  starred,
+  onStar,
   inert = false,
 }: SessionListProps) {
   const headingId = useId();
@@ -172,8 +190,10 @@ export function SessionList({
 
   // A focused row that a snapshot removes, such as a session that moved to the repos it worked in
   // (W34), takes focus with it, and no blur says so. Focus goes to the row that took its place, or
-  // the one before it if it was last, or else the list's heading, rather than to the page.
-  const focusedRow = useRef<{ id: string; index: number } | undefined>(undefined);
+  // the one before it if it was last, or else the list's heading, rather than to the page. So does a
+  // row unstarred in Starred (W53), from its star toggle: focus goes to the star toggle of the row
+  // that took its place, so the next can be unstarred too.
+  const focusedRow = useRef<{ id: string; index: number; part: RowPart } | undefined>(undefined);
   useEffect(() => {
     if (!focusInside || main.current?.contains(document.activeElement)) return;
     const was = focusedRow.current;
@@ -181,7 +201,8 @@ export function SessionList({
     const lost = active === null || active === document.body;
     const rows = main.current ? rowButtons(main.current) : [];
     if (lost && was !== undefined && !rows.some((row) => row.dataset.openSession === was.id)) {
-      const next = rows[Math.min(was.index, rows.length - 1)] ?? headingRef?.current ?? undefined;
+      const row = rows[Math.min(was.index, rows.length - 1)];
+      const next = (row && partOf(row, was.part)) ?? headingRef?.current ?? undefined;
       if (next) {
         next.focus();
         return;
@@ -192,9 +213,11 @@ export function SessionList({
 
   const onFocusIn = (event: FocusEvent<HTMLElement>) => {
     setFocusInside(true);
-    const id = event.target instanceof HTMLElement ? event.target.dataset.openSession : undefined;
-    if (id !== undefined && main.current) focusedRow.current = { id, index: rowButtons(main.current).indexOf(event.target as HTMLElement) };
-    else focusedRow.current = undefined;
+    const target = event.target instanceof HTMLElement ? event.target : undefined;
+    const part: RowPart = target?.dataset.starSession !== undefined ? 'star' : 'open';
+    const id = part === 'star' ? target?.dataset.starSession : target?.dataset.openSession;
+    const index = id === undefined || !main.current ? -1 : rowButtons(main.current).findIndex((button) => button.dataset.openSession === id);
+    focusedRow.current = id !== undefined && index >= 0 ? { id, index, part } : undefined;
   };
 
   const onBlur = (event: FocusEvent<HTMLElement>) => {
@@ -248,6 +271,8 @@ export function SessionList({
                 onOpen={onOpen}
                 onStep={onStep}
                 isOpen={session.sessionId === openSessionId}
+                starred={starred?.has(session.sessionId) ?? false}
+                onStar={onStar}
               />
             ))}
             {shownFinished.length > 0 && (
@@ -259,6 +284,8 @@ export function SessionList({
                 onOpen={onOpen}
                 onStep={onStep}
                 openSessionId={openSessionId}
+                starred={starred}
+                onStar={onStar}
               />
             )}
           </ul>

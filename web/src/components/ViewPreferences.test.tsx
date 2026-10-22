@@ -181,7 +181,7 @@ describe('Main repo, the default', () => {
   it("moves a session started in a root itself to the repo it changed most, a group built for it, and leaves the rest where they started", () => {
     renderApp();
     // ~/work: alone stays; big moves to evals, which has no group of its own; cross to blog, under ~/personal.
-    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions4 sessions', '~/work, directory1 session', 'api, git repo1 needs you', 'evals, git repo1 needs you', 'web, git repo1 session']);
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions4 sessions', 'Starred', '~/work, directory1 session', 'api, git repo1 needs you', 'evals, git repo1 needs you', 'web, git repo1 session']);
     choose('evals');
     expect(listHeading().textContent).toBe('evals, git repo');
     expect(rowNames()).toEqual(['big']);
@@ -197,7 +197,7 @@ describe('Main repo, the default', () => {
     renderApp();
     expect(tabNames()).toEqual(['~/work', '~/personal, 1 needs you']);
     fireEvent.click(tab('~/personal'));
-    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions3 sessions', '~/personal, directory1 session', 'blog, git repo1 needs you']);
+    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions3 sessions', 'Starred', '~/personal, directory1 session', 'blog, git repo1 needs you']);
     choose('blog');
     expect(rowNames()).toEqual(['in-blog', 'cross']);
     expect(tabNames()).toEqual(['~/work, 2 need you', '~/personal']);
@@ -227,12 +227,12 @@ describe('Main repo, the default', () => {
 describe('Where it started', () => {
   it("lists the snapshot's groups as they are, each session where it started (W39)", () => {
     renderApp({ mode: 'where-started' });
-    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', '~/work, directory1 needs you', 'api, git repo1 needs you', 'web, git repo1 session']);
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', 'Starred', '~/work, directory1 needs you', 'api, git repo1 needs you', 'web, git repo1 session']);
     expect(tabNames()).toEqual(['~/work', '~/personal, 1 needs you']);
     expect(rowNames()).toEqual(['big', 'in-api', 'cross', 'alone', 'in-web']);
     expect(['big', 'cross', 'alone', 'in-api'].map(rowGroup)).toEqual(['~/work', '~/work', '~/work', 'api']);
     fireEvent.click(tab('~/personal'));
-    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions2 sessions', '~/personal, directory1 session', 'blog, git repo1 needs you']);
+    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions2 sessions', 'Starred', '~/personal, directory1 session', 'blog, git repo1 needs you']);
   });
 
   it('selects the group a ?session= started in', () => {
@@ -245,7 +245,7 @@ describe('Every repo it worked in', () => {
   it("lists each session where it started and under every repo it worked in, the root's own group only those that worked in none (W34)", () => {
     renderApp({ mode: 'every-repo' });
     // Distinct sessions per group: 1 + 2 + 2 + 1 = 6, more than All sessions' 5.
-    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', '~/work, directory1 session', 'api, git repo1 needs you', 'evals, git repo2 need you', 'web, git repo1 session']);
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', 'Starred', '~/work, directory1 session', 'api, git repo1 needs you', 'evals, git repo2 need you', 'web, git repo1 session']);
     choose('api');
     expect(rowNames().sort()).toEqual(['cross', 'in-api']);
     expect(summary()).toBe('2 sessions1 needs you');
@@ -260,7 +260,7 @@ describe('Every repo it worked in', () => {
     // big worked in blog: ~/personal's badge counts it and in-blog.
     expect(tabNames()).toEqual(['~/work', '~/personal, 2 need you']);
     fireEvent.click(tab('~/personal'));
-    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions4 sessions', '~/personal, directory1 session', 'blog, git repo2 need you']);
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions4 sessions', 'Starred', '~/personal, directory1 session', 'blog, git repo2 need you']);
     expect(tabNames()).toEqual(['~/work, 2 need you', '~/personal']);
     // The title counts every root's, each session once.
     expect(document.title).toBe('(3) pitwall · ~/personal');

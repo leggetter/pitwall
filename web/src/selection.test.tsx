@@ -1,5 +1,5 @@
 // The repo list's selection in the URL (docs/design-system.md, 3: Repo list): ?view=needs-you,
-// ?view=all or ?repo=<key>, with &root=<root> when there's more than one root; pitwall.view.v1 for a
+// ?view=all, ?view=starred (W53) or ?repo=<key>, with &root=<root> when there's more than one root; pitwall.view.v1 for a
 // URL with none; popstate; and ?session= selecting its session's group.
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import type { StorageSource } from './groupState.js';
 import {
   ALL_SESSIONS,
   findGroup,
+  finishedStateId,
   groupSelection,
   NEEDS_YOU,
   parseSelection,
@@ -38,6 +39,15 @@ describe('parseSelection and withSelection', () => {
     expect(parseSelection(`?repo=${WORK}/api&root=${WORK}`)).toEqual({ repo: `${WORK}/api`, root: WORK });
   });
 
+  it('reads and writes Starred, with or without its root (W53)', () => {
+    expect(parseSelection('?view=starred')).toEqual({ view: 'starred' });
+    expect(parseSelection(`?view=starred&root=${WORK}&session=abc`)).toEqual({ view: 'starred', root: WORK });
+    expect(withSelection('?session=abc', viewIn('starred', WORK))).toBe('?view=starred&root=/Users/example/work&session=abc');
+    expect(selectionHref({ view: 'starred' })).toBe('?view=starred');
+    expect(sameSelection({ view: 'starred' }, ALL_SESSIONS)).toBe(false);
+    for (const search of ['?view=Starred', '?view=star', '?view=pinned']) expect(parseSelection(search), search).toBeUndefined();
+  });
+
   it('has no selection for no parameters, an unknown view or an empty repo', () => {
     for (const search of ['', '?', '?session=abc', '?view=mine', '?view=', '?repo=', '?root=/x']) expect(parseSelection(search), search).toBeUndefined();
   });
@@ -50,7 +60,7 @@ describe('parseSelection and withSelection', () => {
   });
 
   it('round-trips any path through the URL', () => {
-    const selections: Selection[] = [NEEDS_YOU, ALL_SESSIONS, { repo: '~/odd path/#1?&=+%' }, { repo: '/a:b@c,d', root: '/a' }];
+    const selections: Selection[] = [NEEDS_YOU, ALL_SESSIONS, { view: 'starred' }, { repo: '~/odd path/#1?&=+%' }, { repo: '/a:b@c,d', root: '/a' }];
     for (const selection of selections) expect(parseSelection(withSelection('', selection))).toEqual(selection);
   });
 
@@ -93,13 +103,25 @@ describe('groups and selections', () => {
     expect(scopeFor([app], ALL_SESSIONS)).toEqual({ kind: 'all' });
     expect(scopeFor([app], { repo: `${ROOT}/app` })).toEqual({ kind: 'group', group: app });
     expect(scopeFor([app], { repo: `${ROOT}/gone` })).toBeUndefined();
+    // Starred's is the starred ids, or none (W53).
+    const ids = new Set([app.sessions[0]!.sessionId]);
+    expect(scopeFor([app], { view: 'starred' }, ids)).toEqual({ kind: 'starred', ids });
+    expect(scopeFor([app], { view: 'starred' })).toEqual({ kind: 'starred', ids: new Set() });
   });
 
   it('names a selection on screen, and a group that has gone by its key', () => {
     expect(selectionName([app], NEEDS_YOU)).toBe('Needs you');
     expect(selectionName([app], ALL_SESSIONS)).toBe('All sessions');
+    expect(selectionName([app], { view: 'starred', root: WORK })).toBe('Starred');
     expect(selectionName([app], { repo: `${ROOT}/app` })).toBe('app');
     expect(selectionName([], { repo: `${ROOT}/gone/` })).toBe('gone');
+  });
+
+  it("keeps a Finished section's state for All sessions, Starred and each group, and has none for Needs you", () => {
+    expect(finishedStateId(ALL_SESSIONS, undefined)).toBe('view:all');
+    expect(finishedStateId({ view: 'starred', root: WORK }, undefined)).toBe('view:starred');
+    expect(finishedStateId(NEEDS_YOU, undefined)).toBeUndefined();
+    expect(finishedStateId({ repo: `${ROOT}/app` }, app)).toBe(`${ROOT}\0${ROOT}/app`);
   });
 
   it('compares selections', () => {

@@ -1,4 +1,4 @@
-// Single-key shortcuts (docs/design-system.md, 6.2): `/`, `?`, `n`, `j` and `k`. They can be turned
+// Single-key shortcuts (docs/design-system.md, 6.2): `/`, `?`, `n`, `j`, `k` and `s` (W53). They can be turned
 // off in the keyboard shortcuts dialog (WCAG 2.1.4, Character Key Shortcuts), and the choice is stored
 // in localStorage as pitwall.shortcuts.v1. They're on by default, and whenever storage is missing,
 // blocked or holds anything else.
@@ -125,7 +125,7 @@ export function isTyping(target: EventTarget | null): boolean {
   return (target instanceof HTMLElement && target.isContentEditable) || target.closest('[contenteditable]:not([contenteditable="false"])') !== null;
 }
 
-export type Shortcut = 'filter' | 'new-session' | 'shortcuts' | 'next' | 'previous';
+export type Shortcut = 'filter' | 'new-session' | 'shortcuts' | 'next' | 'previous' | 'star';
 
 const KEYS: ReadonlyMap<string, Shortcut> = new Map([
   ['/', 'filter'],
@@ -133,16 +133,17 @@ const KEYS: ReadonlyMap<string, Shortcut> = new Map([
   ['?', 'shortcuts'],
   ['j', 'next'],
   ['k', 'previous'],
+  ['s', 'star'],
 ]);
 
-/** Shortcuts that open a dialog, which holding the key down mustn't repeat. */
-const NO_REPEAT: ReadonlySet<Shortcut> = new Set(['new-session', 'shortcuts']);
+/** Shortcuts that open a dialog, or toggle, which holding the key down mustn't repeat. */
+const NO_REPEAT: ReadonlySet<Shortcut> = new Set(['new-session', 'shortcuts', 'star']);
 
 /**
  * The single-key shortcut a key press is, if any. Not with ⌘, Ctrl or Alt held, not while typing,
  * not while an input method is composing, not for a key something nearer already handled, and not
- * when `n` or `?` repeats as the key is held. Shift is allowed, since some layouts need it for `/`
- * and most for `?`; it makes `n`, `j` and `k` capitals, which aren't shortcuts. Whether the
+ * when `n`, `?` or `s` repeats as the key is held. Shift is allowed, since some layouts need it for `/`
+ * and most for `?`; it makes `n`, `j`, `k` and `s` capitals, which aren't shortcuts. Whether the
  * shortcuts are on is the caller's to check.
  */
 export function shortcutFor(event: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'repeat' | 'isComposing' | 'defaultPrevented' | 'target'>): Shortcut | undefined {
@@ -157,4 +158,5 @@ export const SHORTCUT_KEYS = {
   filter: { keys: ['/'], label: 'Slash' },
   newSession: { keys: ['n'], label: 'N' },
   shortcuts: { keys: ['?'], label: 'Question mark' },
+  star: { keys: ['s'], label: 'S' },
 } as const;

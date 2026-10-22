@@ -11,7 +11,7 @@ import { AttachContext } from '../attach.js';
 import { slowFirstSnapshot } from '../components/Dashboard.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
-import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView } from '../components/SessionView.js';
+import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { ViewPreferences } from '../components/ViewPreferences.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
@@ -92,6 +92,14 @@ const MENU_BACKGROUND = background('view-menu', { state: 'working' });
 const MENU_DONE = background('view-menu-done', { state: 'done', alive: false, pid: undefined, finished: true });
 const MENU_INTERACTIVE = session('view-menu-interactive');
 const COMPACT = session('view-compact', { title: 'Export retries' });
+const STARRED_VIEW = session('view-starred', { title: 'Export retries' });
+const STARRED_COMPACT = session('view-starred-compact', { title: 'Export retries' });
+
+/** A session view with its star toggle, starred or not to start with, and a state of its own, so it can be pressed (W53). */
+function Starrable({ starred: start, ...props }: SessionViewProps & { starred: boolean }) {
+  const [starred, setStarred] = useState(start);
+  return <SessionView {...props} star={{ starred, onStar: (_id, on) => setStarred(on) }} />;
+}
 const CONVERSATION_STATES = (
   [
     ['Loading the conversation', 'loading', 'shown', 'A status line after half a second, so a fast answer never flashes it.'],
@@ -288,6 +296,20 @@ export function SessionViews() {
       <Specimen title="A long name and title" note="The title gives way first, then the name, and the directory in the middle." frame="short">
         <Stubbed>
           <SessionView session={LONG_TITLE} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Starred"
+        note="The star toggle in line 1, before the actions menu: md, filled while the session is starred, named Star and the session's name in either state, with s in its tooltip while the single-key shortcuts are on (W53). Press it to unstar; it never closes the view."
+        frame="short"
+      >
+        <Stubbed>
+          <Starrable session={STARRED_VIEW} listed onClose={noop} starred />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Not starred, 600 px and narrower" note="The outlined star, after the heading, with Back to sessions at the start." frame="short" width={375}>
+        <Stubbed>
+          <Starrable session={STARRED_COMPACT} listed onClose={noop} compact starred={false} />
         </Stubbed>
       </Specimen>
       <Specimen

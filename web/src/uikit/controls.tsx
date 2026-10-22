@@ -1,12 +1,14 @@
 // Buttons, alerts, key caps and the app strip (W24): the real Button, Alert, KeyCaps and AppStrip in
-// each variant and state. The page alerts in their place, at the top of the session list, are in
+// each variant and state, and StarButton, the star toggle, off and on (W53). The page alerts in their place, at the top of the session list, are in
 // Page states; the message box's alerts are in Message box.
 
+import { useState } from 'react';
 import { AppStrip } from '../components/AppStrip.js';
 import { Alert, Detail } from '../components/Alert.js';
 import { Button, type ButtonVariant } from '../components/Button.js';
 import { KeyCaps, modEnter } from '../components/KeyCaps.js';
 import { Spinner } from '../components/Spinner.js';
+import { StarButton } from '../components/StarButton.js';
 import { relayAlertText, STATUS_TEXT } from '../relay.js';
 import {
   RELAY_ALERT_BLOCKED,
@@ -21,6 +23,12 @@ import {
 import { Specimen } from './kit.js';
 
 const noop = () => {};
+
+/** A star toggle with a state of its own, so it can be pressed (W53). */
+function LiveStar({ name, start, size }: { name: string; start: boolean; size: 'sm' | 'md' }) {
+  const [starred, setStarred] = useState(start);
+  return <StarButton sessionId={`uikit-${name}`} name={name} starred={starred} onStar={(_id, on) => setStarred(on)} size={size} />;
+}
 
 const VARIANTS: { variant: ButtonVariant; label: string; busy: string; icon?: 'send' | 'stop' | 'add' }[] = [
   { variant: 'primary', label: 'Send', busy: 'Sending…', icon: 'send' },
@@ -81,6 +89,17 @@ export function Buttons() {
               Clear filters
             </Button>
           ))}
+        </p>
+      </Specimen>
+      <Specimen
+        title="The star toggle, off and on"
+        note="A session's star (W53): a ghost icon button with aria-pressed, outlined while off and filled while on, named Star and the session's name by its tooltip in either state. sm on a row, md in the session view's header. Press each to toggle it."
+      >
+        <p className="uikit-row">
+          <LiveStar name="pitwall-test-app" start={false} size="sm" />
+          <LiveStar name="pitwall-test-app" start size="sm" />
+          <LiveStar name="pitwall-test-jobs" start={false} size="md" />
+          <LiveStar name="pitwall-test-jobs" start size="md" />
         </p>
       </Specimen>
       <Specimen title="Spinners" note="12 px inline, in --pw-info-fg; 16 px in a button, in its text colour. Each waits half a second before it shows.">

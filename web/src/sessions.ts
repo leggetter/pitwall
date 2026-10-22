@@ -187,8 +187,8 @@ export function repoListGroups(groups: readonly SessionGroup[], roots: readonly 
 
 // The session list (docs/design-system.md, 3: Session list).
 
-/** What the session list shows: a view of every group, or one group. */
-export type Scope = { kind: 'needs-you' } | { kind: 'all' } | { kind: 'group'; group: SessionGroup };
+/** What the session list shows: a view of every group, the starred sessions in them (W53), or one group. */
+export type Scope = { kind: 'needs-you' } | { kind: 'all' } | { kind: 'starred'; ids: ReadonlySet<string> } | { kind: 'group'; group: SessionGroup };
 
 /** A session, with the group it's listed under. */
 export interface Listed {
@@ -313,9 +313,10 @@ export function sessionOrder(order: SortOrder, finished: boolean): (a: SessionSu
 /**
  * The scope's sessions, split into the rows and the Finished section, each in `order`. Needs you is
  * every session that needs you, from every group, with no Finished section; All sessions is every
- * session, finished ones in one section at the end. Both list each session once, under its home group
- * in `home` (groupBy.ts), or the first group that lists it. The index's order is Urgency, so it's
- * sorted here.
+ * session, finished ones in one section at the end; Starred is the starred ones among them, finished
+ * ones in its own Finished section, as All sessions has (W53). Each lists each session once, under its
+ * home group in `home` (groupBy.ts), or the first group that lists it. The index's order is Urgency,
+ * so it's sorted here.
  */
 export function listScope(
   groups: readonly SessionGroup[],
@@ -333,9 +334,10 @@ export function listScope(
     return items.sort((a, b) => compare(a.session, b.session));
   };
   if (scope.kind === 'needs-you') return { current: sorted(listed.filter(({ session }) => needsAttention(session)), false), finished: [] };
+  const shown = scope.kind === 'starred' ? listed.filter(({ session }) => scope.ids.has(session.sessionId)) : listed;
   return {
-    current: sorted(listed.filter(({ session }) => !session.finished), false),
-    finished: sorted(listed.filter(({ session }) => session.finished), true),
+    current: sorted(shown.filter(({ session }) => !session.finished), false),
+    finished: sorted(shown.filter(({ session }) => session.finished), true),
   };
 }
 

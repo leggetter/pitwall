@@ -1,4 +1,4 @@
-// The single-key shortcuts in the app (W26, docs/design-system.md, 6.2): `/`, `n`, `?`, `j` and `k`
+// The single-key shortcuts in the app (W26, docs/design-system.md, 6.2): `/`, `n`, `?`, `j`, `k` and `s` (W53)
 // from the list, the session view's header and its conversation; ignored while typing, with a
 // modifier held and over a dialog; closing an open menu first; and the off switch, stored as
 // pitwall.shortcuts.v1. Made-up sessions only.
@@ -140,7 +140,9 @@ const heading = () => document.getElementById(view()!.getAttribute('aria-labelle
 const conversation = () => view()!.querySelector<HTMLElement>('.session-view-body[role="tabpanel"]')!;
 const filterField = () => screen.getByRole('searchbox', { name: 'Filter sessions' }) as HTMLInputElement;
 const dialog = (name: string) => screen.queryByRole('dialog', { name });
-const SHORTCUT_KEYS = ['/', 'n', '?', 'j', 'k'];
+const SHORTCUT_KEYS = ['/', 'n', '?', 'j', 'k', 's'];
+/** The star toggles that are pressed: `s` stars the open session (W53), so a key that did nothing leaves none. */
+const pressedStars = () => document.querySelectorAll('[data-star-session][aria-pressed="true"]').length;
 
 async function open(name: string) {
   fireEvent.click(rowButton(name));
@@ -439,6 +441,7 @@ describe('ignored', () => {
     expect(filterField().value).toBe(before.filter);
     expect(dialog('New session')).toBeNull();
     expect(dialog('Keyboard shortcuts')).toBeNull();
+    expect(pressedStars()).toBe(0);
   }
 
   it('while typing: in the filter field, the message box, the Sort select, something contenteditable and the terminal', async () => {
@@ -555,7 +558,7 @@ describe('an open menu', () => {
 });
 
 describe('the off switch', () => {
-  it('is on by default; turning it off stores it and turns off all five, and the header button still opens the dialog', async () => {
+  it('is on by default; turning it off stores it and turns off all six, and the header button still opens the dialog', async () => {
     setWidth(1300);
     const { shortcutStorage } = renderDashboard();
     await open('demo-a');
@@ -573,6 +576,7 @@ describe('the off switch', () => {
       else (target as HTMLElement).focus();
       for (const key of SHORTCUT_KEYS) expect(press(key, target), key).toBe(true);
       expect(viewName()).toBe('demo-a');
+      expect(pressedStars()).toBe(0);
       expect(dialog('New session')).toBeNull();
       expect(dialog('Keyboard shortcuts')).toBeNull();
       expect(document.activeElement).toBe(target);

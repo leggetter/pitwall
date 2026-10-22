@@ -1729,6 +1729,30 @@ mark.match {
   white-space: nowrap;
 }
 
+/*
+ * A row's star toggle (section 4: Starred sessions, W53): at the end of line 1, after the time, in a
+ * slot every row keeps, so nothing moves as it shows. It shows while its session is starred, and
+ * otherwise on the row's hover and focus; on a touch screen it always shows, as anything revealed on
+ * hover does. It's 24 px in a 20 px line: the negative block margins keep the line, and the row, as
+ * tall as before, and the end margin puts its star on the row's 16 px edge, where the time was.
+ */
+.session-star {
+  margin-block: calc((var(--pw-leading-m) - var(--pw-control-sm)) / 2);
+  margin-inline: calc(-1 * var(--pw-space-1));
+  transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .session-star[aria-pressed='false'] {
+    opacity: 0;
+  }
+
+  .session:hover .session-star,
+  .session:focus-within .session-star {
+    opacity: 1;
+  }
+}
+
 .session-what {
   min-width: 0;
   overflow: hidden;
