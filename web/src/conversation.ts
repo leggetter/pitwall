@@ -5,6 +5,7 @@
 import {
   CONVERSATION_STALE_STATUS,
   conversationPath,
+  type AskedQuestion,
   type ConversationEntry,
   type ConversationEntryKind,
   type ConversationPage,
@@ -98,7 +99,7 @@ function reasonIn(body: unknown): string | undefined {
   return typeof error === 'string' && error.trim() !== '' ? error.trim().slice(0, 500) : undefined;
 }
 
-const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 'tool', 'cross-session', 'to-pitwall', 'notice']);
+const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 'tool', 'cross-session', 'to-pitwall', 'question', 'notice']);
 
 /**
  * The body as a ConversationPage for `sessionId`, or undefined when it isn't
@@ -116,7 +117,7 @@ export function asConversationPage(body: unknown, sessionId: string): Conversati
 
 function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const { kind, at, text, markdown, toolName, toolError, from, truncated } = value as Record<string, unknown>;
+  const { kind, at, text, markdown, toolName, toolError, from, questions, truncated } = value as Record<string, unknown>;
   if (typeof kind !== 'string' || !KINDS.has(kind as ConversationEntryKind) || typeof text !== 'string') return undefined;
   const entry: ConversationEntry = { kind: kind as ConversationEntryKind, text };
   if (typeof at === 'string') entry.at = at;
@@ -124,8 +125,73 @@ function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof toolName === 'string') entry.toolName = toolName;
   if (typeof toolError === 'boolean') entry.toolError = toolError;
   if (typeof from === 'string') entry.from = from;
+  if (kind === 'question' && Array.isArray(questions)) entry.questions = questions.slice(0, QUESTIONS_SHOWN).flatMap((question) => asQuestion(question) ?? []);
   if (truncated === true) entry.truncated = true;
   return entry;
+}
+
+/** The most questions, and options to a question, the contract allows (AskedQuestion). */
+const QUESTIONS_SHOWN = 8;
+
+const isText = (value: unknown): value is string => typeof value === 'string';
+
+/** One question of a 'question' entry (W49), or undefined when it isn't one. Options that aren't well formed are dropped. */
+function asQuestion(value: unknown): AskedQuestion | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { question, header, options, multiSelect, answer, notes } = value as Record<string, unknown>;
+  if (!isText(question) || !Array.isArray(options)) return undefined;
+  const asked: AskedQuestion = {
+    question,
+    options: options.slice(0, QUESTIONS_SHOWN).flatMap((option: unknown) => {
+      if (typeof option !== 'object' || option === null) return [];
+      const { label, description } = option as Record<string, unknown>;
+      if (!isText(label)) return [];
+      return [isText(description) ? { label, description } : { label }];
+    }),
+  };
+  if (isText(header)) asked.header = header;
+  if (multiSelect === true) asked.multiSelect = true;
+  if (isText(answer)) asked.answer = answer;
+  if (isText(notes)) asked.notes = notes;
+  return asked;
+}
+
+/**
+ * The separators a multi-select answer might join its labels with. How Claude Code joins them isn't
+ * known (W49), so an answer counts as several labels only when it's nothing but labels joined by one
+ * of these.
+ */
+const ANSWER_JOINS = [',', '\n', ';'] as const;
+
+/** What a question's answer chose: the options it named by their labels, or else the answer as it was typed. */
+export interface ChosenAnswer {
+  /** The indexes of the options chosen. */
+  chosen: ReadonlySet<number>;
+  /** The answer itself, when it named no option by its label: text typed in place of one. */
+  typed?: string;
+}
+
+/**
+ * Which options a question's answer chose, by label (W49), or undefined when it has no answer. The
+ * answer is text: an option is chosen when the answer is its label exactly. A multi-select answer
+ * that's two or more labels joined by a comma, a newline or a semicolon chooses each of them. Any
+ * other answer chooses none, and is shown as typed.
+ */
+export function chosenAnswer(question: AskedQuestion): ChosenAnswer | undefined {
+  const { answer, options } = question;
+  if (answer === undefined) return undefined;
+  const index = (text: string) => options.findIndex((option) => option.label.trim() === text.trim());
+  const exact = index(answer);
+  if (exact !== -1) return { chosen: new Set([exact]) };
+  if (question.multiSelect === true) {
+    for (const join of ANSWER_JOINS) {
+      const parts = answer.split(join).filter((part) => part.trim() !== '');
+      if (parts.length < 2) continue;
+      const chosen = parts.map(index);
+      if (chosen.every((i) => i !== -1)) return { chosen: new Set(chosen) };
+    }
+  }
+  return { chosen: new Set(), typed: answer };
 }
 
 /**
@@ -204,7 +270,8 @@ export interface KeyedEntry {
 /**
  * What the conversation shows, one item per line of its list (docs/design-system.md, 4: Conversation):
  * - `entry`: a message, a notice, or a tool call on its own, which isn't folded. A message to pitwall
- *   (`to-pitwall`, W46) is a message, in its call's place, so it ends a run of tool calls;
+ *   (`to-pitwall`, W46) is a message, in its call's place, so it ends a run of tool calls; so is a
+ *   question asked in a dialog (`question`, W49);
  * - `fold`: two or more tool calls in a row, folded into one toggle.
  */
 export type ConversationRow = ({ kind: 'entry' } & KeyedEntry) | { kind: 'fold'; key: string; calls: KeyedEntry[] };

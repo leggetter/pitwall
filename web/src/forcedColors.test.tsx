@@ -27,6 +27,7 @@ describe('the forced-colours rules', () => {
     ['the filter field', '.filter-input'],
     ['buttons with an edge', '.button:not(.ghost)'],
     ['inline alerts', '.inline-alert'],
+    ["a question's chosen option (W49)", '.question-option.chosen'],
   ])('draw %s again', (_what, selector) => {
     expect(forced).toContain(selector);
   });
