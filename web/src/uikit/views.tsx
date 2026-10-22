@@ -62,11 +62,23 @@ function MaybeScenario({ run, children }: { run: ((root: HTMLElement) => Promise
 }
 
 const GONE = session('view-gone', { title: 'Export retries' });
-const MISSING_DIR = background('view-missing-dir', {
-  state: 'done',
-  cwd: `${APP_DIR}/.claude/worktrees/pitwall-test-export-fix`,
+// W47: a session whose directory has gone, in each state that says what to do, and the two that don't.
+const GONE_DIR = `${APP_DIR}/.claude/worktrees/pitwall-test-export-fix`;
+const MISSING_INTERACTIVE = session('view-missing-dir', {
+  title: 'Export retries',
+  cwd: GONE_DIR,
   cwdMissing: true,
+  lastActivityAt: ago(10 * 24 * 60),
+  askedYou: { reason: 'question', excerpt: 'Should the made-up export keep archived projects?' },
 });
+const MISSING_BACKGROUND = background('view-missing-dir-job', { state: 'working', cwd: GONE_DIR, cwdMissing: true });
+const MISSING_FINISHED = background('view-missing-dir-done', { state: 'done', alive: false, pid: undefined, finished: true, cwd: GONE_DIR, cwdMissing: true });
+const MISSING_QUIET = session('view-missing-dir-quiet', { alive: false, pid: undefined, status: undefined, cwd: GONE_DIR, cwdMissing: true });
+const MISSING_GONE = background('view-missing-dir-gone', { state: 'working', cwd: GONE_DIR, cwdMissing: true });
+// W47: a running session waiting on you, and where to answer.
+const WAITING_INTERACTIVE = session('view-waiting', { title: 'Export retries', status: 'waiting', waitingFor: 'input needed' });
+const WAITING_BACKGROUND = background('view-waiting-job', { state: 'working', status: 'waiting', waitingFor: 'permission prompt' });
+const WAITING_BLOCKED = background('view-waiting-blocked', { state: 'blocked', status: 'idle', waitingFor: 'a made-up question' });
 const LONG_TITLE = session('view-with-a-long-name-for-the-header', {
   title: 'Retry each failed export batch three times with backoff, keeping the 30 second timeout',
   cwd: `${APP_DIR}/packages/exports/src/jobs/retry`,
@@ -176,12 +188,16 @@ export function SessionViews() {
           <SessionView session={FINISHED_ASKED_VIEW} listed onClose={noop} />
         </Stubbed>
       </Specimen>
-      <Specimen title="Background" note="The actions menu in the header, no message box, and older entries behind Load earlier." frame="view">
+      <Specimen
+        title="Background"
+        note="The actions menu in the header, older entries behind Load earlier, and where an interactive session has its message box, a note: it takes messages in its Terminal tab, which attaches (W47). No button opens the tab from there, since opening it attaches."
+        frame="view"
+      >
         <Stubbed options={{ conversation: 'older' }}>
           <SessionView session={VIEW_BACKGROUND} listed onClose={noop} />
         </Stubbed>
       </Specimen>
-      <Specimen title="Background, attached" note="The Terminal tab open, attached to a scripted server, with the success dot on the tab." frame="view">
+      <Specimen title="Background, attached" note="The Terminal tab open, attached to a scripted server, with the success dot on the tab. The footer's note goes while the tab is open." frame="view">
         <Attachable script="attached">
           <Stubbed>
             <Scenario
@@ -195,7 +211,7 @@ export function SessionViews() {
           </Stubbed>
         </Attachable>
       </Specimen>
-      <Specimen title="Background, not running" note="It has finished, so Stop is off in the menu, and opening Terminal asks before restarting it." frame="short">
+      <Specimen title="Background, not running" note="It has finished, so Stop is off in the menu, and opening Terminal asks before restarting it, as its footer says." frame="short">
         <Stubbed>
           <SessionView session={VIEW_BACKGROUND_DONE} listed onClose={noop} />
         </Stubbed>
@@ -205,9 +221,64 @@ export function SessionViews() {
           <SessionView session={GONE} listed={false} onClose={noop} />
         </Stubbed>
       </Specimen>
-      <Specimen title="Directory gone" note="Its working directory no longer exists, as after a worktree was removed." frame="short">
+      <Specimen
+        title="Waiting, interactive"
+        note="The badge says it's waiting and on what, as Claude Code gives it; the line under line 2 says where to answer: in its terminal, since pitwall can't, and a message sent below waits until then (W47)."
+        frame="short"
+      >
         <Stubbed>
-          <SessionView session={MISSING_DIR} listed onClose={noop} />
+          <SessionView session={WAITING_INTERACTIVE} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Waiting, background"
+        note="Answer it in its Terminal tab, which attaches to it. No button opens the tab from the note, since opening it attaches."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={WAITING_BACKGROUND} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Blocked, background" note="A blocked job, which Claude Code reports with status idle, is waiting on you too: the same line. A stale one has none." frame="short">
+        <Stubbed>
+          <SessionView session={WAITING_BLOCKED} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Directory gone, interactive"
+        note="Its worktree was removed, but it's still running in its terminal, waiting on a question from ten days ago. Line 2 keeps Directory no longer exists, and the line under it says why it's listed and that /exit in its terminal ends it (W47)."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={MISSING_INTERACTIVE} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Directory gone, background and running" note="Still running, so it's listed: Stop session, in the actions menu, ends it. Its footer says how to message it." frame="short">
+        <Stubbed>
+          <SessionView session={MISSING_BACKGROUND} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Directory gone, background and not running"
+        note="It has finished, or its process exited: Remove session, in the actions menu, takes it off the list. Its footer says the Terminal tab asks before restarting it."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={MISSING_FINISHED} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Directory gone, interactive and not running"
+        note="Plain: nothing in pitwall or in a terminal acts on an interactive session that isn't running, so there's no line under line 2."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={MISSING_QUIET} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="Directory gone, no longer listed" note="Plain: the menu has no Stop or Remove now, and the alert says why. No footer either." frame="short">
+        <Stubbed>
+          <SessionView session={MISSING_GONE} listed={false} onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen title="A long name and title" note="The title gives way first, then the name, and the directory in the middle." frame="short">

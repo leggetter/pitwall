@@ -2,8 +2,10 @@
 // footer): one session, as the third column from 1,200 px or over the session list below that. A
 // header with its name and title, status, kind, last activity and directory, where it started and
 // the repos it worked in when there are any (W34), and the actions menu;
-// the Conversation and Terminal tabs; the body, which is all that scrolls; and, for an interactive
-// session, the message box in the footer.
+// the Conversation and Terminal tabs; the body, which is all that scrolls; and the footer: the message
+// box for an interactive session, or for a background one a note that it takes messages in its
+// terminal (W47). Under line 2, a line says where to answer while it waits on you, and another what to
+// do about a directory that has gone (W47).
 //
 // Two more states take the view's place: waiting, while a ?session= from the URL waits for the first
 // snapshot, and unlisted, for one that pitwall doesn't list under its roots (3: Session view).
@@ -17,7 +19,7 @@
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
-import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
@@ -59,6 +61,85 @@ export const TERMINAL_INTERACTIVE_NOTE =
 export const STOP_INTERACTIVE_HINT =
   "An interactive session can't be stopped here. Type /bg in its terminal to move it to the background, then stop it here.";
 export const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
+/** The command that ends an interactive session from its own terminal, in code style wherever a note names it. */
+export const EXIT_COMMAND = '/exit';
+/**
+ * The line under line 2 when a session's directory has gone (W47): why it's still listed, and what
+ * ends it or takes it off the list, by kind and state. pitwall can't end an interactive session (W40).
+ */
+export const CWD_MISSING_NOTES = {
+  /** Interactive, and running in its terminal. */
+  interactive: `It's still running in its terminal, so it's listed. Type ${EXIT_COMMAND} there to end it.`,
+  /** Background, and running: Stop session is on. */
+  running: "It's still running, so it's listed. Stop session, in the actions menu, ends it.",
+  /** Background, and not running, whether it finished or its process exited: Remove session is on. */
+  notRunning: "It isn't running. Remove session, in the actions menu, takes it off the list.",
+} as const;
+/**
+ * A background session's footer, where an interactive session has its message box (W47, D2, D3):
+ * it takes messages in its terminal. Opening the Terminal tab attaches, so the note has no button
+ * that opens it; the tab stays the one deliberate way in (D9).
+ */
+export const BACKGROUND_NOTES = {
+  running: 'To message it, type in its Terminal tab, which attaches to it.',
+  /** Finished, or its process exited: attaching restarts it, and the terminal asks first. */
+  notRunning: 'To message it, open its Terminal tab, which asks before restarting it.',
+} as const;
+
+/**
+ * The note for a session whose directory has gone, or undefined for none: for an interactive session
+ * that isn't running, which neither pitwall nor a terminal can act on, and for one that's no longer
+ * listed, whose actions menu has no Stop or Remove and whose header's alert says why.
+ */
+export function cwdMissingNote(session: SessionSummary, listed: boolean): string | undefined {
+  if (!session.cwdMissing || !listed) return undefined;
+  if (session.kind === 'interactive') return session.alive ? CWD_MISSING_NOTES.interactive : undefined;
+  return session.alive ? CWD_MISSING_NOTES.running : CWD_MISSING_NOTES.notRunning;
+}
+
+/**
+ * The line under line 2 while a running session waits on you (W47): where to answer. The status badge
+ * already says it's waiting, and on what, as Claude Code gives it, so this says only where. A question
+ * dialog open in its terminal seems not to be in the transcript until it's answered (PLAN.md, seen on
+ * one session), so the badge and this may be all pitwall can show of it.
+ */
+export const WAITING_NOTES = {
+  /** pitwall can't answer for it, and a relayed message waits until it's answered. */
+  interactive: "Answer it in its terminal: pitwall can't, and a message sent below waits until you do.",
+  /** Opening the Terminal tab attaches, so there's no button for it here either (D9). */
+  background: 'Answer it in its Terminal tab, which attaches to it.',
+} as const;
+
+/**
+ * Whether a running session is waiting on you: its status is `waiting`, or it's a background job
+ * that's blocked, which Claude Code reports with status `idle`, unless it's stale. These are the two
+ * with the solid Waiting or Blocked badge (statusBadge()).
+ */
+function isWaiting(session: SessionSummary): boolean {
+  if (!session.alive) return false;
+  return session.status === 'waiting' || (session.kind === 'background' && session.state === 'blocked' && !session.stale);
+}
+
+/**
+ * The note for a session that's waiting on you, or undefined for none: once it's no longer listed,
+ * and, for a background session, where its Terminal tab can't be opened.
+ */
+export function waitingNote(session: SessionSummary, listed: boolean, canAttach: boolean): string | undefined {
+  if (!listed || !isWaiting(session)) return undefined;
+  if (session.kind === 'interactive') return WAITING_NOTES.interactive;
+  return canAttach ? WAITING_NOTES.background : undefined;
+}
+
+/** A note's text, with /exit in code style wherever it names it (5: Casing and style). */
+function NoteText({ text }: { text: string }): ReactNode {
+  return text.split(EXIT_COMMAND).map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 && <code>{EXIT_COMMAND}</code>}
+      {part}
+    </Fragment>
+  ));
+}
+
 /** The worked-in line's info icon: the rule behind it (W34, spike 004), and where to find the sessions that worked in a repo (W39, W42). */
 export const WORKED_IN_NOTE =
   "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. View preferences, in the header, sets which of these repos list the session; to find every session that worked in a repo, type its name in the filter on All sessions.";
@@ -344,6 +425,8 @@ export function SessionView({
   const title = session.title ? plainText(session.title) : '';
   const cwd = plainText(session.cwd);
   const command = attachCommand(session);
+  const missingNote = cwdMissingNote(session, listed);
+  const waiting = waitingNote(session, listed, background && !terminalOff);
   const canAct = background && listed;
   const busy = actions.running !== undefined;
   const onRunningRef = useRef(onRunningChange);
@@ -480,6 +563,16 @@ export function SessionView({
             </Tooltip>
           )}
         </div>
+        {waiting && (
+          // Where to answer, under the status badge that says it's waiting (W47). Read once, in place.
+          <p className="session-view-waiting-note">{waiting}</p>
+        )}
+        {missingNote && (
+          // Visible, not in a tooltip: why it's still listed, and what to do about it (W47). Read once, in place.
+          <p className="session-view-cwd-note">
+            <NoteText text={missingNote} />
+          </p>
+        )}
         {placement && placement.workedIn.length > 0 && (
           // Line 3: where it started, and the repos it worked in beyond that, the same in every mode of View preferences (W42).
           // The names are text, never markup or links: selecting one does nothing.
@@ -589,6 +682,15 @@ export function SessionView({
               onDraftChange?.(has);
             }}
           />
+        </footer>
+      )}
+      {background && !terminalOff && tab === 'conversation' && (
+        // Where an interactive session has its message box: how to message this one (W47). No button
+        // opens the Terminal tab from here, since opening it attaches (D9). Not on the Terminal tab,
+        // which it's about, and which then has the room; not once it's no longer listed, or where it
+        // can't be attached, as the tab's tooltip says.
+        <footer className="session-view-foot">
+          <p className="session-view-note">{session.alive ? BACKGROUND_NOTES.running : BACKGROUND_NOTES.notRunning}</p>
         </footer>
       )}
     </Frame>
