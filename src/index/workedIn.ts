@@ -315,8 +315,10 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
         handle = await fs.open(path.join(dir, '.git'));
         const head = Buffer.alloc(4096);
         const { bytesRead } = await handle.read(head, 0, head.length, 0);
-        const match = /^gitdir:\s*(.+?)\s*$/m.exec(head.toString('utf8', 0, bytesRead));
-        return match?.[1] ? path.resolve(dir, match[1]) : undefined;
+        // The rest of the line, then trimmed: `(.+?)\s*$` would be quadratic on a run of spaces
+        // inside it, 35 ms for a made-up 4 KiB file.
+        const target = /^gitdir:\s*(.*)$/m.exec(head.toString('utf8', 0, bytesRead))?.[1]?.trimEnd();
+        return target ? path.resolve(dir, target) : undefined;
       } catch {
         return undefined;
       } finally {
@@ -498,7 +500,11 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
     }
   }
 
-  /** Counts calls into a file's per-repo counts, after finding the repo of every place they name. */
+  /**
+   * Counts calls into a file's per-repo counts, after finding the repo of every place they name.
+   * placesOf() runs on the main thread for every call, so toolCalls.ts keeps it linear and cuts
+   * long input short.
+   */
   async function count(file: FileState, calls: readonly RawCall[]): Promise<void> {
     const named: CallPlaces[] = calls.map((call) => placesOf(call.name, call.input, call.cwd, home));
     const paths = [...new Set(named.flatMap((n) => n.paths))];

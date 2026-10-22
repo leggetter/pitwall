@@ -269,6 +269,18 @@ describe('createWorkedInScanner', () => {
       expect(await scan(start({ run: fakeGit().run }))).toMatchObject([{ key: repo('api'), root: code, changes: 1 }]);
     });
 
+    it("reads a worktree's .git file with spaces and a CRLF after its path, and none from a blank one", async () => {
+      const worktree = path.join(dir, 'scratch', 'api-feature');
+      const blank = path.join(dir, 'scratch', 'api-blank');
+      await mkdir(worktree, { recursive: true });
+      await mkdir(blank, { recursive: true });
+      await mkdir(path.join(repo('api'), '.git', 'worktrees', 'api-feature'), { recursive: true });
+      await writeFile(path.join(worktree, '.git'), `gitdir: ${path.join(repo('api'), '.git', 'worktrees', 'api-feature')}   \r\n`);
+      await writeFile(path.join(blank, '.git'), 'gitdir:   \n');
+      await writeFile(main, call('Edit', { file_path: path.join(worktree, 'a.ts') }, repo('app')) + call('Edit', { file_path: path.join(blank, 'a.ts') }, repo('app')));
+      expect(await scan(start({ run: fakeGit().run }))).toMatchObject([{ key: repo('api'), root: code, changes: 1 }]);
+    });
+
     it('repos that no longer exist: a removed one, and one removed after its calls were counted', async () => {
       await writeFile(main, call('Edit', { file_path: path.join(code, 'removed', 'src', 'a.ts') }, repo('app')) + call('Edit', { file_path: path.join(repo('docs'), 'a.md') }, repo('app')));
       const s = start({ run: fakeGit().run });
