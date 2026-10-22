@@ -1,7 +1,7 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -13,13 +13,19 @@ import {
   browserCommand,
   claimOpenMarker,
   currentDirectory,
+  envFileProblem,
   fallbackPortMessage,
+  FIXED_TOKEN_LINE,
   fixedTokenNotice,
   hasFixedToken,
+  openInsteadHint,
   parseCliArgs,
+  repeatsOnePiece,
   resolveRoots,
   resolveToken,
   resolveWebRoot,
+  runningLines,
+  TOKEN_MIN_DIFFERENT,
   USAGE,
   UsageError,
 } from './cli.js';
@@ -222,6 +228,149 @@ describe('resolveToken', () => {
     expect(() => resolveToken({ PITWALL_TOKEN: `${'a'.repeat(32)}&calc` })).toThrow(UsageError);
     expect(() => resolveToken({ PITWALL_TOKEN: `${'a'.repeat(32)}\r\nX: y` })).toThrow(UsageError);
   });
+
+  it('does not take npm run dev’s own token for one dev run as fixed (PITWALL_TOKEN_PER_RUN=1, W51)', () => {
+    const token = 'pitwall-test-token-0123456789abcd';
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1' })).toBe(false);
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '0' })).toBe(true);
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '' })).toBe(true);
+    // It doesn't change which token is used.
+    expect(resolveToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1' })).toBe(token);
+  });
+
+  describe('an obviously weak PITWALL_TOKEN (W51)', () => {
+    it.each([
+      ['32 zeros', '0'.repeat(32)],
+      ['one character and another at the end', `${'a'.repeat(42)}b`],
+      ['seven different characters, in no pattern', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabcdefg'],
+    ])('refuses %s: fewer than 8 different characters, without quoting it', (_, weak) => {
+      expect(TOKEN_MIN_DIFFERENT).toBe(8);
+      expect(() => resolveToken({ PITWALL_TOKEN: weak })).toThrow(new UsageError('PITWALL_TOKEN must have at least 8 different characters'));
+    });
+
+    it.each([
+      ['a word, again and again', 'changeme-changeme-changeme-changeme'],
+      ['the hex digits twice', '0123456789abcdef0123456789abcdef'],
+      ['a piece whose last copy is cut short', 'pitwall-test-pitwall-test-pitwall-tes'],
+      ['two halves alike', 'abcdefghijklmnopqrstuabcdefghijklmnopqrstu'],
+    ])('refuses %s: one piece repeated, without quoting it', (_, weak) => {
+      expect(() => resolveToken({ PITWALL_TOKEN: weak })).toThrow(new UsageError('PITWALL_TOKEN must not be one piece repeated, as in abcabcabc'));
+    });
+
+    it('accepts a token at the edge of the rule: 8 different characters, and no piece repeated', () => {
+      const edge = `abcdefgh${'a'.repeat(24)}`;
+      expect(resolveToken({ PITWALL_TOKEN: edge })).toBe(edge);
+      // A piece repeated with something after it is no longer one piece repeated.
+      const almost = `${'changeme-'.repeat(4)}x`;
+      expect(resolveToken({ PITWALL_TOKEN: almost })).toBe(almost);
+    });
+
+    it('accepts every token .env.example’s command and the CLI make: 32 random bytes as base64url', () => {
+      // The command in .env.example and the CLI's own per-run token are the same expression, and npm run
+      // dev passes its per-run token through this check in the CLI it starts. 20,000 of each kind.
+      for (let i = 0; i < 20_000; i++) {
+        const made = randomBytes(32).toString('base64url');
+        expect(resolveToken({ PITWALL_TOKEN: made })).toBe(made);
+        const perRun = resolveToken({});
+        expect(resolveToken({ PITWALL_TOKEN: perRun })).toBe(perRun);
+      }
+    });
+
+    it('accepts random hex tokens too, as from openssl rand -hex 32 or 16, which have at most 16 different characters', () => {
+      for (let i = 0; i < 5_000; i++) {
+        for (const made of [randomBytes(32).toString('hex'), randomBytes(16).toString('hex')]) {
+          expect(resolveToken({ PITWALL_TOKEN: made })).toBe(made);
+        }
+      }
+    });
+
+    it('says in the help what it accepts, and where to see how to make one', () => {
+      expect(USAGE.replace(/\s+/g, ' ')).toContain(
+          'At least 32 characters from A-Z, a-z, 0-9, "-" and "_", with at least 8 different ones, and not one piece repeated (abcabc...). The pitwall repo\'s .env.example shows how to make a random one.',
+      );
+    });
+  });
+});
+
+describe('repeatsOnePiece', () => {
+  it.each([['aa'], ['abab'], ['abcabcab'], ['xyzxyzx'], ['aaaaaaaaab'.repeat(3)]])('finds a piece repeated in %j', (text) => {
+    expect(repeatsOnePiece(text)).toBe(true);
+  });
+
+  it.each([[''], ['a'], ['ab'], ['aab'], ['abcab'], ['abcdabc'], ['aaaaaaaaab']])('finds none in %j', (text) => {
+    expect(repeatsOnePiece(text)).toBe(false);
+  });
+
+  it('agrees with a check of every period, for many short strings', () => {
+    const naive = (text: string) => {
+      for (let p = 1; p <= text.length / 2; p++) {
+        if ([...text].every((char, i) => i < p || char === text[i - p])) return true;
+      }
+      return false;
+    };
+    for (let i = 0; i < 5_000; i++) {
+      const text = Array.from({ length: 1 + (i % 12) }, () => 'ab'[randomBytes(1)[0]! % 2]).join('');
+      expect(repeatsOnePiece(text), text).toBe(naive(text));
+    }
+  });
+
+  it('takes linear time on a long value, such as a megabyte of one character and another', () => {
+    const started = performance.now();
+    expect(repeatsOnePiece(`${'a'.repeat(1 << 20)}b`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe('what the CLI prints with each kind of token (W51)', () => {
+  const token = 'pitwall-test-token-0123456789abcdefghij';
+
+  it('prints a per-run token’s link, as it always has', () => {
+    expect(runningLines('http://127.0.0.1:4517', token, false)).toEqual([`pitwall is running at http://127.0.0.1:4517/#token=${token}`]);
+    expect(openInsteadHint(false)).toBe('Open the URL above instead.');
+  });
+
+  it('prints a fixed token’s address alone, and says where the token is', () => {
+    expect(runningLines('http://127.0.0.1:4517', token, true)).toEqual([
+      'pitwall is running at http://127.0.0.1:4517/',
+      "The token is the one in PITWALL_TOKEN, so it isn't printed. A tab that has it reconnects by itself; for a new tab, add #token= and that token to the address.",
+    ]);
+    expect(runningLines('http://127.0.0.1:4517', token, true)[1]).toBe(FIXED_TOKEN_LINE);
+    expect(runningLines('http://127.0.0.1:4517', token, true).join('\n')).not.toContain(token);
+    expect(openInsteadHint(true)).toBe('Open the URL above instead, and add #token= and your PITWALL_TOKEN to it.');
+  });
+});
+
+describe('envFileProblem (W51)', () => {
+  const file = '/Users/example/code/pitwall/.env';
+  const stats = (mode: number, uid = 501, isFile = true) => ({ mode: 0o100000 | mode, uid, isFile: () => isFile });
+
+  it('accepts a file of yours that only you can read and write', () => {
+    expect(envFileProblem(file, stats(0o600), { platform: 'darwin', uid: 501 })).toBeUndefined();
+    expect(envFileProblem(file, stats(0o400), { platform: 'linux', uid: 501 })).toBeUndefined();
+  });
+
+  it.each([[0o644], [0o640], [0o604], [0o620], [0o602], [0o660], [0o666], [0o777]])('refuses mode %o, saying chmod 600', (mode) => {
+    expect(envFileProblem(file, stats(mode), { platform: 'darwin', uid: 501 })).toBe(
+      `${file} can be read or changed by other users (mode ${mode.toString(8)}), and it can hold PITWALL_TOKEN. Run chmod 600 ${file}, then run npm run dev again.`,
+    );
+  });
+
+  it('refuses a file another user owns, even at 0600', () => {
+    expect(envFileProblem(file, stats(0o600, 502), { platform: 'darwin', uid: 501 })).toBe(
+      `${file} belongs to another user (uid 502). npm run dev reads a .env only when it's yours, since it can hold PITWALL_TOKEN.`,
+    );
+  });
+
+  it('refuses something that is not a file, such as a directory or a FIFO', () => {
+    expect(envFileProblem(file, stats(0o700, 501, false), { platform: 'darwin', uid: 501 })).toBe(
+      `${file} is not a file. Move it aside, then run npm run dev again.`,
+    );
+  });
+
+  it('checks only that it is a file on Windows, which has no POSIX modes', () => {
+    expect(envFileProblem(file, stats(0o666, 0), { platform: 'win32' })).toBeUndefined();
+    expect(envFileProblem(file, stats(0o666, 0, false), { platform: 'win32' })).toBeDefined();
+  });
 });
 
 describe('resolveWebRoot', () => {
@@ -388,7 +537,12 @@ describe('pitwall (the process)', () => {
     return { code, stdout, stderr };
   }
 
-  /** Starts the CLI on a free port and waits for it to print its URL and roots. */
+  /**
+   * Starts the CLI on a free port and waits for it to print its URL and roots.
+   * The token is the fixed `token` unless `env` says otherwise; an empty
+   * PITWALL_TOKEN gives a per-run one. `printedToken` is the token in the
+   * printed link, if there is one.
+   */
   async function start(args: string[] = [], env: NodeJS.ProcessEnv = {}) {
     const child = run(['--port', '0', ...args, tmp], { PITWALL_TOKEN: token, ...env });
     const result = exited(child);
@@ -396,7 +550,7 @@ describe('pitwall (the process)', () => {
     const [, url, printedToken] = await new Promise<RegExpExecArray>((resolve, reject) => {
       child.stdout.on('data', (chunk: Buffer) => {
         stdout += chunk.toString();
-        const match = /running at (http:\/\/127\.0\.0\.1:\d+)\/#token=(\S+)/.exec(stdout);
+        const match = /running at (http:\/\/127\.0\.0\.1:\d+)\/(?:#token=(\S+))?\n/.exec(stdout);
         if (match && stdout.includes('Watching')) resolve(match);
       });
       child.on('exit', () => reject(new Error(`exited early: ${stdout}`)));
@@ -409,10 +563,10 @@ describe('pitwall (the process)', () => {
    * answers 503. Polls until it's ready, so the test doesn't depend on how
    * quickly the fake claude and the indexer run on a loaded machine.
    */
-  async function firstSnapshot(url: string): Promise<Response> {
+  async function firstSnapshot(url: string, bearer: string = token): Promise<Response> {
     const deadline = Date.now() + 15_000;
     for (;;) {
-      const res = await fetch(`${url}/api/snapshot`, { headers: { authorization: `Bearer ${token}` } });
+      const res = await fetch(`${url}/api/snapshot`, { headers: { authorization: `Bearer ${bearer}` } });
       if (res.status !== 503 || Date.now() > deadline) return res;
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -444,10 +598,10 @@ describe('pitwall (the process)', () => {
     expect(result.stderr).toContain('pitwall: --interval must be a whole number of seconds from 1 to 300, not "0"');
   });
 
-  it('starts, prints the URL with the token and the roots, serves, and exits 0 on SIGTERM', async () => {
+  it('with a fixed token, starts, prints the URL without the token, and the roots, serves, and exits 0 on SIGTERM (W51)', async () => {
     const { child, result, stdout, url, printedToken } = await start();
-    expect(printedToken).toBe(token);
-    expect(stdout).toContain(`Watching root: ${tmp}`);
+    expect(printedToken).toBeUndefined();
+    expect(stdout).toContain(`pitwall is running at ${url}/\n${FIXED_TOKEN_LINE}\nWatching root: ${tmp}`);
 
     expect((await fetch(`${url}/api/snapshot`)).status).toBe(401);
     const res = await firstSnapshot(url);
@@ -456,7 +610,36 @@ describe('pitwall (the process)', () => {
     expect(await res.json()).toMatchObject({ groups: [], source: { ok: true } });
 
     child.kill('SIGTERM');
-    expect((await result).code).toBe(0);
+    const output = await result;
+    expect(output.code).toBe(0);
+    // Not on stdout or stderr, from start to exit: it would outlive the run wherever it was copied.
+    expect(output.stdout).not.toContain(token);
+    expect(output.stderr).not.toContain(token);
+    expect(output.stderr).toBe(`pitwall: ${fixedTokenNotice()}\n`);
+  }, 30_000);
+
+  it('with a per-run token, prints the URL with it, as before, and the token works', async () => {
+    const { child, result, stdout, url, printedToken } = await start([], { PITWALL_TOKEN: '' });
+    expect(printedToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(printedToken).not.toBe(token);
+    expect(stdout).toContain(`pitwall is running at ${url}/#token=${printedToken}\nWatching root: ${tmp}`);
+    expect(stdout).not.toContain('PITWALL_TOKEN');
+    expect((await firstSnapshot(url, printedToken)).status).toBe(200);
+
+    child.kill('SIGTERM');
+    const output = await result;
+    expect(output.code).toBe(0);
+    expect(output.stderr).not.toContain('fixed');
+  }, 30_000);
+
+  it('exits 1 for an obviously weak PITWALL_TOKEN, without printing it (W51)', async () => {
+    for (const weak of ['0'.repeat(32), 'changeme-changeme-changeme-changeme']) {
+      const result = await exited(run([tmp], { PITWALL_TOKEN: weak }));
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(/^pitwall: PITWALL_TOKEN must (have at least 8 different characters|not be one piece repeated, as in abcabcabc)\n/);
+      expect(result.stderr + result.stdout).not.toContain(weak);
+      expect(result.stdout).not.toContain('running at');
+    }
   }, 30_000);
 
   it('polls every 5 seconds by default, and says so', async () => {
@@ -519,13 +702,16 @@ describe('pitwall (the process)', () => {
       expect(statSync(home).mode & 0o777).toBe(0o700);
       expect(statSync(file).mode & 0o777).toBe(0o600);
       const page = await readFile(file, 'utf8');
+      // The launch file is the one place a fixed token is written (D7).
       expect(page).toContain(`location.replace("${url}/#token=${token}")`);
       expect(page).toContain(`<meta http-equiv="refresh" content="0; url=${url}/#token=${token}">`);
-      // stdout, the user's own terminal, still has the URL.
-      expect(stdout).toContain(`running at ${url}/#token=${token}`);
+      // stdout, the user's own terminal, has the address, without the fixed token (W51).
+      expect(stdout).toContain(`running at ${url}/\n`);
 
       child.kill('SIGTERM');
-      expect((await result).code).toBe(0);
+      const output = await result;
+      expect(output.code).toBe(0);
+      expect(output.stdout + output.stderr).not.toContain(token);
       expect(existsSync(file)).toBe(false);
     }, 30_000);
 
@@ -547,27 +733,76 @@ describe('pitwall (the process)', () => {
       expect(existsSync(file)).toBe(false);
     }, 30_000);
 
-    it('deletes the launch file as soon as a page authenticates, while it keeps running', async () => {
-      const { child, result, log, url } = await startOpening();
-      const file = (await openerCalls(log))[0]![0]!;
-      expect(existsSync(file)).toBe(true);
-
-      // What the page does once the launch file has sent it on.
+    /** What the page does once the launch file has sent it on: answers the challenge with a proof. Resolves once authenticated. */
+    async function authenticate(url: string, withToken: string): Promise<WebSocket> {
       const port = Number(new URL(url).port);
       const ws = new WebSocket(`ws://127.0.0.1:${port}${WS_PATH}`, { origin: pitwallOrigin(port) });
       const replies: { type: string; nonce?: string }[] = [];
       ws.on('message', (data) => {
         const message = JSON.parse(String(data)) as { type: string; nonce?: string };
         replies.push(message);
-        if (message.type === 'challenge') ws.send(JSON.stringify({ type: 'auth', proof: proofFor(token, message.nonce!, pitwallOrigin(port)) }));
+        if (message.type === 'challenge') ws.send(JSON.stringify({ type: 'auth', proof: proofFor(withToken, message.nonce!, pitwallOrigin(port)) }));
       });
       await waitUntil(() => replies.some((message) => message.type === 'authenticated'));
+      return ws;
+    }
+
+    it('with a per-run token, deletes the launch file as soon as a page authenticates, while it keeps running', async () => {
+      const { child, result, log, url, printedToken } = await startOpening({ PITWALL_TOKEN: '' });
+      const file = (await openerCalls(log))[0]![0]!;
+      expect(existsSync(file)).toBe(true);
+      expect(await readFile(file, 'utf8')).toContain(`#token=${printedToken}`);
+
+      const ws = await authenticate(url, printedToken!);
       await waitUntil(() => !existsSync(file));
       ws.close();
 
       expect(child.exitCode).toBeNull();
       child.kill('SIGTERM');
       expect((await result).code).toBe(0);
+    }, 30_000);
+
+    it('with a fixed token, keeps the launch file when a page authenticates, so a pinned tab can’t take it from a new one, and deletes it on exit (W51)', async () => {
+      const { child, result, log, url } = await startOpening();
+      const file = (await openerCalls(log))[0]![0]!;
+      expect(existsSync(file)).toBe(true);
+
+      // A pinned tab that already has the token reconnects first; then a second page, as a new tab would.
+      const pinned = await authenticate(url, token);
+      const another = await authenticate(url, token);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(existsSync(file)).toBe(true);
+      expect(await readFile(file, 'utf8')).toContain(`#token=${token}`);
+      pinned.close();
+      another.close();
+
+      expect(child.exitCode).toBeNull();
+      child.kill('SIGTERM');
+      expect((await result).code).toBe(0);
+      expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    it('says what to open instead when the browser can’t be opened: the link, or with a fixed token, the address and the token (W51)', async () => {
+      // Openers that fail, first on the CLI's PATH.
+      const failing = fresh('failing-bin');
+      await mkdir(failing);
+      for (const name of ['open', 'xdg-open']) await writeFile(join(failing, name), '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+      const path = `${failing}${delimiter}${bin}${delimiter}${process.env.PATH ?? ''}`;
+
+      for (const fixed of [true, false]) {
+        const child = run(['--port', '0', tmp], { PITWALL_TOKEN: fixed ? token : '', PITWALL_NO_OPEN: '0', PATH: path });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+        child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+        await waitUntil(() => stderr.includes("couldn't open a browser"));
+        child.kill('SIGTERM');
+        const [code] = (await once(child, 'exit')) as [number | null];
+        expect(code).toBe(0);
+        expect(stderr).toMatch(new RegExp(`pitwall: couldn't open a browser \\(.*\\)\\. ${openInsteadHint(fixed).replace(/[.]/g, '\\.')}\n`));
+        if (fixed) expect(stdout + stderr).not.toContain(token);
+        else expect(stdout).toMatch(/running at http:\/\/127\.0\.0\.1:\d+\/#token=[A-Za-z0-9_-]{43}\n/);
+      }
     }, 30_000);
 
     it('deletes launch files more than 24 hours old when it starts, and keeps newer ones', async () => {
@@ -672,17 +907,23 @@ describe('pitwall (the process)', () => {
   });
 });
 
+/** tsx's loader, from this repo, for a process whose cwd is elsewhere. */
+const TSX_LOADER = pathToFileURL(fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url))).href;
+
 /**
  * Stand-ins for the two watchers `npm run dev` starts, first on its PATH.
- * - `vite` waits to be stopped.
+ * - `vite` waits to be stopped. With $PWTEST_VITE_ENV_LOG set, it first
+ *   writes there the names of the variables it was given, never their values.
+ *   (Not a PITWALL_ name, since those mustn't reach it.)
  * - `tsx` does what `tsx watch src/cli.ts ...` does on one file change: runs
- *   the real CLI, then stops it and runs it again. It logs to
- *   $PITWALL_TEST_DEV_LOG its arguments, the marker it was given, and when the
- *   restarted CLI is up.
+ *   the real CLI, then stops it and runs it again, passing on what the CLI
+ *   prints on stdout. It logs to $PITWALL_TEST_DEV_LOG its arguments, the
+ *   marker it was given, and when the restarted CLI is up.
  * Both also stop if dev.ts goes away without stopping them, so a failed test
  * leaves nothing running.
  */
 const FAKE_VITE = `#!${process.execPath}
+if (process.env.PWTEST_VITE_ENV_LOG) require('node:fs').appendFileSync(process.env.PWTEST_VITE_ENV_LOG, JSON.stringify(Object.keys(process.env)) + '\\n');
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 const parent = process.ppid;
@@ -699,10 +940,11 @@ log('marker ' + process.env.PITWALL_OPEN_MARKER);
 const cliArgs = args.filter((arg) => arg !== 'watch' && !arg.startsWith('--clear-screen'));
 let child;
 function startCli() {
-  child = spawn(process.execPath, ['--import', 'tsx', ...cliArgs], { stdio: ['ignore', 'pipe', 'inherit'] });
+  child = spawn(process.execPath, ['--import', ${JSON.stringify(TSX_LOADER)}, ...cliArgs], { stdio: ['ignore', 'pipe', 'inherit'] });
   return new Promise((resolve, reject) => {
     let out = '';
     child.stdout.on('data', (chunk) => {
+      process.stdout.write(chunk);
       out += chunk;
       if (out.includes('Watching')) resolve();
     });
@@ -829,13 +1071,14 @@ describe('npm run dev (scripts/dev.ts)', () => {
 
 /**
  * A stand-in for `tsx watch src/cli.ts`, for the fixed-token tests: it notes the SHA-256 of the
- * PITWALL_TOKEN it was given, never the token, and whether the open marker was set, then waits to
- * be stopped.
+ * PITWALL_TOKEN it was given, never the token, and its PITWALL_TOKEN_PER_RUN, then waits to be
+ * stopped.
  */
 const FAKE_TSX_TOKEN = `#!${process.execPath}
 const { createHash } = require('node:crypto');
 const { appendFileSync } = require('node:fs');
 const token = process.env.PITWALL_TOKEN ?? '';
+appendFileSync(process.env.PITWALL_TEST_DEV_LOG, 'per-run ' + (process.env.PITWALL_TOKEN_PER_RUN ?? 'unset') + '\\n');
 appendFileSync(process.env.PITWALL_TEST_DEV_LOG, 'token ' + createHash('sha256').update(token).digest('hex') + ' ' + token.length + '\\n');
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
@@ -845,11 +1088,28 @@ setInterval(() => { if (process.ppid !== parent) process.exit(0); }, 200);
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-/** tsx's loader, from this repo, for a process whose cwd is elsewhere. */
-const TSX_LOADER = pathToFileURL(fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url))).href;
+/**
+ * A copy of the repo's layout for one dev run, at `root`: scripts/dev.ts copied, src/ and
+ * node_modules/ linked to the real ones, and a .env holding `env` when it's given, at `mode`
+ * (default 0600). So a .env of the real repo never reaches these tests.
+ */
+async function devLayout(root: string, env?: string, mode = 0o600): Promise<string> {
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  await mkdir(join(root, 'scripts'), { recursive: true });
+  await copyFile(join(repo, 'scripts', 'dev.ts'), join(root, 'scripts', 'dev.ts'));
+  await symlink(join(repo, 'src'), join(root, 'src'));
+  await symlink(join(repo, 'node_modules'), join(root, 'node_modules'));
+  // As the repo's own package.json says, so tsx loads dev.ts as a module.
+  await writeFile(join(root, 'package.json'), '{ "type": "module" }\n');
+  if (env !== undefined) {
+    await writeFile(join(root, '.env'), env, { mode });
+    // Exactly, whatever the umask.
+    await chmod(join(root, '.env'), mode);
+  }
+  return root;
+}
 
 describe('npm run dev: a fixed token (W40)', () => {
-  const repo = fileURLToPath(new URL('..', import.meta.url));
   const FIXED = 'pitwall-test-fixed-token-0123456789abcdefghij';
   const FROM_FILE = 'pitwall-test-dotenv-token-0123456789abcdefghij';
   let tmp: string;
@@ -868,29 +1128,23 @@ describe('npm run dev: a fixed token (W40)', () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  /**
-   * A copy of the repo's layout for one dev run: scripts/dev.ts copied, src/ linked to the real one,
-   * and a .env holding `env` when it's given. So a .env of the real repo never reaches these tests.
-   */
-  async function layout(env?: string): Promise<string> {
-    const root = join(tmp, `repo-${++n}`);
-    await mkdir(join(root, 'scripts'), { recursive: true });
-    await copyFile(join(repo, 'scripts', 'dev.ts'), join(root, 'scripts', 'dev.ts'));
-    await symlink(join(repo, 'src'), join(root, 'src'));
-    // As the repo's own package.json says, so tsx loads dev.ts as a module.
-    await writeFile(join(root, 'package.json'), '{ "type": "module" }\n');
-    if (env !== undefined) await writeFile(join(root, '.env'), env, { mode: 0o600 });
-    return root;
-  }
+  const layout = (env?: string, mode?: number) => devLayout(join(tmp, `repo-${++n}`), env, mode);
 
-  /** Runs the layout's dev.ts in `cwd`, with PITWALL_TOKEN only when `token` is given, and stops it once its watcher has started. */
-  async function devRun(root: string, { token, cwd = tmp }: { token?: string; cwd?: string } = {}) {
+  /**
+   * Runs the layout's dev.ts in `cwd`, with PITWALL_TOKEN only when `token` is given, and `extra`
+   * in its environment, and stops it once its watcher has started.
+   */
+  async function devRun(
+    root: string,
+    { token, cwd = tmp, extra = {}, alsoWaitFor }: { token?: string; cwd?: string; extra?: NodeJS.ProcessEnv; alsoWaitFor?: string } = {},
+  ) {
     const devLog = join(tmp, `dev-${++n}.log`);
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
       PITWALL_DEV_PORT: String(await freePort()),
       PITWALL_TEST_DEV_LOG: devLog,
+      ...extra,
     };
     delete env.PITWALL_TOKEN;
     if (token !== undefined) env.PITWALL_TOKEN = token;
@@ -903,7 +1157,7 @@ describe('npm run dev: a fixed token (W40)', () => {
     const exited = once(child, 'exit') as Promise<[number | null]>;
     const log = () => readFile(devLog, 'utf8').catch(() => '');
     const started = await Promise.race([
-      waitUntil(async () => /^token /m.test(await log()), 30_000).then(() => true),
+      waitUntil(async () => /^token /m.test(await log()) && (alsoWaitFor === undefined || existsSync(alsoWaitFor)), 30_000).then(() => true),
       exited.then(() => false),
     ]);
     if (started) {
@@ -912,7 +1166,8 @@ describe('npm run dev: a fixed token (W40)', () => {
     }
     const [code] = await exited;
     const seen = /^token ([0-9a-f]{64}) (\d+)$/m.exec(await log());
-    return { code, stdout, stderr, started, hash: seen?.[1], length: Number(seen?.[2]) };
+    const perRun = /^per-run (.*)$/m.exec(await log())?.[1];
+    return { code, stdout, stderr, started, hash: seen?.[1], length: Number(seen?.[2]), perRun };
   }
 
   it('without PITWALL_TOKEN, mints a random token for the run, and says nothing about it', async () => {
@@ -981,6 +1236,176 @@ describe('npm run dev: a fixed token (W40)', () => {
     expect(run.stderr.startsWith(message)).toBe(true);
     if ('token' in options && options.token) expect(run.stderr).not.toContain(options.token);
   }, 60_000);
+
+  it.each([
+    ['32 zeros, from the environment', { token: '0'.repeat(32) }, undefined, 'pitwall dev: PITWALL_TOKEN must have at least 8 different characters\n'],
+    ['a word repeated, from .env', {}, `PITWALL_TOKEN=${'changeme-'.repeat(5)}\n`, 'pitwall dev: PITWALL_TOKEN must not be one piece repeated, as in abcabcabc (from '],
+  ] as const)('refuses an obviously weak PITWALL_TOKEN, %s, without printing it, and starts nothing (W51)', async (_, options, env, message) => {
+    const run = await devRun(await layout(env), options);
+    expect(run.code).toBe(1);
+    expect(run.started).toBe(false);
+    expect(run.stderr.startsWith(message)).toBe(true);
+    expect(run.stderr + run.stdout).not.toContain('0'.repeat(32));
+    expect(run.stderr + run.stdout).not.toContain('changeme-');
+  }, 60_000);
+
+  it('marks the token it makes for the run as per-run, and a fixed one never, even when the environment says so (W51)', async () => {
+    const minted = await devRun(await layout());
+    expect(minted.perRun).toBe('1');
+    const fixed = await devRun(await layout(), { token: FIXED, extra: { PITWALL_TOKEN_PER_RUN: '1' } });
+    expect(fixed.hash).toBe(sha256(FIXED));
+    expect(fixed.perRun).toBe('unset');
+    expect(fixed.stderr).toBe(`pitwall dev: ${fixedTokenNotice()}\n`);
+    const fromFile = await devRun(await layout(`PITWALL_TOKEN=${FROM_FILE}\n`));
+    expect(fromFile.perRun).toBe('unset');
+  }, 60_000);
+
+  describe('the .env’s mode and owner (W51)', () => {
+    it.each([[0o644], [0o640], [0o604], [0o660], [0o620]])('refuses a .env at mode %o, saying chmod 600, without showing what is in it, and starts nothing', async (mode) => {
+      const root = await layout(`PITWALL_TOKEN=${FROM_FILE}\nPWTEST_OTHER=made-up-value-in-the-file\n`, mode);
+      const run = await devRun(root);
+      expect(run.code).toBe(1);
+      expect(run.started).toBe(false);
+      // dev.ts names the file from its own real path, so a symlinked temp directory shows resolved.
+      const file = join(realpathSync(root), '.env');
+      expect(run.stderr).toBe(
+        `pitwall dev: ${file} can be read or changed by other users (mode ${mode.toString(8)}), and it can hold PITWALL_TOKEN. Run chmod 600 ${file}, then run npm run dev again.\n`,
+      );
+      expect(run.stderr + run.stdout).not.toContain(FROM_FILE);
+      expect(run.stderr + run.stdout).not.toContain('made-up-value');
+      // Left as it was: pitwall never changes the mode itself.
+      expect(statSync(join(root, '.env')).mode & 0o777).toBe(mode);
+    }, 60_000);
+
+    it('refuses a loose .env even when the environment has the token, since its other variables would still be read', async () => {
+      const run = await devRun(await layout(`PITWALL_TOKEN=${FROM_FILE}\n`, 0o644), { token: FIXED });
+      expect(run.code).toBe(1);
+      expect(run.started).toBe(false);
+      expect(run.stderr).toContain('Run chmod 600 ');
+      expect(run.stderr + run.stdout).not.toContain(FIXED);
+      expect(run.stderr + run.stdout).not.toContain(FROM_FILE);
+    }, 60_000);
+
+    it('reads a .env at 0600 or 0400', async () => {
+      for (const mode of [0o600, 0o400]) {
+        const run = await devRun(await layout(`PITWALL_TOKEN=${FROM_FILE}\n`, mode));
+        expect(run.started).toBe(true);
+        expect(run.hash).toBe(sha256(FROM_FILE));
+      }
+    }, 60_000);
+
+    it('refuses a .env that is a directory, rather than reading it', async () => {
+      const root = await layout();
+      await mkdir(join(root, '.env'), { mode: 0o700 });
+      const run = await devRun(root);
+      expect(run.code).toBe(1);
+      expect(run.started).toBe(false);
+      expect(run.stderr).toBe(`pitwall dev: ${join(realpathSync(root), '.env')} is not a file. Move it aside, then run npm run dev again.\n`);
+    }, 60_000);
+  });
+
+  it('gives Vite the environment pitwall gives any child: no PITWALL_* variable, and nothing holding the token (W48 F7)', async () => {
+    const viteLog = join(tmp, `vite-env-${++n}.log`);
+    const run = await devRun(await layout(`PITWALL_TOKEN=${FROM_FILE}\nPWTEST_FROM_FILE=kept\n`), {
+      extra: { PWTEST_VITE_ENV_LOG: viteLog, PWTEST_COPY: `Bearer ${FROM_FILE}`, PWTEST_KEPT: 'kept', PITWALL_NO_OPEN: '1' },
+      alsoWaitFor: viteLog,
+    });
+    expect(run.started).toBe(true);
+    const names = JSON.parse((await readFile(viteLog, 'utf8')).split('\n')[0]!) as string[];
+    expect(names.filter((name) => /^pitwall_/i.test(name))).toEqual([]);
+    expect(names).not.toContain('PWTEST_COPY');
+    expect(names).toEqual(expect.arrayContaining(['PATH', 'PWTEST_KEPT', 'PWTEST_FROM_FILE', 'PWTEST_VITE_ENV_LOG']));
+  }, 60_000);
+});
+
+describe('npm run dev: what the CLI prints on every restart (W51)', () => {
+  const FIXED = 'pitwall-test-fixed-token-0123456789abcdefghij';
+  const FROM_FILE = 'pitwall-test-dotenv-token-0123456789abcdefghij';
+  let tmp: string;
+  let bin: string;
+  let n = 0;
+
+  beforeAll(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
+    bin = join(tmp, 'bin');
+    await mkdir(bin);
+    await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
+    await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
+    await writeFile(join(bin, 'vite'), FAKE_VITE, { mode: 0o755 });
+    await writeFile(join(bin, 'tsx'), FAKE_TSX, { mode: 0o755 });
+  });
+
+  afterAll(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  /**
+   * Runs a layout's dev.ts, from the layout itself as npm run dev does, so src/cli.ts resolves, with
+   * the restarting stand-in for tsx watch, until the restarted CLI is up. Then stops it, and returns
+   * everything it printed.
+   */
+  async function devRestart(env?: string, token?: string) {
+    const root = await devLayout(join(tmp, `repo-${++n}`), env);
+    const port = await freePort();
+    const devLog = join(tmp, `dev-${++n}.log`);
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
+      PITWALL_DEV_PORT: String(port),
+      PITWALL_NO_OPEN: '0',
+      PITWALL_HOME: join(tmp, `home-${++n}`),
+      PITWALL_TEST_OPEN_LOG: join(tmp, `opened-${n}`),
+      PITWALL_TEST_DEV_LOG: devLog,
+    };
+    delete childEnv.PITWALL_TOKEN;
+    delete childEnv.PITWALL_TOKEN_PER_RUN;
+    if (token !== undefined) childEnv.PITWALL_TOKEN = token;
+    const child = spawn(process.execPath, ['--import', TSX_LOADER, join(root, 'scripts', 'dev.ts'), tmp], { cwd: root, env: childEnv });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const devLogText = async () => readFile(devLog, 'utf8').catch(() => '');
+    try {
+      await waitUntil(async () => /^(restarted|failed)/m.test(await devLogText()), 45_000);
+      expect(await devLogText()).not.toMatch(/^failed/m);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM');
+        const killer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+        await once(child, 'exit');
+        clearTimeout(killer);
+      }
+    }
+    return { port, stdout, stderr };
+  }
+
+  it('without PITWALL_TOKEN, prints the dev run’s own token with the URL, the same on every restart, as before', async () => {
+    const { port, stdout, stderr } = await devRestart();
+    const printed = [...stdout.matchAll(new RegExp(`^pitwall is running at http://127\\.0\\.0\\.1:${port}/#token=([A-Za-z0-9_-]{43})$`, 'gm'))].map((m) => m[1]);
+    expect(printed).toHaveLength(2);
+    expect(printed[1]).toBe(printed[0]);
+    expect(stdout).not.toContain(FIXED_TOKEN_LINE);
+    expect(stderr).not.toContain('fixed');
+  }, 60_000);
+
+  it.each([
+    ['from the environment', undefined, FIXED],
+    ['from .env', `PITWALL_TOKEN=${FROM_FILE}\n`, undefined],
+  ] as const)('with a fixed token %s, prints the address without it on every restart, and the token nowhere', async (_, env, token) => {
+    const secret = token ?? FROM_FILE;
+    const { port, stdout, stderr } = await devRestart(env, token);
+    const lines = stdout.split('\n');
+    expect(lines.filter((line) => line === `pitwall is running at http://127.0.0.1:${port}/`)).toHaveLength(2);
+    expect(lines.filter((line) => line === FIXED_TOKEN_LINE)).toHaveLength(2);
+    expect(stdout).not.toContain('#token=' + secret.slice(0, 4));
+    expect(stdout + stderr).not.toContain(secret);
+    // Said once, by npm run dev, not by each restart.
+    expect(stderr.split('\n').filter((line) => line.includes('the token is fixed'))).toEqual([
+      `pitwall dev: ${fixedTokenNotice(env === undefined ? undefined : '.env')}`,
+    ]);
+  }, 60_000);
 });
 
 describe('pitwall (the process): PITWALL_TOKEN comes from the environment only (W40)', () => {
@@ -1036,13 +1461,14 @@ describe('pitwall (the process): PITWALL_TOKEN comes from the environment only (
     expect(run.stderr).not.toContain('fixed');
   }, 30_000);
 
-  it('with PITWALL_TOKEN set, prints one line saying the token is fixed, without the token', async () => {
+  it('with PITWALL_TOKEN set, prints one line saying the token is fixed, and never the token', async () => {
     const run = await started(FIXED);
     expect(run.code).toBe(0);
-    expect(run.printed).toBe(FIXED);
+    expect(run.printed).toBeUndefined();
     expect(run.stderr).toBe(`pitwall: ${fixedTokenNotice()}\n`);
-    // The URL line on stdout carries the token, as it always has (D7); the warning never does.
-    expect(run.stderr).not.toContain(FIXED);
+    // Neither the warning nor the URL line carries it (W51).
+    expect(run.stdout).toMatch(new RegExp(`^pitwall is running at http://127\\.0\\.0\\.1:\\d+/\n${FIXED_TOKEN_LINE.replace(/[.;#]/g, '\\$&')}\nWatching root: `));
+    expect(run.stdout + run.stderr).not.toContain(FIXED);
   }, 30_000);
 });
 
@@ -1053,6 +1479,10 @@ describe('.env.example (W40)', () => {
     expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('Use this only on a single-user machine or for development.');
     expect(text).toContain('never reads a .env');
     expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('Left empty, as here, it counts as unset');
+    // npm run dev refuses a .env that others can read (W51), and a copy starts at the umask's 0644.
+    expect(text).toMatch(/^#\s+chmod 600 \.env$/m);
+    expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('with at least 8 different ones, and not one piece repeated (abcabc...)');
+    expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('pitwall never prints a fixed token');
     // Its command makes a token the CLI accepts.
     const command = /node -e "(.*)"/.exec(text)![1]!;
     const made = execFileSync(process.execPath, ['-e', command], { encoding: 'utf8' }).trim();
