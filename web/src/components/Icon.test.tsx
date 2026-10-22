@@ -7,7 +7,8 @@ import { Icon } from './Icon.js';
 const NAMES = [
   'close', 'expand', 'select', 'more', 'menu', 'search', 'clear', 'add', 'copy', 'copied', 'terminal',
   'conversation', 'send', 'stop', 'remove', 'restart', 'retry', 'info', 'success', 'warning', 'error',
-  'repo', 'directory', 'external', 'latest', 'back', 'keyboard', 'hide', 'show', 'preferences', 'checked', 'theme-system', 'theme-light', 'theme-dark',
+  'repo', 'directory', 'external', 'latest', 'back', 'keyboard', 'hide', 'show', 'preferences', 'checked', 'star', 'starred', 'theme-system',
+  'theme-light', 'theme-dark',
 ];
 
 function svgOf(container: HTMLElement): SVGSVGElement {

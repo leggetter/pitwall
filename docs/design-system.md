@@ -559,9 +559,10 @@ CSS custom properties don't work in media queries, so these are constants. Use t
   - **Licence files:** both are SIL OFL 1.1, reproduced in full in the root `THIRD_PARTY_NOTICES.md`. The web build copies that file into `dist/web` as `THIRD_PARTY_NOTICES.txt`, so the licences ship with the font files.
 - **Icons:** Material Symbols Rounded, bundled as SVG path data, never as a font or from a CDN.
   - Style: fill 0, weight 400, grade 0. Each size draws its own optical size, which sets the stroke weight for that size: 16 px draws the 20 px design (there's no 16 px one), and 24 px draws the 24 px design.
+    - **One exception, `starred`** (W53): the same glyph as `star`, at fill 1, the filled style Material Symbols draws for a toggle that's on. A star toggle reads by its fill everywhere people star things, and no fill 0 glyph draws a filled star. `scripts/extract-icons.ts` takes the style with the glyph (`['star', 'fill1']`), and fetches `star_fill1_20px.svg` and `_24px.svg` from the same commit.
     - The 48 px design, the only one in the `@material-symbols/svg-400` package, is too thin at 16 px: about 1.0 px strokes, against 1.2 px for the 20 px design.
   - Vendor only the glyphs pitwall uses, from a pinned upstream commit at least 14 days old, as the repo's dependency rule asks. Keep the path data in `web/src/icons/paths.ts`, one path per size, keyed by the semantic names below.
-    - Today's source is `google/material-design-icons` at commit `737e3324305806514d7909874fa1818ae1808232` (2026-10-02): `symbols/web/<glyph>/materialsymbolsrounded/<glyph>_20px.svg` and `_24px.svg`. Nothing is installed.
+    - Today's source is `google/material-design-icons` at commit `737e3324305806514d7909874fa1818ae1808232` (2026-10-02): `symbols/web/<glyph>/materialsymbolsrounded/<glyph>_20px.svg` and `_24px.svg`, or `<glyph>_fill1_20px.svg` and `_24px.svg` for the filled style. Nothing is installed.
     - `scripts/extract-icons.ts` prints a curl config for exactly those files and the licence, then regenerates `paths.ts` from the fetched copies, reading them as data. Its header comment has the steps.
   - Render them through one `Icon` component, `web/src/components/Icon.tsx`: `<svg viewBox="0 -960 960 960" width height fill="currentColor" aria-hidden="true" focusable="false">`, with `size` 16 (the default) or 24, which picks that size's path.
   - **Licence files:** Apache 2.0. The licence text is at `web/src/icons/LICENSE` and in `THIRD_PARTY_NOTICES.md`. The repository has no `NOTICE` file at that commit.
@@ -595,6 +596,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `hide` / `show` | visibility_off / visibility | The session list header's Hide from repo list and Show in repo list, and each hidden group's Unhide (W35). Each draws what the button does |
 | `preferences` | tune | The header's [View preferences](#view-preferences) button (W42) |
 | `checked` | check | The chosen option in a menu's radio group, as in View preferences (W42). The same glyph as `copied`, for another meaning |
+| `star` / `starred` | star / star at fill 1 | A session's [star toggle](#starred-sessions), off and on (W53): outlined while it isn't starred, filled while it is |
 | `theme-system` / `theme-light` / `theme-dark` | computer / light_mode / dark_mode | The theme switch |
 
 ### 2.15 Mapping from today's CSS

@@ -14,6 +14,9 @@
 // be a single path in Material Symbols' 960-unit viewBox, and each path may
 // contain only path commands and numbers, so nothing else can reach the
 // generated file.
+//
+// Every glyph is fill 0, except a name that asks for the filled style (fill1),
+// which Material Symbols draws for a toggle that's on: the starred star (W53).
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,8 +25,10 @@ import { fileURLToPath } from 'node:url';
 const REPO = 'google/material-design-icons';
 /** 2026-10-02, "Update Symbols". Apache License 2.0 at this commit, with no NOTICE file. */
 const COMMIT = '737e3324305806514d7909874fa1818ae1808232';
-/** Rounded, fill 0, weight 400, grade 0: the files with nothing after the optical size. */
+/** Rounded, fill 0, weight 400, grade 0: the files with nothing between the glyph and the optical size. */
 const STYLE = 'materialsymbolsrounded';
+/** The one other style a name may ask for: fill 1, for a toggle that's on, with weight and grade as above. */
+const FILLED = 'fill1';
 const VIEW_BOX = '0 -960 960 960';
 
 /**
@@ -36,8 +41,11 @@ const SIZES = [
   [24, 24],
 ] as const;
 
-/** Semantic name, then the Material Symbols glyph it uses. The table in docs/design-system.md, 2.14. */
-const ICONS: Readonly<Record<string, string>> = {
+/**
+ * Semantic name, then the Material Symbols glyph it uses, or the glyph and its filled style. The table
+ * in docs/design-system.md, 2.14.
+ */
+const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: typeof FILLED]>> = {
   close: 'close',
   expand: 'chevron_right',
   // The down chevron, which Material Symbols used to call expand_more.
@@ -73,6 +81,9 @@ const ICONS: Readonly<Record<string, string>> = {
   // The header's View preferences menu, and the mark on its chosen option (W42).
   preferences: 'tune',
   checked: 'check',
+  // A session's star, off and on (W53): the same glyph, outlined, then filled, as Material Symbols draws a toggle's two states.
+  star: 'star',
+  starred: ['star', FILLED],
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',
@@ -86,14 +97,25 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+/** A name's glyph, and its style when it isn't fill 0. */
+function glyphOf(entry: (typeof ICONS)[string]): { glyph: string; style: string | undefined } {
+  return typeof entry === 'string' ? { glyph: entry, style: undefined } : { glyph: entry[0], style: entry[1] };
+}
+
+/** A glyph's file name, for one optical size: star_20px, or star_fill1_20px for the filled style. */
+function fileName(entry: (typeof ICONS)[string], opticalSize: number): string {
+  const { glyph, style } = glyphOf(entry);
+  return `${glyph}${style ? `_${style}` : ''}_${opticalSize}px`;
+}
+
 /** Where a glyph's file is in the repository, for one optical size. */
-function glyphPath(glyph: string, opticalSize: number): string {
-  return `symbols/web/${glyph}/${STYLE}/${glyph}_${opticalSize}px.svg`;
+function glyphPath(entry: (typeof ICONS)[string], opticalSize: number): string {
+  return `symbols/web/${glyphOf(entry).glyph}/${STYLE}/${fileName(entry, opticalSize)}.svg`;
 }
 
 /** Every file the extraction reads, relative to the repository root. */
 function files(): string[] {
-  return ['LICENSE', ...Object.values(ICONS).flatMap((glyph) => SIZES.map(([, optical]) => glyphPath(glyph, optical)))];
+  return ['LICENSE', ...Object.values(ICONS).flatMap((entry) => SIZES.map(([, optical]) => glyphPath(entry, optical)))];
 }
 
 /** The one path's `d`, after checking the SVG is the shape the generated file assumes. */
@@ -110,8 +132,9 @@ function pathData(svg: string, file: string): string {
   return d;
 }
 
-for (const [name, glyph] of Object.entries(ICONS)) {
-  if (!/^[a-z0-9_]+$/.test(glyph) || !/^[a-z]+(?:-[a-z]+)*$/.test(name)) fail(`bad icon ${name}: ${glyph}`);
+for (const [name, entry] of Object.entries(ICONS)) {
+  const { glyph, style } = glyphOf(entry);
+  if (!/^[a-z0-9_]+$/.test(glyph) || !/^[a-z]+(?:-[a-z]+)*$/.test(name) || (style !== undefined && style !== FILLED)) fail(`bad icon ${name}: ${glyph}`);
 }
 
 const [command] = process.argv.slice(2);
@@ -130,10 +153,10 @@ if (!licence.includes('Apache License') || !licence.includes('Version 2.0, Janua
   fail(`${join(dir, 'LICENSE')} isn't the Apache License 2.0`);
 }
 
-const entries = Object.entries(ICONS).map(([name, glyph]) => {
+const entries = Object.entries(ICONS).map(([name, entry]) => {
   const sizes = SIZES.map(([size, optical]) => {
-    const file = join(dir, glyphPath(glyph, optical));
-    return `    /** ${glyph}_${optical}px */\n    ${size}: '${pathData(readFileSync(file, 'utf8'), file)}',`;
+    const file = join(dir, glyphPath(entry, optical));
+    return `    /** ${fileName(entry, optical)} */\n    ${size}: '${pathData(readFileSync(file, 'utf8'), file)}',`;
   });
   // Single quotes, as in the rest of the code. Neither a name nor a checked path can contain one.
   const key = name.includes('-') ? `'${name}'` : name;
@@ -144,7 +167,8 @@ const source = `// Generated by scripts/extract-icons.ts. Don't edit by hand: se
 //
 // Material Symbols Rounded, from ${REPO} at commit
 // ${COMMIT} (Apache License 2.0; see ./LICENSE
-// and THIRD_PARTY_NOTICES.md): fill 0, weight 400, grade 0. Keyed by the
+// and THIRD_PARTY_NOTICES.md): fill 0, weight 400, grade 0, except the files
+// named _${FILLED}_, which are fill 1, for a toggle that's on. Keyed by the
 // semantic names in docs/design-system.md (2.14), then by the size Icon draws:
 // 16 px uses the 20 px optical size, whose strokes hold up when scaled down,
 // and 24 px uses the 24 px one. Each path's source file is named above it.
