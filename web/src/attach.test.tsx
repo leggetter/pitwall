@@ -264,6 +264,12 @@ describe('endMessage', () => {
     expect(endMessage({ kind: 'server', reason: 'A made-up reason from the server.' })).toEqual({ text: "Couldn't attach:", detail: 'A made-up reason from the server.' });
     expect(endMessage({ kind: 'detached' })).toBeUndefined();
   });
+
+  it('says how to reopen pitwall when the proof is refused, with a per-run token or a fixed one (W51)', () => {
+    expect(endMessage({ kind: 'unauthorized' })).toEqual({
+      text: 'pitwall refused the sign-in proof. Reopen pitwall from the link it printed, or, if PITWALL_TOKEN is set, add #token= and that token to the address.',
+    });
+  });
 });
 
 describe('inputChunks', () => {
