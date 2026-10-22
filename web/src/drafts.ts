@@ -4,9 +4,12 @@
 // tab, brings it back, and one session's draft never shows in another's box.
 //
 // sessionStorage, not localStorage (Phil, 2026-10-22): a draft lasts as long as the tab, as the token
-// does (D7), and survives reloads and pitwall restarts, but doesn't stay on disk once the tab has
-// gone, and two tabs never overwrite each other's. The text is session content, D14's one exception,
-// so it goes nowhere else: never logged, never in a URL, and sent only by Send, to the relay.
+// does (D7), and survives reloads and pitwall restarts, and two tabs never overwrite each other's.
+// It isn't kept off disk, though (W48 F10): Chrome writes sessionStorage to the browser profile, and
+// brings it back with a tab the browser reopens, such as a closed tab reopened or a session restored
+// at start. So a draft is on disk in the profile while its tab is open, and stays there with a closed
+// tab the browser can still reopen. The text is session content, D14's one exception, so pitwall puts
+// it nowhere else: never logged, never in a URL, and sent only by Send, to the relay.
 //
 // Each key holds a small versioned JSON value:
 //
@@ -23,7 +26,7 @@
 // Written as the text changes, in the same event, so a reload straight after a keystroke keeps it.
 // Removed when the box empties, and when a send is delivered, held or refused, as the box clears
 // then; kept, without `send`, when it wasn't sent. Never pruned for a session missing from a
-// snapshot, since a failed poll can empty the list: drafts go when the tab does.
+// snapshot, since a failed poll can empty the list: drafts go with the tab's sessionStorage.
 //
 // Storage can be missing, throw or be full, in a private window, with site data blocked or over its
 // quota. The box then works from memory, as before W44, with no notice. A write that fails removes
