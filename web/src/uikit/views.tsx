@@ -27,6 +27,7 @@ import {
   MARKDOWN_CONVERSATION,
   MARKDOWN_EDGES,
   MARKDOWN_ELEMENTS,
+  QUESTION_CONVERSATION,
   RETRIED_DETAIL,
   ROOT,
   session,
@@ -387,6 +388,9 @@ const CODE_LINKS_STUB: StubOptions = { entries: LINKS_IN_CODE };
 const TO_PITWALL = session('conversation-to-pitwall', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
 const TO_PITWALL_NARROW = session('conversation-to-pitwall-narrow', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
 const TO_PITWALL_STUB: StubOptions = { entries: TO_PITWALL_CONVERSATION };
+const QUESTIONS = session('conversation-questions', { title: 'Export retries' });
+const QUESTIONS_NARROW = session('conversation-questions-narrow', { title: 'Export retries' });
+const QUESTIONS_STUB: StubOptions = { entries: QUESTION_CONVERSATION };
 
 /** The event that moves a Refreshing session's activity, as the index does when the session does something. */
 const REFRESH = 'uikit-refresh';
@@ -559,6 +563,29 @@ export function Conversations() {
         <Stubbed options={TO_PITWALL_STUB}>
           <Scenario run={scrolledTo('.entry-to-pitwall')}>
             <SessionView session={TO_PITWALL_NARROW} listed onClose={noop} compact />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Questions asked in a dialog"
+        note="Claude Code's question dialog, once answered, in its call's place, never folded with the calls around it: Claude asked, then each question with its header and its options, the chosen ones in the selected look with a check and Your answer. A dialog of two, a single choice and a multi-select; an answer typed in place of an option, shown as typed; an answer with notes; and a dismissed dialog, Not answered. Plain text throughout. Scrolled to the first question."
+        frame="tall"
+      >
+        <Stubbed options={QUESTIONS_STUB}>
+          <Scenario run={scrolledTo('.entry-question')}>
+            <SessionView session={QUESTIONS} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Questions asked in a dialog, 600 px and narrower"
+        note="Long questions, options and answers wrap; nothing scrolls sideways. Scrolled to the first question."
+        frame="view"
+        width={375}
+      >
+        <Stubbed options={QUESTIONS_STUB}>
+          <Scenario run={scrolledTo('.entry-question')}>
+            <SessionView session={QUESTIONS_NARROW} listed onClose={noop} compact />
           </Scenario>
         </Stubbed>
       </Specimen>

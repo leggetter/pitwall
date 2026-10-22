@@ -3,7 +3,9 @@
 // newest: your messages, Claude's, its messages to pitwall's relay, messages from other sessions and
 // notices, each text entry with its speaker line and time, and tool calls, two or more in a row folded
 // into one toggle. A message to pitwall's relay is the session's SendMessage call to it, shown in full
-// in the call's place (W46), "To pitwall-relay": it's never folded with the calls around it.
+// in the call's place (W46), "To pitwall-relay": it's never folded with the calls around it. Nor is a
+// question Claude Code asked in its dialog (W49), "Claude asked": each question with its options, the
+// answer marked, as text.
 //
 // - The newest page is fetched when the view opens, and again whenever the session's activity time
 //   moves; it's merged onto the end without duplicating an entry (conversation.ts). Older pages come
@@ -41,8 +43,9 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import type { ConversationEntry, ConversationPage } from '../../../src/shared/protocol.js';
+import type { AskedQuestion, ConversationEntry, ConversationPage } from '../../../src/shared/protocol.js';
 import {
+  chosenAnswer,
   conversationRows,
   countAdded,
   foldOpen,
@@ -561,6 +564,109 @@ function isMarkdown(entry: ConversationEntry): boolean {
   return entry.markdown === true && (entry.kind === 'assistant' || entry.kind === 'cross-session' || entry.kind === 'to-pitwall');
 }
 
+/** The speaker line of a question Claude Code asked in its dialog (W49). */
+export const QUESTION_SPEAKER = 'Claude asked';
+
+/** The speaker line: who, then " · 11:06" when the entry has a time. */
+function Speaker({ entry, children }: { entry: ConversationEntry; children: ReactNode }) {
+  const time = entry.at !== undefined && clockTime(entry.at) !== undefined ? entry.at : undefined;
+  return (
+    <p className="entry-speaker">
+      {children}
+      {time !== undefined && (
+        <span className="entry-time">
+          {' · '}
+          <Timestamp at={time} format="time" />
+        </span>
+      )}
+    </p>
+  );
+}
+
+/**
+ * One question of a dialog (W49): its header, the question, a note when more than one option could
+ * be chosen, and its options as a list named by the question, each chosen one marked "Your answer",
+ * visibly and to a screen reader. An answer that names no option is shown as typed, and notes follow.
+ * In a dialog that wasn't answered (`dismissed`), nothing is marked. With `sayMissing`, a question
+ * with no answer says so. Every string is plain text.
+ */
+function Question({ question, dismissed, sayMissing, alone }: { question: AskedQuestion; dismissed: boolean; sayMissing: boolean; alone: boolean }) {
+  const id = useId();
+  const answer = dismissed ? undefined : chosenAnswer(question);
+  const Tag = alone ? 'div' : 'li';
+  return (
+    <Tag className="question">
+      {question.header !== undefined && <p className="question-header">{plainText(question.header)}</p>}
+      <p className="question-text" id={id}>
+        {plainText(question.question)}
+      </p>
+      {question.multiSelect === true && <p className="question-note">You could choose more than one.</p>}
+      {question.options.length > 0 && (
+        <ul className="question-options" aria-labelledby={id}>
+          {question.options.map((option, index) => {
+            const chosen = answer?.chosen.has(index) === true;
+            return (
+              <li key={index} className={chosen ? 'question-option chosen' : 'question-option'}>
+                {chosen ? <Icon name="checked" className="question-option-icon" /> : <span className="question-option-icon" aria-hidden="true" />}
+                <div className="question-option-body">
+                  <p className="question-option-label">
+                    {plainText(option.label)}
+                    {chosen && (
+                      <span className="question-option-chosen">
+                        {/* The pause a screen reader needs between the label and what it is; the screen shows the gap. */}
+                        <span className="visually-hidden">, </span>
+                        Your answer
+                      </span>
+                    )}
+                  </p>
+                  {option.description !== undefined && <p className="question-option-description">{plainText(option.description)}</p>}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {answer?.typed !== undefined && (
+        <div className="question-typed">
+          <p className="question-typed-label">Your answer</p>
+          <p className="question-typed-text">{plainText(answer.typed)}</p>
+        </div>
+      )}
+      {question.notes !== undefined && (
+        <div className="question-typed question-notes">
+          <p className="question-typed-label">Your notes</p>
+          <p className="question-typed-text">{plainText(question.notes)}</p>
+        </div>
+      )}
+      {sayMissing && answer === undefined && <p className="question-note">No answer in the transcript.</p>}
+    </Tag>
+  );
+}
+
+/**
+ * A question Claude Code asked in its dialog (W49): "Claude asked", its time, then each question.
+ * A dialog that wasn't answered, whose result was an error, says so once, after its questions; so
+ * does one whose answers aren't in the transcript at all. With several questions, they're a list.
+ */
+function QuestionEntry({ entry }: { entry: ConversationEntry }) {
+  // A question entry always has its questions; one that came without says its one-line text.
+  const questions = entry.questions !== undefined && entry.questions.length > 0 ? entry.questions : [{ question: entry.text, options: [] }];
+  const dismissed = entry.toolError === true;
+  // None answered: said once, for the whole dialog, rather than under each question.
+  const none = !dismissed && questions.every((question) => question.answer === undefined);
+  const alone = questions.length === 1;
+  const items = questions.map((question, index) => <Question key={index} question={question} dismissed={dismissed} sayMissing={!dismissed && !none} alone={alone} />);
+  return (
+    <li className="entry entry-question">
+      <Speaker entry={entry}>{QUESTION_SPEAKER}</Speaker>
+      {alone ? items : <ol className="questions">{items}</ol>}
+      {dismissed && <p className="question-status">Not answered.</p>}
+      {none && <p className="question-status">{alone ? 'No answer in the transcript.' : 'No answers in the transcript.'}</p>}
+      {entry.truncated && <p className="entry-cut">Cut short.</p>}
+    </li>
+  );
+}
+
 /**
  * One entry that isn't folded. Markdown as pitwall's own elements, and anything else as text, its line
  * breaks and spaces kept by CSS. Never HTML.
@@ -573,6 +679,7 @@ function Entry({ entry }: { entry: ConversationEntry }) {
       </li>
     );
   }
+  if (entry.kind === 'question') return <QuestionEntry entry={entry} />;
   const text = plainText(entry.text);
   const cut = entry.truncated && <p className="entry-cut">Cut short.</p>;
   if (entry.kind === 'notice') {
@@ -584,7 +691,6 @@ function Entry({ entry }: { entry: ConversationEntry }) {
     );
   }
   const speaker = entry.kind === 'cross-session' ? `From ${plainText(entry.from ?? 'another session')}` : SPEAKERS[entry.kind];
-  const time = entry.at !== undefined && clockTime(entry.at) !== undefined ? entry.at : undefined;
   const body = isMarkdown(entry) ? (
     <div className="entry-text entry-markdown">
       <Markdown text={text} />
@@ -594,15 +700,7 @@ function Entry({ entry }: { entry: ConversationEntry }) {
   );
   return (
     <li className={`entry entry-${entry.kind}`}>
-      <p className="entry-speaker">
-        {speaker}
-        {time !== undefined && (
-          <span className="entry-time">
-            {' · '}
-            <Timestamp at={time} format="time" />
-          </span>
-        )}
-      </p>
+      <Speaker entry={entry}>{speaker}</Speaker>
       {body}
       {cut}
     </li>

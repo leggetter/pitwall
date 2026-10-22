@@ -2738,6 +2738,125 @@ mark.match {
 }
 
 /*
+ * A question Claude Code asked in its dialog (W49, section 4: Conversation): "Claude asked", then each
+ * question, its options as boxes, the chosen ones in the selected look with a check and "Your
+ * answer"; an answer typed in place of an option and notes in sunken boxes, as your messages are.
+ * No fill of its own: it's Claude's turn.
+ */
+.entry-question > :not(.entry-speaker) + * {
+  margin-top: var(--pw-space-2);
+}
+
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  min-width: 0;
+}
+
+.question-header,
+.question-typed-label {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  overflow-wrap: anywhere;
+}
+
+.question-text,
+.question-option-label,
+.question-typed-text {
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.question-text {
+  font-weight: var(--pw-weight-medium);
+}
+
+.question-note,
+.question-status,
+.question-option-description {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.question-option-description {
+  white-space: pre-wrap;
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* An option: a box with a decorative edge. What's chosen is said in words, never by the box alone (6.1). */
+.question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border-radius: var(--pw-radius-md);
+  box-shadow: inset 0 0 0 1px var(--pw-border);
+}
+
+/* Chosen: the selected look, as the open row and the selected repo item have it, with its label at 500. */
+.question-option.chosen {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+}
+
+.question-option.chosen .question-option-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+/* The check's place, kept by every option, so their labels line up; centred on the label's first line. */
+.question-option-icon {
+  flex: none;
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
+  margin-top: calc((var(--pw-leading-m) - var(--pw-icon-sm)) / 2);
+  color: var(--pw-info-tint-fg);
+}
+
+.question-option-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* "Your answer", after the label: --pw-info-tint-fg on --pw-selected, as a pressed chip's label is. */
+.question-option-chosen {
+  margin-inline-start: var(--pw-space-2);
+  color: var(--pw-info-tint-fg);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  white-space: nowrap;
+}
+
+.question-typed {
+  padding: var(--pw-space-2) var(--pw-space-3);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-sunken);
+}
+
+/*
  * Markdown in messages (section 4: Markdown in messages): Claude's messages, its messages to pitwall
  * and other sessions' as pitwall's own elements. Text wraps as the message's text does; only a code block and a table
  * scroll sideways, each in its own box. The spacing between blocks is at the end of this part, after
@@ -3144,6 +3263,12 @@ ol.md-list {
   .root-tab[aria-selected='true'] {
     border: 2px solid Highlight;
     padding: calc(var(--pw-space-1) - 2px) calc(var(--pw-space-2) - 2px);
+  }
+
+  /* A question's chosen option (W49): its fill and ring are gone; "Your answer" still says it. */
+  .question-option.chosen {
+    border: 2px solid Highlight;
+    padding: calc(var(--pw-space-1-5) - 2px) calc(var(--pw-space-2) - 2px);
   }
 
   .theme-switch {

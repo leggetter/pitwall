@@ -5,7 +5,7 @@
 
 import { act, fireEvent, render, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationEntry, ConversationPage, SessionSummary } from '../../../src/shared/protocol.js';
+import type { AskedQuestion, ConversationEntry, ConversationPage, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { absoluteTime, clockTime } from '../format.js';
@@ -332,6 +332,176 @@ describe('Conversation: messages to pitwall (W46)', () => {
     expect(cut!.querySelector('strong')?.textContent).toBe('cut');
     expect(plain!.querySelector('.entry-markdown, strong')).toBeNull();
     expect(plain!.querySelector('p.entry-text')?.textContent).toBe('**plain**');
+  });
+});
+
+describe('Conversation: questions asked in a dialog (W49)', () => {
+  const FLOWS: AskedQuestion = {
+    question: 'Which flows should retry?',
+    header: 'Flows',
+    options: [
+      { label: 'Export', description: 'Retries each batch.' },
+      { label: 'Import', description: 'Retries each file.' },
+    ],
+  };
+  const ERRORS: AskedQuestion = {
+    question: 'Which errors should it retry?',
+    header: 'Errors',
+    multiSelect: true,
+    options: [{ label: 'Timeouts' }, { label: 'Rate limits' }, { label: 'Server errors' }],
+  };
+  const asked = (second: number, questions: AskedQuestion[], extra: Partial<ConversationEntry> = {}): ConversationEntry => ({
+    kind: 'question',
+    at: at(second),
+    text: questions[0]?.question ?? '',
+    toolError: false,
+    questions,
+    ...extra,
+  });
+  const question = (body: HTMLElement) => body.querySelector<HTMLElement>('.entry-question')!;
+  const optionsOf = (element: Element) => [...element.querySelectorAll<HTMLElement>('.question-option')];
+  /** Each option's text as a screen reader reads it, the hidden pause included, and whether it's marked chosen. */
+  const read = (element: Element) => optionsOf(element).map((option) => [option.querySelector('.question-option-label')?.textContent, option.classList.contains('chosen')]);
+
+  it('shows a question as its own entry, "Claude asked" and its time, never folded with the calls around it', async () => {
+    const { body } = await renderView(
+      fakeServer(page([tool(1, 'Read: src/export/job.ts'), tool(2, 'Grep: retry in src'), asked(3, [{ ...FLOWS, answer: 'Export' }]), tool(4, 'Bash: npm test'), tool(5, 'Bash: npm run build'), claude(6, 'Retrying the export job.')])),
+    );
+    expect(rows(body).map((item) => item.className)).toEqual(['entry entry-fold', 'entry entry-question', 'entry entry-fold', 'entry entry-assistant']);
+    expect(folds(body).map((fold) => fold.textContent)).toEqual(['2 tool calls', '2 tool calls']);
+    const entry = question(body);
+    expect(entry.firstElementChild?.className).toBe('entry-speaker');
+    expect(entry.querySelector('.entry-speaker')?.textContent).toBe(`Claude asked · ${clockTime(at(3))}`);
+    expect(entry.querySelector('time')?.getAttribute('datetime')).toBe(at(3));
+  });
+
+  it('shows its header, the question and its options as a list named by the question, the chosen one marked as your answer, by label', async () => {
+    const { body } = await renderView(fakeServer(page([asked(1, [{ ...FLOWS, answer: 'Export' }])])));
+    const entry = question(body);
+    expect(entry.querySelector('.question-header')?.textContent).toBe('Flows');
+    // One question isn't a list of one; its options are a list, named by the question.
+    expect(entry.querySelector('.questions')).toBeNull();
+    const list = within(entry).getByRole('list', { name: 'Which flows should retry?' });
+    expect(list.tagName).toBe('UL');
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+    expect(read(entry)).toEqual([
+      ['Export, Your answer', true],
+      ['Import', false],
+    ]);
+    const [chosen, other] = optionsOf(entry);
+    // The check is decoration: the words say it, visibly and to a screen reader, with a pause before them.
+    expect(chosen!.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(chosen!.querySelector('.question-option-chosen .visually-hidden')?.textContent).toBe(', ');
+    expect(chosen!.querySelector('.question-option-description')?.textContent).toBe('Retries each batch.');
+    expect(other!.querySelector('svg')).toBeNull();
+    expect(other!.textContent).not.toContain('Your answer');
+    expect(entry.querySelector('.question-note, .question-status, .question-typed')).toBeNull();
+  });
+
+  it('marks each option a multi-select answer chose, and says more than one could be chosen', async () => {
+    const { body } = await renderView(fakeServer(page([asked(1, [{ ...FLOWS, answer: 'Import' }, { ...ERRORS, answer: 'Timeouts, Server errors' }])])));
+    const entry = question(body);
+    // Two questions are a list of their own.
+    const items = [...entry.querySelectorAll(':scope > ol.questions > li.question')];
+    expect(items).toHaveLength(2);
+    expect(read(items[0]!)).toEqual([
+      ['Export', false],
+      ['Import, Your answer', true],
+    ]);
+    expect(items[1]!.querySelector('.question-note')?.textContent).toBe('You could choose more than one.');
+    expect(read(items[1]!)).toEqual([
+      ['Timeouts, Your answer', true],
+      ['Rate limits', false],
+      ['Server errors, Your answer', true],
+    ]);
+    expect(items[0]!.querySelector('.question-note')).toBeNull();
+  });
+
+  it('shows an answer that matches no label as typed, and notes under the question', async () => {
+    const { body } = await renderView(
+      fakeServer(page([asked(1, [{ ...FLOWS, answer: 'Only the export job, for now.' }, { ...ERRORS, answer: 'Timeouts', notes: 'Ask again once the\nimport job has tests.' }])])),
+    );
+    const [typed, noted] = [...question(body).querySelectorAll('li.question')];
+    expect(read(typed!)).toEqual([
+      ['Export', false],
+      ['Import', false],
+    ]);
+    const answer = typed!.querySelector('.question-typed')!;
+    expect([...answer.children].map((child) => child.textContent)).toEqual(['Your answer', 'Only the export job, for now.']);
+    expect(typed!.lastElementChild).toBe(answer);
+    expect(read(noted!)[0]).toEqual(['Timeouts, Your answer', true]);
+    const notes = noted!.querySelector('.question-notes')!;
+    expect([...notes.children].map((child) => child.textContent)).toEqual(['Your notes', 'Ask again once the\nimport job has tests.']);
+    // After the options.
+    expect(noted!.lastElementChild).toBe(notes);
+  });
+
+  it('says a dismissed dialog was not answered, once, with nothing marked', async () => {
+    const { body } = await renderView(fakeServer(page([asked(1, [FLOWS, ERRORS], { toolError: true })])));
+    const entry = question(body);
+    expect(entry.querySelectorAll('.question-option.chosen, .question-typed')).toHaveLength(0);
+    expect([...entry.querySelectorAll('.question-status')].map((status) => status.textContent)).toEqual(['Not answered.']);
+    // After the questions, for the whole dialog.
+    expect(entry.lastElementChild?.textContent).toBe('Not answered.');
+    expect(entry.textContent).not.toContain('Your answer');
+    expect(entry.textContent).not.toContain('transcript');
+  });
+
+  it('says when the answers are not in the transcript: once for the dialog when none are, else under each question without one', async () => {
+    const { body } = await renderView(
+      fakeServer(page([asked(1, [FLOWS]), asked(2, [FLOWS, ERRORS], { text: 'Two questions' }), asked(3, [{ ...FLOWS, answer: 'Export' }, ERRORS], { text: 'One answered' }), asked(4, [FLOWS], { toolError: undefined, text: 'No result yet' })])),
+    );
+    const [one, two, partly, open] = [...body.querySelectorAll<HTMLElement>('.entry-question')];
+    expect(one!.querySelector(':scope > .question-status')?.textContent).toBe('No answer in the transcript.');
+    expect(two!.querySelector(':scope > .question-status')?.textContent).toBe('No answers in the transcript.');
+    expect(two!.querySelectorAll('.question-note')).toHaveLength(1);
+    expect(partly!.querySelector(':scope > .question-status')).toBeNull();
+    const [, unanswered] = [...partly!.querySelectorAll('li.question')];
+    expect(unanswered!.lastElementChild?.textContent).toBe('No answer in the transcript.');
+    expect(open!.querySelector(':scope > .question-status')?.textContent).toBe('No answer in the transcript.');
+  });
+
+  it('renders HTML anywhere in a question as the text it is, never as elements, and says when it was cut short', async () => {
+    const html = '<b>bold</b> <img src=x onerror="alert(1)"> <script>alert(2)</script>';
+    const markup: AskedQuestion = { question: `${html}?`, header: html, options: [{ label: html, description: html }, { label: '**not bold**' }], answer: `${html} typed`, notes: html };
+    const { body } = await renderView(fakeServer(page([asked(1, [markup], { truncated: true })])));
+    const entry = question(body);
+    expect(entry.querySelector('b, img, script, strong')).toBeNull();
+    expect(entry.querySelector('.question-text')?.textContent).toBe(`${html}?`);
+    expect(entry.querySelector('.question-header')?.textContent).toBe(html);
+    expect(read(entry)).toEqual([
+      [html, false],
+      ['**not bold**', false],
+    ]);
+    expect(entry.querySelector('.question-option-description')?.textContent).toBe(html);
+    expect(entry.querySelector('.question-typed:not(.question-notes) .question-typed-text')?.textContent).toBe(`${html} typed`);
+    expect(entry.querySelector('.question-notes .question-typed-text')?.textContent).toBe(html);
+    expect(entry.querySelector('.question-text')!.innerHTML).toContain('&lt;b&gt;');
+    expect(entry.lastElementChild?.textContent).toBe('Cut short.');
+  });
+
+  it('shows an entry that came without its questions by its text, as the question', async () => {
+    const { body } = await renderView(fakeServer(page([{ kind: 'question', at: at(1), text: 'Which flows should retry?', toolError: false }])));
+    const entry = question(body);
+    expect(entry.querySelector('.question-text')?.textContent).toBe('Which flows should retry?');
+    expect(entry.querySelector('.question-options')).toBeNull();
+    expect(entry.querySelector(':scope > .question-status')?.textContent).toBe('No answer in the transcript.');
+  });
+
+  it('takes the answers when they arrive with a refresh, as the same entry, never counted as new', async () => {
+    layout({ scrollHeight: 2400, clientHeight: 400 });
+    const server = fakeServer(page([you(1), asked(2, [FLOWS], { toolError: undefined })]));
+    const view = await renderView(server);
+    scrollTo(view.body, 0);
+    server.newest(page([you(1), asked(2, [{ ...FLOWS, answer: 'Import' }])]));
+    await view.refresh();
+    expect(rows(view.body)).toHaveLength(2);
+    expect(read(question(view.body))).toEqual([
+      ['Export', false],
+      ['Import, Your answer', true],
+    ]);
+    expect(bar(view.body)).toBeNull();
+    expect(announced(view.body)).toBe('');
   });
 });
 

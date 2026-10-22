@@ -653,6 +653,100 @@ export const TO_PITWALL_CONVERSATION: ConversationEntry[] = [
 /** The exchange that conversation answers: sent before its replies, so the footer keeps only its status line. */
 export const TO_PITWALL_EXCHANGE: RelayExchange = { sentAt: ago(7), status: 'delivered', reply: { at: ago(6.5), text: TO_PITWALL_SHORT } };
 
+/**
+ * Questions Claude Code asked in its dialog (W49), between tool calls and messages: a dialog of two,
+ * an answered single choice and a multi-select; an answer typed in place of an option; an answer with
+ * notes; and a dismissed dialog, its result an error.
+ */
+export const QUESTION_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(20), text: 'Add a retry with backoff to the export job. Ask me whatever you need to.' },
+  { kind: 'tool', at: ago(19.8), toolName: 'Read', text: 'Read: src/export/job.ts' },
+  { kind: 'tool', at: ago(19.6), toolName: 'Grep', text: 'Grep: retry in src' },
+  {
+    kind: 'question',
+    at: ago(19),
+    text: 'Which job should retry first?',
+    toolError: false,
+    questions: [
+      {
+        question: 'Which job should retry first?',
+        header: 'Job',
+        options: [
+          { label: 'Export', description: 'Retries each batch, replacing what a failed attempt wrote.' },
+          { label: 'Import', description: 'Retries each file from its start.' },
+        ],
+        answer: 'Export',
+      },
+      {
+        question: 'Which errors should it retry?',
+        header: 'Errors',
+        multiSelect: true,
+        options: [
+          { label: 'Timeouts', description: 'A batch that took longer than 30 seconds.' },
+          { label: 'Rate limits', description: 'Waiting as long as the server asks.' },
+          { label: 'Server errors', description: 'Any 5xx answer.' },
+        ],
+        answer: 'Timeouts, Server errors',
+      },
+    ],
+  },
+  { kind: 'assistant', at: ago(18.5), text: 'The export job, then, retrying timeouts and server errors.', markdown: true },
+  {
+    kind: 'question',
+    at: ago(18),
+    text: 'How many attempts should a batch get?',
+    toolError: false,
+    questions: [
+      {
+        question: 'How many attempts should a batch get?',
+        header: 'Attempts',
+        options: [
+          { label: 'Three', description: 'Waiting 1, 4 and 16 seconds.' },
+          { label: 'Five', description: 'Waiting up to a minute in all.' },
+        ],
+        answer: 'Four, and no more than a minute in all.',
+      },
+    ],
+  },
+  {
+    kind: 'question',
+    at: ago(17.5),
+    text: 'Which level should each retry log at?',
+    toolError: false,
+    questions: [
+      {
+        question: 'Which level should each retry log at?',
+        header: 'Logging',
+        options: [
+          { label: 'Debug', description: 'Only when the job runs with --verbose.' },
+          { label: 'Info', description: 'Always, with the batch id.' },
+        ],
+        answer: 'Debug',
+        notes: 'Put the attempt number in each line, so a batch that keeps failing is easy to spot.',
+      },
+    ],
+  },
+  { kind: 'tool', at: ago(12), toolName: 'Edit', text: 'Edit: src/export/job.ts' },
+  { kind: 'tool', at: ago(11), toolName: 'Bash', text: 'Bash: npm test -- export' },
+  {
+    kind: 'question',
+    at: ago(9),
+    text: 'Open a pull request now?',
+    toolError: true,
+    questions: [
+      {
+        question: 'Open a pull request now?',
+        header: 'Next',
+        options: [
+          { label: 'Yes', description: 'Push the branch and open it as a draft.' },
+          { label: 'Not yet', description: 'Retry the import job the same way first.' },
+        ],
+      },
+    ],
+  },
+  { kind: 'user', at: ago(8), text: 'Not yet. Run the whole test suite first.' },
+];
+
 /** What the terminal shows once attached: made up, with colours, in the shape of Claude Code's output. */
 export const TERMINAL_OUTPUT =
   '\x1b[1mpitwall-test-terminal\x1b[0m · Export retries\r\n\r\n' +

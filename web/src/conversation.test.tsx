@@ -3,6 +3,7 @@ import { conversationPath, type ConversationEntry, type ConversationPage } from 
 import { createApiClient, type FetchLike } from './api.js';
 import {
   asConversationPage,
+  chosenAnswer,
   conversationRows,
   countAdded,
   entryKey,
@@ -135,6 +136,41 @@ describe('conversationRows', () => {
     const rows = conversationRows([tool(1), tool(2), toPitwall, tool(4), tool(5)]);
     expect(rows.map((row) => (row.kind === 'fold' ? `fold of ${row.calls.length}` : row.entry.kind))).toEqual(['fold of 2', 'to-pitwall', 'fold of 2']);
     expect(conversationRows([tool(1), toPitwall, tool(4)]).map((row) => (row.kind === 'fold' ? 'fold' : row.entry.kind))).toEqual(['tool', 'to-pitwall', 'tool']);
+  });
+
+  it('never folds a question asked in a dialog with the tool calls around it: it ends their run (W49)', () => {
+    const asked: ConversationEntry = { kind: 'question', at: at(3), text: 'Which flows?', toolError: false, questions: [{ question: 'Which flows?', options: [{ label: 'Export' }] }] };
+    const rows = conversationRows([tool(1), tool(2), asked, tool(4), tool(5)]);
+    expect(rows.map((row) => (row.kind === 'fold' ? `fold of ${row.calls.length}` : row.entry.kind))).toEqual(['fold of 2', 'question', 'fold of 2']);
+  });
+});
+
+describe('chosenAnswer (W49)', () => {
+  const options = [{ label: 'Export' }, { label: 'Import' }, { label: 'Yes, retry' }];
+
+  it('chooses the option whose label is the answer, exactly, and none without an answer', () => {
+    expect(chosenAnswer({ question: 'Which?', options, answer: 'Import' })).toEqual({ chosen: new Set([1]) });
+    expect(chosenAnswer({ question: 'Which?', options, answer: 'Yes, retry' })).toEqual({ chosen: new Set([2]) });
+    expect(chosenAnswer({ question: 'Which?', options })).toBeUndefined();
+  });
+
+  it('shows an answer that names no label as typed: another case, a part of one, or several on a single choice', () => {
+    for (const answer of ['import', 'Exp', 'Only the export job, for now.', 'Export, Import']) {
+      expect(chosenAnswer({ question: 'Which?', options, answer }), answer).toEqual({ chosen: new Set(), typed: answer });
+    }
+    expect(chosenAnswer({ question: 'Anything else?', options: [], answer: 'No.' })).toEqual({ chosen: new Set(), typed: 'No.' });
+  });
+
+  it('chooses each label of a multi-select answer that is only labels, joined by a comma, a newline or a semicolon', () => {
+    const multi = (answer: string) => chosenAnswer({ question: 'Which?', options, multiSelect: true, answer });
+    expect(multi('Export, Import')).toEqual({ chosen: new Set([0, 1]) });
+    expect(multi('Import,Export')).toEqual({ chosen: new Set([0, 1]) });
+    expect(multi('Export\nYes, retry')).toEqual({ chosen: new Set([0, 2]) });
+    expect(multi('Export; Import')).toEqual({ chosen: new Set([0, 1]) });
+    expect(multi('Import')).toEqual({ chosen: new Set([1]) });
+    // Anything that isn't all labels is shown as it was typed, rather than guessed at.
+    expect(multi('Export, and the import job')).toEqual({ chosen: new Set(), typed: 'Export, and the import job' });
+    expect(multi('Export and Import')).toEqual({ chosen: new Set(), typed: 'Export and Import' });
   });
 });
 
@@ -356,5 +392,57 @@ describe('asConversationPage', () => {
         { kind: 'cross-session', text: 'hi', from: 'pitwall-test-sup' },
       ],
     });
+  });
+
+  it("keeps a question entry's questions, dropping those and the options that aren't well formed, and fields of the wrong type (W49)", () => {
+    const body = {
+      sessionId: SID,
+      entries: [
+        {
+          kind: 'question',
+          at: at(1),
+          text: 'Which flows should retry?',
+          toolError: false,
+          questions: [
+            {
+              question: 'Which flows should retry?',
+              header: 'Flows',
+              multiSelect: true,
+              options: [{ label: 'Export', description: 'Each batch.' }, { label: 'Import', description: 7 }, { description: 'no label' }, 'Other'],
+              answer: 'Export, Import',
+              notes: 'Made-up notes.',
+            },
+            { question: 'Header of the wrong type?', header: 3, multiSelect: 'yes', options: [], answer: ['Export'], notes: {} },
+            { question: 'No options' },
+            { options: [] },
+            null,
+          ],
+        },
+        // Questions only belong to question entries; one without any still shows its text.
+        { kind: 'tool', text: 'AskUserQuestion', toolName: 'AskUserQuestion', questions: [{ question: 'Not here.', options: [] }] },
+        { kind: 'question', text: 'Its questions went missing.', questions: 'none' },
+      ],
+    };
+    expect(asConversationPage(body, SID)?.entries).toEqual([
+      {
+        kind: 'question',
+        at: at(1),
+        text: 'Which flows should retry?',
+        toolError: false,
+        questions: [
+          {
+            question: 'Which flows should retry?',
+            header: 'Flows',
+            multiSelect: true,
+            options: [{ label: 'Export', description: 'Each batch.' }, { label: 'Import' }],
+            answer: 'Export, Import',
+            notes: 'Made-up notes.',
+          },
+          { question: 'Header of the wrong type?', options: [] },
+        ],
+      },
+      { kind: 'tool', text: 'AskUserQuestion', toolName: 'AskUserQuestion' },
+      { kind: 'question', text: 'Its questions went missing.' },
+    ]);
   });
 });
