@@ -381,14 +381,33 @@ export const RELAY_ALERT_CHANGED: RelayAlert = {
   blocked: false,
   cause: 'changed',
 };
-/** A changed copy the gate blocked. pitwall raises none today, since the message's own result says so (W43), but relayAlertText() has words for one. */
+/** A changed copy the gate blocked that no copying slip explains, here one to another session (W52). A slip in the spacing raises none. */
 export const RELAY_ALERT_CHANGED_BLOCKED: RelayAlert = {
   at: ago(1),
-  detail: "The relay changed the text before sending it, first at line 12: U+0107 became U+0063. pitwall's gate blocked it, so nothing was sent.",
+  detail: "The relay addressed the message to another session. pitwall's gate blocked it, so nothing was sent.",
   count: 2,
   blocked: true,
   cause: 'changed',
 };
+/** The relay trying your message again in the same turn, after the gate blocked its copy, which the gate blocked too (W52). */
+export const RELAY_ALERT_REPEATED_BLOCKED: RelayAlert = {
+  at: ago(1),
+  detail: "The relay tried again to send one of your messages, in the same turn, after pitwall’s gate had blocked its copy. pitwall's gate blocked it, so nothing was sent.",
+  count: 1,
+  blocked: true,
+  cause: 'repeated',
+};
+/** A repeat whose result pitwall never saw, so it may have been sent (W52). */
+export const RELAY_ALERT_REPEATED_SENT: RelayAlert = {
+  at: ago(1),
+  detail: 'The relay tried again to send one of your messages, in the same turn, after pitwall’s gate had blocked its copy. Its turn ended before pitwall saw whether its gate blocked it.',
+  count: 1,
+  blocked: false,
+  cause: 'repeated',
+};
+/** What a message delivered on pitwall's one more try says after Delivered (W52). */
+export const RETRIED_DETAIL =
+  "pitwall's gate stopped the relay's first copy of your message, because it didn't match, so pitwall tried once more, on a new relay, and the second copy went through. The first time, the relay changed the text before sending it, first at line 33: a space (U+0020) became a tab (U+0009).";
 /** The alert that comes with the relay going off: its gate let a changed copy through. */
 export const RELAY_ALERT_OFF: RelayAlert = {
   at: ago(2),

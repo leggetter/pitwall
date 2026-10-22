@@ -225,7 +225,8 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
       return;
     }
     const { status, detail } = outcome.result;
-    setShown(detail === undefined || status === 'delivered' ? { status, text: STATUS_TEXT[status] } : { status, text: STATUS_TEXT[status], detail });
+    // Delivered has a detail only after pitwall's one retry, which says the gate stopped the relay's first copy (W52).
+    setShown(detail === undefined ? { status, text: STATUS_TEXT[status] } : { status, text: STATUS_TEXT[status], detail });
     // Sent, or set aside by the session: either way it's no longer a draft. Kept when it wasn't sent, or may not have been.
     if (status !== 'failed' && status !== 'uncertain') {
       setText('');

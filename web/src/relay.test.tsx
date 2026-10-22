@@ -159,13 +159,37 @@ describe('relayAlertText', () => {
     const text = relayAlertText({ ...alert, cause: 'changed', blocked: true, count: 3 });
     expect(text).toEqual({
       title: 'pitwall blocked a changed copy of your message',
-      summary: "Its relay's copy didn't match what you sent, so pitwall's gate stopped it, and nothing was sent.",
+      summary: "Its relay's copy didn't match what you sent, so pitwall stopped it, and nothing was sent.",
       count: '3 times since pitwall started.',
     });
   });
 
-  it('uses the same count, of every alert, for both causes', () => {
+  it('says a blocked repeat is the relay trying your message again, never another session, and that the repeat wasn’t sent (W52)', () => {
+    const text = relayAlertText({ ...alert, cause: 'repeated', blocked: true });
+    expect(text).toEqual({
+      title: 'pitwall blocked a repeated send of your message',
+      summary: "After pitwall's gate stopped its relay's copy of your message, the relay tried again in the same turn. The gate stopped that too, so the repeat wasn't sent.",
+      count: 'Once since pitwall started.',
+    });
+    expect(`${text.title} ${text.summary}`).not.toMatch(/another session|didn't ask for/);
+  });
+
+  it('says a repeat that wasn’t blocked may have been sent, says where to look, and says messaging is off only with relayOff (W52)', () => {
+    const text = relayAlertText({ ...alert, cause: 'repeated', count: 2 });
+    expect(text).toEqual({
+      title: "pitwall's relay may have repeated a send of your message",
+      summary:
+        "After pitwall's gate stopped its relay's copy of your message, the relay tried again in the same turn, and the gate may not have stopped it. Check your sessions' conversations for a message from pitwall-relay.",
+      count: '2 times since pitwall started.',
+    });
+    expect(text.summary).not.toMatch(/another session/);
+    expect(relayAlertText({ ...alert, cause: 'repeated' }, off).summary).toMatch(/pitwall-relay\. Messaging is off until you restart pitwall\.$/);
+    expect(relayAlertText({ ...alert, cause: 'repeated', blocked: true }, off).summary).toMatch(/wasn't sent\. Messaging is off until you restart pitwall\.$/);
+  });
+
+  it('uses the same count, of every alert, for every cause', () => {
     expect(relayAlertText({ ...alert, count: 1200 }).count).toBe('1,200 times since pitwall started.');
     expect(relayAlertText({ ...alert, cause: 'changed', count: 1200 }).count).toBe('1,200 times since pitwall started.');
+    expect(relayAlertText({ ...alert, cause: 'repeated', count: 1200 }).count).toBe('1,200 times since pitwall started.');
   });
 });
