@@ -240,14 +240,18 @@ export interface RelayAlert {
    */
   blocked: boolean;
   /**
-   * What the latest one was (W43). 'unrequested': a SendMessage call with no
-   * request of pitwall's behind it, which usually means another session
+   * What the latest one was (W43, W52). 'unrequested': a SendMessage call with
+   * no request of pitwall's behind it, which usually means another session
    * messaged the relay. 'changed': the call for one of your messages didn't
-   * match it, such as text the relay changed or another recipient. A changed
-   * call that the gate blocked raises no alert: that message's own result
-   * says what changed, after pitwall has tried it once more.
+   * match it, such as another recipient, an option or field pitwall didn't
+   * ask for, or text the relay changed. 'repeated': a second call for one of
+   * your messages in the same turn, after pitwall's gate had blocked the
+   * first. A call the gate blocked that differs from your message only in its
+   * text raises no alert: pitwall tries it once more, and that message's own
+   * result says what changed. Any other blocked difference raises a
+   * 'changed' alert and isn't tried again (W48's F3).
    */
-  cause: 'unrequested' | 'changed';
+  cause: 'unrequested' | 'changed' | 'repeated';
 }
 
 /**
@@ -443,7 +447,11 @@ export interface RelayRequest {
 
 export interface RelayResult {
   status: RelayStatus;
-  /** A short explanation, for example why it was refused or failed. */
+  /**
+   * A short explanation, for example why it was refused or failed. On
+   * 'delivered' after pitwall's one retry, it says the gate blocked the
+   * relay's first copy and the second went through (W52). Never message text.
+   */
   detail?: string;
 }
 
