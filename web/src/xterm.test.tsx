@@ -5,7 +5,7 @@ import terminalSource from './components/Terminal.tsx?raw';
 import tokensCss from './tokens.css?raw';
 import xtermSource from './xterm.ts?raw';
 
-const created = vi.hoisted(() => ({ options: [] as unknown[], events: [] as string[], terminals: [] as { options: Record<string, unknown>; textarea: HTMLTextAreaElement | undefined }[] }));
+const created = vi.hoisted(() => ({ options: [] as unknown[], events: [] as string[], hooks: [] as string[], terminals: [] as { options: Record<string, unknown>; textarea: HTMLTextAreaElement | undefined }[] }));
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -26,16 +26,30 @@ vi.mock('@xterm/xterm', () => ({
       });
       created.terminals.push(this);
     }
+    // The public parser hooks keepCursorSteady() registers (W45), recorded in order with the terminal's opening and disposal.
+    parser = {
+      registerCsiHandler: (id: Record<string, string>) => {
+        created.hooks.push(`csi ${JSON.stringify(id)}`);
+        return { dispose: () => created.hooks.push(`disposed csi ${JSON.stringify(id)}`) };
+      },
+      registerEscHandler: (id: Record<string, string>) => {
+        created.hooks.push(`esc ${JSON.stringify(id)}`);
+        return { dispose: () => created.hooks.push(`disposed esc ${JSON.stringify(id)}`) };
+      },
+    };
     loadAddon() {}
     open(container: HTMLElement) {
       created.events.push('opened');
+      created.hooks.push('opened');
       this.textarea = document.createElement('textarea');
       container.append(this.textarea);
     }
     onData() {}
     write() {}
     focus() {}
-    dispose() {}
+    dispose() {
+      created.hooks.push('terminal disposed');
+    }
   },
 }));
 vi.mock('@xterm/addon-fit', () => ({
@@ -112,7 +126,22 @@ describe('createXterm', () => {
     await createXterm(document.createElement('div'));
     expect(sameFamilies(lastOptions().fontFamily)).toBe(sameFamilies(declared('--pw-font-mono')));
     expect(sameFamilies(lastOptions().fontFamily)).toMatch(/^'JetBrains Mono', /);
-    expect(lastOptions()).toMatchObject({ fontSize: 13, cursorBlink: true, scrollback: 5000 });
+    expect(lastOptions()).toMatchObject({ fontSize: 13, cursorBlink: false, cursorStyle: 'block', scrollback: 5000 });
+  });
+
+  it('keeps the cursor steady from before it opens to after it closes: its parser hooks go in first and out before it (W45)', async () => {
+    created.hooks.length = 0;
+    const handle = await createXterm(document.createElement('div'));
+    const hooks = [
+      'csi {"intermediates":" ","final":"q"}',
+      'csi {"prefix":"?","final":"h"}',
+      'esc {"final":"c"}',
+      'csi {"intermediates":"!","final":"p"}',
+    ];
+    expect(created.hooks).toEqual([...hooks, 'opened']);
+    created.hooks.length = 0;
+    handle.dispose();
+    expect(created.hooks).toEqual([...hooks.map((hook) => `disposed ${hook}`), 'terminal disposed']);
   });
 
   it('takes its colours from the --pw-term-* tokens in tokens.css: background, foreground, cursor, selection, red, green, yellow and blue', async () => {
