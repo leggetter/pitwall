@@ -1470,11 +1470,12 @@ What shows in place of the dashboard when the tab can't connect (W40).
 
 | Notice | Lead | Detail |
 |---|---|---|
-| No token: opened without one, or a browser restart lost it | "This tab has no token for pitwall." | "Paste the link pitwall prints when it starts into this tab. On a single-user machine, a fixed `PITWALL_TOKEN` keeps a pinned tab working when pitwall restarts." |
-| Token rejected: the WebSocket closed with 4401 | "pitwall rejected this tab's token." | "Each run of pitwall has its own token, so this usually follows a restart. Paste the link pitwall printed when it started into this tab; on a single-user machine, a fixed `PITWALL_TOKEN` keeps a pinned tab working when pitwall restarts." |
+| No token: opened without one, or a browser restart lost it | "This tab has no token for pitwall." | "In this tab, open the link pitwall printed when it started, or, if `PITWALL_TOKEN` is set, add `#token=` and that token to the address. On a single-user machine, a fixed `PITWALL_TOKEN` keeps a pinned tab working when pitwall restarts." |
+| Token rejected: the WebSocket closed with 4401 | "pitwall rejected this tab's token." | "Unless `PITWALL_TOKEN` is set, each run of pitwall has its own token, so this usually follows a restart. In this tab, open the link pitwall printed when it started, or, if `PITWALL_TOKEN` is set, add `#token=` and that token to the address." |
 
-- **The link** is the URL the CLI prints when it starts, with the token in its fragment, which the page takes out of the address bar ([Session view](#session-view)). Pasted into the tab, it connects it, whether the browser loads the page again or only changes its fragment (`token.ts` reads a new fragment either way).
-- **A fixed token:** with `PITWALL_TOKEN` set, every run that uses it has the same token, so a tab that holds it reconnects by itself after a restart, on the same port. The CLI and `npm run dev` say at start that the token is fixed, and to use this only on a single-user machine or for development.
+- **Both ways back, always** (W51): the page can't tell before it authenticates whether this run's token is per run or fixed, so each notice gives the way for each. The rejected notice leaves out the pinned-tab sentence, since its first sentence already names `PITWALL_TOKEN`.
+- **The link** is the URL the CLI prints when it starts, with a per-run token in its fragment, which the page takes out of the address bar ([Session view](#session-view)). Pasted into the tab, it connects it, whether the browser loads the page again or only changes its fragment (`token.ts` reads a new fragment either way). With a fixed token, the CLI prints the address alone; `#token=` and the token, added to it by hand, connect the tab the same way.
+- **A fixed token:** with `PITWALL_TOKEN` set, every run that uses it has the same token, so a tab that holds it reconnects by itself after a restart, on the same port. The CLI and `npm run dev` say at start that the token is fixed, and to use this only on a single-user machine or for development. Neither ever prints it (W51): it would outlive the run in scrollback, logs and agents' transcripts.
 - **The connection badge's** Token rejected state shows only in the gallery: in the app, the notice replaces the page.
 
 ### Key caps
