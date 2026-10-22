@@ -2,7 +2,8 @@
 // interactive session's view, sending text through pitwall's relay (D8). Top to bottom: the latest
 // exchange and its reply, the result of the last send as an inline alert, the text box beside Send,
 // then the help line with ⌘ ↵, the limits note behind an info button, and the character count from
-// 80 % of the limit.
+// 80 % of the limit. Once the conversation shows the reply, in full, as the session's message to
+// pitwall (W46), the exchange is its status line alone, which says the reply is there.
 //
 // ⌘/Ctrl + Enter sends and Enter adds a line (Phil, 2026-10-20). Send is aria-disabled while there's
 // nothing to send, it's over the limit or a send is out, and its tooltip, which describes it, says
@@ -29,6 +30,7 @@ import {
   exchangeSummary,
   MAX_RELAY_TEXT_LENGTH,
   outgoingText,
+  REPLY_IN_CONVERSATION,
   resultLook,
   sendRelay,
   STATUS_TEXT,
@@ -260,7 +262,7 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
       <h3 className="visually-hidden" id={ids.heading}>
         Message this session
       </h3>
-      {session.relay && <RelayExchangeNote exchange={session.relay} showReply={!replyShown} />}
+      {session.relay && <RelayExchangeNote exchange={session.relay} replyShown={replyShown} />}
       {/* In the last send's place, with no role: it was there when the box appeared (4: Alerts and banners). */}
       {unsureShown && (
         <Alert tone="warning" className="relay-result relay-unsure">
@@ -332,18 +334,23 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
 
 export interface RelayExchangeNoteProps {
   exchange: RelayExchange;
-  /** False when the conversation already shows the reply: then only the status line. */
-  showReply?: boolean;
+  /** True when the conversation already shows the reply (replyInConversation): then only the status line, which says so. */
+  replyShown?: boolean;
 }
 
 /** The latest message pitwall relayed to a session, and its reply, as text only. */
-export function RelayExchangeNote({ exchange, showReply = true }: RelayExchangeNoteProps) {
+export function RelayExchangeNote({ exchange, replyShown = false }: RelayExchangeNoteProps) {
   const summary = exchangeSummary(exchange);
-  const reply = showReply && exchange.reply ? exchange.reply : undefined;
+  const reply = !replyShown && exchange.reply ? exchange.reply : undefined;
   return (
     <div className="relay-exchange">
       <p className="relay-exchange-line">
         Message from pitwall · <Timestamp at={exchange.sentAt} />: <span className={`relay-exchange-status tone-${summary.tone}`}>{summary.status}</span>
+        {replyShown && (
+          <>
+            . <span className="relay-exchange-replied">{REPLY_IN_CONVERSATION}</span>
+          </>
+        )}
       </p>
       {reply && (
         <Tooltip content={`Replied ${absoluteTime(reply.at)}`} relation="none">

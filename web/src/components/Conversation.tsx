@@ -1,7 +1,9 @@
 // The session view's conversation (docs/design-system.md, 4: Conversation): the Conversation tab's
 // panel, which is the view's scrolling body. An <ol> of entries, oldest first, opening scrolled to the
-// newest: your messages, Claude's, messages from other sessions and notices, each text entry with its
-// speaker line and time, and tool calls, two or more in a row folded into one toggle.
+// newest: your messages, Claude's, its messages to pitwall's relay, messages from other sessions and
+// notices, each text entry with its speaker line and time, and tool calls, two or more in a row folded
+// into one toggle. A message to pitwall's relay is the session's SendMessage call to it, shown in full
+// in the call's place (W46), "To pitwall-relay": it's never folded with the calls around it.
 //
 // - The newest page is fetched when the view opens, and again whenever the session's activity time
 //   moves; it's merged onto the end without duplicating an entry (conversation.ts). Older pages come
@@ -13,8 +15,9 @@
 //   browser drop its scroll position. Nothing counts as the reader's place while it's hidden, and
 //   shown again it goes back to the place they left, or to the bottom if they were there (W29).
 // - A fold stays open or closed across refreshes and "Load earlier" while it has a call it had.
-// - Claude's messages and other sessions' are markdown, shown as pitwall's own elements (Markdown.tsx);
-//   your prompts, notices and tool calls are plain text. Nothing is ever HTML (6.1, rule 16).
+// - Claude's messages, its messages to pitwall and other sessions' are markdown, shown as pitwall's own
+//   elements (Markdown.tsx); your prompts, notices and tool calls are plain text. Nothing is ever HTML
+//   (6.1, rule 16).
 //
 // Its states (4: Empty states and Skeletons and spinners, and 5: Errors):
 // - Waiting for the first page: "Loading the conversation…" after --pw-delay-spinner, and what's
@@ -54,6 +57,7 @@ import { Alert, Detail } from './Alert.js';
 import { Badge } from './Badge.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
+import { RELAY_SESSION_NAME } from '../relayName.js';
 import { Markdown } from './Markdown.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -542,11 +546,19 @@ function Fold({ calls, open, onToggle }: FoldProps) {
   );
 }
 
-const SPEAKERS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'You', assistant: 'Claude' };
+/**
+ * The speaker line of a message the session sent pitwall's relay (W46): the name the call addressed,
+ * as a message from another session names its sender ("From name"). Any local session can take the
+ * relay's name, so the line says only what the transcript shows, never that pitwall received it (W48).
+ */
+export const TO_PITWALL_SPEAKER = `To ${RELAY_SESSION_NAME}`;
 
-/** Claude's messages and other sessions' carry markdown; nothing else is ever rendered as markdown. */
+/** The speaker lines that are fixed words. Another session's message names its sender. */
+const SPEAKERS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'You', assistant: 'Claude', 'to-pitwall': TO_PITWALL_SPEAKER };
+
+/** Claude's messages, its messages to pitwall and other sessions' carry markdown; nothing else is ever rendered as markdown. */
 function isMarkdown(entry: ConversationEntry): boolean {
-  return entry.markdown === true && (entry.kind === 'assistant' || entry.kind === 'cross-session');
+  return entry.markdown === true && (entry.kind === 'assistant' || entry.kind === 'cross-session' || entry.kind === 'to-pitwall');
 }
 
 /**

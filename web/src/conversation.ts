@@ -98,7 +98,7 @@ function reasonIn(body: unknown): string | undefined {
   return typeof error === 'string' && error.trim() !== '' ? error.trim().slice(0, 500) : undefined;
 }
 
-const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 'tool', 'cross-session', 'notice']);
+const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 'tool', 'cross-session', 'to-pitwall', 'notice']);
 
 /**
  * The body as a ConversationPage for `sessionId`, or undefined when it isn't
@@ -203,7 +203,8 @@ export interface KeyedEntry {
 
 /**
  * What the conversation shows, one item per line of its list (docs/design-system.md, 4: Conversation):
- * - `entry`: a message, a notice, or a tool call on its own, which isn't folded;
+ * - `entry`: a message, a notice, or a tool call on its own, which isn't folded. A message to pitwall
+ *   (`to-pitwall`, W46) is a message, in its call's place, so it ends a run of tool calls;
  * - `fold`: two or more tool calls in a row, folded into one toggle.
  */
 export type ConversationRow = ({ kind: 'entry' } & KeyedEntry) | { kind: 'fold'; key: string; calls: KeyedEntry[] };

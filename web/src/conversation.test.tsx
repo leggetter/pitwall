@@ -129,6 +129,13 @@ describe('conversationRows', () => {
     expect(conversationRows([])).toEqual([]);
     expect(conversationRows([tool(1), tool(2)]).map((row) => row.kind)).toEqual(['fold']);
   });
+
+  it('never folds a message to pitwall with the tool calls around it: it ends their run (W46)', () => {
+    const toPitwall: ConversationEntry = { kind: 'to-pitwall', at: at(3), text: 'Both flows.', markdown: true };
+    const rows = conversationRows([tool(1), tool(2), toPitwall, tool(4), tool(5)]);
+    expect(rows.map((row) => (row.kind === 'fold' ? `fold of ${row.calls.length}` : row.entry.kind))).toEqual(['fold of 2', 'to-pitwall', 'fold of 2']);
+    expect(conversationRows([tool(1), toPitwall, tool(4)]).map((row) => (row.kind === 'fold' ? 'fold' : row.entry.kind))).toEqual(['tool', 'to-pitwall', 'tool']);
+  });
 });
 
 describe('foldOpen and toggleFold', () => {
@@ -319,12 +326,14 @@ describe('asConversationPage', () => {
         { kind: 'assistant', text: '**a**', markdown: true },
         { kind: 'assistant', text: '**b**', markdown: 'yes' },
         { kind: 'cross-session', text: '**c**', markdown: false },
+        { kind: 'to-pitwall', at: at(4), text: '**d**', markdown: true },
       ],
     };
     expect(asConversationPage(body, SID)?.entries).toEqual([
       { kind: 'assistant', text: '**a**', markdown: true },
       { kind: 'assistant', text: '**b**' },
       { kind: 'cross-session', text: '**c**' },
+      { kind: 'to-pitwall', at: at(4), text: '**d**', markdown: true },
     ]);
   });
 

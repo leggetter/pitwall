@@ -7,6 +7,7 @@ import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { descriptionOf, tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import { usesCommandKey } from './KeyCaps.js';
+import { REPLY_IN_CONVERSATION as REPLY_SAID } from '../relay.js';
 
 // Made-up sessions and messages only.
 
@@ -525,7 +526,67 @@ describe('the message box’s rules (W24)', () => {
     renderDashboard(server, snap(interactive({ relay })));
     const view = await openView();
     await settle();
-    expect(box(view).querySelector('.relay-exchange-line')?.textContent).toBe('Message from pitwall · 3m ago: delivered');
+    expect(box(view).querySelector('.relay-exchange-line')?.textContent).toBe(`Message from pitwall · 3m ago: delivered. ${REPLY_SAID}`);
     expect(box(view).querySelector('.relay-reply')).toBeNull();
+  });
+
+  describe('a reply the conversation shows as a message to pitwall (W46)', () => {
+    const replyText = 'Both flows: the export and the import.';
+    const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: replyText } };
+
+    /** GETs answer the conversation's page once `release` is called, or at once; POSTs are delivered. */
+    function chatServer(entries: unknown[], held = false) {
+      let release = () => {};
+      const gate = held ? new Promise<void>((resolve) => (release = resolve)) : Promise.resolve();
+      const fetch = vi.fn<FetchLike>(async (_url, init) => {
+        if (init.method === 'POST') return new Response(JSON.stringify({ status: 'delivered' }), { status: 200 });
+        await gate;
+        return new Response(JSON.stringify({ sessionId: INTERACTIVE, entries }), { status: 200 });
+      });
+      return { fetch, release: () => release() };
+    }
+
+    it('shows only the status line, saying the reply is in the conversation, with no Reply box', async () => {
+      const entries = [
+        { kind: 'cross-session', at: minutesAgo(3), from: 'pitwall-relay', text: 'Which flows did you change?', markdown: true },
+        { kind: 'to-pitwall', at: minutesAgo(2), text: replyText, markdown: true },
+      ];
+      renderDashboard(chatServer(entries).fetch, snap(interactive({ relay })));
+      const view = await openView();
+      await settle();
+      const line = box(view).querySelector('.relay-exchange-line') as HTMLElement;
+      expect(line.textContent).toBe('Message from pitwall · 3m ago: delivered. It replied, and the reply is in the conversation.');
+      expect(line.querySelector('.relay-exchange-replied')?.textContent).toBe(REPLY_SAID);
+      expect(box(view).querySelector('.relay-reply')).toBeNull();
+      expect(box(view).textContent).not.toContain('Reply:');
+      // The whole reply is in the conversation instead, as the session wrote it.
+      expect(view.querySelector('.entry-to-pitwall .entry-markdown')?.textContent).toBe(replyText);
+    });
+
+    it("keeps the relay's copy in the footer when the message to pitwall since the send isn't it, as from a session that took the relay's name", async () => {
+      const entries = [{ kind: 'to-pitwall', at: minutesAgo(2), text: 'A different made-up message, to whoever took the name.', markdown: true }];
+      renderDashboard(chatServer(entries).fetch, snap(interactive({ relay })));
+      const view = await openView();
+      await settle();
+      expect(view.querySelector('.entry-to-pitwall')).not.toBeNull();
+      expect(box(view).querySelector('.relay-reply')?.textContent).toBe(`Reply: ${replyText}`);
+      expect(box(view).querySelector('.relay-exchange-line')?.textContent).toBe('Message from pitwall · 3m ago: delivered');
+    });
+
+    it('shows the reply in the footer, as before, until the conversation has loaded, and when it has no message to pitwall since the send', async () => {
+      const server = chatServer([{ kind: 'to-pitwall', at: minutesAgo(10), text: 'An older message, from before this send.', markdown: true }], true);
+      renderDashboard(server.fetch, snap(interactive({ relay })));
+      const view = await openView();
+      // Waiting for the conversation: no entries yet, so the reply is in the footer.
+      expect(box(view).querySelector('.relay-reply')?.textContent).toBe(`Reply: ${replyText}`);
+      expect(box(view).querySelector('.relay-exchange-line')?.textContent).toBe('Message from pitwall · 3m ago: delivered');
+      server.release();
+      await settle();
+      await settle();
+      expect(view.querySelector('.entry-to-pitwall')).not.toBeNull();
+      // Its only message to pitwall is from before the send, so the footer keeps the reply.
+      expect(box(view).querySelector('.relay-reply')?.textContent).toBe(`Reply: ${replyText}`);
+      expect(box(view).querySelector('.relay-exchange-replied')).toBeNull();
+    });
   });
 });

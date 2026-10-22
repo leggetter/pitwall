@@ -2707,7 +2707,8 @@ mark.match {
 }
 
 .entry-user,
-.entry-cross-session {
+.entry-cross-session,
+.entry-to-pitwall {
   padding: var(--pw-space-2) var(--pw-space-3);
   border-radius: var(--pw-radius-md);
   background: var(--pw-surface-sunken);
@@ -2716,6 +2717,12 @@ mark.match {
 /* From another session: the info inset at its start edge. */
 .entry-cross-session {
   box-shadow: inset 3px 0 0 var(--pw-info-fg);
+}
+
+/* To pitwall (W46): the same inset at its end edge. A message between sessions has it on the side it
+   came in from; one this session sent out, on the side it went. */
+.entry-to-pitwall {
+  box-shadow: inset -3px 0 0 var(--pw-info-fg);
 }
 
 .entry-notice .entry-text {
@@ -2731,8 +2738,8 @@ mark.match {
 }
 
 /*
- * Markdown in messages (section 4: Markdown in messages): Claude's messages and other sessions' as
- * pitwall's own elements. Text wraps as the message's text does; only a code block and a table
+ * Markdown in messages (section 4: Markdown in messages): Claude's messages, its messages to pitwall
+ * and other sessions' as pitwall's own elements. Text wraps as the message's text does; only a code block and a table
  * scroll sideways, each in its own box. The spacing between blocks is at the end of this part, after
  * the elements' own margins.
  */
@@ -2809,9 +2816,9 @@ ol.md-list {
 }
 
 /*
- * Inline code (2.7): mono s on --pw-surface-sunken, or --pw-surface inside another session's message,
- * which is sunken. Its line height is its own size, so JetBrains Mono's taller ascent doesn't stretch
- * the line it's on past the 4 px grid; its fill still covers the glyphs.
+ * Inline code (2.7): mono s on --pw-surface-sunken, or --pw-surface inside another session's message
+ * or a message to pitwall, which are sunken. Its line height is its own size, so JetBrains Mono's
+ * taller ascent doesn't stretch the line it's on past the 4 px grid; its fill still covers the glyphs.
  */
 .md-code-span {
   padding: 0 var(--pw-space-1);
@@ -2821,7 +2828,8 @@ ol.md-list {
   color: var(--pw-text);
 }
 
-.entry-cross-session .md-code-span {
+.entry-cross-session .md-code-span,
+.entry-to-pitwall .md-code-span {
   background: var(--pw-surface);
 }
 
@@ -2839,9 +2847,9 @@ ol.md-list {
 }
 
 /*
- * A code block: --pw-surface-muted (--pw-surface inside another session's message), a 1 px border,
- * the language and a Copy button in a bar above the code, and the code in code style, as written,
- * scrolling sideways in its own box.
+ * A code block: --pw-surface-muted (--pw-surface inside another session's message or a message to
+ * pitwall), a 1 px border, the language and a Copy button in a bar above the code, and the code in
+ * code style, as written, scrolling sideways in its own box.
  */
 .md-code {
   min-width: 0;
@@ -2850,7 +2858,8 @@ ol.md-list {
   background: var(--pw-surface-muted);
 }
 
-.entry-cross-session .md-code {
+.entry-cross-session .md-code,
+.entry-to-pitwall .md-code {
   background: var(--pw-surface);
 }
 

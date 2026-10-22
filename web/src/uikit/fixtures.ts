@@ -586,6 +586,54 @@ export const LINKS_IN_CODE: ConversationEntry[] = [
   },
 ];
 
+// Messages to pitwall (W46). Made up, in the shape of a session's SendMessage replies to pitwall's relay.
+
+/** A short reply to pitwall. */
+export const TO_PITWALL_SHORT = 'Both flows: the **export** and the import. The tests pass for each.';
+
+/** A long reply, several paragraphs and a list, as long as a footer could never show. */
+export const TO_PITWALL_LONG = [
+  'Here is where the export work stands.',
+  '',
+  'The export job now retries a failed batch three times, waiting 1, 4 and 16 seconds, and gives up with the error from the last attempt. Retries reuse the batch id, so a batch that half-wrote before failing is replaced rather than duplicated.',
+  '',
+  'What changed:',
+  '',
+  '1. `src/export/job.ts` wraps each batch in `withRetry()`.',
+  '2. `src/export/retry.ts` is new: the delays, and the check for errors worth retrying.',
+  '3. Three new tests: a batch that fails once, one that fails every time, and one that times out.',
+  '',
+  'The 30 second timeout is unchanged, as you asked. Nothing is left open, except whether the import job should retry the same way; I left it alone for now.',
+].join('\n');
+
+/** A reply with a code block and links, one in text and one in the code. */
+export const TO_PITWALL_CODE = [
+  'Run this to check it yourself:',
+  '',
+  '```sh',
+  'npm test -- export',
+  'gh pr view https://github.com/example/export-app/pull/41 --web',
+  '```',
+  '',
+  'The pull request is [#41](https://github.com/example/export-app/pull/41), and the CI run is https://example.com/ci/runs/1234.',
+].join('\n');
+
+/** A message from pitwall, the session's tool calls, its replies to pitwall in full, and what it said after. */
+export const TO_PITWALL_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(40), text: 'Add a retry with backoff to the export job.' },
+  { kind: 'cross-session', at: ago(7), from: 'pitwall-relay', text: 'Which flows did you change, and do the tests pass?', markdown: true },
+  { kind: 'tool', at: ago(6.8), toolName: 'Bash', text: 'Bash: git diff --stat' },
+  { kind: 'tool', at: ago(6.6), toolName: 'Bash', text: 'Bash: npm test -- export' },
+  { kind: 'to-pitwall', at: ago(6.5), text: TO_PITWALL_SHORT, markdown: true },
+  { kind: 'assistant', at: ago(6.4), text: 'So I sent it both flows.', markdown: true },
+  { kind: 'to-pitwall', at: ago(6), text: TO_PITWALL_LONG, markdown: true },
+  { kind: 'tool', at: ago(5.8), toolName: 'Bash', text: 'Bash: gh pr view 41' },
+  { kind: 'to-pitwall', at: ago(5.5), text: TO_PITWALL_CODE, markdown: true },
+];
+
+/** The exchange that conversation answers: sent before its replies, so the footer keeps only its status line. */
+export const TO_PITWALL_EXCHANGE: RelayExchange = { sentAt: ago(7), status: 'delivered', reply: { at: ago(6.5), text: TO_PITWALL_SHORT } };
+
 /** What the terminal shows once attached: made up, with colours, in the shape of Claude Code's output. */
 export const TERMINAL_OUTPUT =
   '\x1b[1mpitwall-test-terminal\x1b[0m · Export retries\r\n\r\n' +
