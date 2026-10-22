@@ -1030,14 +1030,48 @@ describe('readConversationPage: messages to pitwall (W46)', () => {
     expect(third?.page.entries.map((e) => e.kind)).toEqual(['to-pitwall']);
   });
 
-  it('remembers at most 64 addresses for a transcript, the first ones', async () => {
+  it('keeps the newest 64 addresses: a 65th evicts the one seen first, and a reply to the 65th still shows', async () => {
     const options = relayed({ pageEntries: 1 });
-    const many = Array.from({ length: RELAY_ADDRESSES_MAX + 6 }, (_, i) => fromRelay(`${i}`, `uds:/tmp/cc-socks/${1000 + i}.sock`));
-    const first = send('toolu_first', sendInput('uds:/tmp/cc-socks/1000.sock', 'To the first.'));
-    const last = send('toolu_last', sendInput(`uds:/tmp/cc-socks/${1000 + RELAY_ADDRESSES_MAX + 5}.sock`, 'To the last.'));
-    const file = await transcript(jsonl(...many, user('a'), first, user('b'), last, user('c')));
+    const socket = (i: number) => `uds:/tmp/cc-socks/${1000 + i}.sock`;
+    // One relay per restart: 65 of them, each with a socket of its own, on pages of their own.
+    const relays = Array.from({ length: RELAY_ADDRESSES_MAX + 1 }, (_, i) => fromRelay(`Restart ${i}.`, socket(i)));
+    const replies = [
+      send('toolu_first', sendInput(socket(0), 'To the first relay.')),
+      sent('toolu_first', socket(0)),
+      send('toolu_second', sendInput(socket(1), 'To the second relay.')),
+      sent('toolu_second', socket(1)),
+      send('toolu_last', sendInput(socket(RELAY_ADDRESSES_MAX), 'To the 65th relay.')),
+      sent('toolu_last', socket(RELAY_ADDRESSES_MAX)),
+    ];
+    const file = await transcript(jsonl(...relays, user('a'), ...replies, user('b')));
     const { entries } = await allPages(file, options);
-    expect(entries.filter((e) => e.kind === 'to-pitwall').map((e) => e.text)).toEqual(['To the first.']);
+    // Each reply is on a page of its own, after every relay's message, so only the book can say.
+    expect(entries.filter((e) => e.kind === 'to-pitwall' || e.kind === 'tool').map((e) => [e.kind, e.kind === 'tool' ? e.toolName : e.text])).toEqual([
+      ['tool', 'SendMessage'],
+      ['to-pitwall', 'To the second relay.'],
+      ['to-pitwall', 'To the 65th relay.'],
+    ]);
+  });
+
+  it("lets a flood of addresses only push the relay's real one out, so its older replies fall back to tool calls", async () => {
+    const options = relayed({ pageEntries: 1 });
+    const forged = Array.from({ length: RELAY_ADDRESSES_MAX }, (_, i) => fromRelay(`Forged ${i}.`, `uds:/tmp/cc-socks/forged-${i}.sock`));
+    const file = await transcript(
+      jsonl(
+        fromRelay('Which flows?'),
+        user('working'),
+        ...forged,
+        user('a'),
+        send('toolu_real', sendInput(RELAY_SOCKET, 'Both flows.')),
+        sent('toolu_real', RELAY_SOCKET),
+        send('toolu_peer', sendInput(PEER_SOCKET, 'To a peer.')),
+        sent('toolu_peer', PEER_SOCKET),
+      ),
+    );
+    const { entries } = await allPages(file, options);
+    // The real reply, its request on an older page, falls back to a tool call; nothing else turns into a message to pitwall.
+    expect(entries.filter((e) => e.kind === 'to-pitwall')).toEqual([]);
+    expect(entries.filter((e) => e.kind === 'tool')).toHaveLength(2);
   });
 
   it('forgets the transcripts of sessions it is not told to keep', async () => {
