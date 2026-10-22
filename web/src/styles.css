@@ -2091,6 +2091,27 @@ mark.match {
 }
 
 /*
+ * Under line 2, where to answer while it waits on you and what to do when the directory has gone
+ * (W47), and a background session's footer: a note in meta text, --pw-text-muted, as the message box's
+ * own note is. /exit is inline code (2.7), its line height its own size so the line stays on the 4 px grid.
+ */
+.session-view-waiting-note,
+.session-view-cwd-note,
+.session-view-note {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-view-cwd-note code {
+  padding: 0 var(--pw-space-1);
+  line-height: 1;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
+}
+
+/*
  * Line 3, once the session has worked in repos beyond where it started (W34): "Started in app · worked
  * in api, docs", meta text that wraps, the repos' labels in --pw-text-muted, then the rule's info button.
  */
@@ -2434,8 +2455,9 @@ mark.match {
 }
 
 /*
- * The footer: the message box, on the --pw-surface-muted band. At most half the view, scrolling
- * inside itself past that, so the conversation keeps its share on a short window.
+ * The footer: the message box, or a background session's note (W47), on the --pw-surface-muted band.
+ * At most half the view, scrolling inside itself past that, so the conversation keeps its share on a
+ * short window.
  */
 .session-view-foot {
   flex: none;

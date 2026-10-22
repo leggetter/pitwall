@@ -10,15 +10,21 @@ import {
 } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { App } from '../App.js';
+import { AttachContext, type AttachEnv } from '../attach.js';
 import type { ConnectionView } from '../connection.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { tooltipText } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from './SessionRow.js';
-import { SessionView } from './SessionView.js';
+import { BACKGROUND_NOTES, CWD_MISSING_HINT, CWD_MISSING_NOTES, cwdMissingNote, EXIT_COMMAND, SessionView, WAITING_NOTES, waitingNote } from './SessionView.js';
 
 // Made-up sessions and conversations only.
+
+// The Terminal tab's xterm.js, for the tests that open it: it only needs to exist.
+vi.mock('../xterm.js', () => ({
+  createXterm: () => ({ cols: 80, rows: 24, write() {}, onData() {}, fit() {}, focus() {}, dispose() {} }),
+}));
 
 const SID = '00000000-0000-4000-8000-0000000000d1';
 const API_KEY = 'k'.repeat(43);
@@ -516,6 +522,340 @@ describe('SessionView: the message box at the foot', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('SessionView: notes that say what to do (W47)', () => {
+  const GONE_DIR = '/Users/example/code/demo-app/.claude/worktrees/pitwall-test-gone';
+  const interactive = (overrides: Partial<SessionSummary> = {}) => target({ cwd: GONE_DIR, cwdMissing: true, ...overrides });
+  const background = (overrides: Partial<SessionSummary> = {}) =>
+    target({ kind: 'background', shortId: 'pt0d47', state: 'working', status: undefined, cwd: GONE_DIR, cwdMissing: true, ...overrides });
+  const finished = (state: 'done' | 'stopped' | 'failed', overrides: Partial<SessionSummary> = {}) =>
+    background({ state, alive: false, pid: undefined, finished: true, ...overrides });
+
+  /** An attach env whose sockets are counted, so a test can say nothing attached. */
+  function attachEnv() {
+    const sockets = fakeSockets();
+    const env: AttachEnv = { token: 'pitwall-test-token', host: '127.0.0.1:4517', createSocket: sockets.factory };
+    return { env, sockets: sockets.sockets };
+  }
+
+  function renderView(s: SessionSummary, { listed = true, env }: { listed?: boolean; env?: AttachEnv } = {}) {
+    const ui = (shown: SessionSummary) => {
+      const view = <SessionView session={shown} listed={listed} onClose={() => {}} />;
+      return env ? <AttachContext.Provider value={env}>{view}</AttachContext.Provider> : view;
+    };
+    const result = render(ui(s));
+    return { ...result, view: result.container.querySelector<HTMLElement>('.session-view')!, update: (next: SessionSummary) => result.rerender(ui(next)) };
+  }
+
+  const head = (view: HTMLElement) => view.querySelector<HTMLElement>('.session-view-head')!;
+  const cwdNote = (view: HTMLElement) => view.querySelector<HTMLElement>('.session-view-cwd-note');
+  const waitNote = (view: HTMLElement) => view.querySelector<HTMLElement>('.session-view-waiting-note');
+  const badgeText = (view: HTMLElement) => view.querySelector('.session-view-meta .badge')?.textContent;
+  const footNote = (view: HTMLElement) => view.querySelector<HTMLElement>('.session-view-foot .session-view-note');
+
+  /** The innermost elements whose whole text is `text`: one, when it's read once. */
+  const holding = (view: HTMLElement, text: string) =>
+    [...view.querySelectorAll('*')].filter((element) => element.textContent === text && ![...element.children].some((child) => child.textContent === text));
+
+  /** Opens the actions menu and reads whether `label` is there and on. */
+  function menuItem(view: HTMLElement, label: string): 'on' | 'off' | 'absent' {
+    fireEvent.click(within(view).getByRole('button', { name: 'Session actions' }));
+    const item = within(view).queryByRole('menuitem', { name: label });
+    const state = !item ? 'absent' : item.getAttribute('aria-disabled') === 'true' ? 'off' : 'on';
+    fireEvent.keyDown(within(view).getByRole('menu'), { key: 'Escape' });
+    return state;
+  }
+
+  describe('the directory that has gone', () => {
+    it('keeps line 2 as it was: "Directory no longer exists", its own item, with its tooltip', async () => {
+      const { view } = renderView(interactive());
+      const missing = view.querySelector<HTMLElement>('.session-view-meta > .session-view-missing')!;
+      expect(missing.textContent).toBe('Directory no longer exists');
+      expect(await tooltipText(missing)).toBe(CWD_MISSING_HINT);
+    });
+
+    it('says an interactive session is still running in its terminal, and that /exit there ends it, in code style', () => {
+      const { view } = renderView(interactive());
+      const note = cwdNote(view)!;
+      expect(note.textContent).toBe("It's still running in its terminal, so it's listed. Type /exit there to end it.");
+      expect(note.textContent).toBe(CWD_MISSING_NOTES.interactive);
+      expect([...note.querySelectorAll('code')].map((code) => code.textContent)).toEqual([EXIT_COMMAND]);
+      // A line of its own, right under line 2, in the header.
+      expect(note.tagName).toBe('P');
+      expect(note.previousElementSibling).toBe(view.querySelector('.session-view-meta'));
+      expect(head(view).contains(note)).toBe(true);
+      // pitwall can't end it: Stop session is there, and off (W40).
+      expect(menuItem(view, 'Stop session')).toBe('off');
+    });
+
+    it('says the same while it waits on you or is busy', () => {
+      for (const status of ['waiting', 'busy', 'idle'] as const) {
+        const { view, unmount } = renderView(interactive({ status, ...(status === 'waiting' ? { waitingFor: 'a made-up question' } : {}) }));
+        expect(cwdNote(view)?.textContent).toBe(CWD_MISSING_NOTES.interactive);
+        unmount();
+      }
+    });
+
+    it('says a running background session is still running, and that Stop session ends it, which is on', () => {
+      for (const s of [background(), background({ state: 'blocked', stale: true }), background({ state: 'done' })]) {
+        const { view, unmount } = renderView(s);
+        expect(cwdNote(view)?.textContent).toBe("It's still running, so it's listed. Stop session, in the actions menu, ends it.");
+        expect(cwdNote(view)?.querySelector('code')).toBeNull();
+        expect(menuItem(view, 'Stop session')).toBe('on');
+        unmount();
+      }
+    });
+
+    it.each(['done', 'stopped', 'failed'] as const)('says a %s background session isn’t running, and that Remove session takes it off the list, which is on', (state) => {
+      const { view } = renderView(finished(state));
+      expect(cwdNote(view)?.textContent).toBe("It isn't running. Remove session, in the actions menu, takes it off the list.");
+      expect(menuItem(view, 'Remove session')).toBe('on');
+      expect(menuItem(view, 'Stop session')).toBe('off');
+    });
+
+    it('says the same of a background session whose process exited before it finished, or whose state is unknown', () => {
+      for (const s of [background({ state: 'blocked', alive: false, pid: undefined, stale: true }), background({ state: 'working', alive: false, pid: undefined }), background({ state: undefined, alive: false, pid: undefined })]) {
+        const { view, unmount } = renderView(s);
+        expect(cwdNote(view)?.textContent).toBe(CWD_MISSING_NOTES.notRunning);
+        expect(menuItem(view, 'Remove session')).toBe('on');
+        unmount();
+      }
+    });
+
+    it('changes with the session: stopped while open, it says Remove session', () => {
+      const { view, update } = renderView(background());
+      expect(cwdNote(view)?.textContent).toBe(CWD_MISSING_NOTES.running);
+      update(finished('stopped'));
+      expect(cwdNote(view)?.textContent).toBe(CWD_MISSING_NOTES.notRunning);
+    });
+
+    it("leaves it plain for an interactive session that isn't running, and for any session no longer listed, whose menu has neither action", () => {
+      const quiet = interactive({ alive: false, pid: undefined, status: undefined });
+      const { view, unmount } = renderView(quiet);
+      expect(view.querySelector('.session-view-missing')?.textContent).toBe('Directory no longer exists');
+      expect(cwdNote(view)).toBeNull();
+      unmount();
+
+      for (const s of [interactive(), background(), finished('done')]) {
+        const gone = renderView(s, { listed: false });
+        expect(gone.view.querySelector('.session-view-missing')?.textContent).toBe('Directory no longer exists');
+        expect(cwdNote(gone.view)).toBeNull();
+        expect(head(gone.view).textContent).toContain('This session is no longer listed');
+        expect(menuItem(gone.view, 'Stop session')).toBe('absent');
+        expect(menuItem(gone.view, 'Remove session')).toBe('absent');
+        gone.unmount();
+      }
+      expect(cwdMissingNote(quiet, true)).toBeUndefined();
+    });
+
+    it('says nothing for a session whose directory is there', () => {
+      for (const s of [target(), target({ kind: 'background', shortId: 'pt0d48', state: 'working', status: undefined })]) {
+        const { view, unmount } = renderView(s);
+        expect(view.querySelector('.session-view-missing')).toBeNull();
+        expect(cwdNote(view)).toBeNull();
+        unmount();
+      }
+    });
+  });
+
+  describe('while it waits on you', () => {
+    const waitingTty = (overrides: Partial<SessionSummary> = {}) => target({ status: 'waiting', waitingFor: 'input needed', ...overrides });
+    const waitingJob = (overrides: Partial<SessionSummary> = {}) =>
+      target({ kind: 'background', shortId: 'pt0d49', state: 'working', status: 'waiting', waitingFor: 'permission prompt', ...overrides });
+
+    it("says to answer an interactive session in its terminal, which pitwall can't do, and that a message sent below waits", () => {
+      const { view } = renderView(waitingTty());
+      const note = waitNote(view)!;
+      expect(note.textContent).toBe("Answer it in its terminal: pitwall can't, and a message sent below waits until you do.");
+      expect(note.textContent).toBe(WAITING_NOTES.interactive);
+      // Under line 2, whose badge says it's waiting and on what; the note doesn't say it again.
+      expect(badgeText(view)).toBe('Waiting: input needed');
+      expect(note.previousElementSibling).toBe(view.querySelector('.session-view-meta'));
+      expect(note.textContent).not.toMatch(/waiting|input needed/i);
+      // The message box is still there, below, as the note says.
+      expect(view.querySelector('.session-view-foot > .relay-box')).toBeTruthy();
+    });
+
+    it('says to answer a background session in its Terminal tab, which attaches, with no button, and attaches nothing by itself', () => {
+      const { env, sockets } = attachEnv();
+      const { view } = renderView(waitingJob(), { env });
+      const note = waitNote(view)!;
+      expect(note.textContent).toBe('Answer it in its Terminal tab, which attaches to it.');
+      expect(note.textContent).toBe(WAITING_NOTES.background);
+      expect(badgeText(view)).toBe('Waiting: permission prompt');
+      expect(note.textContent).not.toMatch(/waiting|permission prompt/i);
+      expect(within(head(view)).queryAllByRole('button').map((button) => button.textContent)).not.toContain('Terminal');
+      expect(note.querySelectorAll('button, a')).toHaveLength(0);
+      expect(within(view).getByRole('tab', { name: 'Terminal' }).getAttribute('aria-selected')).toBe('false');
+      expect(sockets).toHaveLength(0);
+    });
+
+    it('says the same for a background job that is blocked, which Claude Code reports with status idle, but not a stale one', () => {
+      const { env } = attachEnv();
+      const blocked = renderView(waitingJob({ state: 'blocked', status: 'idle', waitingFor: 'a made-up question' }), { env });
+      expect(badgeText(blocked.view)).toBe('Blocked: a made-up question');
+      expect(waitNote(blocked.view)?.textContent).toBe(WAITING_NOTES.background);
+      blocked.unmount();
+      const stale = renderView(waitingJob({ state: 'blocked', status: 'idle', stale: true }), { env });
+      expect(waitNote(stale.view)).toBeNull();
+    });
+
+    it("shows what it's waiting on as Claude Code gives it, as text, in the badge alone", () => {
+      const odd = '<b>made-up</b> dialog: "Pick one" & more';
+      const { view } = renderView(waitingTty({ waitingFor: odd }));
+      expect(badgeText(view)).toBe(`Waiting: ${odd}`);
+      expect(view.querySelector('.session-view-meta b')).toBeNull();
+      expect(holding(view, `Waiting: ${odd}`)).toHaveLength(1);
+      expect(waitNote(view)?.textContent).toBe(WAITING_NOTES.interactive);
+      // And with no reason at all, the badge is just "Waiting", and the note the same.
+      const bare = renderView(waitingTty({ waitingFor: undefined }));
+      expect(badgeText(bare.view)).toBe('Waiting');
+      expect(waitNote(bare.view)?.textContent).toBe(WAITING_NOTES.interactive);
+    });
+
+    it("says nothing when it isn't waiting, isn't running, is no longer listed, or, for a background one, can't be attached", () => {
+      const { env } = attachEnv();
+      const quiet: [SessionSummary, boolean, AttachEnv | undefined][] = [
+        [target({ status: 'idle' }), true, env],
+        [target({ status: 'busy' }), true, env],
+        [target({ askedYou: { reason: 'question', excerpt: 'A made-up question?' } }), true, env],
+        [waitingTty({ alive: false, pid: undefined }), true, env],
+        [waitingTty(), false, env],
+        [waitingJob(), false, env],
+        [waitingJob(), true, undefined],
+        [waitingJob({ state: 'blocked', status: undefined, alive: false, pid: undefined }), true, env],
+      ];
+      for (const [s, listed, attach] of quiet) {
+        const { view, unmount } = renderView(s, { listed, ...(attach ? { env: attach } : {}) });
+        expect(waitNote(view)).toBeNull();
+        unmount();
+      }
+      expect(waitingNote(waitingJob(), true, false)).toBeUndefined();
+      expect(waitingNote(waitingJob(), true, true)).toBe(WAITING_NOTES.background);
+    });
+
+    it('comes and goes with the status, and sits above the directory note when both apply', () => {
+      const { view, update } = renderView(waitingTty({ cwd: GONE_DIR, cwdMissing: true }));
+      expect([...head(view).querySelectorAll('p')].map((p) => p.className)).toEqual(['session-view-waiting-note', 'session-view-cwd-note']);
+      expect(waitNote(view)?.previousElementSibling).toBe(view.querySelector('.session-view-meta'));
+      update(waitingTty({ cwd: GONE_DIR, cwdMissing: true, status: 'busy', waitingFor: undefined }));
+      expect(waitNote(view)).toBeNull();
+      expect(cwdNote(view)?.textContent).toBe(CWD_MISSING_NOTES.interactive);
+    });
+  });
+
+  describe("a background session's footer", () => {
+    it('says to type to a running one in its Terminal tab, which attaches, with no button and no message box, and attaches nothing by itself', () => {
+      const { env, sockets } = attachEnv();
+      const { view } = renderView(background({ cwdMissing: undefined, cwd: '/Users/example/code/demo-app' }), { env });
+      const foot = view.querySelector<HTMLElement>('.session-view-foot')!;
+      expect(footNote(view)?.textContent).toBe('To message it, type in its Terminal tab, which attaches to it.');
+      expect(footNote(view)?.textContent).toBe(BACKGROUND_NOTES.running);
+      // Where the message box would be: last in the view, after the body.
+      expect(view.lastElementChild).toBe(foot);
+      expect(foot.children).toHaveLength(1);
+      // Opening the Terminal tab attaches, so nothing here opens it (D9).
+      expect(within(foot).queryAllByRole('button')).toEqual([]);
+      expect(within(foot).queryAllByRole('link')).toEqual([]);
+      expect(within(view).queryByRole('textbox')).toBeNull();
+      expect(within(view).queryByRole('region', { name: 'Message this session' })).toBeNull();
+      expect(within(view).getByRole('tab', { name: 'Terminal' }).getAttribute('aria-selected')).toBe('false');
+      expect(sockets).toHaveLength(0);
+    });
+
+    it('goes while the Terminal tab is open, which selecting attaches by itself, and comes back on Conversation', async () => {
+      const { env, sockets } = attachEnv();
+      const { view } = renderView(background(), { env });
+      expect(footNote(view)?.textContent).toBe(BACKGROUND_NOTES.running);
+
+      // Why the note has no button to open the tab: selecting it is what attaches (D9).
+      fireEvent.click(within(view).getByRole('tab', { name: 'Terminal' }));
+      await settle();
+      expect(sockets).toHaveLength(1);
+      expect(view.querySelector('.session-view-foot')).toBeNull();
+
+      fireEvent.click(within(view).getByRole('tab', { name: 'Conversation' }));
+      await settle();
+      expect(footNote(view)?.textContent).toBe(BACKGROUND_NOTES.running);
+      expect(sockets[0]!.closedByClient).toBe(true);
+    });
+
+    it('says a finished one asks before restarting, when its Terminal tab opens', () => {
+      const { env, sockets } = attachEnv();
+      for (const s of [finished('done'), finished('failed'), background({ state: 'blocked', alive: false, pid: undefined, stale: true })]) {
+        const { view, unmount } = renderView(s, { env });
+        expect(footNote(view)?.textContent).toBe('To message it, open its Terminal tab, which asks before restarting it.');
+        expect(footNote(view)?.textContent).toBe(BACKGROUND_NOTES.notRunning);
+        unmount();
+      }
+      expect(sockets).toHaveLength(0);
+    });
+
+    it('changes with the session: stopped while open, it says the tab asks first', () => {
+      const { env } = attachEnv();
+      const { view, update } = renderView(background(), { env });
+      expect(footNote(view)?.textContent).toBe(BACKGROUND_NOTES.running);
+      update(finished('stopped'));
+      expect(footNote(view)?.textContent).toBe(BACKGROUND_NOTES.notRunning);
+    });
+
+    it("isn't there once it's no longer listed, or where it can't be attached, as the Terminal tab's tooltip says", () => {
+      const { env } = attachEnv();
+      const gone = renderView(background(), { listed: false, env });
+      expect(gone.view.querySelector('.session-view-foot')).toBeNull();
+      gone.unmount();
+      const unattachable = renderView(background());
+      expect(unattachable.view.querySelector('.session-view-foot')).toBeNull();
+      expect(within(unattachable.view).getByRole('tab', { name: 'Terminal' }).getAttribute('aria-disabled')).toBe('true');
+    });
+
+    it('leaves an interactive session’s footer as it was: the message box, and no note', () => {
+      const { env } = attachEnv();
+      for (const s of [target(), interactive(), target({ alive: false, pid: undefined, status: undefined })]) {
+        const { view, unmount } = renderView(s, { env });
+        expect(view.querySelector('.session-view-foot > .relay-box')).toBeTruthy();
+        expect(footNote(view)).toBeNull();
+        for (const note of Object.values(BACKGROUND_NOTES)) expect(view.textContent).not.toContain(note);
+        unmount();
+      }
+    });
+  });
+
+  describe('for screen readers', () => {
+    it('reads each note once, in place, as plain text: no live region, no name or description that repeats it', () => {
+      const { env } = attachEnv();
+      const cases: [SessionSummary, string[]][] = [
+        [interactive(), [CWD_MISSING_NOTES.interactive]],
+        [background(), [CWD_MISSING_NOTES.running, BACKGROUND_NOTES.running]],
+        [finished('done'), [CWD_MISSING_NOTES.notRunning, BACKGROUND_NOTES.notRunning]],
+        [interactive({ status: 'waiting', waitingFor: 'input needed' }), [WAITING_NOTES.interactive, CWD_MISSING_NOTES.interactive]],
+        [background({ status: 'waiting', waitingFor: 'permission prompt' }), [WAITING_NOTES.background, CWD_MISSING_NOTES.running, BACKGROUND_NOTES.running]],
+      ];
+      for (const [s, notes] of cases) {
+        const { view, unmount } = renderView(s, { env });
+        for (const note of notes) {
+          const found = holding(view, note);
+          expect(found).toHaveLength(1);
+          const element = found[0]!;
+          expect(element.tagName).toBe('P');
+          expect(element.closest('[role="status"], [role="alert"], [aria-live]')).toBeNull();
+          expect(element.hasAttribute('id')).toBe(false);
+          for (const named of view.querySelectorAll('[aria-label], [title]')) {
+            expect(`${named.getAttribute('aria-label') ?? ''}${named.getAttribute('title') ?? ''}`).not.toContain(note);
+          }
+        }
+        // "Directory no longer exists" once, and the note doesn't repeat it.
+        expect(holding(view, 'Directory no longer exists')).toHaveLength(1);
+        expect(cwdNote(view)?.textContent).not.toContain('no longer exists');
+        // The footer has no role or name of its own, and the Terminal tab is still just "Terminal", described by nothing.
+        const foot = view.querySelector<HTMLElement>('.session-view-foot')!;
+        for (const attribute of ['role', 'aria-label', 'aria-labelledby', 'aria-describedby']) expect(foot.hasAttribute(attribute)).toBe(false);
+        if (s.kind === 'background') expect(within(view).getByRole('tab', { name: 'Terminal' }).hasAttribute('aria-describedby')).toBe(false);
+        unmount();
+      }
+    });
   });
 });
 
