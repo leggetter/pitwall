@@ -158,13 +158,13 @@ export const REPLY_IN_CONVERSATION = 'It replied, and the reply is in the conver
 
 /**
  * Whether a message to pitwall is the relay's copy of the reply, whitespace collapsed: the same text, or,
- * when the relay cut its copy (`cut`), text that starts with it. An entry the server cut shorter than
- * the reply, past its page's budget, counts when it's the start of the reply.
+ * when the relay cut its copy (`cut`), text that starts with it. Either way the conversation shows at
+ * least as much as the footer would, so an entry the server cut shorter than the reply, past its
+ * page's budget, never counts: the footer keeps its copy (W48's G1).
  */
 function isReply(entry: ConversationEntry, reply: string, cut: boolean): boolean {
   const text = squash(entry.text);
-  if (text === reply || (cut && text.startsWith(reply))) return true;
-  return entry.truncated === true && text.length >= CONTAINED_FROM && reply.startsWith(text);
+  return text === reply || (cut && text.startsWith(reply));
 }
 
 /**
@@ -173,7 +173,7 @@ function isReply(entry: ConversationEntry, reply: string, cut: boolean): boolean
  * received counts, `exchange.reply`, and it does when:
  * - a message the session sent to pitwall's relay (`to-pitwall`, W46: its SendMessage, in full) at or
  *   after the send is the reply's text, whitespace collapsed, or starts with it when the relay cut its
- *   copy at 2 KiB. The text, not the address alone, is what says it's the reply the relay received,
+ *   copy at 2 KiB, so it shows at least as much as the footer would. The text, not the address alone, is what says it's the reply the relay received,
  *   since any local session can take the relay's name (W48). A message to pitwall with no time isn't
  *   known to be since the send, so it doesn't count; or,
  * - as before W46, one of Claude's entries since the send has the reply's text: the whole entry, or

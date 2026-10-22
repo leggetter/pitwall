@@ -563,6 +563,19 @@ describe('the message box’s rules (W24)', () => {
       expect(view.querySelector('.entry-to-pitwall .entry-markdown')?.textContent).toBe(replyText);
     });
 
+    it("keeps the relay's copy in the footer when the conversation shows only the start of the reply, cut short past its page's budget (W48's G1)", async () => {
+      const long = `${replyText} ${'More of the made-up reply, past what a cut entry keeps. '.repeat(30)}`;
+      const cutRelay = { ...relay, reply: { at: minutesAgo(2), text: `${long.slice(0, 1500)}…` } };
+      const entries = [{ kind: 'to-pitwall', at: minutesAgo(2), text: long.slice(0, 512), markdown: true, truncated: true }];
+      renderDashboard(chatServer(entries).fetch, snap(interactive({ relay: cutRelay })));
+      const view = await openView();
+      await settle();
+      expect(view.querySelector('.entry-to-pitwall .entry-cut')?.textContent).toBe('Cut short.');
+      expect(box(view).querySelector('.relay-reply')?.textContent?.startsWith(`Reply: ${replyText}`)).toBe(true);
+      expect(box(view).querySelector('.relay-exchange-line')?.textContent).toBe('Message from pitwall · 3m ago: delivered');
+      expect(box(view).querySelector('.relay-exchange-replied')).toBeNull();
+    });
+
     it("keeps the relay's copy in the footer when the message to pitwall since the send isn't it, as from a session that took the relay's name", async () => {
       const entries = [{ kind: 'to-pitwall', at: minutesAgo(2), text: 'A different made-up message, to whoever took the name.', markdown: true }];
       renderDashboard(chatServer(entries).fetch, snap(interactive({ relay })));
