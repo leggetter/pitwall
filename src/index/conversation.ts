@@ -369,8 +369,22 @@ interface AddressScan {
   midLine: boolean;
   /** Of the bytes before `offset`, as a cursor's is, so a file rewritten in place is read again. */
   fingerprint: string;
+  /**
+   * Of the file's first bytes, up to 4 KiB, which name the session and its first time: a file that was
+   * replaced by another as long, even on the same inode, as a file system can reuse one at once.
+   */
+  head: string;
   /** The addresses the relay's messages came from, each with the offset of the first line that had it. */
   addresses: Map<string, number>;
+}
+
+/** How much of a transcript's start the address book's `head` covers. */
+const HEAD_BYTES = 4 * KIB;
+
+/** A hash of the bytes in [start, end), as a fingerprint's is. */
+async function digest(handle: FileHandle, start: number, end: number): Promise<string> {
+  const bytes = await readRange(handle, start, end);
+  return createHash('sha256').update(bytes).digest().subarray(0, 8).toString('base64url');
 }
 
 /** What the address book knows of the transcript before an offset, and what it read to know it. */
@@ -390,9 +404,10 @@ export interface KnownAddresses {
  * another session's socket. The book then reads the transcript forward, from where it last stopped
  * up to the page's start, so it reads each byte of a transcript at most once while pitwall runs,
  * however many pages ask. It parses only lines that name the relay. A transcript that was replaced,
- * shrank or was rewritten before where the book stopped is read again from the start.
+ * shrank, or was rewritten at its start or just before where the book stopped is read again from the
+ * start: by its inode, its size, and hashes of its first 4 KiB and of the 64 bytes before that place.
  *
- * In memory only, for the sessions in the latest snapshot: an offset, a fingerprint and at most 64
+ * In memory only, for the sessions in the latest snapshot: an offset, two hashes and at most 64
  * addresses each. It fails soft: a transcript it can't read leaves those calls as tool calls.
  */
 export class RelayAddressBook {
@@ -438,12 +453,20 @@ export class RelayAddressBook {
     let scan = this.scans.get(sessionId);
     if (
       scan !== undefined &&
-      !(scan.file === file && scan.dev === identity.dev && scan.ino === identity.ino && scan.offset <= size && (await fingerprint(handle, scan.offset)) === scan.fingerprint)
+      !(
+        scan.file === file &&
+        scan.dev === identity.dev &&
+        scan.ino === identity.ino &&
+        scan.offset <= size &&
+        (await fingerprint(handle, scan.offset)) === scan.fingerprint &&
+        (await digest(handle, 0, Math.min(HEAD_BYTES, scan.offset))) === scan.head
+      )
     ) {
       scan = undefined;
     }
     if (scan === undefined) {
-      scan = { file, ...identity, offset: 0, midLine: false, fingerprint: await fingerprint(handle, 0), addresses: new Map() };
+      const none = await digest(handle, 0, 0);
+      scan = { file, ...identity, offset: 0, midLine: false, fingerprint: none, head: none, addresses: new Map() };
       this.scans.set(sessionId, scan);
     }
     const target = Math.min(offset, size);
@@ -494,6 +517,7 @@ export class RelayAddressBook {
     // A line that runs on past the target is one the page skipped as too long to read: so is its rest.
     scan.midLine = skipping || partBytes > 0;
     scan.fingerprint = await fingerprint(handle, target);
+    scan.head = await digest(handle, 0, Math.min(HEAD_BYTES, target));
     return target - start;
   }
 
