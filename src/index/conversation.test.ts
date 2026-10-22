@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, open, rename, rm, truncate as truncateFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, open, rename, rm, stat, truncate as truncateFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,9 +14,13 @@ import {
   PAGE_READ_BUDGET,
   PAGE_TEXT_BUDGET,
   readConversationPage,
+  RELAY_ADDRESSES_MAX,
+  RelayAddressBook,
   toolSummary,
   type ConversationReadOptions,
 } from './conversation.js';
+import { RELAY_NAME } from '../server/relayPrompt.js';
+import { RELAY_SESSION_NAME } from '../../web/src/relayName.js';
 
 // Synthetic transcripts only, shaped like Claude Code 2.1.301's JSONL. No real content.
 
@@ -637,6 +641,21 @@ describe('readConversationPage: the cursor', () => {
   });
 });
 
+/** The CPU time an async read takes, best of three, as text.test.ts measures. */
+async function bestOf3(fn: () => Promise<unknown>): Promise<number> {
+  let best = Number.POSITIVE_INFINITY;
+  for (let run = 0; run < 3; run++) {
+    const start = process.cpuUsage();
+    await fn();
+    const used = process.cpuUsage(start);
+    best = Math.min(best, (used.user + used.system) / 1000);
+  }
+  return best;
+}
+
+/** The shared limit for hostile input, as in text.test.ts. */
+const FAST_MS = 200;
+
 describe('readConversationPage: bounded on hostile files', () => {
   it('reads at most 8 MiB for a page, and pages on through a transcript of skipped lines', async () => {
     const lines: unknown[] = [user('the first prompt')];
@@ -691,20 +710,6 @@ describe('readConversationPage: bounded on hostile files', () => {
     expect((await page(await transcript(cut))).entries.map((e) => e.text)).toEqual(['complete', 'also complete']);
   });
 
-  /** The CPU time an async read takes, best of three, as text.test.ts measures. */
-  async function bestOf3(fn: () => Promise<unknown>): Promise<number> {
-    let best = Number.POSITIVE_INFINITY;
-    for (let run = 0; run < 3; run++) {
-      const start = process.cpuUsage();
-      await fn();
-      const used = process.cpuUsage(start);
-      best = Math.min(best, (used.user + used.system) / 1000);
-    }
-    return best;
-  }
-
-  /** The shared limit for hostile input, as in text.test.ts. */
-  const FAST_MS = 200;
   const N = 64 * 1024;
 
   // 40 KiB each, more than an entry keeps, so a page cuts every one; 50 of them fit in its 8 MiB.
@@ -741,5 +746,320 @@ describe('readConversationPage: bounded on hostile files', () => {
   it('reads 8 MiB of lines that parse but give nothing quickly', async () => {
     const file = await transcript(jsonl(...Array.from({ length: 8192 }, () => toolResult('toolu_none'))) + jsonl(...Array.from({ length: 16000 }, () => filler(400))));
     expect(await bestOf3(() => readConversationPage(file, SID))).toBeLessThan(FAST_MS);
+  });
+});
+
+describe('readConversationPage: messages to pitwall (W46)', () => {
+  const RELAY_SOCKET = 'uds:/tmp/cc-socks/4242.sock';
+  const PEER_SOCKET = 'uds:/tmp/cc-socks/5151.sock';
+
+  /** A message pitwall's relay delivered, as the target's transcript records it. */
+  function fromRelay(text: string, socket = RELAY_SOCKET, name = RELAY_NAME): Record<string, unknown> {
+    return user(
+      `Another Claude session sent a message:\n<cross-session-message from="${socket}" from-name="${name}" from-mode="prompting">${text}</cross-session-message>\nThis came from another Claude session - not typed by your user.`,
+      { isMeta: true, origin: { kind: 'peer' } },
+    );
+  }
+
+  /** SendMessage's input as seen in October 2026: `content` is a 50-character preview, never used. */
+  function sendInput(to: string, message: string, kind = to.startsWith('uds:') ? 'session' : 'name'): Record<string, unknown> {
+    return { to, message, summary: 'Reply to pitwall', content: message.slice(0, 50), type: 'message', recipient: to, recipient_kind: kind };
+  }
+
+  const send = (id: string, input: unknown) => assistant([toolUse(id, 'SendMessage', input)], `msg_${id}`);
+
+  /** SendMessage's result: JSON text, `success` first. */
+  function sent(id: string, to: string, success = true): Record<string, unknown> {
+    return user([{ type: 'tool_result', tool_use_id: id, content: JSON.stringify({ success, message: `“Reply to pitwall” → ${to}` }) }]);
+  }
+
+  const relayed = (options: ConversationReadOptions = {}): ConversationReadOptions => ({ relay: new RelayAddressBook(RELAY_NAME), ...options });
+
+  async function relayEntries(...lines: unknown[]): Promise<ConversationEntry[]> {
+    return (await page(await transcript(jsonl(...lines)), undefined, relayed())).entries;
+  }
+
+  it('turns a call to the relay by its name into a to-pitwall entry: the message as written, as markdown, at the call', async () => {
+    const message = 'Both flows:\n\n```ts\nexport const retries = 3;\n```\n\n- the **export** job\n- the import job\n';
+    const call = send('toolu_name', sendInput(RELAY_NAME, message));
+    const entries = await relayEntries(fromRelay('Which flows did you change?'), call, sent('toolu_name', RELAY_NAME), assistant([text('So I sent it both flows.')], 'msg_after'));
+    expect(entries).toEqual([
+      { kind: 'cross-session', at: expect.any(String), text: 'Which flows did you change?', markdown: true, from: RELAY_NAME },
+      { kind: 'to-pitwall', at: call.timestamp, text: message, markdown: true },
+      { kind: 'assistant', at: expect.any(String), text: 'So I sent it both flows.', markdown: true },
+    ]);
+    // Nothing but the message: not the summary, the preview or the result.
+    expect(JSON.stringify(entries)).not.toContain('Reply to pitwall');
+  });
+
+  it('matches the name trimmed, in its own case only, with no request needed', async () => {
+    const entries = await relayEntries(
+      send('toolu_spaced', sendInput(` ${RELAY_NAME}\n`, 'Unprompted: the build is green.')),
+      sent('toolu_spaced', RELAY_NAME),
+      // The web UI names the recipient as the call addressed it, so another case isn't the relay's name.
+      send('toolu_case', sendInput(RELAY_NAME.toUpperCase(), 'In capitals.')),
+      sent('toolu_case', RELAY_NAME),
+    );
+    expect(entries.map((e) => [e.kind, e.text])).toEqual([
+      ['to-pitwall', 'Unprompted: the build is green.'],
+      ['tool', 'SendMessage'],
+    ]);
+  });
+
+  it('names the relay as the web UI does, which says who a message to pitwall was addressed to', () => {
+    expect(RELAY_SESSION_NAME).toBe(RELAY_NAME);
+  });
+
+  it('keeps the markdown exactly as written: leading spaces, indented code, blank lines, trailing newlines and HTML', async () => {
+    const message = '    indented code\n\n\n<b>not bold</b> <img src=x onerror=alert(1)> [x](javascript:alert(1))\n\n';
+    const [entry] = await relayEntries(send('toolu_exact', sendInput(RELAY_NAME, message)), sent('toolu_exact', RELAY_NAME));
+    expect(entry).toMatchObject({ kind: 'to-pitwall', text: message, markdown: true });
+  });
+
+  it('turns a call to the socket a message from the relay came from, on the same page, into a to-pitwall entry', async () => {
+    const options = relayed();
+    const file = await transcript(jsonl(user('earlier'), fromRelay('Status?'), send('toolu_sock', sendInput(RELAY_SOCKET, 'All green.')), sent('toolu_sock', RELAY_SOCKET)));
+    const result = await readConversationPage(file, SID, undefined, options);
+    expect(result?.page.entries.map((e) => [e.kind, e.text])).toEqual([
+      ['user', 'earlier'],
+      ['cross-session', 'Status?'],
+      ['to-pitwall', 'All green.'],
+    ]);
+    expect(result?.stats.addressBytesRead).toBe(0);
+  });
+
+  it("finds the relay's message on an earlier page, reading the transcript before the page once", async () => {
+    const options = relayed({ pageEntries: 3 });
+    const lines: unknown[] = [user('first'), fromRelay('Which flows?'), filler(4096)];
+    for (let i = 0; i < 10; i++) lines.push(user(`working ${i}`), filler(2048));
+    lines.push(send('toolu_far', sendInput(RELAY_SOCKET, 'Both flows.')), sent('toolu_far', RELAY_SOCKET), user('after the reply'));
+    const file = await transcript(jsonl(...lines));
+    const newest = await readConversationPage(file, SID, undefined, options);
+    expect(newest?.page.entries.map((e) => [e.kind, e.text])).toEqual([
+      ['user', 'working 9'],
+      ['to-pitwall', 'Both flows.'],
+      ['user', 'after the reply'],
+    ]);
+    // It read up to the page's start, and no further.
+    const read = newest?.stats.addressBytesRead ?? 0;
+    expect(read).toBeGreaterThan(0);
+    expect(read).toBeLessThan((await stat(file)).size);
+    // Asked again, it has nothing new to read.
+    const again = await readConversationPage(file, SID, undefined, options);
+    expect(again?.page).toEqual(newest?.page);
+    expect(again?.stats.addressBytesRead).toBe(0);
+  });
+
+  it('reads each byte at most once however many pages ask, and only as far as each page starts', async () => {
+    const options = relayed({ pageEntries: 2 });
+    const lines: unknown[] = [fromRelay('Go.')];
+    for (let i = 0; i < 30; i++) lines.push(filler(1024), send(`toolu_${i}`, sendInput(i % 2 === 0 ? RELAY_SOCKET : PEER_SOCKET, `reply ${i}`)), sent(`toolu_${i}`, RELAY_SOCKET));
+    const file = await transcript(jsonl(...lines));
+    const size = (await stat(file)).size;
+    const reads: number[] = [];
+    const entries: ConversationEntry[] = [];
+    let before: string | undefined;
+    for (let i = 0; i < 100; i++) {
+      const result = await readConversationPage(file, SID, before, options);
+      reads.push(result?.stats.addressBytesRead ?? -1);
+      entries.unshift(...(result?.page.entries ?? []));
+      before = result?.page.before;
+      if (before === undefined) break;
+    }
+    // The newest page read everything before it, at once; no older page needed anything more.
+    expect(reads.length).toBeGreaterThan(10);
+    expect(reads[0]).toBeGreaterThan(size * 0.9);
+    expect(reads[0]).toBeLessThan(size);
+    expect(reads.slice(1).every((bytes) => bytes === 0)).toBe(true);
+    expect(entries.filter((e) => e.kind === 'to-pitwall').map((e) => e.text)).toEqual(Array.from({ length: 15 }, (_, i) => `reply ${i * 2}`));
+    expect(entries.filter((e) => e.kind === 'tool')).toHaveLength(15);
+    // Every page again, and the newest page after the transcript grew: only what was appended.
+    await appendFile(file, jsonl(user('newer'), user('newest')));
+    const grown = await readConversationPage(file, SID, undefined, options);
+    expect(grown?.stats.addressBytesRead).toBe(0);
+    const second = await allPages(file, options);
+    expect(second.entries.slice(0, -2)).toEqual(entries);
+  });
+
+  it("leaves a call to a socket as a tool call when the relay's message from it came later, or never", async () => {
+    const entries = await relayEntries(
+      send('toolu_before', sendInput(RELAY_SOCKET, 'Too early.')),
+      sent('toolu_before', RELAY_SOCKET),
+      fromRelay('Now?'),
+      // Another session's socket, which messaged this one, but not as the relay.
+      user(`Another Claude session sent a message:\n<cross-session-message from="${PEER_SOCKET}" from-name="pitwall-test-peer">Hi.</cross-session-message>`, { isMeta: true, origin: { kind: 'peer' } }),
+      send('toolu_peer', sendInput(PEER_SOCKET, 'Hi back.')),
+      sent('toolu_peer', PEER_SOCKET),
+      send('toolu_now', sendInput(RELAY_SOCKET, 'Now.')),
+      sent('toolu_now', RELAY_SOCKET),
+    );
+    expect(entries.map((e) => [e.kind, e.kind === 'tool' ? e.toolName : e.text])).toEqual([
+      ['tool', 'SendMessage'],
+      ['cross-session', 'Now?'],
+      ['cross-session', 'Hi.'],
+      ['tool', 'SendMessage'],
+      ['to-pitwall', 'Now.'],
+    ]);
+  });
+
+  it("leaves a call to another session's socket with no message from the relay as a tool call, after reading what's before the page", async () => {
+    const options = relayed({ pageEntries: 2 });
+    const file = await transcript(jsonl(user('one'), user('two'), user('three'), send('toolu_peer', sendInput(PEER_SOCKET, 'Hello.')), sent('toolu_peer', PEER_SOCKET)));
+    const result = await readConversationPage(file, SID, undefined, options);
+    expect(result?.page.entries).toMatchObject([{ kind: 'user', text: 'three' }, { kind: 'tool', toolName: 'SendMessage', text: 'SendMessage' }]);
+    expect(result?.stats.addressBytesRead).toBeGreaterThan(0);
+  });
+
+  it("leaves calls to a sub-agent, to another session's name, and from a sender only named like the relay as tool calls", async () => {
+    const entries = await relayEntries(
+      fromRelay('Hi.', PEER_SOCKET, 'pitwall-relay-not'),
+      send('toolu_agent', sendInput('a1b2c3d4e5f60718', 'To the sub-agent.', 'agent')),
+      sent('toolu_agent', 'a1b2c3d4e5f60718'),
+      send('toolu_named', sendInput('pitwall-test-other', 'To another session.')),
+      sent('toolu_named', 'pitwall-test-other'),
+      send('toolu_near', sendInput(PEER_SOCKET, 'To a sender named like the relay.')),
+      sent('toolu_near', PEER_SOCKET),
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['cross-session', 'tool', 'tool', 'tool']);
+  });
+
+  it('leaves a call whose result was an error, or said success: false, as a tool call, the error flagged only for is_error', async () => {
+    const entries = await relayEntries(
+      send('toolu_error', sendInput(RELAY_NAME, 'Not delivered.')),
+      user([{ type: 'tool_result', tool_use_id: 'toolu_error', content: 'No session is named pitwall-relay', is_error: true }]),
+      send('toolu_false', sendInput(RELAY_NAME, 'Refused.')),
+      sent('toolu_false', RELAY_NAME, false),
+      send('toolu_blocks', sendInput(RELAY_NAME, 'Refused, in blocks.')),
+      user([{ type: 'tool_result', tool_use_id: 'toolu_blocks', content: [{ type: 'text', text: '{"success":false,"message":"refused"}' }] }]),
+      send('toolu_ok', sendInput(RELAY_NAME, 'Delivered.')),
+      user([{ type: 'tool_result', tool_use_id: 'toolu_ok', content: [{ type: 'text', text: '{"success":true,"message":"sent"}' }] }]),
+    );
+    expect(entries).toEqual([
+      { kind: 'tool', at: expect.any(String), text: 'SendMessage', toolName: 'SendMessage', toolError: true },
+      { kind: 'tool', at: expect.any(String), text: 'SendMessage', toolName: 'SendMessage', toolError: false },
+      { kind: 'tool', at: expect.any(String), text: 'SendMessage', toolName: 'SendMessage', toolError: false },
+      { kind: 'to-pitwall', at: expect.any(String), text: 'Delivered.', markdown: true },
+    ]);
+  });
+
+  it('shows a call with no result yet, as one that was just made, as a to-pitwall entry', async () => {
+    expect(await relayEntries(send('toolu_running', sendInput(RELAY_NAME, 'On its way.')))).toMatchObject([{ kind: 'to-pitwall', text: 'On its way.' }]);
+  });
+
+  it('leaves a call with no string message, or only whitespace, as a tool call, and never reads the preview', async () => {
+    const entries = await relayEntries(
+      send('toolu_none', { to: RELAY_NAME, summary: 'x', content: 'A preview only' }),
+      send('toolu_number', { to: RELAY_NAME, message: 42, content: 'A preview only' }),
+      send('toolu_blank', sendInput(RELAY_NAME, ' \n\t ')),
+      send('toolu_noto', { message: 'No recipient.' }),
+      send('toolu_string', 'not an object'),
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['tool', 'tool', 'tool', 'tool', 'tool']);
+    expect(JSON.stringify(entries)).not.toContain('preview');
+  });
+
+  it('leaves every SendMessage call as a tool call without the relay', async () => {
+    const entries = await entriesOf(fromRelay('Hi.'), send('toolu_x', sendInput(RELAY_NAME, 'Hello.')), send('toolu_y', sendInput(RELAY_SOCKET, 'Hello.')));
+    expect(entries.map((e) => e.kind)).toEqual(['cross-session', 'tool', 'tool']);
+  });
+
+  it('caps the message at 32 KiB, marked truncated, and counts it against the page budget', async () => {
+    const long = `**start** ${'word '.repeat(8000)}`;
+    const [capped] = await relayEntries(send('toolu_long', sendInput(RELAY_NAME, long)));
+    expect(capped).toMatchObject({ kind: 'to-pitwall', text: long.slice(0, ENTRY_TEXT_MAX), truncated: true, markdown: true });
+    // Eight newer entries of 32 KiB spend the page's budget, so the older message keeps 512 characters.
+    const entries = await relayEntries(
+      send('toolu_old', sendInput(RELAY_NAME, long)),
+      ...Array.from({ length: 8 }, (_, i) => assistant([text('d'.repeat(ENTRY_TEXT_MAX))], `msg_full_${i}`)),
+    );
+    expect(entries[0]).toMatchObject({ kind: 'to-pitwall', text: long.slice(0, LEAN_TEXT_MAX), truncated: true });
+  });
+
+  it('stands alone between tool calls, in the call’s place', async () => {
+    const entries = await relayEntries(
+      assistant([toolUse('toolu_a', 'Read', { file_path: '/w/a.ts' })], 'msg_run'),
+      toolResult('toolu_a'),
+      send('toolu_mid', sendInput(RELAY_NAME, 'Halfway.')),
+      sent('toolu_mid', RELAY_NAME),
+      assistant([toolUse('toolu_b', 'Bash', { command: 'npm test' })], 'msg_run2'),
+      toolResult('toolu_b'),
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['tool', 'to-pitwall', 'tool']);
+  });
+
+  it('carries a failed result to the older page its call is on, through the cursor', async () => {
+    const options = relayed({ pageEntries: 1 });
+    const file = await transcript(
+      jsonl(
+        send('toolu_split', sendInput(RELAY_NAME, 'Refused.')),
+        user('in between'),
+        sent('toolu_split', RELAY_NAME, false),
+        send('toolu_split_ok', sendInput(RELAY_NAME, 'Fine.')),
+        user('also in between'),
+        sent('toolu_split_ok', RELAY_NAME),
+      ),
+    );
+    const { entries } = await allPages(file, options);
+    expect(entries.map((e) => e.kind)).toEqual(['tool', 'user', 'to-pitwall', 'user']);
+    // The cursor's pending flag 2 is a failed result; anything past it isn't a cursor.
+    const bad = Buffer.from(JSON.stringify({ v: 1, o: 1, d: '1', i: '2', f: 'AAAAAAAAAAA', p: [['toolu_1', 3]] })).toString('base64url');
+    expect(isWellFormedCursor(bad)).toBe(false);
+    const good = Buffer.from(JSON.stringify({ v: 1, o: 1, d: '1', i: '2', f: 'AAAAAAAAAAA', p: [['toolu_1', 2]] })).toString('base64url');
+    expect(isWellFormedCursor(good)).toBe(true);
+  });
+
+  it('reads the transcript again from the start once it was replaced or rewritten before where the book stopped', async () => {
+    const options = relayed({ pageEntries: 1 });
+    const lines = [fromRelay('Go.'), user('between'), send('toolu_r', sendInput(RELAY_SOCKET, 'Gone.')), sent('toolu_r', RELAY_SOCKET)];
+    const file = await transcript(jsonl(...lines));
+    const first = await readConversationPage(file, SID, undefined, options);
+    expect(first?.page.entries.map((e) => e.kind)).toEqual(['to-pitwall']);
+    // Same size, same place, but a peer's socket now: the book notices and reads again.
+    const replaced = jsonl(fromRelay('Go.', 'uds:/tmp/cc-socks/9999.sock'), ...lines.slice(1));
+    await rm(file);
+    await writeFile(file, replaced);
+    const second = await readConversationPage(file, SID, undefined, options);
+    expect(second?.stats.addressBytesRead).toBeGreaterThan(0);
+    expect(second?.page.entries.map((e) => e.kind)).toEqual(['tool']);
+  });
+
+  it('remembers at most 64 addresses for a transcript, the first ones', async () => {
+    const options = relayed({ pageEntries: 1 });
+    const many = Array.from({ length: RELAY_ADDRESSES_MAX + 6 }, (_, i) => fromRelay(`${i}`, `uds:/tmp/cc-socks/${1000 + i}.sock`));
+    const first = send('toolu_first', sendInput('uds:/tmp/cc-socks/1000.sock', 'To the first.'));
+    const last = send('toolu_last', sendInput(`uds:/tmp/cc-socks/${1000 + RELAY_ADDRESSES_MAX + 5}.sock`, 'To the last.'));
+    const file = await transcript(jsonl(...many, user('a'), first, user('b'), last, user('c')));
+    const { entries } = await allPages(file, options);
+    expect(entries.filter((e) => e.kind === 'to-pitwall').map((e) => e.text)).toEqual(['To the first.']);
+  });
+
+  it('forgets the transcripts of sessions it is not told to keep', async () => {
+    const book = new RelayAddressBook(RELAY_NAME);
+    const file = await transcript(jsonl(fromRelay('Go.'), user('between'), send('toolu_f', sendInput(RELAY_SOCKET, 'Done.'))));
+    expect((await readConversationPage(file, SID, undefined, { relay: book, pageEntries: 1 }))?.stats.addressBytesRead).toBeGreaterThan(0);
+    expect((await readConversationPage(file, SID, undefined, { relay: book, pageEntries: 1 }))?.stats.addressBytesRead).toBe(0);
+    book.retain(new Set(['another-session']));
+    expect((await readConversationPage(file, SID, undefined, { relay: book, pageEntries: 1 }))?.stats.addressBytesRead).toBeGreaterThan(0);
+  });
+
+  it('reads a page of 50 calls to sockets after 8 MiB of hostile lines that name the relay quickly', async () => {
+    // Messages from the relay, each from a socket of its own, past the 64 kept; then lines that only mention it, which are all parsed.
+    const forged = Array.from({ length: 2000 }, (_, i) =>
+      i % 2 === 0 ? fromRelay(`${'x'.repeat(4000)} ${i}`, `uds:/tmp/cc-socks/${i}.sock`) : user(`${`${RELAY_NAME} `.repeat(290)}${i}`),
+    );
+    // None of them is to an address the relay's messages came from.
+    const calls = Array.from({ length: 50 }, (_, i) => send(`toolu_h${i}`, sendInput(`uds:/tmp/cc-socks/peer-${i}.sock`, `hostile ${i}`)));
+    const file = await transcript(jsonl(...forged, ...calls));
+    let read = 0;
+    // A new book each time, so each run reads the 8 MiB before the page.
+    expect(
+      await bestOf3(async () => {
+        read = (await readConversationPage(file, SID, undefined, relayed()))?.stats.addressBytesRead ?? 0;
+      }),
+    ).toBeLessThan(FAST_MS);
+    expect(read).toBeGreaterThan(8 * 1024 * 1024);
+    const result = await readConversationPage(file, SID, undefined, relayed());
+    expect(result?.page.entries).toHaveLength(50);
+    expect(result?.page.entries.every((e) => e.kind === 'tool')).toBe(true);
   });
 });

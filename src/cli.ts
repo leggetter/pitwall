@@ -25,6 +25,7 @@ import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
+import { RELAY_NAME } from './server/relayPrompt.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
@@ -465,6 +466,8 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
     relayOff: () => relay.off(),
+    // Its messages to the relay show in each session's conversation (W46).
+    relayName: RELAY_NAME,
   });
   // Set once the launch file is written, for a per-run token only. The first
   // page to authenticate has read it, so it's deleted then, rather than left

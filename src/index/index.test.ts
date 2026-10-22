@@ -193,6 +193,32 @@ describe('createIndexer', () => {
     }
   });
 
+  it("shows a session's SendMessage calls to the relay as to-pitwall entries when given the relay's name (W46), and as tool calls without it", async () => {
+    vi.useRealTimers();
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-relay-'));
+    try {
+      const { state, deps } = harness();
+      const file = path.join(dir, 'in.jsonl');
+      const at = new Date(NOW).toISOString();
+      const call = { type: 'assistant', timestamp: at, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'SendMessage', input: { to: 'pitwall-test-relay', message: 'Done: **both** flows.' } }] } };
+      await writeFile(file, `${JSON.stringify(call)}\n`);
+      state.files.set('in', file);
+      state.result = { ok: true, rows: [row('in', '/work/repo/a')] };
+      for (const relayName of ['pitwall-test-relay', undefined]) {
+        const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000, ...(relayName === undefined ? {} : { relayName }) }, deps);
+        await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+        expect((await indexer.conversation('in'))?.entries).toEqual(
+          relayName === undefined
+            ? [{ kind: 'tool', at, text: 'SendMessage', toolName: 'SendMessage' }]
+            : [{ kind: 'to-pitwall', at, text: 'Done: **both** flows.', markdown: true }],
+        );
+        indexer.stop();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('notifies after every completed poll, changed or not, with a fresh generatedAt', async () => {
     const { state, deps } = harness();
     state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
