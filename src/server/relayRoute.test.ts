@@ -295,6 +295,18 @@ describe('the relay route: the request', () => {
     expect((await postAsPage(started, relayPath(INTERACTIVE_ID), { text: 'x'.repeat(MAX_RELAY_TEXT_LENGTH) })).status).toBe(200);
   });
 
+  it('checks the limit on the text as received, and passes it on as received: the relay makes look-alike spaces plain (W43)', async () => {
+    const started = await start();
+    // 8,193 characters, which CRLF to LF would bring under the limit, are still too many.
+    const over = `${'x\r\n'.repeat(2731)}`;
+    expect(over.length).toBe(MAX_RELAY_TEXT_LENGTH + 1);
+    expect((await postAsPage(started, relayPath(INTERACTIVE_ID), { text: over })).status).toBe(400);
+    const text = `one\u00a0two\r\n${'x'.repeat(MAX_RELAY_TEXT_LENGTH - 9)}`;
+    expect(text.length).toBe(MAX_RELAY_TEXT_LENGTH);
+    expect((await postAsPage(started, relayPath(INTERACTIVE_ID), { text })).status).toBe(200);
+    expect(started.relay.sends.map((send) => send.text)).toEqual([text]);
+  });
+
   it('answers 400 for JSON it can’t parse, 415 for another type, and 413 for a huge body', async () => {
     const started = await start();
     expect((await postAsPage(started, relayPath(INTERACTIVE_ID), '{"text":')).status).toBe(400);

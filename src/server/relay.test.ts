@@ -443,7 +443,8 @@ describe('the relay: its gate', () => {
     h.gate.hookRuns = false;
     expect(h.relay.off()).toBeUndefined();
     await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
-    expect(h.relay.alert()).toMatchObject({ blocked: false, count: 1, detail: expect.stringMatching(/ran without pitwall's gate checking it/) });
+    // A call for the message you sent, which matched it: not one nobody asked for.
+    expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'changed', count: 1, detail: expect.stringMatching(/ran without pitwall's gate checking it/) });
     expect(h.relay.off()).toEqual({ since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), reason: "its gate didn't check a SendMessage call." });
     await wait(20);
     expect(h.children[0]!.signals).toEqual(['SIGTERM']);
@@ -459,7 +460,7 @@ describe('the relay: which blocked calls restart it', () => {
     await h.relay.send(TARGET, 'hello');
     h.child().peerTurn();
     await wait(10);
-    expect(h.relay.alert()).toMatchObject({ blocked: true });
+    expect(h.relay.alert()).toMatchObject({ blocked: true, cause: 'unrequested' });
     expect(h.relay.off()).toBeUndefined();
     expect(h.child().signals).toEqual([]);
     expect(h.children).toHaveLength(1);
@@ -467,18 +468,28 @@ describe('the relay: which blocked calls restart it', () => {
 
   it('restarts the relay once its turn ends, after a blocked call for pitwall’s own request that didn’t match it', async () => {
     const h = harness();
-    let endTurn: (() => void) | undefined;
+    const endTurn: (() => void)[] = [];
     h.behaviour = (request, child) => {
       child.init();
       child.send({ to: request.to, message: request.text, attachments: [] });
-      endTurn = () => child.result();
+      endTurn.push(() => child.result());
     };
-    expect((await h.relay.send(TARGET, 'hello')).status).toBe('failed');
-    expect(h.relay.alert()).toMatchObject({ blocked: true, detail: expect.stringMatching(/^The relay's SendMessage call had a field pitwall doesn't check\./) });
-    // Not mid-turn: only once the turn has ended.
+    const result = h.relay.send(TARGET, 'hello');
+    await eventually('the first call', () => endTurn.length === 1);
+    await wait(20);
+    // Not mid-turn: only once the turn has ended. Then the message is tried once more, on a new relay.
     expect(h.child().signals).toEqual([]);
-    endTurn!();
-    expect(h.child().signals).toEqual(['SIGTERM']);
+    expect(h.children).toHaveLength(1);
+    endTurn[0]!();
+    expect(h.children[0]!.signals).toEqual(['SIGTERM']);
+    await eventually('the second call', () => endTurn.length === 2);
+    expect(h.children).toHaveLength(2);
+    expect(h.children[1]!.signals).toEqual([]);
+    endTurn[1]!();
+    expect(h.children[1]!.signals).toEqual(['SIGTERM']);
+    expect((await result).status).toBe('failed');
+    // Blocked, so nothing was sent: no alert. The message's own result says why.
+    expect(h.relay.alert()).toBeUndefined();
   });
 });
 
@@ -563,6 +574,7 @@ describe('the relay: a message nobody asked for', () => {
       detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it, so nothing was sent.",
       count: 1,
       blocked: true,
+      cause: 'unrequested',
     });
     expect(child.signals).toEqual([]);
     expect(h.logs.join('\n')).not.toContain('forwarded');
@@ -595,7 +607,7 @@ describe('the relay: a message nobody asked for', () => {
     child.toolUse('SendMessage', { to: 'pitwall-test-other', message: 'forwarded' });
     child.result();
     await wait(10);
-    expect(h.relay.alert()).toMatchObject({ blocked: false, detail: expect.stringMatching(/turn ended before pitwall saw whether its gate blocked it/) });
+    expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'unrequested', detail: expect.stringMatching(/turn ended before pitwall saw whether its gate blocked it/) });
     expect(child.signals).toEqual(['SIGTERM']);
   });
 
@@ -609,7 +621,7 @@ describe('the relay: a message nobody asked for', () => {
       child.result();
     };
     await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
-    expect(h.relay.alert()).toMatchObject({ blocked: true, detail: expect.stringMatching(/^The relay tried to send a second message for one request\./) });
+    expect(h.relay.alert()).toMatchObject({ blocked: true, cause: 'unrequested', detail: expect.stringMatching(/^The relay tried to send a second message for one request\./) });
     expect(h.children[0]!.signals).toEqual([]);
   });
 
@@ -619,7 +631,7 @@ describe('the relay: a message nobody asked for', () => {
     h.gate.hookRuns = false;
     h.child().peerTurn();
     await wait(10);
-    expect(h.relay.alert()).toMatchObject({ blocked: false, detail: expect.stringMatching(/gate didn't stop it, so pitwall stopped the relay/) });
+    expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'unrequested', detail: expect.stringMatching(/gate didn't stop it, so pitwall stopped the relay/) });
     expect(h.relay.off()?.reason).toBe('its gate let through a SendMessage call nobody asked for.');
     expect((await h.relay.send(TARGET, 'again')).detail).toMatch(/^pitwall stopped using its relay for this run: its gate let through a SendMessage call nobody asked for\./);
   });
@@ -632,7 +644,7 @@ describe('the relay: a message nobody asked for', () => {
     child.toolUse('SendMessage', { to: 'pitwall-test-other', message: 'forwarded' });
     child.exit(1);
     await wait(10);
-    expect(h.relay.alert()).toMatchObject({ blocked: false, detail: expect.stringMatching(/stopped before pitwall saw whether its gate blocked it/) });
+    expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'unrequested', detail: expect.stringMatching(/stopped before pitwall saw whether its gate blocked it/) });
     // Not blocked, but the relay is only restarted, not off.
     expect(h.relay.off()).toBeUndefined();
   });
@@ -810,7 +822,7 @@ describe('the relay: the name check right before each write', () => {
 });
 
 describe('the relay: checking what it sent', () => {
-  it('blocks a send whose text was changed, says nothing was sent, raises a blocked alert, and never logs the text', async () => {
+  it('blocks a send whose text was changed, twice, says nothing was sent and where, raises no alert, and never logs the text', async () => {
     const h = harness();
     h.behaviour = (request, child) => {
       child.init();
@@ -821,35 +833,45 @@ describe('the relay: checking what it sent', () => {
     const result = await h.relay.send(TARGET, 'secret plan');
     expect(result).toEqual({
       status: 'failed',
-      detail: "pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent. pitwall is restarting the relay.",
+      detail:
+        "pitwall's gate stopped the relay's copy of your message twice, because it didn't match, so nothing was sent. Both times, the relay changed the text before sending it, first at line 1: the copy has 10 more characters from here.",
     });
-    expect(h.relay.alert()).toMatchObject({ blocked: true, detail: "The relay changed the text before sending it. pitwall's gate blocked it, so nothing was sent." });
+    expect(h.relay.alert()).toBeUndefined();
     expect(h.relay.exchange(TARGET.sessionId)).toBeUndefined();
-    // Its conversation may have been poisoned, so it's restarted once the turn ends, and a new relay takes the next message.
+    // Its conversation may have been poisoned, so each relay is restarted once its turn ends, and a new relay takes the next message.
     expect(h.children[0]!.signals).toEqual(['SIGTERM']);
-    expect(h.logs.join('\n')).not.toContain('secret plan');
+    expect(h.children[1]!.signals).toEqual(['SIGTERM']);
+    expect(h.logs.join('\n')).not.toContain('secret');
+    expect(h.logs.filter((line) => line.includes('first at line 1: the copy has 10 more characters from here'))).toHaveLength(2);
     h.behaviour = (request, child) => child.relay(request);
     await expect(h.relay.send(TARGET, 'again')).resolves.toEqual({ status: 'delivered' });
-    expect(h.children).toHaveLength(2);
+    expect(h.children).toHaveLength(3);
   });
 
-  it('blocks a send to another session, or one that subscribes to idle notices', async () => {
+  it('blocks a send to another session, or one that subscribes to idle notices, with today’s reasons', async () => {
     const h = harness();
     h.behaviour = (request, child) => {
       child.init();
       child.send({ to: 'pitwall-test-other', message: request.text });
       child.result();
     };
-    expect((await h.relay.send(TARGET, 'hello')).status).toBe('failed');
-    expect(h.relay.alert()?.detail).toMatch(/^The relay addressed the message to another session\./);
+    expect(await h.relay.send(TARGET, 'hello')).toEqual({
+      status: 'failed',
+      detail: "pitwall's gate stopped the relay's copy of your message twice, because it didn't match, so nothing was sent. Both times, the relay addressed the message to another session.",
+    });
     await wait(20);
+    let calls = 0;
     h.behaviour = (request, child) => {
       child.init();
-      child.send({ to: request.to, message: request.text, notify_when_idle: true });
+      child.send(++calls === 1 ? { to: request.to, message: request.text, notify_when_idle: true } : { to: request.to, message: request.text, attachments: [] });
       child.result();
     };
-    expect((await h.relay.send(TARGET, 'hello')).status).toBe('failed');
-    expect(h.relay.alert()).toMatchObject({ count: 2, detail: expect.stringMatching(/told when the session goes idle/) });
+    expect(await h.relay.send(TARGET, 'hello')).toEqual({
+      status: 'failed',
+      detail:
+        "pitwall's gate stopped the relay's copy of your message twice, because it didn't match, so nothing was sent. The first time, the relay asked to be told when the session goes idle. The second time, the relay's SendMessage call had a field pitwall doesn't check.",
+    });
+    expect(h.relay.alert()).toBeUndefined();
   });
 
   it('answers uncertain, and stops using the relay, when a send that didn’t match got past the gate', async () => {
@@ -863,10 +885,11 @@ describe('the relay: checking what it sent', () => {
     const result = await h.relay.send(TARGET, 'hello');
     expect(result).toEqual({
       status: 'uncertain',
-      detail: 'The relay changed the text before sending it. It may have reached the session: check its conversation before sending again.',
+      detail:
+        'The relay changed the text before sending it, first at line 1: the copy adds a line break (U+000A). It may have reached the session: check its conversation before sending again.',
     });
     expect(h.relay.exchange(TARGET.sessionId)?.status).toBe('uncertain');
-    expect(h.relay.alert()).toMatchObject({ blocked: false });
+    expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'changed' });
     expect((await h.relay.send(TARGET, 'again')).detail).toMatch(/stopped using its relay/);
   });
 
@@ -915,6 +938,263 @@ describe('the relay: checking what it sent', () => {
     const result = await h.relay.send(TARGET, 'hello');
     expect(result.status).toBe('uncertain');
     expect(h.relay.exchange(TARGET.sessionId)?.status).toBe('uncertain');
+  });
+});
+
+/** Every request written to any relay, in order. */
+const allWritten = (h: Harness) => h.children.flatMap((child) => child.written.map(parseRequest));
+
+/** A turn whose SendMessage call has `message` in place of the request's text. */
+const copies =
+  (message: (text: string) => string): Behaviour =>
+  (request, child) => {
+    child.init();
+    const { allowed } = child.send({ to: request.to, message: message(request.text) });
+    child.text(allowed ? `relayed ${request.id}` : `not relayed ${request.id}: denied`);
+    child.result();
+  };
+
+describe('the relay: look-alike spaces made plain (W43)', () => {
+  const text = 'Line one,\u00a0with a no-break space.\r\nLine two, with\u202fa narrow one and\u2009a thin one.\r\n';
+  const plain = 'Line one, with a no-break space.\nLine two, with a narrow one and a thin one.\n';
+
+  it('frames the request, sets the gate’s expectation and checks the call with the plain text, and answers delivered', async () => {
+    const h = harness();
+    let expected: string | undefined;
+    h.behaviour = (request, child) => {
+      expected = h.gate.expectations.get(child.gateId)?.sha256;
+      child.relay(request);
+    };
+    await expect(h.relay.send(TARGET, text)).resolves.toEqual({ status: 'delivered' });
+    expect(allWritten(h).map((request) => request.text)).toEqual([plain]);
+    expect(expected).toBe(textHash(plain));
+    expect(h.relay.alert()).toBeUndefined();
+    expect(h.logs).toEqual([]);
+  });
+
+  it('counts a copy of the text as received, look-alike spaces and all, as changed', async () => {
+    const h = harness();
+    h.behaviour = copies(() => text);
+    const result = await h.relay.send(TARGET, text);
+    expect(result.status).toBe('failed');
+    expect(result.detail).toContain('first at line 1: a space (U+0020) became a no-break space (U+00A0).');
+  });
+
+  it('picks a request id from the plain text', async () => {
+    const h = harness({ randomId: () => 'deadbeefdeadbeef' });
+    await expect(h.relay.send(TARGET, 'one\u00a0two')).resolves.toEqual({ status: 'delivered' });
+    expect(allWritten(h)[0]).toEqual({ id: 'deadbeefdeadbeef', to: TARGET.name, text: 'one two' });
+  });
+});
+
+describe('the relay: one more try for a changed copy the gate blocked (W43)', () => {
+  it('tries a blocked changed copy once more on a new relay, with a new request id and expectation, and answers delivered', async () => {
+    const h = harness();
+    let attempt = 0;
+    h.behaviour = (request, child) => (++attempt === 1 ? copies((t) => t.replace('\u0107', 'c'))(request, child) : child.relay(request));
+    const result = await h.relay.send(TARGET, 'A made-up note about kra\u0107 and the export.');
+    expect(result).toEqual({ status: 'delivered' });
+    expect(h.children).toHaveLength(2);
+    expect(h.children[0]!.signals).toEqual(['SIGTERM']);
+    const [first, second] = allWritten(h);
+    expect(first!.text).toBe(second!.text);
+    expect(first!.id).not.toBe(second!.id);
+    expect(h.children.map((child) => child.written.length)).toEqual([1, 1]);
+    expect(h.gate.written.map((written) => written.request)).toEqual([first!.id, second!.id]);
+    expect(h.relay.exchange(TARGET.sessionId)?.status).toBe('delivered');
+    // Blocked, so nothing was sent: no alert, and the log says where, never the text.
+    expect(h.relay.alert()).toBeUndefined();
+    expect(h.logs).toContain(
+      "The relay changed the text before sending it, first at line 1: U+0107 became U+0063. pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.",
+    );
+    expect(h.logs.join('\n')).not.toMatch(/made-up|export/);
+  });
+
+  it('waits for the relay’s turn to end, and for it to go, before the second try', async () => {
+    const h = harness();
+    const endTurn: (() => void)[] = [];
+    h.behaviour = (request, child) => {
+      if (h.children.length === 1) {
+        child.init();
+        child.send({ to: request.to, message: `${request.text}!` });
+        endTurn.push(() => child.result());
+      } else child.relay(request);
+    };
+    const result = h.relay.send(TARGET, 'hello');
+    await eventually('the first call', () => endTurn.length === 1);
+    await wait(30);
+    expect(h.children).toHaveLength(1);
+    endTurn[0]!();
+    await expect(result).resolves.toEqual({ status: 'delivered' });
+    expect(h.children).toHaveLength(2);
+  });
+
+  it('answers failed when the second copy is blocked too, says where each first differed, and never tries a third time', async () => {
+    const h = harness();
+    let attempt = 0;
+    h.behaviour = (request, child) => copies((t) => (++attempt === 1 ? t.replace('\n', '\r\n') : t.slice(0, -1)))(request, child);
+    const result = await h.relay.send(TARGET, 'One line.\nTwo lines.');
+    expect(result).toEqual({
+      status: 'failed',
+      detail:
+        "pitwall's gate stopped the relay's copy of your message twice, because it didn't match, so nothing was sent. The first time, the relay changed the text before sending it, first at line 1: the copy adds a carriage return (U+000D). The second time, the relay changed the text before sending it, first at line 2: the copy ends early, 1 character short.",
+    });
+    await wait(60);
+    // The relay that blocked the second copy is restarted as before, but nothing is written to the new one.
+    expect(allWritten(h)).toHaveLength(2);
+    expect(h.children.length).toBeGreaterThanOrEqual(2);
+    expect(h.relay.alert()).toBeUndefined();
+    expect(h.logs.filter((line) => line.endsWith('pitwall will try once more, on a new relay.'))).toHaveLength(1);
+    expect(h.logs).toContain(
+      "The relay changed the text before sending it, first at line 2: the copy ends early, 1 character short. pitwall's gate blocked it again, so nothing was sent.",
+    );
+  });
+
+  it('gives each try its own request timer, so two tries and a restart can take longer than one timer', async () => {
+    const h = harness({ requestTimeoutMs: 250, gateReadyMs: 2000 });
+    h.behaviour = (request, child) => {
+      const first = h.children.length === 1;
+      // The new relay's gate is slow to be ready: the restart outlasts the first try's timer.
+      if (first) h.gate.loads = false;
+      setTimeout(() => (first ? copies((t) => `${t}.`)(request, child) : child.relay(request)), 150);
+    };
+    const started = Date.now();
+    const result = h.relay.send(TARGET, 'hello');
+    await eventually('the new relay', () => h.children.length === 2);
+    setTimeout(() => h.gate.ready.add(h.children[1]!.gateId), 200);
+    await expect(result).resolves.toEqual({ status: 'delivered' });
+    expect(Date.now() - started).toBeGreaterThan(250 + 200);
+  });
+
+  it('answers failed, as before, when the restart limit stops the relay starting again', async () => {
+    const h = harness({ restart: { baseMs: 20, maxMs: 80, max: 1, windowMs: 60_000 } });
+    h.behaviour = copies((t) => `${t}.`);
+    const result = await h.relay.send(TARGET, 'hello');
+    expect(result.status).toBe('failed');
+    expect(result.detail).toBe(
+      "pitwall's gate stopped the relay's copy of your message, because it didn't match, so nothing was sent. The relay changed the text before sending it, first at line 1: the copy adds U+002E. pitwall tried once more, and that wasn’t sent either: The relay stopped 1 times in 1 minutes, so pitwall stopped restarting it for now. Last: exit code 0",
+    );
+    expect(result.retryAfterSeconds).toBeGreaterThan(0);
+    expect(h.children).toHaveLength(1);
+    expect(allWritten(h)).toHaveLength(1);
+  });
+
+  it('says both when the second try fails for another reason', async () => {
+    const h = harness();
+    h.behaviour = (request, child) => {
+      copies((t) => `${t}.`)(request, child);
+      h.rows = [row(OTHER)];
+    };
+    expect((await h.relay.send(TARGET, 'hello')).detail).toBe(
+      "pitwall's gate stopped the relay's copy of your message, because it didn't match, so nothing was sent. The relay changed the text before sending it, first at line 1: the copy adds U+002E. pitwall tried once more, and that wasn’t sent either: No running session is named pitwall-test-target now, so nothing was sent.",
+    );
+    expect(allWritten(h)).toHaveLength(1);
+  });
+
+  it('calls a send the relay repeats after the gate blocked its copy a second message for one request', async () => {
+    const h = harness();
+    h.behaviour = (request, child) => {
+      if (h.children.length > 1) return child.relay(request);
+      child.init();
+      child.send({ to: request.to, message: `${request.text}.` });
+      child.send({ to: request.to, message: `${request.text}.` });
+      child.result();
+    };
+    await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
+    expect(h.relay.alert()).toMatchObject({ blocked: true, cause: 'unrequested', count: 1, detail: expect.stringMatching(/^The relay tried to send a second message for one request\./) });
+  });
+
+  describe('never tries again', () => {
+    /** Sends with `behaviour` on the first relay, then gives any second try the time to happen. */
+    async function once(h: Harness, behaviour: Behaviour) {
+      h.behaviour = (request, child) => (h.children.length === 1 ? behaviour(request, child) : child.relay(request));
+      const result = await h.relay.send(TARGET, 'hello');
+      await wait(60);
+      expect(allWritten(h), 'one request written').toHaveLength(1);
+      return result;
+    }
+
+    it('after a call that matched, whatever its result', async () => {
+      const sent = harness();
+      expect(await once(sent, (request, child) => child.relay(request))).toEqual({ status: 'delivered' });
+      const notSent = harness();
+      expect((await once(notSent, (request, child) => child.relay(request, { success: false, message: 'nope' }))).status).toBe('failed');
+      const unknown = harness();
+      expect(
+        (
+          await once(unknown, (request, child) => {
+            child.init();
+            const id = child.toolUse('SendMessage', { to: request.to, message: request.text });
+            unknown.gate.check(child.gateId, { to: request.to, message: request.text });
+            child.blocked(id, 'Not sent — too many messages');
+            child.result();
+          })
+        ).status,
+      ).toBe('uncertain');
+      // A matching call the gate denied: here, because the expectation expired.
+      const denied = harness();
+      const result = await once(denied, (request, child) => {
+        denied.gate.expectations.get(child.gateId)!.expiresAt = 0;
+        child.relay(request);
+      });
+      expect(result.detail).toMatch(/has expired\. Nothing was sent\.$/);
+    });
+
+    it('after a changed call the gate didn’t stop, which may have been sent', async () => {
+      const sent = harness();
+      sent.gate.hookRuns = false;
+      expect((await once(sent, copies((t) => `${t}.`))).status).toBe('uncertain');
+      expect(sent.relay.alert()).toMatchObject({ blocked: false, cause: 'changed', detail: expect.stringMatching(/first at line 1: the copy adds U\+002E\. pitwall's gate didn't stop it\.$/) });
+      expect(sent.relay.off()).toBeDefined();
+      const notSent = harness();
+      notSent.gate.hookRuns = false;
+      const result = await once(notSent, (request, child) => {
+        child.init();
+        child.send({ to: request.to, message: `${request.text}.` }, { success: false, message: 'nope' });
+        child.result();
+      });
+      expect(result).toEqual({ status: 'failed', detail: 'nope' });
+      expect(notSent.relay.alert()).toMatchObject({ blocked: false, cause: 'changed', detail: expect.stringMatching(/though SendMessage didn’t send it\.$/) });
+    });
+
+    it('after a changed call with a result pitwall doesn’t recognize', async () => {
+      const h = harness();
+      const result = await once(h, (request, child) => {
+        child.init();
+        const id = child.toolUse('SendMessage', { to: request.to, message: `${request.text}.` });
+        child.blocked(id, 'Not sent — too many messages');
+        child.result();
+      });
+      expect(result.status).toBe('uncertain');
+      expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'changed' });
+    });
+
+    it('after a changed call pitwall couldn’t confirm, which may have been sent', async () => {
+      const h = harness();
+      const result = await once(h, (request, child) => {
+        child.init();
+        child.send({ to: request.to, message: `${request.text}.` }, SENT, true);
+        child.exit(1);
+      });
+      expect(result.status).toBe('uncertain');
+      expect(h.relay.alert()).toMatchObject({ blocked: false, cause: 'changed', detail: expect.stringMatching(/couldn't tell whether its gate stopped it\.$/) });
+    });
+
+    it('after a changed call pitwall stopped before it ran, which raises no alert and says where in the result', async () => {
+      const h = harness();
+      const result = await once(h, (request, child) => {
+        child.init();
+        child.toolUse('SendMessage', { to: request.to, message: `${request.text}.` });
+        child.exit(1);
+      });
+      expect(result).toEqual({
+        status: 'failed',
+        detail:
+          'The relay stopped (exit code 1). The relay changed the text before sending it, first at line 1: the copy adds U+002E. pitwall stopped it before it ran, so nothing was sent.',
+      });
+      expect(h.relay.alert()).toBeUndefined();
+      expect(h.logs).toContain('The relay changed the text before sending it, first at line 1: the copy adds U+002E. pitwall stopped the relay before it ran.');
+    });
   });
 });
 

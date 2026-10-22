@@ -10,7 +10,7 @@ import {
   RELAY_NAME,
   RELAY_SYSTEM_PROMPT,
   relayArgs,
-  sendMismatch,
+  callMismatch,
   userMessageLine,
 } from './relayPrompt.js';
 
@@ -164,32 +164,43 @@ describe('parseSendResult', () => {
   });
 });
 
-describe('sendMismatch', () => {
+describe('callMismatch', () => {
   const to = 'pitwall-test-target';
   const text = 'Exactly this.\n  With a leading space, and a trailing one ';
+  const reason = (input: unknown) => callMismatch(input, to, text)?.reason;
 
   it('passes the exact call, also as Claude Code v2.1.303 reports it, normalized', () => {
-    expect(sendMismatch({ to, message: text, summary: 'anything' }, to, text)).toBeUndefined();
-    expect(sendMismatch({ to, message: text, notify_when_idle: false }, to, text)).toBeUndefined();
+    expect(callMismatch({ to, message: text, summary: 'anything' }, to, text)).toBeUndefined();
+    expect(callMismatch({ to, message: text, notify_when_idle: false }, to, text)).toBeUndefined();
     // `content` is only a preview of `message`, cut at about 50 characters.
-    expect(sendMismatch({ to, message: text, summary: 's', type: 'message', recipient: to, recipient_kind: 'name', content: `${text.slice(0, 49)}…` }, to, text)).toBeUndefined();
+    expect(callMismatch({ to, message: text, summary: 's', type: 'message', recipient: to, recipient_kind: 'name', content: `${text.slice(0, 49)}…` }, to, text)).toBeUndefined();
   });
 
-  it('catches a field the gate doesn’t check', () => {
-    expect(sendMismatch({ to, message: text, attachments: [] }, to, text)).toMatch(/a field pitwall doesn't check/);
+  it('catches a field the gate doesn’t check, with today’s reason and no description', () => {
+    expect(callMismatch({ to, message: `${text}!`, attachments: [] }, to, text)).toEqual({ reason: "The relay's SendMessage call had a field pitwall doesn't check." });
   });
 
   it('catches a recipient that disagrees with `to`', () => {
-    expect(sendMismatch({ to, message: text, recipient: 'someone-else' }, to, text)).toMatch(/another session/);
+    expect(reason({ to, message: text, recipient: 'someone-else' })).toMatch(/another session/);
   });
 
   it('catches another target, a changed text and an idle subscription', () => {
-    expect(sendMismatch({ to: 'someone-else', message: text }, to, text)).toMatch(/another session/);
-    expect(sendMismatch({ to: `${to} [d749a0]`, message: text }, to, text)).toMatch(/another session/);
-    expect(sendMismatch({ to, message: text.trimEnd() }, to, text)).toMatch(/changed the text/);
-    expect(sendMismatch({ to, message: `${text}\n` }, to, text)).toMatch(/changed the text/);
-    expect(sendMismatch({ to, message: text, notify_when_idle: true }, to, text)).toMatch(/idle/);
-    expect(sendMismatch(undefined, to, text)).toMatch(/without arguments/);
+    expect(callMismatch({ to: 'someone-else', message: `${text}!` }, to, text)).toEqual({ reason: 'The relay addressed the message to another session.' });
+    expect(reason({ to: `${to} [d749a0]`, message: text })).toMatch(/another session/);
+    expect(reason({ to, message: text.trimEnd() })).toMatch(/changed the text/);
+    expect(reason({ to, message: `${text}\n` })).toMatch(/changed the text/);
+    expect(reason({ to, message: text, notify_when_idle: true })).toMatch(/idle/);
+    expect(reason(undefined)).toMatch(/without arguments/);
+    expect(reason({ to, message: { type: 'shutdown_request' } })).toBe("The relay's SendMessage call had no text.");
+  });
+
+  it('says where a changed text first differed, by line and character code, and never the text', () => {
+    expect(callMismatch({ to, message: text.replace('\n', '\n\u00a0') }, to, text)).toEqual({
+      reason: 'The relay changed the text before sending it, first at line 2: the copy adds a no-break space (U+00A0).',
+      where: 'line 2: the copy adds a no-break space (U+00A0)',
+    });
+    expect(reason({ to, message: text.replace('this', 'thus') })).toBe('The relay changed the text before sending it, first at line 1: U+0069 became U+0075.');
+    expect(reason({ to, message: text.trimEnd() })).not.toMatch(/Exactly|leading|trailing/);
   });
 });
 

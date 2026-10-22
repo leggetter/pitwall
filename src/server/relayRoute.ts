@@ -5,8 +5,10 @@
 //
 //   200  the relay's outcome: delivered, held, refused, failed (nothing was
 //        sent) with why, or uncertain (it may have been sent) with why
-//   400  the body isn't a RelayRequest: `text` must be 1 to 8,192 characters,
-//        not only whitespace, with no NUL. Or resolveSession(): not a safe id
+//   400  the body isn't a RelayRequest: `text` must be 1 to 8,192 characters
+//        as received, not only whitespace, with no NUL. Or resolveSession():
+//        not a safe id. The relay then makes look-alike spaces plain and CRLF
+//        LF (relayText.ts plainSpaces(), W43), which only shortens it
 //   404  resolveSession(): not in the current snapshot
 //   409  not an interactive session with a live process
 //   413  the body is over 64 KiB

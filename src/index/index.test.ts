@@ -400,7 +400,7 @@ describe('createIndexer', () => {
     );
     await flush();
     expect(indexer.latest()).not.toHaveProperty('relayAlert');
-    alert = { at: '2026-10-16T11:59:00.000Z', detail: 'The relay tried to send a message when pitwall hadn’t asked it to.', count: 1, blocked: true };
+    alert = { at: '2026-10-16T11:59:00.000Z', detail: 'The relay tried to send a message when pitwall hadn’t asked it to.', count: 1, blocked: true, cause: 'unrequested' };
     await vi.advanceTimersByTimeAsync(1000);
     expect(indexer.latest()?.relayAlert).toEqual(alert);
     state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
