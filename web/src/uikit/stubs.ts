@@ -15,6 +15,7 @@ import {
 import type { ApiClient, ApiResult } from '../api.js';
 import type { AttachEnv } from '../attach.js';
 import type { ClipboardLike } from '../copy.js';
+import { writeDraft, type DraftStorageSource, type StoredDraft } from '../drafts.js';
 import type { SocketLike } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
 import { writeHidden, type HiddenGroup } from '../hidden.js';
@@ -186,6 +187,31 @@ export function memoryStorage(entries: Record<string, string> = {}): StorageSour
     },
   };
   return () => storage;
+}
+
+/**
+ * The message box's drafts (W44) in memory, for DraftStorageContext: the gallery never reads or
+ * writes the tab's pitwall.draft.v1 keys, so its specimens look the same after a reload.
+ */
+export function memoryDrafts(entries: Record<string, string> = {}): DraftStorageSource {
+  const values = new Map(Object.entries(entries));
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
+  };
+  return () => storage;
+}
+
+/** What the tab would hold for `sessionId` with `draft` kept: for memoryDrafts(). */
+export function storedDraft(sessionId: string, draft: StoredDraft): Record<string, string> {
+  const values: Record<string, string> = {};
+  writeDraft(sessionId, draft, () => ({ getItem: () => null, setItem: (key, value) => void (values[key] = value), removeItem: () => {} }));
+  return values;
 }
 
 /**
