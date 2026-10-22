@@ -227,7 +227,7 @@ describe('Dashboard header', () => {
   });
 
   it('says when the relay tried to send a message nobody asked for and pitwall blocked it, until dismissed, and again for the next one', () => {
-    const alert = { at: minutesAgo(1), detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it.", count: 1, blocked: true };
+    const alert = { at: minutesAgo(1), detail: "The relay tried to send a message when pitwall hadn’t asked it to. pitwall's gate blocked it.", count: 1, blocked: true, cause: 'unrequested' as const };
     const view = (relayAlert?: typeof alert) => <Dashboard view={{ state: 'live', snapshot: { ...mixedSnapshot(), ...(relayAlert ? { relayAlert } : {}) } }} />;
     const { rerender } = render(view());
     rerender(view(alert));
@@ -245,7 +245,7 @@ describe('Dashboard header', () => {
   });
 
   it('says more when the relay’s message may have been sent, and that messaging is off only when it is', () => {
-    const relayAlert = { at: minutesAgo(1), detail: "pitwall's gate didn't stop it <b>.", count: 1, blocked: false };
+    const relayAlert = { at: minutesAgo(1), detail: "pitwall's gate didn't stop it <b>.", count: 1, blocked: false, cause: 'unrequested' as const };
     const { rerender } = render(<Dashboard view={{ state: 'live', snapshot: mixedSnapshot() }} navigation={memoryNavigation()} />);
     rerender(<Dashboard view={{ state: 'live', snapshot: { ...mixedSnapshot(), relayAlert } }} navigation={memoryNavigation()} />);
     const banner = screen.getByRole('alert');

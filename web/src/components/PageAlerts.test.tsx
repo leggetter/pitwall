@@ -8,8 +8,8 @@ import { memoryNavigation } from '../selection.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { Dashboard } from './Dashboard.js';
 
-const SENT: RelayAlert = { at: minutesAgo(2), detail: 'a SendMessage nobody asked for, made up for the test.', count: 1, blocked: false };
-const BLOCKED: RelayAlert = { at: minutesAgo(1), detail: 'a SendMessage nobody asked for, blocked, made up for the test.', count: 3, blocked: true };
+const SENT: RelayAlert = { at: minutesAgo(2), detail: 'a SendMessage nobody asked for, made up for the test.', count: 1, blocked: false, cause: 'unrequested' };
+const BLOCKED: RelayAlert = { at: minutesAgo(1), detail: 'a SendMessage nobody asked for, blocked, made up for the test.', count: 3, blocked: true, cause: 'unrequested' };
 const OFF: RelayOff = { since: minutesAgo(2), reason: "its gate didn't check a SendMessage call." };
 
 const base = () => snapshot([group({ sessions: [session({ name: 'pitwall-test-one' })] })]);
@@ -160,6 +160,31 @@ describe('the relay alert', () => {
     expect(relayAlert()?.textContent).not.toMatch(/stopped using|Messaging is off/);
     next(live({ ...base(), relayAlert: SENT, relayOff: OFF }));
     expect(relayAlert()?.textContent).toContain('Messaging is off until you restart pitwall.');
+  });
+
+  it('tells a changed copy of your message from one nobody asked for, and never blames another session for it (W43)', () => {
+    const CHANGED: RelayAlert = {
+      at: minutesAgo(1),
+      detail: "The relay changed the text before sending it, first at line 3: U+0107 became U+0063. pitwall couldn't tell whether its gate stopped it.",
+      count: 2,
+      blocked: false,
+      cause: 'changed',
+    };
+    const { next } = renderViews(live(base()));
+    next(live({ ...base(), relayAlert: CHANGED }));
+    const alert = relayAlert()!;
+    expect(alert.className).toContain('danger');
+    expect(alert.querySelector('.inline-alert-title')?.textContent).toBe("pitwall's relay may have sent a changed copy of your message");
+    expect(alert.textContent).toContain('Check the conversation of the session you messaged for a message from pitwall-relay.');
+    expect(alert.textContent).toContain('2 times since pitwall started.');
+    expect(alert.querySelector('.alert-detail')?.textContent).toBe(CHANGED.detail);
+    expect(alert.textContent).not.toMatch(/another session|didn't ask for/);
+
+    next(live({ ...base(), relayAlert: { ...CHANGED, blocked: true, count: 3 } }));
+    expect(relayAlert()?.className).toContain('warning');
+    expect(relayAlert()?.querySelector('.inline-alert-title')?.textContent).toBe('pitwall blocked a changed copy of your message');
+    expect(relayAlert()?.textContent).toContain('nothing was sent.');
+    expect(relayAlert()?.textContent).not.toMatch(/another session|didn't ask for/);
   });
 
   it('stays dismissed until its time or count changes', () => {

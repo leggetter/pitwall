@@ -8,7 +8,7 @@ import { Button, type ButtonVariant } from '../components/Button.js';
 import { KeyCaps, modEnter } from '../components/KeyCaps.js';
 import { Spinner } from '../components/Spinner.js';
 import { relayAlertText, STATUS_TEXT } from '../relay.js';
-import { RELAY_ALERT_BLOCKED, RELAY_ALERT_OFF, RELAY_OFF } from './fixtures.js';
+import { RELAY_ALERT_BLOCKED, RELAY_ALERT_CHANGED, RELAY_ALERT_CHANGED_BLOCKED, RELAY_ALERT_OFF, RELAY_ALERT_SENT, RELAY_OFF } from './fixtures.js';
 import { Specimen } from './kit.js';
 
 const noop = () => {};
@@ -92,8 +92,8 @@ export function Buttons() {
   );
 }
 
-const blocked = relayAlertText(RELAY_ALERT_BLOCKED);
-const sent = relayAlertText(RELAY_ALERT_OFF);
+/** The relay alert for each cause, as the page shows it: may have been sent is danger, blocked is a warning. */
+const RELAY_ALERTS = [RELAY_ALERT_SENT, RELAY_ALERT_BLOCKED, RELAY_ALERT_CHANGED, RELAY_ALERT_CHANGED_BLOCKED];
 const off = relayAlertText(RELAY_ALERT_OFF, RELAY_OFF);
 
 /** Each tone, as the page alerts and the message box use them, and one with an action, standalone and at 375 px. */
@@ -106,12 +106,14 @@ function AlertSet() {
       <Alert tone="danger" onDismiss={noop}>
         The index couldn&apos;t read one transcript: a made-up error for pitwall-test.
       </Alert>
-      <Alert tone="danger" title={sent.title} onDismiss={noop}>
-        {sent.summary} {sent.count} Latest: <Detail>{RELAY_ALERT_OFF.detail}</Detail>
-      </Alert>
-      <Alert tone="warning" title={blocked.title} onDismiss={noop}>
-        {blocked.summary} {blocked.count} Latest: <Detail>{RELAY_ALERT_BLOCKED.detail}</Detail>
-      </Alert>
+      {RELAY_ALERTS.map((alert) => {
+        const text = relayAlertText(alert);
+        return (
+          <Alert key={`${alert.cause}-${alert.blocked}`} tone={alert.blocked ? 'warning' : 'danger'} title={text.title} onDismiss={noop}>
+            {text.summary} {text.count} Latest: <Detail>{alert.detail}</Detail>
+          </Alert>
+        );
+      })}
       <Alert tone="neutral">Lost the connection to pitwall. Reconnecting; this list may be out of date.</Alert>
       <Alert tone="success">{STATUS_TEXT.delivered}</Alert>
       <Alert
@@ -135,7 +137,7 @@ export function Alerts() {
     <>
       <Specimen
         title="Inline alerts"
-        note="Each page alert, and the other tones. The icon is the tint's -tint-fg and the text --pw-text; Dismiss is a ghost sm button, whose --pw-text-muted passes on every tint."
+        note="Each page alert, and the other tones. The relay alert in its four cases: a message nobody asked for, then a changed copy of yours (W43), each one that may have been sent and one the gate blocked. pitwall raises none for a changed copy the gate blocked, whose message's own result says so. The icon is the tint's -tint-fg and the text --pw-text; Dismiss is a ghost sm button, whose --pw-text-muted passes on every tint."
       >
         <AlertSet />
       </Specimen>
