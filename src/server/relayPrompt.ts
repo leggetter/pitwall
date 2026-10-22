@@ -23,6 +23,7 @@
 import { randomBytes } from 'node:crypto';
 import { isRecord } from '../index/guards.js';
 import { DENIAL_PREFIX, KNOWN_INPUT_FIELDS } from './relayGateHook.mjs';
+import { describeCopyDifference } from './relayText.js';
 
 /** The relay's session name: what a target sees as the sender. */
 export const RELAY_NAME = 'pitwall-relay';
@@ -208,20 +209,31 @@ export function parseSendResult(block: Record<string, unknown>): SendResult {
   return { kind: 'unknown', reason: 'SendMessage gave an answer pitwall doesn’t recognize' };
 }
 
+/** Why a SendMessage call doesn't match the request. */
+export interface CallMismatch {
+  /** In pitwall's words, one or two sentences. Never the text. */
+  reason: string;
+  /** For a changed text, where the copy first differed (relayText.ts describeCopyDifference()). */
+  where?: string;
+}
+
 /**
  * Why a SendMessage call doesn't match the request, or undefined when it
  * does: it has only the fields the gate knows, `to` must be the target's
  * name, `message` must equal the text exactly, and it mustn't subscribe to
- * idle notices, which print a notice in the target's terminal.
+ * idle notices, which print a notice in the target's terminal. `text` is the
+ * request's text as pitwall relays it (plainSpaces()).
  */
-export function sendMismatch(input: unknown, to: string, text: string): string | undefined {
-  if (!isRecord(input)) return 'The relay called SendMessage without arguments.';
-  if (Object.keys(input).some((field) => !KNOWN_INPUT_FIELDS.has(field))) return "The relay's SendMessage call had a field pitwall doesn't check.";
+export function callMismatch(input: unknown, to: string, text: string): CallMismatch | undefined {
+  if (!isRecord(input)) return { reason: 'The relay called SendMessage without arguments.' };
+  if (Object.keys(input).some((field) => !KNOWN_INPUT_FIELDS.has(field))) return { reason: "The relay's SendMessage call had a field pitwall doesn't check." };
   // Claude Code reports the input normalized (v2.1.303): `recipient` copies `to`, and `content` is a 50-character preview of `message`.
-  if (input.to !== to || (input.recipient !== undefined && input.recipient !== to)) return 'The relay addressed the message to another session.';
-  if (input.message !== text) return 'The relay changed the text before sending it.';
+  if (input.to !== to || (input.recipient !== undefined && input.recipient !== to)) return { reason: 'The relay addressed the message to another session.' };
+  if (typeof input.message !== 'string') return { reason: "The relay's SendMessage call had no text." };
+  const where = describeCopyDifference(text, input.message);
+  if (where !== undefined) return { reason: `The relay changed the text before sending it, first at ${where}.`, where };
   if (input.notify_when_idle !== undefined && input.notify_when_idle !== false) {
-    return 'The relay asked to be told when the session goes idle.';
+    return { reason: 'The relay asked to be told when the session goes idle.' };
   }
   return undefined;
 }
