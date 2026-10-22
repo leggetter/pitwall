@@ -200,21 +200,37 @@ export function replyInConversation(exchange: RelayExchange, entries: readonly C
 /**
  * The page alert for the snapshot's relayAlert (docs/design-system.md, 4: Alerts and banners): what
  * pitwall's relay tried that you didn't ask for. Its `cause` says which: 'unrequested', a message
- * nobody asked for, which usually means another session messaged the relay, or 'changed', a copy of
- * your message that didn't match it (W43). Blocked is a warning, since nothing was sent; otherwise
- * it's danger, since pitwall saw it only afterwards. The server raises none for a changed copy its
- * gate blocked, whose message's own result says so, but the words are here for one. It says
- * messaging is off only when the snapshot's relayOff says so: some alerts only restart the relay.
- * `detail` is pitwall's own words, never a message's text.
+ * nobody asked for, which usually means another session messaged the relay; 'changed', a copy of
+ * your message that didn't match it (W43), such as one to another session or with other words; or
+ * 'repeated', the relay trying your message again in the same turn, after pitwall's gate had stopped
+ * its copy (W52). Only 'unrequested' mentions another session. Blocked is a warning, since nothing
+ * was sent; otherwise it's danger, since pitwall saw it only afterwards. The server raises none for
+ * a copying slip, in whitespace, that its gate blocked: it tries that once more, and the message's
+ * own result says so. It says messaging is off only when the snapshot's relayOff says so: some
+ * alerts only restart the relay. `detail` is pitwall's own words, never a message's text.
  */
 export function relayAlertText(alert: RelayAlert, off?: RelayOff): { title: string; summary: string; count: string } {
   const offNote = off ? ' Messaging is off until you restart pitwall.' : '';
   const count = alert.count === 1 ? 'Once since pitwall started.' : `${alert.count.toLocaleString('en')} times since pitwall started.`;
+  if (alert.cause === 'repeated') {
+    if (alert.blocked) {
+      return {
+        title: 'pitwall blocked a repeated send of your message',
+        summary: `After pitwall's gate stopped its relay's copy of your message, the relay tried again in the same turn. The gate stopped that too, so the repeat wasn't sent.${offNote}`,
+        count,
+      };
+    }
+    return {
+      title: "pitwall's relay may have repeated a send of your message",
+      summary: `After pitwall's gate stopped its relay's copy of your message, the relay tried again in the same turn, and the gate may not have stopped it. Check your sessions' conversations for a message from pitwall-relay.${offNote}`,
+      count,
+    };
+  }
   if (alert.cause === 'changed') {
     if (alert.blocked) {
       return {
         title: 'pitwall blocked a changed copy of your message',
-        summary: `Its relay's copy didn't match what you sent, so pitwall's gate stopped it, and nothing was sent.${offNote}`,
+        summary: `Its relay's copy didn't match what you sent, so pitwall stopped it, and nothing was sent.${offNote}`,
         count,
       };
     }

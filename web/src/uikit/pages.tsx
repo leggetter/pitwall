@@ -35,6 +35,8 @@ import {
   RELAY_ALERT_CHANGED,
   RELAY_ALERT_CHANGED_BLOCKED,
   RELAY_ALERT_OFF,
+  RELAY_ALERT_REPEATED_BLOCKED,
+  RELAY_ALERT_REPEATED_SENT,
   RELAY_ALERT_SENT,
   RELAY_OFF,
   REPO_LIST_SNAPSHOT,
@@ -296,8 +298,18 @@ const PAGES: PageCase[] = [
   },
   {
     title: 'Relay blocked a changed copy',
-    note: 'pitwall raises none today: the message’s own result says where the copy differed. The words are there for one.',
+    note: 'W52: a blocked copy that no copying slip explains, such as one to another session, which pitwall doesn’t try again. A slip in the spacing raises none: pitwall tries that once more, and the message’s own result says so.',
     view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_CHANGED_BLOCKED }) },
+  },
+  {
+    title: 'Relay may have repeated a send',
+    note: 'W52: the relay tried your message again in the same turn, after the gate stopped its copy, and pitwall never saw whether the gate stopped that too. It points at your sessions, and never says another session caused it.',
+    view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_REPEATED_SENT }) },
+  },
+  {
+    title: 'Relay blocked a repeated send',
+    note: 'W52: the same, with the repeat blocked too. A warning, since nothing more was sent.',
+    view: { state: 'live', snapshot: snapshot([NOTES_GROUP], { relayAlert: RELAY_ALERT_REPEATED_BLOCKED }) },
   },
   {
     title: 'The relay off until restart',

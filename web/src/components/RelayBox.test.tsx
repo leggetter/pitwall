@@ -494,8 +494,22 @@ describe('the message box’s rules (W24)', () => {
     const result = box(view).querySelector('.relay-result')!;
     expect(result.getAttribute('role')).toBe(role);
     expect(result.className).toBe(`inline-alert ${tone} relay-result`);
-    // The server's detail is in code style, after pitwall's own sentence; delivered has none.
-    expect(result.querySelector('.alert-detail')?.textContent).toBe(status === 'delivered' ? undefined : 'A made-up detail.');
+    // The server's detail is in code style, after pitwall's own sentence, delivered's included (W52).
+    expect(result.querySelector('.alert-detail')?.textContent).toBe('A made-up detail.');
+  });
+
+  it('says so after Delivered when pitwall’s gate stopped the relay’s first copy and the second went through (W52)', async () => {
+    const detail =
+      "pitwall's gate stopped the relay's first copy of your message, because it didn't match, so pitwall tried once more, on a new relay, and the second copy went through. The first time, the relay changed the text before sending it, first at line 1: the copy adds a line break (U+000A).";
+    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered', detail } }));
+    const view = await openView();
+    await sendFrom(view, 'hello');
+    const result = within(box(view)).getByRole('status');
+    expect(result.textContent).toBe(`Delivered. It's in the session's inbox: it reads it at its next step, or starts a turn if it's idle. ${detail}`);
+    expect(result.className).toBe('inline-alert success relay-result');
+    expect(result.querySelector('.alert-detail')?.textContent).toBe(detail);
+    // Delivered, so the draft clears as it always does.
+    expect(textarea(view).value).toBe('');
   });
 
   it('shows pitwall’s own failure, before the relay answered, as a warning alert when it may have gone, and danger when pitwall refused it', async () => {

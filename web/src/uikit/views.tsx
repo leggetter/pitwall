@@ -27,6 +27,7 @@ import {
   MARKDOWN_CONVERSATION,
   MARKDOWN_EDGES,
   MARKDOWN_ELEMENTS,
+  RETRIED_DETAIL,
   ROOT,
   session,
   TO_PITWALL_CONVERSATION,
@@ -746,6 +747,13 @@ const BOX_CASES: Case[] = [
     run: send((root) => text(root, 'Sending…')),
   },
   { title: 'Delivered', note: 'A success alert, role="status".', session: session('box-delivered'), options: { relay: { status: 'delivered' } }, run: send(result) },
+  {
+    title: 'Delivered on one more try',
+    note: 'W52: pitwall’s gate stopped the relay’s first copy, which differed only in its spacing, and the second went through. The server’s detail says so, in code style, as other results’ do.',
+    session: session('box-delivered-retried'),
+    options: { relay: { status: 'delivered', detail: RETRIED_DETAIL } },
+    run: send(result),
+  },
   {
     title: 'Held for approval',
     note: 'A warning, role="alert". The server’s detail is in code style.',
