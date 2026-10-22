@@ -44,6 +44,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D3 - Background sessions are driven through a PTY running `claude attach <id>`, shown with xterm.js
 
 - **Why:** it gives the full Claude Code interface, including permission prompts and dialogs, without pitwall modeling any of it. `node-pty` works on Node 25. Closing the PTY detaches without stopping the session.
+- **Dialogs in the conversation** (W49): an answered question dialog shows in the Conversation tab as its questions, options and your answers, read-only. pitwall still can't answer one, and an open one isn't in the transcript, so you answer it in the terminal.
 - **In the view:** a background session's footer, where an interactive one has its message box, says to type to it in its Terminal tab, which attaches. There's no button for it, because opening the tab is what attaches (D9) (W47).
 - **Rejected:** a custom chat UI over the transcript plus `claude --resume <id> --bg "prompt"`. It would look better but can't answer dialogs. It may come back later as a read-only view.
 
@@ -136,7 +137,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 ### D15 - The session view renders markdown as pitwall's own elements, never HTML
 
-- **What:** Claude's messages, its messages to pitwall's relay (W46), and messages from other sessions arrive as the markdown they were written in. The relay's copy of a reply, in the message box, stays plain text. The page shows a subset as its own elements: paragraphs, headings, bold, italic, strikethrough, inline code, code blocks with a Copy button, lists, quotes, rules, tables and links. Your prompts show as you typed them.
+- **What:** Claude's messages, its messages to pitwall's relay (W46), and messages from other sessions arrive as the markdown they were written in. The relay's copy of a reply, in the message box, stays plain text, and so do a question dialog's questions, options and your answers (W49). The page shows a subset as its own elements: paragraphs, headings, bold, italic, strikethrough, inline code, code blocks with a Copy button, lists, quotes, rules, tables and links. Your prompts show as you typed them.
 - **Why:** until M3, the server stripped markdown from every message before sending it, as it does for the list's two-line rows. That turned each code block into "[code]" and flattened tables, so a draft written in a code block couldn't be read or copied (Phil's try-out, 2026-10-21).
 - **Safety:** the parser is pitwall's own, with no new dependency, and builds a tree of text that React renders as text. Raw HTML, and anything outside the subset, shows as the literal text it is. Only absolute `http:` and `https:` URLs become links; each opens in a new tab with `noopener noreferrer`, with the URL it opens in its tooltip. Images are never loaded.
 - **Links in code** (Phil, 2026-10-21): bare URLs in code blocks and inline code are links too, as terminals make them clickable, while Copy code copies the code as written. A bare URL ends at a space, `<`, `>`, `"` or a backtick, and drops a `)`, `]` or `}` it didn't open, so a URL in an HTML attribute, JSON or backticks links where it points.
