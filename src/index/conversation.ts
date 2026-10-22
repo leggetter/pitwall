@@ -17,10 +17,19 @@
 // it isn't, the relay's address book (RelayAddressBook, below) reads the
 // transcript forward up to the page, once per transcript, and remembers where
 // the relay's messages came from.
+//
+// A question Claude Code asked in its dialog, an AskUserQuestion call, is a
+// 'question' entry in place of the call, with its questions, options and
+// answers (W49). The answers are in the result's line, as its `toolUseResult`,
+// matched to the questions by their text. Claude Code writes the call and its
+// result together, once the dialog is answered, so they're almost always on one
+// page. When a page boundary falls between them, the result is on the newer
+// page: its cursor carries the result line's place in the file, and the older
+// page reads that one line again once it meets the call.
 
 import { createHash } from 'node:crypto';
 import { open, type FileHandle } from 'node:fs/promises';
-import type { ConversationEntry, ConversationPage } from '../shared/protocol.js';
+import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shared/protocol.js';
 import { isRecord } from './guards.js';
 import { cap, truncate } from './text.js';
 import { stripSystemReminders } from './transcripts.js';
@@ -74,6 +83,26 @@ const ADDRESS_LINE_MAX = PAGE_READ_BUDGET;
 /** How much the relay's address book reads at a time. */
 const ADDRESS_CHUNK_BYTES = MIB;
 
+/** The tool Claude Code asks its question dialog with (W49). */
+const ASK_USER_QUESTION = 'AskUserQuestion';
+/** The contract's caps on a 'question' entry (AskedQuestion), in UTF-16 code units. */
+export const QUESTIONS_MAX = 8;
+export const OPTIONS_MAX = 8;
+export const QUESTION_MAX = 2 * KIB;
+export const HEADER_MAX = 256;
+export const LABEL_MAX = 256;
+export const DESCRIPTION_MAX = KIB;
+export const ANSWER_MAX = 2 * KIB;
+export const NOTES_MAX = 2 * KIB;
+/**
+ * The most dialog results a cursor carries the place of, for the older page to read their answers
+ * from: the last seen, nearest the boundary. A dialog's result is almost always on its call's page,
+ * so a cursor usually carries none, and the others still carry whether they were errors.
+ */
+const MAX_PENDING_LINES = 8;
+/** The longest result line a cursor carries the place of. Real ones are a few KiB, with every option's preview in them. */
+export const ANSWER_LINE_MAX = MIB;
+
 export interface ConversationReadOptions {
   /** Default 50. */
   pageEntries?: number;
@@ -98,6 +127,11 @@ export interface ConversationReadStats {
    * page had read.
    */
   addressBytesRead: number;
+  /**
+   * What was read again for question dialogs' answers (W49): nothing unless a dialog's call is on
+   * this page and its result was on a newer one, and then only that result's line.
+   */
+  answerBytesRead: number;
 }
 
 /**
@@ -149,7 +183,7 @@ export async function readConversationPage(
     const identity = { dev: info.dev.toString(), ino: info.ino.toString() };
     let end = size;
     let midLine = false;
-    let pending = new Map<string, ResultState>();
+    let pending = new Map<string, Pending>();
     if (cursor !== undefined) {
       if (cursor.dev !== identity.dev || cursor.ino !== identity.ino || cursor.offset > size) {
         throw new ConversationCursorError('stale');
@@ -172,6 +206,8 @@ export async function readConversationPage(
           earlier = (address, offset) => (known.addresses.get(address) ?? Number.POSITIVE_INFINITY) < offset;
         }
       }
+      // A question dialog's call on this page whose result was on a newer one: that result's line again.
+      const answerBytesRead = await result.builder.readAnswers(handle, size);
       const page: ConversationPage = { sessionId, entries: result.builder.finish(earlier) };
       if (result.stop !== undefined) {
         page.before = encodeCursor({
@@ -182,7 +218,7 @@ export async function readConversationPage(
           pending: [...result.builder.pending].slice(-MAX_PENDING),
         });
       }
-      return { page, stats: { bytesRead: result.bytesRead, addressBytesRead } };
+      return { page, stats: { bytesRead: result.bytesRead, addressBytesRead, answerBytesRead } };
     } catch (err) {
       if (err instanceof TranscriptChangedError && cursor !== undefined) throw new ConversationCursorError('stale');
       throw err;
@@ -208,7 +244,7 @@ async function readBackwards(
   handle: FileHandle,
   end: number,
   startsMidLine: boolean,
-  pending: Map<string, ResultState>,
+  pending: Map<string, Pending>,
   options: ConversationReadOptions,
 ): Promise<{ builder: PageBuilder; stop?: Stop; bytesRead: number }> {
   const chunkBytes = Math.max(1, options.chunkBytes ?? CHUNK_BYTES);
@@ -236,7 +272,7 @@ async function readBackwards(
       if (k === -1 && lo > 0) break;
       const start = k === -1 ? 0 : lo + k + 1;
       const contentEnd = hi > start && buf[hi - 1 - lo] === NEWLINE ? hi - 1 : hi;
-      const verdict = builder.offer(buf.toString('utf8', start - lo, contentEnd - lo), start);
+      const verdict = builder.offer(buf.toString('utf8', start - lo, contentEnd - lo), start, contentEnd);
       if (verdict === 'full') return { builder, stop: { offset: hi, midLine: false }, bytesRead };
       hi = start;
     }
@@ -298,11 +334,18 @@ interface Cursor {
   dev: string;
   ino: string;
   fingerprint: string;
-  /** Tool results seen on newer pages, by tool_use_id: whether each was an error, or reported a failure. */
-  pending: [string, ResultState][];
+  /**
+   * Tool results seen on newer pages, by tool_use_id: whether each was an error, or reported a
+   * failure, and for a question dialog's result, where its line is (W49).
+   */
+  pending: [string, Pending][];
 }
 
-/** A pending result as the cursor writes it. 2 is newer than the cursor's first version, which only had 0 and 1. */
+/**
+ * A pending result as the cursor writes it: `[id, code]`, or `[id, code, offset, length]` for a
+ * question dialog's result, with its line's place (W49). Code 2 is newer than the cursor's first
+ * version, which only had 0 and 1, and the place is newer still.
+ */
 const RESULT_CODES: Record<ResultState, number> = { ok: 0, error: 1, failed: 2 };
 const RESULT_STATES: readonly ResultState[] = ['ok', 'error', 'failed'];
 
@@ -315,7 +358,16 @@ function encodeCursor(cursor: Cursor): string {
   const body: Record<string, unknown> = { v: 1, o: cursor.offset, d: cursor.dev, i: cursor.ino, f: cursor.fingerprint };
   if (cursor.midLine) body.m = 1;
   const pending = cursor.pending.filter(([id]) => TOOL_USE_ID.test(id));
-  if (pending.length > 0) body.p = pending.map(([id, state]) => [id, RESULT_CODES[state]]);
+  // Only the dialog results nearest the boundary, the last seen, keep their line's place, so the cursor stays small.
+  let lines = 0;
+  const items: unknown[][] = [];
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const [id, result] = pending[i] as [string, Pending];
+    const line = result.line !== undefined && lines < MAX_PENDING_LINES ? result.line : undefined;
+    if (line !== undefined) lines++;
+    items.push(line === undefined ? [id, RESULT_CODES[result.state]] : [id, RESULT_CODES[result.state], line.offset, line.length]);
+  }
+  if (items.length > 0) body.p = items.reverse();
   return Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
 }
 
@@ -336,15 +388,24 @@ function decodeCursor(text: string): Cursor | undefined {
   if (typeof d !== 'string' || !DECIMAL.test(d) || typeof i !== 'string' || !DECIMAL.test(i)) return undefined;
   if (typeof f !== 'string' || !FINGERPRINT.test(f)) return undefined;
   if (m !== undefined && m !== 1) return undefined;
-  const pending: [string, ResultState][] = [];
+  const pending: [string, Pending][] = [];
   if (p !== undefined) {
     if (!Array.isArray(p) || p.length > MAX_PENDING) return undefined;
+    let lines = 0;
     for (const item of p) {
-      if (!Array.isArray(item) || item.length !== 2) return undefined;
-      const [id, code] = item as unknown[];
+      if (!Array.isArray(item) || (item.length !== 2 && item.length !== 4)) return undefined;
+      const [id, code, start, length] = item as unknown[];
       const state = typeof code === 'number' && Number.isInteger(code) ? RESULT_STATES[code] : undefined;
       if (typeof id !== 'string' || !TOOL_USE_ID.test(id) || state === undefined) return undefined;
-      pending.push([id, state]);
+      if (item.length === 2) {
+        pending.push([id, { state }]);
+        continue;
+      }
+      // A dialog result's line is on a newer page, so it starts at or after the cursor's offset.
+      if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < o) return undefined;
+      if (typeof length !== 'number' || !Number.isInteger(length) || length < 1 || length > ANSWER_LINE_MAX) return undefined;
+      if (++lines > MAX_PENDING_LINES) return undefined;
+      pending.push([id, { state, line: { offset: start, length } }]);
     }
   }
   return { offset: o, midLine: m === 1, dev: d, ino: i, fingerprint: f, pending };
@@ -552,6 +613,35 @@ export class RelayAddressBook {
  */
 type ResultState = 'ok' | 'error' | 'failed';
 
+/** A tool result whose call hasn't turned up yet. */
+interface Pending {
+  state: ResultState;
+  /** A question dialog's result (W49): where its line is in the file, to read its answers from again on an older page. */
+  line?: { offset: number; length: number };
+  /** That result's answers, while its line is in memory: on the page that read it, never in the cursor. */
+  answers?: DialogAnswers;
+}
+
+/**
+ * The answers in a question dialog's result line: its `toolUseResult`'s `answers` and `annotations`,
+ * as parsed, each keyed by a question's text. Looked up only for the questions of the call.
+ */
+interface DialogAnswers {
+  answers: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+}
+
+/**
+ * An AskUserQuestion call in the shape the contract reads (W49): its questions as AskedQuestion,
+ * capped, with no answers yet, and each question's text as written, to find its answer by.
+ */
+interface AskCall {
+  questions: AskedQuestion[];
+  keys: string[];
+  /** A question, an option or a string was cut to the contract's caps. */
+  truncated: boolean;
+}
+
 /** A SendMessage call with a message: its `to`, trimmed, and its `message` as written. */
 interface SendCall {
   to: string;
@@ -567,8 +657,8 @@ interface Sender {
 /** What one transcript line contributes, in file order. */
 type Item =
   | { kind: 'text'; messageId: string | undefined; text: string; at: string | undefined }
-  | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined; send?: SendCall }
-  | { kind: 'result'; id: string; state: ResultState }
+  | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined; send?: SendCall; ask?: AskCall }
+  | { kind: 'result'; id: string; state: ResultState; answers?: DialogAnswers }
   | { kind: 'entry'; entry: ConversationEntry; sender?: Sender };
 
 /** A SendMessage call on the page whose result, if it has one yet, didn't fail, and where its line starts. */
@@ -580,7 +670,12 @@ interface SendDraft extends SendCall {
 type Draft =
   | { kind: 'assistant'; messageId: string | undefined; at: string | undefined; parts: string[] }
   | { kind: 'tool'; id: string | undefined; entry: ConversationEntry; send?: SendDraft }
-  | { kind: 'entry'; entry: ConversationEntry };
+  | { kind: 'entry'; entry: ConversationEntry }
+  /**
+   * A question dialog (W49). `entry.questions` gets its answers once they're found: from the result
+   * on this page, or, for a result on a newer page, from its line, read again (`reread`).
+   */
+  | { kind: 'question'; entry: ConversationEntry; keys: string[]; reread?: { id: string; offset: number; length: number } };
 
 /** The socket address a message from pitwall's relay came from, or undefined for any other message. */
 function relayAddress(sender: Sender | undefined, relayName: string): string | undefined {
@@ -600,6 +695,9 @@ function relayAddress(sender: Sender | undefined, relayName: string): string | u
  *   relay by name at once; by a socket address once a message from the relay
  *   that came from it is found before it: on this page, or, through
  *   `finish()`, earlier in the transcript.
+ * - An AskUserQuestion call in the dialog's shape is a 'question' entry. Its
+ *   answers come from its result: in memory on this page, or, through
+ *   `readAnswers()`, from the result's line on a newer page.
  */
 class PageBuilder {
   /** Newest first. */
@@ -608,18 +706,21 @@ class PageBuilder {
   private readonly relayFrom = new Map<string, number>();
 
   constructor(
-    readonly pending: Map<string, ResultState>,
+    readonly pending: Map<string, Pending>,
     private readonly maxEntries: number,
     private readonly relayName?: string,
   ) {}
 
-  /** Takes a line, which starts at `offset` in the file, or says the page is full and the line belongs to the older page. */
-  offer(line: string, offset: number): 'taken' | 'full' {
+  /**
+   * Takes a line, which starts at `offset` in the file and ends at `end`, before its newline, or says
+   * the page is full and the line belongs to the older page.
+   */
+  offer(line: string, offset: number, end: number): 'taken' | 'full' {
     const items = itemsOfLine(line);
     if (items.length === 0) return 'taken';
     const added = this.newEntries(items);
     if (this.drafts.length > 0 && this.drafts.length + added > this.maxEntries) return 'full';
-    for (let i = items.length - 1; i >= 0; i--) this.apply(items[i] as Item, offset);
+    for (let i = items.length - 1; i >= 0; i--) this.apply(items[i] as Item, offset, end);
     return 'taken';
   }
 
@@ -643,11 +744,17 @@ class PageBuilder {
     return { assistant: oldest.kind === 'assistant', messageId: oldest.kind === 'assistant' ? oldest.messageId : undefined };
   }
 
-  private apply(item: Item, offset: number): void {
+  private apply(item: Item, offset: number, end: number): void {
     switch (item.kind) {
-      case 'result':
+      case 'result': {
         this.pending.delete(item.id);
-        this.pending.set(item.id, item.state);
+        const result: Pending = { state: item.state };
+        if (item.answers !== undefined) {
+          result.answers = item.answers;
+          // Too long a line is never read again: an older page would show its questions without answers.
+          if (end - offset <= ANSWER_LINE_MAX) result.line = { offset, length: end - offset };
+        }
+        this.pending.set(item.id, result);
         // Results whose calls never turn up are dropped, the oldest seen first.
         while (this.pending.size > MAX_PENDING) {
           const first = this.pending.keys().next().value;
@@ -655,6 +762,7 @@ class PageBuilder {
           this.pending.delete(first);
         }
         return;
+      }
       case 'text': {
         const oldest = this.drafts[this.drafts.length - 1];
         if (oldest?.kind === 'assistant' && joins(this.oldestText(), item.messageId)) {
@@ -669,14 +777,19 @@ class PageBuilder {
       }
       case 'tool': {
         if (this.full()) return;
-        const entry: ConversationEntry = { kind: 'tool', text: item.summary, toolName: item.name };
-        if (item.at !== undefined) entry.at = item.at;
-        let state: ResultState | undefined;
-        if (item.id !== undefined && this.pending.has(item.id)) {
-          state = this.pending.get(item.id);
-          entry.toolError = state === 'error';
+        let result: Pending | undefined;
+        if (item.id !== undefined) {
+          result = this.pending.get(item.id);
           this.pending.delete(item.id);
         }
+        const state = result?.state;
+        if (item.ask !== undefined) {
+          this.drafts.push(questionDraft(item.ask, item.at, item.id, result));
+          return;
+        }
+        const entry: ConversationEntry = { kind: 'tool', text: item.summary, toolName: item.name };
+        if (item.at !== undefined) entry.at = item.at;
+        if (state !== undefined) entry.toolError = state === 'error';
         const draft: Draft = { kind: 'tool', id: item.id, entry };
         // A call whose result was an error, or said it didn't send, stays a tool call. One with no result yet doesn't.
         if (item.send !== undefined && this.relayName !== undefined && state !== 'error' && state !== 'failed') draft.send = { ...item.send, offset };
@@ -697,6 +810,28 @@ class PageBuilder {
   /** Only a single line with more entries than a page can hold gets here: the rest of it is dropped. */
   private full(): boolean {
     return this.drafts.length >= this.maxEntries;
+  }
+
+  /**
+   * The answers of the question dialogs on this page whose results were on a newer page (W49): each
+   * result's line, read again from where the cursor said it was, in a file `size` long. A line that
+   * has gone, changed or no longer holds that call's result leaves its questions without answers.
+   * At most 8 lines of at most 1 MiB, the cursor's limits. Returns the bytes read.
+   */
+  async readAnswers(handle: FileHandle, size: number): Promise<number> {
+    let bytesRead = 0;
+    for (const draft of this.drafts) {
+      if (draft.kind !== 'question' || draft.reread === undefined) continue;
+      const { id, offset, length } = draft.reread;
+      draft.reread = undefined;
+      if (offset + length > size) continue;
+      const bytes = await readRange(handle, offset, offset + length);
+      bytesRead += bytes.length;
+      if (bytes.length !== length) continue;
+      const result = itemsOfLine(bytes.toString('utf8')).find((item) => item.kind === 'result' && item.id === id);
+      if (result?.kind === 'result' && result.state !== 'error' && result.answers !== undefined) answerQuestions(draft, result.answers);
+    }
+    return bytesRead;
   }
 
   /** True when a call on the page is to a socket address that no message from the relay on the page came from before it. */
@@ -747,6 +882,7 @@ function finishDraft(draft: Draft, toRelay: (send: SendDraft) => boolean): Conve
       if (draft.send !== undefined && toRelay(draft.send)) return withAt({ kind: 'to-pitwall', text: draft.send.message, markdown: true }, draft.entry.at);
       return draft.entry;
     case 'entry':
+    case 'question':
       return draft.entry;
     case 'assistant':
       // Parts were collected newest first. Each block is markdown on its own, so they're joined as
@@ -756,17 +892,96 @@ function finishDraft(draft: Draft, toRelay: (send: SendDraft) => boolean): Conve
 }
 
 /**
+ * A question dialog's draft (W49): its questions, at the call's time, with the first as the entry's
+ * one-line text. With a result, `toolError` says whether it was an error, and the answers come from
+ * it: at once when it's in memory, or else from its line, read again by `readAnswers()`. An error,
+ * such as a dismissed dialog, has none.
+ */
+function questionDraft(ask: AskCall, at: string | undefined, id: string | undefined, result: Pending | undefined): Extract<Draft, { kind: 'question' }> {
+  const entry: ConversationEntry = withAt({ kind: 'question', text: oneLine(ask.questions[0]?.question ?? '', TOOL_SUMMARY_MAX), questions: ask.questions }, at);
+  if (ask.truncated) entry.truncated = true;
+  if (result !== undefined) entry.toolError = result.state === 'error';
+  const draft: Extract<Draft, { kind: 'question' }> = { kind: 'question', entry, keys: ask.keys };
+  if (result === undefined || result.state === 'error') return draft;
+  if (result.answers !== undefined) answerQuestions(draft, result.answers);
+  else if (result.line !== undefined && id !== undefined) draft.reread = { id, ...result.line };
+  return draft;
+}
+
+/**
+ * Each question's answer and notes, found by the question's text as the call wrote it, trimmed and
+ * capped as the contract says. Only a string counts, and a blank one is none: the result's prose is
+ * never read for answers.
+ */
+function answerQuestions(draft: Extract<Draft, { kind: 'question' }>, found: DialogAnswers): void {
+  const questions = draft.entry.questions ?? [];
+  questions.forEach((question, i) => {
+    const key = draft.keys[i];
+    if (key === undefined) return;
+    const value = ownValue(found.answers, key);
+    const answer = typeof value === 'string' ? field(value, ANSWER_MAX) : undefined;
+    const annotation = found.annotations === undefined ? undefined : ownValue(found.annotations, key);
+    const notes = isRecord(annotation) && typeof annotation.notes === 'string' ? field(annotation.notes, NOTES_MAX) : undefined;
+    if (answer !== undefined) question.answer = answer.text;
+    if (notes !== undefined) question.notes = notes.text;
+    if (answer?.cut === true || notes?.cut === true) draft.entry.truncated = true;
+  });
+}
+
+/** `record[key]` when it's the record's own, so a question named like `constructor` finds nothing it didn't have. */
+function ownValue(record: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+/**
  * The entry with at most 32 KiB of text, without splitting a surrogate pair, and in full while the
  * page's budget lasts: once it doesn't fit what's left, only its first 512 characters. Either cut
  * marks it truncated. The text is cut as it is, never trimmed, so a shorter copy of an entry is
  * always the start of the longer one.
  */
 function withinBudget(entry: ConversationEntry, budget: { chars: number }): ConversationEntry {
+  if (entry.questions !== undefined) return questionWithinBudget(entry, entry.questions, budget);
   let text = cap(entry.text, ENTRY_TEXT_MAX);
   if (text.length <= budget.chars) budget.chars -= text.length;
   else text = cap(text, LEAN_TEXT_MAX);
   if (text.length === entry.text.length) return entry;
   return { ...entry, text, truncated: true };
+}
+
+/**
+ * A question entry (W49) in full while the page's budget lasts, its text and every string of its
+ * questions counting against it: the questions, headers, labels, descriptions, answers and notes.
+ * Once it doesn't fit what's left, each string keeps only its first 512 characters, and a cut marks
+ * it truncated. Its text, a one-line summary of at most 200, is never cut, so its key holds.
+ */
+function questionWithinBudget(entry: ConversationEntry, questions: AskedQuestion[], budget: { chars: number }): ConversationEntry {
+  let size = entry.text.length;
+  for (const question of questions) {
+    size += question.question.length + (question.header?.length ?? 0) + (question.answer?.length ?? 0) + (question.notes?.length ?? 0);
+    for (const option of question.options) size += option.label.length + (option.description?.length ?? 0);
+  }
+  if (size <= budget.chars) {
+    budget.chars -= size;
+    return entry;
+  }
+  let cut = false;
+  const lean = (text: string) => {
+    const kept = cap(text, LEAN_TEXT_MAX);
+    if (kept.length < text.length) cut = true;
+    return kept;
+  };
+  const leaned = questions.map((question) => {
+    const copy: AskedQuestion = {
+      question: lean(question.question),
+      options: question.options.map((option) => (option.description === undefined ? { label: lean(option.label) } : { label: lean(option.label), description: lean(option.description) })),
+    };
+    if (question.header !== undefined) copy.header = lean(question.header);
+    if (question.multiSelect === true) copy.multiSelect = true;
+    if (question.answer !== undefined) copy.answer = lean(question.answer);
+    if (question.notes !== undefined) copy.notes = lean(question.notes);
+    return copy;
+  });
+  return cut ? { ...entry, questions: leaned, truncated: true } : entry;
 }
 
 // --- Reading lines ---------------------------------------------------------------
@@ -830,6 +1045,8 @@ function assistantItems(entry: Record<string, unknown>, at: string | undefined):
       const item: Extract<Item, { kind: 'tool' }> = { kind: 'tool', id, name, summary: toolSummary(name, block.input), at };
       const send = name === SEND_MESSAGE ? sendCall(block.input) : undefined;
       if (send !== undefined) item.send = send;
+      const ask = name === ASK_USER_QUESTION ? askCall(block.input) : undefined;
+      if (ask !== undefined) item.ask = ask;
       items.push(item);
     }
   }
@@ -848,6 +1065,65 @@ function sendCall(input: unknown): SendCall | undefined {
   const address = to.trim();
   if (address === '' || address.length > ADDRESS_MAX) return undefined;
   return { to: address, message: cap(message, ENTRY_TEXT_MAX + 1) };
+}
+
+/**
+ * An AskUserQuestion call's input in the dialog's shape (W49), as seen in October 2026: `questions`,
+ * a list of at least one, each with a `question` and `options`, a list of `{ label }`, the question
+ * and each label a string that isn't blank. A `header`, an option's `description` and `multiSelect:
+ * true` are kept when they're there and of their type; anything else, such as an option's `preview`,
+ * is ignored. Any other input is undefined, so the call stays a tool call.
+ *
+ * Every string is trimmed and capped as the contract says, and only the first 8 questions, and the
+ * first 8 options of each, are read; past a cap, the entry is marked truncated. Each question's text
+ * as the call wrote it is kept, to find its answer by.
+ */
+function askCall(input: unknown): AskCall | undefined {
+  if (!isRecord(input) || !Array.isArray(input.questions) || input.questions.length === 0) return undefined;
+  let truncated = input.questions.length > QUESTIONS_MAX;
+  const questions: AskedQuestion[] = [];
+  const keys: string[] = [];
+  for (const value of input.questions.slice(0, QUESTIONS_MAX)) {
+    if (!isRecord(value) || typeof value.question !== 'string' || !Array.isArray(value.options)) return undefined;
+    const question = field(value.question, QUESTION_MAX);
+    if (question === undefined) return undefined;
+    if (value.options.length > OPTIONS_MAX) truncated = true;
+    const options: AskedQuestion['options'] = [];
+    for (const choice of value.options.slice(0, OPTIONS_MAX)) {
+      const label = isRecord(choice) && typeof choice.label === 'string' ? field(choice.label, LABEL_MAX) : undefined;
+      if (label === undefined) return undefined;
+      const description = isRecord(choice) && typeof choice.description === 'string' ? field(choice.description, DESCRIPTION_MAX) : undefined;
+      options.push(description === undefined ? { label: label.text } : { label: label.text, description: description.text });
+      if (label.cut || description?.cut === true) truncated = true;
+    }
+    const asked: AskedQuestion = { question: question.text, options };
+    const header = typeof value.header === 'string' ? field(value.header, HEADER_MAX) : undefined;
+    if (header !== undefined) asked.header = header.text;
+    if (value.multiSelect === true) asked.multiSelect = true;
+    if (question.cut || header?.cut === true) truncated = true;
+    questions.push(asked);
+    keys.push(value.question);
+  }
+  return { questions, keys, truncated };
+}
+
+/** A string trimmed and capped at `max`, and whether the cap cut it. Undefined when it's blank. */
+function field(value: string, max: number): { text: string; cut: boolean } | undefined {
+  const text = value.trim();
+  if (text === '') return undefined;
+  const kept = cap(text, max);
+  return { text: kept, cut: kept.length < text.length };
+}
+
+/**
+ * The answers in a question dialog's result (W49): the result line's `toolUseResult`, as seen in
+ * October 2026, `{ questions, answers: { <question>: <answer> }, annotations: { <question>: { notes?,
+ * preview? } } }`. Only `answers`, a record, is needed; `annotations` is read when it's a record.
+ * Undefined for anything else, such as a dismissed dialog's string.
+ */
+function dialogAnswers(value: unknown): DialogAnswers | undefined {
+  if (!isRecord(value) || !isRecord(value.answers)) return undefined;
+  return isRecord(value.annotations) ? { answers: value.answers, annotations: value.annotations } : { answers: value.answers };
 }
 
 /** A tool result's state (ResultState). Only a short result is read as JSON, and only one that starts like an object with a `success`. */
@@ -887,18 +1163,24 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   const content = message.content;
   let images = 0;
   if (Array.isArray(content)) {
-    const results: Item[] = [];
-    let isResult = false;
+    const results: Extract<Item, { kind: 'result' }>[] = [];
+    let blocks = 0;
     for (const block of content) {
       if (!isRecord(block)) continue;
       if (block.type === 'tool_result') {
-        isResult = true;
+        blocks++;
         if (typeof block.tool_use_id === 'string') results.push({ kind: 'result', id: block.tool_use_id, state: resultState(block) });
       } else if (block.type === 'image') {
         images++;
       }
     }
-    if (isResult) return results;
+    if (blocks > 0) {
+      // The line's toolUseResult is its one result's: a question dialog's answers, when it has them (W49).
+      const [only] = results;
+      const answers = blocks === 1 && only !== undefined && only.state !== 'error' ? dialogAnswers(entry.toolUseResult) : undefined;
+      if (only !== undefined && answers !== undefined) only.answers = answers;
+      return results;
+    }
   }
   const raw = textOf(content);
   if (raw === undefined && images === 0) return [];
