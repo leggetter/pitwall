@@ -9,13 +9,22 @@
 // why, except while it's busy, when its label does. After a send, focus stays in the text box,
 // and the draft clears only when the message was delivered, held or refused. Escape never discards a
 // draft: the box tells the view when there is one, and the view then ignores Escape.
+//
+// The draft survives a reload in this tab (W44, drafts.ts): it's kept in sessionStorage as it's typed,
+// under the session's own key, and the box starts with it. A send that pitwall never heard the end
+// of, because the page reloaded or the view closed while it was out, or because its answer said
+// pitwall couldn't tell, comes back with a warning to check the session's conversation before sending
+// it again, until the draft is edited or sent. Nothing about Send changes: it's the same press as
+// before, and nothing sends by itself.
 
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { RelayExchange, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
+import { DraftStorageContext, readDraft, writeDraft, type UnsureSend } from '../drafts.js';
 import { absoluteTime, plainText } from '../format.js';
 import {
   canMessage,
+  CHECK_BEFORE_RESENDING,
   characterCount,
   exchangeSummary,
   MAX_RELAY_TEXT_LENGTH,
@@ -60,6 +69,24 @@ export const KEPT_NOT_RUNNING = "It isn't running any more, so this can't be sen
 export const KEPT_NOT_LISTED = "It's no longer listed, so this can't be sent. Your text stays here until you clear it.";
 export const SEND_NOT_LISTED = "It's no longer listed, so it can't be messaged.";
 
+/**
+ * A restored draft whose send pitwall never heard the end of (W44): it may have reached the session,
+ * so check before sending it again. Its time is when the send went out. In the warning tone, as the
+ * uncertain results are, and gone once the draft is edited or sent.
+ */
+export function UnsureSendNote({ send }: { send: UnsureSend }) {
+  return send.state === 'out' ? (
+    <>
+      pitwall started sending this <Timestamp at={send.at} />, but the page reloaded or the view closed before it had an answer, so it may have reached the session.{' '}
+      {CHECK_BEFORE_RESENDING}
+    </>
+  ) : (
+    <>
+      pitwall tried to send this <Timestamp at={send.at} /> and couldn&apos;t tell whether it reached the session. {CHECK_BEFORE_RESENDING}
+    </>
+  );
+}
+
 export interface RelayBoxProps {
   /** An interactive session. */
   session: SessionSummary;
@@ -73,16 +100,30 @@ export interface RelayBoxProps {
 
 export function RelayBox({ session, replyShown = false, onDraftChange, listed = true }: RelayBoxProps) {
   const api = useContext(ApiContext);
-  const ids = { heading: useId(), text: useId(), keys: useId(), count: useId(), kept: useId() };
+  const drafts = useContext(DraftStorageContext);
+  const ids = { heading: useId(), text: useId(), keys: useId(), count: useId(), kept: useId(), unsure: useId() };
   const alive = useRef(true);
   const form = useRef<HTMLFormElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   // Aborted when the box goes, so a request still waiting for an apiKey doesn't outlive it.
   const requests = useRef<AbortController | undefined>(undefined);
-  const [text, setText] = useState('');
+  const { sessionId } = session;
+  // This session's draft, as the tab last kept it (W44): after a reload, or opened again later.
+  const [restored] = useState(() => readDraft(sessionId, drafts));
+  const [text, setText] = useState(restored?.text ?? '');
+  // A restored send that pitwall never heard the end of, until the draft is edited or sent.
+  const [unsure, setUnsure] = useState(restored?.send);
   const [sending, setSending] = useState(false);
   const [shown, setShown] = useState<Shown>();
-  const { sessionId } = session;
+
+  /** The draft as it now is, kept for a reload in the same event that changed it. Empty removes it. */
+  const keep = (next: string, send?: UnsureSend) => writeDraft(sessionId, next === '' ? undefined : { text: next, send }, drafts);
+
+  const edit = (next: string) => {
+    setText(next);
+    setUnsure(undefined);
+    keep(next);
+  };
 
   useEffect(() => {
     alive.current = true;
@@ -156,24 +197,40 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
 
   const send = async () => {
     if (!canSend || !api) return;
+    // Kept as out before it goes, so a reload, or the view closing, before the answer leaves a warning
+    // with the draft rather than a draft that looks unsent (W44).
+    const at = new Date().toISOString();
+    keep(text, { at, state: 'out' });
+    setUnsure(undefined);
     setSending(true);
     setShown(undefined);
     const outcome = await sendRelay(api, sessionId, text, requests.current?.signal);
+    // Gone meanwhile: the request was aborted, so its outcome is unknown, and the draft stays out.
     if (!alive.current) return;
     setSending(false);
     // Focus stays in the text box, or comes back to it from Send, unless it was moved elsewhere meanwhile.
     const active = document.activeElement;
     if (active === null || active === document.body || form.current?.contains(active)) field.current?.focus();
-    if (outcome.kind === 'unauthorized') return;
+    if (outcome.kind === 'unauthorized') {
+      // Refused before anything was sent.
+      keep(text);
+      return;
+    }
     if (outcome.kind === 'failed') {
       // Uncertain is a warning, as the relay's own is: a resend would start another turn if this one arrived.
       setShown({ status: outcome.uncertain ? 'uncertain' : 'error', text: outcome.error });
+      keep(text, outcome.uncertain ? { at, state: 'uncertain' } : undefined);
       return;
     }
     const { status, detail } = outcome.result;
     setShown(detail === undefined || status === 'delivered' ? { status, text: STATUS_TEXT[status] } : { status, text: STATUS_TEXT[status], detail });
     // Sent, or set aside by the session: either way it's no longer a draft. Kept when it wasn't sent, or may not have been.
-    if (status !== 'failed' && status !== 'uncertain') setText('');
+    if (status !== 'failed' && status !== 'uncertain') {
+      setText('');
+      keep('');
+    } else {
+      keep(text, status === 'uncertain' ? { at, state: 'uncertain' } : undefined);
+    }
   };
 
   const onSubmit = (event: FormEvent) => {
@@ -193,7 +250,9 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
 
   const look = shown ? resultLook(shown.status) : undefined;
   const keys = modEnter();
-  const describedBy = [kept && ids.kept, ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
+  // The restored warning is read with the text box, as the kept note is, so it's heard before a resend.
+  const unsureShown = unsure !== undefined && formShown;
+  const describedBy = [unsureShown && ids.unsure, kept && ids.kept, ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
 
   return (
     <section className="relay-box" aria-labelledby={ids.heading}>
@@ -202,6 +261,14 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
         Message this session
       </h3>
       {session.relay && <RelayExchangeNote exchange={session.relay} showReply={!replyShown} />}
+      {/* In the last send's place, with no role: it was there when the box appeared (4: Alerts and banners). */}
+      {unsureShown && (
+        <Alert tone="warning" className="relay-result relay-unsure">
+          <span id={ids.unsure}>
+            <UnsureSendNote send={unsure} />
+          </span>
+        </Alert>
+      )}
       {shown && look && (
         <Alert tone={look.tone} role={look.role} className="relay-result">
           {shown.text}
@@ -230,7 +297,7 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
               className="field-input relay-text"
               rows={1}
               value={text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => edit(event.target.value)}
               onKeyDown={onKeyDown}
               readOnly={sending}
               aria-describedby={describedBy}
