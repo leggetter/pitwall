@@ -155,16 +155,14 @@ describe('relayAlertText', () => {
     expect(relayAlertText({ ...alert, cause: 'changed' }, off).summary).toMatch(/pitwall-relay\. Messaging is off until you restart pitwall\.$/);
   });
 
-  it('says a blocked changed copy wasn’t sent, that pitwall tries again when only its text differed, and never blames another session (W43, W52)', () => {
+  it('says a blocked changed copy, one that differed in more than its text, sent nothing, and never blames another session (W43, W52)', () => {
     const text = relayAlertText({ ...alert, cause: 'changed', blocked: true, count: 3 });
     expect(text).toEqual({
       title: 'pitwall blocked a changed copy of your message',
-      summary:
-        "Its relay's copy didn't match what you sent, so pitwall stopped it, and that copy wasn't sent. When only its text differed, pitwall tried once more, and the message's own result says how that went.",
+      summary: "Its relay's copy differed from what you sent in more than its text, so pitwall stopped it, and nothing was sent.",
       count: '3 times since pitwall started.',
     });
-    // The same words whether pitwall tried again or not: the alert's detail says which.
-    expect(`${text.title} ${text.summary}`).not.toMatch(/another session|nothing was sent/);
+    expect(`${text.title} ${text.summary}`).not.toMatch(/another session|didn't ask for/);
   });
 
   it('says a blocked repeat is the relay trying your message again, never another session, and that the repeat wasn’t sent (W52)', () => {

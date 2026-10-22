@@ -12,7 +12,6 @@ import {
   RELAY_ALERT_BLOCKED,
   RELAY_ALERT_CHANGED,
   RELAY_ALERT_CHANGED_BLOCKED,
-  RELAY_ALERT_CHANGED_RETRIED,
   RELAY_ALERT_OFF,
   RELAY_ALERT_REPEATED_BLOCKED,
   RELAY_ALERT_REPEATED_SENT,
@@ -108,7 +107,6 @@ const RELAY_ALERTS = [
   RELAY_ALERT_BLOCKED,
   RELAY_ALERT_CHANGED,
   RELAY_ALERT_CHANGED_BLOCKED,
-  RELAY_ALERT_CHANGED_RETRIED,
   RELAY_ALERT_REPEATED_SENT,
   RELAY_ALERT_REPEATED_BLOCKED,
 ];
@@ -155,7 +153,7 @@ export function Alerts() {
     <>
       <Specimen
         title="Inline alerts"
-        note="Each page alert, and the other tones. The relay alert in its seven cases: a message nobody asked for, a changed copy of yours (W43), and the relay trying yours again in the same turn after the gate stopped its copy (W52), each one that may have been sent and one the gate blocked, and a blocked changed copy that pitwall tried once more because only its text differed (W52). pitwall raises none for a slip in the spacing that the gate blocked, which it also tries once more, and whose message's own result says so. The icon is the tint's -tint-fg and the text --pw-text; Dismiss is a ghost sm button, whose --pw-text-muted passes on every tint."
+        note="Each page alert, and the other tones. The relay alert in its six cases: a message nobody asked for, a changed copy of yours (W43), and the relay trying yours again in the same turn after the gate stopped its copy (W52), each one that may have been sent and one the gate blocked. A blocked changed copy is one that differed in more than its text. pitwall raises none for a blocked copy whose text alone differed, which it tries once more, and whose message's own result says so (W52). The icon is the tint's -tint-fg and the text --pw-text; Dismiss is a ghost sm button, whose --pw-text-muted passes on every tint."
       >
         <AlertSet />
       </Specimen>

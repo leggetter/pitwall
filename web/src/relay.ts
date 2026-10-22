@@ -204,12 +204,12 @@ export function replyInConversation(exchange: RelayExchange, entries: readonly C
  * your message that didn't match it (W43), such as one to another session or with other words; or
  * 'repeated', the relay trying your message again in the same turn, after pitwall's gate had stopped
  * its copy (W52). Only 'unrequested' mentions another session. Blocked is a warning, since nothing
- * was sent; otherwise it's danger, since pitwall saw it only afterwards. A blocked copy whose text
- * alone differs is tried once more (W52): the server raises no alert for a copying slip, in
- * whitespace, and the blocked 'changed' one for any other text, so the blocked 'changed' words fit
- * a copy that was tried again and one that wasn't; its `detail` says which. It says messaging is off
- * only when the snapshot's relayOff says so: some alerts only restart the relay. `detail` is
- * pitwall's own words, never a message's text.
+ * was sent; otherwise it's danger, since pitwall saw it only afterwards. The server raises none for
+ * a blocked copy whose text alone differed, which the relay's model does in long copies: it tries
+ * that once more, and the message's own result says so (W52). So a blocked 'changed' alert is for a
+ * copy that differed in more than its text, such as one to another session, which isn't tried again.
+ * It says messaging is off only when the snapshot's relayOff says so: some alerts only restart the
+ * relay. `detail` is pitwall's own words, never a message's text.
  */
 export function relayAlertText(alert: RelayAlert, off?: RelayOff): { title: string; summary: string; count: string } {
   const offNote = off ? ' Messaging is off until you restart pitwall.' : '';
@@ -232,7 +232,7 @@ export function relayAlertText(alert: RelayAlert, off?: RelayOff): { title: stri
     if (alert.blocked) {
       return {
         title: 'pitwall blocked a changed copy of your message',
-        summary: `Its relay's copy didn't match what you sent, so pitwall stopped it, and that copy wasn't sent. When only its text differed, pitwall tried once more, and the message's own result says how that went.${offNote}`,
+        summary: `Its relay's copy differed from what you sent in more than its text, so pitwall stopped it, and nothing was sent.${offNote}`,
         count,
       };
     }
