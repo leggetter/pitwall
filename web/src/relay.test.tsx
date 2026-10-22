@@ -88,10 +88,17 @@ describe('replyInConversation', () => {
       expect(replyInConversation({ ...exchange(LONG), status: 'held' }, [toPitwall(after)])).toBe(true);
     });
 
-    it('matches the start of the message when the relay cut its copy, and an entry the server cut by what it kept', () => {
+    it('matches the start of the message when the relay cut its copy, so the conversation shows at least as much', () => {
       const whole = `${LONG} ${'More words in the made-up reply. '.repeat(80)}`;
       expect(replyInConversation(exchange(`${whole.slice(0, 2000)}…`), [toPitwall(after, whole)])).toBe(true);
-      expect(replyInConversation(exchange(whole), [toPitwall(after, whole.slice(0, 512), true)])).toBe(true);
+      // The server's 32 Ki cut still shows more than the relay's 2 KiB copy.
+      expect(replyInConversation(exchange(`${whole.slice(0, 2000)}…`), [toPitwall(after, whole.slice(0, 2600), true)])).toBe(true);
+    });
+
+    it("is false for an entry the server cut shorter than the relay's copy, past its page's budget: the footer keeps it (W48's G1)", () => {
+      const whole = `${LONG} ${'More words in the made-up reply. '.repeat(80)}`;
+      expect(replyInConversation(exchange(`${whole.slice(0, 2000)}…`), [toPitwall(after, whole.slice(0, 512), true)])).toBe(false);
+      expect(replyInConversation(exchange(whole.slice(0, 900)), [toPitwall(after, whole.slice(0, 512), true)])).toBe(false);
     });
 
     it("is false for a different message, as from a session that took the relay's name, so the relay's own copy stays in the footer", () => {
