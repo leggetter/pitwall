@@ -247,13 +247,13 @@ export interface RelayAlert {
    * ask for, or text the relay changed. 'repeated': a second call for one of
    * your messages in the same turn, after pitwall's gate had blocked the
    * first. A call the gate blocked that differs from your message only in its
-   * text is tried once more, on a new relay, and that message's own result
-   * says what changed. It raises no alert when the difference is a copying
-   * slip (whitespace, or invisible characters your message has, left out),
-   * and a blocked 'changed' alert otherwise. Any other blocked difference,
-   * such as another recipient, `notify_when_idle` or a field pitwall doesn't
-   * check, raises a blocked 'changed' alert and isn't tried again (W48's F3,
-   * W52).
+   * text raises no alert: pitwall tries it once more, on a new relay, and that
+   * message's own result says the first copy was blocked and where it
+   * differed. The relay's model drops or changes text in long copies, so an
+   * alert there would be routine (W52's live check: 447 characters dropped
+   * from a 6,000-character message). Any other blocked difference, such as
+   * another recipient, `notify_when_idle` or a field pitwall doesn't check,
+   * raises a blocked 'changed' alert and isn't tried again (W48's F3, W52).
    */
   cause: 'unrequested' | 'changed' | 'repeated';
 }
