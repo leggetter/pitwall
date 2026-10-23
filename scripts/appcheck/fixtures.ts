@@ -1,0 +1,273 @@
+// The made-up world the fake server serves: sessions under /Users/example/code (and, for two root
+// tabs, /Users/example/oss), their conversations, and what spawn and the relay change. Nothing here
+// comes from a real session or transcript: every name is pitwall-test-*, every path is under
+// /Users/example, and every link goes to example.com or github.com/example.
+//
+// Parts refer to sessions by the names in NAMES, so a fixture can change without touching a part.
+
+import type {
+  ConversationEntry,
+  ConversationPage,
+  IndexSnapshot,
+  RelayExchange,
+  SessionGroup,
+  SessionSummary,
+  SpawnRequest,
+} from '../../src/shared/protocol.js';
+
+export const CODE = '/Users/example/code';
+export const OSS = '/Users/example/oss';
+export const API_SERVER = `${CODE}/api-server`;
+export const DEMO_APP = `${CODE}/demo-app`;
+export const BLOG = `${OSS}/blog`;
+
+/** The sessions parts use, by role. */
+export const NAMES = {
+  /** Interactive, waiting on a permission prompt: needs you. */
+  waiting: 'pitwall-test-docs',
+  /** Interactive, idle, ended its turn with a question: needs you. */
+  asked: 'pitwall-test-review',
+  /** Interactive and idle, with every kind of conversation entry and links: the message box's session. */
+  conversation: 'pitwall-test-api',
+  /** Background and running: Terminal opens and attaches. */
+  running: 'pitwall-test-nightly-export',
+  running2: 'pitwall-test-retry-worker',
+  running3: 'pitwall-test-index-rebuild',
+  /** Background, running and waiting on a permission prompt, where Enter would approve. */
+  prompting: 'pitwall-test-deploy-check',
+  /** Background and finished: opens on Conversation, and attaching would restart it. */
+  finished: 'pitwall-test-old-migration',
+  /** Started in the root itself; worked in two repos, so Group sessions by moves it. */
+  fromRoot: 'pitwall-test-from-root',
+  inApi: 'pitwall-test-in-api',
+  /** Under the second root, waiting, so its tab has a need-you badge. */
+  blog: 'pitwall-test-blog-notes',
+} as const;
+
+/** What a link in the conversation says and where it goes (the links part). */
+export const LINKS = {
+  bare: 'http://example.com/ci/runs/1234',
+  misleadingText: 'https://github.com/example/demo-app/pull/51',
+  misleadingHref: 'http://example.com/demo-app/pull/51',
+  ownAddress: 'http://example.com/changelog',
+  lookAlike: 'https://exämple.com/login',
+  lookAlikePunycode: 'https://xn--exmple-cua.com/login',
+  lookAlikeHost: 'xn--exmple-cua.com',
+} as const;
+
+const MINUTE = 60_000;
+
+interface Spawned {
+  summary: SessionSummary;
+  root: string;
+}
+
+export interface ResetOptions {
+  /** One root, /Users/example/code, or two, with /Users/example/oss as well. */
+  roots?: 1 | 2;
+}
+
+/** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
+export class World {
+  #now = Date.now();
+  #roots: 1 | 2 = 1;
+  #sessions = new Map<string, SessionSummary>();
+  #spawned: Spawned[] = [];
+  #nextSpawn = 0;
+
+  constructor() {
+    this.reset();
+  }
+
+  reset(options: ResetOptions = {}): void {
+    this.#now = Date.now();
+    this.#roots = options.roots ?? 1;
+    this.#spawned = [];
+    this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
+  }
+
+  get roots(): string[] {
+    return this.#roots === 2 ? [CODE, OSS] : [CODE];
+  }
+
+  snapshot(): IndexSnapshot {
+    const pick = (cwd: string) => [...this.#sessions.values()].filter((each) => each.cwd === cwd && !this.#isSpawned(each));
+    const groups: SessionGroup[] = [
+      { key: CODE, label: 'code', kind: 'directory', root: CODE, sessions: pick(CODE) },
+      { key: API_SERVER, label: 'api-server', kind: 'git', root: CODE, sessions: pick(API_SERVER) },
+      { key: DEMO_APP, label: 'demo-app', kind: 'git', root: CODE, sessions: pick(DEMO_APP) },
+      ...(this.#roots === 2 ? [{ key: BLOG, label: 'blog', kind: 'git' as const, root: OSS, sessions: pick(BLOG) }] : []),
+    ];
+    // A started session is listed in the group of its directory, or its root's own, as the index lists it.
+    for (const { summary, root } of this.#spawned) {
+      const home = groups.find((group) => group.key === summary.cwd) ?? groups.find((group) => group.key === root);
+      if (home) home.sessions.unshift(summary);
+      else groups.push({ key: summary.cwd, label: summary.cwd.slice(root.length + 1), kind: 'directory', root, sessions: [summary] });
+    }
+    return { generatedAt: new Date().toISOString(), roots: this.roots, groups: groups.filter((group) => group.sessions.length > 0), source: { ok: true } };
+  }
+
+  /** The session with this id, if the snapshot lists it. */
+  session(sessionId: string): SessionSummary | undefined {
+    return this.#sessions.get(sessionId);
+  }
+
+  byName(name: string): SessionSummary {
+    const found = [...this.#sessions.values()].find((each) => each.name === name);
+    if (!found) throw new Error(`no made-up session named ${name}`);
+    return found;
+  }
+
+  conversation(sessionId: string): ConversationPage | undefined {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return undefined;
+    const entries = session.name === NAMES.conversation ? this.#everyKind() : this.#short(session);
+    return { sessionId, entries };
+  }
+
+  /** The root a spawn's directory is under, or undefined when it's under none. */
+  rootFor(cwd: string): string | undefined {
+    return this.roots.filter((root) => cwd === root || cwd.startsWith(`${root}/`)).sort((a, b) => b.length - a.length)[0];
+  }
+
+  /** A made-up background session for a spawn, which `list` puts in the snapshot later. */
+  spawn(request: SpawnRequest, root: string): { summary: SessionSummary; list: () => void } {
+    this.#nextSpawn += 1;
+    const n = String(this.#nextSpawn).padStart(3, '0');
+    const now = new Date().toISOString();
+    const summary: SessionSummary = {
+      sessionId: `00000000-0000-4000-8000-000000064${n}`,
+      shortId: `pt64s${n}`,
+      name: request.name !== undefined && request.name !== '' ? request.name : `pitwall-test-started-${n}`,
+      kind: 'background',
+      cwd: request.cwd,
+      pid: 41_000 + this.#nextSpawn,
+      alive: true,
+      state: 'working',
+      startedAt: now,
+      stale: false,
+      finished: false,
+      lastActivityAt: now,
+      lastUserPrompt: 'A made-up first prompt.',
+      transcript: 'ok',
+    };
+    return {
+      summary,
+      list: () => {
+        this.#spawned.push({ summary, root });
+        this.#sessions.set(summary.sessionId, summary);
+      },
+    };
+  }
+
+  /** What the index shows on a session's row after a relayed message: its latest exchange. */
+  relayed(sessionId: string, exchange: RelayExchange): void {
+    const session = this.#sessions.get(sessionId);
+    if (session) this.#sessions.set(sessionId, { ...session, relay: exchange });
+  }
+
+  #isSpawned(session: SessionSummary): boolean {
+    return this.#spawned.some((each) => each.summary.sessionId === session.sessionId);
+  }
+
+  #ago(minutes: number): string {
+    return new Date(this.#now - minutes * MINUTE).toISOString();
+  }
+
+  #baseSessions(): SessionSummary[] {
+    let n = 0;
+    const session = (name: string, extra: Partial<SessionSummary> = {}): SessionSummary => {
+      n += 1;
+      return {
+        sessionId: `00000000-0000-4000-8000-0000000064${String(n).padStart(2, '0')}`,
+        name,
+        kind: 'interactive',
+        cwd: DEMO_APP,
+        pid: 40_000 + n,
+        alive: true,
+        status: 'idle',
+        startedAt: this.#ago(180),
+        stale: false,
+        finished: false,
+        lastActivityAt: this.#ago(n * 3),
+        lastUserPrompt: 'Tidy the made-up export job.',
+        transcript: 'ok',
+        ...extra,
+      };
+    };
+    const job = (name: string, extra: Partial<SessionSummary> = {}): SessionSummary =>
+      session(name, { kind: 'background', shortId: `pt64${String(n + 1).padStart(2, '0')}`, status: undefined, state: 'working', ...extra });
+    const worked = (label: string, changes: number, calls: number) => ({ key: `${CODE}/${label}`, label, root: CODE, calls, changes, lastAt: this.#ago(2) });
+    const all = [
+      session(NAMES.waiting, { title: 'Update the getting started guide', status: 'waiting', waitingFor: 'permission prompt', lastUserPrompt: 'Update the made-up getting started guide.' }),
+      session(NAMES.asked, {
+        title: 'Review the retry change',
+        askedYou: { reason: 'question', excerpt: 'Should I retry the failed batch now, or wait for tonight?' },
+        relay: { sentAt: this.#ago(30), status: 'delivered', reply: { at: this.#ago(29), text: 'Thanks, looking at it now.' } },
+      }),
+      session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.' }),
+      job(NAMES.running),
+      job(NAMES.running2),
+      job(NAMES.running3),
+      job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt' }),
+      job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
+      session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)] }),
+      session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route' }),
+      session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed' }),
+    ];
+    return all;
+  }
+
+  #short(session: SessionSummary): ConversationEntry[] {
+    return [
+      { kind: 'user', at: this.#ago(12), text: `A made-up prompt for ${session.name}: tidy the export job.` },
+      { kind: 'assistant', at: this.#ago(11), text: 'A made-up reply: the export job now retries **three times**, with backoff.', markdown: true },
+    ];
+  }
+
+  /** Every kind of entry the session view shows, oldest first. */
+  #everyKind(): ConversationEntry[] {
+    return [
+      { kind: 'user', at: this.#ago(40), text: 'Add a made-up health route to the API, with a test.' },
+      { kind: 'assistant', at: this.#ago(39), markdown: true, text: "I'll start with the routes file.\n\n- read `src/routes.ts`\n- add `GET /health`\n- add a test" },
+      { kind: 'tool', at: this.#ago(38), toolName: 'Read', text: 'Read: src/routes.ts' },
+      { kind: 'assistant', at: this.#ago(37), markdown: true, text: 'The route is in. Running the tests now.' },
+      { kind: 'tool', at: this.#ago(36), toolName: 'Bash', text: 'Bash: npm test', toolError: true },
+      { kind: 'tool', at: this.#ago(35), toolName: 'Edit', text: 'Edit: src/routes.test.ts' },
+      { kind: 'tool', at: this.#ago(34), toolName: 'Bash', text: 'Bash: npm test' },
+      {
+        kind: 'question',
+        at: this.#ago(33),
+        text: 'Which status should the health route return?',
+        questions: [
+          {
+            header: 'Status',
+            question: 'Which status should the health route return?',
+            options: [{ label: '200 OK', description: 'With a small JSON body.' }, { label: '204 No Content' }],
+            answer: '200 OK',
+          },
+        ],
+      },
+      { kind: 'cross-session', at: this.#ago(30), from: 'pitwall-test-reviewer', markdown: true, text: 'Please check the made-up CI run before merging.' },
+      { kind: 'to-pitwall', at: this.#ago(28), markdown: true, text: 'Checked: both flows pass, and the run is green.' },
+      { kind: 'notice', at: this.#ago(26), text: 'Conversation compacted.' },
+      {
+        kind: 'assistant',
+        at: this.#ago(25),
+        markdown: true,
+        text: [
+          `The pull request is up: [${LINKS.misleadingText}](${LINKS.misleadingHref}), and its run is ${LINKS.bare}.`,
+          '',
+          `The notes are at <${LINKS.ownAddress}>, and you can sign in at [the dashboard](${LINKS.lookAlike}) to see the logs.`,
+        ].join('\n'),
+      },
+    ];
+  }
+}
+
+/** The screen a made-up attached session shows, as a PTY would send it. */
+export function terminalScreen(session: SessionSummary): string {
+  const name = `\u001b[1m${session.name}\u001b[0m, a made-up session for the app check`;
+  if (session.status === 'waiting') return `${name}\r\n\r\nAllow the made-up deploy check to run?\r\n\u001b[36m❯ 1. Yes\u001b[0m\r\n  2. No, and tell Claude what to do differently\r\n`;
+  return `${name}\r\n\r\n\u001b[32m>\u001b[0m `;
+}
