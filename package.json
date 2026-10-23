@@ -17,6 +17,7 @@
     "dev": "tsx scripts/dev.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
     "test": "vitest run",
+    "appcheck": "tsx scripts/appcheck/appcheck.ts",
     "start": "node dist/cli.js"
   },
   "dependencies": {
