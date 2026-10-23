@@ -7,33 +7,55 @@
 // - Success and info toasts go after --pw-toast-timeout. The time stops while the pointer is over the
 //   stack or focus is inside it, and starts again from where it was. Error toasts stay until dismissed.
 // - The same message again replaces the toast that says it, so it's announced again without stacking.
+//   So does a toast with the same key, about the same thing: a started session's, once it's listed (W63).
+// - A toast can carry one action, an outline sm button before Dismiss, such as Open for a started
+//   session that didn't open (W63). It stays until it's dismissed or its action is used, as an error
+//   toast does, since a few seconds is too little time to reach it (WCAG 2.2.1). The action takes the
+//   toast away and says where focus goes.
 // - Text only, never markup (6.1, 16). Form errors, the relay's results and anything that needs a
 //   decision stay inline instead.
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type FocusEvent, type ReactNode } from 'react';
 import { cssTime, TOAST_TIMEOUT_MS } from '../timing.js';
+import { Button } from './Button.js';
 import { Icon, type IconName } from './Icon.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
 import './Toast.css';
 
 export type ToastTone = 'success' | 'info' | 'error';
 
+/** A toast's one action: a verb, as a button's label is (5: Labels), and what it does. */
+export interface ToastAction {
+  label: string;
+  /** Called as the toast goes. It says where focus goes, since the toast takes its button with it. */
+  onAction: () => void;
+}
+
 export interface ToastInput {
   tone?: ToastTone;
   /** Plain text. */
   message: string;
+  /** What it's about: a later toast with the same key replaces it, whatever it says (W63). */
+  key?: string;
+  /** One action, before Dismiss. The toast then stays until it's dismissed or the action is used (W63). */
+  action?: ToastAction;
 }
 
 export interface ToastData {
   id: number;
   tone: ToastTone;
   message: string;
+  key?: string;
+  action?: ToastAction;
   /** Going: it fades out, then it's removed. */
   leaving?: boolean;
 }
 
 /** Shows a toast. Outside a ToastProvider, nothing shows. */
 export type ShowToast = (toast: ToastInput) => void;
+
+/** Takes away the toast with this key, if one is showing, as Dismiss would. */
+export type DismissToast = (key: string) => void;
 
 /** What useToast() returns. The Dashboard provides it, with the stack inside the app. */
 export const ToastContext = createContext<ShowToast>(() => {});
@@ -54,13 +76,13 @@ let nextId = 0;
  * The toasts' state: `show` for ToastContext, and the props for the ToastRegion that renders them.
  * For a component that both shows toasts and places the stack, as the Dashboard does inside the app.
  */
-export function useToastStack(): { show: ShowToast; region: Pick<ToastRegionProps, 'toasts' | 'onDismiss' | 'onGone'> } {
+export function useToastStack(): { show: ShowToast; dismiss: DismissToast; region: Pick<ToastRegionProps, 'toasts' | 'onDismiss' | 'onGone'> } {
   const [toasts, setToasts] = useState<ToastData[]>([]);
 
-  const show = useCallback<ShowToast>(({ tone = 'success', message }) => {
-    const toast: ToastData = { id: (nextId += 1), tone, message };
+  const show = useCallback<ShowToast>(({ tone = 'success', message, key, action }) => {
+    const toast: ToastData = { id: (nextId += 1), tone, message, ...(key === undefined ? {} : { key }), ...(action === undefined ? {} : { action }) };
     setToasts((list) => {
-      const others = list.filter((shown) => shown.message !== message || shown.tone !== tone);
+      const others = list.filter((shown) => (shown.message !== message || shown.tone !== tone) && (key === undefined || shown.key !== key));
       const live = others.filter((shown) => !shown.leaving);
       // The oldest goes first: at once, so the stack never has more than three.
       const over = live.length + 1 - MAX_TOASTS;
@@ -75,8 +97,11 @@ export function useToastStack(): { show: ShowToast; region: Pick<ToastRegionProp
   const remove = useCallback((id: number) => {
     setToasts((list) => list.filter((toast) => toast.id !== id));
   }, []);
+  const dismiss = useCallback<DismissToast>((key) => {
+    setToasts((list) => (list.some((toast) => toast.key === key && !toast.leaving) ? list.map((toast) => (toast.key === key ? { ...toast, leaving: true } : toast)) : list));
+  }, []);
 
-  return { show, region: { toasts, onDismiss: leave, onGone: remove } };
+  return { show, dismiss, region: { toasts, onDismiss: leave, onGone: remove } };
 }
 
 export interface ToastProviderProps {
@@ -142,7 +167,18 @@ export function ToastRegion({ toasts, onDismiss, onGone, onFocusLost }: ToastReg
       onBlur={onBlur}
     >
       {toasts.map((toast) => (
-        <ToastCard key={toast.id} toast={toast} paused={paused} onDismiss={() => dismiss(toast.id)} onTimeout={() => onDismiss(toast.id)} onGone={() => onGone(toast.id)} />
+        <ToastCard
+          key={toast.id}
+          toast={toast}
+          paused={paused}
+          onDismiss={() => dismiss(toast.id)}
+          onAction={() => {
+            onDismiss(toast.id);
+            toast.action?.onAction();
+          }}
+          onTimeout={() => onDismiss(toast.id)}
+          onGone={() => onGone(toast.id)}
+        />
       ))}
     </div>
   );
@@ -152,11 +188,14 @@ interface ToastCardProps {
   toast: ToastData;
   paused: boolean;
   onDismiss: () => void;
+  /** Its action, used: the toast goes, and the action says where focus goes. */
+  onAction: () => void;
   onTimeout: () => void;
   onGone: () => void;
 }
 
-function ToastCard({ toast, paused, onDismiss, onTimeout, onGone }: ToastCardProps) {
+function ToastCard({ toast, paused, onDismiss, onAction, onTimeout, onGone }: ToastCardProps) {
+  const messageId = useId();
   const card = useRef<HTMLDivElement>(null);
   // What's left of its time, kept across pauses.
   const remaining = useRef<number | undefined>(undefined);
@@ -165,9 +204,11 @@ function ToastCard({ toast, paused, onDismiss, onTimeout, onGone }: ToastCardPro
   const onGoneRef = useRef(onGone);
   onGoneRef.current = onGone;
   const { tone, leaving = false } = toast;
+  // An error toast stays until it's dismissed, and so does one with an action, so there's time to reach it.
+  const lasting = tone === 'error' || toast.action !== undefined;
 
   useEffect(() => {
-    if (tone === 'error' || leaving || paused) return;
+    if (lasting || leaving || paused) return;
     remaining.current ??= cssTime(card.current, '--pw-toast-timeout', TOAST_TIMEOUT_MS);
     const started = Date.now();
     const timer = setTimeout(() => onTimeoutRef.current(), remaining.current);
@@ -175,7 +216,7 @@ function ToastCard({ toast, paused, onDismiss, onTimeout, onGone }: ToastCardPro
       clearTimeout(timer);
       remaining.current = Math.max(0, (remaining.current ?? 0) - (Date.now() - started));
     };
-  }, [tone, leaving, paused]);
+  }, [lasting, leaving, paused]);
 
   // Going: removed when its fade ends, or after the fade's time if no animation runs.
   useEffect(() => {
@@ -197,7 +238,15 @@ function ToastCard({ toast, paused, onDismiss, onTimeout, onGone }: ToastCardPro
       <span className="toast-tile">
         <Icon name={ICONS[tone]} />
       </span>
-      <p className="toast-message">{toast.message}</p>
+      <p className="toast-message" id={messageId}>
+        {toast.message}
+      </p>
+      {toast.action && (
+        // Named by its verb, and described by the message, which says what it acts on.
+        <Button size="sm" className="toast-action" aria-describedby={messageId} onClick={onAction}>
+          {toast.action.label}
+        </Button>
+      )}
       <Tooltip content="Dismiss" relation="label">
         <button type="button" className="icon-button ghost sm toast-dismiss" onClick={onDismiss}>
           <Icon name="close" />
