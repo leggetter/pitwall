@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Badge } from '../components/Badge.js';
 import { CopyButton } from '../components/CopyButton.js';
 import { CopyCommand } from '../components/CopyCommand.js';
-import { startedText } from '../components/Dashboard.js';
+import { listedText, OPEN_LISTED, startedText } from '../components/Dashboard.js';
 import { Header } from '../components/Header.js';
 import { InfoTip } from '../components/InfoTip.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
@@ -298,6 +298,26 @@ export function Toasts() {
       <Specimen title="At 600 px and narrower" note="16 px from the edges, and full width." frame="toasts-tall" width={375} lasting>
         <Toasted>
           <ShowToasts toasts={[{ message: STOPPED }, { tone: 'error', message: "Couldn't copy; the text is selected" }]} />
+        </Toasted>
+      </Specimen>
+      <Specimen
+        title="With an action"
+        note="A started session listed while you were in the middle of something, a draft say, so it didn't open (W63). It replaces the toast that said it started, which has the same key, and stays until it's dismissed or Open is used. In the app, Open selects the session's tab, group and view, and its heading takes focus; here it takes the toast away."
+        frame="toasts"
+        lasting
+      >
+        <Toasted>
+          <ShowToasts
+            toasts={[
+              { message: startedText('pitwall-test-started'), key: 'started:pt0001' },
+              { tone: 'info', message: listedText('pitwall-test-started'), key: 'started:pt0001', action: { label: OPEN_LISTED, onAction: noop } },
+            ]}
+          />
+        </Toasted>
+      </Specimen>
+      <Specimen title="With an action, at 600 px and narrower" note="The message wraps; Open and Dismiss keep their size." frame="toasts" width={375} lasting>
+        <Toasted>
+          <ShowToasts toasts={[{ tone: 'info', message: listedText('pitwall-test-started'), action: { label: OPEN_LISTED, onAction: noop } }]} />
         </Toasted>
       </Specimen>
     </>

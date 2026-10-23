@@ -295,6 +295,11 @@ export interface SessionViewProps {
   /** Whether a Stop or Remove is running, for j, k, ↑ and ↓, which wait for it rather than move the view away (6.2). */
   onRunningChange?: ((running: boolean) => void) | undefined;
   /**
+   * Whether a question is open in the view: a Stop or Remove confirmation, or the terminal's restart
+   * prompt, asking or restarting. A session started from New session doesn't replace the view then (W63).
+   */
+  onPromptChange?: ((open: boolean) => void) | undefined;
+  /**
    * The view's width as the third column, which the divider also changes: the actions menu then has
    * Make view wider, Make view narrower and Reset view width, so it can be resized without a drag.
    */
@@ -344,6 +349,7 @@ export function SessionView({
   animate = true,
   onDraftChange,
   onRunningChange,
+  onPromptChange,
   panel,
   hidden = false,
   star,
@@ -533,6 +539,14 @@ export function SessionView({
     onRunningRef.current?.(busy);
   }, [busy]);
   useEffect(() => () => onRunningRef.current?.(false), []);
+  // A confirmation or the terminal's restart prompt, open, for a started session that would replace the view (W63).
+  const prompting = actions.confirming !== undefined || (tab === 'terminal' && restart !== undefined);
+  const onPromptRef = useRef(onPromptChange);
+  onPromptRef.current = onPromptChange;
+  useEffect(() => {
+    onPromptRef.current?.(prompting);
+  }, [prompting]);
+  useEffect(() => () => onPromptRef.current?.(false), []);
   // What the width items can do, which changes only at the limits, so a drag doesn't re-render the view.
   const limits = useSyncExternalStore(panel?.subscribe ?? noStore, () => (panel ? panelLimits(panel.get()) : ''));
   const [canWiden, canNarrow, canReset] = limits.split('|').map((part) => part !== '');
