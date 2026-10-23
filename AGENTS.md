@@ -14,6 +14,7 @@ M1, the read-only index, M2, interacting with sessions from the web UI, and M3, 
 
 ## Rules
 
+- **A UI change runs the app check:** `npm run build && npm run appcheck -- --out <dir>`, and adds or extends its part in `scripts/appcheck/parts/`. On macOS, never send key presses to Google Chrome's headless mode: it plays the user's alert sound for each key a page doesn't handle (W64). The harness refuses any browser but the pinned `chrome-headless-shell` there.
 - **The plan is the source of truth.** Update `PLAN.md` in the same commit as the work. A settled decision moves to `README.md` with its reasoning.
 - **Prefer documented Claude Code interfaces:** `claude agents --json`, `claude --bg`, `claude attach`, `claude logs`, and cross-session messaging. Anything internal goes behind one adapter module and fails soft: show "unavailable", never crash. That covers transcript JSONL, `~/.claude/jobs/*/state.json` and the inbox socket wire format.
 - **Never touch a real session.** During development and tests, don't message, stop, attach to or remove a session the user didn't name. Spikes and tests use throwaway sessions named `pitwall-test-*`, and remove them afterwards.
@@ -38,6 +39,9 @@ npm run dev -- [root...] rebuild the web UI and restart the server on change. Us
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5)
+npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
+                         (scripts/appcheck/README.md); --only <part>, --widths, --themes, --ports
+npm run appcheck:install-shell    once on macOS: the pinned chrome-headless-shell it runs in
 ```
 
 There is no Vite dev server. `npm run dev` runs `vite build --watch --mode development` and `tsx watch src/cli.ts`, and the pitwall server serves `dist/web`. Development mode adds the design system's gallery at `http://127.0.0.1:4517/#uikit` (`docs/design-system.md`); `npm run build` leaves it out.
@@ -62,6 +66,8 @@ web/src/test/            test helpers and fixtures shared across the web UI's te
 scripts/dev.ts           runs the two watchers behind `npm run dev`
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
+scripts/appcheck/        the app check: a fake server using pitwall's own security code, a Chrome driver,
+                         and one part per area in parts/; not built, not in npm test
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7); .env is gitignored
 CLAUDE.md                imports this file for Claude Code
 tsconfig.json            server typecheck: src/ with tests, scripts/, config files
