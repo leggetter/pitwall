@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -1072,14 +1072,29 @@ describe('npm run dev (scripts/dev.ts)', () => {
     const paths = files('normal');
     const child = dev(port, paths);
     const devLog = async () => readFile(paths.devLog, 'utf8').catch(() => '');
+    // What a CLI said when it couldn't open the browser, for the message if it wasn't opened. Those lines have
+    // the launch file's path, never the token.
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
     try {
       await waitUntil(async () => /^(restarted|failed)/m.test(await devLog()), 45_000);
       expect(await devLog()).not.toMatch(/^failed/m);
-      // Give the restarted CLI time to open a second tab, if it were going to.
+      // The restarted CLI found the marker, so it wrote no launch file: it opens no second tab. It decides that
+      // before it says it's watching, which is when the fake tsx logs `restarted`. The first CLI's launch file went
+      // when it exited.
+      expect((await readdir(paths.home)).filter((name) => name.startsWith('launch-'))).toEqual([]);
+      // The first CLI's opener is a process of its own, which is often still starting when the restarted CLI is up,
+      // and later still on a loaded machine. So its call is waited for by the clock, not for a fixed 500 ms (W61).
+      await waitUntil(async () => (await openerCalls(paths.log)).length > 0, 10_000).catch(() => undefined);
+      // And no second call comes in the next half second.
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       const calls = await openerCalls(paths.log);
-      expect(calls).toHaveLength(1);
+      const said = stderr
+        .split('\n')
+        .filter((line) => line.startsWith("pitwall: couldn't"))
+        .join('\n');
+      expect(calls, said === '' ? 'the opener calls, waited for up to 10 s' : `the opener calls, where a CLI said:\n${said}`).toHaveLength(1);
       expect(calls[0]).toHaveLength(1);
       expect(calls[0]![0]).toMatch(new RegExp(`^${paths.home}/launch-${port}-[0-9a-f]{24}\\.html$`));
 
