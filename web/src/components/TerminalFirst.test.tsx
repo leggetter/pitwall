@@ -4,6 +4,10 @@
 // j, k, ↑ and ↓, which waits before attaching, so passing through attaches nothing; the four-attach
 // limit (D9); and the setting's menu and its storage. Made-up sessions only, and fake sockets: nothing
 // here reaches a session.
+//
+// And W57: the terminal takes the keyboard only right after a click or Enter in the page opened the
+// view or its Terminal tab, or asked to attach again, never from the URL, a reload, back or forward, a
+// root tab or a step, with a hint in its bar when it hasn't; and the setting that can make it never.
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,28 +26,39 @@ import { App } from '../App.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
 import { BACKGROUND_TAB_KEY, readBackgroundTab, writeBackgroundTab } from '../backgroundTab.js';
 import { browserStorage, type StorageSource } from '../groupState.js';
+import { GESTURE_MS } from '../focusGesture.js';
 import { computeProof } from '../proof.js';
+import { TERMINAL_FOCUS_KEY } from '../terminalFocus.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { ATTACH_DELAY_MS } from '../timing.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
 import { SessionView } from './SessionView.js';
-import type { TerminalHandle } from './Terminal.js';
+import { TYPE_HINT, type TerminalHandle } from './Terminal.js';
 
-// xterm.js, replaced by a terminal whose screen is a textarea, so where focus goes can be seen.
+// xterm.js, replaced by a terminal whose screen is a textarea, so where focus goes can be seen. A key
+// pressed on the screen goes to the session as xterm.js would send it, so a key that reaches the
+// session shows on the attach socket (W57).
 class FakeTerminal implements TerminalHandle {
   cols = 80;
   rows = 24;
   disposed = false;
   readonly screen: HTMLTextAreaElement;
+  private listeners: ((data: string) => void)[] = [];
   constructor(container: HTMLElement) {
     this.screen = document.createElement('textarea');
     this.screen.className = 'fake-terminal';
+    this.screen.addEventListener('keydown', (event) => {
+      const data = event.key === 'Enter' ? '\r' : event.key.length === 1 ? event.key : undefined;
+      if (data !== undefined) for (const listener of this.listeners) listener(data);
+    });
     container.append(this.screen);
   }
   write() {}
-  onData() {}
+  onData(listener: (data: string) => void) {
+    this.listeners.push(listener);
+  }
   fit() {}
   focus() {
     this.screen.focus();
@@ -96,9 +111,13 @@ function sessions(): SessionSummary[] {
 }
 const snap = (list: SessionSummary[] = sessions()): IndexSnapshot => snapshot([group({ sessions: list })]);
 
-/** Every GET is a conversation page of one entry; every POST is refused, and recorded. */
+/** The session New session starts, which a test then lists (W57). */
+const STARTED = { shortId: 'pt5799', name: 'job-new' };
+
+/** Every GET is a conversation page of one entry; New session starts STARTED; every other POST is refused. All are recorded. */
 function fakeServer() {
   return vi.fn<FetchLike>(async (url, init) => {
+    if (init.method === 'POST' && url === '/api/sessions') return new Response(JSON.stringify({ ok: true, ...STARTED }), { status: 201 });
     if (init.method === 'POST') return new Response(JSON.stringify({ ok: false, error: 'not in this test' }), { status: 409 });
     const sessionId = decodeURIComponent(url.split('/')[3] ?? '');
     const page: ConversationPage = { sessionId, entries: [{ kind: 'assistant', text: `made-up reply from ${sessionId.slice(-2)}` }] };
@@ -169,6 +188,24 @@ const attachStatus = () => view()!.querySelector('.attach-status')?.textContent;
 const posts = (fetch: ReturnType<typeof fakeServer>) => fetch.mock.calls.filter(([, init]) => init.method === 'POST');
 const sent = (socket: FakeSocket) => socket.sent.map((data) => JSON.parse(data) as Record<string, unknown>);
 const press = (key: string, target: Element | null = document.activeElement) => fireEvent.keyDown(target ?? document.body, { key });
+/** What reached the session through an attach socket: each input message's data (W57). */
+const inputs = (socket: FakeSocket) => sent(socket).flatMap((message) => (message.type === 'input' ? [message.data] : []));
+/** Whether the latest terminal's screen has focus, so a key pressed now would reach its session. */
+const terminalHasFocus = () => terminals.at(-1)?.screen.isConnected === true && document.activeElement === terminals.at(-1)?.screen;
+/** The terminal bar's hint that shows, F6's or how to type to it, by its text. */
+const shownHint = () => view()?.querySelector<HTMLElement>('.attach-hints [data-shown="true"]')?.textContent ?? undefined;
+
+/** New session, from its header button, with a made-up first prompt: the fake server starts STARTED. */
+async function startSession() {
+  const button = screen.getByRole('button', { name: 'New session' });
+  // A click focuses the button in a browser, and the dialog gives focus back to it as it closes.
+  button.focus();
+  fireEvent.click(button);
+  const dialog = screen.getByRole('dialog', { name: 'New session' });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
+}
 
 /** The attach server's side of the handshake, as far as `attached`, with real timers. */
 async function attachIt(socket: FakeSocket) {
@@ -449,12 +486,387 @@ describe('focus as a view opens on its Terminal tab', () => {
     expect(document.activeElement).toBe(filter);
   });
 
-  it('goes into the terminal as it attaches from a ?session= on load, with nothing focused', async () => {
+  // Flipped by W57: before it, the terminal took focus here, so the next key after a reload went to the session.
+  it('stays where it is as the terminal attaches from a ?session= on load, with nothing focused: the bar says how to type to it, and no key reaches the session', async () => {
     const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     expect(document.activeElement).toBe(document.body);
     await attachIt(sockets.last);
-    expect(document.activeElement).toBe(terminals.at(-1)?.screen);
+    expect(attachStatus()).toBe('Attached');
+    expect(document.activeElement).toBe(document.body);
+    expect(shownHint()).toBe(TYPE_HINT);
+    // Enter would approve a dialog's highlighted option; `/`, a name and Enter would send a slash command.
+    for (const key of ['Enter', '/', 'c', 'o', 'Enter']) press(key);
+    expect(inputs(sockets.last)).toEqual([]);
+    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Filter sessions' }));
+  });
+});
+
+describe('the terminal takes the keyboard only when you ask for it (W57)', () => {
+  describe('never by itself', () => {
+    it('after a reload, or in a tab the browser restores, which attach with the token the tab holds: Enter and j reach no session', async () => {
+      window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
+      window.history.replaceState(null, '', `/?view=all&session=${J1}`);
+      const fake = fakeSockets();
+      render(<App createSocket={fake.factory} fetch={fakeServer()} />);
+      const index = fake.last;
+      act(() => {
+        index.open();
+        index.receive({ type: 'challenge', version: PROTOCOL_VERSION, nonce: NONCE });
+      });
+      await waitFor(() => expect(index.sent).toHaveLength(1));
+      act(() => index.receive({ type: 'authenticated', apiKey: API_KEY }));
+      act(() => index.receive({ type: 'snapshot', snapshot: snap() }));
+      await settle();
+      await waitFor(() => expect(fake.sockets).toHaveLength(2));
+      const attach = fake.last;
+      await attachIt(attach);
+      expect(attachStatus()).toBe('Attached');
+      expect(document.activeElement).toBe(document.body);
+      expect(shownHint()).toBe(TYPE_HINT);
+      press('Enter');
+      // With nothing focused, j is the shortcut it always was: the next session, never a key for this one.
+      press('j');
+      await settle();
+      expect(viewName()).toBe('job-two');
+      expect(inputs(attach)).toEqual([]);
+    });
+
+    it('when back or forward returns to a running background session, even one a click opened moments before', async () => {
+      const { sockets, history } = renderDashboard();
+      await open('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+      await open('job-two');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(2));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+
+      history.back();
+      await settle();
+      expect(viewName()).toBe('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(3));
+      await attachIt(sockets.last);
+      expect(attachStatus()).toBe('Attached');
+      expect(terminalHasFocus()).toBe(false);
+      expect(shownHint()).toBe(TYPE_HINT);
+      press('Enter');
+      expect(inputs(sockets.last)).toEqual([]);
+
+      history.forward();
+      await settle();
+      expect(viewName()).toBe('job-two');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(4));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(false);
+      expect(shownHint()).toBe(TYPE_HINT);
+    });
+
+    it('in the view of a session started from New session, which opens once it’s listed, even with its heading focused', async () => {
+      const { sockets, update } = renderDashboard();
+      // `n` with nothing focused, so focus has nowhere to go back to, and the view's heading takes it as the view opens.
+      press('n');
+      const dialog = screen.getByRole('dialog', { name: 'New session' });
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
+      (document.activeElement as HTMLElement | null)?.blur();
+      update(snap([...sessions(), job(57, STARTED.name, { shortId: STARTED.shortId })]));
+      await settle();
+      expect(viewName()).toBe(STARTED.name);
+      expect(shownTab()).toBe('Terminal');
+      expect(document.activeElement).toBe(heading());
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(false);
+      expect(document.activeElement).toBe(heading());
+      expect(shownHint()).toBe(TYPE_HINT);
+    });
+
+    it('in a view a root tab’s switch shows for the first time, as one for a session started there before you left it', async () => {
+      const ROOTS = ['/Users/example/alpha', '/Users/example/bravo'];
+      const twoRoots = (extra: SessionSummary[] = []) =>
+        snapshot(
+          ROOTS.map((root, index) => group({ key: `${root}/app`, label: 'app', root, sessions: [job(40 + index, `job-${index + 1}`, { cwd: `${root}/app` }), ...(index === 0 ? extra : [])] })),
+          { roots: ROOTS },
+        );
+      const rootTab = (root: string) => screen.getAllByRole('tab').find((candidate) => candidate.classList.contains('root-tab') && candidate.querySelector('.root-tab-label')?.textContent === `~/${root.split('/').at(-1)}`)!;
+      const { sockets, update } = renderDashboard(twoRoots(), { search: '' });
+      await startSession();
+      fireEvent.click(rootTab(ROOTS[1]!));
+      await settle();
+      update(twoRoots([job(58, STARTED.name, { shortId: STARTED.shortId, cwd: `${ROOTS[0]}/app` })]));
+      await settle();
+      expect(sockets.sockets).toHaveLength(0);
+
+      fireEvent.click(rootTab(ROOTS[0]!));
+      rootTab(ROOTS[0]!).focus();
+      await settle();
+      expect(viewName()).toBe(STARTED.name);
+      expect(shownTab()).toBe('Terminal');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(false);
+      expect(document.activeElement).toBe(rootTab(ROOTS[0]!));
+      press('Enter');
+      expect(inputs(sockets.last)).toEqual([]);
+    });
+
+    it('when stepped onto with j, soon after a click opened the view before it: the click was that view’s', async () => {
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      vi.setSystemTime(NOW);
+      const { sockets } = renderDashboard();
+      await open('demo-a');
+      press('j');
+      await settle();
+      expect(viewName()).toBe('job-one');
+      await pass(ATTACH_DELAY_MS);
+      await attachQuietly(sockets.last);
+      expect(attachStatus()).toBe('Attached');
+      expect(terminalHasFocus()).toBe(false);
+      expect(document.activeElement).toBe(heading());
+      expect(shownHint()).toBe(TYPE_HINT);
+    });
+  });
+
+  describe('when you ask for it in this page', () => {
+    it('after a click or Enter on its row, as it attaches, and the next key reaches the session; the bar shows F6’s hint', async () => {
+      const { sockets } = renderDashboard();
+      await open('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      // Attaching, the bar shows F6's hint, so one that's about to take focus doesn't flash the other.
+      expect(shownHint()).toBe('F6F6 to leave the terminal');
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+      expect(shownHint()).toBe('F6F6 to leave the terminal');
+      press('Enter');
+      expect(inputs(sockets.last)).toEqual(['\r']);
+    });
+
+    it('after a click on its Terminal tab, in a view the URL opened without focus', async () => {
+      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(false);
+      fireEvent.click(tab('Conversation'));
+      fireEvent.click(tab('Terminal'));
+      // The tab takes focus itself, as Safari gives a clicked button none.
+      expect(document.activeElement).toBe(tab('Terminal'));
+      await waitFor(() => expect(sockets.sockets).toHaveLength(2));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+    });
+
+    it('after Attach again, in a view a reload opened, though the button has gone by the time it attaches', async () => {
+      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      act(() => sockets.last.receive({ type: 'exit', code: 0 }));
+      expect(attachStatus()).toBe('Detached');
+      fireEvent.click(within(view()!).getByRole('button', { name: 'Attach again' }));
+      await waitFor(() => expect(sockets.sockets).toHaveLength(2));
+      expect(within(view()!).queryByRole('button', { name: 'Attach again' })).toBeNull();
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+    });
+
+    it('after Restart and attach, for one the URL opened that had finished, once the confirmation had taken focus to Cancel', async () => {
+      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      const socket = sockets.last;
+      act(() => {
+        socket.open();
+        socket.receive({ type: 'challenge', version: PROTOCOL_VERSION, nonce: NONCE });
+      });
+      await waitFor(() => expect(socket.sent).toHaveLength(1));
+      act(() => socket.receive({ type: 'ready' }));
+      act(() => socket.receive({ type: 'needs-restart' }));
+      const confirm = within(view()!).getByRole('alertdialog');
+      expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
+      fireEvent.click(within(confirm).getByRole('button', { name: 'Restart and attach' }));
+      act(() => socket.receive({ type: 'attached' }));
+      expect(terminalHasFocus()).toBe(true);
+    });
+  });
+
+  describe('the gesture', () => {
+    it(`runs out: an attach that completes more than ${GESTURE_MS / 1000} s after the click takes no focus`, async () => {
+      const { sockets } = renderDashboard();
+      await open('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      vi.setSystemTime(NOW + GESTURE_MS + 1);
+      await attachIt(sockets.last);
+      expect(attachStatus()).toBe('Attached');
+      expect(terminalHasFocus()).toBe(false);
+      expect(document.activeElement).toBe(heading());
+      expect(shownHint()).toBe(TYPE_HINT);
+    });
+
+    it(`still holds at ${GESTURE_MS / 1000} s`, async () => {
+      const { sockets } = renderDashboard();
+      await open('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      vi.setSystemTime(NOW + GESTURE_MS);
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+    });
+
+    it('is used once: the attach it was for spends it, and a view opened again after takes none', async () => {
+      const { sockets, history } = renderDashboard();
+      await open('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+      // Away and back in the history, with no click on the row between: its click is spent.
+      await open('demo-a');
+      history.back();
+      await settle();
+      expect(viewName()).toBe('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(2));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(false);
+    });
+
+    it('holds the guard: what’s typed in the filter after a click on a row stays in the filter, before and after the attach', async () => {
+      const { sockets } = renderDashboard();
+      await open('job-one');
+      press('/');
+      const filter = screen.getByRole('searchbox', { name: 'Filter sessions' });
+      expect(document.activeElement).toBe(filter);
+      for (const key of ['j', 'o', 'b']) press(key);
+      fireEvent.change(filter, { target: { value: 'job' } });
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(document.activeElement).toBe(filter);
+      for (const key of ['-', 'o', 'Enter']) press(key);
+      expect(inputs(sockets.last)).toEqual([]);
+      expect((filter as HTMLInputElement).value).toBe('job');
+      expect(shownHint()).toBe(TYPE_HINT);
+    });
+  });
+
+  describe('the hint', () => {
+    it('says how to type to it while it’s attached without focus: in the bar, in the place F6’s hint keeps, read in place, and describing the Terminal tab, with no live region', async () => {
+      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      const regions = () => document.querySelectorAll('[role="status"], [role="alert"], [aria-live]').length;
+      const before = regions();
+      await attachIt(sockets.last);
+      const hints = view()!.querySelector('.attach-bar .attach-hints')!;
+      const [leave, type] = [...hints.querySelectorAll<HTMLElement>('.attach-hint')];
+      expect(type?.textContent).toBe('Click the terminal, or Tab to it, to type to the session');
+      expect([leave?.dataset.shown, type?.dataset.shown]).toEqual(['false', 'true']);
+      // Plain text: no role, no live region, none inside the badge's status region, and none added.
+      expect(type?.getAttribute('role')).toBeNull();
+      expect(type?.closest('[aria-live], [role="status"], [role="alert"]')).toBeNull();
+      expect(regions()).toBe(before);
+      expect(tab('Terminal').getAttribute('aria-describedby')).toBe(type?.id);
+      expect(document.getElementById(type!.id)).toBe(type);
+    });
+
+    it('gives way to F6’s once the terminal has focus, from a click on it or Tab, and comes back after F6', async () => {
+      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(shownHint()).toBe(TYPE_HINT);
+      act(() => terminals.at(-1)!.screen.focus());
+      expect(shownHint()).toBe('F6F6 to leave the terminal');
+      press('Enter');
+      expect(inputs(sockets.last)).toEqual(['\r']);
+      press('F6');
+      expect(document.activeElement).toBe(tab('Terminal'));
+      expect(shownHint()).toBe(TYPE_HINT);
+    });
+
+    it('gives way to F6’s while it attaches and once the attach has ended, and goes with the terminal', async () => {
+      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      expect(attachStatus()).toBe('Attaching…');
+      expect(shownHint()).toBe('F6F6 to leave the terminal');
+      expect(tab('Terminal').hasAttribute('aria-describedby')).toBe(false);
+      await attachIt(sockets.last);
+      act(() => sockets.last.receive({ type: 'exit', code: 0 }));
+      expect(shownHint()).toBe('F6F6 to leave the terminal');
+      expect(tab('Terminal').hasAttribute('aria-describedby')).toBe(false);
+      fireEvent.click(within(view()!).getByRole('button', { name: 'Back to the conversation' }));
+      expect(view()!.querySelector('.attach-hints')).toBeNull();
+    });
+  });
+
+  describe('the setting, pitwall.terminal-focus.v1 (terminalFocus.ts)', () => {
+    it('on never, takes no focus after a click on the row, the Terminal tab or Attach again, and the hint says how to type to it', async () => {
+      const { sockets } = renderDashboard(snap(), { storage: memory({ [TERMINAL_FOCUS_KEY]: 'never' }) });
+      await open('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(attachStatus()).toBe('Attached');
+      expect(terminalHasFocus()).toBe(false);
+      expect(document.activeElement).toBe(heading());
+      expect(shownHint()).toBe(TYPE_HINT);
+      press('Enter');
+      expect(inputs(sockets.last)).toEqual([]);
+
+      fireEvent.click(tab('Conversation'));
+      fireEvent.click(tab('Terminal'));
+      await waitFor(() => expect(sockets.sockets).toHaveLength(2));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(false);
+      expect(document.activeElement).toBe(tab('Terminal'));
+
+      act(() => sockets.last.receive({ type: 'exit', code: 0 }));
+      fireEvent.click(within(view()!).getByRole('button', { name: 'Attach again' }));
+      await waitFor(() => expect(sockets.sockets).toHaveLength(3));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(false);
+      expect(shownHint()).toBe(TYPE_HINT);
+      // Clicking or Tabbing to it still reaches it.
+      act(() => terminals.at(-1)!.screen.focus());
+      press('y');
+      expect(inputs(sockets.last)).toEqual(['y']);
+    });
+
+    it('on after-open, stored or by default, takes focus after a click on the row, and still none after a reload', async () => {
+      for (const storage of [memory({ [TERMINAL_FOCUS_KEY]: 'after-open' }), memory()]) {
+        const clicked = renderDashboard(snap(), { storage });
+        await open('job-one');
+        await waitFor(() => expect(clicked.sockets.sockets).toHaveLength(1));
+        await attachIt(clicked.sockets.last);
+        expect(terminalHasFocus()).toBe(true);
+        clicked.unmount();
+
+        const loaded = renderDashboard(snap(), { storage, search: `?view=all&session=${J1}` });
+        await waitFor(() => expect(loaded.sockets.sockets).toHaveLength(1));
+        await attachIt(loaded.sockets.last);
+        expect(terminalHasFocus()).toBe(false);
+        loaded.unmount();
+      }
+    });
+
+    it('is after-open for a value it doesn’t know, "always" included, and for storage that throws', async () => {
+      const throwing = (() => ({
+        getItem: () => {
+          throw new Error('blocked');
+        },
+        setItem: () => {
+          throw new Error('blocked');
+        },
+      })) as StorageSource;
+      for (const storage of [memory({ [TERMINAL_FOCUS_KEY]: 'always' }), memory({ [TERMINAL_FOCUS_KEY]: 'sideways' }), throwing]) {
+        const loaded = renderDashboard(snap(), { storage, search: `?view=all&session=${J1}` });
+        await waitFor(() => expect(loaded.sockets.sockets).toHaveLength(1));
+        await attachIt(loaded.sockets.last);
+        expect(terminalHasFocus()).toBe(false);
+        loaded.unmount();
+
+        const clicked = renderDashboard(snap(), { storage });
+        await open('job-one');
+        await waitFor(() => expect(clicked.sockets.sockets).toHaveLength(1));
+        await attachIt(clicked.sockets.last);
+        expect(terminalHasFocus()).toBe(true);
+        clicked.unmount();
+      }
+    });
   });
 });
 

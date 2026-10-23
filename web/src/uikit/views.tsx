@@ -238,7 +238,7 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Background, opened on its Terminal tab (W54)"
-        note="A running background session opens on its Terminal tab, as View preferences has it by default, and attaches at once: nothing pressed here. Its conversation is behind the Conversation tab, with the footer's note. The terminal takes focus as it attaches, unless focus has gone outside the view meanwhile."
+        note="A running background session opens on its Terminal tab, as View preferences has it by default, and attaches at once: nothing pressed here. Its conversation is behind the Conversation tab, with the footer's note. Nothing here asked for the terminal, so it takes no focus, and its bar says how to type to it (W57); a click or Enter on the session's row, or on the Terminal tab, would have given it focus as it attached."
         frame="view"
       >
         <Attachable script="attached">

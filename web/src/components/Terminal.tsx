@@ -3,8 +3,9 @@
 // detaches, so switching to the Conversation tab, closing the view or closing the browser tab
 // leaves the session running.
 //
-// docs/design-system.md, 4: Terminal. The bar has the status badge, the "F6 to leave the terminal"
-// hint, and ghost sm "Attach again" and "Detach" buttons. Below it, the screen: xterm.js on
+// docs/design-system.md, 4: Terminal. The bar has the status badge, a hint, and ghost sm "Attach
+// again" and "Detach" buttons. The hint is "F6 to leave the terminal", or, while it's attached and
+// the screen doesn't have focus, how to type to it (W57). Below it, the screen: xterm.js on
 // --pw-term-bg, its font and colours from the tokens (xterm.ts). A notice for an attach that ended
 // is an inline alert above the screen, neutral when it ended as asked and danger when it failed.
 //
@@ -18,11 +19,12 @@
 // takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
 // has started or failed.
 //
-// Once attached, the terminal takes focus, unless the view says not to: it doesn't pull focus from
-// wherever it has gone meanwhile outside the view (W54). A terminal the view opened on by stepping
-// (j, k, ↑, ↓) waits --pw-delay-attach before it attaches, so a session only passed through is never
-// attached, and doesn't take focus when it does, so the next step is still a step (W54). It shows
-// "Attaching…" while it waits. Attach again, and a confirmed restart, take focus as before.
+// Once attached, the terminal takes focus if the view says it may: only right after you asked for it
+// in this page, and while focus is still in the view (focusGesture.ts, W57). Attach again and a
+// confirmed restart are asked for here, so it tells the view of each (onAsk). A terminal the view
+// opened on by stepping (j, k, ↑, ↓) waits --pw-delay-attach before it attaches, so a session only
+// passed through is never attached, and doesn't take focus when it does, so the next step is still a
+// step (W54). It shows "Attaching…" while it waits.
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ATTACH_COMMAND, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachEnv, type AttachSession, type AttachStatus, type EndNotice } from '../attach.js';
@@ -49,6 +51,12 @@ export const RESTART = {
 
 /** The key that leaves the terminal, for the Terminal tab (6.1 rule 14, 6.2). */
 export const LEAVE_KEY = 'F6';
+
+/**
+ * The bar's hint while it's attached and the screen doesn't have focus (W57): what's typed goes
+ * elsewhere until you click the screen or Tab to it, as after a reload, a step, or F6.
+ */
+export const TYPE_HINT = 'Click the terminal, or Tab to it, to type to the session';
 
 /** What the view needs from a terminal. createXterm() (xterm.ts) is the real one. */
 export interface TerminalHandle {
@@ -157,12 +165,24 @@ export interface SessionTerminalProps {
   wait?: boolean;
   /** Whether the terminal may take focus now that it has attached. Always, unless this says no. */
   canFocus?: () => boolean;
+  /**
+   * Attach again, or a confirmed Restart and attach, with the element pressed when there's one: asked
+   * for in this page, so the view lets the attach that follows take focus (W57).
+   */
+  onAsk?: (target: Element | undefined) => void;
+  /** The id for the hint that says how to type to it, which the view's Terminal tab is described by (W57). */
+  typeHintId?: string;
 }
 
-export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, onRestartChange, wait = false, canFocus }: SessionTerminalProps) {
+export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, onRestartChange, wait = false, canFocus, onAsk, typeHintId }: SessionTerminalProps) {
   const container = useRef<HTMLDivElement>(null);
   // The F6 hint, which describes xterm.js's textarea, so a screen reader in the terminal hears how to leave.
   const hintId = useId();
+  const ownTypeHintId = useId();
+  // Whether focus is in the screen, xterm.js's textarea, for which hint the bar shows.
+  const [focused, setFocused] = useState(false);
+  const onAskRef = useRef(onAsk);
+  onAskRef.current = onAsk;
   const session = useRef<AttachSession | undefined>(undefined);
   const [status, setStatus] = useState<AttachStatus>({ kind: 'connecting' });
   const onStatusRef = useRef(onStatus);
@@ -210,6 +230,8 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
     let waited = true;
     let started = false;
     setStatus({ kind: 'connecting' });
+    // A new screen, which has no focus yet: the last one's went with it, with or without a blur.
+    setFocused(false);
     // Only the first attempt waits: Attach again is asked for.
     quiet.current = attempt === 0 && waits.current;
 
@@ -328,6 +350,9 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
   const notice = ended ? endMessage(status.end) : undefined;
   const tone = ended ? noticeTone(status.end) : 'neutral';
   const badge = STATUS_BADGES[status.kind];
+  // How to type to it while it's attached and the screen doesn't have focus; F6 otherwise, as before,
+  // since the screen takes every key, attached or not.
+  const typeHint = status.kind === 'attached' && !focused;
 
   return (
     <div className="attach">
@@ -338,12 +363,31 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
             {badge.label}
           </Badge>
         </span>
-        <span className="attach-hint" id={hintId}>
-          <KeyCaps keys={[LEAVE_KEY]} label={LEAVE_KEY} /> to leave the terminal
+        {/*
+          One place for both hints: the one that doesn't apply is hidden but keeps its room, so focus
+          moving in or out of the screen never changes the bar's size, which would resize the session.
+          Plain text, never a live region: it's read in place, and as the Terminal tab's description.
+        */}
+        <span className="attach-hints">
+          <span className="attach-hint" id={hintId} data-shown={!typeHint}>
+            <KeyCaps keys={[LEAVE_KEY]} label={LEAVE_KEY} /> to leave the terminal
+          </span>
+          <span className="attach-hint attach-type-hint" id={typeHintId ?? ownTypeHintId} data-shown={typeHint}>
+            {TYPE_HINT}
+          </span>
         </span>
         <span className="attach-actions">
           {ended && (
-            <Button ref={attachAgain} variant="ghost" size="sm" icon="retry" onClick={() => setAttempt((count) => count + 1)}>
+            <Button
+              ref={attachAgain}
+              variant="ghost"
+              size="sm"
+              icon="retry"
+              onClick={() => {
+                onAskRef.current?.(attachAgain.current ?? undefined);
+                setAttempt((count) => count + 1);
+              }}
+            >
               Attach again
             </Button>
           )}
@@ -367,6 +411,7 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
             setRestarting(true);
             // Asked for: the terminal takes focus once it's attached, as Restart and attach had it.
             quiet.current = false;
+            onAskRef.current?.(undefined);
             session.current?.confirmRestart();
           }}
           onCancel={onClose}
@@ -378,7 +423,12 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
           <NoticeText notice={notice} />
         </Alert>
       )}
-      <div className="attach-terminal" ref={container} />
+      <div
+        className="attach-terminal"
+        ref={container}
+        onFocus={() => setFocused(true)}
+        onBlur={(event) => setFocused(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))}
+      />
     </div>
   );
 }
