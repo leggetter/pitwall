@@ -4,19 +4,21 @@
 //
 // - The stack is an aria-live="polite" region that's always in the DOM, from before the first toast,
 //   so a toast's text is announced as it arrives. An error toast is role="alert" too.
-// - Success and info toasts go after --pw-toast-timeout. The time stops while the pointer is over the
-//   stack or focus is inside it, and starts again from where it was. Error toasts stay until dismissed.
+// - Success and info toasts go after --pw-toast-timeout, or --pw-toast-action-timeout with an action.
+//   The time stops while the pointer is over the stack or focus is inside it, and starts again from
+//   where it was. Error toasts stay until dismissed.
 // - The same message again replaces the toast that says it, so it's announced again without stacking.
 //   So does a toast with the same key, about the same thing: a started session's, once it's listed (W63).
 // - A toast can carry one action, an outline sm button before Dismiss, such as Open for a started
-//   session that didn't open (W63). It stays until it's dismissed or its action is used, as an error
-//   toast does, since a few seconds is too little time to reach it (WCAG 2.2.1). The action takes the
-//   toast away and says where focus goes.
+//   session that didn't open (W63). It stays for --pw-toast-action-timeout, 10 s, long enough to
+//   reach the button; a lasting one would sit over the session view's Send for as long as it stayed.
+//   The action is a shortcut, never the only way to what it does. It takes the toast away, and says
+//   where focus goes.
 // - Text only, never markup (6.1, 16). Form errors, the relay's results and anything that needs a
 //   decision stay inline instead.
 
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type FocusEvent, type ReactNode } from 'react';
-import { cssTime, TOAST_TIMEOUT_MS } from '../timing.js';
+import { cssTime, TOAST_ACTION_TIMEOUT_MS, TOAST_TIMEOUT_MS } from '../timing.js';
 import { Button } from './Button.js';
 import { Icon, type IconName } from './Icon.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
@@ -37,7 +39,7 @@ export interface ToastInput {
   message: string;
   /** What it's about: a later toast with the same key replaces it, whatever it says (W63). */
   key?: string;
-  /** One action, before Dismiss. The toast then stays until it's dismissed or the action is used (W63). */
+  /** One action, before Dismiss: a shortcut to something there's another way to. The toast then stays for --pw-toast-action-timeout (W63). */
   action?: ToastAction;
 }
 
@@ -204,19 +206,22 @@ function ToastCard({ toast, paused, onDismiss, onAction, onTimeout, onGone }: To
   const onGoneRef = useRef(onGone);
   onGoneRef.current = onGone;
   const { tone, leaving = false } = toast;
-  // An error toast stays until it's dismissed, and so does one with an action, so there's time to reach it.
-  const lasting = tone === 'error' || toast.action !== undefined;
+  // An error toast stays until it's dismissed. One with an action stays longer than the rest, so there's time to reach it.
+  const lasting = tone === 'error';
+  const action = toast.action !== undefined;
 
   useEffect(() => {
     if (lasting || leaving || paused) return;
-    remaining.current ??= cssTime(card.current, '--pw-toast-timeout', TOAST_TIMEOUT_MS);
+    remaining.current ??= action
+      ? cssTime(card.current, '--pw-toast-action-timeout', TOAST_ACTION_TIMEOUT_MS)
+      : cssTime(card.current, '--pw-toast-timeout', TOAST_TIMEOUT_MS);
     const started = Date.now();
     const timer = setTimeout(() => onTimeoutRef.current(), remaining.current);
     return () => {
       clearTimeout(timer);
       remaining.current = Math.max(0, (remaining.current ?? 0) - (Date.now() - started));
     };
-  }, [lasting, leaving, paused]);
+  }, [lasting, action, leaving, paused]);
 
   // Going: removed when its fade ends, or after the fade's time if no animation runs.
   useEffect(() => {

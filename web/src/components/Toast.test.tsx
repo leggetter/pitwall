@@ -1,12 +1,12 @@
 // Toasts (docs/design-system.md, 4: Toasts, 2.13, 6.1 item 9): the live region that's there before
 // any toast, the timeout and its pause, error toasts, the stack's limit, Dismiss and its focus; and
-// W63's key, which replaces a toast about the same thing, and action, which keeps a toast until it's used.
+// W63's key, which replaces a toast about the same thing, and action, which gives a toast longer.
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { block, blocks, declarations, withoutComments } from '../test/css.js';
 import { toastMessages, toastRegion, toastSaying } from '../test/toasts.js';
-import { TOAST_TIMEOUT_MS } from '../timing.js';
+import { TOAST_ACTION_TIMEOUT_MS, TOAST_TIMEOUT_MS } from '../timing.js';
 import { MAX_TOASTS, ToastProvider, ToastRegion, useToast, useToastStack, type DismissToast, type ShowToast } from './Toast.js';
 import toastCss from './Toast.css?raw';
 
@@ -184,8 +184,42 @@ describe('Toasts: a key and an action (W63)', () => {
     expect(document.getElementById(open.getAttribute('aria-describedby')!)?.textContent).toBe('pitwall-test-new is listed now.');
     // An info toast, but not a role="alert" one, as an error toast is.
     expect(toast.hasAttribute('role')).toBe(false);
-    await pass(TOAST_TIMEOUT_MS * 3);
+    await pass(TOAST_TIMEOUT_MS + 1_000);
     expect(toastMessages()).toEqual(['pitwall-test-new is listed now.']);
+  });
+
+  it(`takes a toast with an action away by itself after --pw-toast-action-timeout, ${TOAST_ACTION_TIMEOUT_MS / 1000} s`, async () => {
+    const { show } = setup();
+    show({ tone: 'info', message: 'pitwall-test-new is listed now.', action: { label: 'Open', onAction: () => {} } });
+    show({ message: 'Copied' });
+    await pass(TOAST_TIMEOUT_MS);
+    expect(toastMessages()).toEqual(['pitwall-test-new is listed now.']);
+    await advance(TOAST_ACTION_TIMEOUT_MS - TOAST_TIMEOUT_MS - 300);
+    expect(toastMessages()).toEqual(['pitwall-test-new is listed now.']);
+    await pass(300);
+    expect(toastMessages()).toEqual([]);
+  });
+
+  it('stops its time while the pointer is over the stack and while focus is inside it, and goes on once neither is', async () => {
+    const { show } = setup();
+    show({ tone: 'info', message: 'pitwall-test-new is listed now.', action: { label: 'Open', onAction: () => {} } });
+    await advance(TOAST_ACTION_TIMEOUT_MS - 3_000);
+    fireEvent.pointerEnter(toastRegion());
+    await advance(60_000);
+    expect(toastMessages()).toEqual(['pitwall-test-new is listed now.']);
+
+    // Focus in it, from the keyboard, keeps it after the pointer has gone.
+    act(() => screen.getByRole('button', { name: 'Open' }).focus());
+    fireEvent.pointerLeave(toastRegion());
+    await advance(60_000);
+    expect(toastMessages()).toEqual(['pitwall-test-new is listed now.']);
+
+    // Neither now: the 3 s it had left go on from where they were.
+    act(() => screen.getByRole('button', { name: 'Before' }).focus());
+    await advance(2_700);
+    expect(toastMessages()).toEqual(['pitwall-test-new is listed now.']);
+    await pass(300);
+    expect(toastMessages()).toEqual([]);
   });
 
   it('takes the toast away when its action is used, and calls it once', async () => {

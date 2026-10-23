@@ -22,7 +22,7 @@ export interface SpecimenProps {
    */
   width?: number;
   /**
-   * Toasts and copied icons stay: --pw-toast-timeout and --pw-copied-timeout are an hour inside, so
+   * Toasts and copied icons stay: --pw-toast-timeout, --pw-toast-action-timeout and --pw-copied-timeout are an hour inside, so
    * a result a scenario brought about is still there to see, and for the screenshots.
    */
   lasting?: boolean;
@@ -36,7 +36,7 @@ export interface SpecimenProps {
 }
 
 /** The timing tokens a lasting specimen sets on its stage. Components read them where they are (timing.ts). */
-const LASTING = { '--pw-toast-timeout': '3600s', '--pw-copied-timeout': '3600s' } as CSSProperties;
+const LASTING = { '--pw-toast-timeout': '3600s', '--pw-toast-action-timeout': '3600s', '--pw-copied-timeout': '3600s' } as CSSProperties;
 
 /** The waiting delays a waited specimen sets on its stage. */
 const WAITED = {
