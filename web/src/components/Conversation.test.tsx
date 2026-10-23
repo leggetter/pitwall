@@ -494,6 +494,28 @@ describe('Conversation: questions asked in a dialog (W49)', () => {
     expect(noted!.lastElementChild).toBe(notes);
   });
 
+  it('marks neither of two options with the same label, and shows the answer as typed, for an answer that is that label (W58)', async () => {
+    const twins: AskedQuestion = {
+      question: 'Retry the failed batch?',
+      options: [
+        { label: 'Yes', description: 'Retry it now.' },
+        { label: 'Yes', description: 'Retry it tonight.' },
+        { label: 'No' },
+      ],
+      answer: 'Yes',
+    };
+    const { body } = await renderView(fakeServer(page([asked(1, [twins])])));
+    const entry = question(body);
+    expect(read(entry)).toEqual([
+      ['Yes', false],
+      ['Yes', false],
+      ['No', false],
+    ]);
+    expect(entry.querySelectorAll('.question-option-chosen, svg.question-option-icon')).toHaveLength(0);
+    const answer = entry.querySelector('.question-typed')!;
+    expect([...answer.children].map((child) => child.textContent)).toEqual(['Your answer', 'Yes']);
+  });
+
   it('says a dismissed dialog was not answered, once, with nothing marked', async () => {
     const { body } = await renderView(fakeServer(page([asked(1, [FLOWS, ERRORS], { toolError: true })])));
     const entry = question(body);

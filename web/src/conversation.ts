@@ -175,12 +175,22 @@ export interface ChosenAnswer {
  * Which options a question's answer chose, by label (W49), or undefined when it has no answer. The
  * answer is text: an option is chosen when the answer is its label exactly. A multi-select answer
  * that's two or more labels joined by a comma, a newline or a semicolon chooses each of them. Any
- * other answer chooses none, and is shown as typed.
+ * other answer chooses none, and is shown as typed. So does one that names a label two or more
+ * options share, since the answer can't say which of them was chosen (W58).
  */
 export function chosenAnswer(question: AskedQuestion): ChosenAnswer | undefined {
   const { answer, options } = question;
   if (answer === undefined) return undefined;
-  const index = (text: string) => options.findIndex((option) => option.label.trim() === text.trim());
+  /** The one option whose label is `text`, or -1 when none is, or more than one. */
+  const index = (text: string) => {
+    let found = -1;
+    for (const [i, option] of options.entries()) {
+      if (option.label.trim() !== text.trim()) continue;
+      if (found !== -1) return -1;
+      found = i;
+    }
+    return found;
+  };
   const exact = index(answer);
   if (exact !== -1) return { chosen: new Set([exact]) };
   if (question.multiSelect === true) {
