@@ -98,11 +98,6 @@ export interface SessionSummary {
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
-   * The newest assistant text, with markdown syntax stripped to plain text, then
-   * trimmed and truncated to 500 characters.
-   */
-  lastAssistantText?: string;
-  /**
    * The newest prompt typed by the user, truncated to 300 characters. Messages
    * from other sessions (cross-session messages) are never counted as prompts.
    */
@@ -113,6 +108,39 @@ export interface SessionSummary {
    * session's reply when one came back through the relay.
    */
   relay?: RelayExchange;
+  /**
+   * The repos under a configured root that this session worked in, other than
+   * the one it started in, newest touch first (W34, spike 004). A repo counts
+   * when the session changed it, or when at least 5% of its tool calls,
+   * sub-agents' included, touched it. It's shown in the session view only: a
+   * session is listed under the group it started in and nowhere else (W39,
+   * Phil, 2026-10-21), so a repo here may have no group in IndexSnapshot.groups.
+   * The web UI may still show the session under one of these repos, by the
+   * viewer's Group sessions by (W42), set in Preferences (W59).
+   * Absent until the session's transcripts have been scanned, when they can't
+   * be read, and when no repo passes the rule.
+   */
+  workedIn?: WorkedIn[];
+}
+
+/** One repo a session worked in, beyond its start (SessionSummary.workedIn). */
+export interface WorkedIn {
+  /** The repo's top-level directory: the SessionGroup.key its group has when it has one. */
+  key: string;
+  /** The repo's label, as its group's SessionGroup.label is or would be. */
+  label: string;
+  /**
+   * The configured root the repo's group sits under, or would: SessionGroup.root. The web UI groups
+   * the snapshot by the viewer's choice (W42, Group sessions by in Preferences), and needs it to place a session
+   * under a repo that has no group in the snapshot.
+   */
+  root: string;
+  /** Tool calls that touched the repo, sub-agents' included. */
+  calls: number;
+  /** Edits and writes in the repo, commits and pushes there, and PRs created or merged for it. */
+  changes: number;
+  /** ISO 8601: the newest call that touched the repo. */
+  lastAt: string;
 }
 
 /** One relayed message and its outcome, shown on the target session's row. */
@@ -125,7 +153,7 @@ export interface RelayExchange {
 }
 
 export interface SessionGroup {
-  /** Absolute path: the repo's top-level directory for git, otherwise the session's cwd. */
+  /** Absolute path: the repo's top-level directory for git, otherwise the directory: sessions' cwd, or the configured root for its own group. */
   key: string;
   /**
    * `key` relative to the configured root it sits under, or the root's basename
@@ -133,10 +161,20 @@ export interface SessionGroup {
    * root whose main repo isn't), the key with the home directory shortened to `~`.
    */
   label: string;
+  /**
+   * 'git' for a repo. 'directory' for a directory in no repo: a directory
+   * below a root, or a root itself. Every group lists the sessions started in
+   * it, and only those (W39).
+   */
   kind: 'git' | 'directory';
   /** The configured root this group sits under. */
   root: string;
   /**
+   * The sessions started in the group, each once. A session is in exactly one
+   * group: the one it started in (W39, Phil, 2026-10-21: "The problem is
+   * duplication"). A group with no sessions is left out, the root's own group
+   * included.
+   *
    * Sorted: sessions that need the user first (status 'waiting', or a background
    * job that is blocked and not stale), then askedYou, then busy, then by
    * lastActivityAt descending (startedAt when there's none). Stale sessions
@@ -164,10 +202,28 @@ export interface IndexSnapshot {
   source: SourceHealth;
   /**
    * Set once pitwall's relay has tried to do something nobody asked for in
-   * this run, such as a SendMessage with no pending request. That usually
-   * means another session messaged the relay. Absent until the first one.
+   * this run: a SendMessage with no pending request, which usually means
+   * another session messaged the relay, or one for your message that didn't
+   * match it and that pitwall's gate may not have stopped. Absent until the
+   * first one.
    */
   relayAlert?: RelayAlert;
+  /**
+   * Set once pitwall has stopped using its relay for the rest of this run,
+   * because its gate let through, or didn't check, a SendMessage call (D8).
+   * Messaging works again only after pitwall restarts. Absent while the relay
+   * can be used. Not every relayAlert with `blocked: false` sets it: some only
+   * restart the relay.
+   */
+  relayOff?: RelayOff;
+}
+
+/** Why pitwall stopped using its relay for this run (D8). */
+export interface RelayOff {
+  /** ISO 8601: when pitwall stopped using it. */
+  since: string;
+  /** Why, in pitwall's words, such as "its gate didn't check a SendMessage call." Never any message text. */
+  reason: string;
 }
 
 /** The latest thing the relay tried that nobody asked for (W11, D8). */
@@ -183,6 +239,23 @@ export interface RelayAlert {
    * False when pitwall saw it only afterwards, so it may have been sent.
    */
   blocked: boolean;
+  /**
+   * What the latest one was (W43, W52). 'unrequested': a SendMessage call with
+   * no request of pitwall's behind it, which usually means another session
+   * messaged the relay. 'changed': the call for one of your messages didn't
+   * match it, such as another recipient, an option or field pitwall didn't
+   * ask for, or text the relay changed. 'repeated': a second call for one of
+   * your messages in the same turn, after pitwall's gate had blocked the
+   * first. A call the gate blocked that differs from your message only in its
+   * text raises no alert: pitwall tries it once more, on a new relay, and that
+   * message's own result says the first copy was blocked and where it
+   * differed. The relay's model drops or changes text in long copies, so an
+   * alert there would be routine (W52's live check: 447 characters dropped
+   * from a 6,000-character message). Any other blocked difference, such as
+   * another recipient, `notify_when_idle` or a field pitwall doesn't check,
+   * raises a blocked 'changed' alert and isn't tried again (W48's F3, W52).
+   */
+  cause: 'unrequested' | 'changed' | 'repeated';
 }
 
 /**
@@ -212,21 +285,6 @@ export type ServerMessage =
   | { type: 'snapshot'; snapshot: IndexSnapshot }
   | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
   | { type: 'error'; error: string };
-
-/**
- * The full newest assistant message of one session, fetched on demand when the
- * user expands a row. Same plain-text treatment as lastAssistantText, without
- * the 500-character limit.
- */
-export interface LastMessage {
-  sessionId: string;
-  /** Markdown syntax stripped to plain text. At most 64 KiB of source text. */
-  text: string;
-  /** True when the source message was longer than the 64 KiB the index keeps. */
-  truncated: boolean;
-  /** ISO 8601 timestamp of the message, when known. */
-  at?: string;
-}
 
 /**
  * Client → server WebSocket messages. The client's first message must be
@@ -259,16 +317,6 @@ export const WS_PATH = '/ws';
 /** HTTP path that returns the latest IndexSnapshot as JSON. */
 export const SNAPSHOT_PATH = '/api/snapshot';
 
-/**
- * HTTP path that returns one session's LastMessage as JSON. Only sessions in
- * the current snapshot (under the roots) are served: any other id gets 404.
- */
-// For clients. A server building a route pattern from this must decode it,
-// because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
-export function lastMessagePath(sessionId: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/last-message`;
-}
-
 /** Default poll interval for the index, in milliseconds. `pitwall --interval <seconds>` overrides it. */
 export const DEFAULT_POLL_INTERVAL_MS = 5000;
 
@@ -282,24 +330,81 @@ export type ConversationEntryKind =
   | 'tool'
   /** A message from another Claude session. */
   | 'cross-session'
+  /**
+   * A message this session sent to pitwall's relay with SendMessage, in full,
+   * in place of that tool call: usually its reply to a message from pitwall
+   * (W46). A call is to pitwall when its `to` is the relay's name, or a `uds:`
+   * address that a cross-session message from the relay's name came from
+   * earlier in the same transcript, on any page. A call whose result was an
+   * error, or that has no `message` text, stays a 'tool' entry.
+   */
+  | 'to-pitwall'
+  /**
+   * A question Claude Code asked in its dialog (the AskUserQuestion tool), with
+   * its options and the answers, in place of that tool call (W49). Claude Code
+   * seems to write the call to the transcript only once it's answered, so an
+   * open dialog has no entry. A call whose result was an error, such as a
+   * dismissed dialog, keeps its questions, has no answers and sets
+   * `toolError`. A call whose input isn't the shape below stays a 'tool' entry.
+   */
+  | 'question'
   /** Anything else worth showing: a compaction summary, a task notification, a command's output. */
   | 'notice';
+
+/** One question in a 'question' entry (W49). Every string is plain text, never markdown or HTML. */
+export interface AskedQuestion {
+  /** The question, as asked. At most 2 Ki code units. */
+  question: string;
+  /** Its short label, when it has one. At most 256 code units. */
+  header?: string;
+  /** The choices offered, in order, at most 8. Each label at most 256 code units, each description at most 1 Ki. */
+  options: Array<{ label: string; description?: string }>;
+  /** True when more than one option could be chosen. */
+  multiSelect?: boolean;
+  /**
+   * The answer as Claude Code recorded it, once answered: an option's label,
+   * several labels for a multi-select, or text typed in place of an option.
+   * At most 2 Ki code units.
+   */
+  answer?: string;
+  /** Notes typed with the answer, when there are any. At most 2 Ki code units. */
+  notes?: string;
+}
 
 export interface ConversationEntry {
   kind: ConversationEntryKind;
   /** ISO 8601, when known. */
   at?: string;
   /**
-   * Plain text, with markdown syntax stripped. For 'tool', a one-line summary
-   * of the call, such as `Bash: npm test` or `Edit: src/cli.ts`. At most 8 KiB.
+   * At most 32 Ki UTF-16 code units, as `String.length` counts them, by kind
+   * (W36, Phil, 2026-10-21):
+   * - 'assistant', 'cross-session' and 'to-pitwall': the markdown as written,
+   *   with `markdown` set. A client renders it as text and its own elements,
+   *   never as HTML. For 'to-pitwall' it's the SendMessage call's `message`.
+   * - 'user': the prompt as typed, with nothing stripped.
+   * - 'tool': a one-line summary of the call, such as `Bash: npm test` or
+   *   `Edit: src/cli.ts`.
+   * - 'notice': plain text.
+   * - 'question': the first question, as a one-line summary; `questions` has
+   *   them all (W49).
+   * A page carries at most 256 Ki code units of its entries' text in full, newest
+   * entries first. Entries past that are cut to 512 and marked `truncated`.
    */
   text: string;
+  /** True when `text` is markdown: set on 'assistant', 'cross-session' and 'to-pitwall' entries. */
+  markdown?: true;
   /** For 'tool': the tool's name. */
   toolName?: string;
-  /** For 'tool': whether the result was an error. */
+  /** For 'tool' and 'question': whether the result was an error. */
   toolError?: boolean;
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
+  /**
+   * For 'question': the questions asked, in order, at most 8 (W49). Their text
+   * counts toward the page's budget, and past it each string is cut to 512 and
+   * the entry marked `truncated`.
+   */
+  questions?: AskedQuestion[];
   /** True when `text` was cut to the limit. */
   truncated?: boolean;
 }
@@ -326,10 +431,11 @@ export const CONVERSATION_STALE_STATUS = 410;
  * HTTP path that returns a ConversationPage as JSON: the newest page, or the
  * page before the `before` cursor. A cursor for a file that was rotated or
  * rewritten gets 410, and the client should reload the newest page. More than
- * 4 reads at once get 429 with `Retry-After`. Same rules as lastMessagePath():
- * only sessions in the current snapshot, and a server building a route
- * pattern from this must decode it.
+ * 4 reads at once get 429 with `Retry-After`. Only sessions in the current
+ * snapshot (under the roots) are served: any other id gets 404.
  */
+// For clients. A server building a route pattern from this must decode it,
+// because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
 export function conversationPath(sessionId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
   return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
@@ -357,7 +463,9 @@ export type RelayStatus =
   /**
    * Not sent: no live session answers to the target's name, the name is
    * ambiguous, the relay couldn't start, or pitwall's gate denied the relay's
-   * SendMessage call because it didn't match the request.
+   * SendMessage call because it didn't match the request, on the first try
+   * and on pitwall's one retry (W43). Then `detail` says where the call first
+   * differed, by line and character code, never with the text.
    */
   | 'failed'
   /**
@@ -367,14 +475,24 @@ export type RelayStatus =
    */
   | 'uncertain';
 
-/** Body of a POST to relayPath(). `text` is 1 to 8,192 characters, sent verbatim. */
+/**
+ * Body of a POST to relayPath(). `text` is 1 to 8,192 characters, sent
+ * verbatim except that spaces that look like a space, such as a no-break
+ * space, become a plain space, and a CRLF line break becomes LF (W43): the
+ * relay's model tends to write those as plain ones, and its gate then blocks
+ * the copy.
+ */
 export interface RelayRequest {
   text: string;
 }
 
 export interface RelayResult {
   status: RelayStatus;
-  /** A short explanation, for example why it was refused or failed. */
+  /**
+   * A short explanation, for example why it was refused or failed. On
+   * 'delivered' after pitwall's one retry, it says the gate blocked the
+   * relay's first copy and the second went through (W52). Never message text.
+   */
   detail?: string;
 }
 

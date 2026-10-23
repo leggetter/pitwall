@@ -5,23 +5,39 @@
 //
 // The browser is opened through a launch file (D7, src/server/launch.ts), never
 // with the token URL on a command line, because `ps` shows every process's
-// arguments to every user. The token is printed to stdout, the user's own
-// terminal, and passed in from `npm run dev` through the environment, which
-// other users can't read.
+// arguments to every user. A token that dies with the run is printed to
+// stdout, the user's own terminal, with the URL. A fixed one (PITWALL_TOKEN)
+// never is (W51): it stays valid for every later run, so a copy in scrollback,
+// a log or an agent's transcript would outlive the run. The token is passed in
+// from `npm run dev` through the environment, which other users can't read.
+//
+// PITWALL_TOKEN comes from the environment only. The CLI never loads a .env,
+// from the current directory or anywhere else: pitwall runs inside other
+// people's repos, and one of those repos' .env would then pick the token,
+// fixed and known to whoever wrote it. `npm run dev` reads the pitwall repo's
+// own .env, found from its own location (scripts/dev.ts).
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
-import { LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
+import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
+import { RELAY_NAME } from './server/relayPrompt.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
 export const INTERVAL_MIN_SECONDS = 1;
 export const INTERVAL_MAX_SECONDS = 300;
+
+/**
+ * The fewest different characters PITWALL_TOKEN may have (W51). Low enough that a random token in
+ * any common alphabet passes: one from .env.example's command, 43 characters of base64url, fails it
+ * about once in 10^32 tries, and 64 hex characters (`openssl rand -hex 32`) about once in 10^19.
+ */
+export const TOKEN_MIN_DIFFERENT = 8;
 
 export const USAGE = `Usage: pitwall [root...] [--port <n>] [--interval <seconds>] [--no-open]
 
@@ -30,7 +46,9 @@ The roots default to the current directory.
 
 Options:
   --port <n>            Port on 127.0.0.1. Default ${DEFAULT_PORT}, or a free port if
-                        ${DEFAULT_PORT} is busy. 0 always picks a free port.
+                        ${DEFAULT_PORT} is busy. 0 always picks a free port. A pinned
+                        tab needs the same port every run, so give one with --port
+                        if ${DEFAULT_PORT} is often busy.
   --interval <seconds>  How often to poll claude agents, in whole seconds
                         from ${INTERVAL_MIN_SECONDS} to ${INTERVAL_MAX_SECONDS}. Default ${DEFAULT_POLL_INTERVAL_MS / 1000}.
   --no-open             Don't open the browser.
@@ -40,23 +58,58 @@ Options:
 The browser is opened through a launch file in ~/.pitwall (mode 0600, in a
 0700 directory), so the token never appears in a command line. The file is
 deleted once the page connects, after 60 seconds, or on exit, whichever is first.
+With a fixed PITWALL_TOKEN, it isn't deleted when a page connects, so a pinned
+tab that reconnects first can't take it from a new one.
 
 Environment:
-  PITWALL_TOKEN        Use this token instead of a random one. At least 32
-                       characters from A-Z, a-z, 0-9, "-" and "_". Reusing
-                       it keeps one token alive across runs: any page or
-                       script that ever saw it can drive every later run
-                       that uses it. Leave it unset to get a new token on
-                       every run.
-  PITWALL_NO_OPEN      Set to 1 to skip opening the browser.
-  PITWALL_HOME         Where launch files go, instead of ~/.pitwall.
-  PITWALL_OPEN_MARKER  A file path. Open the browser only if it doesn't exist
-                       yet, then create it. npm run dev sets it, so the browser
-                       opens once per dev run, not on every restart.`;
+  PITWALL_TOKEN          Use this token instead of a random one. At least 32
+                         characters from A-Z, a-z, 0-9, "-" and "_", with at
+                         least ${TOKEN_MIN_DIFFERENT} different ones, and not one piece repeated
+                         (abcabc...). The pitwall repo's .env.example shows how
+                         to make a random one. Reusing it keeps one token alive
+                         across runs: any page or script that ever saw it can
+                         drive every later run that uses it, so use it only on
+                         a single-user machine or for development. pitwall
+                         then prints its URL without the token: a tab that has
+                         it reconnects by itself, and a new tab needs #token=
+                         and the token added. Leave it unset, or empty, to get
+                         a new token on every run, printed with the URL.
+                         pitwall reads it from the environment only, never
+                         from a .env file; npm run dev also reads it from the
+                         pitwall repo's own .env.
+  PITWALL_NO_OPEN        Set to 1 to skip opening the browser.
+  PITWALL_HOME           Where launch files go, instead of ~/.pitwall.
+  PITWALL_OPEN_MARKER    A file path. Open the browser only if it doesn't exist
+                         yet, then create it. npm run dev sets it, so the
+                         browser opens once per dev run, not on every restart.
+  PITWALL_TOKEN_PER_RUN  Set to 1, with PITWALL_OPEN_MARKER, when PITWALL_TOKEN
+                         isn't fixed but this run's own, so pitwall prints it
+                         with the URL. npm run dev sets both for the token it
+                         makes for each dev run, and never for a fixed one.
+                         Without the marker it's ignored: PITWALL_TOKEN is
+                         fixed, and never printed.`;
 
 /** A problem with the command line or environment. Printed with a `pitwall:` prefix, exit 1. */
 export class UsageError extends Error {
   override name = 'UsageError';
+}
+
+/** Printed with a `pitwall:` prefix, exit 1, when the directory pitwall was started in has been deleted. */
+export const CWD_GONE_MESSAGE = 'the current directory no longer exists. cd to one that does and run pitwall again.';
+
+/**
+ * The current directory, or undefined when it no longer exists. A shell can
+ * stay in a directory after it has been deleted, and process.cwd() then fails
+ * with ENOENT from uv_cwd. Any other failure is thrown as it was.
+ */
+export function currentDirectory(readCwd: () => string = () => process.cwd()): string | undefined {
+  try {
+    return readCwd();
+  } catch (error) {
+    const { code, syscall } = (typeof error === 'object' && error !== null ? error : {}) as NodeJS.ErrnoException;
+    if (code === 'ENOENT' && syscall === 'uv_cwd') return undefined;
+    throw error;
+  }
 }
 
 export type CliCommand =
@@ -123,8 +176,12 @@ function parseInterval(raw: string): number {
   return seconds;
 }
 
-/** Resolves the roots to absolute paths, defaulting to cwd. Throws UsageError for one that isn't a directory. */
-export function resolveRoots(roots: string[], cwd: string = process.cwd()): string[] {
+/**
+ * Resolves the roots against `cwd` to absolute paths, defaulting to `cwd`
+ * itself. Throws UsageError for one that isn't a directory. `cwd` comes from
+ * currentDirectory(), so the CLI never reads the directory unchecked.
+ */
+export function resolveRoots(roots: string[], cwd: string): string[] {
   const absolute = (roots.length > 0 ? roots : [cwd]).map((root) => resolve(cwd, root));
   for (const root of absolute) {
     let isDirectory = false;
@@ -138,17 +195,131 @@ export function resolveRoots(roots: string[], cwd: string = process.cwd()): stri
   return absolute;
 }
 
-/** PITWALL_TOKEN when set and valid, otherwise 32 random bytes as base64url. */
+/**
+ * The line printed at start when PITWALL_TOKEN is set, by the CLI and by npm
+ * run dev, which says where it came from (`source`). Never the token itself.
+ */
+export function fixedTokenNotice(source?: string): string {
+  return `the token is fixed by PITWALL_TOKEN${source ? ` in ${source}` : ''}, so every run that uses it has the same one. Use this only on a single-user machine or for development.`;
+}
+
+/**
+ * Whether PITWALL_TOKEN fixes the token: set and not empty, since an empty one
+ * counts as unset (W40), and not npm run dev's own token for one dev run, which
+ * it marks with PITWALL_TOKEN_PER_RUN=1 (W51). That mark counts only with
+ * PITWALL_OPEN_MARKER set too, as npm run dev sets both (W58): set by hand
+ * without it, it would print a fixed token and delete its launch file at the
+ * first authentication, so it's ignored.
+ */
+export function hasFixedToken(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.PITWALL_TOKEN === undefined || env.PITWALL_TOKEN === '') return false;
+  const devRunsOwn = env.PITWALL_TOKEN_PER_RUN === '1' && env.PITWALL_OPEN_MARKER !== undefined && env.PITWALL_OPEN_MARKER !== '';
+  return !devRunsOwn;
+}
+
+/**
+ * PITWALL_TOKEN when set and valid, otherwise 32 random bytes as base64url.
+ * An empty PITWALL_TOKEN counts as unset, so `PITWALL_TOKEN=` in a .env, as
+ * .env.example has it, gives a new token every run; one that's set but not
+ * valid is refused. No message quotes it.
+ *
+ * Valid: at least 32 characters from base64url's alphabet, at least
+ * TOKEN_MIN_DIFFERENT of them different, and not one piece written out again
+ * and again (W51). The last two only refuse an obviously weak token, such as
+ * 32 zeros or a word repeated; they can't tell a random token from a made-up
+ * one. A token that npm run dev made for its run is checked here too, in the
+ * CLI it starts, and passes them as any random token does.
+ */
 export function resolveToken(env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env.PITWALL_TOKEN;
-  if (fromEnv === undefined) return randomBytes(32).toString('base64url');
+  if (fromEnv === undefined || fromEnv === '') return randomBytes(32).toString('base64url');
   if (fromEnv.length < 32) throw new UsageError('PITWALL_TOKEN must be at least 32 characters');
   // The token goes into a URL fragment, an Authorization header and, on
   // Windows, a `cmd /c start` command line, so keep it to URL-safe characters.
   if (!/^[A-Za-z0-9_-]+$/.test(fromEnv)) {
     throw new UsageError('PITWALL_TOKEN may only contain A-Z, a-z, 0-9, "-" and "_"');
   }
+  if (new Set(fromEnv).size < TOKEN_MIN_DIFFERENT) {
+    throw new UsageError(`PITWALL_TOKEN must have at least ${TOKEN_MIN_DIFFERENT} different characters`);
+  }
+  if (repeatsOnePiece(fromEnv)) throw new UsageError('PITWALL_TOKEN must not be one piece repeated, as in abcabcabc');
   return fromEnv;
+}
+
+/**
+ * Whether `text` is one piece written out at least twice, the last copy
+ * perhaps cut short: `abcabcab`, `xyxy`. That is, its shortest period is at
+ * most half its length. Found from the longest prefix that's also a suffix
+ * (KMP's failure function), in time linear in the length, since the
+ * environment can hold a long value.
+ */
+export function repeatsOnePiece(text: string): boolean {
+  if (text.length < 2) return false;
+  const border = new Array<number>(text.length).fill(0);
+  for (let i = 1, k = 0; i < text.length; i++) {
+    while (k > 0 && text[i] !== text[k]) k = border[k - 1]!;
+    if (text[i] === text[k]) k++;
+    border[i] = k;
+  }
+  return text.length - border[text.length - 1]! <= text.length / 2;
+}
+
+/**
+ * Why npm run dev mustn't read the pitwall repo's .env (W51), or undefined
+ * when it may. The file can hold PITWALL_TOKEN, so it must be a file of yours
+ * that neither group nor others can read or change, as ensureLaunchDir asks of
+ * ~/.pitwall. `stats` is from the open file (fstat), so what's checked is
+ * what's read. The message names the file, never its contents. Windows has no
+ * POSIX owner or mode bits, so there only the file check applies. The CLI
+ * itself never reads a .env.
+ */
+export function envFileProblem(file: string, stats: Pick<Stats, 'mode' | 'uid' | 'isFile'>, context: DirCheckContext = {}): string | undefined {
+  const platform = context.platform ?? process.platform;
+  const uid = 'uid' in context ? context.uid : process.getuid?.();
+  if (!stats.isFile()) return `${file} is not a file. Move it aside, then run npm run dev again.`;
+  if (platform === 'win32') return undefined;
+  if (uid !== undefined && stats.uid !== uid) {
+    return `${file} belongs to another user (uid ${stats.uid}). npm run dev reads a .env only when it's yours, since it can hold PITWALL_TOKEN.`;
+  }
+  const mode = stats.mode & 0o777;
+  if ((mode & 0o077) !== 0) {
+    return `${file} can be read or changed by other users (mode ${mode.toString(8).padStart(3, '0')}), and it can hold PITWALL_TOKEN. Run chmod 600 ${file}, then run npm run dev again.`;
+  }
+  return undefined;
+}
+
+/**
+ * The line printed under the URL when the token is fixed, in place of the
+ * token, which the URL then leaves out (W51).
+ */
+export const FIXED_TOKEN_LINE =
+  "The token is the one in PITWALL_TOKEN, so it isn't printed. A tab that has it reconnects by itself; for a new tab, add #token= and that token to the address.";
+
+/**
+ * What the CLI prints once its server is listening. A per-run token's link, as
+ * it always has (W8): the token dies with the run. A fixed token's address with
+ * no token, and FIXED_TOKEN_LINE: printed, the token would outlive the run in
+ * scrollback, logs and agents' transcripts (W48 F2).
+ */
+export function runningLines(serverUrl: string, token: string, fixed: boolean): string[] {
+  if (fixed) return [`pitwall is running at ${serverUrl}/`, FIXED_TOKEN_LINE];
+  return [`pitwall is running at ${serverUrl}/#token=${token}`];
+}
+
+/** What to do when the browser can't be opened: the printed link, or with a fixed token, the address and the token. */
+export function openInsteadHint(fixed: boolean): string {
+  return fixed ? 'Open the URL above instead, and add #token= and your PITWALL_TOKEN to it.' : 'Open the URL above instead.';
+}
+
+/**
+ * What the CLI prints when the default port was busy and it fell back to a
+ * free one: a pinned tab can't follow a port that changes every run.
+ */
+export function fallbackPortMessage(defaultPort: number, port: number): string {
+  return (
+    `pitwall: port ${defaultPort} is busy, so this run uses port ${port}, which changes every time. ` +
+    `A pinned pitwall tab needs the same port every run, so start pitwall with --port <n> to keep one working.`
+  );
 }
 
 /**
@@ -189,11 +360,15 @@ export function browserCommand(file: string, platform: NodeJS.Platform = process
   return ['xdg-open', [file]];
 }
 
-/** Opens the file with execFile, so no shell parses it. A failure is reported, not fatal. */
-export function openBrowser(file: string): void {
+/**
+ * Opens the file with execFile, so no shell parses it. A failure is reported,
+ * not fatal, with what to open instead (`fixed`: the token isn't printed).
+ */
+export function openBrowser(file: string, fixed: boolean): void {
   const [command, args] = browserCommand(file);
   const child = execFile(command, args, (error) => {
-    if (error) console.error(`pitwall: couldn't open a browser (${error.message}). Open the URL above instead.`);
+    // On one line: execFile's message ends with a line break and the opener's stderr.
+    if (error) console.error(`pitwall: couldn't open a browser (${error.message.trim().replace(/\s+/g, ' ')}). ${openInsteadHint(fixed)}`);
   });
   child.unref();
 }
@@ -219,7 +394,12 @@ function readVersion(): string {
   return pkg.version;
 }
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+export interface MainOptions {
+  /** Reads the current directory. Default process.cwd(). Tests pass one that throws. */
+  cwd?: () => string;
+}
+
+export async function main(argv: string[] = process.argv.slice(2), options: MainOptions = {}): Promise<number> {
   let command: CliCommand;
   let roots: string[];
   let token: string;
@@ -236,13 +416,32 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       console.log(readVersion());
       return 0;
     }
-    roots = resolveRoots(command.roots);
+    // Before anything reads the directory, starts a child process or opens the
+    // browser, and even when every root is absolute: a shell can stay in a
+    // directory that has been deleted. Then process.cwd() throws, a relative
+    // PITWALL_HOME or CLAUDE_CONFIG_DIR can't be resolved, and git and the
+    // browser opener, which set no cwd of their own, would start in it.
+    // --help and --version don't need the directory, so they still work.
+    const cwd = currentDirectory(options.cwd);
+    if (cwd === undefined) {
+      console.error(`pitwall: ${CWD_GONE_MESSAGE}`);
+      return 1;
+    }
+    roots = resolveRoots(command.roots, cwd);
     token = resolveToken();
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     console.error(`pitwall: ${error.message}\nRun pitwall --help for usage.`);
     return 1;
   }
+  // Whether the token outlives this run. If so, it's never printed (W51), and
+  // its launch file isn't deleted when a page first authenticates.
+  const fixed = hasFixedToken();
+  // A fixed token, said once. Not under npm run dev, which sets the marker: it says so itself when
+  // PITWALL_TOKEN is fixed, and otherwise passes a token of its own run, marked PITWALL_TOKEN_PER_RUN.
+  if (fixed && marker === undefined) console.error(`pitwall: ${fixedTokenNotice()}`);
+  // Unset, as it counts: not passed on to the children, empty.
+  if (process.env.PITWALL_TOKEN === '') delete process.env.PITWALL_TOKEN;
   // Under npm run dev, a restart finds the marker the first run created, and
   // doesn't open another tab.
   if (command.open && !(marker !== undefined && existsSync(marker))) {
@@ -263,6 +462,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   // use it, and the relay, which has no token to pass it.
   removeTokenVariables(process.env, token);
   delete process.env.PITWALL_OPEN_MARKER;
+  delete process.env.PITWALL_TOKEN_PER_RUN;
 
   const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   // The relay (D8) starts on the first message. The index leaves its own session out, and shows its exchanges.
@@ -273,9 +473,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     exclude: (row) => relay.isRelay(row),
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
+    relayOff: () => relay.off(),
+    // Its messages to the relay show in each session's conversation (W46).
+    relayName: RELAY_NAME,
   });
-  // Set once the launch file is written. The first page to authenticate has
-  // read it, so it's deleted then, rather than left holding the token.
+  // Set once the launch file is written, for a per-run token only. The first
+  // page to authenticate has read it, so it's deleted then, rather than left
+  // holding the token. A fixed token's file waits its 60 seconds, or the exit:
+  // a pinned tab that already has the token reconnects before a new tab has
+  // read the file, and would otherwise take it away from that tab (W51).
   let launchFileUsed: (() => void) | undefined;
   let server;
   try {
@@ -326,16 +532,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
 
+  // The launch file always has the token: it's the one place a fixed token is written (D7).
   const url = `${server.url}/#token=${token}`;
-  if (command.port === undefined && server.port !== DEFAULT_PORT) {
-    console.log(`pitwall: port ${DEFAULT_PORT} is busy, so using ${server.port}.`);
-  }
-  console.log(`pitwall is running at ${url}`);
+  if (command.port === undefined && server.port !== DEFAULT_PORT) console.log(fallbackPortMessage(DEFAULT_PORT, server.port));
+  for (const line of runningLines(server.url, token, fixed)) console.log(line);
   console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}, polling every ${intervalMs / 1000}s`);
   // Only now that this process's own server is listening, so the browser is
   // never sent to whatever else holds the port.
   if (launchDir !== undefined && (marker === undefined || claimOpenMarker(marker))) {
-    launchFileUsed = openThroughLaunchFile(launchDir, server.port, url);
+    const used = openThroughLaunchFile(launchDir, server.port, url, fixed);
+    if (!fixed) launchFileUsed = used;
   }
   return 0;
 }
@@ -345,16 +551,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
  * function is called, 60 seconds after it was written, or when this process
  * exits, whichever comes first. A failure is reported, not fatal.
  */
-function openThroughLaunchFile(dir: string, port: number, url: string): (() => void) | undefined {
+function openThroughLaunchFile(dir: string, port: number, url: string, fixed: boolean): (() => void) | undefined {
   let file: string;
   try {
     file = writeLaunchFile(dir, port, url);
   } catch (error) {
-    console.error(`pitwall: couldn't write the launch file in ${dir} (${(error as Error).message}). Open the URL above instead.`);
+    console.error(`pitwall: couldn't write the launch file in ${dir} (${(error as Error).message}). ${openInsteadHint(fixed)}`);
     return undefined;
   }
   const used = removeWhenUsed(file);
-  openBrowser(file);
+  openBrowser(file, fixed);
   return used;
 }
 

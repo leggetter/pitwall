@@ -42,8 +42,10 @@ export type ApiResult =
    * Anything else: a network error, another status, a body that isn't JSON,
    * or an aborted request. `body` is the parsed JSON body of a non-2xx
    * response, when it had one, such as a SpawnResult's error and hint.
+   * `retryAfter` is the response's Retry-After, in seconds, when it gave a
+   * whole number of them, as the server does with 429.
    */
-  | { kind: 'failed'; status?: number; body?: unknown };
+  | { kind: 'failed'; status?: number; body?: unknown; retryAfter?: number };
 
 export interface ApiGetOptions {
   fetch?: FetchLike;
@@ -102,8 +104,18 @@ async function apiRequest(
   } catch {
     isJson = false;
   }
-  if (!response.ok) return isJson ? { kind: 'failed', status: response.status, body: parsed } : { kind: 'failed', status: response.status };
+  if (!response.ok) {
+    const failed: ApiResult = isJson ? { kind: 'failed', status: response.status, body: parsed } : { kind: 'failed', status: response.status };
+    const retryAfter = retryAfterSeconds(response.headers?.get?.('Retry-After') ?? null);
+    return retryAfter === undefined ? failed : { ...failed, retryAfter };
+  }
   return isJson ? { kind: 'ok', status: response.status, body: parsed } : { kind: 'failed', status: response.status };
+}
+
+/** A Retry-After header's delay in seconds, when it's a whole number of them; an HTTP date, or anything else, isn't read. */
+export function retryAfterSeconds(header: string | null): number | undefined {
+  if (header === null || !/^\s*\d{1,6}\s*$/.test(header)) return undefined;
+  return Number(header.trim());
 }
 
 /** What components use. App provides one per connection, through ApiContext. */

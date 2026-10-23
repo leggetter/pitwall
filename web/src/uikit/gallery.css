@@ -1,0 +1,502 @@
+/* The #uikit gallery's own chrome (W19). Plain on purpose: it isn't part of the design system, so it
+   only frames the specimens. It uses the tokens, so it follows the theme like the app does. Dev
+   builds only: it loads with the gallery's chunk. */
+
+.uikit {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 16px 96px;
+}
+
+.uikit-bar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 0;
+  background: var(--pw-bg);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.uikit-bar h1 {
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
+}
+
+.uikit-reopen button {
+  padding: 2px 10px;
+  border: 1px solid var(--pw-border-control);
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface);
+  font-size: var(--pw-text-s);
+  cursor: pointer;
+}
+
+.uikit-bar a,
+.uikit-index a {
+  color: var(--pw-link);
+  font-size: var(--pw-text-s);
+}
+
+.uikit-intro {
+  margin-top: 12px;
+}
+
+.uikit-index ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uikit-section {
+  margin-top: 48px;
+  /* Clear of the sticky bar when a link jumps here. */
+  scroll-margin-top: 64px;
+}
+
+.uikit-section > h2 {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--pw-border-strong);
+  font-size: var(--pw-text-xl);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-xl);
+}
+
+.uikit-specimen {
+  margin-top: 24px;
+}
+
+.uikit-specimen > h3 {
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
+}
+
+.uikit-note {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+}
+
+.uikit-section > .uikit-note {
+  margin-top: 4px;
+}
+
+.uikit-problem {
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  border: 2px dashed var(--pw-danger-fg);
+  font-size: var(--pw-text-s);
+}
+
+/*
+ * The stage a specimen stands on: the page background, outlined, so the specimen's own edges show.
+ * It's a container like the app (styles.css), so the shell's width rules follow the stage's width.
+ */
+.uikit-stage {
+  container: pitwall / inline-size;
+  margin-top: 8px;
+  padding: 16px;
+  background: var(--pw-bg);
+  outline: 1px dashed var(--pw-border-strong);
+  border-radius: var(--pw-radius-sm);
+}
+
+/*
+ * A stage holding a window of a set width (kit.tsx, FitWindow): a window wider than the stage is
+ * scaled to fit it, whole, so nothing at its right edge, such as the session view's Send, is cut off.
+ */
+.uikit-widths {
+  overflow: hidden;
+}
+
+.uikit-fit {
+  min-width: 0;
+}
+
+.uikit-window {
+  flex: none;
+  container: pitwall / inline-size;
+  outline: 1px dashed var(--pw-border-strong);
+}
+
+/*
+ * A frame stands in for the window. Its transform makes it the containing block for anything the
+ * app fixes to the window (a dialog's backdrop, the repo drawer), so those stay inside it, and its
+ * overflow makes it the scroller that sticky headers stick to.
+ */
+.uikit-frame {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  transform: translateZ(0);
+}
+
+/*
+ * A session view on its own, in a view frame. In the app the view over the list fills the columns'
+ * grid row (styles.css); here there's no row, so it fills the frame, at its right edge, as the window.
+ */
+:is(.uikit-frame-view, .uikit-frame-short, .uikit-frame-tall) .session-view.overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.uikit-frame-view {
+  height: 640px;
+}
+
+.uikit-frame-short {
+  height: 420px;
+}
+
+/* For a whole conversation, every kind of entry in it. */
+.uikit-frame-tall {
+  height: 1200px;
+}
+
+.uikit-frame-dialog {
+  height: 920px;
+}
+
+/*
+ * For the keyboard shortcuts dialog, whose whole map shows in a tall enough window: at 375 px, where
+ * its rows wrap most, with about 48 px to spare below it (W41's Shift+Enter row took 53 px).
+ */
+.uikit-frame-dialog-tall {
+  height: 1540px;
+}
+
+/*
+ * The Preferences dialog in a window 540 px tall (W59). The card is at most the window less 96 px
+ * tall, by 100dvh, which here is the gallery's window, not the frame, so the frame says it for it:
+ * its body scrolls, as at 375 x 540 in the app.
+ */
+.uikit-frame-dialog-short {
+  height: 540px;
+}
+
+.uikit-frame-dialog-short .dialog {
+  max-height: calc(540px - 2 * var(--pw-space-12));
+}
+
+/* The Preferences dialog's sections one at a time, each as wide as the dialog, with its body's padding (W59, W62). */
+.uikit-preferences-section {
+  max-width: var(--pw-dialog-md);
+  padding: var(--pw-space-4);
+  background: var(--pw-surface-overlay);
+}
+
+/* A window 560 px tall, which the app fills, so its list scrolls inside as it does in the app. */
+.uikit-frame-page {
+  height: 560px;
+}
+
+.uikit-frame-page > :is(.app, .uikit-scenario),
+.uikit-frame-page > .uikit-scenario > .app {
+  height: 100%;
+}
+
+/* The token notices aren't the app shell: they keep their own height. */
+.uikit-frame-page:has(> .notice) {
+  height: auto;
+  min-height: 160px;
+}
+
+/* Below 600 px a frame is as wide as the window, as the session view is (min(760px, 100vw)). */
+@media (max-width: 600px) {
+  .uikit-stage.uikit-frame {
+    margin-inline: -16px;
+    border-radius: 0;
+  }
+}
+
+/* Room below a menu button for its open menu, with the button at the end, as in the session view's header. */
+.uikit-menu-stage {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  max-width: 320px;
+  min-height: 176px;
+  padding: 8px;
+  background: var(--pw-surface);
+}
+
+/* An open menu with a tooltip on one of its items, above it: room for both. */
+.uikit-menu-stage-tall {
+  min-height: 200px;
+  padding-top: 40px;
+}
+
+/* Each root tab's repo list in one mode of Group sessions by, side by side, each as wide as the sidebar (W42). */
+.uikit-mode-lists {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.uikit-mode-list {
+  width: 240px;
+}
+
+.uikit-mode-list .repo-list {
+  border: 1px solid var(--pw-border);
+}
+
+/* Room below a menu with a radio group, whose options' lines make it taller and wider than the actions menu (W42). */
+.uikit-menu-stage-radio {
+  max-width: 360px;
+  min-height: 280px;
+}
+
+/* Room above a trigger for its tooltip, which sits 6 px above it, as it does in the app. */
+.uikit-tip-stage {
+  padding-top: 72px;
+}
+
+/* Something the width of the session list at 1,200 px, or narrower, so its text gives way. */
+.uikit-narrow {
+  max-width: 360px;
+}
+
+/* A row a little narrower than its title, so the title is cut, with room for some of it. */
+.uikit-row-width {
+  max-width: 560px;
+}
+
+/* A box too narrow for its path, so the middle ellipsis cuts it. */
+.uikit-cut .session-view-cwd {
+  flex: none;
+  width: 160px;
+}
+
+/* Meta text, as the app's meta lines have it. */
+.uikit-meta {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* Frames for toasts, which the app fixes to the window's bottom right: here, the frame's. */
+.uikit-frame-toasts {
+  height: 200px;
+  padding: 16px;
+}
+
+.uikit-frame-toasts-tall {
+  height: 280px;
+  padding: 16px;
+}
+
+/* A window of a set width whose content isn't a whole page: the stage's padding, inside it. */
+.uikit-window-pad {
+  padding: 16px;
+}
+
+/* The session view's width, for what stands in its footer or header. */
+.uikit-panel-width {
+  max-width: 760px;
+}
+
+.uikit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+  gap: 0 16px;
+}
+
+.uikit-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.uikit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.uikit-reopen {
+  padding: 24px;
+  text-align: center;
+}
+
+/* Tokens */
+
+.uikit-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uikit-swatches li {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+}
+
+.uikit-swatch {
+  grid-row: span 2;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--pw-radius-sm);
+  /* An edge, so a swatch the colour of the page still shows. */
+  box-shadow: inset 0 0 0 1px var(--pw-border-strong);
+}
+
+.uikit-swatches code,
+.uikit-token-list code {
+  font-size: var(--pw-text-s);
+  overflow-wrap: anywhere;
+}
+
+.uikit-value {
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-xs);
+  overflow-wrap: anywhere;
+  font-variant-ligatures: none;
+}
+
+.uikit-token-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--pw-text-s);
+}
+
+.uikit-token-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+
+/* Type */
+
+.uikit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--pw-text-s);
+}
+
+.uikit-table th,
+.uikit-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--pw-border);
+  text-align: left;
+  vertical-align: baseline;
+}
+
+.uikit-table thead th {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-bold);
+}
+
+.uikit-table tbody th {
+  font-weight: var(--pw-weight-medium);
+  white-space: nowrap;
+}
+
+.uikit-table td:last-child {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .uikit-table thead {
+    display: none;
+  }
+
+  .uikit-table tr {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    gap: 0 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--pw-border);
+  }
+
+  .uikit-table th,
+  .uikit-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .uikit-table td:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+.uikit-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+}
+
+.uikit-type-grid > div > p:first-child {
+  color: var(--pw-text-muted);
+}
+
+/* Icons */
+
+.uikit-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 12px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uikit-icons li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.uikit-icon-sizes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.uikit-icons code {
+  font-size: var(--pw-text-xs);
+}
+
+/* 14 px text, as the design system's body is, with the icon centred on it as a button would. */
+.uikit-icon-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+/* A row drawn as the pointer would leave it, for the States specimens. The same fill as styles.css's hover. */
+.uikit-hovered .session {
+  background: var(--pw-surface-hover);
+}
+
+/* A hovered row shows its star toggle, as the pointer would (W53). */
+.uikit-hovered .session-star {
+  opacity: 1;
+}
+
+/* The Buttons table: a busy button's spinner has no text, so line the cells up by their middles, not their baselines. */
+.uikit-buttons td {
+  vertical-align: middle;
+}

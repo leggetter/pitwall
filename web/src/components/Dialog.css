@@ -1,0 +1,120 @@
+/*
+ * Dialogs (docs/design-system.md, 4: Dialogs): the backdrop at --pw-z-backdrop, centring the card
+ * 48 px from the top and 16 px from the sides; the card at --pw-z-dialog, at most the window less
+ * 96 px tall. Its header, body and footer are divided by 1 px lines, and only the body scrolls.
+ */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--pw-z-backdrop);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--pw-space-12) var(--pw-space-4);
+  background: var(--pw-backdrop);
+}
+
+.dialog {
+  position: relative;
+  z-index: var(--pw-z-dialog);
+  display: flex;
+  flex-direction: column;
+  width: min(var(--pw-dialog-md), 100%);
+  max-height: calc(100vh - 2 * var(--pw-space-12));
+  max-height: calc(100dvh - 2 * var(--pw-space-12));
+  background: var(--pw-surface-overlay);
+  color: var(--pw-text);
+  border-radius: var(--pw-radius-lg);
+  box-shadow: var(--pw-shadow-3);
+}
+
+.dialog.sm {
+  width: min(var(--pw-dialog-sm), 100%);
+}
+
+.dialog.lg {
+  width: min(var(--pw-dialog-lg), 100%);
+}
+
+.dialog-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dialog-head {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.dialog-heading {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dialog-title {
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
+}
+
+.dialog-subtitle {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+/* A command stays whole, on the next line if need be, rather than breaking at its hyphens. */
+.dialog-subtitle code {
+  white-space: nowrap;
+}
+
+/* Close sits on the title's line: 28 px in its 24 px line, nudged to the card's edge. */
+.dialog-close {
+  margin-right: calc(-1 * var(--pw-space-1));
+}
+
+.dialog-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--pw-space-4);
+  min-height: 0;
+  padding: var(--pw-space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dialog-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-2) var(--pw-space-3);
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+}
+
+.dialog-foot-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--pw-space-3);
+  margin-left: auto;
+}

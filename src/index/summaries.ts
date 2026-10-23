@@ -60,7 +60,6 @@ export function toSessionSummary(
   if (row.state !== undefined) summary.state = row.state;
   if (row.waitingFor !== undefined) summary.waitingFor = row.waitingFor;
   if (transcript.lastActivityAt !== undefined) summary.lastActivityAt = transcript.lastActivityAt;
-  if (transcript.lastAssistantText !== undefined) summary.lastAssistantText = transcript.lastAssistantText;
   if (transcript.lastUserPrompt !== undefined) summary.lastUserPrompt = transcript.lastUserPrompt;
   if (transcript.askedYou !== undefined && turnIsOver(row, stale)) summary.askedYou = transcript.askedYou;
   if (transcript.aiTitle !== undefined && !sameTitle(transcript.aiTitle, row.name)) {
@@ -184,13 +183,17 @@ function compareText(a: string, b: string): number {
 export interface PlacedSession {
   /** The root the session belongs to. */
   root: string;
+  /** The group of the directory it started in: the one group it's listed under. */
   group: GroupKey;
   summary: SessionSummary;
 }
 
 /**
- * Groups sessions by root and group key, labels each group, and sorts the
- * sessions in each group and the groups themselves.
+ * The groups, each listing the sessions started in it and only those (SessionGroup's comments,
+ * W39): a repo, its worktrees and subdirectories included; a directory below a root that's in no
+ * repo; or a root's own directory. A session is in exactly one group, whatever its workedIn names,
+ * so a repo that sessions only worked in has no group. A group with no sessions is left out. Labels
+ * each group, and sorts the sessions in each group and the groups themselves.
  */
 export function buildGroups(sessions: readonly PlacedSession[], home: string): SessionGroup[] {
   const groups = new Map<string, SessionGroup>();

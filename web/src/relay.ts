@@ -3,7 +3,16 @@
 // the token, and the words the UI uses for each outcome. The server
 // (src/server/relayRoute.ts, relay.ts) is the authority on every check.
 
-import { relayPath, type RelayAlert, type RelayExchange, type RelayResult, type RelayStatus, type SessionSummary } from '../../src/shared/protocol.js';
+import {
+  relayPath,
+  type ConversationEntry,
+  type RelayAlert,
+  type RelayExchange,
+  type RelayOff,
+  type RelayResult,
+  type RelayStatus,
+  type SessionSummary,
+} from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 
 /** The server's limit, repeated so the box can say so before sending. */
@@ -14,8 +23,12 @@ export type RelayOutcome =
   | { kind: 'result'; result: RelayResult }
   /** The connection was refused (WebSocket 4401). The app is already showing that the token was rejected. */
   | { kind: 'unauthorized' }
-  /** No answer pitwall understands: a network error, or a response that isn't a RelayResult. */
-  | { kind: 'failed'; error: string };
+  /**
+   * No answer pitwall understands: a network error, or a response that isn't a RelayResult. `uncertain`
+   * when the message may have gone: pitwall didn't answer, or answered with a server error or a
+   * success it didn't explain. Otherwise pitwall refused the request before the relay ran.
+   */
+  | { kind: 'failed'; error: string; uncertain: boolean };
 
 const STATUSES: readonly RelayStatus[] = ['delivered', 'held', 'refused', 'failed', 'uncertain'];
 
@@ -37,16 +50,34 @@ export function outgoingText(text: string): string {
   return text.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
 }
 
+/** What pitwall can say, after its own sentence, when a send's outcome isn't known (5: Errors). */
+export const CHECK_BEFORE_RESENDING = 'Check its conversation before sending again.';
+
+/**
+ * What a send with no RelayResult means (docs/design-system.md, 4: Message box, and 5: Errors). The
+ * relay route answers every request it handles with one, so without one pitwall knows only this:
+ * - no answer, a server error or an unexplained success: the message may have gone, so it says so,
+ *   as the relay's own "uncertain" does, rather than inviting a resend, which starts another turn;
+ * - any other status: pitwall refused the request before the relay ran, so nothing was sent.
+ */
+export function unexplainedSend(status: number | undefined): Extract<RelayOutcome, { kind: 'failed' }> {
+  if (status === undefined) {
+    return { kind: 'failed', uncertain: true, error: `pitwall didn't answer, so it may have reached the session. ${CHECK_BEFORE_RESENDING}` };
+  }
+  if (status >= 500 || (status >= 200 && status < 300)) {
+    const what = status >= 500 ? `with an error (HTTP ${status})` : `without saying what happened (HTTP ${status})`;
+    return { kind: 'failed', uncertain: true, error: `pitwall answered ${what}, so it may have reached the session. ${CHECK_BEFORE_RESENDING}` };
+  }
+  return { kind: 'failed', uncertain: false, error: `Not sent: pitwall refused the request (HTTP ${status}).` };
+}
+
 /** Sends `text` to a session with POST relayPath(), as outgoingText() makes it. Never rejects. */
 export async function sendRelay(api: ApiClient, sessionId: string, text: string, signal?: AbortSignal): Promise<RelayOutcome> {
   const result = await api.post(relayPath(sessionId), { text: outgoingText(text) }, signal ? { signal } : {});
   if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
   const relayed = asRelayResult(result.body);
   if (relayed !== undefined) return { kind: 'result', result: relayed };
-  return {
-    kind: 'failed',
-    error: result.kind === 'failed' && result.status !== undefined ? `pitwall answered ${result.status}, so it may not have been sent.` : "Couldn't reach pitwall, so it may not have been sent.",
-  };
+  return unexplainedSend(result.status);
 }
 
 /** Whether a session can be messaged: interactive, with a live process. */
@@ -63,7 +94,7 @@ export const STATUS_TEXT: Record<RelayStatus, string> = {
   uncertain: 'May have reached the session. Check its conversation before sending again.',
 };
 
-/** A short label for an exchange's status, for a row. */
+/** A short label for an exchange's status, for the line above the message box. */
 export const STATUS_LABEL: Record<RelayStatus, string> = {
   delivered: 'delivered',
   held: 'held for approval in its terminal',
@@ -79,53 +110,148 @@ export function statusTone(status: RelayStatus): RelayTone {
   return status === 'delivered' ? 'ok' : status === 'held' || status === 'uncertain' ? 'waiting' : 'failed';
 }
 
-/** The latest exchange, for a row: when it was sent and what happened. */
+/** The latest exchange, above the message box: when it was sent and what happened. */
 export function exchangeSummary(exchange: RelayExchange): { status: string; tone: RelayTone } {
   return { status: STATUS_LABEL[exchange.status], tone: statusTone(exchange.status) };
 }
 
-/**
- * The banner for the snapshot's relayAlert: what pitwall's relay tried that
- * nobody asked for. `detail` is pitwall's own words, never a message's text.
- */
-export function relayAlertText(alert: RelayAlert): { summary: string; count: string } {
-  const summary = alert.blocked
-    ? "pitwall's relay tried to send a message nobody asked for, and pitwall blocked it. That usually means another session messaged the relay."
-    : "pitwall's relay sent a message nobody asked for, or one pitwall couldn't check, before pitwall could stop it. It may have reached one of your sessions: check their conversations for a message from pitwall-relay. That usually means another session messaged the relay, and pitwall has stopped using it until you restart pitwall.";
-  return { summary, count: alert.count === 1 ? 'Once since pitwall started.' : `${alert.count} times since pitwall started.` };
-}
+/** The result of a send, or 'error' for pitwall's own failure before the relay answered. */
+export type SendResultStatus = RelayStatus | 'error';
 
-// The row's "Message" quick action opens the session view, and the view's
-// message box takes the focus: straight away when the box is already on
-// screen, otherwise once it appears, after the view has focused its own
-// Close button. A request nobody takes within 2 seconds lapses.
-const FOCUS_REQUEST_MS = 2000;
-let focusRequest: { sessionId: string; at: number } | undefined;
-const mountedBoxes = new Map<string, () => void>();
-
-/** Asks the message box for this session to take the focus. */
-export function requestRelayFocus(sessionId: string): void {
-  const focus = mountedBoxes.get(sessionId);
-  if (focus) {
-    focusRequest = undefined;
-    focus();
-    return;
-  }
-  focusRequest = { sessionId, at: Date.now() };
-}
+const RESULT_TONES: Record<RelayTone, 'success' | 'warning' | 'danger'> = { ok: 'success', waiting: 'warning', failed: 'danger' };
 
 /**
- * Called by a message box when it appears. Takes a pending request for its
- * session, and takes later ones until the returned function is called.
+ * The inline alert for a send's result (docs/design-system.md, 4: Message box): delivered is success
+ * and role="status"; held and "may have arrived" are warnings, refused and not sent are danger, all
+ * role="alert", since they need a look.
  */
-export function registerRelayFocus(sessionId: string, focus: () => void): () => void {
-  mountedBoxes.set(sessionId, focus);
-  if (focusRequest?.sessionId === sessionId && Date.now() - focusRequest.at <= FOCUS_REQUEST_MS) {
-    focusRequest = undefined;
-    // After the effects that run when the session view opens, which focus its Close button.
-    setTimeout(focus, 0);
+export function resultLook(status: SendResultStatus): { tone: 'success' | 'warning' | 'danger'; role: 'status' | 'alert' } {
+  const tone = status === 'error' ? 'danger' : RESULT_TONES[statusTone(status)];
+  return { tone, role: status === 'delivered' ? 'status' : 'alert' };
+}
+
+/** The character count shows from this share of the limit. */
+export const COUNT_FROM = 0.8;
+
+/**
+ * The message box's character count: nothing below 80 % of the limit, then "6,554 / 8,192", then
+ * "12 characters over the 8,192 limit" once over it.
+ */
+export function characterCount(length: number, limit = MAX_RELAY_TEXT_LENGTH): { text: string; over: boolean } | undefined {
+  if (length < limit * COUNT_FROM) return undefined;
+  const format = (n: number) => n.toLocaleString('en');
+  if (length <= limit) return { text: `${format(length)} / ${format(limit)}`, over: false };
+  const over = length - limit;
+  return { text: `${format(over)} ${over === 1 ? 'character' : 'characters'} over the ${format(limit)} limit`, over: true };
+}
+
+/** Whitespace collapsed, for comparing text the conversation and the relay each cleaned in their own way. */
+function squash(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** Replies at least this long may sit inside a longer entry; shorter ones must be the whole entry, or "Done." would match everything. */
+const CONTAINED_FROM = 40;
+
+/** What the status line adds once the conversation shows the reply, after the exchange's status (W46). */
+export const REPLY_IN_CONVERSATION = 'It replied, and the reply is in the conversation.';
+
+/**
+ * Whether a message to pitwall is the relay's copy of the reply, whitespace collapsed: the same text, or,
+ * when the relay cut its copy (`cut`), text that starts with it. Either way the conversation shows at
+ * least as much as the footer would, so an entry the server cut shorter than the reply, past its
+ * page's budget, never counts: the footer keeps its copy (W48's G1).
+ */
+function isReply(entry: ConversationEntry, reply: string, cut: boolean): boolean {
+  const text = squash(entry.text);
+  return text === reply || (cut && text.startsWith(reply));
+}
+
+/**
+ * Whether the conversation already shows the exchange's reply, so the message box shows only its
+ * status line, which says so (docs/design-system.md, 4: Message box). Only the reply pitwall's relay
+ * received counts, `exchange.reply`, and it does when:
+ * - a message the session sent to pitwall's relay (`to-pitwall`, W46: its SendMessage, in full) at or
+ *   after the send is the reply's text, whitespace collapsed, or starts with it when the relay cut its
+ *   copy at 2 KiB, so it shows at least as much as the footer would. The text, not the address alone, is what says it's the reply the relay received,
+ *   since any local session can take the relay's name (W48). A message to pitwall with no time isn't
+ *   known to be since the send, so it doesn't count; or,
+ * - as before W46, one of Claude's entries since the send has the reply's text: the whole entry, or
+ *   for a reply of 40 characters or more, part of one.
+ * Before the conversation loads there are no entries, so the reply shows in the footer until it does.
+ */
+export function replyInConversation(exchange: RelayExchange, entries: readonly ConversationEntry[]): boolean {
+  if (!exchange.reply) return false;
+  // The relay cuts a long reply with an ellipsis; the rest is a prefix of what was sent.
+  const cut = exchange.reply.text.endsWith('…');
+  const reply = squash(exchange.reply.text.replace(/…$/, ''));
+  if (reply === '') return false;
+  const sent = Date.parse(exchange.sentAt);
+  const since = (at: string | undefined) => at !== undefined && Date.parse(at) >= sent;
+  if (entries.some((entry) => entry.kind === 'to-pitwall' && since(entry.at) && isReply(entry, reply, cut))) return true;
+  return entries.some((entry) => {
+    if (entry.kind !== 'assistant') return false;
+    if (entry.at !== undefined && Date.parse(entry.at) < sent) return false;
+    const text = squash(entry.text);
+    return text === reply || (reply.length >= CONTAINED_FROM && text.includes(reply));
+  });
+}
+
+/**
+ * The page alert for the snapshot's relayAlert (docs/design-system.md, 4: Alerts and banners): what
+ * pitwall's relay tried that you didn't ask for. Its `cause` says which: 'unrequested', a message
+ * nobody asked for, which usually means another session messaged the relay; 'changed', a copy of
+ * your message that didn't match it (W43), such as one to another session or with other words; or
+ * 'repeated', the relay trying your message again in the same turn, after pitwall's gate had stopped
+ * its copy (W52). Only 'unrequested' mentions another session. Blocked is a warning, since nothing
+ * was sent; otherwise it's danger, since pitwall saw it only afterwards. The server raises none for
+ * a blocked copy whose text alone differed, which the relay's model does in long copies: it tries
+ * that once more, and the message's own result says so (W52). So a blocked 'changed' alert is for a
+ * copy that differed in more than its text, such as one to another session, which isn't tried again.
+ * It says messaging is off only when the snapshot's relayOff says so: some alerts only restart the
+ * relay. `detail` is pitwall's own words, never a message's text.
+ */
+export function relayAlertText(alert: RelayAlert, off?: RelayOff): { title: string; summary: string; count: string } {
+  const offNote = off ? ' Messaging is off until you restart pitwall.' : '';
+  const count = alert.count === 1 ? 'Once since pitwall started.' : `${alert.count.toLocaleString('en')} times since pitwall started.`;
+  if (alert.cause === 'repeated') {
+    if (alert.blocked) {
+      return {
+        title: 'pitwall blocked a repeated send of your message',
+        summary: `After pitwall's gate stopped its relay's copy of your message, the relay tried again in the same turn. The gate stopped that too, so the repeat wasn't sent.${offNote}`,
+        count,
+      };
+    }
+    return {
+      title: "pitwall's relay may have repeated a send of your message",
+      summary: `After pitwall's gate stopped its relay's copy of your message, the relay tried again in the same turn, and the gate may not have stopped it. Check your sessions' conversations for a message from pitwall-relay.${offNote}`,
+      count,
+    };
   }
-  return () => {
-    if (mountedBoxes.get(sessionId) === focus) mountedBoxes.delete(sessionId);
+  if (alert.cause === 'changed') {
+    if (alert.blocked) {
+      return {
+        title: 'pitwall blocked a changed copy of your message',
+        summary: `Its relay's copy differed from what you sent in more than its text, so pitwall stopped it, and nothing was sent.${offNote}`,
+        count,
+      };
+    }
+    return {
+      title: "pitwall's relay may have sent a changed copy of your message",
+      summary: `pitwall's gate may not have stopped it. Check the conversation of the session you messaged for a message from pitwall-relay.${offNote}`,
+      count,
+    };
+  }
+  if (alert.blocked) {
+    return {
+      title: "pitwall blocked a message you didn't ask for",
+      summary: `Its relay tried to send it, and pitwall's gate stopped it, so nothing was sent. That usually means another session messaged the relay.${offNote}`,
+      count,
+    };
+  }
+  return {
+    title: "pitwall's relay may have sent a message you didn't ask for",
+    summary: `That usually means another session messaged the relay. Check your sessions' conversations for a message from pitwall-relay.${offNote}`,
+    count,
   };
 }

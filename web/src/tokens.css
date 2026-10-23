@@ -1,0 +1,289 @@
+/* pitwall design system tokens. Import before any other CSS. See docs/design-system.md. */
+
+/* 1. Structure: the same in light and dark */
+:root {
+  /* Inter and JetBrains Mono are self-hosted by fonts.css. */
+  --pw-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --pw-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --pw-text-xs: 0.75rem;   --pw-leading-xs: 1.25rem;  /* 12/20 */
+  --pw-text-s: 0.8125rem;  --pw-leading-s: 1.25rem;   /* 13/20 */
+  --pw-text-m: 0.875rem;   --pw-leading-m: 1.25rem;   /* 14/20, the body */
+  --pw-text-l: 1rem;       --pw-leading-l: 1.5rem;    /* 16/24 */
+  --pw-text-xl: 1.25rem;   --pw-leading-xl: 1.75rem;  /* 20/28 */
+  --pw-weight-regular: 400;
+  --pw-weight-medium: 500;
+  --pw-weight-bold: 600;
+
+  --pw-space-0-5: 2px;  --pw-space-1: 4px;   --pw-space-1-5: 6px; --pw-space-2: 8px;
+  --pw-space-2-5: 10px; --pw-space-3: 12px;  --pw-space-4: 16px;  --pw-space-5: 20px;
+  --pw-space-6: 24px;   --pw-space-8: 32px;  --pw-space-10: 40px; --pw-space-12: 48px;
+
+  --pw-radius-xs: 2px;
+  --pw-radius-sm: 4px;
+  --pw-radius-md: 6px;
+  --pw-radius-lg: 8px;
+  --pw-radius-full: 999px;
+
+  --pw-control-sm: 24px;
+  --pw-control-md: 28px;
+  --pw-control-lg: 32px;
+  --pw-badge-h: 20px;
+  --pw-dot: 8px;
+  --pw-icon-sm: 16px;
+  --pw-icon-lg: 24px;
+  --pw-header-h: 52px;
+  --pw-strip-h: 32px;
+
+  --pw-sidebar-w: 240px;
+  --pw-list-min-w: 360px;
+  --pw-panel-w: 760px;
+  --pw-panel-min-w: 560px;
+  --pw-dialog-sm: 408px;
+  --pw-dialog-md: 624px;
+  --pw-dialog-lg: 840px;
+  --pw-tooltip-max-w: 344px;
+  --pw-toast-w: 360px;
+  --pw-menu-min-w: 192px;
+
+  --pw-z-sticky: 10;
+  --pw-z-panel: 20;
+  --pw-z-dropdown: 30;
+  --pw-z-backdrop: 40;
+  --pw-z-dialog: 41;
+  --pw-z-tooltip: 60;
+  --pw-z-toast: 70;
+
+  --pw-duration-fast: 150ms;
+  --pw-duration-base: 220ms;
+  --pw-ease-standard: ease;
+  --pw-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --pw-delay-tooltip: 300ms;  /* read by JavaScript */
+  --pw-delay-spinner: 500ms;  /* read by JavaScript */
+  --pw-delay-long: 10s;       /* read by JavaScript */
+  --pw-delay-attach: 500ms;   /* read by JavaScript */
+  --pw-toast-timeout: 4s;     /* read by JavaScript */
+  --pw-copied-timeout: 2s;    /* read by JavaScript */
+}
+
+/* 2. Light, the default */
+:root {
+  color-scheme: light;
+
+  --pw-bg: #FAFAF8;
+  --pw-surface: #FFFFFF;
+  --pw-surface-muted: #FAFAFA;
+  --pw-surface-sunken: #F5F5F5;
+  --pw-surface-strong: #EBEBEB;
+  --pw-surface-hover: #F5F5F5;
+  --pw-surface-hover-bg: #EBEBEB;
+  --pw-surface-overlay: #FFFFFF;
+  --pw-selected: #E5ECFA;
+  --pw-selected-border: #0044CC;
+  --pw-highlight: #FFEB99;
+  --pw-backdrop: rgb(0 0 0 / 0.1);
+
+  --pw-text: #141412;
+  --pw-text-muted: #52504A;
+  --pw-text-subtle: #6A6860;
+  --pw-text-disabled: #A3A093;
+  --pw-text-inverse: #FFFFFF;
+
+  --pw-border: #EBEBEB;
+  --pw-border-strong: #E0E0E0;
+  --pw-border-dashed: #CCCCCC;
+  --pw-border-control: #8C897E;
+  --pw-border-input: #8C897E;
+
+  --pw-accent: #0044CC;
+  --pw-accent-hover: #0036A3;
+  --pw-on-accent: #FFFFFF;
+  --pw-link: #0044CC;
+  --pw-focus: #3369D6;
+  --pw-warning-indicator: #997A00;
+
+  --pw-neutral-fg: #52504A; --pw-neutral-solid: #F5F5F5; --pw-on-neutral-solid: #141412;
+  --pw-neutral-tint: #F5F5F5; --pw-neutral-tint-fg: #141412; --pw-neutral-border: #EBEBEB;
+  --pw-info-fg: #0044CC; --pw-info-solid: #0044CC; --pw-on-info-solid: #FFFFFF;
+  --pw-info-tint: #E5ECFA; --pw-info-tint-fg: #0044CC; --pw-info-border: #CCDAF5;
+  --pw-success-fg: #007A3D; --pw-success-solid: #008040; --pw-on-success-solid: #FFFFFF;
+  --pw-success-tint: #E5F2EC; --pw-success-tint-fg: #006633; --pw-success-border: #CCE6D9;
+  --pw-warning-fg: #665200; --pw-warning-solid: #FFCC00; --pw-on-warning-solid: #141412;
+  --pw-warning-tint: #FFF5CC; --pw-warning-tint-fg: #332900; --pw-warning-border: #FFE066;
+  --pw-danger-fg: #CC2314; --pw-danger-solid: #CC2314; --pw-on-danger-solid: #FFFFFF;
+  --pw-danger-tint: #FAE9E7; --pw-danger-tint-fg: #CC2314; --pw-danger-border: #F5D3D0;
+
+  --pw-code-boolean: #0036A3; --pw-code-string: #006633; --pw-code-number: #665200; --pw-code-null: #A31C10;
+
+  /* The terminal is dark in both modes for now. xterm.ts reads these when it creates a terminal. */
+  --pw-term-bg: #141412; --pw-term-fg: #F5F5F5; --pw-term-cursor: #F5F5F5;
+  --pw-term-selection: rgb(102 143 224 / 0.35);
+  --pw-term-red: #E07B72; --pw-term-green: #66B38C; --pw-term-yellow: #FFE066; --pw-term-blue: #668FE0;
+
+  /* Elevation. Edges are rings (box-shadow), so they take no layout space. */
+  --pw-shadow-1: 0 0 0 1px rgb(0 0 0 / 0.04), 0 2px 4px rgb(0 0 0 / 0.08), 0 4px 8px rgb(0 0 0 / 0.08);
+  --pw-shadow-2: 0 0 0 1px rgb(0 0 0 / 0.04), 0 4px 8px rgb(0 0 0 / 0.08), 0 8px 16px rgb(0 0 0 / 0.08);
+  --pw-shadow-3: 0 0 0 1px rgb(0 0 0 / 0.04), 0 8px 16px rgb(0 0 0 / 0.08), 0 16px 32px rgb(0 0 0 / 0.08);
+  --pw-shadow-control: 0 0 0 1px var(--pw-border-control), 0 1px 2px rgb(0 0 0 / 0.04);
+  --pw-shadow-input: 0 0 0 1px var(--pw-border-input), inset 0 1px 2px rgb(0 0 0 / 0.04);
+  --pw-shadow-input-error: 0 0 0 1px var(--pw-danger-fg), inset 0 1px 2px rgb(0 0 0 / 0.04);
+  --pw-shadow-accent: 0 0 0 1px var(--pw-accent-hover), 0 1px 2px rgb(0 0 0 / 0.08);
+  --pw-shadow-overlay: var(--pw-shadow-3);
+  --pw-ring-focus: 0 0 0 2px var(--pw-surface), 0 0 0 4px var(--pw-focus);
+  --pw-ring-focus-inset: inset 0 0 0 2px var(--pw-focus);
+  --pw-ring-selected: inset 0 0 0 1px var(--pw-selected-border);
+}
+
+/*
+ * 3. Dark, twice: when the page sets data-theme="dark", and when it sets no data-theme and the
+ * system is dark, as when JavaScript is off. Keep the two blocks identical: tokens.test.tsx checks.
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --pw-bg: #141412;
+  --pw-surface: #191917;
+  --pw-surface-muted: #1D1D1B;
+  --pw-surface-sunken: #222220;
+  --pw-surface-strong: #353533;
+  --pw-surface-hover: #272725;
+  --pw-surface-hover-bg: #222220;
+  --pw-surface-overlay: #1D1D1B;
+  --pw-selected: #001B52;
+  --pw-selected-border: #668FE0;
+  --pw-highlight: #665200;
+  --pw-backdrop: rgb(0 0 0 / 0.5);
+
+  --pw-text: #F5F5F5;
+  --pw-text-muted: #CCCCCC;
+  --pw-text-subtle: #9D9D9D;
+  --pw-text-disabled: #525252;
+  --pw-text-inverse: #141412;
+
+  --pw-border: #2C2C2A;
+  --pw-border-strong: #3E3E3D;
+  --pw-border-dashed: #3A3A38;
+  --pw-border-control: #6E6E6C;
+  --pw-border-input: #6E6E6C;
+
+  --pw-accent: #0044CC;
+  --pw-accent-hover: #3369D6;
+  --pw-on-accent: #FFFFFF;
+  --pw-link: #668FE0;
+  --pw-focus: #668FE0;
+  --pw-warning-indicator: #CCA300;
+
+  --pw-neutral-fg: #CCCCCC; --pw-neutral-solid: #222220; --pw-on-neutral-solid: #F5F5F5;
+  --pw-neutral-tint: #222220; --pw-neutral-tint-fg: #F5F5F5; --pw-neutral-border: #2C2C2A;
+  --pw-info-fg: #668FE0; --pw-info-solid: #0044CC; --pw-on-info-solid: #FFFFFF;
+  --pw-info-tint: #001B52; --pw-info-tint-fg: #99B4EB; --pw-info-border: #0036A3;
+  --pw-success-fg: #66B38C; --pw-success-solid: #006633; --pw-on-success-solid: #F5F5F5;
+  --pw-success-tint: #00331A; --pw-success-tint-fg: #99CCB3; --pw-success-border: #006633;
+  --pw-warning-fg: #FFE066; --pw-warning-solid: #CCA300; --pw-on-warning-solid: #141412;
+  --pw-warning-tint: #332900; --pw-warning-tint-fg: #FFE066; --pw-warning-border: #665200;
+  --pw-danger-fg: #E07B72; --pw-danger-solid: #A31C10; --pw-on-danger-solid: #F5F5F5;
+  --pw-danger-tint: #520E08; --pw-danger-tint-fg: #EBA7A1; --pw-danger-border: #7A150C;
+
+  --pw-code-boolean: #668FE0; --pw-code-string: #66B38C; --pw-code-number: #FFE066; --pw-code-null: #E07B72;
+
+  /* Dark lifts with a faint top highlight and a light ring, because drop shadows don't read on near-black. */
+  --pw-shadow-1: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 2px 4px rgb(0 0 0 / 0.32), 0 4px 8px rgb(0 0 0 / 0.32);
+  --pw-shadow-2: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 4px 8px rgb(0 0 0 / 0.32), 0 8px 16px rgb(0 0 0 / 0.32);
+  --pw-shadow-3: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 8px 16px rgb(0 0 0 / 0.32), 0 16px 32px rgb(0 0 0 / 0.32);
+  --pw-shadow-control: 0 0 0 1px var(--pw-border-control), 0 2px 4px rgb(0 0 0 / 0.16);
+  --pw-shadow-input: 0 0 0 1px var(--pw-border-input), inset 0 2px 4px rgb(0 0 0 / 0.24);
+  --pw-shadow-input-error: 0 0 0 1px var(--pw-danger-fg), inset 0 2px 4px rgb(0 0 0 / 0.24);
+  --pw-shadow-accent: inset 0 1px 0 rgb(255 255 255 / 0.24), 0 0 0 1px var(--pw-accent-hover), 0 2px 4px rgb(0 0 0 / 0.16);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --pw-bg: #141412;
+    --pw-surface: #191917;
+    --pw-surface-muted: #1D1D1B;
+    --pw-surface-sunken: #222220;
+    --pw-surface-strong: #353533;
+    --pw-surface-hover: #272725;
+    --pw-surface-hover-bg: #222220;
+    --pw-surface-overlay: #1D1D1B;
+    --pw-selected: #001B52;
+    --pw-selected-border: #668FE0;
+    --pw-highlight: #665200;
+    --pw-backdrop: rgb(0 0 0 / 0.5);
+
+    --pw-text: #F5F5F5;
+    --pw-text-muted: #CCCCCC;
+    --pw-text-subtle: #9D9D9D;
+    --pw-text-disabled: #525252;
+    --pw-text-inverse: #141412;
+
+    --pw-border: #2C2C2A;
+    --pw-border-strong: #3E3E3D;
+    --pw-border-dashed: #3A3A38;
+    --pw-border-control: #6E6E6C;
+    --pw-border-input: #6E6E6C;
+
+    --pw-accent: #0044CC;
+    --pw-accent-hover: #3369D6;
+    --pw-on-accent: #FFFFFF;
+    --pw-link: #668FE0;
+    --pw-focus: #668FE0;
+    --pw-warning-indicator: #CCA300;
+
+    --pw-neutral-fg: #CCCCCC; --pw-neutral-solid: #222220; --pw-on-neutral-solid: #F5F5F5;
+    --pw-neutral-tint: #222220; --pw-neutral-tint-fg: #F5F5F5; --pw-neutral-border: #2C2C2A;
+    --pw-info-fg: #668FE0; --pw-info-solid: #0044CC; --pw-on-info-solid: #FFFFFF;
+    --pw-info-tint: #001B52; --pw-info-tint-fg: #99B4EB; --pw-info-border: #0036A3;
+    --pw-success-fg: #66B38C; --pw-success-solid: #006633; --pw-on-success-solid: #F5F5F5;
+    --pw-success-tint: #00331A; --pw-success-tint-fg: #99CCB3; --pw-success-border: #006633;
+    --pw-warning-fg: #FFE066; --pw-warning-solid: #CCA300; --pw-on-warning-solid: #141412;
+    --pw-warning-tint: #332900; --pw-warning-tint-fg: #FFE066; --pw-warning-border: #665200;
+    --pw-danger-fg: #E07B72; --pw-danger-solid: #A31C10; --pw-on-danger-solid: #F5F5F5;
+    --pw-danger-tint: #520E08; --pw-danger-tint-fg: #EBA7A1; --pw-danger-border: #7A150C;
+
+    --pw-code-boolean: #668FE0; --pw-code-string: #66B38C; --pw-code-number: #FFE066; --pw-code-null: #E07B72;
+
+    /* Dark lifts with a faint top highlight and a light ring, because drop shadows don't read on near-black. */
+    --pw-shadow-1: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 2px 4px rgb(0 0 0 / 0.32), 0 4px 8px rgb(0 0 0 / 0.32);
+    --pw-shadow-2: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 4px 8px rgb(0 0 0 / 0.32), 0 8px 16px rgb(0 0 0 / 0.32);
+    --pw-shadow-3: 0 -1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px rgb(255 255 255 / 0.12), 0 8px 16px rgb(0 0 0 / 0.32), 0 16px 32px rgb(0 0 0 / 0.32);
+    --pw-shadow-control: 0 0 0 1px var(--pw-border-control), 0 2px 4px rgb(0 0 0 / 0.16);
+    --pw-shadow-input: 0 0 0 1px var(--pw-border-input), inset 0 2px 4px rgb(0 0 0 / 0.24);
+    --pw-shadow-input-error: 0 0 0 1px var(--pw-danger-fg), inset 0 2px 4px rgb(0 0 0 / 0.24);
+    --pw-shadow-accent: inset 0 1px 0 rgb(255 255 255 / 0.24), 0 0 0 1px var(--pw-accent-hover), 0 2px 4px rgb(0 0 0 / 0.16);
+  }
+}
+
+/* 4. pitwall's session states, as tone aliases */
+:root {
+  --pw-state-attention-bg: var(--pw-warning-solid);   /* "needs you": the only solid badge */
+  --pw-state-attention-fg: var(--pw-on-warning-solid);
+  --pw-state-attention-bar: var(--pw-warning-indicator);
+  --pw-state-asked-bg: var(--pw-warning-tint);
+  --pw-state-asked-fg: var(--pw-warning-tint-fg);
+  --pw-state-asked-border: var(--pw-warning-border);
+  --pw-state-busy-bg: var(--pw-info-tint);
+  --pw-state-busy-fg: var(--pw-info-tint-fg);
+  --pw-state-busy-border: var(--pw-info-border);
+  --pw-state-idle-bg: var(--pw-neutral-tint);
+  --pw-state-idle-fg: var(--pw-neutral-tint-fg);
+  --pw-state-idle-border: var(--pw-neutral-border);
+  --pw-state-done-bg: var(--pw-success-tint);
+  --pw-state-done-fg: var(--pw-success-tint-fg);
+  --pw-state-done-border: var(--pw-success-border);
+  --pw-state-failed-bg: var(--pw-danger-tint);
+  --pw-state-failed-fg: var(--pw-danger-tint-fg);
+  --pw-state-failed-border: var(--pw-danger-border);
+  --pw-state-offline-fg: var(--pw-text-subtle);
+  --pw-state-offline-border: var(--pw-border-dashed);
+}
+
+/* 5. Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pw-duration-fast: 0ms;
+    --pw-duration-base: 0ms;
+  }
+}

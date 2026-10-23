@@ -3,18 +3,19 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   type ConversationPage,
   type IndexSnapshot,
-  type LastMessage,
   type RelayAlert,
   type RelayExchange,
+  type RelayOff,
   type SourceHealth,
 } from '../shared/protocol.js';
 import { createAgentsSource, type AgentRow, type AgentsSource } from './agents.js';
-import { ConversationCursorError, readConversationPage } from './conversation.js';
+import { ConversationCursorError, readConversationPage, RelayAddressBook } from './conversation.js';
 import { oneLine } from './exec.js';
-import { createGroupResolver, type GroupResolver } from './grouping.js';
+import { createGroupResolver, groupLabel, type GroupResolver } from './grouping.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
 import { buildGroups, toSessionSummary, type PlacedSession } from './summaries.js';
 import { createTranscriptReader, type TranscriptReader } from './transcripts.js';
+import { createWorkedInScanner, type WorkedInScanner } from './workedIn.js';
 
 export { isSafeSessionId } from './transcripts.js';
 export { ConversationCursorError, isWellFormedCursor } from './conversation.js';
@@ -37,6 +38,13 @@ export interface IndexerOptions {
   relayExchange?: (sessionId: string) => RelayExchange | undefined;
   /** The latest thing the relay tried that nobody asked for (D8), shown as the snapshot's `relayAlert`. A hook that throws adds nothing. */
   relayAlert?: () => RelayAlert | undefined;
+  /** Why pitwall stopped using its relay for this run (D8), shown as the snapshot's `relayOff`. A hook that throws adds nothing. */
+  relayOff?: () => RelayOff | undefined;
+  /**
+   * The relay's session name, RELAY_NAME (D8), passed in: a session's SendMessage calls to it show in
+   * its conversation as 'to-pitwall' entries (W46). Without it, they stay tool calls.
+   */
+  relayName?: string;
 }
 
 export interface Indexer {
@@ -44,13 +52,6 @@ export interface Indexer {
   latest(): IndexSnapshot | undefined;
   /** Called with every new snapshot. Returns an unsubscribe function. */
   subscribe(listener: (snapshot: IndexSnapshot) => void): () => void;
-  /**
-   * The full newest assistant message of a session in the latest snapshot.
-   * Undefined for any other session id, and for a session with no message.
-   * Synchronous and file-free: it strips what the last poll kept, once per
-   * change of message, in time bounded however hostile the text is.
-   */
-  lastMessage(sessionId: string): LastMessage | undefined;
   /**
    * One page of a session's conversation, read from its transcript backwards:
    * the newest page, or the one before the `before` cursor. Undefined for a
@@ -76,6 +77,11 @@ export interface IndexerDeps {
   home: string;
   /** How many sessions are resolved and read at the same time. */
   concurrency: number;
+  /**
+   * The repos each session worked in (workedIn.ts), read synchronously on every poll, which never
+   * waits for a scan. Without one, no session has workedIn.
+   */
+  workedIn?: WorkedInScanner;
 }
 
 /**
@@ -92,6 +98,7 @@ export function startIndexer(options: IndexerOptions): Indexer {
     agents: createAgentsSource(options.claudeBin === undefined ? {} : { claudeBin: options.claudeBin }),
     groups: createGroupResolver({ now }),
     transcripts: createTranscriptReader({ now }),
+    workedIn: createWorkedInScanner({ now }),
     now,
     home: os.homedir(),
     concurrency: 8,
@@ -103,8 +110,10 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   let latest: IndexSnapshot | undefined;
-  /** The session ids in `latest`: the only ones lastMessage() answers for. */
+  /** The session ids in `latest`: the only ones conversation() answers for. */
   let current = new Set<string>();
+  /** Where the relay's messages came from, per transcript, for the conversation's 'to-pitwall' entries. */
+  const relayBook = options.relayName === undefined ? undefined : new RelayAddressBook(options.relayName);
   let running = false;
   let stopped = false;
 
@@ -128,8 +137,11 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       if (stopped) return;
       const alert = calls(() => options.relayAlert?.(), undefined);
       if (alert !== undefined) snapshot.relayAlert = alert;
+      const off = calls(() => options.relayOff?.(), undefined);
+      if (off !== undefined) snapshot.relayOff = off;
       latest = snapshot;
       current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
+      relayBook?.retain(current);
       for (const listener of [...listeners]) {
         try {
           listener(snapshot);
@@ -153,10 +165,6 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
         listeners.delete(listener);
       };
     },
-    lastMessage(sessionId) {
-      if (!current.has(sessionId)) return undefined;
-      return deps.transcripts.lastMessage(sessionId);
-    },
     async conversation(sessionId, before) {
       if (!current.has(sessionId)) return undefined;
       const file = deps.transcripts.transcriptFile(sessionId);
@@ -164,7 +172,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       // The newest page is tried twice, in case the file shrank while it was read.
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          return (await readConversationPage(file, sessionId, before))?.page;
+          return (await readConversationPage(file, sessionId, before, relayBook === undefined ? {} : { relay: relayBook }))?.page;
         } catch (err) {
           if (err instanceof ConversationCursorError) throw err;
           if (before !== undefined) return undefined;
@@ -176,6 +184,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       stopped = true;
       clearInterval(timer);
       listeners.clear();
+      deps.workedIn?.stop();
     },
   };
 }
@@ -212,8 +221,41 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
   const kept = placed.filter((p): p is PlacedSession => p !== undefined);
   deps.transcripts.retain(new Set(kept.map((p) => p.summary.sessionId)));
   deps.groups.prune();
+  addWorkedIn(kept, resolvedRoots, deps);
 
   return { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } };
+}
+
+/**
+ * Hands the scanner this poll's sessions, which queues their scans without waiting for them, and
+ * adds what earlier scans found to their summaries, each repo labelled as its group is or would be,
+ * with the root that group sits under or would (W42). It never moves a session: the snapshot lists
+ * each only where it started (W39), and the web UI groups it by the viewer's Group sessions by, in Preferences (W59). A
+ * session seen for the first time has no workedIn until a later poll. Nothing here can fail the poll.
+ */
+function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: IndexerDeps): void {
+  const scanner = deps.workedIn;
+  if (scanner === undefined) return;
+  try {
+    scanner.track(
+      kept.map(({ root, group, summary }) => ({
+        sessionId: summary.sessionId,
+        file: deps.transcripts.transcriptFile(summary.sessionId),
+        // A session started in no repo has the root's group or a directory's, which no repo matches.
+        startKey: group.kind === 'git' ? group.key : root,
+      })),
+      roots,
+    );
+    for (const { summary } of kept) {
+      const repos = scanner.workedIn(summary.sessionId);
+      if (repos === undefined || repos.length === 0) continue;
+      // The label buildGroups would give the repo's group, and the root that group would sit under,
+      // which the web UI needs to list the session under a repo with no group (W42).
+      summary.workedIn = repos.map(({ key, root, calls, changes, lastAt }) => ({ key, label: groupLabel(key, root, deps.home), root, calls, changes, lastAt }));
+    }
+  } catch {
+    // What was added stays, and the poll goes on: a scanner failure only leaves workedIn out.
+  }
 }
 
 /** A hook's answer, or `fallback` when it throws or answers nothing, so one bad hook can't break a poll. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cwdWithinGroup, plainText, relativeTime, shortenHome, updatedAgo } from './format.js';
-import { attachCommand, needsAttention, splitFinished, statusPill } from './sessions.js';
+import { middleEllipsisParts, plainText, relativeTime, shortenHome, updatedAgo } from './format.js';
+import { attachCommand, needsAttention, rowStatusBadge, statusBadge, type SessionStatus } from './sessions.js';
 import { NOW, session } from './test/fixtures.js';
 
 describe('shortenHome', () => {
@@ -17,12 +17,22 @@ describe('shortenHome', () => {
   });
 });
 
-describe('cwdWithinGroup', () => {
-  it('is undefined at the group directory, relative below it, and shortened outside it', () => {
-    expect(cwdWithinGroup('/Users/example/repo', '/Users/example/repo')).toBeUndefined();
-    expect(cwdWithinGroup('/Users/example/repo/', '/Users/example/repo')).toBeUndefined();
-    expect(cwdWithinGroup('/Users/example/repo/src/lib', '/Users/example/repo')).toBe('src/lib');
-    expect(cwdWithinGroup('/Users/example/repo-worktrees/a', '/Users/example/repo')).toBe('~/repo-worktrees/a');
+describe('middleEllipsisParts', () => {
+  it('keeps the last segment, from its slash, for the end that always shows', () => {
+    expect(middleEllipsisParts('~/code/pitwall/packages/web')).toEqual({ start: '~/code/pitwall/packages', end: '/web' });
+    expect(middleEllipsisParts('~/code, /srv/projects')).toEqual({ start: '~/code, /srv', end: '/projects' });
+  });
+
+  it('has no end when there is no slash after the first character, so the text is only cut at its end', () => {
+    expect(middleEllipsisParts('pitwall')).toEqual({ start: 'pitwall', end: '' });
+    expect(middleEllipsisParts('/srv')).toEqual({ start: '/srv', end: '' });
+  });
+
+  it('puts the two parts back together as the text', () => {
+    for (const text of ['~/a/b', '~/', '/', '', 'a/b/']) {
+      const { start, end } = middleEllipsisParts(text);
+      expect(start + end).toBe(text);
+    }
   });
 });
 
@@ -85,58 +95,55 @@ describe('session helpers', () => {
     expect(needsAttention(session({ kind: 'background', state: 'done', status: 'idle', askedYou: asked }))).toBe(true);
   });
 
-  it('splitFinished goes by the finished field and keeps the order within each part', () => {
-    const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, state: 'done' as const, finished: true };
-    const a = session({ name: 'a' });
-    const b = session({ name: 'b', ...finished });
-    const c = session({ name: 'c' });
-    const d = session({ name: 'd', ...finished, state: 'failed' });
-    const { current, finished: done } = splitFinished([a, b, c, d]);
-    expect(current.map((s) => s.name)).toEqual(['a', 'c']);
-    expect(done.map((s) => s.name)).toEqual(['b', 'd']);
-  });
-
-  it('statusPill puts waiting first, then blocked unless stale, then asked you, then the rest', () => {
+  it('statusBadge puts waiting first, then blocked unless stale, then asked you, then the rest', () => {
     const asked = { reason: 'open-questions' as const, excerpt: 'Should I push it?' };
-    const label = (overrides: Parameters<typeof session>[0]) => statusPill(session(overrides));
-    expect(label({ status: 'waiting', waitingFor: 'input needed', askedYou: asked })).toEqual({
-      label: 'waiting: input needed',
-      tone: 'attention',
+    const badge = (overrides: Parameters<typeof session>[0]) => statusBadge(session(overrides));
+    expect(badge({ status: 'waiting', waitingFor: 'input needed', askedYou: asked })).toEqual({
+      status: 'waiting',
+      label: 'Waiting: input needed',
+      look: 'solid-warning',
     });
-    expect(label({ kind: 'background', state: 'blocked', askedYou: asked })).toEqual({ label: 'blocked', tone: 'attention' });
-    expect(label({ status: 'idle', askedYou: asked })).toEqual({ label: 'asked you', tone: 'asked' });
-    // Finished: the state, not the question, which the row shows apart, muted.
-    expect(label({ kind: 'background', state: 'done', alive: false, status: undefined, finished: true, askedYou: asked })).toEqual({
-      label: 'done',
-      tone: 'done',
+    expect(badge({ kind: 'background', state: 'blocked', askedYou: asked })).toEqual({ status: 'blocked', label: 'Blocked', look: 'solid-warning' });
+    expect(badge({ status: 'idle', askedYou: asked })).toEqual({ status: 'asked', label: 'Asked you', look: 'subtle-warning' });
+    // Finished: the state, not the question, which the row shows apart, as an outline badge.
+    expect(badge({ kind: 'background', state: 'done', alive: false, status: undefined, finished: true, askedYou: asked })).toEqual({
+      status: 'done',
+      label: 'Done',
+      look: 'subtle-success',
     });
-    expect(label({ kind: 'background', state: 'failed', alive: false, pid: undefined, status: undefined, finished: true, askedYou: asked })).toEqual({
-      label: 'failed',
-      tone: 'failed',
+    expect(badge({ kind: 'background', state: 'failed', alive: false, pid: undefined, status: undefined, finished: true, askedYou: asked })).toEqual({
+      status: 'failed',
+      label: 'Failed',
+      look: 'subtle-danger',
     });
     // Done with a live process is idle, so its question still leads.
-    expect(label({ kind: 'background', state: 'done', status: 'idle', askedYou: asked })).toEqual({ label: 'asked you', tone: 'asked' });
-    expect(label({ kind: 'background', state: 'blocked', stale: true, alive: false })).toEqual({
-      label: 'blocked',
-      tone: 'offline',
-    });
-    expect(label({ kind: 'background', state: 'blocked', stale: true, askedYou: asked })).toEqual({
-      label: 'blocked',
-      tone: 'offline',
-    });
-    expect(label({ status: 'idle' })).toEqual({ label: 'idle', tone: 'idle' });
+    expect(badge({ kind: 'background', state: 'done', status: 'idle', askedYou: asked })).toEqual({ status: 'asked', label: 'Asked you', look: 'subtle-warning' });
+    expect(badge({ kind: 'background', state: 'blocked', stale: true, alive: false })).toEqual({ status: 'blocked-stale', label: 'Blocked', look: 'outline' });
+    expect(badge({ kind: 'background', state: 'blocked', stale: true, askedYou: asked })).toEqual({ status: 'blocked-stale', label: 'Blocked', look: 'outline' });
+    expect(badge({ status: 'idle' })).toEqual({ status: 'idle', label: 'Idle', look: 'subtle-neutral' });
   });
 
-  it('statusPill includes the blocked reason when there is one', () => {
-    expect(statusPill(session({ kind: 'background', state: 'blocked', waitingFor: 'input needed' }))).toEqual({
-      label: 'blocked: input needed',
-      tone: 'attention',
-    });
-    expect(statusPill(session({ status: 'waiting' }))).toEqual({ label: 'waiting', tone: 'attention' });
-    expect(statusPill(session({ kind: 'background', state: 'working', status: undefined }))).toEqual({
-      label: 'working',
-      tone: 'busy',
-    });
+  it("statusBadge gives each state the Badges table's label and look, in sentence case, with a dot for busy and working", () => {
+    const cases: [Parameters<typeof session>[0], SessionStatus, string, string, boolean][] = [
+      [{ kind: 'background', state: 'blocked', waitingFor: 'input needed' }, 'blocked', 'Blocked: input needed', 'solid-warning', false],
+      [{ status: 'waiting' }, 'waiting', 'Waiting', 'solid-warning', false],
+      [{ kind: 'background', state: 'stopped', alive: false, status: undefined }, 'stopped', 'Stopped', 'subtle-neutral', false],
+      [{ alive: false, status: undefined }, 'not-running', 'Not running', 'outline', false],
+      [{ status: 'busy' }, 'busy', 'Busy', 'subtle-info', true],
+      [{ kind: 'background', state: 'working', status: undefined }, 'working', 'Working', 'subtle-info', true],
+      [{ status: undefined }, 'unknown', 'Unknown', 'subtle-neutral', false],
+    ];
+    for (const [overrides, status, label, look, dot] of cases) {
+      const badge = statusBadge(session(overrides));
+      expect({ status: badge.status, label: badge.label, look: badge.look, dot: badge.dot === true }).toEqual({ status, label, look, dot });
+    }
+  });
+
+  it('rowStatusBadge leaves out Idle, which only the session view shows, and nothing else', () => {
+    expect(rowStatusBadge(session({ status: 'idle' }))).toBeUndefined();
+    expect(rowStatusBadge(session({ status: undefined }))?.label).toBe('Unknown');
+    expect(rowStatusBadge(session({ status: 'busy' }))?.label).toBe('Busy');
+    expect(rowStatusBadge(session({ status: 'idle', askedYou: { reason: 'question', excerpt: 'Ship it?' } }))?.label).toBe('Asked you');
   });
 
   it('attachCommand is only for background sessions with a plain short id', () => {

@@ -1,6 +1,7 @@
 // The list of claude subcommands spawn refuses as a whole prompt. Nothing
-// here runs a subcommand: the one live check runs `claude --help`, which only
-// prints, and is skipped where claude isn't installed, as on CI.
+// here runs a subcommand. The one live check runs `claude --help`, which only
+// prints, and only with PITWALL_LIVE=1, like the other live checks, so a plain
+// `npm test` never runs claude. It's skipped where claude isn't installed.
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
@@ -58,14 +59,17 @@ describe('helpCommands', () => {
   });
 });
 
-// `claude --help` only prints. Run from the temp directory, with the same
-// scrubbed environment pitwall gives its children.
-const help = spawnSync('claude', ['--help'], { cwd: tmpdir(), env: childEnvironment(process.env), encoding: 'utf8', timeout: 15_000 });
-const installed = help.error === undefined && help.status === 0;
+// `claude --help` only prints. Run only with PITWALL_LIVE=1, from the temp
+// directory, with the same scrubbed environment pitwall gives its children.
+const live = process.env.PITWALL_LIVE === '1';
+const help = live
+  ? spawnSync('claude', ['--help'], { cwd: tmpdir(), env: childEnvironment(process.env), encoding: 'utf8', timeout: 15_000 })
+  : undefined;
+const installed = help !== undefined && help.error === undefined && help.status === 0;
 
-describe.skipIf(!installed)('the installed claude', () => {
+describe.runIf(installed)('the installed claude (PITWALL_LIVE=1)', () => {
   it('lists no command that CLAUDE_COMMANDS lacks', () => {
-    const listed = helpCommands(help.stdout);
+    const listed = helpCommands(help?.stdout ?? '');
     // A parse that found nothing would pass vacuously.
     expect(listed.length).toBeGreaterThan(5);
     expect(listed.filter((name) => !CLAUDE_COMMANDS.has(name))).toEqual([]);

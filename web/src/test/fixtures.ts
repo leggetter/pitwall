@@ -26,7 +26,6 @@ export function session(overrides: Partial<SessionSummary> = {}): SessionSummary
     stale: false,
     finished: false,
     lastActivityAt: minutesAgo(5),
-    lastAssistantText: 'Done. The tests pass.',
     lastUserPrompt: 'run the tests',
     transcript: 'ok',
     ...overrides,
@@ -70,7 +69,6 @@ export function mixedSnapshot(): IndexSnapshot {
           status: 'waiting',
           waitingFor: 'permission prompt',
           lastUserPrompt: 'update the getting started guide',
-          lastAssistantText: 'I need permission to edit docs/quickstart.md.',
         }),
         session({
           name: 'demo-worker',
@@ -79,7 +77,6 @@ export function mixedSnapshot(): IndexSnapshot {
           state: 'blocked',
           status: 'idle',
           cwd: '/Users/example/code/demo-app/packages/worker',
-          lastAssistantText: 'Which queue should the retry go to?',
         }),
         session({ name: 'demo-api', status: 'busy', lastActivityAt: minutesAgo(0.5) }),
       ],

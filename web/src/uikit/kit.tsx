@@ -1,0 +1,248 @@
+// The gallery's own building blocks (W19): a specimen with its caption, and scenarios that put a
+// real component into a state by using it, as a person would: typing, choosing, pressing. That
+// keeps the components unchanged, with no props that exist only for the gallery.
+
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+
+/** Collects the scenarios still running, so the gallery knows when every specimen has settled. */
+export const SettleContext = createContext<((work: Promise<unknown>) => void) | undefined>(undefined);
+
+export interface SpecimenProps {
+  title: string;
+  note?: ReactNode;
+  /**
+   * A frame holds what the app positions against the window (the session view, dialogs, whole
+   * pages): it becomes their containing block, so they sit inside it. Its height is the window's.
+   */
+  frame?: 'view' | 'short' | 'tall' | 'dialog' | 'dialog-tall' | 'dialog-short' | 'page' | 'toasts' | 'toasts-tall';
+  /**
+   * A window this many px wide, for the shell's width rules, which follow the app's width
+   * (docs/design-system.md, 2.12). A stage is as wide as the gallery; a window wider than that is
+   * scaled down to fit it, whole, rather than cut off at the stage's edge (W34, from W31's review).
+   */
+  width?: number;
+  /**
+   * Toasts and copied icons stay: --pw-toast-timeout and --pw-copied-timeout are an hour inside, so
+   * a result a scenario brought about is still there to see, and for the screenshots.
+   */
+  lasting?: boolean;
+  /**
+   * A waiting state shows at once: --pw-delay-spinner is 0 inside, so its skeletons and status are
+   * there, and --pw-delay-long is 0 too for `long`, so the line saying what's slow is, or an hour
+   * otherwise, so it never joins while someone looks.
+   */
+  waited?: 'shown' | 'long';
+  children: ReactNode;
+}
+
+/** The timing tokens a lasting specimen sets on its stage. Components read them where they are (timing.ts). */
+const LASTING = { '--pw-toast-timeout': '3600s', '--pw-copied-timeout': '3600s' } as CSSProperties;
+
+/** The waiting delays a waited specimen sets on its stage. */
+const WAITED = {
+  shown: { '--pw-delay-spinner': '0s', '--pw-delay-long': '3600s' },
+  long: { '--pw-delay-spinner': '0s', '--pw-delay-long': '0s' },
+} as Record<'shown' | 'long', CSSProperties>;
+
+export function Specimen({ title, note, frame, width, lasting = false, waited, children }: SpecimenProps) {
+  const style = lasting || waited ? { ...(lasting ? LASTING : {}), ...(waited ? WAITED[waited] : {}) } : undefined;
+  return (
+    <div className="uikit-specimen">
+      <h3>{title}</h3>
+      {note !== undefined && <p className="uikit-note">{note}</p>}
+      {width === undefined ? (
+        <div className={frame ? `uikit-stage uikit-frame uikit-frame-${frame}` : 'uikit-stage'} style={style}>
+          {children}
+        </div>
+      ) : (
+        <div className="uikit-stage uikit-widths">
+          <FitWindow width={width} className={frame ? `uikit-window uikit-frame uikit-frame-${frame}` : 'uikit-window'} style={style}>
+            {children}
+          </FitWindow>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface FitWindowProps {
+  width: number;
+  className: string;
+  style: CSSProperties | undefined;
+  children: ReactNode;
+}
+
+/**
+ * A window `width` px wide, laid out at that width, and scaled to the room its stage has when that's
+ * less, from its top left, in a box as tall as it then is. The app inside measures its layout width
+ * (layout.ts, widthOf), so it keeps the window's columns. Without layout, as in the tests, it's unscaled.
+ */
+function FitWindow({ width, className, style, children }: FitWindowProps) {
+  const box = useRef<HTMLDivElement>(null);
+  const shown = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState<{ scale: number; height: number }>({ scale: 1, height: 0 });
+  useLayoutEffect(() => {
+    const outer = box.current;
+    const inner = shown.current;
+    if (!outer || !inner) return;
+    const update = () => {
+      const room = outer.clientWidth;
+      const scale = room > 0 && room < width ? room / width : 1;
+      const height = inner.offsetHeight * scale;
+      setFit((current) => (current.scale === scale && current.height === height ? current : { scale, height }));
+    };
+    update();
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(update);
+    observer.observe(outer);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [width]);
+  const scaled = fit.scale < 1;
+  return (
+    <div ref={box} className="uikit-fit" style={scaled ? { height: fit.height } : undefined} data-scale={scaled ? fit.scale.toFixed(3) : undefined}>
+      <div ref={shown} className={className} style={{ ...style, width, ...(scaled ? { transform: `scale(${fit.scale})`, transformOrigin: '0 0' } : {}) }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** Polls until `find` returns something, every frame or so. performance.now(), since a screenshot run may freeze Date.now(). */
+export async function until<T>(what: string, find: () => T | null | undefined | false, timeoutMs = 3000): Promise<T> {
+  const end = performance.now() + timeoutMs;
+  for (;;) {
+    const found = find();
+    if (found) return found;
+    if (performance.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 16));
+  }
+}
+
+/** The element `selector` matches inside `root`, waiting for it to appear. */
+export function element<T extends Element = HTMLElement>(root: ParentNode, selector: string): Promise<T> {
+  return until(selector, () => root.querySelector<T>(selector));
+}
+
+/**
+ * Moves a mouse onto `target`, as a person would, so its tooltip opens after --pw-delay-tooltip.
+ * React makes pointer enter from pointerover. Nothing moves it off again, so the tooltip stays.
+ */
+export function hover(target: Element): void {
+  target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+}
+
+/**
+ * Hovers the element `selector` matches inside `root`, and waits for a tooltip to show: one saying
+ * `text`, when it's given, or else the first new one. Its content is plain text, so it's compared as such.
+ */
+export async function hoverFor(root: ParentNode, selector: string, text?: string): Promise<HTMLElement> {
+  const target = await element(root, selector);
+  const before = new Set(document.querySelectorAll('[role="tooltip"]:not([hidden])'));
+  hover(target);
+  return until(`the tooltip on ${selector}`, () =>
+    [...document.querySelectorAll<HTMLElement>('[role="tooltip"]:not([hidden])')].find((tip) =>
+      text === undefined ? !before.has(tip) : tip.querySelector('.tooltip-text')?.textContent === text,
+    ),
+  );
+}
+
+/** Types into a field as a person would, so React sees the change. */
+export function type(field: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(field, value);
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** Chooses the option whose text is `label`. */
+export function choose(select: HTMLSelectElement, label: string): void {
+  const option = [...select.options].find((candidate) => candidate.text === label);
+  if (!option) throw new Error(`no option "${label}"`);
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, option.value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/** Presses the button labelled `label` inside `root`, waiting for it to appear and to be neither disabled nor busy. */
+export async function press(root: ParentNode, label: string): Promise<void> {
+  const button = await until(`the ${label} button`, () =>
+    [...root.querySelectorAll('button')].find(
+      (candidate) =>
+        candidate.textContent?.trim() === label && !candidate.disabled && candidate.getAttribute('aria-disabled') !== 'true' && candidate.getAttribute('aria-busy') !== 'true',
+    ),
+  );
+  button.click();
+}
+
+/**
+ * Whether the page has layout, so a frame's width picks the app's columns. The tests' happy-dom has
+ * none: every width there is the window's, so a scenario that needs a narrow or wide frame has nothing
+ * to wait for.
+ */
+export function laidOut(root: HTMLElement): boolean {
+  return root.getBoundingClientRect().width > 0;
+}
+
+/** The whole specimen `root` is in, for what a scenario brings about outside its own element, such as a toast in the stack. */
+export function specimenOf(root: HTMLElement): HTMLElement {
+  return root.closest<HTMLElement>('.uikit-specimen') ?? root;
+}
+
+/** Text that appears inside `root`. */
+export function text(root: HTMLElement, wanted: string): Promise<true> {
+  return until(`"${wanted}"`, () => root.textContent?.includes(wanted) || undefined);
+}
+
+export interface ScenarioProps {
+  /** Puts the specimen inside `root` into its state. Runs once, after the first render. */
+  run: (root: HTMLElement) => Promise<unknown>;
+  children: ReactNode;
+}
+
+/** Runs `run` against its children once they're on screen, and says so if it couldn't finish. */
+export function Scenario({ run, children }: ScenarioProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const settle = useContext(SettleContext);
+  const started = useRef(false);
+  const [problem, setProblem] = useState<string>();
+
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || started.current) return;
+    started.current = true;
+    const work = run(root).catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)));
+    settle?.(work);
+  }, [run, settle]);
+
+  return (
+    <div ref={ref} className="uikit-scenario">
+      {problem !== undefined && (
+        <p className="uikit-problem" role="status">
+          This specimen didn&apos;t reach its state: {problem}
+        </p>
+      )}
+      {children}
+    </div>
+  );
+}
+
+/** A dialog that Cancel and Escape close, as in the app, with a way to open it again in the same state. */
+export function Reopenable({ children }: { children: (close: () => void) => ReactNode }) {
+  const [open, setOpen] = useState(true);
+  const [round, setRound] = useState(0);
+  if (!open) {
+    return (
+      <p className="uikit-reopen">
+        <button
+          type="button"
+          onClick={() => {
+            setRound((value) => value + 1);
+            setOpen(true);
+          }}
+        >
+          Open it again
+        </button>
+      </p>
+    );
+  }
+  return <div key={round}>{children(() => setOpen(false))}</div>;
+}

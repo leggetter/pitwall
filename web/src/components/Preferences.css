@@ -1,0 +1,41 @@
+/*
+ * The Preferences dialog (docs/design-system.md, 4: Preferences), W59: its sections in the body,
+ * which scrolls, each after a 1 px line and 16 px, its title in m 14/20 600, 12 px above its first
+ * setting, then its settings 16 px apart.
+ *
+ * The medium card, 624 px (W62): of the three dialog widths, the smallest that puts every option's
+ * line on one line but one. The longest that fits, Every repo it worked in's, is about 434 px, so a
+ * card of 488 px at the least: the body's padding, the radio and its gap take 54 px. The terminal
+ * takes the keyboard's When you open it, two sentences of about 733 px, stays on two.
+ */
+
+/*
+ * From 900 px, where the repo list is a column at the window's left, the card never covers it: at most
+ * the window less the list's width on each side, so a new grouping shows beside the dialog as it's
+ * chosen (W59's reason for no Save button). That's 420 px at 900 px, and 624 px from 1,104 px. A media
+ * query, as for every component that fills the window (2.12): 100vw is the window, like the query.
+ */
+@media (min-width: 900px) {
+  .dialog.preferences-dialog {
+    width: min(var(--pw-dialog-md), 100%, 100vw - 2 * var(--pw-sidebar-w));
+  }
+}
+
+.preferences-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-4);
+}
+
+.preferences-section + .preferences-section {
+  padding-top: var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+}
+
+.preferences-section-title {
+  /* 12 px above its first setting: the section's 16 px gap, less 4 px, so the title sits with what it names. */
+  margin-bottom: calc(-1 * var(--pw-space-1));
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-m);
+}

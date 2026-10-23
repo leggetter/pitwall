@@ -32,7 +32,7 @@ describe('isWithin', () => {
 });
 
 describe('matchRoot', () => {
-  const roots = ['/work', '/work/clients', '/other'];
+  const roots = ['/work', '/work/projects', '/other'];
 
   it('returns the root a directory sits in', () => {
     expect(matchRoot('/other/x', roots)).toBe('/other');
@@ -40,13 +40,13 @@ describe('matchRoot', () => {
   });
 
   it('prefers the longest of nested roots', () => {
-    expect(matchRoot('/work/clients/acme', roots)).toBe('/work/clients');
-    expect(matchRoot('/work/clients', roots)).toBe('/work/clients');
-    expect(matchRoot('/work/clientsX', roots)).toBe('/work');
+    expect(matchRoot('/work/projects/site', roots)).toBe('/work/projects');
+    expect(matchRoot('/work/projects', roots)).toBe('/work/projects');
+    expect(matchRoot('/work/projectsX', roots)).toBe('/work');
   });
 
   it('prefers the longest root whatever order the roots are in', () => {
-    expect(matchRoot('/work/clients/acme', ['/work/clients', '/work'])).toBe('/work/clients');
+    expect(matchRoot('/work/projects/site', ['/work/projects', '/work'])).toBe('/work/projects');
   });
 
   it('drops directories outside every root', () => {

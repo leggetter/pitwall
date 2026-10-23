@@ -1,46 +1,131 @@
-import { useContext, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { RelayExchange, RelayStatus, SessionSummary } from '../../../src/shared/protocol.js';
+// The message box (docs/design-system.md, 4: Message box): "Message this session", at the foot of an
+// interactive session's view, sending text through pitwall's relay (D8). Top to bottom: the latest
+// exchange and its reply, the result of the last send as an inline alert, the text box beside Send,
+// then the help line with ⌘ ↵, the limits note behind an info button, and the character count from
+// 80 % of the limit. Once the conversation shows the reply, in full, as the session's message to
+// pitwall (W46), the exchange is its status line alone, which says the reply is there.
+//
+// ⌘/Ctrl + Enter sends and Enter adds a line (Phil, 2026-10-20). Send is aria-disabled while there's
+// nothing to send, it's over the limit or a send is out, and its tooltip, which describes it, says
+// why, except while it's busy, when its label does. After a send, focus stays in the text box,
+// and the draft clears only when the message was delivered, held or refused. Escape never discards a
+// draft: the box tells the view when there is one, and the view then ignores Escape.
+//
+// The draft survives a reload in this tab (W44, drafts.ts): it's kept in sessionStorage as it's typed,
+// under the session's own key, and the box starts with it. A send that pitwall never heard the end
+// of, because the page reloaded or the view closed while it was out, or because its answer said
+// pitwall couldn't tell, comes back with a warning to check the session's conversation before sending
+// it again, until the draft is edited or sent. Nothing about Send changes: it's the same press as
+// before, and nothing sends by itself.
+
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import type { RelayExchange, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { absoluteTime, plainText, relativeTime } from '../format.js';
-import { canMessage, exchangeSummary, MAX_RELAY_TEXT_LENGTH, outgoingText, registerRelayFocus, sendRelay, STATUS_TEXT, statusTone, type RelayTone } from '../relay.js';
+import { DraftStorageContext, readDraft, writeDraft, type UnsureSend } from '../drafts.js';
+import { absoluteTime, plainText } from '../format.js';
+import {
+  canMessage,
+  CHECK_BEFORE_RESENDING,
+  characterCount,
+  exchangeSummary,
+  MAX_RELAY_TEXT_LENGTH,
+  outgoingText,
+  REPLY_IN_CONVERSATION,
+  resultLook,
+  sendRelay,
+  STATUS_TEXT,
+  type SendResultStatus,
+} from '../relay.js';
+import { Alert, Detail } from './Alert.js';
+import { Button } from './Button.js';
+import { InfoTip } from './InfoTip.js';
+import { KeyCaps, modEnter } from './KeyCaps.js';
+import { ScrollBox } from './ScrollBox.js';
+import { Timestamp } from './Timestamp.js';
+import { Tooltip } from './Tooltip.js';
 import '../relay.css';
 
 /** What the box shows after a send. `error` is pitwall's own failure, before the relay answered. */
 interface Shown {
-  status: RelayStatus | 'error';
+  status: SendResultStatus;
   text: string;
   detail?: string;
 }
 
-const LIMITS_NOTE =
+export const LIMITS_NOTE =
   "Starts a turn on that session's model. The session sees it as a message from another session, not from you, so it can't approve prompts.";
+
+export const NOT_RUNNING_NOTE = "It isn't running, so it can't be messaged.";
+
+/** Why Send is aria-disabled, for its tooltip. */
+export const SEND_EMPTY = 'Type a message to send it.';
+export const sendTooLong = (over: number) =>
+  `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${MAX_RELAY_TEXT_LENGTH.toLocaleString('en')}.`;
+export const SEND_UNAVAILABLE = "Messages can't be sent from here.";
+
+/**
+ * Why a draft that was being written can't be sent any more: its session stopped running, or left the
+ * list. The text stays, so it isn't lost, until it's cleared; Send says the same in its tooltip.
+ */
+export const KEPT_NOT_RUNNING = "It isn't running any more, so this can't be sent. Your text stays here until you clear it.";
+export const KEPT_NOT_LISTED = "It's no longer listed, so this can't be sent. Your text stays here until you clear it.";
+export const SEND_NOT_LISTED = "It's no longer listed, so it can't be messaged.";
+
+/**
+ * A restored draft whose send pitwall never heard the end of (W44): it may have reached the session,
+ * so check before sending it again. Its time is when the send went out. In the warning tone, as the
+ * uncertain results are, and gone once the draft is edited or sent.
+ */
+export function UnsureSendNote({ send }: { send: UnsureSend }) {
+  return send.state === 'out' ? (
+    <>
+      pitwall started sending this <Timestamp at={send.at} />, but the page reloaded or the view closed before it had an answer, so it may have reached the session.{' '}
+      {CHECK_BEFORE_RESENDING}
+    </>
+  ) : (
+    <>
+      pitwall tried to send this <Timestamp at={send.at} /> and couldn&apos;t tell whether it reached the session. {CHECK_BEFORE_RESENDING}
+    </>
+  );
+}
 
 export interface RelayBoxProps {
   /** An interactive session. */
   session: SessionSummary;
-  now: number;
-  /** When the row's Message button asks for the box, before it takes the focus. The session view scrolls to the newest message. */
-  onFocusRequest?: () => void;
+  /** The conversation already shows the latest exchange's reply, so the box shows only its status line. */
+  replyShown?: boolean;
+  /** Whether there's a draft, for the view, which ignores Escape while there is one (6.2). */
+  onDraftChange?: (hasDraft: boolean) => void;
+  /** False once the session has left the snapshot: a draft stays, but can't be sent. */
+  listed?: boolean;
 }
 
-/**
- * "Message this session", at the foot of the session view: sends text through
- * pitwall's relay (D8). The latest exchange and any reply, then what happened
- * to this send, sit just above the text box, as text only.
- */
-export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
+export function RelayBox({ session, replyShown = false, onDraftChange, listed = true }: RelayBoxProps) {
   const api = useContext(ApiContext);
-  const headingId = useId();
-  const textId = useId();
-  const noteId = useId();
-  const textRef = useRef<HTMLTextAreaElement>(null);
+  const drafts = useContext(DraftStorageContext);
+  const ids = { heading: useId(), text: useId(), keys: useId(), count: useId(), kept: useId(), unsure: useId() };
   const alive = useRef(true);
+  const form = useRef<HTMLFormElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
   // Aborted when the box goes, so a request still waiting for an apiKey doesn't outlive it.
   const requests = useRef<AbortController | undefined>(undefined);
-  const [text, setText] = useState('');
+  const { sessionId } = session;
+  // This session's draft, as the tab last kept it (W44): after a reload, or opened again later.
+  const [restored] = useState(() => readDraft(sessionId, drafts));
+  const [text, setText] = useState(restored?.text ?? '');
+  // A restored send that pitwall never heard the end of, until the draft is edited or sent.
+  const [unsure, setUnsure] = useState(restored?.send);
   const [sending, setSending] = useState(false);
   const [shown, setShown] = useState<Shown>();
-  const { sessionId } = session;
+
+  /** The draft as it now is, kept for a reload in the same event that changed it. Empty removes it. */
+  const keep = (next: string, send?: UnsureSend) => writeDraft(sessionId, next === '' ? undefined : { text: next, send }, drafts);
+
+  const edit = (next: string) => {
+    setText(next);
+    setUnsure(undefined);
+    keep(next);
+  };
 
   useEffect(() => {
     alive.current = true;
@@ -52,40 +137,103 @@ export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
     };
   }, []);
 
-  // The row's Message button: the view shows its newest message, and the box takes the focus.
-  const onFocusRequestRef = useRef(onFocusRequest);
+  const messageable = canMessage(session) && listed;
+  // A session that stopped running, or left the list, shows its note instead of the text box, unless
+  // there's a draft: that stays, editable, so it isn't lost, with a note saying why it can't be sent.
+  const formShown = messageable || text !== '';
+  const kept = !messageable && text !== '' ? (listed ? KEPT_NOT_RUNNING : KEPT_NOT_LISTED) : undefined;
+  const hasDraft = text !== '';
+  const onDraftRef = useRef(onDraftChange);
+  onDraftRef.current = onDraftChange;
   useEffect(() => {
-    onFocusRequestRef.current = onFocusRequest;
-  }, [onFocusRequest]);
-  useEffect(
-    () =>
-      registerRelayFocus(sessionId, () => {
-        onFocusRequestRef.current?.();
-        textRef.current?.focus();
-      }),
-    [sessionId],
-  );
+    onDraftRef.current?.(hasDraft);
+  }, [hasDraft]);
+  useEffect(() => () => onDraftRef.current?.(false), []);
 
-  const messageable = canMessage(session);
-  const tooLong = outgoingText(text).length > MAX_RELAY_TEXT_LENGTH;
+  // From one line to eight, then it scrolls (4: Inputs): its height follows its content, and the CSS
+  // caps it. Measured again when its width changes, since the text wraps differently.
+  const grow = () => {
+    const element = field.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  };
+  useLayoutEffect(grow, [text, formShown]);
+  useEffect(() => {
+    const element = field.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    let width = element.clientWidth;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      // In the next frame: changing its height inside the callback would notify it again in this one.
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(grow);
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [formShown]);
+
+  const length = outgoingText(text).length;
+  const tooLong = length > MAX_RELAY_TEXT_LENGTH;
   const canSend = messageable && !sending && text.trim() !== '' && !tooLong && api !== undefined;
+  const count = characterCount(length);
+  // Why Send does nothing, while it doesn't. Busy says so itself, with its label.
+  const sendOff = sending
+    ? undefined
+    : !messageable
+      ? listed
+        ? NOT_RUNNING_NOTE
+        : SEND_NOT_LISTED
+      : api === undefined
+      ? SEND_UNAVAILABLE
+      : tooLong
+        ? sendTooLong(length - MAX_RELAY_TEXT_LENGTH)
+        : text.trim() === ''
+          ? SEND_EMPTY
+          : undefined;
 
   const send = async () => {
     if (!canSend || !api) return;
+    // Kept as out before it goes, so a reload, or the view closing, before the answer leaves a warning
+    // with the draft rather than a draft that looks unsent (W44).
+    const at = new Date().toISOString();
+    keep(text, { at, state: 'out' });
+    setUnsure(undefined);
     setSending(true);
     setShown(undefined);
     const outcome = await sendRelay(api, sessionId, text, requests.current?.signal);
+    // Gone meanwhile: the request was aborted, so its outcome is unknown, and the draft stays out.
     if (!alive.current) return;
     setSending(false);
-    if (outcome.kind === 'unauthorized') return;
+    // Focus stays in the text box, or comes back to it from Send, unless it was moved elsewhere meanwhile.
+    const active = document.activeElement;
+    if (active === null || active === document.body || form.current?.contains(active)) field.current?.focus();
+    if (outcome.kind === 'unauthorized') {
+      // Refused before anything was sent.
+      keep(text);
+      return;
+    }
     if (outcome.kind === 'failed') {
-      setShown({ status: 'error', text: outcome.error });
+      // Uncertain is a warning, as the relay's own is: a resend would start another turn if this one arrived.
+      setShown({ status: outcome.uncertain ? 'uncertain' : 'error', text: outcome.error });
+      keep(text, outcome.uncertain ? { at, state: 'uncertain' } : undefined);
       return;
     }
     const { status, detail } = outcome.result;
-    setShown(detail === undefined || status === 'delivered' ? { status, text: STATUS_TEXT[status] } : { status, text: STATUS_TEXT[status], detail });
+    // Delivered has a detail only after pitwall's one retry, which says the gate stopped the relay's first copy (W52).
+    setShown(detail === undefined ? { status, text: STATUS_TEXT[status] } : { status, text: STATUS_TEXT[status], detail });
     // Sent, or set aside by the session: either way it's no longer a draft. Kept when it wasn't sent, or may not have been.
-    if (status !== 'failed' && status !== 'uncertain') setText('');
+    if (status !== 'failed' && status !== 'uncertain') {
+      setText('');
+      keep('');
+    } else {
+      keep(text, status === 'uncertain' ? { at, state: 'uncertain' } : undefined);
+    }
   };
 
   const onSubmit = (event: FormEvent) => {
@@ -97,95 +245,121 @@ export function RelayBox({ session, now, onFocusRequest }: RelayBoxProps) {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       void send();
-    } else if (event.key === 'Escape' && text !== '') {
+    } else if (event.key === 'Escape' && hasDraft) {
       // Keep the draft: Escape elsewhere closes the session view.
       event.preventDefault();
     }
   };
 
+  const look = shown ? resultLook(shown.status) : undefined;
+  const keys = modEnter();
+  // The restored warning is read with the text box, as the kept note is, so it's heard before a resend.
+  const unsureShown = unsure !== undefined && formShown;
+  const describedBy = [unsureShown && ids.unsure, kept && ids.kept, ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
+
   return (
-    <section className="relay-box" aria-labelledby={headingId}>
+    <section className="relay-box" aria-labelledby={ids.heading}>
       {/* Named for assistive technology; on screen the text box and Send say what this is, as in a chat. */}
-      <h3 className="visually-hidden" id={headingId}>
+      <h3 className="visually-hidden" id={ids.heading}>
         Message this session
       </h3>
-      {session.relay && <RelayExchangeNote exchange={session.relay} now={now} />}
-      {shown && (
-        <p className={`relay-result tone-${tone(shown.status)}`} role={shown.status === 'delivered' ? 'status' : 'alert'}>
-          {shown.text}
-          {shown.detail !== undefined && <span className="relay-detail"> {plainText(shown.detail)}</span>}
-        </p>
+      {session.relay && <RelayExchangeNote exchange={session.relay} replyShown={replyShown} />}
+      {/* In the last send's place, with no role: it was there when the box appeared (4: Alerts and banners). */}
+      {unsureShown && (
+        <Alert tone="warning" className="relay-result relay-unsure">
+          <span id={ids.unsure}>
+            <UnsureSendNote send={unsure} />
+          </span>
+        </Alert>
       )}
-      {messageable ? (
-        <form className="relay-form" onSubmit={onSubmit}>
-          <label className="visually-hidden" htmlFor={textId}>
+      {shown && look && (
+        <Alert tone={look.tone} role={look.role} className="relay-result">
+          {shown.text}
+          {shown.detail !== undefined && (
+            <>
+              {' '}
+              <Detail>{plainText(shown.detail)}</Detail>
+            </>
+          )}
+        </Alert>
+      )}
+      {formShown ? (
+        <form className="relay-form" ref={form} onSubmit={onSubmit}>
+          {kept && (
+            <p className="relay-note relay-kept" id={ids.kept}>
+              {kept}
+            </p>
+          )}
+          <label className="visually-hidden" htmlFor={ids.text}>
             Message to {plainText(session.name)}
           </label>
           <div className="relay-compose">
             <textarea
-              id={textId}
-              ref={textRef}
+              ref={field}
+              id={ids.text}
               className="field-input relay-text"
-              rows={2}
+              rows={1}
               value={text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => edit(event.target.value)}
               onKeyDown={onKeyDown}
-              disabled={sending}
-              aria-describedby={noteId}
+              readOnly={sending}
+              aria-describedby={describedBy}
               aria-invalid={tooLong || undefined}
               spellCheck
             />
-            <button type="submit" className="button small primary" disabled={!canSend} aria-busy={sending || undefined}>
-              {sending ? 'Sending…' : 'Send'}
-            </button>
+            <Tooltip content={sendOff} relation="description">
+              <Button type="submit" variant="primary" icon="send" disabled={!canSend} busy={sending} busyLabel="Sending…">
+                Send
+              </Button>
+            </Tooltip>
           </div>
-          <p className="relay-note">
-            <span className={tooLong ? 'relay-count over' : 'relay-count'}>
-              {tooLong ? `${text.length - MAX_RELAY_TEXT_LENGTH} characters over the ${MAX_RELAY_TEXT_LENGTH} limit` : `${text.length} / ${MAX_RELAY_TEXT_LENGTH}`}
-            </span>{' '}
-            <span id={noteId}>{LIMITS_NOTE}</span>
-          </p>
+          <div className="relay-help">
+            <p className="relay-help-keys" id={ids.keys}>
+              <KeyCaps keys={keys.keys} label={keys.label} /> to send
+              {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. */}
+              <InfoTip text={LIMITS_NOTE} className="relay-info" />
+            </p>
+            {count && (
+              <p className={count.over ? 'relay-count over' : 'relay-count'} id={ids.count}>
+                {count.text}
+              </p>
+            )}
+          </div>
         </form>
       ) : (
-        <>
-          <p className="relay-note">It isn&apos;t running, so it can&apos;t be messaged.</p>
-          <p className="relay-note" id={noteId}>
-            {LIMITS_NOTE}
-          </p>
-        </>
+        <p className="relay-note">{NOT_RUNNING_NOTE}</p>
       )}
     </section>
   );
 }
 
-function tone(status: Shown['status']): RelayTone {
-  return status === 'error' ? 'failed' : statusTone(status);
-}
-
 export interface RelayExchangeNoteProps {
   exchange: RelayExchange;
-  now: number;
-  /** On a row: one line for the reply, which the title shows in full. */
-  compact?: boolean;
+  /** True when the conversation already shows the reply (replyInConversation): then only the status line, which says so. */
+  replyShown?: boolean;
 }
 
 /** The latest message pitwall relayed to a session, and its reply, as text only. */
-export function RelayExchangeNote({ exchange, now, compact = false }: RelayExchangeNoteProps) {
+export function RelayExchangeNote({ exchange, replyShown = false }: RelayExchangeNoteProps) {
   const summary = exchangeSummary(exchange);
-  const reply = exchange.reply ? plainText(exchange.reply.text) : undefined;
+  const reply = !replyShown && exchange.reply ? exchange.reply : undefined;
   return (
-    <div className={compact ? 'relay-exchange compact' : 'relay-exchange'}>
-      <p className={`relay-exchange-line tone-${summary.tone}`}>
-        <span className="relay-exchange-label">Message from pitwall</span>{' '}
-        <time dateTime={exchange.sentAt} title={absoluteTime(exchange.sentAt)}>
-          {relativeTime(exchange.sentAt, now)}
-        </time>
-        : {summary.status}
+    <div className="relay-exchange">
+      <p className="relay-exchange-line">
+        Message from pitwall · <Timestamp at={exchange.sentAt} />: <span className={`relay-exchange-status tone-${summary.tone}`}>{summary.status}</span>
+        {replyShown && (
+          <>
+            . <span className="relay-exchange-replied">{REPLY_IN_CONVERSATION}</span>
+          </>
+        )}
       </p>
-      {reply !== undefined && exchange.reply && (
-        <p className="relay-reply" title={compact ? `${reply}\n${absoluteTime(exchange.reply.at)}` : absoluteTime(exchange.reply.at)}>
-          <span className="who">Reply</span> {reply}
-        </p>
+      {reply && (
+        <Tooltip content={`Replied ${absoluteTime(reply.at)}`} relation="none">
+          {/* Three lines at most (two on short windows), then it scrolls: a Tab stop while it does (ScrollBox). */}
+          <ScrollBox as="p" className="relay-reply" label="Reply">
+            <span className="relay-reply-label">Reply:</span> {plainText(reply.text)}
+          </ScrollBox>
+        </Tooltip>
       )}
     </div>
   );

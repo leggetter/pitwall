@@ -1,11 +1,16 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPAWN_PATH, type IndexSnapshot, type SessionSummary } from '../../../src/shared/protocol.js';
+import actionsCss from '../actions.css?raw';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
-import { directoryChoices, directoryProblem, modelProblem, nameProblem, promptProblem } from '../spawn.js';
+import { directoryChoices, directoryProblem, modelProblem, nameProblem, promptProblem, rootOf } from '../spawn.js';
+import { block, declarations, withoutComments } from '../test/css.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
+import { hover, unhover } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
+import dialogCss from './Dialog.css?raw';
+import { TRUST_TEXT } from './NewSessionDialog.js';
 
 // Made-up sessions and directories only.
 
@@ -57,7 +62,6 @@ function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = sn
     );
   };
   const result = render(ui(first));
-  for (const toggle of result.container.querySelectorAll<HTMLElement>('.group-toggle[aria-expanded="false"]')) fireEvent.click(toggle);
   return { ...result, update: (next: IndexSnapshot) => result.rerender(ui(next)) };
 }
 
@@ -66,6 +70,12 @@ const settle = () => act(async () => {});
 function openDialog(): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name: 'New session' }));
   return screen.getByRole('dialog', { name: 'New session' });
+}
+
+/** Fills in a first prompt and returns the dialog, for a submit. */
+function fill2(dialog: HTMLElement): HTMLElement {
+  fill(dialog, { prompt: 'Reply with: ready' });
+  return dialog;
 }
 
 function fill(dialog: HTMLElement, fields: { prompt?: string; name?: string }) {
@@ -114,6 +124,136 @@ describe('New session: the dialog', () => {
     const dialog = openDialog();
     fireEvent.keyDown(within(dialog).getByLabelText('First prompt'), { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
+
+    fireEvent.click(within(openDialog()).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('has a header with the title, the intro and Close, a body, and a footer with ⌘ ↵, Cancel and Start session', async () => {
+    renderDashboard(fakeServer(started));
+    const dialog = openDialog();
+
+    expect(dialog.querySelector('.dialog-title')?.textContent).toBe('New session');
+    // The intro is the dialog's description.
+    const intro = document.getElementById(dialog.getAttribute('aria-describedby') ?? '');
+    expect(intro?.textContent).toBe('Starts a background session with claude --bg, which you can open from the list.');
+    const close = within(dialog).getByRole('button', { name: 'Close' });
+    expect(close.closest('.dialog-head')).toBeTruthy();
+    // Its name is its tooltip, which has Escape's key cap after it.
+    const tip = await hover(close);
+    expect(tip?.querySelector('.tooltip-text')?.textContent).toBe('Close');
+    expect(tip?.querySelector('.key-caps')?.textContent).toBe('EscEscape');
+    unhover(close);
+    const foot = dialog.querySelector('.dialog-foot')!;
+    expect(foot.querySelector('.dialog-foot-meta')?.textContent).toMatch(/^(Command|Control) Enter to start$|to start$/);
+    expect([...foot.querySelectorAll('button')].map((button) => button.textContent)).toEqual(['Cancel', 'Start session']);
+  });
+
+  it('traps Tab inside, from the last control to the first and back', () => {
+    renderDashboard(fakeServer(started));
+    const dialog = openDialog();
+    const close = within(dialog).getByRole('button', { name: 'Close' });
+    const start = within(dialog).getByRole('button', { name: 'Start session' });
+
+    start.focus();
+    fireEvent.keyDown(start, { key: 'Tab' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(start);
+  });
+
+  it('starts the session with ⌘ Enter or Ctrl Enter from any field, and Enter alone in the prompt adds a line', async () => {
+    const server = fakeServer(started, started);
+    renderDashboard(server);
+    let dialog = openDialog();
+    fill(dialog, { prompt: 'first' });
+    fireEvent.keyDown(within(dialog).getByLabelText('First prompt'), { key: 'Enter' });
+    await settle();
+    expect(posts(server)).toEqual([]);
+    fireEvent.keyDown(within(dialog).getByLabelText('First prompt'), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(posts(server).map((post) => post.body)).toEqual([{ cwd: REPO, prompt: 'first' }]);
+
+    dialog = openDialog();
+    fill(dialog, { prompt: 'second' });
+    fireEvent.keyDown(within(dialog).getByLabelText('Directory'), { key: 'Enter', ctrlKey: true });
+    await settle();
+    expect(posts(server)).toHaveLength(2);
+  });
+
+  it('⌘ Enter checks the fields like Start session does, and puts focus on the first problem', async () => {
+    const server = fakeServer(started);
+    renderDashboard(server);
+    const dialog = openDialog();
+    fill(dialog, { name: '-bad', prompt: '' });
+    fireEvent.keyDown(within(dialog).getByLabelText('Directory'), { key: 'Enter', metaKey: true });
+    await settle();
+    const name = within(dialog).getByLabelText(/^Name/);
+    expect(document.activeElement).toBe(name);
+    expect(name.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(name.getAttribute('aria-describedby') ?? '')?.textContent).toMatch(/^Letters, digits/);
+    expect(within(dialog).getByLabelText('First prompt').getAttribute('aria-invalid')).toBe('true');
+    expect(posts(server)).toEqual([]);
+  });
+
+  it('shows no problems until the first submit, then follows the typing', async () => {
+    renderDashboard(fakeServer(started));
+    const dialog = openDialog();
+    fill(dialog, { name: '-bad' });
+    expect(dialog.querySelector('.field-problem')).toBeNull();
+    expect(within(dialog).getByLabelText(/^Name/).hasAttribute('aria-invalid')).toBe(false);
+
+    await submit(dialog);
+    expect(within(dialog).getByText(/^Letters, digits/)).toBeTruthy();
+    fill(dialog, { name: 'good' });
+    expect(within(dialog).queryByText(/^Letters, digits/)).toBeNull();
+    fill(dialog, { name: 'bad;' });
+    expect(within(dialog).getByText(/^Letters, digits/)).toBeTruthy();
+  });
+
+  it('closes on a click on the backdrop only while nothing has been typed', () => {
+    renderDashboard(fakeServer(started));
+    const button = screen.getByRole('button', { name: 'New session' });
+    button.focus();
+    let dialog = openDialog();
+    const backdrop = () => document.querySelector('.dialog-backdrop')!;
+    // A click inside the card isn't one on the backdrop.
+    fireEvent.pointerDown(dialog);
+    fireEvent.click(dialog);
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
+
+    fill(dialog, { prompt: 'a draft' });
+    fireEvent.pointerDown(backdrop());
+    fireEvent.click(backdrop());
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
+
+    fill(dialog, { prompt: '' });
+    fireEvent.pointerDown(backdrop());
+    fireEvent.click(backdrop());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
+
+    // A press that starts in the card and ends on the backdrop, as when selecting text, isn't a click on it.
+    dialog = openDialog();
+    fireEvent.pointerDown(dialog);
+    fireEvent.click(backdrop());
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
+  });
+
+  it('sits at --pw-z-backdrop and --pw-z-dialog, as wide as --pw-dialog-md, at most the window less 96 px tall', () => {
+    const css = withoutComments(dialogCss);
+    const backdrop = new Map(declarations(block(css, /\.dialog-backdrop\s*\{/)));
+    expect(backdrop.get('z-index')).toBe('var(--pw-z-backdrop)');
+    expect(backdrop.get('background')).toBe('var(--pw-backdrop)');
+    expect(backdrop.get('padding')).toBe('var(--pw-space-12) var(--pw-space-4)');
+    const card = declarations(block(css, /\n\.dialog\s*\{/));
+    expect(new Map(card).get('z-index')).toBe('var(--pw-z-dialog)');
+    expect(new Map(card).get('width')).toBe('min(var(--pw-dialog-md), 100%)');
+    expect(card.filter(([property]) => property === 'max-height').map(([, value]) => value)).toContain('calc(100dvh - 2 * var(--pw-space-12))');
+    // The old modal's z-index, equal to --pw-z-panel, is gone.
+    expect(withoutComments(actionsCss)).not.toMatch(/modal|z-index:\s*20/);
   });
 
   it("isn't offered before the first snapshot", () => {
@@ -140,13 +280,48 @@ describe('New session: starting one', () => {
       },
     ]);
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByText('Started pitwall-test-spawn. Its view opens when it shows up in the list.')).toBeTruthy();
+    // A toast, in the stack's live region, which was there before it (4: Toasts), not a page alert.
+    const toast = screen.getByText('Started pitwall-test-spawn. Its view opens when it shows up in the list.');
+    expect(toast.closest('.toasts')?.getAttribute('aria-live')).toBe('polite');
+    expect(toast.closest('.session-list-alerts')).toBeNull();
 
     const spawned = session({ name: 'pitwall-test-spawn', kind: 'background', shortId: 'c0ffee12', state: 'working', cwd: OTHER_REPO });
     update(snap([session({ name: 'demo-docs' }), spawned]));
     await settle();
     expect(screen.getByRole('dialog', { name: 'pitwall-test-spawn' })).toBeTruthy();
-    expect(screen.queryByText(/Its view opens when/)).toBeNull();
+  });
+
+  it("started from the no-sessions empty state, focuses the new session's heading once it's listed, since the button it came from has gone (W31)", async () => {
+    const server = fakeServer(started);
+    const { update } = renderDashboard(server, snapshot([]));
+    const fromEmpty = within(screen.getByRole('main')).getByRole('button', { name: 'New session' });
+    // A click focuses the button it's on, as a browser's does.
+    fromEmpty.focus();
+    fireEvent.click(fromEmpty);
+    const dialog = screen.getByRole('dialog', { name: 'New session' });
+    fill(dialog, { prompt: 'Reply with: ready' });
+    await submit(dialog);
+    expect(document.activeElement).toBe(fromEmpty);
+
+    const spawned = session({ name: 'pitwall-test-spawn', kind: 'background', shortId: 'c0ffee12', state: 'working', cwd: REPO });
+    update(snapshot([group({ key: REPO, label: 'demo-app', sessions: [spawned] })]));
+    await settle();
+    const view = screen.getByRole('dialog', { name: 'pitwall-test-spawn' });
+    expect(document.activeElement).toBe(document.getElementById(view.getAttribute('aria-labelledby')!));
+  });
+
+  it('started from the header, leaves focus on its New session button when the view opens', async () => {
+    const server = fakeServer(started);
+    const { update } = renderDashboard(server);
+    const header = within(document.querySelector<HTMLElement>('.app-header')!).getByRole('button', { name: 'New session' });
+    header.focus();
+    await submit(fill2(openDialog()));
+    expect(document.activeElement).toBe(header);
+    const spawned = session({ name: 'pitwall-test-spawn', kind: 'background', shortId: 'c0ffee12', state: 'working', cwd: REPO });
+    update(snap([session({ name: 'demo-docs' }), spawned]));
+    await settle();
+    expect(screen.getByRole('dialog', { name: 'pitwall-test-spawn' })).toBeTruthy();
+    expect(document.activeElement).toBe(header);
   });
 
   it('leaves out an empty name and the default model, and uses a typed directory and model', async () => {
@@ -215,10 +390,30 @@ describe('New session: starting one', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
 
+    // Busy, and Cancel aria-disabled: both stay focusable, and neither does anything.
     const busy = within(dialog).getByRole('button', { name: 'Starting…' }) as HTMLButtonElement;
-    expect(busy.disabled).toBe(true);
-    expect((within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    expect(busy.disabled).toBe(false);
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
+    expect(cancel.getAttribute('aria-disabled')).toBe('true');
+    expect(cancel.disabled).toBe(false);
+    // Every other control is aria-disabled too, and keeps what it has.
+    const close = within(dialog).getByRole('button', { name: 'Close' });
+    expect(close.getAttribute('aria-disabled')).toBe('true');
+    const prompt = within(dialog).getByLabelText('First prompt') as HTMLTextAreaElement;
+    for (const field of [within(dialog).getByLabelText('Directory'), within(dialog).getByLabelText(/^Name/), within(dialog).getByLabelText(/^Model/), prompt]) {
+      expect(field.getAttribute('aria-disabled')).toBe('true');
+    }
+    expect(prompt.readOnly).toBe(true);
+    fireEvent.change(prompt, { target: { value: 'changed' } });
+    expect(prompt.value).toBe('go');
+    fireEvent.click(cancel);
+    fireEvent.click(close);
+    fireEvent.click(busy);
     fireEvent.keyDown(dialog, { key: 'Escape' });
+    fireEvent.keyDown(prompt, { key: 'Enter', metaKey: true });
+    fireEvent.pointerDown(document.querySelector('.dialog-backdrop')!);
+    fireEvent.click(document.querySelector('.dialog-backdrop')!);
     fireEvent.submit(dialog.querySelector('form')!);
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
     expect(server).toHaveBeenCalledTimes(1);
@@ -226,6 +421,13 @@ describe('New session: starting one', () => {
     answer(new Response(JSON.stringify(started.body), { status: 201 }));
     await settle();
     expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
+  });
+
+  it('styles its fields and the first prompt’s textarea with the placeholder rule in actions.css', () => {
+    renderDashboard(fakeServer(started));
+    const dialog = openDialog();
+    expect(within(dialog).getByLabelText('First prompt').classList.contains('field-input')).toBe(true);
+    expect((within(dialog).getByPlaceholderText('Claude Code names it from the prompt') as HTMLInputElement).classList.contains('field-input')).toBe(true);
   });
 
   it('keeps the session view behind it open on Escape', async () => {
@@ -258,13 +460,22 @@ describe('New session: when it is refused', () => {
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
 
+    // An inline danger alert at the end of the body (4: Dialogs), not a banner.
     const alert = within(dialog).getByRole('alert');
-    expect(within(alert).getByText(untrusted.body.error)).toBeTruthy();
-    expect(within(alert).getByText(/never trusts a directory for you/)).toBeTruthy();
-    expect(within(alert).getByText(`cd ${REPO} && claude`, { selector: 'code' })).toBeTruthy();
-    fireEvent.click(within(alert).getByRole('button', { name: 'Copy' }));
+    expect(alert.className).toBe('inline-alert danger spawn-failure');
+    expect(dialog.querySelector('.banner')).toBeNull();
+    expect(alert.textContent).toContain(`Couldn't start the session. ${untrusted.body.error}`);
+    expect(within(alert).getByText(untrusted.body.error).className).toBe('alert-detail');
+    expect(within(alert).getByText(TRUST_TEXT)).toBeTruthy();
+    // The command chip: the whole command, in two parts for the middle ellipsis.
+    const chip = alert.querySelector('code.command-chip')!;
+    expect(chip.textContent).toBe(`cd ${REPO} && claude`);
+    const copy = within(alert).getByRole('button', { name: 'Copy command' });
+    expect(chip.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(copy);
     await settle();
     expect(writeText).toHaveBeenCalledWith(`cd ${REPO} && claude`);
+    expect(screen.getByText('Copied').closest('.toasts')).toBeTruthy();
     // Still open, so the user can trust the directory and try again.
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
   });
@@ -275,8 +486,8 @@ describe('New session: when it is refused', () => {
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
     const alert = within(dialog).getByRole('alert');
-    expect(alert.textContent).toBe('Another session is still starting. Try again in a moment.');
-    expect(within(alert).queryByRole('button', { name: 'Copy' })).toBeNull();
+    expect(alert.textContent).toBe("Couldn't start the session. Another session is still starting. Try again in a moment.");
+    expect(within(alert).queryByRole('button', { name: 'Copy command' })).toBeNull();
 
     await submit(dialog);
     expect(within(dialog).getByRole('alert').textContent).toBe("Couldn't start the session (HTTP 500).");
@@ -310,5 +521,32 @@ describe('spawn helpers', () => {
     expect(promptProblem(' \n')).toBeDefined();
     expect(promptProblem('x'.repeat(16_384))).toBeUndefined();
     expect(promptProblem('x'.repeat(16_385))).toBeDefined();
+  });
+
+  it("with a root tab open, offers that tab's directories alone, then its root (W38)", () => {
+    const s = snapshot(
+      [
+        group({ key: '/r/b', label: 'b', root: '/r', sessions: [] }),
+        group({ key: '/r2/a', label: 'a', root: '/r2', sessions: [] }),
+        group({ key: '/r/a', label: 'a', root: '/r2', sessions: [] }),
+      ],
+      { roots: ['/r', '/r2'] },
+    );
+    expect(directoryChoices(s, '/r').map((choice) => choice.path)).toEqual(['/r/b', '/r']);
+    // A group the index put under /r2 whose key is under /r (a worktree's main repo) isn't /r2's to offer.
+    expect(directoryChoices(s, '/r2').map((choice) => choice.path)).toEqual(['/r2/a', '/r2']);
+  });
+
+  it("places a directory under the longest root that holds it, as the index does, and keeps a typed one in the open tab (W38)", () => {
+    expect(rootOf('/a/b/c', ['/a', '/a/b'])).toBe('/a/b');
+    expect(rootOf('/a/bc', ['/a', '/a/b'])).toBe('/a');
+    expect(rootOf('/a/b/', ['/a/b', '/a'])).toBe('/a/b');
+    expect(rootOf('/z', ['/a'])).toBeUndefined();
+    expect(directoryProblem('/a/x', ['/a', '/a/b'], '/a')).toBeUndefined();
+    expect(directoryProblem('/a/b/x', ['/a', '/a/b'], '/a')).toBe('Use a directory under /a. /a/b has its own tab.');
+    expect(directoryProblem('/a/b/x', ['/a', '/a/b'], '/a/b')).toBeUndefined();
+    expect(directoryProblem('/q/x', ['/a', '/q'], '/a')).toBe('Use a directory under /a. /q has its own tab.');
+    expect(directoryProblem('/elsewhere', ['/a', '/q'], '/a')).toBe('Use a directory under /a.');
+    expect(directoryProblem('relative', ['/a', '/q'], '/a')).toMatch(/absolute/);
   });
 });

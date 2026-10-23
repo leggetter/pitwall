@@ -8,6 +8,14 @@
 // The file is deleted as soon as a page authenticates, 60 seconds after it was
 // written if none does, or when the CLI exits, whichever comes first. A later
 // run deletes any left behind by one that was killed. Jupyter does the same.
+//
+// With a fixed token (PITWALL_TOKEN), the CLI doesn't delete the file when a
+// page authenticates, only after the 60 seconds or on exit (W51): a pinned tab
+// that already has the token reconnects at once, before a newly opened tab has
+// read the file, which would then find it gone. Keeping it is no wider an
+// exposure: the token is in the environment or a 0600 .env for the whole run,
+// and this file is 0600 in a 0700 directory. It's the one place pitwall
+// writes a fixed token (D7).
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
 import os from 'node:os';
@@ -207,9 +215,9 @@ export function removeOnExit(file: string): () => void {
 /**
  * Deletes `file` once it has done its job, so the token doesn't sit on disk
  * for the whole run: when the returned function is called, which the CLI does
- * when a page first authenticates, or `ttlMs` after this call, whichever comes
- * first. Until then removeOnExit() still deletes it on exit. Calling the
- * returned function again does nothing.
+ * when a page first authenticates with a per-run token, or `ttlMs` after this
+ * call, whichever comes first. Until then removeOnExit() still deletes it on
+ * exit. Calling the returned function again does nothing.
  */
 export function removeWhenUsed(file: string, ttlMs: number = LAUNCH_FILE_TTL_MS): () => void {
   const remove = removeOnExit(file);

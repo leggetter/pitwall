@@ -1,86 +1,4 @@
-/* pitwall web UI. Plain CSS with custom properties; light and dark follow the system. */
-
-:root {
-  color-scheme: light dark;
-
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
-
-  --bg: #f4f5f7;
-  --surface: #ffffff;
-  --surface-raised: #f0f2f5;
-  --border: #d8dce2;
-  --border-strong: #b9c0c9;
-  --text: #1b1f24;
-  --text-muted: #555d67;
-  --focus: #1f5fd6;
-
-  --attention: #f59e0b;
-  --attention-text: #2b1d00;
-  --attention-row: #fff6e5;
-  --attention-strong: #9a5800;
-
-  --busy-bg: #dbe8fe;
-  --busy-text: #1d3f99;
-  --idle-bg: #eceef1;
-  --idle-text: #474f59;
-  --done-bg: #dcf5e4;
-  --done-text: #165c32;
-  --failed-bg: #fde2e2;
-  --failed-text: #921c1c;
-  --offline-text: #5a626c;
-  --offline-border: #9aa1ab;
-
-  --live: #16833d;
-  --pending: #b26b00;
-  --broken: #c42b2b;
-
-  --warning-bg: #fff3cd;
-  --warning-border: #d9a400;
-  --error-bg: #fde2e2;
-  --error-border: #d14343;
-
-  --radius: 8px;
-  --radius-pill: 999px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e1115;
-    --surface: #161a20;
-    --surface-raised: #1e232b;
-    --border: #2b323c;
-    --border-strong: #3d4552;
-    --text: #e6e9ee;
-    --text-muted: #9ca5b1;
-    --focus: #7ea8ff;
-
-    --attention: #fbbf24;
-    --attention-text: #1c1300;
-    --attention-row: #2a2008;
-    --attention-strong: #fcc94a;
-
-    --busy-bg: #18294a;
-    --busy-text: #a9c7ff;
-    --idle-bg: #232932;
-    --idle-text: #b7bfc9;
-    --done-bg: #12301e;
-    --done-text: #8ee6ac;
-    --failed-bg: #3b1717;
-    --failed-text: #ffaaaa;
-    --offline-text: #9ca5b1;
-    --offline-border: #535c69;
-
-    --live: #4ade80;
-    --pending: #fbbf24;
-    --broken: #f87171;
-
-    --warning-bg: #33280a;
-    --warning-border: #a37b00;
-    --error-bg: #3b1717;
-    --error-border: #b84040;
-  }
-}
+/* pitwall web UI. Plain CSS, with its colours, fonts and type sizes from the custom properties in tokens.css (docs/design-system.md). */
 
 *,
 *::before,
@@ -89,17 +7,17 @@
 }
 
 html {
-  background: var(--bg);
+  background: var(--pw-bg);
 }
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.45;
+  background: var(--pw-bg);
+  color: var(--pw-text);
   -webkit-text-size-adjust: 100%;
+  font: var(--pw-text-m)/var(--pw-leading-m) var(--pw-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 h1,
@@ -110,19 +28,35 @@ p {
 }
 
 code {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
 }
 
+/* Fields show what was typed, with no ligatures or contextual alternates (docs/design-system.md, 2.7): Inter would draw -> as an arrow. */
+input,
+select,
+textarea {
+  font-variant-ligatures: none;
+}
+
+/*
+ * Keyboard focus (docs/design-system.md, 2.10): a 2 px gap in the surface colour, then a 2 px ring in
+ * --pw-focus, drawn as a shadow. The transparent outline shows in forced-colours mode, which drops
+ * shadows. A control with an edge of its own keeps it under the ring, in the rules below.
+ */
 :focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid transparent;
   outline-offset: 2px;
+  box-shadow: var(--pw-ring-focus);
 }
 
 [hidden] {
@@ -146,293 +80,1484 @@ input {
   vertical-align: -2px;
 }
 
-/* Layout */
+/*
+ * The app shell (docs/design-system.md, 3). The page doesn't scroll: the app is one window tall, a
+ * grid of the app strip (only while the relay is off), the header and the columns, and each column scrolls on
+ * its own. Which columns there are comes from data-layout, which layout.ts sets from the app's width:
+ * three-columns from 1,200 px, sidebar from 900 px, and drawer below that. The header's compact rule
+ * is a container query on the app, which spans the window; the #uikit gallery's frames give it
+ * narrower ones.
+ */
 
 .app {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 16px 48px;
+  container: pitwall / inline-size;
+  display: grid;
+  /* One column, never wider than the window, whatever the widest row or badge inside would like. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'strip'
+    'header'
+    'columns';
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--pw-bg);
 }
 
+/*
+ * Positioned, so what's absolutely positioned inside, such as a .visually-hidden label, is laid out
+ * against them and clipped by their overflow. Otherwise it's placed on the page, as far down as its
+ * row, and the page itself grows a scrollbar.
+ */
+.app,
+.repo-list,
+.session-list-body {
+  position: relative;
+}
+
+/*
+ * The columns are placed by name, so the session view over the list (below) can share their row
+ * rather than being placed after them.
+ */
+.columns {
+  grid-area: columns;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* One row, the window's height less the header's, whatever a column holds: the columns scroll instead. */
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: 'list';
+  min-height: 0;
+}
+
+.app[data-layout='sidebar'] .columns {
+  grid-template-columns: var(--pw-sidebar-w) minmax(0, 1fr);
+  grid-template-areas: 'repos list';
+}
+
+/* The session view's column takes the width its pane has: see .session-pane below. */
+.app[data-layout='three-columns'] .columns {
+  grid-template-columns: var(--pw-sidebar-w) minmax(var(--pw-list-min-w), 1fr) auto;
+  grid-template-areas: 'repos list view';
+}
+
+.columns > .repo-list {
+  grid-area: repos;
+}
+
+.columns > .session-list {
+  grid-area: list;
+}
+
+/*
+ * The third column's pane: the divider and the session view, or the "Select a session" state. Below
+ * 1,200 px it isn't a box at all, and the view overlays the list from inside it, so the view is the
+ * same element in every layout and never remounts.
+ */
+.session-pane {
+  display: contents;
+}
+
+/*
+ * 760 px, or the width the divider set (Divider.tsx sets it on the pane), but never more than what the
+ * repo list and the session list's 360 px leave, which is 600 px at 1,200 px. 100cqw is the app's width.
+ */
+.app[data-layout='three-columns'] .session-pane {
+  position: relative;
+  grid-area: view;
+  display: flex;
+  width: var(--pw-panel-w);
+  min-width: 0;
+  max-width: calc(100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w));
+  min-height: 0;
+}
+
+/*
+ * A window too short for the header and useful columns, such as a phone held sideways or 200 % zoom
+ * on a laptop: the page scrolls as a whole, so the lists keep their room.
+ */
+@media (max-height: 480px) {
+  .app {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .columns > .repo-list,
+  .session-list-body {
+    overflow-y: visible;
+  }
+
+  /* The session view's column sticks to the top of the window, one window tall; so does the view over the list (below). */
+  .app[data-layout='three-columns'] .session-pane {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    height: 100dvh;
+  }
+}
+
+/* The repo list (section 3, and Repo list items in section 4) */
+
+.repo-list {
+  min-width: 0;
+  min-height: 0;
+  padding: var(--pw-space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--pw-bg);
+  border-right: 1px solid var(--pw-border);
+}
+
+.repo-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo-divider {
+  margin: var(--pw-space-2) 0;
+  border: 0;
+  border-top: 1px solid var(--pw-border);
+}
+
+.repo-item {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border-radius: var(--pw-radius-md);
+  color: var(--pw-text);
+  text-decoration: none;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+/* The sidebar is on --pw-bg; the drawer is a surface (2.3). */
+@media (hover: hover) {
+  .repo-item:hover {
+    background: var(--pw-surface-hover-bg);
+  }
+
+  .repo-drawer .repo-item:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.repo-item.selected,
+.repo-item.selected:hover {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+}
+
+.repo-item.selected:focus-visible {
+  box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+.repo-item-icon {
+  flex: none;
+  color: var(--pw-text-subtle);
+}
+
+.repo-item-label {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repo-item.selected .repo-item-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+.repo-item.finished:not(.selected) .repo-item-label {
+  color: var(--pw-text-muted);
+}
+
+.repo-item > .badge {
+  flex: none;
+}
+
+.repo-item-count {
+  flex: none;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The Hidden section, at the repo list's foot (W35; section 4: Hidden groups): a disclosure the size
+ * of a repo list item, in the Finished toggle's type, then each hidden group's link, muted, and its
+ * Unhide icon button. On --pw-bg in the sidebar, where hovers are --pw-surface-hover-bg (2.3).
+ */
+.repo-hidden-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  width: 100%;
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: transparent;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.repo-hidden-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repo-hidden-toggle > .badge {
+  flex: none;
+}
+
+.repo-hidden-toggle .chevron {
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.repo-hidden-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.repo-hidden-list {
+  padding-top: var(--pw-space-0-5);
+}
+
+.repo-hidden-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+}
+
+.repo-hidden-entry > .repo-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repo-item.hidden-item:not(.selected) .repo-item-label {
+  color: var(--pw-text-muted);
+}
+
+/* A hidden group the snapshot hasn't: "No sessions" under its label, which keeps the item's width. */
+.repo-item-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.repo-item-text > .repo-item-label {
+  flex: none;
+}
+
+.repo-item-note {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+@media (hover: hover) {
+  .repo-hidden-toggle:hover {
+    background: var(--pw-surface-hover-bg);
+    color: var(--pw-text);
+  }
+
+  .repo-drawer .repo-hidden-toggle:hover {
+    background: var(--pw-surface-hover);
+  }
+
+  .columns > .repo-list .icon-button.ghost:hover {
+    background: var(--pw-surface-hover-bg);
+  }
+}
+
+/* The drawer, below 900 px: over a backdrop, like a dialog, sliding in from the left. */
+
+.repo-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--pw-z-backdrop);
+  background: var(--pw-backdrop);
+}
+
+.repo-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--pw-z-dialog);
+  display: flex;
+  width: min(var(--pw-sidebar-w), 100vw);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-overlay);
+  animation: repo-drawer-in var(--pw-duration-base) var(--pw-ease-out);
+}
+
+.repo-drawer > .repo-list {
+  flex: 1 1 auto;
+  background: var(--pw-surface);
+  border-right: 0;
+}
+
+@keyframes repo-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+/* The session list (section 3) */
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--pw-surface);
+}
+
+/*
+ * The page alerts, above the header: at most half the column, then they scroll inside themselves, so
+ * the header and some rows always show, as the session view's footer does.
+ */
+/*
+ * A box that scrolls inside itself, while its content overflows and it's a Tab stop (ScrollBox.tsx):
+ * the inset ring, since what's around it may clip an outer one.
+ */
+.scroll-box:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.session-list-alerts {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--pw-space-3);
+  max-height: 50%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--pw-space-3) var(--pw-space-4) 0;
+  /* The alerts' actions wrap under their text when the column is narrow (Alerts, below). */
+  container: page-alerts / inline-size;
+}
+
+.session-list-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.session-list-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-3);
+}
+
+.session-list-title {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
+}
+
+.session-list-title:focus-visible {
+  outline-offset: 2px;
+  border-radius: var(--pw-radius-sm);
+}
+
+.session-list-kind {
+  flex: none;
+  color: var(--pw-text-subtle);
+}
+
+.session-list-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Line 2: the filters, growing, with room at the right for W23's Sort select. */
+.session-list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-2) var(--pw-space-3);
+}
+
+.session-list-filters > .filter-controls {
+  flex: 1 1 auto;
+}
+
+.session-list-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The header has the line above the first row. */
+.session-list-body > .sessions > :first-child {
+  border-top: 0;
+}
+
+/* The session view's column, from 1,200 px. The divider draws the line between it and the list. */
+
+.session-view.in-column,
+.session-view-empty {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.session-view-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pw-surface);
+}
+
+/*
+ * The divider (section 3: Session view): a 24 px hit area (WCAG 2.5.8) at the view's left edge, with
+ * the 1 px line at that edge, which turns 2 px --pw-focus on hover, focus and while dragging. The hit
+ * area is 16 px over the view's gutter, which has nothing in it, and 8 px over the list's edge, its
+ * rows' padding and the outer part of its scrollbar, so it covers none of the view's content.
+ */
+.session-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--pw-space-2));
+  z-index: 1;
+  width: var(--pw-control-sm);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.session-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pw-space-2);
+  width: 1px;
+  background: var(--pw-border);
+}
+
+.session-divider:focus-visible {
+  box-shadow: none;
+}
+
+.session-divider:focus-visible::before,
+.session-divider[data-dragging]::before {
+  width: 2px;
+  background: var(--pw-focus);
+}
+
+@media (hover: hover) {
+  .session-divider:hover::before {
+    width: 2px;
+    background: var(--pw-focus);
+  }
+}
+
+/* No text selection, and the resize cursor everywhere, while the divider is dragged. */
+.app:has(.session-divider[data-dragging]) {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/*
+ * Page notices (docs/design-system.md, 4: Page notices): in place of the dashboard, 560 px at most,
+ * 15 % of the window down. The wordmark, the lead in l, then the detail in m and --pw-text-muted 4 px
+ * below, with commands as inline code (2.7).
+ */
 .notice {
   max-width: 560px;
   margin: 15vh auto 0;
-  padding: 0 16px;
+  padding: 0 var(--pw-space-4);
+  overflow-wrap: anywhere;
 }
 
 .notice .brand {
-  margin-bottom: 8px;
+  margin-bottom: var(--pw-space-2);
 }
 
-.notice p {
-  font-size: 1.1rem;
+.notice-lead {
+  color: var(--pw-text);
+  font-size: var(--pw-text-l);
+  line-height: var(--pw-leading-l);
+}
+
+.notice-detail {
+  margin-top: var(--pw-space-1);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.notice code {
+  padding: 0 var(--pw-space-1);
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
 }
 
 /* Header */
 
-.masthead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 14px 0 12px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
-}
-
-.masthead-row {
+.app-header {
+  grid-area: header;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
+  gap: var(--pw-space-2) var(--pw-space-3);
+  min-height: var(--pw-header-h);
+  padding: 0 var(--pw-space-4);
+  background: var(--pw-bg);
+  border-bottom: 1px solid var(--pw-border);
 }
 
-.masthead-row + .masthead-row {
-  margin-top: 10px;
+.app-header-start {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--pw-space-3);
+  min-width: 0;
 }
 
 .brand {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  flex: none;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
 }
 
 .roots {
   min-width: 0;
-  flex: 1 1 200px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  overflow-wrap: anywhere;
+  color: var(--pw-text-subtle);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
+  font-variant-ligatures: none;
 }
 
-.masthead-status {
+.app-header-end {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 12px;
-  margin-left: auto;
-  font-size: 0.875rem;
+  gap: var(--pw-space-2) var(--pw-space-3);
 }
 
-.connection {
+/*
+ * With two or more roots, a tab per root in place of the roots' path (section 3: Header, and 4: Tabs,
+ * W38). The header wraps whenever its line has no room, at any width: first the right side goes
+ * under the wordmark and the tabs, then the tabs go under the wordmark and wrap among themselves, and
+ * only a tab wider than a whole line is cut, in the middle. So every tab, and every badge on one, is
+ * in sight at 320 px, and nothing scrolls sideways. 12 px above and below keep one line at 52 px.
+ */
+.app-header.has-tabs {
+  flex-wrap: wrap;
+  padding-block: var(--pw-space-3);
+}
+
+.app-header.has-tabs .app-header-start {
+  flex-wrap: wrap;
+  row-gap: var(--pw-space-2);
+}
+
+.root-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Path type, as the roots were. The open tab has the selected look, as the selected repo list item does. */
+.root-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-weight: 600;
+  gap: var(--pw-space-1-5);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--pw-control-md);
+  padding: var(--pw-space-1) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: none;
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
+  font-variant-ligatures: none;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
-.connection .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--pending);
+/* On the page background, the header's fill (2.3). */
+@media (hover: hover) {
+  .root-tab:hover {
+    background: var(--pw-surface-hover-bg);
+    color: var(--pw-text);
+  }
 }
 
-.state-live .dot {
-  background: var(--live);
+.root-tab[aria-selected='true'],
+.root-tab[aria-selected='true']:hover {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+  color: var(--pw-text);
+  font-weight: var(--pw-weight-medium);
 }
 
-.state-unauthorized .dot {
-  background: var(--broken);
+.root-tab[aria-selected='true']:focus-visible {
+  box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+/* The need-you badge, in the badges' own type, never cut. */
+.root-tab .badge {
+  flex: none;
+  font-family: var(--pw-font-sans);
+}
+
+/* The connection badge (section 4): a badge, inside the element that's its role="status". */
+.connection {
+  display: inline-flex;
+  flex: none;
 }
 
 .updated {
-  color: var(--text-muted);
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.controls {
-  justify-content: space-between;
-}
+/* The summary, at the right of the session list's heading */
 
-.filters {
+.summary {
   display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-2);
+  margin-left: auto;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+ * The summary and a group's Hide from repo list, or Show in repo list (W35), together at the right of
+ * the heading's line, and wrapping together. The button is sm, 24 px, the line's height, so the header
+ * is as tall for a group as for a view.
+ */
+.session-list-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-2);
+  margin-left: auto;
+}
+
+/* The filters: the field, the chips and Clear filters. */
+
+.filter-controls {
+  display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
-  flex: 1 1 360px;
+  gap: var(--pw-space-2) var(--pw-space-3);
+  min-width: 0;
+}
+
+/* The filter field (Search, in section 4) */
+
+.filter-field {
+  position: relative;
+  display: flex;
+  flex: 1 1 200px;
+  align-items: center;
+  min-width: min(200px, 100%);
+}
+
+.filter-field-icon {
+  position: absolute;
+  flex: none;
+  left: var(--pw-space-2);
+  color: var(--pw-text-subtle);
+  pointer-events: none;
 }
 
 .filter-input {
-  flex: 1 1 220px;
-  max-width: 420px;
-  min-width: 0;
-  padding: 6px 10px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  width: 100%;
+  height: var(--pw-control-md);
+  margin: 0;
+  padding: var(--pw-space-1) var(--pw-space-3) var(--pw-space-1) var(--pw-space-8);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-input);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  text-overflow: ellipsis;
+  appearance: none;
+}
+
+/* Room for the clear button once there's text. */
+.filter-input:not(:placeholder-shown) {
+  padding-right: var(--pw-space-8);
+}
+
+.filter-input:focus-visible {
+  box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
 }
 
 .filter-input::placeholder {
-  color: var(--text-muted);
+  color: var(--pw-text-subtle);
   opacity: 1;
 }
 
-.toggle {
+/* The field has a clear button of its own. */
+.filter-input::-webkit-search-cancel-button,
+.filter-input::-webkit-search-decoration {
+  appearance: none;
+}
+
+.filter-clear {
+  position: absolute;
+  right: 2px;
+}
+
+/*
+ * The `/` key cap, while the single-key shortcuts are on and the field is empty and unfocused: 4 px
+ * from the right, centred in the 28 px field. The text keeps clear of it, as of the clear button, and
+ * keeps the same room on focus, so the placeholder doesn't move. Clicks go through it to the field.
+ */
+.filter-field.with-key .filter-input {
+  padding-right: var(--pw-space-8);
+}
+
+.filter-key {
+  position: absolute;
+  right: var(--pw-space-1);
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  user-select: none;
+  pointer-events: none;
 }
 
-.toggle input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--attention-strong);
+.filter-input:focus ~ .filter-key {
+  display: none;
 }
 
-.summary {
-  color: var(--text-muted);
-  font-size: 0.875rem;
-}
+/* Filter chips (section 4) */
 
-.summary-attention {
-  color: var(--text);
-}
-
-/* Banners */
-
-.banner {
+.filter-chips {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-left-width: 4px;
-  border-radius: var(--radius);
-  background: var(--surface);
-  overflow-wrap: anywhere;
+  gap: var(--pw-space-2);
 }
 
-.banner.warning {
-  background: var(--warning-bg);
-  border-color: var(--warning-border);
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  height: var(--pw-control-sm);
+  padding: 0 var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-control);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--pw-duration-fast) var(--pw-ease-standard),
+    color var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
-.banner.error {
-  background: var(--error-bg);
-  border-color: var(--error-border);
+@media (hover: hover) {
+  .chip:hover {
+    background: var(--pw-surface-hover);
+    color: var(--pw-text);
+  }
 }
 
-.banner.muted {
-  color: var(--text-muted);
+.chip:focus-visible {
+  box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+  color: var(--pw-info-tint-fg);
+}
+
+.chip[aria-pressed='true']:focus-visible {
+  box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+/* At 600 px and narrower, the header's right side wraps under the wordmark. */
+
+
+@container pitwall (max-width: 600px) {
+  .app-header {
+    flex-wrap: wrap;
+    padding-block: var(--pw-space-3);
+  }
+
+  .app-header-end {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+}
+
+/*
+ * The app strip (section 4: Alerts and banners): above the header, only while the relay is off until
+ * restart. One line, 32 px: a sentence too long for it ends in an ellipsis, with Details still there,
+ * so the session view over the list can start just below it and never hide it. It inverts with the
+ * theme, --pw-text-inverse on --pw-text (2.5), so it never uses a tone colour; its icon and link take
+ * the text's colour.
+ */
+.app-strip {
+  grid-area: strip;
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  height: var(--pw-strip-h);
+  padding: 0 var(--pw-space-4);
+  background: var(--pw-text);
+  color: var(--pw-text-inverse);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.app-strip > svg {
+  flex: none;
+}
+
+.app-strip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-button.app-strip-link {
+  flex: none;
+  color: var(--pw-text-inverse);
+  line-height: var(--pw-leading-s);
 }
 
 /* Content */
 
-.content {
+/*
+ * Empty states (section 4: Empty states, and EmptyState.tsx): centred in their pane, at most 408 px
+ * wide: the 24 px icon in --pw-text-subtle, the title 8 px below, one sentence 4 px below that, and
+ * the action 16 px below. The session list's rows area and the session view's column centre it both
+ * ways; it fills them, so a short window scrolls it rather than cutting it.
+ */
+.empty-state {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.placeholder {
-  padding: 48px 16px;
-  color: var(--text-muted);
+  align-items: center;
+  width: 100%;
+  max-width: var(--pw-dialog-sm);
+  margin: auto;
+  padding: var(--pw-space-6) var(--pw-space-4);
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.empty-state-icon {
+  color: var(--pw-text-subtle);
+}
+
+.empty-state-title {
+  margin-top: var(--pw-space-2);
+  color: var(--pw-text);
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
+}
+
+/* A heading only for the session view's unlisted state, which takes focus from script, with no ring of its own. */
+h2.empty-state-title:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.empty-state-sentence {
+  margin-top: var(--pw-space-1);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--pw-space-2);
+  margin-top: var(--pw-space-4);
+}
+
+/* The rows' area, which centres an empty state in what's left of the column. */
+.session-list-body:has(> .empty-state) {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * A status line (section 4: Skeletons and spinners): pitwall's own waiting and "nothing here" lines,
+ * such as "Loading the conversation…" and "Still waiting for claude agents…": meta, muted, centred.
+ */
+.status-line {
+  margin: var(--pw-space-3) 0;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* The long-wait line under the session list's skeleton rows. */
+.list-waiting .status-line {
+  padding: 0 var(--pw-space-4);
+}
+
+/*
+ * Badges (section 4): 20 px rectangles in label type. Solid is for "needs you" only; everything else
+ * is subtle (a tint and its edge) or outline (dashed). A session's status badge (.state-*) takes its
+ * look from the state aliases in tokens.css; the others take a tone's.
+ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1);
+  min-width: var(--pw-badge-h);
+  max-width: 100%;
+  min-height: var(--pw-badge-h);
+  padding: 0 var(--pw-space-1-5);
+  border-radius: var(--pw-radius-sm);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Its own box, so a label too long for its row ends in an ellipsis. */
+.badge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Its explanation is in a tooltip (Badge's hint). */
+.badge.has-hint {
+  cursor: help;
+}
+
+.badge-attention,
+.badge-solid-warning,
+.badge.state-waiting,
+.badge.state-blocked {
+  background: var(--pw-state-attention-bg);
+  color: var(--pw-state-attention-fg);
+}
+
+.badge-subtle-neutral {
+  background: var(--pw-neutral-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-neutral-border);
+  color: var(--pw-neutral-tint-fg);
+}
+
+.badge-subtle-info {
+  background: var(--pw-info-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-info-border);
+  color: var(--pw-info-tint-fg);
+}
+
+.badge-subtle-success {
+  background: var(--pw-success-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-success-border);
+  color: var(--pw-success-tint-fg);
+}
+
+.badge-subtle-warning {
+  background: var(--pw-warning-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-warning-border);
+  color: var(--pw-warning-tint-fg);
+}
+
+.badge-subtle-danger {
+  background: var(--pw-danger-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-danger-border);
+  color: var(--pw-danger-tint-fg);
+}
+
+/* Badges aren't focusable, so the outline is free for the dashed edge. */
+.badge-outline {
+  outline: 1px dashed var(--pw-border-dashed);
+  outline-offset: -1px;
+  color: var(--pw-text-subtle);
+}
+
+.badge.state-asked {
+  background: var(--pw-state-asked-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-asked-border);
+  color: var(--pw-state-asked-fg);
+}
+
+.badge.state-busy,
+.badge.state-working {
+  background: var(--pw-state-busy-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-busy-border);
+  color: var(--pw-state-busy-fg);
+}
+
+.badge.state-idle,
+.badge.state-stopped,
+.badge.state-unknown {
+  background: var(--pw-state-idle-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-idle-border);
+  color: var(--pw-state-idle-fg);
+}
+
+.badge.state-done {
+  background: var(--pw-state-done-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-done-border);
+  color: var(--pw-state-done-fg);
+}
+
+.badge.state-failed {
+  background: var(--pw-state-failed-bg);
+  box-shadow: inset 0 0 0 1px var(--pw-state-failed-border);
+  color: var(--pw-state-failed-fg);
+}
+
+.badge.state-blocked-stale,
+.badge.state-not-running {
+  outline: 1px dashed var(--pw-state-offline-border);
+  outline-offset: -1px;
+  color: var(--pw-state-offline-fg);
+}
+
+/*
+ * The status dot (section 4): an 8 px circle in the text's colour, which inside a badge is its tint's
+ * -tint-fg (2.1). A label always goes with it, and it doesn't animate.
+ */
+.status-dot {
+  flex: none;
+  width: var(--pw-dot);
+  height: var(--pw-dot);
+  border-radius: var(--pw-radius-full);
+  background: currentColor;
+}
+
+/*
+ * The spinner (section 4: Skeletons and spinners, and Spinner.tsx): 12 px inline or 16 px in a
+ * button, a 2 px ring with a conic gradient from transparent to --pw-info-fg, or to the text colour
+ * of the badge or button it's in (2.1). It waits --pw-delay-spinner before showing, so a fast answer
+ * never flashes it, and slows to 2 s a turn under reduced motion.
+ */
+.spinner {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--pw-info-fg);
+  border-radius: var(--pw-radius-full);
+  background: conic-gradient(transparent, currentColor);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), currentColor calc(100% - 2px));
+  animation:
+    pw-spin 0.8s linear infinite,
+    pw-appear 0s linear var(--pw-delay-spinner) both;
+}
+
+@keyframes pw-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes pw-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.badge > .spinner,
+.button > .spinner {
+  color: inherit;
+}
+
+.spinner.in-button {
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2s, 0s;
+  }
+}
+
+/*
+ * Skeletons (section 4: Skeletons and spinners, and Waiting.tsx): 12 px bars in --pw-surface-sunken,
+ * --pw-radius-sm, in the shape of what's coming, pulsing (opacity 1 → 0.6 → 1, 1.5 s) only without
+ * reduced motion. They're aria-hidden; a status says what's loading. Waiting.tsx shows them after
+ * --pw-delay-spinner, so the pulse starts as they appear.
+ */
+.skeleton-bar {
+  display: block;
+  flex: none;
+  width: 60%;
+  height: 12px;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  animation: pw-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pw-pulse {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar {
+    animation: none;
+  }
+}
+
+.skeleton-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A session row's box: padding 8 px 16 px, two 20 px lines 2 px apart, a line between rows. */
+.skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-0-5);
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+}
+
+.skeleton-row:first-child {
+  border-top: 0;
+}
+
+/* A 20 px line box, the bar centred in it. */
+.skeleton-line {
+  display: flex;
+  align-items: center;
+  height: var(--pw-leading-m);
+}
+
+.skeleton-bar.identity {
+  width: 40%;
+}
+
+.skeleton-bar.preview {
+  width: 70%;
+}
+
+/* In the repo list: a repo list item's box, 32 px, its label's bar at four widths. */
+.skeleton-item {
+  display: flex;
+  align-items: center;
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+}
+
+.skeleton-item:nth-child(1) .skeleton-bar {
+  width: 70%;
+}
+
+.skeleton-item:nth-child(2) .skeleton-bar {
+  width: 50%;
+}
+
+.skeleton-item:nth-child(3) .skeleton-bar {
+  width: 80%;
+}
+
+.skeleton-item:nth-child(4) .skeleton-bar {
+  width: 45%;
+}
+
+/* On --pw-bg, the sidebar's fill, a sunken bar barely shows; the drawer is a surface, like the rows. */
+.columns > .repo-list .skeleton-bar {
+  background: var(--pw-surface-strong);
+}
+
+/* The session view's header while it waits: a bar for the name in its 24 px line, and one for line 2. */
+.skeleton-heading {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  height: var(--pw-leading-l);
+}
+
+.skeleton-bar.title {
+  width: 40%;
+}
+
+.skeleton-bar.meta {
+  width: 70%;
+}
+
+/* A filter match (Search, in section 4): --pw-text whatever the text around it, the pair 2.5 checks. */
+mark.match {
+  background: var(--pw-highlight);
+  color: var(--pw-text);
+}
+
+/* A path cut in the middle: the start ends in an ellipsis, and the last segment stays. */
+.middle-ellipsis {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+/*
+ * The start gives way first, down to the few characters MiddleEllipsis keeps as its minimum; only
+ * then does the end, which ends in an ellipsis too. Shrinking shares space out by these factors, so
+ * the start's, a million times the end's, leaves the end whole (to well under a pixel) until then.
+ * The end's has to be at least 1: below that, the spec shrinks it by only that fraction of what's needed.
+ */
+.middle-ellipsis-start {
+  flex: 0 1000000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.middle-ellipsis-end {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .link-button {
   padding: 0;
   background: none;
   border: 0;
-  color: var(--focus);
-  font-size: 0.85rem;
+  color: var(--pw-link);
+  font-size: var(--pw-text-s);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
+/*
+ * Buttons (section 4): outline at md by default, with sm and lg; primary (actions.css), ghost and
+ * danger variants. An optional 16 px leading icon sits 6 px before the label.
+ */
 .button {
-  padding: 4px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.button:hover {
-  background: var(--surface-raised);
-}
-
-.button.small {
-  padding: 2px 10px;
-  font-size: 0.8rem;
-}
-
-/* Groups */
-
-.group {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.group-heading {
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.group-toggle {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  width: 100%;
-  padding: 10px 14px;
-  background: var(--surface-raised);
-  border: 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-.group-toggle:focus-visible {
-  outline-offset: -2px;
-}
-
-.group-toggle .chevron {
-  color: var(--text-muted);
-  transition: transform 120ms ease;
-}
-
-.group-toggle[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
-}
-
-.group-kind {
   display: inline-flex;
-  color: var(--text-muted);
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1-5);
+  min-height: var(--pw-control-md);
+  padding: var(--pw-space-1) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-control);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.group-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.button > svg {
+  flex: none;
 }
 
-.group-root,
-.group-count {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  font-weight: 400;
+/* An outline button's icon is muted; a primary or danger button's takes the label's colour. */
+.button:not(.primary, .danger) > svg {
+  color: var(--pw-text-muted);
 }
 
-.group-count {
-  margin-left: auto;
+@media (hover: hover) {
+  .button:hover {
+    background: var(--pw-surface-hover);
+  }
 }
 
-.group-attention {
-  padding: 1px 8px;
-  border-radius: var(--radius-pill);
-  background: var(--attention);
-  color: var(--attention-text);
-  font-size: 0.8rem;
-  font-weight: 700;
+.button:not(.primary, .danger):active {
+  background: var(--pw-surface-strong);
+}
+
+.button:focus-visible {
+  box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
+}
+
+.button.sm {
+  min-height: var(--pw-control-sm);
+  padding: var(--pw-space-0-5) var(--pw-space-2);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* md is the default; the class only says so. */
+
+.button.lg {
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-3);
+}
+
+.button.primary:active {
+  background: var(--pw-accent-hover);
+}
+
+.button.ghost,
+.icon-button.ghost {
+  background: none;
+  box-shadow: none;
+  color: var(--pw-text-muted);
+}
+
+@media (hover: hover) {
+  .button.ghost:hover,
+  .icon-button.ghost:hover {
+    background: var(--pw-surface-hover);
+    box-shadow: var(--pw-shadow-control);
+    color: var(--pw-text);
+  }
+
+  /* On the page background rather than a surface (2.3). */
+  .app-header .button.ghost:hover,
+  .app-header .icon-button.ghost:hover {
+    background: var(--pw-surface-hover-bg);
+  }
+}
+
+.button.ghost:focus-visible,
+.icon-button.ghost:focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+.button.ghost:active,
+.icon-button.ghost:active {
+  background: var(--pw-surface-strong);
+}
+
+/*
+ * Disabled (section 4: Buttons): aria-disabled, so the button stays focusable and keeps its focus
+ * ring. --pw-text-disabled on --pw-surface-sunken, or no fill for ghost, with the control edge; WCAG
+ * 1.4.3 exempts inactive controls (2.5). Hover and press change nothing. A busy button is
+ * aria-disabled too where activation must wait (Send), but keeps its variant's look: the spinner and
+ * the label say it's busy.
+ */
+.button[aria-disabled='true']:not([aria-busy='true']),
+.button[aria-disabled='true']:not([aria-busy='true']):hover,
+.button[aria-disabled='true']:not([aria-busy='true']):active {
+  background: var(--pw-surface-sunken);
+  box-shadow: var(--pw-shadow-control);
+  color: var(--pw-text-disabled);
+  filter: none;
+  cursor: not-allowed;
+}
+
+.button.ghost[aria-disabled='true']:not([aria-busy='true']),
+.button.ghost[aria-disabled='true']:not([aria-busy='true']):hover,
+.button.ghost[aria-disabled='true']:not([aria-busy='true']):active {
+  background: none;
+  box-shadow: none;
+}
+
+.button[aria-disabled='true']:not([aria-busy='true']) > svg {
+  color: var(--pw-text-disabled);
+}
+
+.button[aria-disabled='true']:not([aria-busy='true']):focus-visible {
+  box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
+}
+
+.button.ghost[aria-disabled='true']:not([aria-busy='true']):focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+/* A ghost icon button, such as a dialog's Close while its action runs: the same, with no fill. */
+.icon-button.ghost[aria-disabled='true'],
+.icon-button.ghost[aria-disabled='true']:hover,
+.icon-button.ghost[aria-disabled='true']:active {
+  background: none;
+  box-shadow: none;
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
+}
+
+.icon-button.ghost[aria-disabled='true']:focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+/* Busy: the spinner and the -ing label; Button.tsx keeps its idle width and ignores activation. */
+.button[aria-busy='true'] {
+  cursor: progress;
+}
+
+/* Icon buttons (section 4): square, with a 16 px icon. */
+.icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  cursor: pointer;
+}
+
+.icon-button.sm {
+  width: var(--pw-control-sm);
+  height: var(--pw-control-sm);
+}
+
+.icon-button.md {
+  width: var(--pw-control-md);
+  height: var(--pw-control-md);
 }
 
 .sessions {
@@ -441,404 +1566,900 @@ input {
   list-style: none;
 }
 
-/* Session rows */
+/*
+ * Session rows (section 4): two lines, 2 px apart. Line 1 is the name and title, the badges and the
+ * time, on one line: the title gives way first, then the name, and the status badge last, which
+ * leaves the name and the time at least 10em. Line 2 is what the session asked, or was last asked, on
+ * one line with an ellipsis.
+ */
 
 .session {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 14px 10px 18px;
-  border-top: 1px solid var(--border);
+  gap: var(--pw-space-0-5);
+  min-width: 0;
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
+.session.openable {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .session.openable:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+/* No tint for a row that needs you: the bar and the badge say so. */
 .session.attention {
-  background: var(--attention-row);
-  box-shadow: inset 4px 0 0 var(--attention);
+  box-shadow: inset 3px 0 0 var(--pw-state-attention-bar);
 }
 
-.session-head {
+.session.open,
+.session.open:hover {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+}
+
+.session.attention.open {
+  box-shadow:
+    inset 3px 0 0 var(--pw-state-attention-bar),
+    var(--pw-ring-selected);
+}
+
+/*
+ * The name cuts off with an ellipsis, which would clip its button's focus ring, so the row shows it,
+ * inset (2.10). The transparent outline is the forced-colours fallback, on the button itself.
+ */
+.session:has(.session-open:focus-visible) {
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.session.attention:has(.session-open:focus-visible) {
+  box-shadow:
+    inset 3px 0 0 var(--pw-state-attention-bar),
+    var(--pw-ring-focus-inset);
+}
+
+.session-open:focus-visible {
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.session-line {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--pw-space-2);
+  min-width: 0;
 }
 
-/* The name, then the title: the name keeps its room, a long title ends in an ellipsis. */
 .session-ident {
   display: flex;
+  flex: 1 1 auto;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--pw-space-1-5);
   min-width: 0;
-  max-width: 100%;
 }
 
+/* Shrinks only once the title has gone. */
 .session-name {
+  display: flex;
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.session-title-sep {
-  flex: none;
-  color: var(--text-muted);
-}
-
-.session-title {
-  flex: 1 1 auto;
-  min-width: 0;
   overflow: hidden;
-  color: var(--text-muted);
-  font-size: 0.9rem;
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.kind {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.session-open {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.pill {
-  padding: 1px 9px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  font-size: 0.8rem;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+@media (hover: hover) {
+  .session-open:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
 }
 
-.tone-attention {
-  background: var(--attention);
-  color: var(--attention-text);
-  font-weight: 700;
+/*
+ * The " · " before the title is part of it, so it goes when the title has given way. The alternative
+ * text keeps it from being read out, where that's supported.
+ */
+.session-title::before {
+  content: '·';
+  content: '·' / '';
+  margin-right: var(--pw-space-1-5);
 }
 
-.tone-asked {
-  background: var(--surface);
-  border-color: var(--attention);
-  color: var(--attention-strong);
-  font-weight: 700;
+.session-title {
+  flex: 0 1000000 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tone-busy {
-  background: var(--busy-bg);
-  color: var(--busy-text);
+.session-badges {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  max-width: calc(100% - 10em);
 }
 
-.tone-idle,
-.tone-stopped {
-  background: var(--idle-bg);
-  color: var(--idle-text);
+/* Stale and a finished session's Asked you are short and stay whole; the status badge gives way. */
+.session-badges > .badge {
+  flex: none;
 }
 
-.tone-done {
-  background: var(--done-bg);
-  color: var(--done-text);
+.session-badges > .badge[data-status] {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
-.tone-failed {
-  background: var(--failed-bg);
-  color: var(--failed-text);
+.activity {
+  flex: none;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.tone-offline {
-  border-color: var(--offline-border);
-  border-style: dashed;
-  color: var(--offline-text);
+/*
+ * A row's star toggle (section 4: Starred sessions, W53): at the end of line 1, after the time, in a
+ * slot every row keeps, so nothing moves as it shows. It shows while its session is starred, and
+ * otherwise on the row's hover and focus; on a touch screen it always shows, as anything revealed on
+ * hover does. It's 24 px in a 20 px line: the negative block margins keep the line, and the row, as
+ * tall as before, and the end margin puts its star on the row's 16 px edge, where the time was.
+ */
+.session-star {
+  margin-block: calc((var(--pw-leading-m) - var(--pw-control-sm)) / 2);
+  margin-inline: calc(-1 * var(--pw-space-1));
+  transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
-.stale {
-  padding: 0 6px;
-  border: 1px solid var(--offline-border);
-  border-radius: 4px;
-  color: var(--offline-text);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: help;
+/* The name and the time keep their 10em, with the star's slot taken out of the badges' share. */
+.session-line:has(> .session-star) .session-badges {
+  max-width: calc(100% - 10em - var(--pw-control-sm));
 }
 
-/* Finished background sessions: a collapsed, muted sub-list at the bottom of each group */
+@media (hover: hover) {
+  .session-star[aria-pressed='false'] {
+    opacity: 0;
+  }
+
+  .session:hover .session-star,
+  .session:focus-within .session-star {
+    opacity: 1;
+  }
+}
+
+.session-what {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-group {
+  color: var(--pw-text-subtle);
+}
+
+.session-what-sep {
+  color: var(--pw-text-subtle);
+}
+
+.asked {
+  color: var(--pw-text);
+}
+
+.asked-label {
+  color: var(--pw-warning-fg);
+  font-weight: var(--pw-weight-medium);
+}
+
+.who {
+  font-weight: var(--pw-weight-medium);
+}
+
+.session-what .who {
+  font-weight: inherit;
+}
+
+.transcript-note {
+  color: var(--pw-text-subtle);
+}
+
+/* Finished: the name at 400 in muted, and nothing in a tone colour, since none of them needs you. */
+.session.finished .session-name {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-regular);
+}
+
+.session.finished .asked,
+.session.finished .asked-label {
+  color: var(--pw-text-muted);
+}
+
+/* The Finished section (section 4): a toggle row at the bottom of the session list, then its rows. */
 
 .finished-list {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--pw-border);
 }
 
 .finished-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--pw-space-1-5);
   width: 100%;
-  padding: 6px 14px 6px 18px;
-  background: transparent;
+  padding: var(--pw-space-1-5) var(--pw-space-4);
   border: 0;
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  font-weight: 600;
+  background: transparent;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
 .finished-asked {
-  font-weight: 400;
+  font-weight: var(--pw-weight-regular);
 }
 
-.finished-toggle:hover {
-  background: var(--surface-raised);
+@media (hover: hover) {
+  .finished-toggle:hover {
+    background: var(--pw-surface-hover);
+  }
 }
 
+/* Full width inside the scrolling list, which would clip the outer ring (2.10). */
 .finished-toggle:focus-visible {
   outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
 }
 
 .finished-toggle .chevron {
-  transition: transform 120ms ease;
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
 .finished-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
 }
 
-.session.finished {
-  color: var(--text-muted);
-}
+/* The Sort setting, at the right of the filters' line (section 3: Session list). */
 
-.session.finished .session-name,
-.session.finished .asked {
-  font-weight: 500;
-}
-
-.session.finished .asked-label {
-  color: inherit;
-}
-
-.tone-asked-muted {
-  border-color: var(--offline-border);
-  border-style: dashed;
-  color: var(--offline-text);
-  cursor: help;
-}
-
-.activity {
-  margin-left: auto;
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.prompt {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.who {
-  margin-right: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.asked {
-  font-size: 0.9rem;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.asked-label {
-  margin-right: 2px;
-  color: var(--attention-strong);
-}
-
-.reply {
+.sort {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.clamp-text {
-  display: -webkit-box;
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-}
-
-.clamp-text.expanded {
-  display: block;
-  /* A full reply can be 64 KiB: it scrolls inside the row rather than pushing the list away. */
-  max-height: 70vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  white-space: pre-wrap;
-  -webkit-line-clamp: unset;
-  line-clamp: none;
-}
-
-.reply-note {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  font-style: italic;
-}
-
-.transcript-note {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  font-style: italic;
-}
-
-.session-foot {
-  display: flex;
-  flex-wrap: wrap;
+  flex: none;
   align-items: center;
-  gap: 4px 12px;
-  margin-top: 2px;
+  gap: var(--pw-space-1-5);
+  margin-left: auto;
 }
 
-.cwd {
-  min-width: 0;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  overflow-wrap: anywhere;
+.sort-label {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
 }
 
-.cwd-missing {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  font-style: italic;
-  cursor: help;
+/* A native select in a field's box, with the select icon over its right edge (section 4: Inputs). */
+.select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
+
+.select-input {
+  min-height: var(--pw-control-md);
+  margin: 0;
+  padding: var(--pw-space-1) var(--pw-space-8) var(--pw-space-1) var(--pw-space-3);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-input);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  cursor: pointer;
+  appearance: none;
+}
+
+.select-input:focus-visible {
+  box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
+}
+
+.select-icon {
+  position: absolute;
+  right: var(--pw-space-2);
+  color: var(--pw-text-muted);
+  pointer-events: none;
+}
+
+/*
+ * A command chip and its copy button (section 4: Copy): code style on --pw-surface-sunken, one line
+ * with a middle ellipsis, and a click selects the whole command.
+ */
 
 .copy-command {
-  display: inline-flex;
-  flex-wrap: wrap;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  max-width: 100%;
 }
 
-.copy-command code {
-  padding: 1px 6px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.8rem;
+.command-chip {
+  display: flex;
+  min-width: 0;
+  padding: 0 var(--pw-space-1-5);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
+  border-radius: var(--pw-radius-sm);
+  line-height: var(--pw-leading-s);
   user-select: all;
 }
 
-.copy-status {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
-/* Opening a session's view from its row */
-
-.session.openable {
-  cursor: pointer;
-}
-
-.session.openable:hover {
-  background: var(--surface-raised);
-}
-
-.session.attention.openable:hover {
-  background: var(--attention-row);
-}
-
-.session.open {
-  box-shadow: inset 4px 0 0 var(--focus);
-}
-
-.session-open {
-  padding: 0;
-  background: none;
-  border: 0;
-  font: inherit;
-  text-align: left;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-
-.session-open:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-/* The session view: a panel over the right of the page. A column: the header, the conversation, which
-   is all that scrolls, and for an interactive session the message box, pinned below the newest message. */
-
+/*
+ * The session view (sections 3 and 4): a column of the header, the actions' confirmation, the tabs,
+ * the body, which is all that scrolls, and for an interactive session the footer with the message box.
+ * In the third column from 1,200 px. Below that, over the right of the columns, in their row, so it
+ * starts below the header and the app strip, whatever their height: as wide as the panel or the app,
+ * whichever is less. What it covers is inert while it's open (Dashboard.tsx).
+ */
 .session-view {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 10;
   display: flex;
   flex-direction: column;
-  width: min(760px, 100vw);
-  background: var(--surface);
-  border-left: 1px solid var(--border-strong);
-  box-shadow: -8px 0 24px rgb(0 0 0 / 0.18);
+  background: var(--pw-surface);
+}
+
+.session-view.overlay {
+  position: relative;
+  z-index: var(--pw-z-panel);
+  grid-area: 1 / 1 / 2 / -1;
+  justify-self: end;
+  width: min(var(--pw-panel-w), 100%);
+  min-width: 0;
+  min-height: 0;
+  box-shadow: var(--pw-shadow-overlay);
+}
+
+/* On a short window, where the page scrolls as a whole, it sticks to the top of the window, one window tall, as the third column does. */
+@media (max-height: 480px) {
+  .session-view.overlay {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    height: 100dvh;
+  }
+}
+
+/* Sliding in from the right as it opens over the list; not when the window crosses 1,200 px. */
+.session-view.overlay.opening {
+  animation: session-view-in var(--pw-duration-base) var(--pw-ease-out);
+}
+
+@keyframes session-view-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-view.overlay.opening {
+    animation: none;
+  }
 }
 
 .session-view-head {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
 }
 
+/* Line 1: Back (compact), the heading, the actions menu, Close. */
 .session-view-top {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
 }
 
+.session-view-back {
+  flex: none;
+  margin-left: calc(-1 * var(--pw-space-2));
+}
+
+/*
+ * The name, then " · " and the title, on one line: the title gives way first, then the name, each
+ * with an ellipsis. The full title is in its tooltip when it's cut.
+ */
 .session-view-title {
+  display: flex;
   flex: 1 1 auto;
+  align-items: baseline;
   min-width: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+  font-size: var(--pw-text-l);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-l);
+  white-space: nowrap;
+}
+
+/* Focused when the view opens, with no ring of its own: it isn't a control (6.1, item 8). */
+.session-view-title:focus,
+.session-view-title:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.session-view-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The unlisted view's header has Close alone: its heading is the empty state's title, below. */
+.session-view-spacer {
+  flex: 1 1 auto;
 }
 
 .session-view-subtitle {
-  color: var(--text-muted);
-  font-weight: 400;
+  position: relative;
+  flex: 0 1000000 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-regular);
+  text-overflow: ellipsis;
 }
 
+/* The visible " · ", with no alternative text, so it isn't read twice. */
+.session-view-subtitle::before {
+  content: '·';
+  content: '·' / '';
+  margin: 0 var(--pw-space-1-5);
+}
+
+/* Stop and Remove's confirmation and result, between the header and the tabs, 8 px 16 px around them (section 4: Inline confirmation). */
+.session-view > .session-actions {
+  flex: none;
+  padding: var(--pw-space-2) var(--pw-space-4);
+}
+
+/* Line 2: the status badge, the kind, the last activity, and the directory with its copy button, wrapping. */
 .session-view-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
+.session-view-kind,
+.session-view-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+}
+
+/* An info button (InfoTip): a ghost sm icon button, so Tab reaches it, its 24 px box overlapping the 20 px line. */
+.session-view-info {
+  margin-block: calc(-1 * var(--pw-space-0-5));
+}
+
+.session-view-activity {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The directory takes the rest of the line, or a line of its own, and gives way in the middle. */
 .session-view-cwd {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
+  display: inline-flex;
+  flex: 1 1 16em;
+  align-items: center;
+  gap: var(--pw-space-0-5);
+  min-width: 0;
+}
+
+.session-view-path {
+  display: flex;
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
+  font-variant-ligatures: none;
+}
+
+.session-view-missing {
+  flex: none;
+  color: var(--pw-text-muted);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/*
+ * Under line 2, where to answer while it waits on you and what to do when the directory has gone
+ * (W47), and a background session's footer: a note in meta text, --pw-text-muted, as the message box's
+ * own note is. /exit is inline code (2.7), its line height its own size so the line stays on the 4 px grid.
+ */
+.session-view-waiting-note,
+.session-view-cwd-note,
+.session-view-note {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-view-cwd-note code {
+  padding: 0 var(--pw-space-1);
+  line-height: 1;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
+}
+
+/*
+ * Line 3, once the session has worked in repos beyond where it started (W34): "Started in app · worked
+ * in api, docs", meta text that wraps, the repos' labels in --pw-text-muted, then the rule's info button.
+ */
+.session-view-worked {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-view-worked-text {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.session-view-note {
-  color: var(--text-muted);
-  font-size: 0.85rem;
+.session-view-repo {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-medium);
+}
+
+/* A copy from the actions menu that the clipboard refused: the text, selected, so it can be copied by hand. */
+.session-view-copy-fallback {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.session-view-copy-fallback code {
+  padding: 0 var(--pw-space-1-5);
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
+  font-size: var(--pw-text-xs);
+  user-select: all;
+}
+
+/*
+ * Inline alerts (section 4: Alerts and banners, and Alert.tsx): a tint, its 1 px edge, the tone's icon
+ * in the tint's -tint-fg (2.1), and --pw-text, which 2.5 checks on every tint. Actions sit at the
+ * right, and wrap under the text at 600 px and narrower. Detail from Claude Code or the server is in
+ * code style.
+ */
+.inline-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-3);
+  border-radius: var(--pw-radius-md);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Focused by the app strip's Details. Inset, in place of its edge, since the alerts' area scrolls and
+ * would clip an outer ring; --pw-focus is at least 3:1 on every tint (2.5).
+ */
+.inline-alert.inline-alert:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.inline-alert > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.inline-alert-text {
+  /* From nothing, so it stays beside the icon when the actions wrap under it. */
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.inline-alert-title {
+  font-weight: var(--pw-weight-medium);
+}
+
+.inline-alert-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--pw-space-2);
+  /* 24 px buttons, centred on the first 20 px line. */
+  margin: calc(-1 * var(--pw-space-0-5)) 0;
+}
+
+.alert-detail {
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
+  white-space: pre-wrap;
+}
+
+.inline-alert.neutral {
+  background: var(--pw-neutral-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-neutral-border);
+}
+
+
+.inline-alert.neutral > svg {
+  color: var(--pw-neutral-tint-fg);
+}
+
+.inline-alert.info {
+  background: var(--pw-info-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-info-border);
+}
+
+
+.inline-alert.info > svg {
+  color: var(--pw-info-tint-fg);
+}
+
+.inline-alert.success {
+  background: var(--pw-success-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-success-border);
+}
+
+
+.inline-alert.success > svg {
+  color: var(--pw-success-tint-fg);
+}
+
+.inline-alert.warning {
+  background: var(--pw-warning-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-warning-border);
+}
+
+
+.inline-alert.warning > svg {
+  color: var(--pw-warning-tint-fg);
+}
+
+.inline-alert.danger {
+  background: var(--pw-danger-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-danger-border);
+}
+
+
+.inline-alert.danger > svg {
+  color: var(--pw-danger-tint-fg);
+}
+
+/* Under the text, which starts after the 16 px icon and its 8 px gap: in an app 600 px wide or narrower, or a session list column that is. */
+@container pitwall (max-width: 600px) {
+  .inline-alert {
+    flex-wrap: wrap;
+  }
+
+  .inline-alert-actions {
+    flex-basis: 100%;
+    padding-left: calc(var(--pw-icon-sm) + var(--pw-space-2));
+  }
+}
+
+@container page-alerts (max-width: 600px) {
+  .inline-alert {
+    flex-wrap: wrap;
+  }
+
+  .inline-alert-actions {
+    flex-basis: 100%;
+    padding-left: calc(var(--pw-icon-sm) + var(--pw-space-2));
+  }
+}
+
+/*
+ * Inline confirmations (section 4: Inline confirmation, and InlineConfirm.tsx): the question and its
+ * consequence, then Cancel and the confirm button at the right, wrapping under them when there's no
+ * room. A 3 px bar at the left: --pw-danger-fg, or --pw-warning-indicator for the restart, each at
+ * least 3:1 on the --pw-surface-muted fill, as an indicator needs (2.5).
+ */
+.inline-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-2) var(--pw-space-3);
+  padding: var(--pw-space-3);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-muted);
+}
+
+.inline-confirm.danger {
+  box-shadow: inset 3px 0 0 var(--pw-danger-fg), inset 0 0 0 1px var(--pw-border-strong);
+}
+
+.inline-confirm.warning {
+  box-shadow: inset 3px 0 0 var(--pw-warning-indicator), inset 0 0 0 1px var(--pw-border-strong);
+}
+
+.inline-confirm-text {
+  flex: 1 1 16em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.inline-confirm-question {
+  font-weight: var(--pw-weight-medium);
+}
+
+.inline-confirm-consequence {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.inline-confirm-buttons {
+  display: flex;
+  flex: none;
+  gap: var(--pw-space-2);
+  margin-left: auto;
+}
+
+/*
+ * Key caps (section 4: Key caps): each key a <kbd>, 20 px tall, 2 px apart, in label type on
+ * --pw-surface with the control edge and a 1 px inner bottom edge.
+ */
+.key-caps,
+.key-caps-keys {
+  display: inline-flex;
+  align-items: center;
+}
+
+.key-caps-keys {
+  gap: var(--pw-space-0-5);
+}
+
+.key-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--pw-space-5);
+  height: var(--pw-space-5);
+  padding: 0 5px;
+  border-radius: var(--pw-radius-xs);
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-control), inset 0 -1px 0 var(--pw-border-strong);
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-sans);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+}
+
+/*
+ * The tabs (section 4: Session view): a 40 px row under the header. The open tab has a 2 px --pw-text
+ * underline on the row's bottom edge, over its border.
+ */
+.session-tabs {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  gap: var(--pw-space-1);
+  height: var(--pw-space-10);
+  padding: 0 var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+}
+
+.session-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  height: var(--pw-control-md);
+  margin-bottom: 5px;
+  padding: var(--pw-space-1) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-lg);
+  background: none;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .session-tab:hover {
+    background: var(--pw-surface-hover);
+    color: var(--pw-text);
+  }
+}
+
+.session-tab[aria-selected='true'] {
+  color: var(--pw-text);
+}
+
+.session-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -6px;
+  left: 0;
+  height: 2px;
+  background: var(--pw-text);
+}
+
+.session-tab[aria-disabled='true'],
+.session-tab[aria-disabled='true']:hover {
+  background: none;
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
+}
+
+/* While attached: an 8 px success dot after the label. */
+.session-tab-dot {
+  flex: none;
+  width: var(--pw-dot);
+  height: var(--pw-dot);
+  border-radius: var(--pw-radius-full);
+  background: var(--pw-success-fg);
 }
 
 .session-view-body {
@@ -846,142 +2467,898 @@ input {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px 16px 24px;
+  padding: var(--pw-space-3) var(--pw-space-4) var(--pw-space-6);
 }
 
-/* At most half the panel, so the conversation keeps its share on a short window. */
+/* A Tab stop that fills the view, which would clip the outer ring (2.10). */
+.session-view-body:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.session-view-terminal {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/*
+ * The footer: the message box, or a background session's note (W47), on the --pw-surface-muted band.
+ * At most half the view, scrolling inside itself past that, so the conversation keeps its share on a
+ * short window.
+ */
 .session-view-foot {
   flex: none;
   max-height: 50%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 10px 16px 12px;
-  border-top: 1px solid var(--border);
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+  background: var(--pw-surface-muted);
 }
 
 @media (max-height: 760px) {
   .session-view-foot {
-    padding: 8px 16px 10px;
+    padding: var(--pw-space-2) var(--pw-space-4);
   }
 }
 
 .load-earlier {
-  display: block;
-  margin: 0 auto 12px;
+  /* Its own line, centred; still a flex box, so its spinner has its size while it's busy. */
+  display: flex;
+  width: fit-content;
+  margin: 0 auto var(--pw-space-3);
 }
 
-.session-view-status {
-  margin: 12px 0;
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  text-align: center;
+/* The unlisted state's body, which centres its empty state. */
+.session-view-body.session-view-state {
+  display: flex;
+  flex-direction: column;
 }
 
+/*
+ * The conversation's alerts (section 5: Errors): a failure with Try again, or a notice. At the top,
+ * 12 px above Load earlier or the list; at the end ("end"), 12 px below the list.
+ */
+.conversation-alert {
+  margin-bottom: var(--pw-space-3);
+}
+
+.conversation-alert.end {
+  margin: var(--pw-space-3) 0 0;
+}
+
+/*
+ * Menus (section 4): a panel below its button, aligned to the button's end edge, or above it when
+ * there's no room below. Items are 32 px; danger items are in danger text, on the danger tint when
+ * highlighted. Keyboard focus shows the inset ring too, as the panel's 4 px padding would clip the outer one.
+ */
+.menu-anchor {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--pw-space-1));
+  right: 0;
+  z-index: var(--pw-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  min-width: var(--pw-menu-min-w);
+  padding: var(--pw-space-1);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-overlay);
+  box-shadow: var(--pw-shadow-2);
+}
+
+.menu.up {
+  top: auto;
+  bottom: calc(100% + var(--pw-space-1));
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border: 0;
+  border-radius: var(--pw-radius-sm);
+  background: none;
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.menu-item > svg {
+  flex: none;
+  color: var(--pw-text-muted);
+}
+
+/* The room an icon takes, for an item without one, so its label lines up with the others'. */
+.menu-item-icon-room {
+  flex: none;
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
+}
+
+.menu-item:focus {
+  outline: none;
+  background: var(--pw-surface-hover);
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+@media (hover: hover) {
+  .menu-item:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.menu-item.danger,
+.menu-item.danger > svg {
+  color: var(--pw-danger-fg);
+}
+
+.menu-item.danger:focus {
+  background: var(--pw-danger-tint);
+}
+
+.menu-item.danger:focus,
+.menu-item.danger:focus > svg {
+  color: var(--pw-danger-tint-fg);
+}
+
+@media (hover: hover) {
+  .menu-item.danger:hover {
+    background: var(--pw-danger-tint);
+  }
+
+  .menu-item.danger:hover,
+  .menu-item.danger:hover > svg {
+    color: var(--pw-danger-tint-fg);
+  }
+}
+
+.menu-item[aria-disabled='true'],
+.menu-item[aria-disabled='true'] > svg,
+.menu-item[aria-disabled='true']:hover {
+  background: none;
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
+}
+
+.menu-item[aria-disabled='true']:focus {
+  background: var(--pw-surface-hover);
+}
+
+.menu-separator {
+  height: 1px;
+  margin: var(--pw-space-1) 0;
+  background: var(--pw-border);
+}
+
+/*
+ * A radio group in a menu (W42, View preferences): its title in label type, then its options, the
+ * chosen one with a check mark in the icon's place. An option's line saying what it does wraps under
+ * its label, so the panel is as wide as its content up to 20rem, and never wider than the app leaves,
+ * 16 px each side, with no sideways scroll at 320 px. 100cqw is the app's width (the pitwall
+ * container), or a #uikit frame's; with no container, the window's.
+ */
+.menu.described {
+  width: max-content;
+  max-width: min(20rem, calc(100cqw - 2 * var(--pw-space-4)));
+}
+
+.menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.menu-group-title {
+  padding: var(--pw-space-1-5) var(--pw-space-2) var(--pw-space-1);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+}
+
+.menu-radio {
+  align-items: flex-start;
+  white-space: normal;
+}
+
+/* The check mark and the icon's room sit on the label's line. */
+.menu-radio > svg,
+.menu-radio > .menu-item-icon-room {
+  margin-top: var(--pw-space-0-5);
+}
+
+.menu-radio-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.menu-radio[aria-checked='true'] .menu-item-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+.menu-radio-description {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/*
+ * The conversation (section 4: Conversation): an <ol>, oldest first, 12 px between entries. Text
+ * entries have a speaker line; tool calls, two or more in a row, fold into one toggle.
+ */
 .conversation {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--pw-space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.entry-label {
-  margin-bottom: 2px;
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+/* "You", "Claude" or "From name", then " · 11:06", always visible: label type, the time subtle. */
+.entry-speaker {
+  margin-bottom: var(--pw-space-0-5);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  overflow-wrap: anywhere;
+}
+
+.entry-time {
+  color: var(--pw-text-subtle);
+  font-variant-numeric: tabular-nums;
 }
 
 .entry-text {
-  font-size: 0.9rem;
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .entry-user,
+.entry-cross-session,
+.entry-to-pitwall {
+  padding: var(--pw-space-2) var(--pw-space-3);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-sunken);
+}
+
+/* From another session: the info inset at its start edge. */
 .entry-cross-session {
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  background: var(--surface-raised);
+  box-shadow: inset 3px 0 0 var(--pw-info-fg);
 }
 
-.entry-cross-session {
-  border-left: 3px solid var(--busy-text);
+/* To pitwall (W46): the same inset at its end edge. A message between sessions has it on the side it
+   came in from; one this session sent out, on the side it went. */
+.entry-to-pitwall {
+  box-shadow: inset -3px 0 0 var(--pw-info-fg);
 }
 
-/* A sender's name is shown as it is, not in capitals. */
-.entry-cross-session .entry-label {
-  text-transform: none;
-  letter-spacing: 0;
+.entry-notice .entry-text {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
-.entry-tool {
+.entry-cut {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/*
+ * A question Claude Code asked in its dialog (W49, section 4: Conversation): "Claude asked", then each
+ * question, its options as boxes, the chosen ones in the selected look with a check and "Your
+ * answer"; an answer typed in place of an option and notes in sunken boxes, as your messages are.
+ * No fill of its own: it's Claude's turn.
+ */
+.entry-question > :not(.entry-speaker) + * {
+  margin-top: var(--pw-space-2);
+}
+
+.questions {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
+  flex-direction: column;
+  gap: var(--pw-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.entry-tool-text {
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  min-width: 0;
+}
+
+.question-header,
+.question-typed-label {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+  overflow-wrap: anywhere;
+}
+
+.question-text,
+.question-option-label,
+.question-typed-text {
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.question-text {
+  font-weight: var(--pw-weight-medium);
+}
+
+.question-note,
+.question-status,
+.question-option-description {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.question-option-description {
+  white-space: pre-wrap;
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* An option: a box with a decorative edge. What's chosen is said in words, never by the box alone (6.1). */
+.question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pw-space-2);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border-radius: var(--pw-radius-md);
+  box-shadow: inset 0 0 0 1px var(--pw-border);
+}
+
+/* Chosen: the selected look, as the open row and the selected repo item have it, with its label at 500. */
+.question-option.chosen {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+}
+
+.question-option.chosen .question-option-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+/* The check's place, kept by every option, so their labels line up; centred on the label's first line. */
+.question-option-icon {
+  flex: none;
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
+  margin-top: calc((var(--pw-leading-m) - var(--pw-icon-sm)) / 2);
+  color: var(--pw-info-tint-fg);
+}
+
+.question-option-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* "Your answer", after the label: --pw-info-tint-fg on --pw-selected, as a pressed chip's label is. */
+.question-option-chosen {
+  margin-inline-start: var(--pw-space-2);
+  color: var(--pw-info-tint-fg);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  white-space: nowrap;
+}
+
+.question-typed {
+  padding: var(--pw-space-2) var(--pw-space-3);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-sunken);
+}
+
+/*
+ * Markdown in messages (section 4: Markdown in messages): Claude's messages, its messages to pitwall
+ * and other sessions' as pitwall's own elements. Text wraps as the message's text does; only a code block and a table
+ * scroll sideways, each in its own box. The spacing between blocks is at the end of this part, after
+ * the elements' own margins.
+ */
+.entry-markdown {
+  white-space: normal;
+}
+
+/* A message with too much formatting to show: its text as written, as your prompts are, then a note. */
+.md-as-written {
+  white-space: pre-wrap;
+}
+
+.md-as-written-note {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* Headings are styled text from the type scale, not h1 to h6: the page's outline is pitwall's (6.1, rule 6). */
+.md-heading {
+  font-weight: var(--pw-weight-bold);
+}
+
+.md-h1,
+.md-h2 {
+  font-size: var(--pw-text-l);
+  line-height: var(--pw-leading-l);
+}
+
+/* Bold is 600, the heaviest weight pitwall loads (2.7). */
+.entry-markdown strong {
+  font-weight: var(--pw-weight-bold);
+}
+
+.md-list {
+  margin: 0;
+  padding-inline-start: var(--pw-space-6);
+}
+
+/* Bullets by depth, whatever lists the conversation's own markup puts around them. */
+ul.md-list {
+  list-style-type: disc;
+}
+
+.md-list ul.md-list {
+  list-style-type: circle;
+}
+
+.md-list .md-list ul.md-list {
+  list-style-type: square;
+}
+
+ol.md-list {
+  list-style-type: decimal;
+}
+
+.md-list > li::marker {
+  color: var(--pw-text-muted);
+}
+
+/* A quote: muted text, after a 3 px bar that's a real border, so forced colours keep it. */
+.md-quote {
+  margin: 0;
+  padding-inline-start: var(--pw-space-3);
+  border-inline-start: 3px solid var(--pw-border-strong);
+  color: var(--pw-text-muted);
+}
+
+.md-rule {
+  height: 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--pw-border-strong);
+}
+
+/*
+ * Inline code (2.7): mono s on --pw-surface-sunken, or --pw-surface inside another session's message
+ * or a message to pitwall, which are sunken. Its line height is its own size, so JetBrains Mono's
+ * taller ascent doesn't stretch the line it's on past the 4 px grid; its fill still covers the glyphs.
+ */
+.md-code-span {
+  padding: 0 var(--pw-space-1);
+  line-height: 1;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text);
+}
+
+.entry-cross-session .md-code-span,
+.entry-to-pitwall .md-code-span {
+  background: var(--pw-surface);
+}
+
+.md-link {
+  border-radius: var(--pw-radius-xs);
+  color: var(--pw-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .md-link:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
+/*
+ * The question a link asks before it opens (W55), after the paragraph, heading or table the link is
+ * in: an inline confirmation, in the text colour even inside a quote, whose text is muted.
+ */
+.entry-markdown .inline-confirm {
+  color: var(--pw-text);
+}
+
+/*
+ * A code block: --pw-surface-muted (--pw-surface inside another session's message or a message to
+ * pitwall), a 1 px border, the language and a Copy button in a bar above the code, and the code in
+ * code style, as written, scrolling sideways in its own box.
+ */
+.md-code {
+  min-width: 0;
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-muted);
+}
+
+.entry-cross-session .md-code,
+.entry-to-pitwall .md-code {
+  background: var(--pw-surface);
+}
+
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-md);
+  padding: var(--pw-space-0-5) var(--pw-space-0-5) 0 var(--pw-space-3);
+}
+
+.md-code-language {
   min-width: 0;
   overflow: hidden;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tool-error {
+.md-code-bar .copy-button {
+  margin-inline-start: auto;
+}
+
+.md-code-scroll {
+  margin: 0;
+  padding: 0 var(--pw-space-3) var(--pw-space-2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-radius: 0 0 var(--pw-radius-md) var(--pw-radius-md);
+  color: var(--pw-text);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-ligatures: none;
+  tab-size: 4;
+  white-space: pre;
+}
+
+.md-code-scroll code {
+  font-size: inherit;
+}
+
+/*
+ * A bare URL in code is a link (W37), in the code's own mono face and size, told apart from the code
+ * by its underline as well as --pw-link. A code block's box clips what's drawn past it, so a link in
+ * one takes the inset focus ring, as the box itself does: the outer ring would lose its top on the
+ * code's first line, which has no padding above it.
+ */
+.md-code-scroll .md-link:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+/*
+ * A table: header cells 600 on --pw-surface-muted, 1 px borders, cells wrapping at spaces only, so a
+ * table too wide for the message scrolls sideways in its own box rather than breaking its words.
+ */
+.md-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.md-table {
+  border-collapse: collapse;
+  overflow-wrap: normal;
+}
+
+.md-table th,
+.md-table td {
+  padding: var(--pw-space-1) var(--pw-space-2);
+  border: 1px solid var(--pw-border-strong);
+  text-align: start;
+  vertical-align: top;
+}
+
+.md-table th {
+  background: var(--pw-surface-muted);
+  font-weight: var(--pw-weight-bold);
+}
+
+.md-table .md-align-left {
+  text-align: left;
+}
+
+.md-table .md-align-center {
+  text-align: center;
+}
+
+.md-table .md-align-right {
+  text-align: right;
+}
+
+/*
+ * Between blocks: 8 px, and 12 px above a heading. Inside a list item, 4 px, so a list nested in an
+ * item stays with it; items are 2 px apart.
+ */
+.entry-markdown > * + *,
+.md-quote > * + * {
+  margin-top: var(--pw-space-2);
+}
+
+.entry-markdown > * + .md-heading,
+.md-quote > * + .md-heading {
+  margin-top: var(--pw-space-3);
+}
+
+.md-list > li > * + * {
+  margin-top: var(--pw-space-1);
+}
+
+.md-list > li + li {
+  margin-top: var(--pw-space-0-5);
+}
+
+/* A tool call: one line of code text, cut with an ellipsis, then its error badge. */
+.entry-tool,
+.tool-call {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+}
+
+.tool-call-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-ligatures: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-call-error {
   flex: none;
-  padding: 0 6px;
-  border-radius: 4px;
-  background: var(--failed-bg);
-  color: var(--failed-text);
-  font-family: var(--font-sans);
-  font-size: 0.75rem;
-  font-weight: 600;
 }
 
-.entry-notice .entry-text {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  font-style: italic;
+/*
+ * The fold's toggle: the expand chevron and "n tool calls" in code style, with the error count. It
+ * sits 6 px into the gutter, so its chevron lines up with the text above and below it.
+ */
+.fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  max-width: calc(100% + var(--pw-space-1-5));
+  min-height: var(--pw-control-sm);
+  margin-inline-start: calc(-1 * var(--pw-space-1-5));
+  padding: var(--pw-space-0-5) var(--pw-space-1-5);
+  border: 0;
+  border-radius: var(--pw-radius-sm);
+  background: transparent;
+  color: var(--pw-text-muted);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
-.entry-note {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  font-style: italic;
-}
-
-@media (max-width: 600px) {
-  body {
-    font-size: 14px;
-  }
-
-  .masthead {
-    position: static;
-  }
-
-  .masthead-status {
-    margin-left: 0;
-  }
-
-  .group-count {
-    margin-left: 0;
-  }
-
-  .copy-command {
-    margin-left: 0;
+@media (hover: hover) {
+  .fold-toggle:hover {
+    background: var(--pw-surface-hover);
+    color: var(--pw-text);
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .group-toggle .chevron {
-    transition: none;
+.fold-toggle:focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+.fold-toggle .chevron {
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.fold-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.fold-toggle .badge {
+  margin-inline-start: var(--pw-space-0-5);
+  font-family: var(--pw-font-sans);
+}
+
+/* Expanded: one call a line, lined up with the toggle's label. */
+.tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: var(--pw-space-1) 0 0;
+  padding: 0 0 0 calc(var(--pw-icon-sm) + var(--pw-space-1-5));
+  list-style: none;
+}
+
+/*
+ * "n new · Jump to latest" (section 4: Conversation): sticky at the bottom of the body, 8 px from the
+ * footer. The sticky box has no height, so the bar takes no room in the list and nothing moves when it
+ * goes. A sticky box keeps clear of its scroller's padding, so its offset takes the body's 24 px off.
+ */
+.jump-latest {
+  position: sticky;
+  bottom: calc(var(--pw-space-2) - var(--pw-space-6));
+  z-index: var(--pw-z-sticky);
+  height: 0;
+}
+
+.jump-latest-button {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1-5);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-3);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-info-tint);
+  box-shadow: inset 0 0 0 1px var(--pw-info-border);
+  color: var(--pw-info-tint-fg);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .jump-latest-button:hover {
+    box-shadow: inset 0 0 0 1px var(--pw-info-fg);
+  }
+}
+
+.jump-latest-button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--pw-info-border), var(--pw-ring-focus);
+}
+
+/*
+ * Forced colours, such as Windows' contrast themes (docs/design-system.md, 6.1 rule 17). The browser
+ * drops every box-shadow and replaces the palette with the system's, keeping only colours written as
+ * system colours, such as Highlight and CanvasText. So whatever a shadow or a fill drew that says
+ * something is drawn again here: an open row, a pressed chip, the selected repo, the open tab, the
+ * divider, the edges of what sits over the page, and the edges of fields and buttons. A state is drawn
+ * with a border where the element can also take focus, so its focus outline still shows.
+ */
+@media (forced-colors: active) {
+  /* The open session's row: its fill and ring are gone. Focus is on its button, whose own outline shows. */
+  .session.open,
+  .session.open:hover {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  /* Chips: an edge, and a thicker one in Highlight while pressed, the padding giving back what the border takes. */
+  .chip {
+    border: 1px solid ButtonText;
+    padding: 0 calc(var(--pw-space-2) - 1px);
+  }
+
+  .chip[aria-pressed='true'] {
+    border: 2px solid Highlight;
+    padding: 0 calc(var(--pw-space-2) - 2px);
+  }
+
+  /* The selected repo list item, the open root tab, and the theme switch's selected option. */
+  .repo-item.selected {
+    border: 2px solid Highlight;
+    padding: calc(var(--pw-space-1-5) - 2px) calc(var(--pw-space-2) - 2px);
+  }
+
+  .root-tab[aria-selected='true'] {
+    border: 2px solid Highlight;
+    padding: calc(var(--pw-space-1) - 2px) calc(var(--pw-space-2) - 2px);
+  }
+
+  /* A question's chosen option (W49): its fill and ring are gone; "Your answer" still says it. */
+  .question-option.chosen {
+    border: 2px solid Highlight;
+    padding: calc(var(--pw-space-1-5) - 2px) calc(var(--pw-space-2) - 2px);
+  }
+
+  .theme-switch {
+    border: 1px solid ButtonText;
+  }
+
+  .theme-switch-option[aria-pressed='true'] {
+    border: 2px solid Highlight;
+  }
+
+  /* The open tab's underline, which is a fill. */
+  .session-tab[aria-selected='true']::after {
+    background: Highlight;
+  }
+
+  /* The divider's line, which is a fill too: the system's text colour, and Highlight while it's in use. */
+  .session-divider::before {
+    background: CanvasText;
+  }
+
+  .session-divider:focus-visible::before,
+  .session-divider[data-dragging]::before {
+    background: Highlight;
+  }
+
+  @media (hover: hover) {
+    .session-divider:hover::before {
+      background: Highlight;
+    }
+  }
+
+  /* What sits over the page: the session view over the list, the drawer, dialogs, menus, toasts and tooltips. */
+  .session-view.overlay {
+    border-left: 1px solid CanvasText;
+  }
+
+  .repo-drawer,
+  .dialog,
+  .menu,
+  .toast,
+  .tooltip {
+    outline: 1px solid CanvasText;
+  }
+
+  /* Fields, buttons with an edge, and the boxes whose edge is a ring: an inline alert, a confirmation, the Jump to latest bar. */
+  .field-input,
+  .select-input,
+  .filter-input,
+  .button:not(.ghost),
+  .icon-button:not(.ghost),
+  .jump-latest-button,
+  .inline-alert,
+  .inline-confirm {
+    border: 1px solid ButtonText;
   }
 }

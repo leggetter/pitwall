@@ -18,6 +18,15 @@ export function plainText(text: string): string {
 }
 
 /**
+ * pitwall's own sentence for something that failed (docs/design-system.md, 5: Errors): "Couldn't
+ * stop the session.", with the HTTP status when the server answered, "(HTTP 502)". The server's
+ * reason, when it gave one, goes after it, as text.
+ */
+export function couldNot(what: string, status: number | undefined): string {
+  return `Couldn't ${what}${status === undefined ? '' : ` (HTTP ${status})`}.`;
+}
+
+/**
  * Shortens a home directory to `~` when the path makes it obvious: macOS
  * `/Users/<name>` and Linux `/home/<name>`. The browser can't ask for the real
  * home directory, and the contract doesn't send it.
@@ -25,21 +34,6 @@ export function plainText(text: string): string {
 export function shortenHome(path: string): string {
   const match = /^\/(?:Users|home)\/[^/]+(?=\/|$)/.exec(path);
   return match ? `~${path.slice(match[0].length)}` : path;
-}
-
-/**
- * Where `cwd` sits relative to its group:
- * - `undefined` when it is the group directory itself;
- * - the relative path when it is below it;
- * - the home-shortened absolute path otherwise, such as a git worktree that is
- *   grouped under its main repo but lives elsewhere on disk.
- */
-export function cwdWithinGroup(cwd: string, groupKey: string): string | undefined {
-  const key = groupKey.replace(/\/+$/, '');
-  const dir = cwd.replace(/\/+$/, '');
-  if (dir === key) return undefined;
-  if (key === '' || dir.startsWith(`${key}/`)) return dir.slice(key.length + 1);
-  return shortenHome(dir);
 }
 
 /** "12s ago", "5m ago", "3h ago", "2d ago". Future times (clock skew) read as "just now". */
@@ -65,7 +59,7 @@ export function updatedAgo(iso: string, now: number): string {
   return `updated ${relativeTime(iso, now)}`;
 }
 
-/** The absolute local time, for hover text. */
+/** The absolute local time, with seconds, for a timestamp's tooltip. */
 export function absoluteTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
@@ -79,7 +73,24 @@ export function absoluteTime(iso: string): string {
   });
 }
 
+/** The time of day alone, in the user's locale ("11:06"), for the conversation's speaker lines. Undefined when it isn't a time. */
+export function clockTime(iso: string): string | undefined {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
 /** Roots for display: home-shortened and comma-separated. */
 export function formatRoots(roots: readonly string[]): string {
   return roots.map(shortenHome).join(', ');
+}
+
+/**
+ * A path, or a list of them, cut in two for a middle ellipsis (docs/design-system.md, 5): the end,
+ * from the last `/`, always shows, and the start is cut short with "…" when there isn't room. With
+ * no `/` after the first character, the end is empty, so the text is only cut at its end.
+ */
+export function middleEllipsisParts(text: string): { start: string; end: string } {
+  const slash = text.lastIndexOf('/');
+  return slash > 0 ? { start: text.slice(0, slash), end: text.slice(slash) } : { start: text, end: '' };
 }

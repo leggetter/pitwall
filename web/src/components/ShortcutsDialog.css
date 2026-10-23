@@ -1,0 +1,75 @@
+/*
+ * The keyboard shortcuts dialog (docs/design-system.md, 4: Keyboard shortcuts dialog): the off switch
+ * at the top of the body, then the keyboard map in groups. Each row is what it does, then its key
+ * caps at the right, which wrap under it when the dialog is too narrow for both.
+ */
+
+.shortcuts-switch .field-hint {
+  /* Under the label, past the 16 px box and its 6 px gap. */
+  padding-left: calc(var(--pw-icon-sm) + var(--pw-space-1-5));
+}
+
+.shortcuts-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pw-space-2);
+  margin-bottom: var(--pw-space-1);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-s);
+}
+
+.shortcuts-off {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-regular);
+}
+
+.shortcut-list {
+  margin: 0;
+}
+
+.shortcut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pw-space-1) var(--pw-space-4);
+  padding: var(--pw-space-1-5) 0;
+  border-top: 1px solid var(--pw-border);
+}
+
+.shortcut-what {
+  flex: 1 1 12em;
+  min-width: 0;
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.shortcut-keys {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--pw-space-1);
+  margin: 0 0 0 auto;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
+}
+
+.shortcut-alternatives {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  white-space: nowrap;
+}
+
+.shortcut-or,
+.shortcut-then {
+  display: inline-flex;
+}
+
+.shortcut-then {
+  margin-left: calc(-1 * var(--pw-space-0-5));
+}

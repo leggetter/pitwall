@@ -1,169 +1,177 @@
-/* Spawn, stop and remove (W12): the New session dialog and the session view's actions. Uses the tokens in styles.css. */
+/* Spawn, stop and remove (W12): the New session dialog and the session view's actions. Uses the tokens in tokens.css.
+   Disabled and busy buttons are in styles.css (W24). */
 
 .button.primary {
-  background: var(--focus);
-  border-color: var(--focus);
-  color: var(--surface);
-  font-weight: 600;
+  background: var(--pw-accent);
+  color: var(--pw-on-accent);
+  font-weight: var(--pw-weight-medium);
+  box-shadow: var(--pw-shadow-accent);
 }
 
-.button.primary:hover {
-  background: var(--focus);
-  filter: brightness(1.08);
+.button.primary:focus-visible {
+  box-shadow: var(--pw-shadow-accent), var(--pw-ring-focus);
+}
+
+@media (hover: hover) {
+  .button.primary:hover {
+    background: var(--pw-accent-hover);
+  }
 }
 
 .button.danger {
-  background: var(--error-bg);
-  border-color: var(--error-border);
+  background: var(--pw-danger-solid);
+  color: var(--pw-on-danger-solid);
+  box-shadow: none;
 }
 
-.button.danger:hover {
-  background: var(--error-bg);
-  filter: brightness(0.97);
+.button.danger:focus-visible {
+  box-shadow: var(--pw-ring-focus);
 }
 
-.modal .button:disabled,
-.session-actions .button:disabled {
-  cursor: default;
-  opacity: 0.6;
+@media (hover: hover) {
+  .button.danger:hover {
+    background: var(--pw-danger-solid);
+    filter: brightness(0.92);
+  }
 }
 
-/* The New session dialog */
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 48px 16px;
-  overflow-y: auto;
-  background: rgb(0 0 0 / 0.35);
-}
-
-.modal {
-  width: min(620px, 100%);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px 20px;
-}
-
-.modal-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-}
+/*
+ * Fields (docs/design-system.md, 4: Inputs, textareas and selects), as the New session dialog uses
+ * them: the label above, 4 px away, in label type, with "optional" after it; the 32 px field; then the
+ * help text and the error below, in meta type, each linked to the field with aria-describedby.
+ */
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--pw-space-1);
 }
 
 .field-label {
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
 }
 
 .field-optional {
-  margin-left: 4px;
-  color: var(--text-muted);
-  font-weight: 400;
-  font-size: 0.8rem;
+  margin-left: var(--pw-space-1);
+  color: var(--pw-text-subtle);
+  font-weight: var(--pw-weight-regular);
 }
 
-.field select,
-.field-input {
+.field-input,
+.field .select-input {
   width: 100%;
-  padding: 6px 8px;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  font: inherit;
+  min-height: var(--pw-control-lg);
+  margin: 0;
+  padding: var(--pw-space-1-5) var(--pw-space-3);
+  background: var(--pw-surface);
+  color: var(--pw-text);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  box-shadow: var(--pw-shadow-input);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
 }
 
+/* The select's text clears the icon drawn over its right edge. */
+.field .select {
+  display: flex;
+}
+
+.field .select-input {
+  padding-right: var(--pw-space-8);
+}
+
+/* Paths and model names are in the mono path style. */
+.field-input.mono {
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+}
+
+/* Placeholders are examples, never the only label (section 4: Inputs). The browser's default is fainter. */
+.field-input::placeholder {
+  color: var(--pw-text-subtle);
+  opacity: 1;
+}
+
+.field-input:focus-visible {
+  box-shadow: var(--pw-shadow-input), var(--pw-ring-focus);
+}
+
+/* In a dialog: resizable vertically, at least six rows. */
 .field-prompt {
-  min-height: 7.5em;
+  min-height: calc(6 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
   resize: vertical;
-  font-family: var(--font-sans);
-  line-height: 1.4;
+  font-family: var(--pw-font-sans);
 }
 
 .field-input[aria-invalid='true'],
-.field select[aria-invalid='true'] {
-  border-color: var(--error-border);
+.field .select-input[aria-invalid='true'] {
+  box-shadow: var(--pw-shadow-input-error);
+}
+
+.field-input[aria-invalid='true']:focus-visible,
+.field .select-input[aria-invalid='true']:focus-visible {
+  box-shadow: var(--pw-shadow-input-error), var(--pw-ring-focus);
+}
+
+/* While the dialog's action runs, its fields are aria-disabled: the disabled look (section 4: Inputs). */
+.field-input[aria-disabled='true'],
+.field .select-input[aria-disabled='true'] {
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text-disabled);
+  cursor: not-allowed;
 }
 
 .field-hint {
-  color: var(--text-muted);
-  font-size: 0.8rem;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
   overflow-wrap: anywhere;
 }
 
 .field-problem {
-  color: var(--failed-text);
-  font-size: 0.85rem;
+  color: var(--pw-danger-fg);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
-.spawn-failure {
-  flex-direction: column;
-  align-items: stretch;
-  margin-top: 0;
+/*
+ * A checkbox (section 4: Inputs, textareas and selects): the native one, 16 px, filled with
+ * --pw-selected-border, and its label 6 px after it, which a click on also toggles it.
+ */
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
 }
 
+.checkbox input {
+  flex: none;
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
+  margin: 0;
+  accent-color: var(--pw-selected-border);
+}
+
+.checkbox label {
+  cursor: pointer;
+}
+
+/* The New session dialog's failure: the trust sentence, then the command chip and its copy button, each on a line of their own. */
+.spawn-trust,
 .spawn-failure .copy-command {
-  margin-left: 0;
+  margin-top: var(--pw-space-2);
 }
 
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-/* Stop and Remove in the session view */
+/* Stop and Remove in the session view: the confirmation and the result, one at a time (InlineConfirm and Alert in styles.css). */
 
 .session-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.session-actions-buttons,
-.session-confirm-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.session-confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--error-border);
-  border-radius: var(--radius);
-  font-size: 0.875rem;
-}
-
-.action-result {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.action-result.failed {
-  color: var(--failed-text);
+  gap: var(--pw-space-2);
 }

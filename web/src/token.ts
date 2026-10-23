@@ -1,7 +1,11 @@
 // Token transport: the CLI opens a launch file that sends the browser to
 // http://127.0.0.1:<port>/#token=<token> (D7). The UI takes the token from the
 // fragment, keeps it in sessionStorage, and removes it from the address bar so
-// it doesn't linger in history, bookmarks or screen shares.
+// it doesn't linger there, or in bookmarks or screen shares. The browser has
+// already recorded the URL by then, though: the launch file's redirect puts it,
+// token and all, in the profile's history (W48 F2). Chrome also writes
+// sessionStorage to the profile on disk. A per-run token found there is dead
+// once its run ends; a fixed PITWALL_TOKEN isn't.
 //
 // The token never leaves the page. It's used only to answer the WebSocket's
 // challenge with an HMAC (connection.ts); HTTP API calls carry the apiKey the

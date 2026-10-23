@@ -34,18 +34,52 @@
 //      from the relay's transcript within a short grace period, turns it into
 //      held or refused
 //
+// The text is the request's with look-alike spaces made plain and CRLF as LF
+// (relayText.ts plainSpaces(), W43), before the id is picked, the request is
+// framed, the gate's expectation is written and the call is checked, so all
+// four use the same text, and the gate still compares it exactly.
+//
+// A call for the request that differs from it only in its text
+// (relayPrompt.ts callMismatch()'s `where`), which the gate denied, is tried
+// once more (W43, W52): pitwall restarts the relay once its turn ends, as
+// before, and sends the same text on the new one, with a new request id and
+// expectation, while the HTTP request waits. The new relay is outside
+// whatever may have primed the old one. Only then, and at most once per
+// message: `denied` comes only from Claude Code's own tool result
+// (parseSendResult()), which the relay's model can't write, so nothing was
+// sent. Never after a call the gate didn't stop, one pitwall couldn't
+// confirm, any other result, or a call that differs in more than its text:
+// one to another session, one that asks for idle notices or has a field
+// pitwall doesn't check, which a peer may have talked the relay into (W48's
+// F3). If the second copy goes through, the result says the first was
+// blocked. If it's blocked too, or the second try fails, the result is
+// 'failed', and says where the copy first differed (relayText.ts
+// describeCopyDifference()), never with the text.
+//
 // What pitwall can't confirm is 'uncertain', never 'failed': 'failed' means
 // nothing was sent. A request that fails before anything was sent isn't
 // recorded as the session's exchange, so it never replaces one that was.
 //
-// A SendMessage call that wasn't for a request raises the snapshot's
-// relayAlert. A call nobody asked for that the gate blocked leaves the relay
-// sound, so it keeps running: restarting it for each one would let any
-// session that can reach it use up the restart limit. A blocked call for one
-// of pitwall's own requests that didn't match it restarts the relay once its
-// turn ends, because its conversation may have been poisoned. A call that
-// got past the gate when it shouldn't have stops pitwall using the relay
-// until pitwall restarts.
+// A SendMessage call nobody asked for raises the snapshot's relayAlert, with
+// cause 'unrequested'. A call for one of your messages that didn't match it
+// raises it with cause 'changed', unless only its text differed and the gate
+// blocked it or pitwall stopped it before it ran: nothing was sent, and the
+// message's own result says what changed. The relay's model drops or
+// changes text in long copies, so an alert there would be routine (W52's
+// live check: 447 characters dropped from a 6,000-character message). One
+// that differs in more than its text, which the gate blocked or pitwall
+// stopped, raises it as blocked. A second call in the turn in which the gate
+// blocked the call for one of your messages raises it with cause 'repeated'
+// (W48's F8): it's the relay trying again, not another session. A call
+// nobody asked for that the gate blocked leaves the relay sound, so it keeps
+// running: restarting it for each one would let any session that can reach
+// it use up the restart limit. A blocked call for one of pitwall's own
+// requests that didn't match it restarts the relay once its turn ends,
+// because its conversation may have been poisoned. A call that got past the
+// gate when it shouldn't have stops pitwall using the relay until pitwall
+// restarts. One for your message that matched it, but ran without the gate
+// checking it, raises no alert: nothing unrequested or changed was sent, and
+// the snapshot's relayOff says why messaging is off.
 //
 // The gate needs Claude Code 2.1.295 or later, for the hooks' `onFailure`,
 // so pitwall checks `claude --version` before it first starts the relay.
@@ -74,12 +108,13 @@ import {
   type RelayTranscriptTail,
 } from '../index/relayTranscript.js';
 import { isSafeSessionId } from '../index/transcripts.js';
-import type { RelayAlert, RelayExchange, RelayResult, RelayStatus } from '../shared/protocol.js';
+import type { RelayAlert, RelayExchange, RelayOff, RelayResult, RelayStatus } from '../shared/protocol.js';
 import { childEnvironment } from './command.js';
 import { ensureLaunchDir, pitwallHome } from './launch.js';
 import { createRelayGate, RELAY_GATE_DIR_NAME, type RelayGate } from './relayGate.js';
 import { DENIAL_PREFIX } from './relayGateHook.mjs';
 import {
+  callMismatch,
   findAnswer,
   frameRequest,
   isAddressable,
@@ -89,10 +124,11 @@ import {
   parseSendResult,
   RELAY_NAME,
   relayArgs,
-  sendMismatch,
   userMessageLine,
+  type CallMismatch,
   type SendResult,
 } from './relayPrompt.js';
+import { plainSpaces } from './relayText.js';
 
 /** The session a message is for, from the resolved summary, never from the request. */
 export interface RelayTarget {
@@ -108,12 +144,14 @@ export interface RelaySendOutcome extends RelayResult {
 }
 
 export interface RelayManager {
-  /** Relays `text`, verbatim, to `target`. Never rejects. */
+  /** Relays `text` to `target`, verbatim except for plainSpaces(). Never rejects. */
   send(target: RelayTarget, text: string): Promise<RelaySendOutcome>;
   /** The latest exchange with a session, for its summary in the snapshot. */
   exchange(sessionId: string): RelayExchange | undefined;
   /** The latest thing the relay tried that nobody asked for, for the snapshot. Undefined until the first. */
   alert(): RelayAlert | undefined;
+  /** Why pitwall stopped using the relay for this run, for the snapshot. Undefined while it can be used. */
+  off(): RelayOff | undefined;
   /** True for a `claude agents` row that is the relay itself, by pid, session id or directory. */
   isRelay(row: { sessionId: string; pid?: number | undefined; cwd: string }): boolean;
   /** Fails what's waiting and stops the relay. Resolves within about 2 seconds. */
@@ -242,17 +280,29 @@ interface Proc {
   ready: Promise<boolean>;
   /** The gate's SessionStart hook has marked it ready: its hooks loaded. */
   gateReady: boolean;
-  /** SendMessage calls nobody asked for, by tool_use id, waiting for their results. What each was, in pitwall's words. */
-  strays: Map<string, string>;
+  /** SendMessage calls nobody asked for, by tool_use id, waiting for their results. */
+  strays: Map<string, Stray>;
   /** The gate blocked a call for one of pitwall's requests that didn't match it: start over when the turn ends. */
   restartAfterTurn: boolean;
+  /** The gate blocked the call for one of pitwall's requests in this turn: another SendMessage in it is the relay trying again. */
+  blockedInTurn: boolean;
   /** Don't start another relay when this one exits; the next request will. */
   noRestart: boolean;
 }
 
+/** A SendMessage call nobody asked for, waiting for its result. */
+interface Stray {
+  /** It came after the call for a request, in that request's turn: a second call for one request. */
+  second: boolean;
+  /** The gate had already blocked that request's call in this turn: the relay trying again ('repeated'). */
+  repeated: boolean;
+}
+
 interface Job {
   target: RelayTarget;
+  /** The request's text as pitwall relays it: plainSpaces(). */
   text: string;
+  /** This attempt's request id. The second try has a new one. */
   id: string;
   resolve: (outcome: RelaySendOutcome) => void;
   done: boolean;
@@ -263,12 +313,17 @@ interface Job {
   toolUseId?: string;
   msgId?: string;
   attemptedAt: number;
+  /** This attempt was written a second time, after a turn that ignored it. */
   retried: boolean;
   timer?: NodeJS.Timeout;
   /** The gate the expectation was written for. */
   gateId?: string;
-  /** Why the relay's SendMessage call didn't match the request, when it didn't. */
-  mismatch?: string;
+  /** Why this attempt's SendMessage call didn't match the request, when it didn't. */
+  mismatch?: CallMismatch;
+  /** Why the first attempt's call didn't match, once the gate blocked it and only its text differed: the message is tried once more, and only once. */
+  blockedOnce?: CallMismatch;
+  /** The second try has started: the relay that blocked the first has gone. */
+  secondTry: boolean;
 }
 
 interface ExchangeState {
@@ -320,6 +375,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   let tailReads: Promise<void> = Promise.resolve();
   /** Why pitwall stopped using the relay for this run, once its gate let through a call it shouldn't have. */
   let gateBroken: string | undefined;
+  /** ISO 8601: when gateBroken was set. */
+  let gateBrokenAt: string | undefined;
   let latestAlert: RelayAlert | undefined;
   /** Set once `claude --version` has said it's new enough. Checked again while it hasn't, so an update needs no restart. */
   let versionChecked = false;
@@ -343,12 +400,23 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     return `pitwall stopped using its relay for this run: ${gateBroken} Restart pitwall to use it again.`;
   }
 
-  /** Answers the request. Recording an exchange is separate: only something that may have been sent is recorded. */
+  /**
+   * Answers the request. Recording an exchange is separate: only something
+   * that may have been sent is recorded. A message whose first copy the gate
+   * blocked, and that then wasn't sent, says both. One whose second copy was
+   * delivered says the first was blocked (W52), so a retry is never silent.
+   */
   function finish(job: Job, outcome: RelaySendOutcome): void {
     if (job.done) return;
     job.done = true;
     clearTimeout(job.timer);
     if (job.gateId !== undefined) gate.clear(job.gateId);
+    if (job.blockedOnce !== undefined && outcome.status === 'failed') {
+      const again = job.secondTry ? 'pitwall tried once more, and that wasn’t sent either:' : 'pitwall couldn’t try again:';
+      outcome = { ...outcome, detail: `${blockedOnceDetail(job.blockedOnce)} ${again} ${outcome.detail ?? 'no reason given.'}` };
+    } else if (job.blockedOnce !== undefined && outcome.status === 'delivered') {
+      outcome = { ...outcome, detail: retriedDetail(job.blockedOnce) };
+    }
     job.resolve(outcome);
     if (current === job) {
       current = undefined;
@@ -471,10 +539,13 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (job.done) return;
     const reachedGate = job.gateId !== undefined && !gate.pending(job.gateId);
     if (!reachedGate) {
-      if (job.mismatch !== undefined) raiseAlert(`${job.mismatch} pitwall stopped the relay before it ran.`, true);
-      return finish(job, failed(`${detail} Nothing was sent.`));
+      if (job.mismatch === undefined) return finish(job, failed(`${detail} Nothing was sent.`));
+      // A call that never ran: nothing was sent. A changed text raises no alert, as the gate blocking it wouldn't; more than that does (W52).
+      if (job.mismatch.where !== undefined) log(`${job.mismatch.reason} pitwall stopped the relay before it ran.`);
+      else raiseAlert(`${job.mismatch.reason} pitwall stopped the relay before it ran, so nothing was sent.`, true, 'changed');
+      return finish(job, failed(`${detail} ${job.mismatch.reason} pitwall stopped it before it ran, so nothing was sent.`));
     }
-    if (job.mismatch !== undefined) raiseAlert(`${job.mismatch} pitwall couldn't tell whether its gate stopped it.`, false);
+    if (job.mismatch !== undefined) raiseAlert(`${job.mismatch.reason} pitwall couldn't tell whether its gate stopped it.`, false, 'changed');
     recordOutcome(job, 'uncertain');
     finish(job, { status: 'uncertain', detail: `${detail} ${MAY_HAVE_REACHED}` });
   }
@@ -493,14 +564,19 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   function breakGate(reason: string): void {
     if (gateBroken === undefined) {
       gateBroken = reason;
+      gateBrokenAt = new Date(now()).toISOString();
       log(`pitwall stopped using the relay: ${reason}`);
     }
     if (proc !== undefined) proc.noRestart = true;
     stopProcess('SIGTERM');
   }
 
-  function raiseAlert(detail: string, blocked: boolean): void {
-    latestAlert = { at: new Date(now()).toISOString(), detail, count: (latestAlert?.count ?? 0) + 1, blocked };
+  /**
+   * `cause`: 'unrequested' for a call with no request behind it, 'changed' for one for a request that didn't
+   * match it, 'repeated' for another call in the turn in which the gate blocked the call for a request.
+   */
+  function raiseAlert(detail: string, blocked: boolean, cause: RelayAlert['cause']): void {
+    latestAlert = { at: new Date(now()).toISOString(), detail, count: (latestAlert?.count ?? 0) + 1, blocked, cause };
     log(detail);
   }
 
@@ -588,6 +664,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       gateReady: false,
       strays: new Map(),
       restartAfterTurn: false,
+      blockedInTurn: false,
       noRestart: false,
     };
     const events: RelayChildEvents = {
@@ -665,7 +742,10 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     lastError = said === undefined ? why : `${why}: ${said}`;
     if (!p.stopping) log(`it stopped (${lastError}).`);
     // Calls nobody asked for whose results never came.
-    for (const detail of p.strays.values()) raiseAlert(`${detail} The relay stopped before pitwall saw whether its gate blocked it.`, false);
+    for (const stray of p.strays.values()) {
+      const said = strayWords(p, stray);
+      raiseAlert(`${said.detail} The relay stopped before pitwall saw whether its gate blocked it.`, false, said.cause);
+    }
     p.strays.clear();
     if (current !== undefined && current.phase === 'grace') {
       // SendMessage had already delivered it; only the wait for a notice was cut short.
@@ -759,6 +839,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   function onTurnStart(p: Proc, event: Record<string, unknown>): void {
     p.busy = true;
     p.turnText = '';
+    p.blockedInTurn = false;
     const sessionId = event.session_id;
     if (typeof sessionId !== 'string' || !isSafeSessionId(sessionId) || sessionId === p.sessionId) return;
     p.sessionId = sessionId;
@@ -784,17 +865,29 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (job !== undefined && job.phase === 'written') {
       job.phase = 'sent';
       job.toolUseId = id;
-      const mismatch = sendMismatch(block.input, job.target.name, job.text);
+      const mismatch = callMismatch(block.input, job.target.name, job.text);
       if (mismatch !== undefined) job.mismatch = mismatch;
       return;
     }
     // Nobody asked for this one. The gate has no expectation for it, so it should deny it.
-    p.strays.set(
-      id,
-      job === undefined || job.phase === 'waiting'
-        ? 'The relay tried to send a message when pitwall hadn’t asked it to.'
-        : 'The relay tried to send a second message for one request.',
-    );
+    // After the gate blocked the call for a request in this turn, it's the relay trying that request again (W48's F8),
+    // whether that request is now 'waiting' for its second try or has its answer. Otherwise, after the call for the
+    // request in flight, it's a second call for that request.
+    const repeated = p.blockedInTurn;
+    p.strays.set(id, { repeated, second: repeated || (job !== undefined && job.phase !== 'waiting') });
+  }
+
+  /**
+   * What a call nobody asked for was, in pitwall's words, and its alert's cause. Asked again when its
+   * result comes, so a repeat whose request's denial arrived after it, as with two calls in one message,
+   * is still called a repeat.
+   */
+  function strayWords(p: Proc, stray: Stray): { detail: string; cause: RelayAlert['cause'] } {
+    if (stray.repeated || (stray.second && p.blockedInTurn)) {
+      return { detail: 'The relay tried again to send one of your messages, in the same turn, after pitwall’s gate had blocked its copy.', cause: 'repeated' };
+    }
+    if (stray.second) return { detail: 'The relay tried to send a second message for one request.', cause: 'unrequested' };
+    return { detail: 'The relay tried to send a message when pitwall hadn’t asked it to.', cause: 'unrequested' };
   }
 
   function onToolResult(p: Proc, block: Record<string, unknown>): void {
@@ -802,12 +895,13 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     const stray = toolUseId === undefined ? undefined : p.strays.get(toolUseId);
     if (stray !== undefined) {
       p.strays.delete(toolUseId!);
-      return onStrayResult(stray, parseSendResult(block));
+      return onStrayResult(strayWords(p, stray), parseSendResult(block));
     }
     const job = current;
     if (job === undefined || job.phase !== 'sent') return;
     if (job.toolUseId !== undefined && toolUseId !== job.toolUseId) return;
     const result = parseSendResult(block);
+    if (result.kind === 'denied') p.blockedInTurn = true;
     if (job.mismatch !== undefined) return onMismatchResult(p, job, job.mismatch, result);
     switch (result.kind) {
       case 'denied':
@@ -825,7 +919,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     recordOutcome(job, 'delivered');
     if (job.gateId !== undefined && gate.pending(job.gateId)) {
       // It ran, and the gate never claimed the expectation: the gate isn't in the way of SendMessage.
-      raiseAlert("The relay's SendMessage ran without pitwall's gate checking it. It was the message you sent, but the relay isn't safe to use.", false);
+      // It was your message, as asked, so nothing unrequested or changed was sent: no alert. relayOff says messaging is off, and why.
+      log("The relay's SendMessage ran without pitwall's gate checking it. It was the message you sent, but the relay isn't safe to use.");
       breakGate("its gate didn't check a SendMessage call.");
     }
     // Counted in polls rather than by the clock, so the wait is the same whatever the time does.
@@ -842,27 +937,88 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     void tick();
   }
 
-  /** The result of the request's call, which didn't match the request: the gate should have denied it. */
-  function onMismatchResult(p: Proc, job: Job, mismatch: string, result: SendResult): void {
+  /**
+   * The result of the request's call, which didn't match the request: the
+   * gate should have denied it, so nothing was sent. Denied, and only its
+   * text differs, which the relay's model does in long copies: no alert. The
+   * first time, the message is tried once more on a new relay, outside
+   * whatever may have primed this one, and the second time, its result says
+   * so. Denied, and more than its text differs (another recipient, idle
+   * notices, a field pitwall doesn't check), which a peer may have caused: a
+   * blocked 'changed' alert, and never tried again (W52, W48's F3).
+   */
+  function onMismatchResult(p: Proc, job: Job, mismatch: CallMismatch, result: SendResult): void {
     if (result.kind === 'denied') {
       // Blocked, but the relay got pitwall's own request wrong: its conversation may have been poisoned, so it starts over.
-      raiseAlert(`${mismatch} pitwall's gate blocked it, so nothing was sent.`, true);
       p.restartAfterTurn = true;
-      return finish(job, failed("pitwall's gate stopped the relay's send, because it didn't match your message, so nothing was sent. pitwall is restarting the relay."));
+      const again = job.blockedOnce !== undefined;
+      if (mismatch.where === undefined) {
+        raiseAlert(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent.`, true, 'changed');
+        if (!again) return finish(job, failed(notTriedDetail(mismatch)));
+      } else if (!again) {
+        log(`${mismatch.reason} pitwall's gate blocked it, so nothing was sent. pitwall will try once more, on a new relay.`);
+        return tryOnceMore(p, job, mismatch);
+      } else {
+        log(`${mismatch.reason} pitwall's gate blocked it again, so nothing was sent.`);
+      }
+      const first = job.blockedOnce!;
+      // This is the whole story: finish() adds nothing to it.
+      delete job.blockedOnce;
+      return finish(job, failed(blockedTwiceDetail(first, mismatch)));
     }
-    raiseAlert(`${mismatch} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}.`, false);
+    raiseAlert(`${mismatch.reason} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}.`, false, 'changed');
     breakGate('its gate let through a SendMessage call that didn’t match the request.');
     if (result.kind === 'not-sent') return finish(job, failed(result.reason));
     if (result.kind === 'sent' && result.msgId !== undefined) job.msgId = result.msgId;
     recordOutcome(job, 'uncertain');
-    finish(job, { status: 'uncertain', detail: `${mismatch} ${MAY_HAVE_REACHED}` });
+    finish(job, { status: 'uncertain', detail: `${mismatch.reason} ${MAY_HAVE_REACHED}` });
+  }
+
+  /**
+   * The gate blocked the first copy: nothing was sent. Once the relay that
+   * made it has gone, which it does when its turn ends, send the same text
+   * on a new one, with a new request id and expectation. Until then the
+   * request is 'waiting', as one not yet written is, and the first write's
+   * timer still runs, so a turn that doesn't end can't hold it up.
+   */
+  function tryOnceMore(p: Proc, job: Job, mismatch: CallMismatch): void {
+    job.blockedOnce = mismatch;
+    job.phase = 'waiting';
+    delete job.mismatch;
+    delete job.toolUseId;
+    delete job.msgId;
+    p.onExit.push(() => {
+      // After the rest of onExit(), so the relay that's gone is no longer `proc`.
+      setImmediate(() => {
+        if (job.done || current !== job) return;
+        secondTry(job).catch((error: unknown) => {
+          log(`a second try failed unexpectedly: ${oneLine(error instanceof Error ? error.message : String(error))}`);
+          if (job.phase === 'waiting') finish(job, failed('pitwall hit an unexpected error while relaying the message.'));
+          else unconfirmed(job, 'pitwall hit an unexpected error while relaying the message.');
+        });
+      });
+    });
+  }
+
+  async function secondTry(job: Job): Promise<void> {
+    clearTimeout(job.timer);
+    job.secondTry = true;
+    job.retried = false;
+    job.id = newRequestId(job.text, options.randomId);
+    job.attemptedAt = now();
+    const started = await ensureRunning();
+    if (job.done) return;
+    if (!started.ok) {
+      return finish(job, started.retryAfterSeconds === undefined ? failed(started.detail) : { ...failed(started.detail), retryAfterSeconds: started.retryAfterSeconds });
+    }
+    await checkAndWrite(job);
   }
 
   /** The result of a call nobody asked for. */
-  function onStrayResult(detail: string, result: SendResult): void {
+  function onStrayResult({ detail, cause }: { detail: string; cause: RelayAlert['cause'] }, result: SendResult): void {
     // Blocked, so the relay is still sound: no restart, which a peer could otherwise repeat until the restart limit.
-    if (result.kind === 'denied') return raiseAlert(`${detail} pitwall's gate blocked it, so nothing was sent.`, true);
-    raiseAlert(`${detail} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}, so pitwall stopped the relay.`, false);
+    if (result.kind === 'denied') return raiseAlert(`${detail} pitwall's gate blocked it, so nothing was sent.`, true, cause);
+    raiseAlert(`${detail} pitwall's gate didn't stop it${result.kind === 'not-sent' ? ', though SendMessage didn’t send it' : ''}, so pitwall stopped the relay.`, false, cause);
     breakGate('its gate let through a SendMessage call nobody asked for.');
   }
 
@@ -880,12 +1036,18 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     }
     // A call nobody asked for whose result never came: pitwall can't tell what happened, so it starts over.
     if (p.strays.size > 0 && proc === p && !p.stopping) {
-      for (const detail of p.strays.values()) raiseAlert(`${detail} Its turn ended before pitwall saw whether its gate blocked it.`, false);
+      for (const stray of p.strays.values()) {
+        const said = strayWords(p, stray);
+        raiseAlert(`${said.detail} Its turn ended before pitwall saw whether its gate blocked it.`, false, said.cause);
+      }
+      p.blockedInTurn = false;
       p.strays.clear();
       log('restarting it after a turn that ended before a call nobody asked for had its result.');
       stopProcess('SIGTERM');
       return;
     }
+    // A call in the next turn isn't a repeat. Calls still waiting for their results, on a relay that's going, keep it for onExit().
+    if (p.strays.size === 0) p.blockedInTurn = false;
     if (p.restartAfterTurn && proc === p && !p.stopping) {
       log("restarting it after it sent something other than pitwall's request, which its gate blocked.");
       stopProcess('SIGTERM');
@@ -982,17 +1144,20 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       if (queue.length >= maxQueue) {
         return Promise.resolve({ ...failed('The relay is busy with other messages. Try again in a moment.'), retryAfterSeconds: 5 });
       }
+      // What the relay is asked to copy, what the gate expects and what the call is checked against.
+      const plain = plainSpaces(text);
       return new Promise<RelaySendOutcome>((resolve) => {
         queue.push({
           target,
-          text,
-          id: newRequestId(text, options.randomId),
+          text: plain,
+          id: newRequestId(plain, options.randomId),
           resolve,
           done: false,
           phase: 'waiting',
           pid: target.pid,
           attemptedAt: now(),
           retried: false,
+          secondTry: false,
         });
         pump();
       });
@@ -1005,6 +1170,9 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     },
     alert() {
       return latestAlert === undefined ? undefined : { ...latestAlert };
+    },
+    off() {
+      return gateBroken === undefined || gateBrokenAt === undefined ? undefined : { since: gateBrokenAt, reason: gateBroken };
     },
     isRelay,
     async close() {
@@ -1028,6 +1196,33 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       p.child.kill('SIGKILL');
     },
   };
+}
+
+/** Today's reason for a call that didn't match, as the rest of a sentence: "the relay changed the text …". */
+function lowerFirst(reason: string): string {
+  return reason.charAt(0).toLowerCase() + reason.slice(1);
+}
+
+/** The first copy, which the gate blocked: what the result says before why the second try didn't go. */
+function blockedOnceDetail(first: CallMismatch): string {
+  return `pitwall's gate stopped the relay's copy of your message, because it didn't match, so nothing was sent. ${first.reason}`;
+}
+
+/** A blocked copy that differed in more than its text (W52): nothing was sent, and pitwall didn't try again. */
+function notTriedDetail(mismatch: CallMismatch): string {
+  return `${blockedOnceDetail(mismatch)} More than its text differed, so pitwall didn’t try again.`;
+}
+
+/** The second copy delivered (W52): the result says the first was blocked, and where it differed, never with the text. */
+function retriedDetail(first: CallMismatch): string {
+  return `pitwall's gate stopped the relay's first copy of your message, because it didn't match, so pitwall tried once more, on a new relay, and the second copy went through. The first time, ${lowerFirst(first.reason)}`;
+}
+
+/** Both copies blocked: nothing was sent, and where each first differed, or today's reason for another mismatch. */
+function blockedTwiceDetail(first: CallMismatch, second: CallMismatch): string {
+  const lead = "pitwall's gate stopped the relay's copy of your message twice, because it didn't match, so nothing was sent.";
+  if (first.reason === second.reason) return `${lead} Both times, ${lowerFirst(first.reason)}`;
+  return `${lead} The first time, ${lowerFirst(first.reason)} The second time, ${lowerFirst(second.reason)}`;
 }
 
 /** What a delivery notice makes of a relayed message's status. */

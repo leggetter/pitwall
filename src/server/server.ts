@@ -31,7 +31,7 @@ import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
-import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, lastMessagePath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
+import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
 import { registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import type { RunningServer, ServerOptions } from './index.js';
@@ -59,13 +59,10 @@ import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './webs
 export const DEFAULT_PORT = 4517;
 
 /**
- * The last-message route as a Hono pattern. lastMessagePath() encodes its
+ * The conversation route as a Hono pattern. conversationPath() encodes its
  * argument, which would turn `:sessionId` into `%3AsessionId`, so the
  * pattern is decoded back.
  */
-const LAST_MESSAGE_ROUTE = decodeURIComponent(lastMessagePath(':sessionId'));
-
-/** The conversation route as a Hono pattern, decoded for the same reason. */
 const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
 
 /**
@@ -266,17 +263,6 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     const snapshot = indexer.latest();
     if (!snapshot) return c.body(null, 503);
     return c.json(snapshot);
-  });
-
-  // Answered from memory, never by reading a file: the index serves only
-  // sessions in the latest snapshot, and the guard checks the id first.
-  app.get(LAST_MESSAGE_ROUTE, (c) => {
-    c.header('Cache-Control', 'no-store');
-    const lookup = resolveSession(indexer, c.req.param('sessionId'));
-    if (!lookup.ok) return c.body(null, lookup.status);
-    const message = indexer.lastMessage(lookup.session.sessionId);
-    if (!message) return c.body(null, 404);
-    return c.json(message);
   });
 
   // Read from the transcript, a page at a time and at most about 8 MiB per

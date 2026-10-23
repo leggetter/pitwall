@@ -116,7 +116,7 @@ describe('toSessionSummary', () => {
   it('maps an interactive row with a readable transcript', () => {
     const summary = toSessionSummary(
       row({ status: 'busy' }),
-      { transcript: 'ok', lastActivityAt: iso(NOW - 1000), lastAssistantText: 'working on it', lastUserPrompt: 'go' },
+      { transcript: 'ok', lastActivityAt: iso(NOW - 1000), lastUserPrompt: 'go' },
       NOW,
     );
     expect(summary).toEqual({
@@ -131,7 +131,6 @@ describe('toSessionSummary', () => {
       stale: false,
       finished: false,
       lastActivityAt: iso(NOW - 1000),
-      lastAssistantText: 'working on it',
       lastUserPrompt: 'go',
       transcript: 'ok',
     });
@@ -429,5 +428,69 @@ describe('buildGroups', () => {
 
   it('is empty without sessions', () => {
     expect(buildGroups([], home)).toEqual([]);
+  });
+
+  describe('each session in one group, the one it started in (W39)', () => {
+    /** A session placed by where it started, whose summary names the repos under `root` it worked in. */
+    function worked(id: string, key: string, kind: 'git' | 'directory', repos: string[], overrides: Partial<SessionSummary> = {}): PlacedSession {
+      const workedIn = repos.map((repo) => ({ key: repo, label: repo.slice(root.length + 1), root, calls: 10, changes: 1, lastAt: iso(NOW) }));
+      return placed(id, key, { ...overrides, ...(workedIn.length > 0 ? { workedIn } : {}) }, root, kind);
+    }
+    const view = (groups: ReturnType<typeof buildGroups>) =>
+      groups.map((g) => [g.label, g.kind, g.sessions.map((s) => s.sessionId)] as const).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+
+    it("lists a session started in the root only in the root's group, whatever repos it worked in", () => {
+      const groups = buildGroups([worked('in-root', root, 'directory', [`${root}/alpha`, `${root}/beta`]), worked('in-root-alone', root, 'directory', [])], home);
+      expect(view(groups)).toEqual([['git', 'directory', ['in-root', 'in-root-alone']]]);
+      // Its summary still names both repos, for the session view and the filter.
+      expect(groups[0]?.sessions.find((s) => s.sessionId === 'in-root')?.workedIn?.map((repo) => repo.label)).toEqual(['alpha', 'beta']);
+    });
+
+    it('lists a session started in a repo only there, not under a sibling it worked in', () => {
+      const groups = buildGroups([worked('in-alpha', `${root}/alpha`, 'git', [`${root}/beta`]), worked('in-beta', `${root}/beta`, 'git', [])], home);
+      expect(view(groups)).toEqual([
+        ['alpha', 'git', ['in-alpha']],
+        ['beta', 'git', ['in-beta']],
+      ]);
+    });
+
+    it('leaves out a repo that sessions only worked in', () => {
+      const groups = buildGroups([worked('in-alpha', `${root}/alpha`, 'git', [`${root}/projects/delta`]), worked('in-root', root, 'directory', [`${root}/projects/delta`])], home);
+      expect(groups.some((g) => g.key === `${root}/projects/delta`)).toBe(false);
+      expect(view(groups)).toEqual([
+        ['alpha', 'git', ['in-alpha']],
+        ['git', 'directory', ['in-root']],
+      ]);
+    });
+
+    it('lists a session started in a directory below the root that is in no repo there alone', () => {
+      const groups = buildGroups([worked('in-notes', `${root}/notes`, 'directory', [`${root}/alpha`]), worked('in-root', root, 'directory', [])], home);
+      expect(view(groups)).toEqual([
+        ['git', 'directory', ['in-root']],
+        ['notes', 'directory', ['in-notes']],
+      ]);
+    });
+
+    it("keeps a worktree's and a subdirectory's sessions under their repo, whatever else they worked in", () => {
+      // The group resolver gives both the main repo's key: a subdirectory's top level, a worktree's common dir.
+      const groups = buildGroups(
+        [worked('in-src', `${root}/alpha`, 'git', [`${root}/beta`], { cwd: `${root}/alpha/src` }), worked('in-worktree', `${root}/alpha`, 'git', [`${root}/beta`], { cwd: `${root}/alpha-worktrees/feature` })],
+        home,
+      );
+      expect(view(groups)).toEqual([['alpha', 'git', ['in-src', 'in-worktree']]]);
+    });
+
+    it('lists each session in exactly one group, and its group counts it once', () => {
+      const sessions = [
+        worked('a', `${root}/alpha`, 'git', [`${root}/beta`, `${root}/gamma`]),
+        worked('b', `${root}/beta`, 'git', [`${root}/alpha`]),
+        worked('r', root, 'directory', [`${root}/alpha`, `${root}/gamma`]),
+        worked('n', `${root}/notes`, 'directory', [`${root}/beta`]),
+      ];
+      const groups = buildGroups(sessions, home);
+      const listed = groups.flatMap((g) => g.sessions.map((s) => s.sessionId));
+      expect(listed.sort()).toEqual(['a', 'b', 'n', 'r']);
+      expect(groups.reduce((sum, g) => sum + g.sessions.length, 0)).toBe(sessions.length);
+    });
   });
 });

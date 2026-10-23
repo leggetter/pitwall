@@ -4,7 +4,7 @@ Run on 2026-10-16 against Claude Code v2.1.301 on macOS. It closes the two S4 ga
 
 ## Setup
 
-- **Target:** `pitwall-test-target`, an interactive session Phil started in Warp with `claude -n pitwall-test-target` in `~/leggetter/git/pitwall`. Idle, auto mode.
+- **Target:** `pitwall-test-target`, an interactive session Phil started in Warp with `claude -n pitwall-test-target` in `~/oss/pitwall`. Idle, auto mode.
 - **Supervisor stand-in:** `pitwall-test-supervisor`, a background session on Haiku in the same directory. It was limited to `ListAgents` and `SendMessage` and allowed to message the target only. Removed afterwards.
 
 ## Timeline (UTC)

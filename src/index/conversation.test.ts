@@ -1,22 +1,36 @@
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, open, rename, rm, truncate as truncateFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, open, rename, rm, stat, truncate as truncateFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ConversationEntry, ConversationPage } from '../shared/protocol.js';
 import {
+  ANSWER_LINE_MAX,
+  ANSWER_MAX,
   ConversationCursorError,
+  CURSOR_MAX_LENGTH,
+  DESCRIPTION_MAX,
   ENTRY_TEXT_MAX,
+  HEADER_MAX,
   isWellFormedCursor,
-  LEAN_SOURCE_MAX,
+  LABEL_MAX,
+  LEAN_TEXT_MAX,
+  NOTES_MAX,
   NOTICE_MAX,
-  PAGE_STRIP_CHARS,
+  OPTIONS_MAX,
   PAGE_ENTRIES,
   PAGE_READ_BUDGET,
+  PAGE_TEXT_BUDGET,
+  QUESTION_MAX,
+  QUESTIONS_MAX,
   readConversationPage,
+  RELAY_ADDRESSES_MAX,
+  RelayAddressBook,
   toolSummary,
   type ConversationReadOptions,
 } from './conversation.js';
+import { RELAY_NAME } from '../server/relayPrompt.js';
+import { RELAY_SESSION_NAME } from '../../web/src/relayName.js';
 
 // Synthetic transcripts only, shaped like Claude Code 2.1.301's JSONL. No real content.
 
@@ -104,10 +118,17 @@ async function entriesOf(...lines: unknown[]): Promise<ConversationEntry[]> {
 }
 
 describe('readConversationPage: what becomes an entry', () => {
-  it('reads a typed prompt as a user entry, with system reminders and markdown stripped', async () => {
+  it('reads a typed prompt as a user entry, with system reminders stripped and nothing else', async () => {
     const at = nextTimestamp();
     const prompt = { ...user('<system-reminder>harness note</system-reminder>\nPlease fix the **flaky** test in `src/a.ts`'), timestamp: at };
-    expect(await entriesOf(prompt)).toEqual([{ kind: 'user', at, text: 'Please fix the flaky test in src/a.ts' }]);
+    expect(await entriesOf(prompt)).toEqual([{ kind: 'user', at, text: 'Please fix the **flaky** test in `src/a.ts`' }]);
+  });
+
+  it('keeps a prompt as typed: its markdown, indents, runs of spaces and blank lines, losing only blank lines before it and whitespace after it', async () => {
+    const typed = '  Two spaces first.\n\n\n\n    indented   by four,   with runs\n\t- a tab\n```\n[code] and # not a heading\n```\n| a | b |\n|---|---|';
+    const [entry] = await entriesOf(user(`<system-reminder>note</system-reminder>\n \n${typed}  \n\n`));
+    expect(entry).toEqual({ kind: 'user', at: expect.any(String), text: typed });
+    expect(entry?.markdown).toBeUndefined();
   });
 
   it('reads text blocks and images as one prompt', async () => {
@@ -144,8 +165,8 @@ describe('readConversationPage: what becomes an entry', () => {
       assistant([text('Another message.')], 'msg_2'),
     );
     expect(entries).toEqual([
-      { kind: 'assistant', at: first.timestamp, text: 'First part.\nSecond part.' },
-      { kind: 'assistant', at: expect.any(String), text: 'Another message.' },
+      { kind: 'assistant', at: first.timestamp, text: 'First part.\n\nSecond part.', markdown: true },
+      { kind: 'assistant', at: expect.any(String), text: 'Another message.', markdown: true },
     ]);
     expect(JSON.stringify(entries)).not.toContain('reasoning');
   });
@@ -173,7 +194,7 @@ describe('readConversationPage: what becomes an entry', () => {
       ]),
     );
     expect(entries).toMatchObject([
-      { kind: 'assistant', text: 'One.\nTwo.' },
+      { kind: 'assistant', text: 'One.\n\nTwo.' },
       { kind: 'tool', text: 'Bash: ls', toolName: 'Bash', toolError: false },
       { kind: 'tool', text: 'Grep: TODO', toolName: 'Grep', toolError: true },
     ]);
@@ -210,7 +231,7 @@ describe('readConversationPage: what becomes an entry', () => {
         { isMeta: true, origin: { kind: 'peer' } },
       ),
     );
-    expect(entries).toEqual([{ kind: 'cross-session', at: expect.any(String), text: 'Please review PR 4.', from: 'pitwall-test-sup' }]);
+    expect(entries).toEqual([{ kind: 'cross-session', at: expect.any(String), text: 'Please **review** PR 4.', markdown: true, from: 'pitwall-test-sup' }]);
   });
 
   it("reads newer Claude Code's agent-message form, whose from is the sender", async () => {
@@ -230,7 +251,7 @@ describe('readConversationPage: what becomes an entry', () => {
       }),
       user('Another Claude session sent a message:\n<agent-message from="R&amp;D &quot;bot&quot;">hello</agent-message>', { isMeta: true }),
     );
-    expect(noName).toEqual({ kind: 'cross-session', at: expect.any(String), text: 'hi' });
+    expect(noName).toEqual({ kind: 'cross-session', at: expect.any(String), text: 'hi', markdown: true });
     expect(named).toMatchObject({ from: 'R&D "bot"', text: 'hello' });
   });
 
@@ -289,30 +310,109 @@ describe('readConversationPage: what becomes an entry', () => {
     ]);
   });
 
-  it('caps text at 8 KiB and marks it truncated, after stripping markdown, and leaves HTML as text', async () => {
-    const [long, html] = await entriesOf(
-      assistant([text(`**bold** ${'word '.repeat(4000)}`)], 'msg_long'),
-      assistant([text('<b>not bold</b> <img src=x onerror=alert(1)>')], 'msg_html'),
+  it("sends Claude's markdown as written, flagged as markdown, with HTML and anything else left as text", async () => {
+    const markdown = [
+      '## Summary',
+      '',
+      'The **export** job *retries*, ~~once~~ three times. See [the docs](https://example.com/docs) or <https://example.com>.',
+      '',
+      '```ts',
+      'const delays = [1, 4, 16]; // `seconds`',
+      '```',
+      '',
+      '| Attempt | Wait |',
+      '|:---|---:|',
+      '| 1 | 1 s |',
+      '',
+      '- one',
+      '  1. nested',
+      '> quoted <b>not bold</b> <img src=x onerror=alert(1)>',
+      '',
+      '---',
+      '\\*escaped\\* [code] · joined',
+    ].join('\n');
+    const [entry, rule] = await entriesOf(assistant([text(`\n${markdown}\n\n`)], 'msg_md'), assistant([text('---')], 'msg_rule'));
+    expect(entry).toEqual({ kind: 'assistant', at: expect.any(String), text: markdown, markdown: true });
+    // A thematic break alone is markdown too, not an empty entry.
+    expect(rule).toMatchObject({ kind: 'assistant', text: '---', markdown: true });
+  });
+
+  it("sends another session's message as markdown, as written", async () => {
+    const body = 'Please check:\n\n```sh\nnpm test\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |';
+    expect(await entriesOf(user(`Another Claude session sent a message:\n<agent-message from="pitwall-test-peer">\n${body}\n</agent-message>`, { isMeta: true }))).toEqual([
+      { kind: 'cross-session', at: expect.any(String), text: body, markdown: true, from: 'pitwall-test-peer' },
+    ]);
+  });
+
+  it('leaves tool calls and notices as they were, with no markdown flag', async () => {
+    const entries = await entriesOf(
+      assistant([toolUse('toolu_md', 'Bash', { command: 'echo "**not bold**"' })]),
+      toolResult('toolu_md'),
+      user('<local-command-stdout>**Context** `12%`</local-command-stdout>'),
     );
-    expect(long?.text.startsWith('bold word')).toBe(true);
-    expect(long?.text.length).toBeLessThanOrEqual(ENTRY_TEXT_MAX);
-    expect(long?.truncated).toBe(true);
-    expect(html).toEqual({ kind: 'assistant', at: expect.any(String), text: '<b>not bold</b> <img src=x onerror=alert(1)>' });
+    expect(entries).toEqual([
+      { kind: 'tool', at: expect.any(String), text: 'Bash: echo "**not bold**"', toolName: 'Bash', toolError: false },
+      { kind: 'notice', at: expect.any(String), text: '**Context** `12%`' },
+    ]);
   });
 
-  it('strips the newest entries in full while the page budget lasts, then keeps 512 characters of the rest', async () => {
-    const long = `${'word '.repeat(2000)}`;
-    const entries = await entriesOf(...Array.from({ length: 20 }, (_, i) => assistant([text(`${i} ${long}`)], `msg_${i}`)));
-    // 128 KiB of 8 KiB entries: the newest 16 in full, the 4 before them lean.
-    expect(PAGE_STRIP_CHARS / ENTRY_TEXT_MAX).toBe(16);
-    expect(entries.map((e) => e.text.length > LEAN_SOURCE_MAX)).toEqual([...Array(4).fill(false), ...Array(16).fill(true)]);
-    expect(entries.every((e) => e.truncated === true)).toBe(true);
-    expect(entries[0]?.text.startsWith('0 word')).toBe(true);
+  it('caps an entry at 32 KiB, marked truncated, as the start of what was written', async () => {
+    const source = `**bold** ${'word '.repeat(8000)}`;
+    const [long, prompt, peer] = await entriesOf(
+      assistant([text(source)], 'msg_long'),
+      user(source),
+      user(`Another Claude session sent a message:\n<agent-message from="x">${source}</agent-message>`, { isMeta: true }),
+    );
+    expect(ENTRY_TEXT_MAX).toBe(32 * 1024);
+    for (const entry of [long, prompt, peer]) {
+      expect(entry?.text).toBe(source.slice(0, ENTRY_TEXT_MAX));
+      expect(entry?.truncated).toBe(true);
+    }
+    // One that fits isn't marked.
+    expect((await entriesOf(assistant([text('a'.repeat(ENTRY_TEXT_MAX))], 'msg_fits')))[0]).toEqual({
+      kind: 'assistant',
+      at: expect.any(String),
+      text: 'a'.repeat(ENTRY_TEXT_MAX),
+      markdown: true,
+    });
   });
 
-  it('leaves out an entry with nothing left once stripped, and an entry without a timestamp has no at', async () => {
+  it('never splits a surrogate pair where it cuts', async () => {
+    // The 32 KiB cut falls between the two halves of the emoji.
+    const source = `${'a'.repeat(ENTRY_TEXT_MAX - 1)}😀 and more`;
+    const [entry] = await entriesOf(assistant([text(source)], 'msg_pair'));
+    expect(entry?.text).toBe('a'.repeat(ENTRY_TEXT_MAX - 1));
+    expect(entry?.truncated).toBe(true);
+    // And at the 512-character cut, past the page's budget.
+    const lean = `${'b'.repeat(LEAN_TEXT_MAX - 1)}😀${'c'.repeat(ENTRY_TEXT_MAX)}`;
+    const entries = await entriesOf(
+      assistant([text(lean)], 'msg_lean'),
+      ...Array.from({ length: 8 }, (_, i) => assistant([text('d'.repeat(ENTRY_TEXT_MAX))], `msg_full_${i}`)),
+    );
+    expect(entries[0]?.text).toBe('b'.repeat(LEAN_TEXT_MAX - 1));
+  });
+
+  it("carries the newest entries' text in full while the page's 256 KiB lasts, then the first 512 characters of the rest", async () => {
+    const big = (i: number) => `${i} ${'word '.repeat(6000)}`; // 30,002 characters or so
+    const sources = [
+      'a short, old reply that still fits',
+      ...Array.from({ length: 11 }, (_, i) => big(i)),
+    ];
+    const entries = await entriesOf(...sources.map((source, i) => assistant([text(source)], `msg_${i}`)));
+    expect(PAGE_TEXT_BUDGET).toBe(256 * 1024);
+    // Newest first: eight of about 30 KiB fit in 256 KiB, the ninth doesn't, and nor do the two before
+    // it; the short one does, in what's left.
+    expect(entries.map((e) => e.text.length === LEAN_TEXT_MAX)).toEqual([false, true, true, true, ...Array(8).fill(false)]);
+    expect(entries.map((e) => e.truncated === true)).toEqual([false, true, true, true, ...Array(8).fill(false)]);
+    // A cut entry is the start of what was written, so the client can tell it's the same entry.
+    entries.forEach((entry, i) => expect(sources[i]?.startsWith(entry.text)).toBe(true));
+    const full = entries.filter((e) => e.truncated !== true).reduce((sum, e) => sum + e.text.length, 0);
+    expect(full).toBeLessThanOrEqual(PAGE_TEXT_BUDGET);
+  });
+
+  it('leaves out an entry with only whitespace, and an entry without a timestamp has no at', async () => {
     const undated = { type: 'user', message: { role: 'user', content: 'undated' } };
-    expect(await entriesOf(assistant([text('---')], 'msg_rule'), undated)).toEqual([{ kind: 'user', text: 'undated' }]);
+    expect(await entriesOf(assistant([text(' \n\t ')], 'msg_blank'), undated)).toEqual([{ kind: 'user', text: 'undated' }]);
   });
 });
 
@@ -406,7 +506,7 @@ describe('readConversationPage: paging', () => {
       ),
     );
     const { pages } = await allPages(file, { pageEntries: 2 });
-    expect(pages.map((p) => p.entries.map((e) => e.text))).toEqual([['block 1\nblock 2\nblock 3', 'newest prompt'], ['older prompt']]);
+    expect(pages.map((p) => p.entries.map((e) => e.text))).toEqual([['block 1\n\nblock 2\n\nblock 3', 'newest prompt'], ['older prompt']]);
   });
 
   it('pairs a tool call with its result when they fall on different pages', async () => {
@@ -551,6 +651,21 @@ describe('readConversationPage: the cursor', () => {
   });
 });
 
+/** The CPU time an async read takes, best of three, as text.test.ts measures. */
+async function bestOf3(fn: () => Promise<unknown>): Promise<number> {
+  let best = Number.POSITIVE_INFINITY;
+  for (let run = 0; run < 3; run++) {
+    const start = process.cpuUsage();
+    await fn();
+    const used = process.cpuUsage(start);
+    best = Math.min(best, (used.user + used.system) / 1000);
+  }
+  return best;
+}
+
+/** The shared limit for hostile input, as in text.test.ts. */
+const FAST_MS = 200;
+
 describe('readConversationPage: bounded on hostile files', () => {
   it('reads at most 8 MiB for a page, and pages on through a transcript of skipped lines', async () => {
     const lines: unknown[] = [user('the first prompt')];
@@ -605,37 +720,26 @@ describe('readConversationPage: bounded on hostile files', () => {
     expect((await page(await transcript(cut))).entries.map((e) => e.text)).toEqual(['complete', 'also complete']);
   });
 
-  /** The CPU time an async read takes, best of three, as text.test.ts measures. */
-  async function bestOf3(fn: () => Promise<unknown>): Promise<number> {
-    let best = Number.POSITIVE_INFINITY;
-    for (let run = 0; run < 3; run++) {
-      const start = process.cpuUsage();
-      await fn();
-      const used = process.cpuUsage(start);
-      best = Math.min(best, (used.user + used.system) / 1000);
-    }
-    return best;
-  }
-
-  /** The shared limit for hostile input, as in text.test.ts. */
-  const FAST_MS = 200;
   const N = 64 * 1024;
 
-  // 24 KiB each, three times what an entry keeps, so 50 of them fit in one page's 8 MiB.
-  const M = 24 * 1024;
+  // 40 KiB each, more than an entry keeps, so a page cuts every one; 50 of them fit in its 8 MiB.
+  const M = 40 * 1024;
   it.each([
     ['emphasis that never closes', '*\\\\ '.repeat(M / 4)],
     ['unclosed emphasis', '*a '.repeat(M / 3)],
     ['a run of [', '['.repeat(M)],
     ['a link opener and spaces', `[a](${' '.repeat(M - 4)}`],
-    ['lines just over the piece length', Array.from({ length: M / 130 }, () => '*\\\\ '.repeat(33).slice(0, 129)).join('\n')],
+    ['short lines of escapes and emphasis', Array.from({ length: M / 130 }, () => '*\\\\ '.repeat(33).slice(0, 129)).join('\n')],
   ])('reads a page of 50 hostile assistant messages of %s quickly', async (_name, hostile) => {
     const lines = Array.from({ length: 50 }, (_, i) => assistant([text(hostile)], `msg_${i}`));
     const file = await transcript(jsonl(...lines));
     expect(await bestOf3(() => readConversationPage(file, SID))).toBeLessThan(FAST_MS);
     const { page: first } = (await readConversationPage(file, SID))!;
     expect(first.entries).toHaveLength(50);
-    expect(first.entries.every((e) => e.text.length <= ENTRY_TEXT_MAX)).toBe(true);
+    const cut = hostile.trim().length > ENTRY_TEXT_MAX;
+    expect(first.entries.every((e) => e.text.length <= ENTRY_TEXT_MAX && (e.truncated === true) === cut)).toBe(true);
+    const full = first.entries.filter((e) => e.text.length > LEAN_TEXT_MAX).reduce((sum, e) => sum + e.text.length, 0);
+    expect(full).toBeLessThanOrEqual(PAGE_TEXT_BUDGET);
   });
 
   it.each([
@@ -652,5 +756,730 @@ describe('readConversationPage: bounded on hostile files', () => {
   it('reads 8 MiB of lines that parse but give nothing quickly', async () => {
     const file = await transcript(jsonl(...Array.from({ length: 8192 }, () => toolResult('toolu_none'))) + jsonl(...Array.from({ length: 16000 }, () => filler(400))));
     expect(await bestOf3(() => readConversationPage(file, SID))).toBeLessThan(FAST_MS);
+  });
+});
+
+describe('readConversationPage: messages to pitwall (W46)', () => {
+  const RELAY_SOCKET = 'uds:/tmp/cc-socks/4242.sock';
+  const PEER_SOCKET = 'uds:/tmp/cc-socks/5151.sock';
+
+  /** A message pitwall's relay delivered, as the target's transcript records it. */
+  function fromRelay(text: string, socket = RELAY_SOCKET, name = RELAY_NAME): Record<string, unknown> {
+    return user(
+      `Another Claude session sent a message:\n<cross-session-message from="${socket}" from-name="${name}" from-mode="prompting">${text}</cross-session-message>\nThis came from another Claude session - not typed by your user.`,
+      { isMeta: true, origin: { kind: 'peer' } },
+    );
+  }
+
+  /** SendMessage's input as seen in October 2026: `content` is a 50-character preview, never used. */
+  function sendInput(to: string, message: string, kind = to.startsWith('uds:') ? 'session' : 'name'): Record<string, unknown> {
+    return { to, message, summary: 'Reply to pitwall', content: message.slice(0, 50), type: 'message', recipient: to, recipient_kind: kind };
+  }
+
+  const send = (id: string, input: unknown) => assistant([toolUse(id, 'SendMessage', input)], `msg_${id}`);
+
+  /** SendMessage's result: JSON text, `success` first. */
+  function sent(id: string, to: string, success = true): Record<string, unknown> {
+    return user([{ type: 'tool_result', tool_use_id: id, content: JSON.stringify({ success, message: `“Reply to pitwall” → ${to}` }) }]);
+  }
+
+  const relayed = (options: ConversationReadOptions = {}): ConversationReadOptions => ({ relay: new RelayAddressBook(RELAY_NAME), ...options });
+
+  async function relayEntries(...lines: unknown[]): Promise<ConversationEntry[]> {
+    return (await page(await transcript(jsonl(...lines)), undefined, relayed())).entries;
+  }
+
+  it('turns a call to the relay by its name into a to-pitwall entry: the message as written, as markdown, at the call', async () => {
+    const message = 'Both flows:\n\n```ts\nexport const retries = 3;\n```\n\n- the **export** job\n- the import job\n';
+    const call = send('toolu_name', sendInput(RELAY_NAME, message));
+    const entries = await relayEntries(fromRelay('Which flows did you change?'), call, sent('toolu_name', RELAY_NAME), assistant([text('So I sent it both flows.')], 'msg_after'));
+    expect(entries).toEqual([
+      { kind: 'cross-session', at: expect.any(String), text: 'Which flows did you change?', markdown: true, from: RELAY_NAME },
+      { kind: 'to-pitwall', at: call.timestamp, text: message, markdown: true },
+      { kind: 'assistant', at: expect.any(String), text: 'So I sent it both flows.', markdown: true },
+    ]);
+    // Nothing but the message: not the summary, the preview or the result.
+    expect(JSON.stringify(entries)).not.toContain('Reply to pitwall');
+  });
+
+  it('matches the name trimmed, in its own case only, with no request needed', async () => {
+    const entries = await relayEntries(
+      send('toolu_spaced', sendInput(` ${RELAY_NAME}\n`, 'Unprompted: the build is green.')),
+      sent('toolu_spaced', RELAY_NAME),
+      // The web UI names the recipient as the call addressed it, so another case isn't the relay's name.
+      send('toolu_case', sendInput(RELAY_NAME.toUpperCase(), 'In capitals.')),
+      sent('toolu_case', RELAY_NAME),
+    );
+    expect(entries.map((e) => [e.kind, e.text])).toEqual([
+      ['to-pitwall', 'Unprompted: the build is green.'],
+      ['tool', 'SendMessage'],
+    ]);
+  });
+
+  it('names the relay as the web UI does, which says who a message to pitwall was addressed to', () => {
+    expect(RELAY_SESSION_NAME).toBe(RELAY_NAME);
+  });
+
+  it('keeps the markdown exactly as written: leading spaces, indented code, blank lines, trailing newlines and HTML', async () => {
+    const message = '    indented code\n\n\n<b>not bold</b> <img src=x onerror=alert(1)> [x](javascript:alert(1))\n\n';
+    const [entry] = await relayEntries(send('toolu_exact', sendInput(RELAY_NAME, message)), sent('toolu_exact', RELAY_NAME));
+    expect(entry).toMatchObject({ kind: 'to-pitwall', text: message, markdown: true });
+  });
+
+  it('turns a call to the socket a message from the relay came from, on the same page, into a to-pitwall entry', async () => {
+    const options = relayed();
+    const file = await transcript(jsonl(user('earlier'), fromRelay('Status?'), send('toolu_sock', sendInput(RELAY_SOCKET, 'All green.')), sent('toolu_sock', RELAY_SOCKET)));
+    const result = await readConversationPage(file, SID, undefined, options);
+    expect(result?.page.entries.map((e) => [e.kind, e.text])).toEqual([
+      ['user', 'earlier'],
+      ['cross-session', 'Status?'],
+      ['to-pitwall', 'All green.'],
+    ]);
+    expect(result?.stats.addressBytesRead).toBe(0);
+  });
+
+  it("finds the relay's message on an earlier page, reading the transcript before the page once", async () => {
+    const options = relayed({ pageEntries: 3 });
+    const lines: unknown[] = [user('first'), fromRelay('Which flows?'), filler(4096)];
+    for (let i = 0; i < 10; i++) lines.push(user(`working ${i}`), filler(2048));
+    lines.push(send('toolu_far', sendInput(RELAY_SOCKET, 'Both flows.')), sent('toolu_far', RELAY_SOCKET), user('after the reply'));
+    const file = await transcript(jsonl(...lines));
+    const newest = await readConversationPage(file, SID, undefined, options);
+    expect(newest?.page.entries.map((e) => [e.kind, e.text])).toEqual([
+      ['user', 'working 9'],
+      ['to-pitwall', 'Both flows.'],
+      ['user', 'after the reply'],
+    ]);
+    // It read up to the page's start, and no further.
+    const read = newest?.stats.addressBytesRead ?? 0;
+    expect(read).toBeGreaterThan(0);
+    expect(read).toBeLessThan((await stat(file)).size);
+    // Asked again, it has nothing new to read.
+    const again = await readConversationPage(file, SID, undefined, options);
+    expect(again?.page).toEqual(newest?.page);
+    expect(again?.stats.addressBytesRead).toBe(0);
+  });
+
+  it('reads each byte at most once however many pages ask, and only as far as each page starts', async () => {
+    const options = relayed({ pageEntries: 2 });
+    const lines: unknown[] = [fromRelay('Go.')];
+    for (let i = 0; i < 30; i++) lines.push(filler(1024), send(`toolu_${i}`, sendInput(i % 2 === 0 ? RELAY_SOCKET : PEER_SOCKET, `reply ${i}`)), sent(`toolu_${i}`, RELAY_SOCKET));
+    const file = await transcript(jsonl(...lines));
+    const size = (await stat(file)).size;
+    const reads: number[] = [];
+    const entries: ConversationEntry[] = [];
+    let before: string | undefined;
+    for (let i = 0; i < 100; i++) {
+      const result = await readConversationPage(file, SID, before, options);
+      reads.push(result?.stats.addressBytesRead ?? -1);
+      entries.unshift(...(result?.page.entries ?? []));
+      before = result?.page.before;
+      if (before === undefined) break;
+    }
+    // The newest page read everything before it, at once; no older page needed anything more.
+    expect(reads.length).toBeGreaterThan(10);
+    expect(reads[0]).toBeGreaterThan(size * 0.9);
+    expect(reads[0]).toBeLessThan(size);
+    expect(reads.slice(1).every((bytes) => bytes === 0)).toBe(true);
+    expect(entries.filter((e) => e.kind === 'to-pitwall').map((e) => e.text)).toEqual(Array.from({ length: 15 }, (_, i) => `reply ${i * 2}`));
+    expect(entries.filter((e) => e.kind === 'tool')).toHaveLength(15);
+    // Every page again, and the newest page after the transcript grew: only what was appended.
+    await appendFile(file, jsonl(user('newer'), user('newest')));
+    const grown = await readConversationPage(file, SID, undefined, options);
+    expect(grown?.stats.addressBytesRead).toBe(0);
+    const second = await allPages(file, options);
+    expect(second.entries.slice(0, -2)).toEqual(entries);
+  });
+
+  it("leaves a call to a socket as a tool call when the relay's message from it came later, or never", async () => {
+    const entries = await relayEntries(
+      send('toolu_before', sendInput(RELAY_SOCKET, 'Too early.')),
+      sent('toolu_before', RELAY_SOCKET),
+      fromRelay('Now?'),
+      // Another session's socket, which messaged this one, but not as the relay.
+      user(`Another Claude session sent a message:\n<cross-session-message from="${PEER_SOCKET}" from-name="pitwall-test-peer">Hi.</cross-session-message>`, { isMeta: true, origin: { kind: 'peer' } }),
+      send('toolu_peer', sendInput(PEER_SOCKET, 'Hi back.')),
+      sent('toolu_peer', PEER_SOCKET),
+      send('toolu_now', sendInput(RELAY_SOCKET, 'Now.')),
+      sent('toolu_now', RELAY_SOCKET),
+    );
+    expect(entries.map((e) => [e.kind, e.kind === 'tool' ? e.toolName : e.text])).toEqual([
+      ['tool', 'SendMessage'],
+      ['cross-session', 'Now?'],
+      ['cross-session', 'Hi.'],
+      ['tool', 'SendMessage'],
+      ['to-pitwall', 'Now.'],
+    ]);
+  });
+
+  it("leaves a call to another session's socket with no message from the relay as a tool call, after reading what's before the page", async () => {
+    const options = relayed({ pageEntries: 2 });
+    const file = await transcript(jsonl(user('one'), user('two'), user('three'), send('toolu_peer', sendInput(PEER_SOCKET, 'Hello.')), sent('toolu_peer', PEER_SOCKET)));
+    const result = await readConversationPage(file, SID, undefined, options);
+    expect(result?.page.entries).toMatchObject([{ kind: 'user', text: 'three' }, { kind: 'tool', toolName: 'SendMessage', text: 'SendMessage' }]);
+    expect(result?.stats.addressBytesRead).toBeGreaterThan(0);
+  });
+
+  it("leaves calls to a sub-agent, to another session's name, and from a sender only named like the relay as tool calls", async () => {
+    const entries = await relayEntries(
+      fromRelay('Hi.', PEER_SOCKET, 'pitwall-relay-not'),
+      send('toolu_agent', sendInput('a1b2c3d4e5f60718', 'To the sub-agent.', 'agent')),
+      sent('toolu_agent', 'a1b2c3d4e5f60718'),
+      send('toolu_named', sendInput('pitwall-test-other', 'To another session.')),
+      sent('toolu_named', 'pitwall-test-other'),
+      send('toolu_near', sendInput(PEER_SOCKET, 'To a sender named like the relay.')),
+      sent('toolu_near', PEER_SOCKET),
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['cross-session', 'tool', 'tool', 'tool']);
+  });
+
+  it('leaves a call whose result was an error, or said success: false, as a tool call, the error flagged only for is_error', async () => {
+    const entries = await relayEntries(
+      send('toolu_error', sendInput(RELAY_NAME, 'Not delivered.')),
+      user([{ type: 'tool_result', tool_use_id: 'toolu_error', content: 'No session is named pitwall-relay', is_error: true }]),
+      send('toolu_false', sendInput(RELAY_NAME, 'Refused.')),
+      sent('toolu_false', RELAY_NAME, false),
+      send('toolu_blocks', sendInput(RELAY_NAME, 'Refused, in blocks.')),
+      user([{ type: 'tool_result', tool_use_id: 'toolu_blocks', content: [{ type: 'text', text: '{"success":false,"message":"refused"}' }] }]),
+      send('toolu_ok', sendInput(RELAY_NAME, 'Delivered.')),
+      user([{ type: 'tool_result', tool_use_id: 'toolu_ok', content: [{ type: 'text', text: '{"success":true,"message":"sent"}' }] }]),
+    );
+    expect(entries).toEqual([
+      { kind: 'tool', at: expect.any(String), text: 'SendMessage', toolName: 'SendMessage', toolError: true },
+      { kind: 'tool', at: expect.any(String), text: 'SendMessage', toolName: 'SendMessage', toolError: false },
+      { kind: 'tool', at: expect.any(String), text: 'SendMessage', toolName: 'SendMessage', toolError: false },
+      { kind: 'to-pitwall', at: expect.any(String), text: 'Delivered.', markdown: true },
+    ]);
+  });
+
+  it('shows a call with no result yet, as one that was just made, as a to-pitwall entry', async () => {
+    expect(await relayEntries(send('toolu_running', sendInput(RELAY_NAME, 'On its way.')))).toMatchObject([{ kind: 'to-pitwall', text: 'On its way.' }]);
+  });
+
+  it('leaves a call with no string message, or only whitespace, as a tool call, and never reads the preview', async () => {
+    const entries = await relayEntries(
+      send('toolu_none', { to: RELAY_NAME, summary: 'x', content: 'A preview only' }),
+      send('toolu_number', { to: RELAY_NAME, message: 42, content: 'A preview only' }),
+      send('toolu_blank', sendInput(RELAY_NAME, ' \n\t ')),
+      send('toolu_noto', { message: 'No recipient.' }),
+      send('toolu_string', 'not an object'),
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['tool', 'tool', 'tool', 'tool', 'tool']);
+    expect(JSON.stringify(entries)).not.toContain('preview');
+  });
+
+  it('leaves every SendMessage call as a tool call without the relay', async () => {
+    const entries = await entriesOf(fromRelay('Hi.'), send('toolu_x', sendInput(RELAY_NAME, 'Hello.')), send('toolu_y', sendInput(RELAY_SOCKET, 'Hello.')));
+    expect(entries.map((e) => e.kind)).toEqual(['cross-session', 'tool', 'tool']);
+  });
+
+  it('caps the message at 32 KiB, marked truncated, and counts it against the page budget', async () => {
+    const long = `**start** ${'word '.repeat(8000)}`;
+    const [capped] = await relayEntries(send('toolu_long', sendInput(RELAY_NAME, long)));
+    expect(capped).toMatchObject({ kind: 'to-pitwall', text: long.slice(0, ENTRY_TEXT_MAX), truncated: true, markdown: true });
+    // Eight newer entries of 32 KiB spend the page's budget, so the older message keeps 512 characters.
+    const entries = await relayEntries(
+      send('toolu_old', sendInput(RELAY_NAME, long)),
+      ...Array.from({ length: 8 }, (_, i) => assistant([text('d'.repeat(ENTRY_TEXT_MAX))], `msg_full_${i}`)),
+    );
+    expect(entries[0]).toMatchObject({ kind: 'to-pitwall', text: long.slice(0, LEAN_TEXT_MAX), truncated: true });
+  });
+
+  it('stands alone between tool calls, in the call’s place', async () => {
+    const entries = await relayEntries(
+      assistant([toolUse('toolu_a', 'Read', { file_path: '/w/a.ts' })], 'msg_run'),
+      toolResult('toolu_a'),
+      send('toolu_mid', sendInput(RELAY_NAME, 'Halfway.')),
+      sent('toolu_mid', RELAY_NAME),
+      assistant([toolUse('toolu_b', 'Bash', { command: 'npm test' })], 'msg_run2'),
+      toolResult('toolu_b'),
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['tool', 'to-pitwall', 'tool']);
+  });
+
+  it('carries a failed result to the older page its call is on, through the cursor', async () => {
+    const options = relayed({ pageEntries: 1 });
+    const file = await transcript(
+      jsonl(
+        send('toolu_split', sendInput(RELAY_NAME, 'Refused.')),
+        user('in between'),
+        sent('toolu_split', RELAY_NAME, false),
+        send('toolu_split_ok', sendInput(RELAY_NAME, 'Fine.')),
+        user('also in between'),
+        sent('toolu_split_ok', RELAY_NAME),
+      ),
+    );
+    const { entries } = await allPages(file, options);
+    expect(entries.map((e) => e.kind)).toEqual(['tool', 'user', 'to-pitwall', 'user']);
+    // The cursor's pending flag 2 is a failed result; anything past it isn't a cursor.
+    const bad = Buffer.from(JSON.stringify({ v: 1, o: 1, d: '1', i: '2', f: 'AAAAAAAAAAA', p: [['toolu_1', 3]] })).toString('base64url');
+    expect(isWellFormedCursor(bad)).toBe(false);
+    const good = Buffer.from(JSON.stringify({ v: 1, o: 1, d: '1', i: '2', f: 'AAAAAAAAAAA', p: [['toolu_1', 2]] })).toString('base64url');
+    expect(isWellFormedCursor(good)).toBe(true);
+  });
+
+  it('reads the transcript again from the start once it was replaced or rewritten before where the book stopped', async () => {
+    const options = relayed({ pageEntries: 1 });
+    const lines = [fromRelay('Go.'), user('between'), send('toolu_r', sendInput(RELAY_SOCKET, 'Gone.')), sent('toolu_r', RELAY_SOCKET)];
+    const file = await transcript(jsonl(...lines));
+    const first = await readConversationPage(file, SID, undefined, options);
+    expect(first?.page.entries.map((e) => e.kind)).toEqual(['to-pitwall']);
+    // Rewritten in place, so the same inode and the same size, with only its first line changed: a
+    // peer's socket now. The book notices by the file's start and reads it again.
+    const rewritten = jsonl(fromRelay('Go.', 'uds:/tmp/cc-socks/9999.sock'), ...lines.slice(1));
+    expect(Buffer.byteLength(rewritten)).toBe((await stat(file)).size);
+    await writeFile(file, rewritten);
+    const second = await readConversationPage(file, SID, undefined, options);
+    expect(second?.stats.addressBytesRead).toBeGreaterThan(0);
+    expect(second?.page.entries.map((e) => e.kind)).toEqual(['tool']);
+    // Replaced by another file, which a file system may give the same inode: read again, and the relay's socket is back.
+    await rm(file);
+    await writeFile(file, jsonl(...lines));
+    const third = await readConversationPage(file, SID, undefined, options);
+    expect(third?.stats.addressBytesRead).toBeGreaterThan(0);
+    expect(third?.page.entries.map((e) => e.kind)).toEqual(['to-pitwall']);
+  });
+
+  it('keeps the newest 64 addresses: a 65th evicts the one seen first, and a reply to the 65th still shows', async () => {
+    const options = relayed({ pageEntries: 1 });
+    const socket = (i: number) => `uds:/tmp/cc-socks/${1000 + i}.sock`;
+    // One relay per restart: 65 of them, each with a socket of its own, on pages of their own.
+    const relays = Array.from({ length: RELAY_ADDRESSES_MAX + 1 }, (_, i) => fromRelay(`Restart ${i}.`, socket(i)));
+    const replies = [
+      send('toolu_first', sendInput(socket(0), 'To the first relay.')),
+      sent('toolu_first', socket(0)),
+      send('toolu_second', sendInput(socket(1), 'To the second relay.')),
+      sent('toolu_second', socket(1)),
+      send('toolu_last', sendInput(socket(RELAY_ADDRESSES_MAX), 'To the 65th relay.')),
+      sent('toolu_last', socket(RELAY_ADDRESSES_MAX)),
+    ];
+    const file = await transcript(jsonl(...relays, user('a'), ...replies, user('b')));
+    const { entries } = await allPages(file, options);
+    // Each reply is on a page of its own, after every relay's message, so only the book can say.
+    expect(entries.filter((e) => e.kind === 'to-pitwall' || e.kind === 'tool').map((e) => [e.kind, e.kind === 'tool' ? e.toolName : e.text])).toEqual([
+      ['tool', 'SendMessage'],
+      ['to-pitwall', 'To the second relay.'],
+      ['to-pitwall', 'To the 65th relay.'],
+    ]);
+  });
+
+  it("lets a flood of addresses only push the relay's real one out, so its older replies fall back to tool calls", async () => {
+    const options = relayed({ pageEntries: 1 });
+    const forged = Array.from({ length: RELAY_ADDRESSES_MAX }, (_, i) => fromRelay(`Forged ${i}.`, `uds:/tmp/cc-socks/forged-${i}.sock`));
+    const file = await transcript(
+      jsonl(
+        fromRelay('Which flows?'),
+        user('working'),
+        ...forged,
+        user('a'),
+        send('toolu_real', sendInput(RELAY_SOCKET, 'Both flows.')),
+        sent('toolu_real', RELAY_SOCKET),
+        send('toolu_peer', sendInput(PEER_SOCKET, 'To a peer.')),
+        sent('toolu_peer', PEER_SOCKET),
+      ),
+    );
+    const { entries } = await allPages(file, options);
+    // The real reply, its request on an older page, falls back to a tool call; nothing else turns into a message to pitwall.
+    expect(entries.filter((e) => e.kind === 'to-pitwall')).toEqual([]);
+    expect(entries.filter((e) => e.kind === 'tool')).toHaveLength(2);
+  });
+
+  it('forgets the transcripts of sessions it is not told to keep', async () => {
+    const book = new RelayAddressBook(RELAY_NAME);
+    const file = await transcript(jsonl(fromRelay('Go.'), user('between'), send('toolu_f', sendInput(RELAY_SOCKET, 'Done.'))));
+    expect((await readConversationPage(file, SID, undefined, { relay: book, pageEntries: 1 }))?.stats.addressBytesRead).toBeGreaterThan(0);
+    expect((await readConversationPage(file, SID, undefined, { relay: book, pageEntries: 1 }))?.stats.addressBytesRead).toBe(0);
+    book.retain(new Set(['another-session']));
+    expect((await readConversationPage(file, SID, undefined, { relay: book, pageEntries: 1 }))?.stats.addressBytesRead).toBeGreaterThan(0);
+  });
+
+  it('reads a page of 50 calls to sockets after 8 MiB of hostile lines that name the relay quickly', async () => {
+    // Messages from the relay, each from a socket of its own, past the 64 kept; then lines that only mention it, which are all parsed.
+    const forged = Array.from({ length: 2000 }, (_, i) =>
+      i % 2 === 0 ? fromRelay(`${'x'.repeat(4000)} ${i}`, `uds:/tmp/cc-socks/${i}.sock`) : user(`${`${RELAY_NAME} `.repeat(290)}${i}`),
+    );
+    // None of them is to an address the relay's messages came from.
+    const calls = Array.from({ length: 50 }, (_, i) => send(`toolu_h${i}`, sendInput(`uds:/tmp/cc-socks/peer-${i}.sock`, `hostile ${i}`)));
+    const file = await transcript(jsonl(...forged, ...calls));
+    let read = 0;
+    // A new book each time, so each run reads the 8 MiB before the page.
+    expect(
+      await bestOf3(async () => {
+        read = (await readConversationPage(file, SID, undefined, relayed()))?.stats.addressBytesRead ?? 0;
+      }),
+    ).toBeLessThan(FAST_MS);
+    expect(read).toBeGreaterThan(8 * 1024 * 1024);
+    const result = await readConversationPage(file, SID, undefined, relayed());
+    expect(result?.page.entries).toHaveLength(50);
+    expect(result?.page.entries.every((e) => e.kind === 'tool')).toBe(true);
+  });
+});
+
+describe('readConversationPage: questions asked in a dialog (W49)', () => {
+  // The shapes seen on this machine in October 2026, made up: the call's input, and the result line's
+  // toolUseResult beside its message. Options may carry other fields, such as a preview, never read.
+  const FLOWS = {
+    question: 'Which flows should retry?',
+    header: 'Flows',
+    multiSelect: false,
+    options: [
+      { label: 'Export', description: 'Retries each batch.', preview: 'A made-up preview, never read.' },
+      { label: 'Import', description: 'Retries each file.' },
+    ],
+  };
+  const ATTEMPTS = {
+    question: 'How many attempts?',
+    header: 'Attempts',
+    multiSelect: false,
+    options: [
+      { label: 'Three', description: 'Waiting 1, 4 and 16 seconds.' },
+      { label: 'Five', description: 'Waiting up to a minute.' },
+    ],
+  };
+  const INPUT = { questions: [FLOWS, ATTEMPTS] };
+
+  const ask = (id: string, input: unknown = INPUT) => assistant([toolUse(id, 'AskUserQuestion', input)], `msg_${id}`);
+
+  /** The dialog's result: the prose the model reads, and the structured answer beside the message. */
+  function answered(id: string, answers: unknown, annotations: unknown = {}, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    const prose = `Your questions have been answered: "${FLOWS.question}"="Prose only". You can now continue with the user's answers in mind.`;
+    return user([{ type: 'tool_result', tool_use_id: id, content: prose }], { toolUseResult: { questions: INPUT.questions, answers, annotations }, ...extra });
+  }
+
+  /** A dismissed dialog, as an earlier call on another day was: an error, with a string toolUseResult. */
+  function dismissed(id: string): Record<string, unknown> {
+    return user([{ type: 'tool_result', tool_use_id: id, content: "The user doesn't want to proceed with this tool use.", is_error: true }], {
+      toolUseResult: 'Error: the user declined to answer.',
+    });
+  }
+
+  const FLOWS_ASKED = {
+    question: FLOWS.question,
+    header: 'Flows',
+    options: [
+      { label: 'Export', description: 'Retries each batch.' },
+      { label: 'Import', description: 'Retries each file.' },
+    ],
+  };
+  const ATTEMPTS_ASKED = {
+    question: ATTEMPTS.question,
+    header: 'Attempts',
+    options: [
+      { label: 'Three', description: 'Waiting 1, 4 and 16 seconds.' },
+      { label: 'Five', description: 'Waiting up to a minute.' },
+    ],
+  };
+
+  it("turns an answered dialog into one question entry in the call's place: its questions, options and answers, at the call's time", async () => {
+    const call = ask('toolu_ask');
+    const entries = await entriesOf(user('Add retries.'), call, answered('toolu_ask', { [FLOWS.question]: 'Export', [ATTEMPTS.question]: 'Three' }), assistant([text('Retrying the export job three times.')], 'msg_after'));
+    expect(entries).toEqual([
+      { kind: 'user', at: expect.any(String), text: 'Add retries.' },
+      {
+        kind: 'question',
+        at: call.timestamp,
+        text: FLOWS.question,
+        toolError: false,
+        questions: [
+          { ...FLOWS_ASKED, answer: 'Export' },
+          { ...ATTEMPTS_ASKED, answer: 'Three' },
+        ],
+      },
+      { kind: 'assistant', at: expect.any(String), text: 'Retrying the export job three times.', markdown: true },
+    ]);
+    // Nothing else of the call or its result: not the preview, and not the prose.
+    expect(JSON.stringify(entries)).not.toContain('preview');
+    expect(JSON.stringify(entries)).not.toContain('Prose only');
+  });
+
+  it('keeps the multi-select flag, notes from the annotations, and an answer typed in place of an option, as text', async () => {
+    const input = { questions: [{ ...FLOWS, multiSelect: true }, ATTEMPTS] };
+    const [entry] = await entriesOf(
+      ask('toolu_multi', input),
+      answered(
+        'toolu_multi',
+        { [FLOWS.question]: 'Export, Import', [ATTEMPTS.question]: 'Four, if the batch is small.' },
+        { [FLOWS.question]: { notes: 'Ask me again next week.', preview: 'A made-up preview.' }, [ATTEMPTS.question]: { preview: 'Only a preview.' } },
+      ),
+    );
+    expect(entry?.questions).toEqual([
+      { ...FLOWS_ASKED, multiSelect: true, answer: 'Export, Import', notes: 'Ask me again next week.' },
+      { ...ATTEMPTS_ASKED, answer: 'Four, if the batch is small.' },
+    ]);
+  });
+
+  it("keeps a dismissed dialog's questions with no answers, and flags the error", async () => {
+    expect(await entriesOf(ask('toolu_no'), dismissed('toolu_no'))).toEqual([
+      { kind: 'question', at: expect.any(String), text: FLOWS.question, toolError: true, questions: [FLOWS_ASKED, ATTEMPTS_ASKED] },
+    ]);
+    // An error never has answers, even beside a toolUseResult that looks like it has.
+    const error = user([{ type: 'tool_result', tool_use_id: 'toolu_err', content: 'Failed.', is_error: true }], {
+      toolUseResult: { answers: { [FLOWS.question]: 'Export' } },
+    });
+    expect((await entriesOf(ask('toolu_err'), error))[0]).toMatchObject({ toolError: true, questions: [FLOWS_ASKED, ATTEMPTS_ASKED] });
+  });
+
+  it('shows a call with no result yet with its questions alone, and no error flag', async () => {
+    expect(await entriesOf(ask('toolu_open'))).toEqual([{ kind: 'question', at: expect.any(String), text: FLOWS.question, questions: [FLOWS_ASKED, ATTEMPTS_ASKED] }]);
+  });
+
+  it("shows the questions without answers when toolUseResult has none for them, and never reads the result's prose", async () => {
+    const prose = (id: string, extra: Record<string, unknown> = {}) =>
+      user([{ type: 'tool_result', tool_use_id: id, content: `Your questions have been answered: "${FLOWS.question}"="Export"` }], extra);
+    const cases: unknown[] = [
+      prose('toolu_none'),
+      prose('toolu_string', { toolUseResult: 'answered' }),
+      prose('toolu_list', { toolUseResult: { answers: [['Which flows should retry?', 'Export']] } }),
+      // Keyed by other text, or not strings: a question's answer is found only by its text, and is text.
+      prose('toolu_other', { toolUseResult: { answers: { 'Which flows?': 'Export', [ATTEMPTS.question.toUpperCase()]: 'Three' } } }),
+      prose('toolu_types', { toolUseResult: { answers: { [FLOWS.question]: ['Export', 'Import'], [ATTEMPTS.question]: 3 }, annotations: { [FLOWS.question]: 'not a record' } } }),
+      prose('toolu_blank', { toolUseResult: { answers: { [FLOWS.question]: '  \n ' }, annotations: { [FLOWS.question]: { notes: ' ' } } } }),
+    ];
+    const ids = ['toolu_none', 'toolu_string', 'toolu_list', 'toolu_other', 'toolu_types', 'toolu_blank'];
+    const entries = await entriesOf(...ids.flatMap((id, i) => [ask(id), cases[i]]));
+    expect(entries).toHaveLength(ids.length);
+    for (const entry of entries) expect(entry).toEqual({ kind: 'question', at: expect.any(String), text: FLOWS.question, toolError: false, questions: [FLOWS_ASKED, ATTEMPTS_ASKED] });
+    // A question named like an object's own properties finds only what the answers really hold.
+    const named = { questions: [{ question: 'constructor', options: [{ label: 'toString' }] }] };
+    const [own] = await entriesOf(ask('toolu_proto', named), answered('toolu_proto', {}, {}));
+    expect(own?.questions).toEqual([{ question: 'constructor', options: [{ label: 'toString' }] }]);
+    // A line with two results says nothing about which one its toolUseResult is.
+    const two = user(
+      [
+        { type: 'tool_result', tool_use_id: 'toolu_two', content: 'answered' },
+        { type: 'tool_result', tool_use_id: 'toolu_other_call', content: 'ok' },
+      ],
+      { toolUseResult: { answers: { [FLOWS.question]: 'Export' } } },
+    );
+    expect((await entriesOf(ask('toolu_two'), two))[0]?.questions).toEqual([FLOWS_ASKED, ATTEMPTS_ASKED]);
+  });
+
+  it("leaves a call whose input isn't the dialog's shape as a tool call", async () => {
+    const inputs: unknown[] = [
+      'a string',
+      {},
+      { questions: [] },
+      { questions: 'Which flows?' },
+      { questions: [FLOWS, 'not a question'] },
+      { questions: [{ question: 'No options?' }] },
+      { questions: [{ question: 'Options not a list?', options: 'Export' }] },
+      { questions: [{ question: ' \n ', options: [{ label: 'Export' }] }] },
+      { questions: [{ question: 42, options: [{ label: 'Export' }] }] },
+      { questions: [{ question: 'Strings for options?', options: ['Export', 'Import'] }] },
+      { questions: [{ question: 'No label?', options: [{ description: 'Retries each batch.' }] }] },
+      { questions: [{ question: 'A blank label?', options: [{ label: '  ' }] }] },
+      { questions: [FLOWS, { question: 'One bad option?', options: [{ label: 'Fine' }, { label: 7 }] }] },
+    ];
+    const entries = await entriesOf(...inputs.map((input, i) => ask(`toolu_bad_${i}`, input)));
+    expect(entries.map((e) => [e.kind, e.text, e.toolName])).toEqual(inputs.map(() => ['tool', 'AskUserQuestion', 'AskUserQuestion']));
+    expect(entries.every((e) => e.questions === undefined)).toBe(true);
+    // The dialog's input on another tool is just that tool's call.
+    expect(await entriesOf(assistant([toolUse('toolu_other_tool', 'mcp__example__ask', INPUT)]))).toMatchObject([{ kind: 'tool', text: 'mcp__example__ask' }]);
+  });
+
+  it('drops optional fields of the wrong type, keeps a question with no options, and summarises the first question on one line', async () => {
+    const input = {
+      questions: [
+        { question: '  Which flows\nshould   retry?  ', header: 42, multiSelect: 'yes', options: [{ label: ' Export ', description: 7 }, { label: 'Import', description: '   ' }] },
+        { question: 'Anything else?', header: '  ', options: [] },
+      ],
+    };
+    const [entry] = await entriesOf(ask('toolu_loose', input), answered('toolu_loose', { '  Which flows\nshould   retry?  ': ' Export ' }));
+    expect(entry).toEqual({
+      kind: 'question',
+      at: expect.any(String),
+      text: 'Which flows should retry?',
+      toolError: false,
+      questions: [
+        // Trimmed, and found by the question as the call wrote it.
+        { question: 'Which flows\nshould   retry?', options: [{ label: 'Export' }, { label: 'Import' }], answer: 'Export' },
+        { question: 'Anything else?', options: [] },
+      ],
+    });
+  });
+
+  it('caps the questions, the options and every string as the contract says, marking the entry truncated', async () => {
+    expect([QUESTIONS_MAX, OPTIONS_MAX, QUESTION_MAX, HEADER_MAX, LABEL_MAX, DESCRIPTION_MAX, ANSWER_MAX, NOTES_MAX]).toEqual([8, 8, 2048, 256, 256, 1024, 2048, 2048]);
+    const long = (n: number, c = 'q') => c.repeat(n + 10);
+    const many = {
+      questions: [
+        {
+          question: long(QUESTION_MAX),
+          header: long(HEADER_MAX, 'h'),
+          options: Array.from({ length: OPTIONS_MAX + 1 }, (_, i) => ({ label: `${i} ${long(LABEL_MAX, 'l')}`, description: long(DESCRIPTION_MAX, 'd') })),
+        },
+        ...Array.from({ length: QUESTIONS_MAX }, (_, i) => ({ question: `Question ${i + 2}?`, options: [{ label: 'Yes' }] })),
+      ],
+    };
+    const [entry] = await entriesOf(
+      ask('toolu_caps', many),
+      answered('toolu_caps', { [many.questions[0]!.question]: long(ANSWER_MAX, 'a') }, { [many.questions[0]!.question]: { notes: long(NOTES_MAX, 'n') } }),
+    );
+    const [first] = entry?.questions ?? [];
+    expect(entry?.truncated).toBe(true);
+    expect(entry?.questions).toHaveLength(QUESTIONS_MAX);
+    expect(entry?.questions?.at(-1)?.question).toBe('Question 8?');
+    expect(first?.options).toHaveLength(OPTIONS_MAX);
+    expect(first?.question).toBe('q'.repeat(QUESTION_MAX));
+    expect(first?.header).toBe('h'.repeat(HEADER_MAX));
+    expect(first?.options.every((o) => o.label.length === LABEL_MAX && o.description === 'd'.repeat(DESCRIPTION_MAX))).toBe(true);
+    expect(first?.answer).toBe('a'.repeat(ANSWER_MAX));
+    expect(first?.notes).toBe('n'.repeat(NOTES_MAX));
+    // The text is a one-line summary, at most 200 characters.
+    expect(entry?.text.length).toBeLessThanOrEqual(200);
+    // Each cap alone marks it: one answer past its cap.
+    const [answerOnly] = await entriesOf(ask('toolu_one_cap'), answered('toolu_one_cap', { [FLOWS.question]: long(ANSWER_MAX, 'a') }));
+    expect(answerOnly).toMatchObject({ truncated: true, questions: [{ answer: 'a'.repeat(ANSWER_MAX) }, ATTEMPTS_ASKED] });
+    // Nor does a cut split a surrogate pair.
+    const pair = { questions: [{ question: `${'q'.repeat(QUESTION_MAX - 1)}😀 and more?`, options: [{ label: 'Yes' }] }] };
+    expect((await entriesOf(ask('toolu_pair', pair)))[0]?.questions?.[0]?.question).toBe('q'.repeat(QUESTION_MAX - 1));
+  });
+
+  it("counts every string of its questions against the page's 256 KiB, and past it cuts each to 512, marked truncated", async () => {
+    const big = (c: string, n: number) => c.repeat(n);
+    const question = (i: number) => ({
+      // Each string exactly at its cap, so nothing is cut until the budget runs out.
+      question: `${i}${big('q', QUESTION_MAX - 1)}`,
+      header: big('h', HEADER_MAX),
+      options: Array.from({ length: OPTIONS_MAX }, (_, j) => ({ label: `${j}${big('l', LABEL_MAX - 1)}`, description: big('d', DESCRIPTION_MAX) })),
+    });
+    const input = { questions: Array.from({ length: QUESTIONS_MAX }, (_, i) => question(i)) };
+    const answers = Object.fromEntries(input.questions.map((q) => [q.question, big('a', ANSWER_MAX)]));
+    const annotations = Object.fromEntries(input.questions.map((q) => [q.question, { notes: big('n', NOTES_MAX) }]));
+    // In full, it's 8 × (2,048 + 256 + 8 × (256 + 1,024) + 2,048 + 2,048) = 133,120 code units, and its text.
+    const fullSize = (e: ConversationEntry) =>
+      e.text.length + (e.questions ?? []).reduce((sum, q) => sum + q.question.length + (q.header?.length ?? 0) + (q.answer?.length ?? 0) + (q.notes?.length ?? 0) + q.options.reduce((s, o) => s + o.label.length + (o.description?.length ?? 0), 0), 0);
+    // Newest, it takes its share of the budget first: of the five 32 KiB replies before it, only three still fit.
+    const replies = Array.from({ length: 5 }, (_, i) => assistant([text(big('r', ENTRY_TEXT_MAX))], `msg_reply_${i}`));
+    const newest = await entriesOf(...replies, ask('toolu_big', input), answered('toolu_big', answers, annotations));
+    const asked = newest.at(-1)!;
+    expect(asked.truncated).toBeUndefined();
+    expect(fullSize(asked)).toBeGreaterThan(133_000);
+    expect(newest.slice(0, 5).map((e) => e.truncated === true)).toEqual([true, true, false, false, false]);
+    // Oldest, after eight newer 32 KiB replies have spent the budget: each string keeps its first 512.
+    const older = await entriesOf(
+      ask('toolu_lean', input),
+      answered('toolu_lean', answers, annotations),
+      ...Array.from({ length: 8 }, (_, i) => assistant([text(big('r', ENTRY_TEXT_MAX))], `msg_full_${i}`)),
+    );
+    const lean = older[0]!;
+    expect(lean.truncated).toBe(true);
+    expect(lean.text).toBe(asked.text);
+    const strings = (lean.questions ?? []).flatMap((q) => [q.question, q.header, q.answer, q.notes, ...q.options.flatMap((o) => [o.label, o.description])]);
+    expect(strings.every((s) => s !== undefined && s.length <= LEAN_TEXT_MAX)).toBe(true);
+    expect(lean.questions?.[0]).toMatchObject({ question: input.questions[0]!.question.slice(0, LEAN_TEXT_MAX), header: big('h', HEADER_MAX), answer: big('a', LEAN_TEXT_MAX), notes: big('n', LEAN_TEXT_MAX) });
+    expect(lean.questions?.[0]?.options[0]).toEqual({ label: input.questions[0]!.options[0]!.label, description: big('d', LEAN_TEXT_MAX) });
+  });
+
+  it("stands alone between tool calls, in the call's place", async () => {
+    const entries = await entriesOf(
+      assistant([toolUse('toolu_a', 'Read', { file_path: '/w/a.ts' })], 'msg_run'),
+      toolResult('toolu_a'),
+      ask('toolu_mid'),
+      answered('toolu_mid', { [FLOWS.question]: 'Import' }),
+      assistant([toolUse('toolu_b', 'Bash', { command: 'npm test' })], 'msg_run2'),
+      toolResult('toolu_b'),
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['tool', 'question', 'tool']);
+  });
+
+  describe('across a page boundary', () => {
+    const ANSWERS = { [FLOWS.question]: 'Export', [ATTEMPTS.question]: 'Three' };
+    const lines = (id = 'toolu_split') => [user('start'), ask(id), user('between 1'), user('between 2'), answered(id, ANSWERS, { [FLOWS.question]: { notes: 'Made-up notes.' } }), user('after')];
+
+    it("gives the older page the answers, by reading only the result's line again, with a cursor that stays small", async () => {
+      const original = lines();
+      const file = await transcript(jsonl(...original));
+      const resultLine = JSON.stringify(original[4]);
+      const first = await readConversationPage(file, SID, undefined, { pageEntries: 2 });
+      expect(first?.page.entries.map((e) => e.text)).toEqual(['between 2', 'after']);
+      expect(first?.stats.answerBytesRead).toBe(0);
+      // The cursor carries the result's state and its line's place, not its answers.
+      const before = first?.page.before ?? '';
+      expect(before.length).toBeLessThan(300);
+      expect(Buffer.from(before, 'base64url').toString('utf8')).not.toContain('Export');
+      const second = await readConversationPage(file, SID, before, { pageEntries: 2 });
+      expect(second?.page.entries.map((e) => e.kind)).toEqual(['question', 'user']);
+      expect(second?.page.entries[0]).toMatchObject({
+        toolError: false,
+        questions: [
+          { question: FLOWS.question, answer: 'Export', notes: 'Made-up notes.' },
+          { question: ATTEMPTS.question, answer: 'Three' },
+        ],
+      });
+      expect(second?.stats.answerBytesRead).toBe(Buffer.byteLength(resultLine));
+      // The same entries as one page that holds them all, whatever the page and chunk sizes.
+      const whole = await page(file, undefined, { pageEntries: 1000 });
+      for (const options of [{ pageEntries: 1 }, { pageEntries: 2, chunkBytes: 64 }, { pageEntries: 3, chunkBytes: 1 }]) {
+        expect((await allPages(file, options)).entries, JSON.stringify(options)).toEqual(whole.entries);
+      }
+    });
+
+    it('carries a dismissed result across too, with no line to read again', async () => {
+      const file = await transcript(jsonl(user('start'), ask('toolu_gone'), user('between'), dismissed('toolu_gone'), user('after')));
+      const first = await readConversationPage(file, SID, undefined, { pageEntries: 2 });
+      const second = await readConversationPage(file, SID, first?.page.before, { pageEntries: 2 });
+      expect(second?.page.entries[1]).toMatchObject({ kind: 'question', toolError: true, questions: [FLOWS_ASKED, ATTEMPTS_ASKED] });
+      expect(second?.stats.answerBytesRead).toBe(0);
+    });
+
+    it("leaves the questions without answers when the result's line changed, or went, after the cursor was made", async () => {
+      // Rewritten in place, the same length, with the result now another call's: the id no longer matches.
+      const original = lines('toolu_aaaa');
+      const file = await transcript(jsonl(...original));
+      const first = await readConversationPage(file, SID, undefined, { pageEntries: 2 });
+      const rewritten = jsonl(...original).replace('"tool_use_id":"toolu_aaaa"', '"tool_use_id":"toolu_bbbb"');
+      expect(Buffer.byteLength(rewritten)).toBe((await stat(file)).size);
+      await writeFile(file, rewritten);
+      const changed = await readConversationPage(file, SID, first?.page.before, { pageEntries: 2 });
+      expect(changed?.page.entries[0]).toMatchObject({ kind: 'question', toolError: false, questions: [FLOWS_ASKED, ATTEMPTS_ASKED] });
+      expect(changed?.stats.answerBytesRead).toBeGreaterThan(0);
+      // Cut short since: the line is no longer all there, so it isn't read.
+      const kept = lines();
+      const cut = await transcript(jsonl(...kept));
+      const cutFirst = await readConversationPage(cut, SID, undefined, { pageEntries: 2 });
+      const keep = Buffer.byteLength(jsonl(...kept.slice(0, 4))) + 10;
+      await truncateFile(cut, keep);
+      const shorter = await readConversationPage(cut, SID, cutFirst?.page.before, { pageEntries: 2 });
+      expect(shorter?.page.entries[0]).toMatchObject({ kind: 'question', toolError: false, questions: [FLOWS_ASKED, ATTEMPTS_ASKED] });
+      expect(shorter?.stats.answerBytesRead).toBe(0);
+    });
+
+    it('carries the places of at most 8 dialog results, the last seen, and the cursor stays within its limit', async () => {
+      // A hostile run: 64 calls, then 64 results for them after a prompt, every id 64 characters.
+      const id = (i: number) => `toolu_${String(i).padStart(58, '0')}`;
+      const calls = Array.from({ length: 64 }, (_, i) => ask(id(i)));
+      const results = Array.from({ length: 64 }, (_, i) => answered(id(i), ANSWERS));
+      const file = await transcript(jsonl(...calls, user('gap'), ...results));
+      const first = await readConversationPage(file, SID, undefined, { pageEntries: 1 });
+      const before = first?.page.before ?? '';
+      expect(before.length).toBeLessThanOrEqual(CURSOR_MAX_LENGTH);
+      expect(isWellFormedCursor(before)).toBe(true);
+      const { entries } = await allPages(file, { pageEntries: 1 });
+      const asked = entries.filter((e) => e.kind === 'question');
+      expect(asked).toHaveLength(64);
+      expect(asked.every((e) => e.toolError === false)).toBe(true);
+      // Only the 8 results seen last, just after the prompt, kept their place: their calls are the first 8.
+      expect(asked.map((e) => e.questions?.[0]?.answer === 'Export')).toEqual(Array.from({ length: 64 }, (_, i) => i < 8));
+    });
+
+    it("refuses a cursor whose dialog result's place isn't one this reader makes", () => {
+      const cursor = (p: unknown[]) => Buffer.from(JSON.stringify({ v: 1, o: 100, d: '1', i: '2', f: 'AAAAAAAAAAA', p })).toString('base64url');
+      expect(isWellFormedCursor(cursor([['toolu_1', 0, 100, 2048]]))).toBe(true);
+      expect(isWellFormedCursor(cursor([['toolu_1', 0, 100, ANSWER_LINE_MAX]]))).toBe(true);
+      expect(isWellFormedCursor(cursor(Array.from({ length: 8 }, (_, i) => [`toolu_${i}`, 0, 100 + i, 10])))).toBe(true);
+      for (const bad of [
+        [['toolu_1', 0, 100]],
+        [['toolu_1', 0, 100, 10, 1]],
+        [['toolu_1', 0, 99, 10]],
+        [['toolu_1', 0, 100.5, 10]],
+        [['toolu_1', 0, '100', 10]],
+        [['toolu_1', 0, 100, 0]],
+        [['toolu_1', 0, 100, ANSWER_LINE_MAX + 1]],
+        Array.from({ length: 9 }, (_, i) => [`toolu_${i}`, 0, 100 + i, 10]),
+      ]) {
+        expect(isWellFormedCursor(cursor(bad)), JSON.stringify(bad)).toBe(false);
+      }
+    });
   });
 });
