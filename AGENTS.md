@@ -4,13 +4,13 @@ Instructions for agents working in this repo.
 
 ## What this is
 
-pitwall is a local CLI and web UI for supervising the Claude Code sessions on this machine. It lists and groups them, lets you act on them, spawns new ones, and has a supervisor session you can talk to instead of visiting each session.
+pitwall is a local CLI and web UI for supervising the Claude Code sessions on this machine. It lists and groups them, lets you act on them, spawns new ones, and will have a supervisor session (M5) you can talk to instead of visiting each session.
 
 Read `PLAN.md` first. It says what exists, what's next and which decisions are still open.
 
 ## Status
 
-M1, the read-only index, and M2, interacting with sessions from the web UI, are merged into `main` ([PR #6](https://github.com/leggetter/pitwall/pull/6), [PR #19](https://github.com/leggetter/pitwall/pull/19)). M3, the design system and restyle, is in progress on `m3/integration`. See "M3 work breakdown" in `PLAN.md` and `docs/design-system.md`.
+M1, the read-only index, and M2, interacting with sessions from the web UI, are merged into `main` ([PR #6](https://github.com/leggetter/pitwall/pull/6), [PR #19](https://github.com/leggetter/pitwall/pull/19)). M3, the design system and restyle, is in review in [PR #51](https://github.com/leggetter/pitwall/pull/51), with W54 and W55 still being built on `m3/integration`. See "M3 work breakdown" in `PLAN.md` and `docs/design-system.md`.
 
 ## Rules
 
@@ -31,8 +31,10 @@ Use Node 22 (CI runs 22.x) and npm.
 npm ci                   install exactly what package-lock.json records
 npm run build            server with tsc to dist/, web UI with Vite to dist/web
 npm run dev -- [root...] rebuild the web UI and restart the server on change. Uses port 4517
-                         and one token per run, refuses to start if 4517 is busy, and opens
-                         the browser once, through the launch file, after the server listens
+                         (PITWALL_DEV_PORT overrides it), refuses to start if it's busy, and opens
+                         the browser once, through the launch file, after the server listens.
+                         One token per run, unless PITWALL_TOKEN is set in the environment or
+                         the repo's .env (see .env.example)
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5)
@@ -60,6 +62,8 @@ web/src/test/            test helpers and fixtures shared across the web UI's te
 scripts/dev.ts           runs the two watchers behind `npm run dev`
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
+.env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7); .env is gitignored
+CLAUDE.md                imports this file for Claude Code
 tsconfig.json            server typecheck: src/ with tests, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)

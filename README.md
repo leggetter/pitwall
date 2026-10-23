@@ -5,9 +5,9 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Lists every live session under a directory,** wherever it was started (Warp, Cursor, any terminal), grouped by git repo.
 - **Lets you act on a session:** read it, reply, answer its prompts.
 - **Spawns new sessions** in any directory under the root.
-- **Has a supervisor session** you can talk to instead of visiting each session. It knows what each one is waiting on and what's urgent.
+- **Will have a supervisor session** (M5) you can talk to instead of visiting each session, knowing what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, and M2, interacting with sessions from the web UI, are done. M3, a design system and restyle, is in progress on `m3/integration`. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, and M2, interacting with sessions from the web UI, are done. M3, a design system and restyle, is in review in [PR #51](https://github.com/leggetter/pitwall/pull/51), with W54 and W55 still being built on `m3/integration`. See [`PLAN.md`](PLAN.md).
 
 ## Use
 
@@ -34,10 +34,10 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **How:** poll every 5 s by default (`pitwall --interval <seconds>`). The full snapshot is pushed only when it changed, with a heartbeat after other polls. Each `claude agents --json` call costs about 0.18 s of CPU, so a 2 s interval used about 9% of a core; that was the M1 behavior until W7a. Interactive rows give `status` (busy/idle) only; background rows add `state` and, when waiting, `waitingFor`.
 - **`--all`, from M2:** background sessions that have finished or been stopped stay listed, muted, so they can still be opened, attached to (which restarts them) or removed. Plain `--json` drops them once their process has gone. It costs nothing measurable.
 
-### D2 - Interactive sessions: relay through the supervisor, or `/bg` for full control
+### D2 - Interactive sessions: relay messages, or `/bg` for full control
 
 - **Why:** an interactive session in Warp or Cursor belongs to that terminal. The only documented way in from outside is cross-session messaging. The receiving session sees such a message as coming from another session, "not typed by your user", so it can't approve a permission prompt or change configuration.
-- **So:** pitwall relays messages, and labels them in the UI as coming from the supervisor. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a headless session pitwall runs, limited to `SendMessage` behind a gate (D8), which the M5 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
+- **So:** pitwall relays messages through its relay, a headless session named `pitwall-relay` (D8): the page shows each send as "Message from pitwall", and the target sees a message from `pitwall-relay`. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a headless session pitwall runs, limited to `SendMessage` behind a gate (D8), which the M5 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
 - **Rejected:** posting to a session's inbox socket directly. Only the socket's auth line is documented, not the message format.
 - **Waiting on you:** while an interactive session waits on you, its view says to answer in its terminal; a relayed message seems to wait until then (W47; not yet confirmed on a live dialog).
 
@@ -46,7 +46,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Why:** it gives the full Claude Code interface, including permission prompts and dialogs, without pitwall modeling any of it. `node-pty` works on Node 25. Closing the PTY detaches without stopping the session.
 - **Dialogs in the conversation** (W49): an answered question dialog shows in the Conversation tab as its questions, options and your answers, read-only. pitwall still can't answer one, and an open one isn't in the transcript, so you answer it in the terminal.
 - **In the view:** a background session's footer, where an interactive one has its message box, says to type to it in its Terminal tab, which attaches. There's no button for it, because opening the tab is what attaches (D9) (W47).
-- **Rejected:** a custom chat UI over the transcript plus `claude --resume <id> --bg "prompt"`. It would look better but can't answer dialogs. It may come back later as a read-only view.
+- **Rejected:** a custom chat UI over the transcript plus `claude --resume <id> --bg "prompt"`. It would look better but can't answer dialogs. The Conversation tab is that read-only view (W9).
 
 ### D4 - The supervisor is a background Claude Code session, not an Agent SDK app
 
@@ -91,7 +91,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Start group:** the repo of the session's working directory, by `git rev-parse --git-common-dir`, so worktrees sit under the repo they belong to. A directory below a root that isn't in a repo groups as itself.
 - **The snapshot:** the server lists each session once, under the group it started in (Phil, 2026-10-21: "The problem is duplication"), and names the repos it worked in. The page groups it again for the viewer's View preferences, so switching is instant.
-- **View preferences** (Phil, 2026-10-21, after git-76, started in `~/hookdeck/git` itself, didn't show under evals, where it made 1,642 tool calls and 183 changes): Group sessions by, in a header menu, kept as `pitwall.group-by.v1`.
+- **View preferences** (Phil, 2026-10-21, after a long session started in the root itself didn't show under the repo where it made 1,642 tool calls and 183 changes): Group sessions by, in a header menu, kept as `pitwall.group-by.v1`.
   - **Main repo, the default:** a session started in a root's own directory that worked in repos is listed under the one it changed most, ties broken by tool calls, the newest touch, then the path. It may be under another root, and so in that root's tab. A root-started session that worked in no repo stays under the root, and every other session stays where it started.
   - **Where it started:** the snapshot as it is.
   - **Every repo it worked in:** each session under where it started and every repo it worked in, except that the root's own group keeps only root-started sessions that worked in no repo.
@@ -141,11 +141,11 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Why:** until M3, the server stripped markdown from every message before sending it, as it does for the list's two-line rows. That turned each code block into "[code]" and flattened tables, so a draft written in a code block couldn't be read or copied (Phil's try-out, 2026-10-21).
 - **Safety:** the parser is pitwall's own, with no new dependency, and builds a tree of text that React renders as text. Raw HTML, and anything outside the subset, shows as the literal text it is. Only absolute `http:` and `https:` URLs become links; each opens in a new tab with `noopener noreferrer`, with the URL it opens in its tooltip. Images are never loaded.
 - **Links in code** (Phil, 2026-10-21): bare URLs in code blocks and inline code are links too, as terminals make them clickable, while Copy code copies the code as written. A bare URL ends at a space, `<`, `>`, `"` or a backtick, and drops a `)`, `]` or `}` it didn't open, so a URL in an HTML attribute, JSON or backticks links where it points.
-- **Bounds:** at most 32 Ki characters a message and 256 Ki a page. A message that would take more than 5,000 elements is shown as written, with a note.
+- **Bounds:** at most 32 Ki UTF-16 code units a message and 256 Ki a page. A message that would take more than 5,000 elements is shown as written, with a note.
 
 ### D16 - Several roots show as tabs
 
-- **What:** with two or more roots (`pitwall ~/hookdeck/git ~/leggetter/git`), the header shows a tab per root, and each tab narrows the repo list, Needs you, All sessions, Starred, the session list, the filter and New session to its root. With one root, the header is as before.
+- **What:** with two or more roots (`pitwall ~/work ~/oss`), the header shows a tab per root, and each tab narrows the repo list, Needs you, All sessions, Starred, the session list, the filter and New session to its root. With one root, the header is as before.
 - **Nothing out of sight:** a tab that isn't open shows its root's needs-you badge, and the page title's count covers every root.
 - **Each tab keeps its place:** its selection, open session and filter. Switching never detaches a terminal (D9's four count across tabs), drops a draft or stops a send. The open tab is in the URL (`&root=`) and in `pitwall.root-tab.v1`.
 - **Nested roots:** a session belongs to the longest root that holds it, as the index decides, so the tabs always agree with the server.
