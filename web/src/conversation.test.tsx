@@ -172,6 +172,20 @@ describe('chosenAnswer (W49)', () => {
     expect(multi('Export, and the import job')).toEqual({ chosen: new Set(), typed: 'Export, and the import job' });
     expect(multi('Export and Import')).toEqual({ chosen: new Set(), typed: 'Export and Import' });
   });
+
+  it('marks none for an answer that two or more options share as their label, and shows it as typed (W58)', () => {
+    const twins = [{ label: 'Yes', description: 'Retry now.' }, { label: 'No' }, { label: 'Yes', description: 'Retry tonight.' }];
+    expect(chosenAnswer({ question: 'Retry?', options: twins, answer: 'Yes' })).toEqual({ chosen: new Set(), typed: 'Yes' });
+    // The same once trimmed, as labels are compared.
+    expect(chosenAnswer({ question: 'Retry?', options: [{ label: 'Yes' }, { label: ' Yes ' }], answer: 'Yes' })).toEqual({ chosen: new Set(), typed: 'Yes' });
+    // A label only one option has is still chosen.
+    expect(chosenAnswer({ question: 'Retry?', options: twins, answer: 'No' })).toEqual({ chosen: new Set([1]) });
+    // In a multi-select answer too: a shared label in it chooses nothing, so it's all shown as typed.
+    const multi = (answer: string) => chosenAnswer({ question: 'Retry?', options: twins, multiSelect: true, answer });
+    expect(multi('Yes')).toEqual({ chosen: new Set(), typed: 'Yes' });
+    expect(multi('No, Yes')).toEqual({ chosen: new Set(), typed: 'No, Yes' });
+    expect(multi('No')).toEqual({ chosen: new Set([1]) });
+  });
 });
 
 describe('foldOpen and toggleFold', () => {
