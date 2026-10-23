@@ -60,6 +60,14 @@
 // drops a draft, or stops a send or an action in flight. The header, the page alerts, the app strip,
 // the toasts, the Sort setting and the document title's count are the whole page's. Switching tabs
 // pushes one history entry, with the tab's selection and open session; the back button switches back.
+//
+// A session started from New session is selected once it's listed (W63): its root tab, the group the
+// repo list lists it under in the viewer's Group sessions by, and its view, in one pushed history
+// entry, as opening a row pushes one. Its terminal takes no focus (W57), and focus stays where it was
+// unless the switch took it away. Not over what you're in the middle of, though: a draft, a running
+// Stop or Remove, an open confirmation or restart prompt, in the view open here or in the session's
+// tab, or typing in the columns. Then a toast says it's listed, with Open, in place of the one that
+// said it started.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
@@ -80,6 +88,7 @@ import {
   browserNavigation,
   findGroup,
   finishedStateId,
+  groupSelection,
   sameSelection,
   scopeFor,
   selectionHref,
@@ -105,7 +114,7 @@ import {
   type Filters,
 } from '../sessions.js';
 import { useSort } from '../sort.js';
-import { shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
+import { isTyping, shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
 import { useStarred } from '../starred.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
@@ -148,6 +157,18 @@ export const groupMovedText = (mode: GroupBy) =>
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
+
+/**
+ * The toast once a started session is listed, when showing it would have taken over what you're in
+ * the middle of (W63). It replaces the one that said it started, and has OPEN_LISTED.
+ */
+export const listedText = (name: string) => `${plainText(name)} is listed now. It didn't open, so you keep your place.`;
+
+/** That toast's action: it selects and opens the session, as it would have been. */
+export const OPEN_LISTED = 'Open';
+
+/** What a started session's toasts are about, so the one that says it's listed replaces the one that said it started. */
+const startedKey = (shortId: string) => `started:${shortId}`;
 
 /** The toast for `s`, which stars or unstars the open session while focus is elsewhere (W53). */
 export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'Unstarred'} ${plainText(name)}.`;
@@ -320,39 +341,95 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
   const overlaid = layout !== 'three-columns' && openId !== undefined;
   const reposCovered = overlaid && overlayCoversRepos;
-  // The New session dialog, and the session it started, opened once it's listed.
+  // The New session dialog, and the session it started, selected once it's listed (W63).
   const [newSession, setNewSession] = useState(false);
-  // Its view takes no focus, unless focus has nowhere to be: started from the no-sessions empty state,
-  // whose New session button goes as the session is listed, focus would otherwise be left on the page.
-  // Started in a root tab that has since been left, it opens there instead, for when that tab is back,
-  // unless the view open there has a draft or a running action, which it would replace (W38).
-  const openStarted = useCallback(
-    (session: SessionSummary) => {
-      // The root of the group it's listed under: a session just started has worked in no repo yet, so where it started.
-      const root = grouped.home.get(session.sessionId)?.root;
-      if (tab !== undefined && root !== undefined && root !== tab) {
-        const there = places.get(root)?.session;
-        if (there !== undefined && holding(there)) return;
-        setPlaces((current) => new Map(current).set(root, { selection: current.get(root)?.selection ?? viewIn('all', root), session: session.sessionId }));
-        return;
-      }
-      const active = document.activeElement;
-      if (active === null || active === document.body) focusView.current = { id: session.sessionId, on: 'heading' };
-      opened.open(session.sessionId);
-    },
-    [opened.open, grouped.home, tab, places],
-  );
+  // Which open session views have a question open, a Stop or Remove confirmation or the terminal's
+  // restart prompt: a started session doesn't replace them (W63). By session, as drafts are.
+  const prompts = useRef(new Map<string, boolean>());
+  /**
+   * Whether showing a started session in this session's place would take over what you're in the
+   * middle of (W63): what holding() keeps, a draft or a running Stop or Remove, or a question open in
+   * its view.
+   */
+  const keepsPlace = (sessionId: string | undefined) => sessionId !== undefined && (holding(sessionId) || (prompts.current.get(sessionId) ?? false));
+  /** Typing in the columns, where single-key shortcuts are off: the filter, the message box, the terminal. Not in a dialog, which a switch leaves alone. */
+  const typingHere = () => {
+    const active = document.activeElement;
+    return active instanceof Element && isTyping(active) && active.closest('.columns') !== null && app.current?.contains(active) === true;
+  };
+  /**
+   * Shows a session New session started (W63): its root tab; its group, the one the repo list lists
+   * it under in the viewer's Group sessions by, which is its home group (groupBy.ts), as a ?session=
+   * link selects it too; and its view, which its row marks as open. One history entry, pushed, as
+   * opening a row pushes one, so the back button goes back to where you were. Its terminal takes no
+   * focus (W57): nothing in the page asked for it.
+   *
+   * Focus, with `kept`: it stays where it is, as when a view opens from the URL, unless the switch took
+   * away or hid what had it, as a row that's no longer listed, or it was on the page, as after the
+   * no-sessions empty state's New session: then the view's heading takes it. With `heading`, from the
+   * toast's Open, which goes with its toast, the heading takes it, as from a row (6.1, item 8).
+   */
+  const showStarted = (session: SessionSummary, focus: 'kept' | 'heading') => {
+    const home = grouped.home.get(session.sessionId);
+    const next = home ? groupSelection(home, roots) : selection;
+    const active = document.activeElement;
+    const unless = focus === 'kept' && active instanceof Element && active !== document.body && active !== document.documentElement ? active : undefined;
+    focusView.current = unless === undefined ? { id: session.sessionId, on: 'heading' } : { id: session.sessionId, on: 'heading', unless };
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, next), session.sessionId)}${hash}`);
+    writeStoredSelection(next, storage);
+    followSelection();
+    opened.follow();
+  };
+  // The toast's Open, whenever it's used: the session as it's listed then, or its view alone once it isn't.
+  const listedToast = useRef<{ sessionId: string; key: string } | undefined>(undefined);
+  const openListed = useRef<(sessionId: string) => void>(() => {});
+  openListed.current = (sessionId) => {
+    listedToast.current = undefined;
+    const listed = listedSession(sessionId);
+    if (listed) {
+      showStarted(listed, 'heading');
+      return;
+    }
+    focusView.current = { id: sessionId, on: 'heading' };
+    opened.open(sessionId);
+  };
+  // Once it's listed: shown, unless that would take over the view open here, typing in the columns,
+  // or the view open in its root tab, which it would replace. Then the toast that said it started
+  // says it's listed, with Open.
+  const openStarted = (session: SessionSummary) => {
+    // The root of the group it's listed under: a session just started has worked in no repo yet, so where it started.
+    const root = grouped.home.get(session.sessionId)?.root;
+    const there = tab !== undefined && root !== undefined && root !== tab ? places.get(root)?.session : undefined;
+    if (!keepsPlace(openId) && !typingHere() && !keepsPlace(there)) {
+      showStarted(session, 'kept');
+      return;
+    }
+    const key = startedKey(session.shortId ?? session.sessionId);
+    listedToast.current = { sessionId: session.sessionId, key };
+    toasts.show({ tone: 'info', key, message: listedText(session.name), action: { label: OPEN_LISTED, onAction: () => openListed.current(session.sessionId) } });
+  };
   const started = useOpenWhenListed(everySession, openStarted);
+  // Opened some other way, from its row say, the toast's Open has nothing left to do, so it goes.
+  useEffect(() => {
+    const shown = listedToast.current;
+    if (shown === undefined || shown.sessionId !== openId) return;
+    listedToast.current = undefined;
+    toasts.dismiss(shown.key);
+  }, [openId]);
 
   // The view's heading, which takes focus when a session is opened from a row or the view's header;
   // or its conversation, when `j` or `k` was pressed there, so ↑ and ↓ go on scrolling it. A view that
   // opened on its Terminal tab (W54) has its conversation hidden, so its heading takes focus instead.
   const viewHeading = useRef<HTMLHeadingElement>(null);
-  const focusView = useRef<{ id: string; on: 'heading' | 'conversation' } | undefined>(undefined);
+  // `unless`: what had focus as a started session was shown (W63), which keeps it while it's still in sight.
+  const focusView = useRef<{ id: string; on: 'heading' | 'conversation'; unless?: Element } | undefined>(undefined);
   useEffect(() => {
     const target = focusView.current;
     if (target === undefined || target.id !== openId) return;
     focusView.current = undefined;
+    const { unless } = target;
+    if (unless !== undefined && unless.isConnected && unless.closest('[hidden], [inert]') === null) return;
     // The shown view's, not one kept hidden for another root tab (W38).
     const conversation =
       target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('section.session-view:not([hidden]) .session-view-body[role="tabpanel"]:not([hidden])') : undefined;
@@ -971,6 +1048,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       onRunningChange={(busy) => {
         running.current.set(session.sessionId, busy);
       }}
+      onPromptChange={(open) => {
+        prompts.current.set(session.sessionId, open);
+      }}
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
@@ -1107,7 +1187,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           onStarted={(session) => {
             setNewSession(false);
             started.wait(session);
-            toasts.show({ tone: 'success', message: startedText(session.name) });
+            toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}
         />
       )}

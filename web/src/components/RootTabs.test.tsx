@@ -457,9 +457,9 @@ describe("each tab's own place", () => {
     expect(box().value).toBe('');
   });
 
-  it('opens a session started from a tab that has since been left in that tab, for when it’s back, not over the one open now', async () => {
+  it('switches to the tab a session was started from once it’s listed, with its group and its view, keeping the tab you were in as you left it (W63)', async () => {
     const list = sessions();
-    const { update } = renderDashboard(twoRoots(list), { search: `?view=all&root=${PERSONAL}` });
+    const { update, history } = renderDashboard(twoRoots(list), { search: `?view=all&root=${PERSONAL}` });
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
@@ -473,9 +473,17 @@ describe("each tab's own place", () => {
     next.groups[2] = { ...next.groups[2]!, sessions: [...next.groups[2]!.sessions, started] };
     update(next);
     await settle();
-    expect(viewName()).toBe('w-two');
-    switchTo('~/personal');
+    expect(openTab()).toBe('~/personal');
+    expect(repoItem('blog').getAttribute('aria-current')).toBe('page');
     expect(viewName()).toBe('p-new');
+    expect(search(history)).toBe(`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&session=${id(19)}`);
+    // ~/work's view is kept, hidden, as a switch keeps it.
+    expect(views().find((each) => each.name === 'w-two')?.hidden).toBe(true);
+
+    history.back();
+    await settle();
+    expect(openTab()).toBe('~/work');
+    expect(viewName()).toBe('w-two');
   });
 
   it("moves j from the conversation to the next session's conversation, past another tab's hidden view", async () => {

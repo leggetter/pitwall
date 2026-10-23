@@ -82,7 +82,7 @@ const SECTIONS: Section[] = [
     Content: PreferencesDialogs,
   },
   { id: 'tooltips', title: 'Tooltips', intro: 'Tooltip on each kind of control it is on in the app, each opened by hovering it.', Content: Tooltips },
-  { id: 'toasts', title: 'Toasts', intro: 'ToastProvider and its stack: a success, an error, three at most, and full width at 600 px and narrower.', Content: Toasts },
+  { id: 'toasts', title: 'Toasts', intro: 'ToastProvider and its stack: a success, an error, three at most, full width at 600 px and narrower, and one with an action.', Content: Toasts },
   { id: 'copy', title: 'Copy buttons', intro: 'CopyButton idle, copied and refused, against a stub clipboard, and CopyCommand, the command chip.', Content: CopyButtons },
   { id: 'timestamps', title: 'Timestamps', intro: 'Timestamp, on the one shared clock, with the absolute time in its tooltip.', Content: Timestamps },
   {
