@@ -24,6 +24,7 @@ import {
   background,
   exchange,
   LINKS_IN_CODE,
+  LINKS_THAT_ASK,
   MARKDOWN_CONVERSATION,
   MARKDOWN_EDGES,
   MARKDOWN_ELEMENTS,
@@ -407,6 +408,10 @@ const MARKDOWN_STUB: StubOptions = { entries: MARKDOWN_CONVERSATION };
 const CODE_LINKS = background('conversation-code-links', { state: 'working' });
 const CODE_LINKS_NARROW = background('conversation-code-links-narrow', { state: 'working' });
 const CODE_LINKS_STUB: StubOptions = { entries: LINKS_IN_CODE };
+const LINKS_ASK = background('conversation-links-ask', { state: 'working' });
+const LINKS_ASKING = background('conversation-links-asking', { state: 'working' });
+const LINKS_ASKING_NARROW = background('conversation-links-asking-narrow', { state: 'working' });
+const LINKS_ASK_STUB: StubOptions = { entries: LINKS_THAT_ASK };
 const TO_PITWALL = session('conversation-to-pitwall', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
 const TO_PITWALL_NARROW = session('conversation-to-pitwall-narrow', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
 const TO_PITWALL_STUB: StubOptions = { entries: TO_PITWALL_CONVERSATION };
@@ -463,6 +468,13 @@ async function earlierUntil(root: HTMLElement, selector: string): Promise<void> 
   if (body) body.scrollTop = 0;
 }
 
+/** Scrolls the conversation's `body` so `target` is at the top, as a reader would. */
+function scrollToTop(body: HTMLElement, target: Element): void {
+  // In a window scaled to fit its stage, the box on screen is smaller than the one that scrolls.
+  const scale = body.offsetHeight > 0 ? body.getBoundingClientRect().height / body.offsetHeight : 1;
+  body.scrollTop += (target.getBoundingClientRect().top - body.getBoundingClientRect().top) / scale - 12;
+}
+
 /** Scrolls the conversation so the first `selector` is at the top, as a reader would; at the top for none. */
 const scrolledTo = (selector?: string) => async (root: HTMLElement) => {
   const body = await conversationBody(root);
@@ -470,10 +482,7 @@ const scrolledTo = (selector?: string) => async (root: HTMLElement) => {
     body.scrollTop = 0;
     return;
   }
-  const target = await element(body, selector);
-  // In a window scaled to fit its stage, the box on screen is smaller than the one that scrolls.
-  const scale = body.offsetHeight > 0 ? body.getBoundingClientRect().height / body.offsetHeight : 1;
-  body.scrollTop += (target.getBoundingClientRect().top - body.getBoundingClientRect().top) / scale - 12;
+  scrollToTop(body, await element(body, selector));
 };
 
 /** Copies the first code block with its Copy button, as a reader would, then waits for the copied icon and the toast. */
@@ -483,6 +492,18 @@ async function copyCode(root: HTMLElement): Promise<void> {
   await until('the copied icon', () => root.querySelector('.md-code .copy-button.copied'));
   await text(specimenOf(root), 'Copied');
 }
+
+/**
+ * Clicks the link saying `text`, as a reader would, so its question opens after the paragraph it's in
+ * (W55), then scrolls the conversation to that paragraph, with the question under it.
+ */
+const asks = (text: string) => async (root: HTMLElement) => {
+  const body = await conversationBody(root);
+  const link = await until(`the link "${text}"`, () => [...body.querySelectorAll<HTMLAnchorElement>('a.md-link')].find((a) => a.textContent === text));
+  link.click();
+  const question = await element(body, '.inline-confirm');
+  scrollToTop(body, question.previousElementSibling ?? question);
+};
 
 /** Scrolls up to read, then the session does more: "Jump to latest" appears with the count. */
 async function scrollUpThenMore(root: HTMLElement): Promise<void> {
@@ -562,6 +583,40 @@ export function Conversations() {
         <Stubbed options={CODE_LINKS_STUB}>
           <Scenario run={scrolledTo('.md-code')}>
             <SessionView session={CODE_LINKS_NARROW} listed onClose={noop} compact />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Links that ask"
+        note="A link whose text isn't its own address asks before it opens: one whose text is words, one whose text is another address, and one to an internationalised host. A bare URL, an autolink and a link whose text is its own address open on one click, as before. A URL with a username before its host is text, in text and in code. Nothing shows the difference until a click. Scrolled to the top."
+        frame="view"
+      >
+        <Stubbed options={LINKS_ASK_STUB}>
+          <Scenario run={scrolledTo()}>
+            <SessionView session={LINKS_ASK} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Links that ask: asking"
+        note="The link whose text is another address, clicked: an inline confirmation after its paragraph names the host it really goes to, then its full address in code style, with Cancel, which has focus, and Open link. Cancel or Escape opens nothing and puts focus back on the link; Open link opens it in a new tab with no opener or referrer."
+        frame="view"
+      >
+        <Stubbed options={LINKS_ASK_STUB}>
+          <Scenario run={asks('https://github.com/example/export-app/pull/51')}>
+            <SessionView session={LINKS_ASKING} listed onClose={noop} />
+          </Scenario>
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Links that ask, 600 px and narrower"
+        note="The link to an internationalised host, clicked: its host is named in punycode, as its tooltip shows it. The address wraps anywhere, and the buttons wrap under the text."
+        frame="view"
+        width={375}
+      >
+        <Stubbed options={LINKS_ASK_STUB}>
+          <Scenario run={asks('the dashboard')}>
+            <SessionView session={LINKS_ASKING_NARROW} listed onClose={noop} compact />
           </Scenario>
         </Stubbed>
       </Specimen>
