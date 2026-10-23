@@ -378,6 +378,7 @@ Same way of working as M3, on `m3.1/integration`.
 | Item | What | Branch | Size | Status |
 | --- | --- | --- | --- | --- |
 | W63 | A new session is selected when it appears: its root tab, its repo or directory under the viewer's Group sessions by, and its view | `m3.1/new-session-selected` | S | In progress. Web UI only. Phil (2026-10-23): "when creating a new session, it should be automatically selected - the repo/directory and the session." |
+| W64 | A headless app check kept in the repo: a fake server using pitwall's own security headers and CSP, a Chrome driver, and one part per area, at four widths in both themes, exiting non-zero on any failure | `m3.1/appcheck` | M | In progress. "After M3" item 1 (coordinator's order). Built from the checks W54 to W63's builders wrote after the reboot wiped M3's |
 
 ## M2 work breakdown
 
