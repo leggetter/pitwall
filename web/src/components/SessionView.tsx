@@ -15,14 +15,23 @@
 // send or an action in flight. A hidden view has no id and ignores Escape, and its conversation keeps
 // the reader's place, as it does behind the Terminal tab.
 //
+// The tab it opens on (W54): a running background session's Terminal tab, which attaches, as View
+// preferences says unless it says Conversation; Conversation for the rest, finished background
+// sessions included, since attaching restarts them, and wherever the Terminal tab is off. It's decided
+// as the view is first shown, and never again: the tab you choose is yours, whatever the session does
+// after. A view opened by stepping (j, k, ↑, ↓) waits before its terminal attaches, and the terminal
+// takes no focus then (Terminal.tsx); otherwise it takes focus as it attaches, as when you open the tab
+// yourself, unless focus has meanwhile gone somewhere outside the view.
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
-import { Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
+import type { BackgroundTab } from '../backgroundTab.js';
 import { getConversation } from '../conversation.js';
 import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
 import { DraftStorageContext, hasStoredDraft } from '../drafts.js';
@@ -80,7 +89,8 @@ export const CWD_MISSING_NOTES = {
 /**
  * A background session's footer, where an interactive session has its message box (W47, D2, D3):
  * it takes messages in its terminal. Opening the Terminal tab attaches, so the note has no button
- * that opens it; the tab stays the one deliberate way in (D9).
+ * that opens it; from the Conversation tab, the tab stays the one deliberate way in (D9). A running
+ * one's view opens on its Terminal tab anyway, unless View preferences says Conversation (W54).
  */
 export const BACKGROUND_NOTES = {
   running: 'To message it, type in its Terminal tab, which attaches to it.',
@@ -286,6 +296,17 @@ export interface SessionViewProps {
   hidden?: boolean;
   /** Its star toggle, before the actions menu (W53): whether it's starred, and a way to star or unstar it. */
   star?: { starred: boolean; onStar: (sessionId: string, on: boolean) => void } | undefined;
+  /**
+   * The tab a running background session's view opens on (W54), View preferences' Open running
+   * background sessions on, read as the view is first shown. Left out, as the gallery's specimens and
+   * the tests of a view alone do, it opens on Conversation. The Dashboard always gives it.
+   */
+  backgroundTab?: BackgroundTab | undefined;
+  /**
+   * Opened by stepping onto the session, with j, k, ↑ or ↓ (W54): a terminal it opens on waits
+   * --pw-delay-attach before attaching, and takes no focus when it does. Read as the view opens.
+   */
+  stepped?: boolean;
 }
 
 type Tab = 'conversation' | 'terminal';
@@ -308,6 +329,8 @@ export function SessionView({
   panel,
   hidden = false,
   star,
+  backgroundTab = 'conversation',
+  stepped = false,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -338,7 +361,32 @@ export function SessionView({
   );
   const conversation = useConversation(session.lastActivityAt, loader);
   const actions = useSessionActions(session, onClose);
-  const [tab, setTab] = useState<Tab>('conversation');
+
+  // An interactive session, or a background one that can't be attached from here.
+  const background = session.kind === 'background';
+  const terminalOff = !background
+    ? TERMINAL_INTERACTIVE_NOTE
+    : !attachEnv
+      ? 'Attach is unavailable here.'
+      : !listed
+        ? "It's no longer listed, so it can't be attached."
+        : undefined;
+
+  /**
+   * The tab it opens on (W54): Terminal for a running background session it can attach, unless View
+   * preferences says Conversation; Conversation for the rest. A finished one restarts when attached,
+   * which the restart confirmation asks first, so it waits for you to open the tab.
+   */
+  const openingTab = (): Tab => (backgroundTab === 'terminal' && background && session.alive && terminalOff === undefined ? 'terminal' : 'conversation');
+  // Undefined until the view is first shown: one that opens hidden, in a root tab that isn't open (W38),
+  // as a session started there does, decides when that tab is opened, so it never attaches unseen.
+  const [chosen, setChosen] = useState<Tab | undefined>(() => (hidden ? undefined : openingTab()));
+  const tab = chosen ?? 'conversation';
+  useLayoutEffect(() => {
+    if (chosen === undefined && !hidden) setChosen(openingTab());
+  });
+  // Opened by stepping: its first terminal waits, and takes no focus. Opening a tab yourself ends that.
+  const [quiet, setQuiet] = useState(stepped);
   const [attachStatus, setAttachStatus] = useState<AttachStatus>();
   // The terminal's restart confirmation, open or busy, for Escape's layering.
   const [restart, setRestart] = useState<RestartPhase>();
@@ -371,30 +419,33 @@ export function SessionView({
     });
   };
 
-  // An interactive session, or a background one that can't be attached from here.
-  const background = session.kind === 'background';
-  const terminalOff = !background
-    ? TERMINAL_INTERACTIVE_NOTE
-    : !attachEnv
-      ? 'Attach is unavailable here.'
-      : !listed
-        ? "It's no longer listed, so it can't be attached."
-        : undefined;
-
   /** Opening Terminal attaches; for a session that isn't running, the terminal first asks to restart it (D9). */
   const openTab = (next: Tab) => {
     if (next === 'terminal' && terminalOff) return;
-    setTab(next);
+    setChosen(next);
+    // Chosen: a terminal opened from here attaches at once, and takes focus.
+    if (next !== tab) setQuiet(false);
     // Switching to Conversation unmounts the terminal, which detaches.
     if (next === 'conversation') setAttachStatus(undefined);
   };
 
   /** Detach, Cancel on the restart, or Back to the conversation: the conversation, with focus on the Terminal tab. */
   const leaveTerminal = useCallback(() => {
-    setTab('conversation');
+    setChosen('conversation');
+    setQuiet(false);
     setAttachStatus(undefined);
     terminalTab.current?.focus();
   }, []);
+
+  /**
+   * Whether the terminal may take focus as it attaches: while focus is in this view, or nowhere, so a
+   * key typed elsewhere meanwhile, in the filter, say, never goes to the session (W54).
+   */
+  const terminalMayFocus = useCallback(() => {
+    const active = document.activeElement;
+    if (active === null || active === document.body) return true;
+    return heading.current?.closest('section')?.contains(active) ?? false;
+  }, [heading]);
 
   /** F6 in the terminal: focus moves to the Terminal tab, and the terminal stays open and attached (6.1 rule 14). */
   const focusTerminalTab = useCallback(() => terminalTab.current?.focus(), []);
@@ -676,6 +727,8 @@ export function SessionView({
             onLeave={focusTerminalTab}
             onStatus={setAttachStatus}
             onRestartChange={setRestart}
+            wait={quiet}
+            canFocus={terminalMayFocus}
           />
         )}
       </div>

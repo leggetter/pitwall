@@ -8,6 +8,7 @@ import { PROTOCOL_VERSION, type ConversationPage, type IndexSnapshot, type Sessi
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { App } from '../App.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
+import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import type { ConnectionView } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
 import { PANEL_WIDTH_KEY, readPanelWidth } from '../panelWidth.js';
@@ -197,7 +198,9 @@ describe('the open session in the URL', () => {
   });
 
   it('opens the view a loaded URL names, and nothing else: no attach, no message, no stop or remove, and no focus taken', async () => {
-    const { fetch, sockets } = renderDashboard(snap(), { search: `?view=all&session=${B}` });
+    // With View preferences on Conversation: by default, a running background session opens on its
+    // Terminal tab, which attaches (W54, TerminalFirst.test.tsx).
+    const { fetch, sockets } = renderDashboard(snap(), { search: `?view=all&session=${B}`, storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
     await settle();
     expect(viewName()).toBe('demo-b');
     expect(within(view()!).getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
@@ -552,7 +555,7 @@ describe('Escape, nearest first', () => {
 
 describe('the tabs', () => {
   it('are a tablist of Conversation and Terminal, with roving tabindex, each controlling its tab panel', async () => {
-    renderDashboard();
+    renderDashboard(snap(), { storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
     await open('demo-b');
     const list = within(view()!).getByRole('tablist', { name: 'Session view' });
     const [conversation, terminal] = within(list).getAllByRole('tab');
@@ -571,7 +574,7 @@ describe('the tabs', () => {
   });
 
   it('move focus with ← → Home End, and open only on Enter or Space, as a click', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderDashboard(snap(), { storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
     await open('demo-b');
     const [conversation, terminal] = within(view()!).getAllByRole('tab');
     conversation!.focus();

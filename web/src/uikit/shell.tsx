@@ -7,6 +7,7 @@
 
 import { useId, useState } from 'react';
 import type { IndexSnapshot } from '../../../src/shared/protocol.js';
+import type { BackgroundTab } from '../backgroundTab.js';
 import { FilterControls } from '../components/Filters.js';
 import { Header } from '../components/Header.js';
 import { HideButton } from '../components/HideButton.js';
@@ -47,10 +48,11 @@ import { memoryShortcuts, memoryStorage, storedHidden } from './stubs.js';
 const noop = () => {};
 const UPDATED = ago(0.05);
 
-/** View preferences with a mode of its own, so its menu can be opened and a mode chosen (W42). */
+/** View preferences with choices of its own, so its menu can be opened and a choice made (W42, W54). */
 function usePreferences(start: GroupBy = 'main-repo') {
   const [groupBy, onGroupBy] = useState<GroupBy>(start);
-  return { groupBy, onGroupBy };
+  const [backgroundTab, onBackgroundTab] = useState<BackgroundTab>('terminal');
+  return { groupBy, onGroupBy, backgroundTab, onBackgroundTab };
 }
 
 /** The Sort setting, with state of its own. */

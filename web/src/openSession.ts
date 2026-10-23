@@ -55,8 +55,9 @@ export interface OpenSession {
 }
 
 /**
- * The open session, from the URL. Reading it never opens anything else: no attach, no message,
- * nothing that changes a session.
+ * The open session, from the URL. Reading it opens nothing else: no message, nothing that changes a
+ * session. The view it opens picks its own tab: a running background session's opens on Terminal,
+ * which attaches, unless View preferences says Conversation (W54, SessionView.tsx).
  */
 export function useOpenSession(navigation: NavigationEnv = browserNavigation): OpenSession {
   const [id, setId] = useState<string | undefined>(() => parseSession(navigation.location.search));
