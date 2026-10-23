@@ -218,6 +218,8 @@ interface Harness {
   gate: FakeGate;
   children: FakeChild[];
   child(): FakeChild;
+  /** For each relay started, how many earlier ones hadn't exited yet. Never two at once: all zeros. */
+  runningAtStart: number[];
   rows: AgentRow[];
   listed: { ok: boolean; error?: string } | undefined;
   agentCalls: number;
@@ -244,6 +246,7 @@ function harness(options: Partial<RelayOptions> = {}): Harness {
     children: [],
     gate: new FakeGate(now),
     child: () => h.children.at(-1)!,
+    runningAtStart: [],
     rows: [row(TARGET), row(OTHER)],
     listed: undefined,
     agentCalls: 0,
@@ -302,12 +305,16 @@ function harness(options: Partial<RelayOptions> = {}): Harness {
       }
       const child = new FakeChild(events, ++pid, args, spawnOptions, h.gate);
       child.behaviour = (request, c) => h.behaviour?.(request, c);
+      h.runningAtStart.push(h.children.filter((earlier) => !earlier.exited).length);
       h.children.push(child);
       return child;
     },
     noticeGraceMs: 40,
     noticePollMs: 5,
-    requestTimeoutMs: 400,
+    // As long as pitwall's own. It starts at each write, before a test's own waits, so a loaded test machine that
+    // stalls for longer than a short one lets it fire first: it stops the relay itself, mid-turn or before the relay
+    // has answered, and a new one starts (W56). Tests of the timer set a short one.
+    requestTimeoutMs: 60_000,
     idleWaitMs: 300,
     retryIdleMs: 30,
     restart: { baseMs: 20, maxMs: 80, max: 4, windowMs: 60_000 },
@@ -468,6 +475,9 @@ describe('the relay: which blocked calls restart it', () => {
   });
 
   it('restarts the relay once its turn ends, after a blocked call for pitwall’s own request that didn’t match it', async () => {
+    // The first write's timer runs on while the request waits for the turn to end, by design. A loaded CI machine once
+    // stalled this test past the 400 ms the harness gave it, so that timer stopped the relay mid-turn and a new one
+    // started (W56). That path has a test of its own, after the one more try tests.
     const h = harness();
     const endTurn: (() => void)[] = [];
     h.behaviour = (request, child) => {
@@ -479,12 +489,14 @@ describe('the relay: which blocked calls restart it', () => {
     await eventually('the first call', () => endTurn.length === 1);
     await wait(20);
     // Not mid-turn: only once the turn has ended. Then a changed text is tried once more, on a new relay.
-    expect(h.child().signals).toEqual([]);
+    expect(h.children[0]!.signals).toEqual([]);
     expect(h.children).toHaveLength(1);
     endTurn[0]!();
     expect(h.children[0]!.signals).toEqual(['SIGTERM']);
     await eventually('the second call', () => endTurn.length === 2);
     expect(h.children).toHaveLength(2);
+    // Started once the old relay had gone: never two at once.
+    expect(h.runningAtStart).toEqual([0, 0]);
     expect(h.children[1]!.signals).toEqual([]);
     endTurn[1]!();
     expect(h.children[1]!.signals).toEqual(['SIGTERM']);
@@ -1040,6 +1052,7 @@ describe('the relay: one more try for a changed text the gate blocked (W43, W52)
     });
     expect(h.children).toHaveLength(2);
     expect(h.children[0]!.signals).toEqual(['SIGTERM']);
+    expect(h.runningAtStart).toEqual([0, 0]);
     const [first, second] = allWritten(h);
     expect(first!.text).toBe(second!.text);
     expect(first!.id).not.toBe(second!.id);
@@ -1093,9 +1106,34 @@ describe('the relay: one more try for a changed text the gate blocked (W43, W52)
     await eventually('the first call', () => endTurn.length === 1);
     await wait(30);
     expect(h.children).toHaveLength(1);
+    expect(h.children[0]!.signals).toEqual([]);
     endTurn[0]!();
     await expect(result).resolves.toEqual({ status: 'delivered', detail: `${RETRIED}the relay changed the text before sending it, first at line 1: the copy adds a line break (U+000A).` });
     expect(h.children).toHaveLength(2);
+    expect(h.runningAtStart).toEqual([0, 0]);
+  });
+
+  it('lets the first try’s own timer end a turn that doesn’t, with no second try, and starts the next relay only once that one has gone', async () => {
+    // The first write's timer runs on while the request waits for the turn to end, so a turn that never ends can't hold
+    // the message up. A stalled CI machine once sent "restarts the relay once its turn ends, …" down this path (W56).
+    const h = harness({ requestTimeoutMs: 400 });
+    h.behaviour = (request, child) => {
+      child.init();
+      child.send({ to: request.to, message: `${request.text}\n` });
+      // The turn never ends.
+    };
+    expect(await h.relay.send(TARGET, 'hello')).toEqual({
+      status: 'failed',
+      detail:
+        "pitwall's gate stopped the relay's copy of your message, because it didn't match, so nothing was sent. The relay changed the text before sending it, first at line 1: the copy adds a line break (U+000A). pitwall couldn’t try again: The relay didn't finish within 0s. pitwall restarted the relay, and nothing was sent.",
+    });
+    expect(h.children[0]!.signals).toEqual(['SIGTERM']);
+    // Restarted once it has gone, as after any stop, with nothing written to the new relay.
+    await eventually('the restart', () => h.children.length === 2);
+    expect(h.runningAtStart).toEqual([0, 0]);
+    await wait(20);
+    expect(allWritten(h)).toHaveLength(1);
+    expect(h.relay.alert()).toBeUndefined();
   });
 
   it('says so when the relay stops while waiting for a notice after the second copy, which still went through', async () => {
@@ -1154,17 +1192,20 @@ describe('the relay: one more try for a changed text the gate blocked (W43, W52)
   it('gives each try its own request timer, so two tries and a restart can take longer than one timer', async () => {
     const h = harness({ requestTimeoutMs: 250, gateReadyMs: 2000 });
     h.behaviour = (request, child) => {
-      const first = h.children.length === 1;
+      if (h.children.length > 1) return child.relay(request);
       // The new relay's gate is slow to be ready: the restart outlasts the first try's timer.
-      if (first) h.gate.loads = false;
-      setTimeout(() => (first ? copies((t) => `${t}\n`)(request, child) : child.relay(request)), 150);
+      h.gate.loads = false;
+      copies((t) => `${t}\n`)(request, child);
     };
     const started = Date.now();
     const result = h.relay.send(TARGET, 'hello');
     await eventually('the new relay', () => h.children.length === 2);
-    setTimeout(() => h.gate.ready.add(h.children[1]!.gateId), 200);
+    // Each relay answers at once, so a timer can run out only in a stall right after a write, not in a slow turn (W56).
+    // The new relay's gate, polled rather than timed, is ready only once the first try's timer would have run out.
+    await eventually('the first try’s timer to have run out', () => Date.now() - started > 250 + 50);
+    h.gate.ready.add(h.children[1]!.gateId);
     expect((await result).status).toBe('delivered');
-    expect(Date.now() - started).toBeGreaterThan(250 + 200);
+    expect(h.runningAtStart).toEqual([0, 0]);
   });
 
   it('answers failed, as before, when the restart limit stops the relay starting again', async () => {
@@ -1572,7 +1613,7 @@ describe('the relay: uncertain, never failed, once a call may have run', () => {
   });
 
   it('answers uncertain when a request times out after the gate allowed its call', async () => {
-    const h = harness();
+    const h = harness({ requestTimeoutMs: 400 });
     h.behaviour = (request, child) => {
       child.init();
       child.send({ to: request.to, message: request.text }, SENT, true);
@@ -1679,7 +1720,7 @@ describe('the relay: one at a time', () => {
   });
 
   it('restarts the relay when a request takes too long', async () => {
-    const h = harness();
+    const h = harness({ requestTimeoutMs: 400 });
     h.behaviour = (_request, child) => child.init();
     const result = await h.relay.send(TARGET, 'hello');
     expect(result.detail).toBe("The relay didn't finish within 0s. pitwall restarted the relay. Nothing was sent.");
