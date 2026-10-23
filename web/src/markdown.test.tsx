@@ -750,6 +750,7 @@ describe('links that ask first (W55, W48\'s F6)', () => {
     ['the default port', 'https://example.com:443/a', 'https://example.com/a'],
     ['characters the parser percent-encodes', 'https://example.com/users/{id}', 'https://example.com/users/%7Bid%7D'],
     ['spaces at either end', '  https://example.com/a ', 'https://example.com/a'],
+    ['C0 controls and spaces at either end, U+0000 to U+0020, as the parser drops them', '\u0000\u001f\t\n https://example.com/a \r\u0020\u0001', 'https://example.com/a'],
     ['an empty query or fragment', 'https://example.com/a?#', 'https://example.com/a'],
     ['the same query and fragment', 'https://example.com/a?b=1&c=2#d', 'https://example.com/a?b=1&c=2#d'],
   ])('counts as its own address: %s', (_name, written, href) => {
@@ -775,9 +776,52 @@ describe('links that ask first (W55, W48\'s F6)', () => {
     ['a line break', 'https://example.com/\na', 'https://example.com/a'],
     ['a space inside', 'https://example.com /a', 'https://example.com/a'],
     ['nothing', '', 'https://example.com/'],
+    ['only what the parser drops', ' \u0000\t\u0020 ', 'https://example.com/'],
+    ['a no-break space at the end, which the parser keeps', 'https://example.com/a\u00a0', 'https://example.com/a'],
+    ['a ! before it, which the parser keeps', '!https://example.com/a', 'https://example.com/a'],
     ['a link to anything but http: and https:', 'javascript:alert(1)', 'javascript:alert(1)'],
   ])("isn't its own address: %s", (_name, written, href) => {
     expect(isOwnAddress(written, href)).toBe(false);
+  });
+
+  describe('bounded on hostile link text, as W48\'s F1 asked of the server', () => {
+    const N = 32 * 1024;
+    /** U+0001 to U+0008: C0 controls with no tab, line break or space among them, so the text reaches the URL parser. */
+    const controls = (count: number) => Array.from({ length: count }, (_, i) => String.fromCharCode(1 + (i % 8))).join('');
+    /** Milliseconds, best of three. A trim anchored at the end took about 460 ms on an inner run of 32,000. */
+    const bestOf3 = (fn: () => unknown) => {
+      let best = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 3; run++) {
+        const start = performance.now();
+        fn();
+        best = Math.min(best, performance.now() - start);
+      }
+      return best;
+    };
+    const BOUND_MS = 50;
+
+    it.each([
+      ['a long inner run of spaces', `x${' '.repeat(N - 2)}x`, false],
+      ['a long inner run of tabs and C0 controls', `x${'\t\u0001\u0000\u001f'.repeat(N / 4 - 1)}x`, false],
+      ['a long inner run of C0 controls alone, which reaches the URL parser', `x${controls(N - 2)}x`, false],
+      ['C0 controls alone inside the path', `https://example.com/a${controls(N - 30)}b`, false],
+      ['long runs at both ends, around its address', `${' \u0001'.repeat(N / 4)}https://example.com/a${'\u0002 '.repeat(N / 4)}`, true],
+      ['nothing but what the parser drops', ' \u0000'.repeat(N / 2), false],
+    ])(`reads 32 Ki of link text with %s well within ${BOUND_MS} ms`, (_name, written, own) => {
+      expect(written.length).toBeGreaterThan(N - 64);
+      expect(written.length).toBeLessThanOrEqual(N + 64);
+      expect(isOwnAddress(written, 'https://example.com/a')).toBe(own);
+      expect(bestOf3(() => isOwnAddress(written, 'https://example.com/a'))).toBeLessThan(BOUND_MS);
+    });
+
+    it('asks for a parsed link whose text is 32 Ki with a long inner run, well within the bound', () => {
+      const [block] = parseMarkdown(`[x${' '.repeat(N - 40)}x](https://example.com/a)`);
+      const found = block?.type === 'paragraph' ? block.children[0] : undefined;
+      expect(found?.type).toBe('link');
+      if (found?.type !== 'link') return;
+      expect(asksFirst(found)).toBe(true);
+      expect(bestOf3(() => asksFirst(found))).toBeLessThan(BOUND_MS);
+    });
   });
 
   it("reads a link's text through its formatting and code, with a line break as a line feed", () => {

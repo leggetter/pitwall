@@ -163,8 +163,20 @@ export function linkText(children: Inline[]): string {
   return text;
 }
 
-/** What the browser's URL parser drops from either end of a URL: C0 controls and spaces. */
-const PARSER_TRIMS = /^[\u0000- ]+|[\u0000- ]+$/g;
+/**
+ * `text` without what the browser's URL parser drops from either end of a URL: C0 controls and
+ * spaces, U+0000 to U+0020. By hand, from each end, as spacesAt() and isBlank() are: a pattern
+ * anchored at the end, such as `[\u0000- ]+$`, is quadratic on a long run of them that doesn't
+ * reach the end, and a link's text is a session's (W55, as W48's F1 was).
+ */
+function parserTrimmed(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) <= 0x20) start++;
+  while (end > start && text.charCodeAt(end - 1) <= 0x20) end--;
+  return text.slice(start, end);
+}
+
 /** What can't be inside a link's text for it to be its own address: spaces, and the tabs and line breaks the parser drops unseen. */
 const NOT_AN_ADDRESS = /[ \t\n\r]/;
 const HAS_SCHEME = /^https?:/i;
@@ -184,12 +196,12 @@ const HAS_SCHEME = /^https?:/i;
  * different query or fragment, `www.` added or left off.
  *
  * A bare URL or an autolink always is: its text is what was parsed to make its URL, it starts with
- * its scheme, the parser drops the same characters from its ends as PARSER_TRIMS, and it can't hold a
+ * its scheme, the parser drops the same characters from its ends as parserTrimmed(), and it can't hold a
  * space, tab or line break (a bare URL ends at whitespace, an autolink holds only characters above
  * U+0020).
  */
 export function isOwnAddress(text: string, href: string): boolean {
-  const written = text.replace(PARSER_TRIMS, '');
+  const written = parserTrimmed(text);
   if (written === '' || NOT_AN_ADDRESS.test(written)) return false;
   const target = httpUrl(href);
   if (!target) return false;
