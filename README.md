@@ -21,7 +21,7 @@ node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 - **Port:** the default is 4517, falling back to a free port if it's busy. An explicit `--port` fails instead.
 - **Interval:** `--interval` sets the poll, in seconds (default 5).
 - **Acting on sessions:** open a session to read its conversation; attach to a background session in a terminal in the page; message an interactive session through the relay (D8); start, stop and remove background sessions. Finished background sessions stay listed, in a Finished section at the end of the list.
-- **Layout:** repos, then the selected repo's sessions, then the open session (D11). `/` filters, `n` starts a session, `?` lists the shortcuts and `j`/`k` move through the list; a setting turns them off (D13).
+- **Layout:** repos, then the selected repo's sessions, then the open session (D11). `/` filters, `n` starts a session, `?` lists the shortcuts, `j`/`k` move through the list and `s` stars the open session; a setting turns them off (D13).
 
 ## Decisions
 
@@ -110,7 +110,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D11 - Three columns: repos, then sessions, then the open session
 
 - **Why:** asked for after trying M2: pick a repo, then one of its sessions, then work with that session. It replaces M2's single list of grouped cards.
-- **Repo list:** Needs you and All sessions first, then the root's own directory, labelled with its path, then the repos in alphanumeric order, so the list never jumps.
+- **Repo list:** Needs you, All sessions and Starred first (Starred shows whether or not anything is starred, so the list never jumps; W53), then the root's own directory, labelled with its path, then the repos in alphanumeric order, so the list never jumps.
 - **Widths:** three columns from 1,200 px. Below that, the session view lies over the session list, starting below the header, and what it covers is inert (it can't be clicked or tabbed to). Below 900 px the repo list is a drawer, and at 600 px and narrower the session view is full width, with Back to sessions.
 - **Resizing:** the session view is 760 px by default and at least 560 px, about 80 terminal columns. The divider resizes it, and so do the actions menu's Make view wider and Make view narrower, for anyone who can't drag (WCAG 2.5.7). The width is remembered.
 
@@ -125,7 +125,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Sending:** ⌘↵ (Ctrl+Enter on other platforms) sends, and Enter adds a line. Each message starts a turn on the target session's model and can't be taken back, so a stray Enter mustn't send.
 - **When a send's outcome is unknown:** no answer, a server error or a success pitwall can't read. The UI says the message may have reached the session and to check its conversation, rather than inviting a resend that would start another turn.
-- **Shortcuts:** `/`, `n`, `?` and `j`/`k`. They're ignored while you type, in the terminal, with ⌘, Ctrl or Alt held, and while an input method composes. A setting in the shortcuts dialog turns them off (WCAG 2.1.4), and the browser remembers it.
+- **Shortcuts:** `/`, `n`, `?`, `j`/`k` and `s` (star the open session, W53). They're ignored while you type, in the terminal, with ⌘, Ctrl or Alt held, and while an input method composes. A setting in the shortcuts dialog turns them off (WCAG 2.1.4), and the browser remembers it.
 - **Leaving the terminal:** F6 moves focus from the attached terminal to its tab, so the terminal isn't a keyboard trap (WCAG 2.1.2). Claude Code's docs bind nothing to F6 (checked 2026-10-21).
 - **A new line in the terminal** (Phil, 2026-10-21): Shift+Enter sends a line feed (Ctrl+J), which Claude Code's docs give as a new line in every terminal with no setup. xterm.js would send Enter's carriage return, which submits. Not with Ctrl, Alt or ⌘ as well, nor while an input method composes.
 
@@ -133,7 +133,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** until M3, every snapshot sent to the browser held each session's latest reply, though the UI showed none of it. That's gone.
 - **What it still carries:** what the list and the session view's header show: each session's title, its newest prompt (up to 300 characters), what it asked you, and the reply to a message you relayed. The conversation itself leaves the server only when you open it, through the token-gated conversation route.
-- **Browser storage:** no token in `localStorage`, and no session content, with one exception. The token is in `sessionStorage`. So is each conversation's unsent draft, under `pitwall.draft.v1:<sessionId>`, with whether a send of it was out or uncertain, and when (W44). Phil chose `sessionStorage` over `localStorage` (2026-10-22): a draft lasts as long as the tab, as the token does, through reloads and pitwall restarts, and two tabs never overwrite each other's. The browser keeps `sessionStorage` in its profile on disk while the tab exists, and for a closed tab it can reopen (W48's F10). A process that takes pitwall's port while pitwall is down serves the tab's next reload on pitwall's origin, and can read the token and the drafts: D7's single-user caveat covers it (W48). Browsers do copy a tab's `sessionStorage` into a duplicated tab, and bring it back with a reopened one. The draft's text goes nowhere else. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1`, `pitwall.root-tab.v1` and `pitwall.hidden.v1:<root>`. The last is one key per root, holding each hidden group's path, label and kind, so pitwalls watching different roots keep separate lists. Storage is also per origin, so a pitwall on a fallback port starts with none.
+- **Browser storage:** no token in `localStorage`, and no session content, with one exception. The token is in `sessionStorage`. So is each conversation's unsent draft, under `pitwall.draft.v1:<sessionId>`, with whether a send of it was out or uncertain, and when (W44). Phil chose `sessionStorage` over `localStorage` (2026-10-22): a draft lasts as long as the tab, as the token does, through reloads and pitwall restarts, and two tabs never overwrite each other's. The browser keeps `sessionStorage` in its profile on disk while the tab exists, and for a closed tab it can reopen (W48's F10). A process that takes pitwall's port while pitwall is down serves the tab's next reload on pitwall's origin, and can read the token and the drafts: D7's single-user caveat covers it (W48). Browsers do copy a tab's `sessionStorage` into a duplicated tab, and bring it back with a reopened one. The draft's text goes nowhere else. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1`, `pitwall.root-tab.v1` and `pitwall.hidden.v1:<root>`. The last is one key per root, holding each hidden group's path, label and kind, so pitwalls watching different roots keep separate lists. `pitwall.starred.v1` holds the starred sessions' ids alone, no names, titles or prompts: one key for every root and tab on the origin, at most 100 with the oldest star dropped, never pruned for a session missing from a snapshot (W53). It's the first `localStorage` key to hold session ids. Storage is also per origin, so a pitwall on a fallback port starts with none.
 
 ### D15 - The session view renders markdown as pitwall's own elements, never HTML
 
@@ -145,7 +145,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 ### D16 - Several roots show as tabs
 
-- **What:** with two or more roots (`pitwall ~/hookdeck/git ~/leggetter/git`), the header shows a tab per root, and each tab narrows the repo list, Needs you, All sessions, the session list, the filter and New session to its root. With one root, the header is as before.
+- **What:** with two or more roots (`pitwall ~/hookdeck/git ~/leggetter/git`), the header shows a tab per root, and each tab narrows the repo list, Needs you, All sessions, Starred, the session list, the filter and New session to its root. With one root, the header is as before.
 - **Nothing out of sight:** a tab that isn't open shows its root's needs-you badge, and the page title's count covers every root.
 - **Each tab keeps its place:** its selection, open session and filter. Switching never detaches a terminal (D9's four count across tabs), drops a draft or stops a send. The open tab is in the URL (`&root=`) and in `pitwall.root-tab.v1`.
 - **Nested roots:** a session belongs to the longest root that holds it, as the index decides, so the tabs always agree with the server.
