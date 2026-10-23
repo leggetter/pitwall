@@ -162,12 +162,19 @@ function setWidth(width: number) {
 }
 
 const settle = () => act(async () => {});
-/** Lets real I/O finish, such as WebCrypto's proof, while fake timers stand still. */
+/** One turn of the event loop, in which real I/O that has finished, such as WebCrypto's proof, comes back, while fake timers stand still. */
 const io = () => act(() => new Promise<void>((resolve) => setImmediate(resolve)));
-/** Waits for `done` without timers, for the tests that fake them. */
-async function until(done: () => boolean) {
-  for (let i = 0; i < 200 && !done(); i += 1) await io();
-  expect(done()).toBe(true);
+/**
+ * How long until() waits, by the real clock, which no test fakes. Real I/O takes time rather than turns: WebCrypto's
+ * proof runs on Node's thread pool, which a loaded machine can keep waiting while the event loop turns 200 times in
+ * a few tens of milliseconds (W60). It's under the 5 seconds a test may take, so a wait that fails says so itself.
+ */
+const UNTIL_MS = 4000;
+/** Waits for `done`, a turn of the event loop at a time, without timers, for the tests that fake them. */
+async function until(done: () => boolean, what: string) {
+  const deadline = performance.now() + UNTIL_MS;
+  while (!done() && performance.now() < deadline) await io();
+  expect(done(), `still waiting for ${what} after ${UNTIL_MS / 1000} s`).toBe(true);
 }
 /** Moves the fake clock on, running what falls due and what that awaits. */
 const pass = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
@@ -225,7 +232,7 @@ async function attachQuietly(socket: FakeSocket) {
     socket.open();
     socket.receive({ type: 'challenge', version: PROTOCOL_VERSION, nonce: NONCE });
   });
-  await until(() => socket.sent.length === 1);
+  await until(() => socket.sent.length === 1, 'the page to answer the challenge');
   act(() => socket.receive({ type: 'ready' }));
   act(() => socket.receive({ type: 'attached' }));
 }
@@ -984,7 +991,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
     await pass(ATTACH_DELAY_MS * 2);
     expect(sockets.sockets).toHaveLength(0);
     fireEvent.click(tab('Terminal'));
-    await until(() => sockets.sockets.length === 1);
+    await until(() => sockets.sockets.length === 1, 'the attach socket');
     await attachQuietly(sockets.last);
     expect(document.activeElement).toBe(terminals.at(-1)?.screen);
   });
@@ -996,7 +1003,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
     await settle();
     expect(viewName()).toBe('job-one');
     await open('job-two');
-    await until(() => sockets.sockets.length === 1);
+    await until(() => sockets.sockets.length === 1, 'the attach socket');
     await attachQuietly(sockets.last);
     expect(sent(sockets.last)[1]).toMatchObject({ type: 'open', sessionId: J2 });
   });
