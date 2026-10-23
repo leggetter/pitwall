@@ -96,7 +96,8 @@ const tab = (label: string) => {
 };
 const tabNames = () => tabs().map((candidate) => candidate.getAttribute('aria-label') ?? candidate.textContent);
 const prefsButton = () => screen.getByRole('button', { name: 'View preferences' });
-const options = () => screen.getAllByRole('menuitemradio');
+/** Group sessions by's options; the menu's other group, Open running background sessions on, is W54's (TerminalFirst.test.tsx). */
+const options = () => within(screen.getByRole('group', { name: 'Group sessions by' })).getAllByRole('menuitemradio');
 const checkedOption = () => options().find((option) => option.getAttribute('aria-checked') === 'true');
 const optionName = (option: Element) => document.getElementById(option.getAttribute('aria-labelledby') ?? '')?.textContent;
 const toasts = () => [...document.querySelectorAll('.toast-message')].map((toast) => toast.textContent);

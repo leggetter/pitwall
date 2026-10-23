@@ -232,7 +232,8 @@
 /* Room below View preferences for its menu, which is taller and wider than the actions menu (W42). */
 .uikit-menu-stage-prefs {
   max-width: 360px;
-  min-height: 280px;
+  /* Two radio groups, Group sessions by and Open running background sessions on (W54). */
+  min-height: 490px;
 }
 
 /* Room above a trigger for its tooltip, which sits 6 px above it, as it does in the app. */

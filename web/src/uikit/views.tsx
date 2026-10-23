@@ -4,7 +4,7 @@
 // would: opening the menu, choosing an item, opening a tab, opening a fold, scrolling up.
 // Every fixture is made once, when the gallery loads, so a re-render never changes a session's id.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
@@ -14,6 +14,7 @@ import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { ViewPreferences } from '../components/ViewPreferences.js';
+import type { BackgroundTab } from '../backgroundTab.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
 import type { GroupBy } from '../groupBy.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
@@ -61,6 +62,14 @@ function Attachable({ script, children }: { script: AttachScript; children: Reac
   return <AttachContext.Provider value={env}>{children}</AttachContext.Provider>;
 }
 
+/**
+ * --pw-delay-attach at an hour for everything inside, so a view stepped onto waits on screen, saying
+ * Attaching…, with nothing attached (W54). `display: contents`, so the view still sits in its frame.
+ */
+function AttachWaits({ children }: { children: ReactNode }) {
+  return <div style={{ display: 'contents', '--pw-delay-attach': '3600s' } as CSSProperties}>{children}</div>;
+}
+
 /** Runs `run` when there is one; otherwise just shows the children. */
 function MaybeScenario({ run, children }: { run: ((root: HTMLElement) => Promise<unknown>) | undefined; children: ReactNode }) {
   return run ? <Scenario run={run}>{children}</Scenario> : children;
@@ -89,6 +98,9 @@ const LONG_TITLE = session('view-with-a-long-name-for-the-header', {
   cwd: `${APP_DIR}/packages/exports/src/jobs/retry`,
 });
 const ATTACHED = background('view-attached', { state: 'working' });
+// W54: a running background session's view opens on its Terminal tab; stepped onto, it waits first.
+const OPENS_ON_TERMINAL = background('view-opens-on-terminal', { state: 'working' });
+const STEPPED_ONTO = background('view-stepped-onto', { state: 'working' });
 const MENU_BACKGROUND = background('view-menu', { state: 'working' });
 const MENU_DONE = background('view-menu-done', { state: 'done', alive: false, pid: undefined, finished: true });
 const MENU_INTERACTIVE = session('view-menu-interactive');
@@ -202,8 +214,8 @@ export function SessionViews() {
         </Stubbed>
       </Specimen>
       <Specimen
-        title="Background"
-        note="The actions menu in the header, older entries behind Load earlier, and where an interactive session has its message box, a note: it takes messages in its Terminal tab, which attaches (W47). No button opens the tab from there, since opening it attaches."
+        title="Background, on Conversation"
+        note="As it opens with View preferences on Conversation, or once you choose the tab (W54): the actions menu in the header, older entries behind Load earlier, and where an interactive session has its message box, a note: it takes messages in its Terminal tab, which attaches (W47). No button opens the tab from there, since opening it attaches."
         frame="view"
       >
         <Stubbed options={{ conversation: 'older' }}>
@@ -224,9 +236,40 @@ export function SessionViews() {
           </Stubbed>
         </Attachable>
       </Specimen>
-      <Specimen title="Background, not running" note="It has finished, so Stop is off in the menu, and opening Terminal asks before restarting it, as its footer says." frame="short">
+      <Specimen
+        title="Background, opened on its Terminal tab (W54)"
+        note="A running background session opens on its Terminal tab, as View preferences has it by default, and attaches at once: nothing pressed here. Its conversation is behind the Conversation tab, with the footer's note. The terminal takes focus as it attaches, unless focus has gone outside the view meanwhile."
+        frame="view"
+      >
+        <Attachable script="attached">
+          <Stubbed>
+            {/* Longer than a scenario's usual 3 s: under the whole test suite's load, the gallery's first attaches took 3.4 to 4.4 s (W54). */}
+            <Scenario run={async (root) => until('the terminal to attach', () => root.querySelector('.session-tab-dot'), 10_000)}>
+              <SessionView session={OPENS_ON_TERMINAL} listed onClose={noop} backgroundTab="terminal" />
+            </Scenario>
+          </Stubbed>
+        </Attachable>
+      </Specimen>
+      <Specimen
+        title="Stepped onto with j, waiting to attach (W54)"
+        note="Opened by j, k, ↑ or ↓: on its Terminal tab, saying Attaching…, but nothing attaches until the view has stayed open for --pw-delay-attach, 500 ms (an hour here). Moving on before then attaches nothing, and once it attaches the terminal takes no focus, so the next j is still a step."
+        frame="short"
+      >
+        <AttachWaits>
+          <Attachable script="attached">
+            <Stubbed>
+              <SessionView session={STEPPED_ONTO} listed onClose={noop} backgroundTab="terminal" stepped />
+            </Stubbed>
+          </Attachable>
+        </AttachWaits>
+      </Specimen>
+      <Specimen
+        title="Background, not running"
+        note="It has finished, so it opens on Conversation even with View preferences on Terminal (W54): attaching restarts it, and opening Terminal asks first, as its footer says. Stop is off in the menu."
+        frame="short"
+      >
         <Stubbed>
-          <SessionView session={VIEW_BACKGROUND_DONE} listed onClose={noop} />
+          <SessionView session={VIEW_BACKGROUND_DONE} listed onClose={noop} backgroundTab="terminal" />
         </Stubbed>
       </Specimen>
       <Specimen title="No longer listed" note="The session left the snapshot, so the view keeps what it showed, without the message box, the actions or the terminal." frame="short">
@@ -1189,10 +1232,11 @@ function MenuStage({ children, prefs = false }: { children: ReactNode; prefs?: b
   return <div className={prefs ? 'uikit-menu-stage uikit-menu-stage-prefs' : 'uikit-menu-stage'}>{children}</div>;
 }
 
-/** The header's View preferences menu with a mode of its own, so choosing one checks it (W42). */
-function LivePreferences({ start }: { start: GroupBy }) {
+/** The header's View preferences menu with choices of its own, so choosing one checks it (W42, W54). */
+function LivePreferences({ start, tab = 'terminal' }: { start: GroupBy; tab?: BackgroundTab }) {
   const [groupBy, setGroupBy] = useState(start);
-  return <ViewPreferences groupBy={groupBy} onGroupBy={setGroupBy} />;
+  const [backgroundTab, setBackgroundTab] = useState(tab);
+  return <ViewPreferences groupBy={groupBy} onGroupBy={setGroupBy} backgroundTab={backgroundTab} onBackgroundTab={setBackgroundTab} />;
 }
 
 const clickMenuButton = async (root: HTMLElement) => (await element<HTMLButtonElement>(root, 'button[aria-haspopup="menu"]')).click();
@@ -1216,8 +1260,8 @@ export function Menus() {
         </Scenario>
       </Specimen>
       <Specimen
-        title="View preferences, open (W42)"
-        note="The header's menu: a ghost md preferences icon button, named View preferences by its tooltip, opening one radio group, Group sessions by. Each mode has one line saying what it does; the chosen one, Main repo by default, has the check mark and takes focus as the menu opens. ↑ ↓ Home End move, Enter, Space or a click chooses and closes, Escape or Tab closes."
+        title="View preferences, open (W42, W54)"
+        note="The header's menu: a ghost md preferences icon button, named View preferences by its tooltip, opening two radio groups. Group sessions by, Main repo by default, then, after a separator, Open running background sessions on, Terminal by default. Each option has one line saying what it does; the chosen ones have the check mark, and the chosen grouping takes focus as the menu opens. ↑ ↓ Home End move through both, Enter, Space or a click chooses and closes, Escape or Tab closes."
       >
         <Scenario run={clickMenuButton}>
           <MenuStage prefs>
@@ -1229,6 +1273,16 @@ export function Menus() {
         <Scenario run={clickMenuButton}>
           <MenuStage prefs>
             <LivePreferences start="every-repo" />
+          </MenuStage>
+        </Scenario>
+      </Specimen>
+      <Specimen
+        title="View preferences, Conversation chosen (W54)"
+        note="Running background sessions open on Conversation, as finished ones always do; their Terminal tab attaches only once it's opened. A choice changes the views that open after it, never the one that's open."
+      >
+        <Scenario run={clickMenuButton}>
+          <MenuStage prefs>
+            <LivePreferences start="main-repo" tab="conversation" />
           </MenuStage>
         </Scenario>
       </Specimen>

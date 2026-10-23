@@ -44,6 +44,11 @@
 // hasn't, All sessions in the same root tab is selected instead, a toast says so, and focus stays on
 // the View preferences button. An open session view stays open.
 //
+// View preferences also sets which tab a running background session's view opens on: Terminal, the
+// default, or Conversation (W54, backgroundTab.ts), which the view reads as it opens. Stepping onto a
+// session with `j`, `k`, ↑ or ↓ tells its view so, and a terminal it opens on waits a moment before
+// attaching, so passing through attaches nothing.
+//
 // With two or more roots, the header has a tab per root (W38, rootTabs.ts), and the open tab narrows
 // the repo list, the session list, the filter, `j` and `k`, and the New session dialog to its root.
 // Each tab keeps its own place, its selection, its open session and its filter, and the open session
@@ -54,6 +59,7 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
+import { useBackgroundTab } from '../backgroundTab.js';
 import type { ConnectionView } from '../connection.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } from '../groupBy.js';
@@ -203,6 +209,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const [panelWidth] = useState(() => createPanelWidthStore(storage));
   // Group sessions by, from View preferences (W42): the snapshot's groups, grouped again for the mode.
   const [groupBy, setGroupBy] = useGroupBy(storage);
+  // Which tab a running background session's view opens on, from View preferences too (W54).
+  const [backgroundTab, setBackgroundTab] = useBackgroundTab(storage);
   const startGroups = snapshot?.groups;
   const grouped = useMemo(() => groupSessions(startGroups ?? [], groupBy), [startGroups, groupBy]);
   const viewSnapshot = useMemo(() => (snapshot ? { roots: snapshot.roots, groups: grouped.groups } : undefined), [snapshot, grouped]);
@@ -326,7 +334,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const started = useOpenWhenListed(everySession, openStarted);
 
   // The view's heading, which takes focus when a session is opened from a row or the view's header;
-  // or its conversation, when `j` or `k` was pressed there, so ↑ and ↓ go on scrolling it.
+  // or its conversation, when `j` or `k` was pressed there, so ↑ and ↓ go on scrolling it. A view that
+  // opened on its Terminal tab (W54) has its conversation hidden, so its heading takes focus instead.
   const viewHeading = useRef<HTMLHeadingElement>(null);
   const focusView = useRef<{ id: string; on: 'heading' | 'conversation' } | undefined>(undefined);
   useEffect(() => {
@@ -334,9 +343,22 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (target === undefined || target.id !== openId) return;
     focusView.current = undefined;
     // The shown view's, not one kept hidden for another root tab (W38).
-    const conversation = target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('section.session-view:not([hidden]) .session-view-body[role="tabpanel"]') : undefined;
+    const conversation =
+      target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('section.session-view:not([hidden]) .session-view-body[role="tabpanel"]:not([hidden])') : undefined;
     (conversation ?? viewHeading.current)?.focus();
   });
+
+  // The session the last step, by `j`, `k`, ↑ or ↓, moved the open view to (W54): its view waits
+  // before its terminal attaches, and its terminal takes no focus. Any other way of opening one,
+  // a click, Enter, the URL or the back button, isn't a step.
+  const stepped = useRef<string | undefined>(undefined);
+  const stepTo = (sessionId: string) => {
+    stepped.current = sessionId;
+    opened.open(sessionId, 'replace');
+  };
+  useEffect(() => {
+    if (stepped.current !== openId) stepped.current = undefined;
+  }, [openId]);
 
   // Focus in what the view has just covered, as when the back button opens it or the window narrows
   // past 1,200 px, would be lost as that goes inert: it moves to the view's heading instead. Before
@@ -389,7 +411,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const id = next?.dataset.openSession;
     if (!next || id === undefined) return;
     next.focus();
-    if (openId !== undefined) opened.open(id, 'replace');
+    if (openId !== undefined) stepTo(id);
   };
 
   // ↑ and ↓ in the view's header: the next or previous session, with focus on its heading. Nothing
@@ -401,7 +423,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (!next || id === undefined) return;
     next.scrollIntoView?.({ block: 'nearest' });
     focusView.current = { id, on: 'heading' };
-    opened.open(id, 'replace');
+    stepTo(id);
   };
 
   // `j` and `k`: the next or previous session in the list as shown, from the focused row, or else the
@@ -440,7 +462,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       next.scrollIntoView?.({ block: 'nearest' });
       focusView.current = { id, on: inConversation ? 'conversation' : 'heading' };
     }
-    opened.open(id, 'replace');
+    stepTo(id);
     return true;
   };
 
@@ -928,6 +950,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         running.current.set(session.sessionId, busy);
       }}
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
+      backgroundTab={backgroundTab}
+      stepped={hiddenIn === undefined && stepped.current === session.sessionId}
     />
   );
   let sessionView: ReactNode;
@@ -1001,7 +1025,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         reposOpen={drawerOpen}
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
-        preferences={{ groupBy, onGroupBy: chooseGroupBy }}
+        preferences={{ groupBy, onGroupBy: chooseGroupBy, backgroundTab, onBackgroundTab: setBackgroundTab }}
         tabs={
           tab === undefined
             ? undefined

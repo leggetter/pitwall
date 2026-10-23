@@ -17,11 +17,18 @@
 // A session that isn't running asks first, as an inline confirmation under the bar (W24): Cancel
 // takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
 // has started or failed.
+//
+// Once attached, the terminal takes focus, unless the view says not to: it doesn't pull focus from
+// wherever it has gone meanwhile outside the view (W54). A terminal the view opened on by stepping
+// (j, k, ↑, ↓) waits --pw-delay-attach before it attaches, so a session only passed through is never
+// attached, and doesn't take focus when it does, so the next step is still a step (W54). It shows
+// "Attaching…" while it waits. Attach again, and a confirmed restart, take focus as before.
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ATTACH_COMMAND, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachEnv, type AttachSession, type AttachStatus, type EndNotice } from '../attach.js';
 import { plainText } from '../format.js';
 import type { BadgeLook } from '../sessions.js';
+import { ATTACH_DELAY_MS, cssTime } from '../timing.js';
 import type { XtermOptions } from '../xterm.js';
 import { Alert, Detail } from './Alert.js';
 import { Badge, type BadgeProps } from './Badge.js';
@@ -142,9 +149,17 @@ export interface SessionTerminalProps {
   onStatus?: (status: AttachStatus) => void;
   /** The restart confirmation's phase as it changes, for Escape's layering in the session view. */
   onRestartChange?: (phase: RestartPhase | undefined) => void;
+  /**
+   * Opened by stepping onto the session (W54): the first attach starts only once --pw-delay-attach has
+   * passed with the terminal still open, and doesn't take focus. Read as the terminal opens. Attach
+   * again starts at once.
+   */
+  wait?: boolean;
+  /** Whether the terminal may take focus now that it has attached. Always, unless this says no. */
+  canFocus?: () => boolean;
 }
 
-export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, onRestartChange }: SessionTerminalProps) {
+export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, onRestartChange, wait = false, canFocus }: SessionTerminalProps) {
   const container = useRef<HTMLDivElement>(null);
   // The F6 hint, which describes xterm.js's textarea, so a screen reader in the terminal hears how to leave.
   const hintId = useId();
@@ -154,6 +169,12 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
   onStatusRef.current = onStatus;
   const onLeaveRef = useRef(onLeave);
   onLeaveRef.current = onLeave;
+  const canFocusRef = useRef(canFocus);
+  canFocusRef.current = canFocus;
+  // Read once, for the first attach: a later change, as the view's own state settles, starts nothing over.
+  const waits = useRef(wait);
+  // This attach waited, and so takes no focus, until a confirmed restart asks for it.
+  const quiet = useRef(false);
   useEffect(() => {
     onStatusRef.current?.(status);
   }, [status]);
@@ -184,7 +205,50 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
     let disposed = false;
     let terminal: TerminalHandle | undefined;
     let observer: ResizeObserver | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Whether the wait, if any, is over; and whether this run has started its attach.
+    let waited = true;
+    let started = false;
     setStatus({ kind: 'connecting' });
+    // Only the first attempt waits: Attach again is asked for.
+    quiet.current = attempt === 0 && waits.current;
+
+    /** Attaches once the terminal is there and the wait is over, whichever comes last. */
+    const begin = () => {
+      const created = terminal;
+      if (disposed || started || !waited || !created) return;
+      started = true;
+      session.current = startAttach({
+        url: attachSocketUrl(env.host),
+        token: env.token,
+        sessionId,
+        createSocket: env.createSocket,
+        size: () => ({ cols: created.cols, rows: created.rows }),
+        onStatus: (next) => {
+          if (disposed) return;
+          setStatus(next);
+          if (next.kind === 'attached') {
+            // The panel may have changed size while the socket was opening.
+            created.fit();
+            session.current?.resize(created.cols, created.rows);
+            if (!quiet.current && (canFocusRef.current?.() ?? true)) created.focus();
+          }
+        },
+        onOutput: (data) => created.write(data),
+      });
+    };
+
+    // Stepped onto: attach once the session has stayed open for the delay, counted from when the
+    // terminal opened, while it loads. Moving on unmounts the view, which clears the timer, so nothing
+    // attaches for a session only passed through.
+    if (quiet.current) {
+      waited = false;
+      timer = setTimeout(() => {
+        timer = undefined;
+        waited = true;
+        begin();
+      }, cssTime(element, '--pw-delay-attach', ATTACH_DELAY_MS));
+    }
 
     Promise.resolve()
       .then(() =>
@@ -201,33 +265,16 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
             return;
           }
           terminal = created;
-          const attach = startAttach({
-            url: attachSocketUrl(env.host),
-            token: env.token,
-            sessionId,
-            createSocket: env.createSocket,
-            size: () => ({ cols: created.cols, rows: created.rows }),
-            onStatus: (next) => {
-              if (disposed) return;
-              setStatus(next);
-              if (next.kind === 'attached') {
-                // The panel may have changed size while the socket was opening.
-                created.fit();
-                session.current?.resize(created.cols, created.rows);
-                created.focus();
-              }
-            },
-            onOutput: (data) => created.write(data),
-          });
-          session.current = attach;
-          created.onData((data) => attach.input(data));
+          // Keys before the attach has started go nowhere, as every key does then.
+          created.onData((data) => session.current?.input(data));
           if (typeof ResizeObserver !== 'undefined') {
             observer = new ResizeObserver(() => {
               created.fit();
-              attach.resize(created.cols, created.rows);
+              session.current?.resize(created.cols, created.rows);
             });
             observer.observe(element);
           }
+          begin();
         },
         () => {
           if (!disposed) setStatus({ kind: 'ended', end: { kind: 'error', error: "the terminal couldn't be loaded." } });
@@ -236,6 +283,7 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
 
     return () => {
       disposed = true;
+      if (timer !== undefined) clearTimeout(timer);
       observer?.disconnect();
       session.current?.detach();
       session.current = undefined;
@@ -317,6 +365,8 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
           busy={phase === 'restarting'}
           onConfirm={() => {
             setRestarting(true);
+            // Asked for: the terminal takes focus once it's attached, as Restart and attach had it.
+            quiet.current = false;
             session.current?.confirmRestart();
           }}
           onCancel={onClose}

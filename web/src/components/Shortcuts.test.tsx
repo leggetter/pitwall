@@ -383,17 +383,30 @@ describe('j and k', () => {
   });
 
   it("from the conversation, show the next session and keep focus in its conversation, where ↑ and ↓ scroll", async () => {
+    // Without demo-b, a running background session, which opens on its Terminal tab (below).
+    renderDashboard(snap(sessions().filter((each) => each.sessionId !== B)));
+    await open('demo-a');
+    conversation().focus();
+    press('j');
+    await settle();
+    expect(viewName()).toBe('demo-c');
+    expect(document.activeElement).toBe(conversation());
+    press('k');
+    await settle();
+    expect(viewName()).toBe('demo-a');
+    expect(document.activeElement).toBe(conversation());
+  });
+
+  it("from the conversation onto a view that opens on its Terminal tab, focus goes to its heading, since its conversation is hidden (W54)", async () => {
     renderDashboard();
     await open('demo-a');
     conversation().focus();
     press('j');
     await settle();
     expect(viewName()).toBe('demo-b');
-    expect(document.activeElement).toBe(conversation());
-    press('k');
-    await settle();
-    expect(viewName()).toBe('demo-a');
-    expect(document.activeElement).toBe(conversation());
+    expect(within(view()!).getByRole('tab', { name: /^Terminal/ }).getAttribute('aria-selected')).toBe('true');
+    expect(conversation().hidden).toBe(true);
+    expect(document.activeElement).toBe(heading());
   });
 
   it('with nothing focused and a session open, show the next one, with focus on its heading', async () => {

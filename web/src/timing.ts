@@ -1,5 +1,6 @@
 // The motion and timing tokens that JavaScript reads (docs/design-system.md, 2.13): --pw-delay-tooltip,
-// --pw-delay-spinner, --pw-delay-long, --pw-toast-timeout, --pw-copied-timeout and --pw-duration-base.
+// --pw-delay-spinner, --pw-delay-long, --pw-delay-attach, --pw-toast-timeout, --pw-copied-timeout and
+// --pw-duration-base.
 // Each is read from the element it applies to, so a part of the page can set its own, as the #uikit
 // gallery does to keep a toast or a copied icon on screen for its screenshots, or to show a waiting
 // state's skeletons and long-wait line at once. Where there's no stylesheet, as in the tests, the
@@ -24,5 +25,10 @@ export const TOOLTIP_DELAY_MS = 300;
 export const SPINNER_DELAY_MS = 500;
 /** Before a waiting state adds the line saying what's slow. */
 export const LONG_DELAY_MS = 10_000;
+/**
+ * How long a running background session opened by stepping (j, k, ↑, ↓) stays open before its
+ * terminal attaches, so passing through it attaches nothing (W54).
+ */
+export const ATTACH_DELAY_MS = 500;
 export const TOAST_TIMEOUT_MS = 4_000;
 export const COPIED_TIMEOUT_MS = 2_000;

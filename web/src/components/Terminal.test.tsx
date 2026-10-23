@@ -16,12 +16,17 @@ import type { ConnectionView } from '../connection.js';
 import { computeProof } from '../proof.js';
 import { fakeSockets, group, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { descriptionOf } from '../test/tooltips.js';
+import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
 import { NEW_LINE, type TerminalHandle } from './Terminal.js';
 
 // Made-up sessions only. xterm.js is replaced by FakeTerminal, through the
 // module the view loads it from, and ResizeObserver by one the tests trigger.
+//
+// These tests open the Terminal tab themselves, so View preferences has running background
+// sessions open on Conversation. Opening on the Terminal tab, the default since W54, is in
+// TerminalFirst.test.tsx.
 
 /** A terminal the tests drive by hand. fit() takes the size set with `nextSize`. */
 class FakeTerminal implements TerminalHandle {
@@ -109,6 +114,8 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', FakeResizeObserver);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
+  // The setup file clears localStorage after each test.
+  window.localStorage.setItem(BACKGROUND_TAB_KEY, 'conversation');
 });
 
 afterEach(() => {
@@ -224,7 +231,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
     expect(descriptionOf(tab(view, 'Terminal'))).toBe('Attach is unavailable here.');
   });
 
-  it('attaches only when Terminal is opened, never when the view opens', async () => {
+  it('with View preferences on Conversation, attaches only when Terminal is opened, never when the view opens', async () => {
     const { fake } = renderDashboard();
     const view = await openView('demo-worker');
     expect(tab(view, 'Conversation').getAttribute('aria-selected')).toBe('true');
@@ -786,7 +793,7 @@ describe("SessionView: Shift+Enter, a new line in Claude Code's prompt (W41)", (
 });
 
 describe('App: attach', () => {
-  it('opens a session from the URL without attaching', async () => {
+  it('with View preferences on Conversation, opens a session from the URL without attaching', async () => {
     window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
     window.history.replaceState(null, '', `/?view=all&session=${BG}`);
     const fake = fakeSockets();

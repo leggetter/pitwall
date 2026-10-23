@@ -467,6 +467,8 @@ export function Pages() {
 
 /** A session in LIST_SNAPSHOT, opened from the URL as a reload or a link would. */
 const OPEN = `?view=all&session=${APP_GROUP.sessions[0]?.sessionId ?? ''}`;
+/** LIST_SNAPSHOT's running background session, pitwall-test-nightly, opened the same way (W54). */
+const OPEN_JOB = `?view=all&session=${JOBS_GROUP.sessions[0]?.sessionId ?? ''}`;
 
 const LAYOUTS: PageCase[] = [
   {
@@ -486,9 +488,16 @@ const LAYOUTS: PageCase[] = [
   },
   {
     title: 'Three columns, opened from the URL',
-    note: 'A ?session= opens the view on load, without attaching, sending or changing anything.',
+    note: 'A ?session= opens the view on load, without sending or changing anything. This one is interactive, so it opens on Conversation and attaches nothing.',
     width: 1280,
     search: OPEN,
+    view: { state: 'live', snapshot: LIST_SNAPSHOT },
+  },
+  {
+    title: 'Three columns, a running background session opened from the URL (W54)',
+    note: 'It opens on its Terminal tab, which attaches, as a click on its row would have it, with View preferences on Terminal, the default. It sends and changes nothing else.',
+    width: 1280,
+    search: OPEN_JOB,
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   {
