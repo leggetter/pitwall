@@ -198,6 +198,29 @@ describe('MenuButton', () => {
     expect(screen.getByRole('menu').className).toBe('menu');
   });
 
+  it('with room on neither side, as on a short window, opens below, as tall as the window leaves, and scrolls (W54)', () => {
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) });
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      // A panel taller than either side of a button in the middle of the window.
+      return this.getAttribute('role') === 'menu' ? rect(0, window.innerHeight) : rect(window.innerHeight / 2 - 14, 28);
+    });
+    const { button } = setup();
+    fireEvent.click(button);
+    const menu = screen.getByRole('menu');
+    expect(menu.className).toBe('menu');
+    // Below the button: what's left of the window, less the 4 px gap and 8 px from its foot.
+    expect(menu.style.maxHeight).toBe(`${window.innerHeight / 2 - 14 - 4 - 8}px`);
+    expect(menu.style.overflowY).toBe('auto');
+    fireEvent.click(button);
+
+    // Room below again: no limit.
+    spy.mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'menu' ? rect(0, 150) : rect(20, 28);
+    });
+    fireEvent.click(button);
+    expect(screen.getByRole('menu').style.maxHeight).toBe('');
+  });
+
   it('closes with closeMenus, for a shortcut, inside the element given only: focus in it goes back to its button', () => {
     const entries: MenuEntry[] = [{ id: 'one', label: 'Copy session ID', onSelect: () => {} }];
     render(
