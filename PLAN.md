@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 to M3 done. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, plus what Phil's try-out and daily use asked for, merged into `main` on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51) as 626a121, a merge commit that keeps each work item's history, approved by Phil. W48's security review asked for changes twice; W50 to W52, W55, W57 and W58 fixed every finding, and its re-check approved M3 for main. |
+| **Status** | M0 to M3 done; M3.1, the work after M3, is in progress on `m3.1/integration`. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, plus what Phil's try-out and daily use asked for, merged into `main` on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51) as 626a121, a merge commit that keeps each work item's history, approved by Phil. W48's security review asked for changes twice; W50 to W52, W55, W57 and W58 fixed every finding, and its re-check approved M3 for main. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - "After M3" below, in order: first a durable home for the headless app-check tools, which the 2026-10-23 reboot wiped (coordinator)<br>- Then resuming ended interactive sessions, spike 005, the sub-agents view, open in an editor, and M4, my open pull requests |
+| **Next steps** | - M3.1 on `m3.1/integration`: W63, a new session selected when it appears, then "M3.1 - After M3" below, in order, starting with a durable home for the headless app-check tools<br>- Then M4, my open pull requests |
 
 ## Who is this for
 
@@ -235,7 +235,11 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 - **Open in an editor** (Phil, 2026-10-23: "open in editor such as code or cursor. Not sure how we can detect which are available and how to trigger the launch from a browser. Or maybe it could ping the pitwall process to do that?"). A browser can't tell which apps are installed, so Phil chose option A, the coordinator's lean: pitwall's server opens the editor. It finds the editors on the PATH (`code`, `cursor`), or an installed app for `open -a`, tells the page which exist, and on request runs the chosen one on a listed session's own directory, through `runFile` with no shell and a scrubbed environment, never on a path the page sends. Rejected: `vscode://` and `cursor://` links, which can't detect what's installed and may ask each time. It's a new state-changing route that starts a process, so it gets a security look. After M3 (the coordinator's lean, which Phil didn't change). See "After M3".
 - **Settled decisions** are in the README as D10 to D16 (2026-10-21): the design system, fonts and icons; the three columns and their widths; two-line rows, no tint, no idle badge and the urgency sort; ⌘↵, the shortcuts and F6; and a snapshot that carries only what the list shows, without each session's latest reply; markdown in the session view as pitwall's own elements; and several roots as tabs. Since then, D2, D3, D6, D7, D8, D11, D13, D14, D15 and D16 have gained W39 to W53's decisions.
 
-### After M3
+### M3.1 - After M3 (in progress, on `m3.1/integration`)
+
+The work after M3, on its own integration branch, `m3.1/integration`, merged into main with Phil's approval as the other milestones are (coordinator, 2026-10-23). It starts with what Phil's daily use keeps finding, then the list below.
+
+- **A new session is selected when it appears** (Phil, 2026-10-23, through pitwall: "when creating a new session, it should be automatically selected - the repo/directory and the session."). Today its view opens once it's listed, but the repo list keeps its selection, such as Needs you or another repo, and a session started in another root tab is opened there without switching to it (W63).
 
 In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 
@@ -366,6 +370,14 @@ Changes requested, at 64dd304: two Medium findings block the merge into main, an
 - **Checked and sound:** where the fixed token is read and validated, the launch file, children's environments (except Vite), logs and errors, and that nothing of the removed hand-off is left; drafts' storage and clearing; that W43's retry can't send twice; no HTML sinks, and only absolute `http:` and `https:` links, with 31 hostile 32 KiB inputs parsed in 15 ms or less; no new routes; the scanner's reads and git calls; query parameters, `localStorage`, the CSP, local fonts, the gallery kept out of production, and the terminal's escape-sequence handlers.
 - **Residuals, to document:** a port squatter serving a pinned tab's reload on pitwall's origin can read its token and drafts, and a fixed token stays valid (D7, D14); the launch redirect puts the token in browser history; drafts sit in the browser profile; a `.git` FIFO swapped in by another account outside the roots could hang one libuv thread; `JSON.parse` of a transcript line up to 16 MiB takes about 100 ms; the repo `.env`'s other variables reach pitwall's children. W14's dev-token residual (L6) now lasts every run with a fixed token, and its restart limit (N2) counts W43's retries. Recorded: the port squatter in D7 and D14, browser history in D7, the profile on disk in D14; the `.git` FIFO, the 16 MiB parse, the `.env`'s other variables and N2's count are accepted and recorded here only (coordinator, 2026-10-23).
 - **W46's second pass** (approved): the entry claims only the name it addressed, "To pitwall-relay", and the footer hides the relay's copy only when the conversation shows at least as much (G1, fixed in #52). Checking that the address was one of this run's relays isn't built (W46's Later).
+
+## M3.1 work breakdown
+
+Same way of working as M3, on `m3.1/integration`.
+
+| Item | What | Branch | Size | Status |
+| --- | --- | --- | --- | --- |
+| W63 | A new session is selected when it appears: its root tab, its repo or directory under the viewer's Group sessions by, and its view | `m3.1/new-session-selected` | S | In progress. Web UI only. Phil (2026-10-23): "when creating a new session, it should be automatically selected - the repo/directory and the session." |
 
 ## M2 work breakdown
 
