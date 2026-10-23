@@ -229,13 +229,23 @@ describe('resolveToken', () => {
     expect(() => resolveToken({ PITWALL_TOKEN: `${'a'.repeat(32)}\r\nX: y` })).toThrow(UsageError);
   });
 
-  it('does not take npm run dev’s own token for one dev run as fixed (PITWALL_TOKEN_PER_RUN=1, W51)', () => {
+  it('does not take npm run dev’s own token for one dev run as fixed (PITWALL_TOKEN_PER_RUN=1 with PITWALL_OPEN_MARKER, W51)', () => {
     const token = 'pitwall-test-token-0123456789abcd';
-    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1' })).toBe(false);
-    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '0' })).toBe(true);
-    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '' })).toBe(true);
+    const marker = '/Users/example/tmp/pitwall-dev-abc/opened';
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1', PITWALL_OPEN_MARKER: marker })).toBe(false);
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '0', PITWALL_OPEN_MARKER: marker })).toBe(true);
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '', PITWALL_OPEN_MARKER: marker })).toBe(true);
     // It doesn't change which token is used.
-    expect(resolveToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1' })).toBe(token);
+    expect(resolveToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1', PITWALL_OPEN_MARKER: marker })).toBe(token);
+  });
+
+  it('ignores PITWALL_TOKEN_PER_RUN=1 set by hand, without PITWALL_OPEN_MARKER: a token from the environment is fixed (W58)', () => {
+    const token = 'pitwall-test-token-0123456789abcd';
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1' })).toBe(true);
+    // An empty marker counts as unset, as main() reads it.
+    expect(hasFixedToken({ PITWALL_TOKEN: token, PITWALL_TOKEN_PER_RUN: '1', PITWALL_OPEN_MARKER: '' })).toBe(true);
+    // It never makes an empty token fixed.
+    expect(hasFixedToken({ PITWALL_TOKEN: '', PITWALL_TOKEN_PER_RUN: '1' })).toBe(false);
   });
 
   describe('an obviously weak PITWALL_TOKEN (W51)', () => {
@@ -632,6 +642,18 @@ describe('pitwall (the process)', () => {
     expect(output.stderr).not.toContain('fixed');
   }, 30_000);
 
+  it('with PITWALL_TOKEN_PER_RUN=1 set by hand, without PITWALL_OPEN_MARKER, still takes the token as fixed and never prints it (W58)', async () => {
+    const { child, result, stdout, url, printedToken } = await start([], { PITWALL_TOKEN_PER_RUN: '1', PITWALL_OPEN_MARKER: undefined });
+    expect(printedToken).toBeUndefined();
+    expect(stdout).toContain(`pitwall is running at ${url}/\n${FIXED_TOKEN_LINE}\nWatching root: ${tmp}`);
+
+    child.kill('SIGTERM');
+    const output = await result;
+    expect(output.code).toBe(0);
+    expect(output.stdout + output.stderr).not.toContain(token);
+    expect(output.stderr).toBe(`pitwall: ${fixedTokenNotice()}\n`);
+  }, 30_000);
+
   it('exits 1 for an obviously weak PITWALL_TOKEN, without printing it (W51)', async () => {
     for (const weak of ['0'.repeat(32), 'changeme-changeme-changeme-changeme']) {
       const result = await exited(run([tmp], { PITWALL_TOKEN: weak }));
@@ -777,6 +799,21 @@ describe('pitwall (the process)', () => {
       another.close();
 
       expect(child.exitCode).toBeNull();
+      child.kill('SIGTERM');
+      expect((await result).code).toBe(0);
+      expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    it('with PITWALL_TOKEN_PER_RUN=1 set by hand, without the marker, keeps a fixed token’s launch file when a page authenticates (W58)', async () => {
+      const { child, result, log, url } = await startOpening({ PITWALL_TOKEN_PER_RUN: '1', PITWALL_OPEN_MARKER: undefined });
+      const file = (await openerCalls(log))[0]![0]!;
+      expect(existsSync(file)).toBe(true);
+
+      const ws = await authenticate(url, token);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(existsSync(file)).toBe(true);
+      ws.close();
+
       child.kill('SIGTERM');
       expect((await result).code).toBe(0);
       expect(existsSync(file)).toBe(false);
@@ -1260,6 +1297,25 @@ describe('npm run dev: a fixed token (W40)', () => {
     expect(fromFile.perRun).toBe('unset');
   }, 60_000);
 
+  it('never takes PITWALL_TOKEN_PER_RUN from a .env: a fixed token stays fixed, and the token it makes is still per-run (W58)', async () => {
+    // A 0600 .env holding a made-up token and the mark.
+    const fromFile = await devRun(await layout(`# made up\nPITWALL_TOKEN=${FROM_FILE}\nPITWALL_TOKEN_PER_RUN=1\n`));
+    expect(fromFile.hash).toBe(sha256(FROM_FILE));
+    expect(fromFile.perRun).toBe('unset');
+    expect(fromFile.stderr).toBe(`pitwall dev: ${fixedTokenNotice('.env')}\n`);
+    expect(fromFile.stderr + fromFile.stdout).not.toContain(FROM_FILE);
+    // A token from the environment, with the mark in the .env.
+    const fromEnvironment = await devRun(await layout('PITWALL_TOKEN_PER_RUN=1\n'), { token: FIXED });
+    expect(fromEnvironment.hash).toBe(sha256(FIXED));
+    expect(fromEnvironment.perRun).toBe('unset');
+    expect(fromEnvironment.stderr).toBe(`pitwall dev: ${fixedTokenNotice()}\n`);
+    // No token anywhere: the one this run makes is marked, by dev itself.
+    const minted = await devRun(await layout('PITWALL_TOKEN_PER_RUN=1\n'));
+    expect(minted.length).toBe(43);
+    expect(minted.perRun).toBe('1');
+    expect(minted.stderr + minted.stdout).not.toContain('fixed');
+  }, 60_000);
+
   describe('the .env’s mode and owner (W51)', () => {
     it.each([[0o644], [0o640], [0o604], [0o660], [0o620]])('refuses a .env at mode %o, saying chmod 600, without showing what is in it, and starts nothing', async (mode) => {
       const root = await layout(`PITWALL_TOKEN=${FROM_FILE}\nPWTEST_OTHER=made-up-value-in-the-file\n`, mode);
@@ -1393,6 +1449,7 @@ describe('npm run dev: what the CLI prints on every restart (W51)', () => {
   it.each([
     ['from the environment', undefined, FIXED],
     ['from .env', `PITWALL_TOKEN=${FROM_FILE}\n`, undefined],
+    ['from a 0600 .env that also says PITWALL_TOKEN_PER_RUN=1 (W58)', `# made up\nPITWALL_TOKEN=${FROM_FILE}\nPITWALL_TOKEN_PER_RUN=1\n`, undefined],
   ] as const)('with a fixed token %s, prints the address without it on every restart, and the token nowhere', async (_, env, token) => {
     const secret = token ?? FROM_FILE;
     const { port, stdout, stderr } = await devRestart(env, token);

@@ -9,9 +9,11 @@
 // environment, which other users can't read, never the command line), and pins
 // the port. It also sets PITWALL_TOKEN_PER_RUN=1, so the CLI knows the token
 // dies with this dev run and prints its link, on every restart, as for any
-// per-run token. Every security check stays on. After each restart the web UI
-// reconnects, answers a fresh challenge with the token it already has, and
-// gets the new server's apiKey.
+// per-run token. The CLI honours it only with PITWALL_OPEN_MARKER, which this
+// script sets too, and this script never takes it from the environment or the
+// .env (W58), so it can't mark a fixed token. Every security check stays on.
+// After each restart the web UI reconnects, answers a fresh challenge with the
+// token it already has, and gets the new server's apiKey.
 //
 // A fixed token, opt-in (W40), for a single-user machine or for development:
 // PITWALL_TOKEN from the environment, or from the pitwall repo's own .env,
@@ -57,7 +59,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
-import { envFileProblem, fixedTokenNotice, hasFixedToken, resolveToken, UsageError } from '../src/cli.js';
+import { envFileProblem, fixedTokenNotice, resolveToken, UsageError } from '../src/cli.js';
 import { childEnvironment } from '../src/server/command.js';
 
 const DEFAULT_DEV_PORT = 4517;
@@ -122,14 +124,16 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
  * else one random token for this run. Exits 1 with the CLI's message for one that isn't valid.
  */
 function devToken(): { token: string; fixed: boolean } {
-  // Only this script says a token is its own, below; one already in the environment would hide a fixed token.
-  delete process.env.PITWALL_TOKEN_PER_RUN;
   // An empty PITWALL_TOKEN counts as unset (resolveToken), so the repo's .env can still set it.
   if (process.env.PITWALL_TOKEN === '') delete process.env.PITWALL_TOKEN;
   const fromEnvironment = process.env.PITWALL_TOKEN !== undefined;
   // The repo's root, from this file's own place: never the current directory, whose .env isn't ours.
   const envFile = join(fileURLToPath(new URL('..', import.meta.url)), '.env');
   loadPrivateEnvFile(envFile);
+  // Only this script says a token is its own, for the one it mints, below. From the environment or
+  // the .env, it would mark a fixed token as per-run: printed at every restart, and its launch file
+  // deleted at the first authentication (W58). So it's dropped from both, after the .env is read.
+  delete process.env.PITWALL_TOKEN_PER_RUN;
   let resolved: string;
   try {
     resolved = resolveToken(process.env);
@@ -138,7 +142,8 @@ function devToken(): { token: string; fixed: boolean } {
     console.error(`pitwall dev: ${error.message}${fromEnvironment ? '' : ` (from ${envFile})`}`);
     process.exit(1);
   }
-  const fixed = hasFixedToken(process.env);
+  // Fixed when a PITWALL_TOKEN that isn't empty was given, from the environment or the .env.
+  const fixed = process.env.PITWALL_TOKEN !== undefined && process.env.PITWALL_TOKEN !== '';
   if (fixed) console.error(`pitwall dev: ${fixedTokenNotice(fromEnvironment ? undefined : '.env')}`);
   return { token: resolved, fixed };
 }

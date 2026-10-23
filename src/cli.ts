@@ -82,9 +82,12 @@ Environment:
   PITWALL_OPEN_MARKER    A file path. Open the browser only if it doesn't exist
                          yet, then create it. npm run dev sets it, so the
                          browser opens once per dev run, not on every restart.
-  PITWALL_TOKEN_PER_RUN  Set to 1 when PITWALL_TOKEN isn't fixed but this run's
-                         own, so pitwall prints it with the URL. npm run dev
-                         sets it for the token it makes for each dev run.`;
+  PITWALL_TOKEN_PER_RUN  Set to 1, with PITWALL_OPEN_MARKER, when PITWALL_TOKEN
+                         isn't fixed but this run's own, so pitwall prints it
+                         with the URL. npm run dev sets both for the token it
+                         makes for each dev run, and never for a fixed one.
+                         Without the marker it's ignored: PITWALL_TOKEN is
+                         fixed, and never printed.`;
 
 /** A problem with the command line or environment. Printed with a `pitwall:` prefix, exit 1. */
 export class UsageError extends Error {
@@ -203,10 +206,15 @@ export function fixedTokenNotice(source?: string): string {
 /**
  * Whether PITWALL_TOKEN fixes the token: set and not empty, since an empty one
  * counts as unset (W40), and not npm run dev's own token for one dev run, which
- * it marks with PITWALL_TOKEN_PER_RUN=1 (W51).
+ * it marks with PITWALL_TOKEN_PER_RUN=1 (W51). That mark counts only with
+ * PITWALL_OPEN_MARKER set too, as npm run dev sets both (W58): set by hand
+ * without it, it would print a fixed token and delete its launch file at the
+ * first authentication, so it's ignored.
  */
 export function hasFixedToken(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.PITWALL_TOKEN !== undefined && env.PITWALL_TOKEN !== '' && env.PITWALL_TOKEN_PER_RUN !== '1';
+  if (env.PITWALL_TOKEN === undefined || env.PITWALL_TOKEN === '') return false;
+  const devRunsOwn = env.PITWALL_TOKEN_PER_RUN === '1' && env.PITWALL_OPEN_MARKER !== undefined && env.PITWALL_OPEN_MARKER !== '';
+  return !devRunsOwn;
 }
 
 /**
