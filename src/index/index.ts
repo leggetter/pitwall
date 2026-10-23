@@ -230,7 +230,7 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
  * Hands the scanner this poll's sessions, which queues their scans without waiting for them, and
  * adds what earlier scans found to their summaries, each repo labelled as its group is or would be,
  * with the root that group sits under or would (W42). It never moves a session: the snapshot lists
- * each only where it started (W39), and the web UI groups it by the viewer's View preferences. A
+ * each only where it started (W39), and the web UI groups it by the viewer's Group sessions by, in Preferences (W59). A
  * session seen for the first time has no workedIn until a later poll. Nothing here can fail the poll.
  */
 function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: IndexerDeps): void {
