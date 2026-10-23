@@ -72,7 +72,7 @@ function whatItWants(session: SessionSummary): { content: ReactNode; hint?: stri
 
 export interface SessionRowProps {
   session: SessionSummary;
-  /** The group it's listed under: in Needs you and All sessions, its home group as View preferences says (W42). */
+  /** The group it's listed under: in Needs you and All sessions, its home group as Group sessions by says (W42). */
   group: Pick<SessionGroup, 'root' | 'key' | 'label'>;
   /**
    * Start line 2 with the group's label: in Needs you and All sessions, which list every group. In a

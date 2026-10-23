@@ -1,6 +1,6 @@
-// View preferences: Group sessions by (docs/design-system.md, 3: Repo list, and 4: View preferences),
-// W42. The snapshot lists each session in the group it started in (W39). The page groups it again
-// for the viewer's choice, so switching is instant and never asks the server.
+// Preferences: Group sessions by (docs/design-system.md, 3: Repo list, and 4: Preferences), W42. The
+// snapshot lists each session in the group it started in (W39). The page groups it again for the
+// viewer's choice, so switching is instant and never asks the server.
 //
 // - Main repo, the default (Phil, 2026-10-21): a session started in a root itself that worked in
 //   repos is listed under one of them, its main repo: the one with the most changes, ties broken by
@@ -43,7 +43,7 @@ export const GROUP_BY_KEY = 'pitwall.group-by.v1';
 
 export const DEFAULT_GROUP_BY: GroupBy = 'main-repo';
 
-/** The modes in the menu's order, the default first. */
+/** The modes in the Preferences dialog's order, the default first. */
 export const GROUP_BY_MODES: readonly GroupBy[] = ['main-repo', 'where-started', 'every-repo'];
 
 export const GROUP_BY_LABELS: Readonly<Record<GroupBy, string>> = {
@@ -52,14 +52,14 @@ export const GROUP_BY_LABELS: Readonly<Record<GroupBy, string>> = {
   'every-repo': 'Every repo it worked in',
 };
 
-/** Each mode's one plain line in the menu, under its label. */
+/** Each mode's one plain line in the Preferences dialog, under its label. */
 export const GROUP_BY_DESCRIPTIONS: Readonly<Record<GroupBy, string>> = {
   'main-repo': 'A session started in a root goes under the repo it changed most.',
   'where-started': 'Each session stays under the repo or directory it started in.',
   'every-repo': 'A session shows under every repo it worked in, so counts can overlap.',
 };
 
-/** The radio group's name, which the menu shows above the modes. */
+/** The radio group's legend, above the modes. */
 export const GROUP_BY_TITLE = 'Group sessions by';
 
 export function isGroupBy(value: unknown): value is GroupBy {

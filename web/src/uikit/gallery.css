@@ -173,6 +173,26 @@
   height: 1540px;
 }
 
+/*
+ * The Preferences dialog in a window 540 px tall (W59). The card is at most the window less 96 px
+ * tall, by 100dvh, which here is the gallery's window, not the frame, so the frame says it for it:
+ * its body scrolls, as at 375 x 540 in the app.
+ */
+.uikit-frame-dialog-short {
+  height: 540px;
+}
+
+.uikit-frame-dialog-short .dialog {
+  max-height: calc(540px - 2 * var(--pw-space-12));
+}
+
+/* The Preferences dialog's sections one at a time, each as wide as the dialog, with its body's padding (W59). */
+.uikit-preferences-section {
+  max-width: var(--pw-dialog-sm);
+  padding: var(--pw-space-4);
+  background: var(--pw-surface-overlay);
+}
+
 /* A window 560 px tall, which the app fills, so its list scrolls inside as it does in the app. */
 .uikit-frame-page {
   height: 560px;
@@ -214,7 +234,7 @@
   padding-top: 40px;
 }
 
-/* Each root tab's repo list in one mode of View preferences, side by side, each as wide as the sidebar (W42). */
+/* Each root tab's repo list in one mode of Group sessions by, side by side, each as wide as the sidebar (W42). */
 .uikit-mode-lists {
   display: flex;
   flex-wrap: wrap;
@@ -229,11 +249,10 @@
   border: 1px solid var(--pw-border);
 }
 
-/* Room below View preferences for its menu, which is taller and wider than the actions menu (W42). */
-.uikit-menu-stage-prefs {
+/* Room below a menu with a radio group, whose options' lines make it taller and wider than the actions menu (W42). */
+.uikit-menu-stage-radio {
   max-width: 360px;
-  /* Two radio groups, Group sessions by and Open running background sessions on (W54). */
-  min-height: 490px;
+  min-height: 280px;
 }
 
 /* Room above a trigger for its tooltip, which sits 6 px above it, as it does in the app. */

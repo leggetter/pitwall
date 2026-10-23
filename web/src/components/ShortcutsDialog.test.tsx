@@ -59,7 +59,7 @@ function dialogRows() {
 describe('the keyboard shortcuts dialog', () => {
   it("lists every row of 6.2's keyboard map, and no other", () => {
     const rows = docRows();
-    expect(rows.length).toBe(19);
+    expect(rows.length).toBe(20);
     const listed = keyboardMap(true).flatMap((group) => group.rows.map((row) => row.doc));
     expect(listed).toHaveLength(rows.length);
     expect(new Set(listed.map((row) => `${row.key} | ${row.where}`))).toEqual(new Set(rows.map((row) => `${row.key} | ${row.where}`)));
@@ -68,7 +68,7 @@ describe('the keyboard shortcuts dialog', () => {
   it('shows each row with its key caps, read out in words', () => {
     renderDialog();
     const rows = dialogRows();
-    expect(rows).toHaveLength(19);
+    expect(rows).toHaveLength(20);
     const byWhat = new Map(rows.map((row) => [row.what, row]));
     expect(byWhat.get('Focus the filter field')).toEqual({ what: 'Focus the filter field', caps: '/', heard: 'Slash' });
     expect(byWhat.get('Open the New session dialog')?.caps).toBe('n');

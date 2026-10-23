@@ -1,0 +1,82 @@
+/*
+ * A radio group (docs/design-system.md, 4: Inputs, textareas and selects), W59: the legend in label
+ * type, then the options 8 px apart. Each option is the native radio, 16 px, filled with
+ * --pw-selected-border as the checkbox is, its label 6 px after it, and its line under the label,
+ * in meta type, indented to it.
+ */
+
+.radio-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.radio-group-legend {
+  margin-bottom: var(--pw-space-2);
+  padding: 0;
+  font-size: var(--pw-text-xs);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-xs);
+}
+
+.radio-group-hint {
+  margin-top: calc(-1 * var(--pw-space-1));
+  margin-bottom: var(--pw-space-2);
+}
+
+.radio-group-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-2);
+}
+
+.radio-option {
+  display: grid;
+  grid-template-columns: var(--pw-icon-sm) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--pw-space-1-5);
+}
+
+/*
+ * The radio in a round box of its own size, which draws the focus ring. Chrome draws a native radio's
+ * box-shadow square, whatever its border-radius, so :focus-visible's ring on the radio itself was a
+ * square around a circle (seen in the W59 check).
+ */
+.radio-control {
+  display: inline-flex;
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
+  border-radius: var(--pw-radius-full);
+}
+
+.radio-control:has(input:focus-visible) {
+  box-shadow: var(--pw-ring-focus);
+}
+
+.radio-option input {
+  width: var(--pw-icon-sm);
+  height: var(--pw-icon-sm);
+  margin: 0;
+  accent-color: var(--pw-selected-border);
+}
+
+/* The ring is the box's; the outline stays, transparent, for forced colours (6.1, item 3). */
+.radio-option input:focus-visible {
+  box-shadow: none;
+}
+
+.radio-option label {
+  min-width: 0;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  cursor: pointer;
+}
+
+.radio-option-description {
+  grid-column: 2;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}

@@ -312,7 +312,7 @@ export const WORKED_ROOT_GROUP = group('code', [WORKED_FROM_ROOT, WORKED_ROOT_AL
 /** Six sessions, two of which need you, in four groups: none for pitwall-test-docs, where three of them worked. */
 export const WORKED_SNAPSHOT = snapshot([WORKED_API_GROUP, WORKED_APP_GROUP, WORKED_SCRATCH_GROUP, WORKED_ROOT_GROUP]);
 
-// View preferences (W42): two roots, ~/code and ~/work. pitwall-test-delivery-plan started in ~/code
+// Group sessions by (W42): two roots, ~/code and ~/work. pitwall-test-delivery-plan started in ~/code
 // itself, worked most in pitwall-test-docs, which has no group, and less in pitwall-test-service,
 // under ~/work. So Main repo lists it under pitwall-test-docs, Where it started under ~/code, and Every
 // repo it worked in under both repos, one in each root's tab.

@@ -1,8 +1,8 @@
 // Running background sessions open on the Terminal tab (W54): which tab a view opens on, for each kind
-// and state, from a click, ?session=, the back button and a reload, and with View preferences on
+// and state, from a click, ?session=, the back button and a reload, and with Preferences on
 // Conversation; a tab you chose staying chosen; where focus goes as the terminal attaches; stepping with
 // j, k, ↑ and ↓, which waits before attaching, so passing through attaches nothing; the four-attach
-// limit (D9); and the setting's menu and its storage. Made-up sessions only, and fake sockets: nothing
+// limit (D9); and the setting in the Preferences dialog (W59), and its storage. Made-up sessions only, and fake sockets: nothing
 // here reaches a session.
 //
 // And W57: the terminal takes the keyboard only right after a click or Enter in the page opened the
@@ -31,6 +31,7 @@ import { computeProof } from '../proof.js';
 import { TERMINAL_FOCUS_KEY } from '../terminalFocus.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
+import { choosePreference, openPreferences, preferenceGroup, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
 import { ATTACH_DELAY_MS } from '../timing.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
@@ -366,7 +367,7 @@ describe('the tab a view opens on', () => {
     expect(posts(fetch)).toEqual([]);
   });
 
-  it('is Conversation with View preferences on Conversation, from a click, a ?session= and the back button, and nothing attaches', async () => {
+  it('is Conversation with Preferences on Conversation, from a click, a ?session= and the back button, and nothing attaches', async () => {
     const storage = memory({ [BACKGROUND_TAB_KEY]: 'conversation' });
     const { sockets, history } = renderDashboard(snap(), { storage });
     await open('job-one');
@@ -418,12 +419,11 @@ describe('a tab you chose', () => {
     expect(sockets.sockets).toHaveLength(1);
   });
 
-  it('isn’t switched by View preferences either: a new choice is for the views that open after it', async () => {
+  it('isn’t switched by Preferences either: a new choice is for the views that open after it', async () => {
     const { sockets, storage } = renderDashboard();
     await open('job-one');
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
-    fireEvent.click(screen.getByRole('button', { name: 'View preferences' }));
-    fireEvent.click(within(screen.getByRole('group', { name: 'Open running background sessions on' })).getByRole('menuitemradio', { name: 'Conversation' }));
+    choosePreference('Open running background sessions on', 'Conversation');
     expect((storage as ReturnType<typeof memory>).values.get(BACKGROUND_TAB_KEY)).toBe('conversation');
     expect(viewName()).toBe('job-one');
     expect(shownTab()).toBe('Terminal');
@@ -1086,51 +1086,44 @@ describe('the four-attach limit (D9)', () => {
   });
 });
 
-describe('View preferences: Open running background sessions on', () => {
-  const prefsButton = () => screen.getByRole('button', { name: 'View preferences' });
-  const group = () => screen.getByRole('group', { name: 'Open running background sessions on' });
-  const optionsOf = () => within(group()).getAllByRole('menuitemradio');
-  const optionName = (option: Element) => document.getElementById(option.getAttribute('aria-labelledby') ?? '')?.textContent;
-  const describedBy = (option: Element) => document.getElementById(option.getAttribute('aria-describedby') ?? '')?.textContent;
+describe('Preferences: Open running background sessions on', () => {
+  const SETTING = 'Open running background sessions on';
+  const labelOf = (radio: HTMLInputElement) => radio.labels?.[0]?.textContent;
+  const describedBy = (element: Element) => document.getElementById(element.getAttribute('aria-describedby') ?? '')?.textContent;
+  const checked = () => preferenceOptions(SETTING).map((radio) => radio.checked);
 
-  it('is a second radio group, after a separator: Terminal, chosen by default, and Conversation, each with a line saying what it does', () => {
+  it("is the Session view section's first radio group: Terminal, chosen by default, and Conversation, each with a line saying what it does", () => {
     renderDashboard();
-    fireEvent.click(prefsButton());
-    const menu = screen.getByRole('menu', { name: 'View preferences' });
-    const groups = within(menu).getAllByRole('group');
-    expect(groups.map((each) => each.getAttribute('aria-label'))).toEqual(['Group sessions by', 'Open running background sessions on']);
-    expect(group().previousElementSibling?.getAttribute('role')).toBe('separator');
-    expect(optionsOf().map(optionName)).toEqual(['Terminal', 'Conversation']);
-    expect(optionsOf().map(describedBy)).toEqual([
-      'The session attaches as its view opens, so you can type to it.',
+    const dialog = openPreferences();
+    const section = within(dialog).getByRole('region', { name: 'Session view' });
+    expect(within(section).getAllByRole('group')[0]).toBe(preferenceGroup(SETTING));
+    expect(preferenceOptions(SETTING).map(labelOf)).toEqual(['Terminal', 'Conversation']);
+    expect(preferenceOptions(SETTING).map(describedBy)).toEqual([
+      'The session attaches as its view opens, so its terminal is ready to use.',
       'The session attaches only once you open its Terminal tab.',
     ]);
-    expect(optionsOf().map((option) => option.getAttribute('aria-checked'))).toEqual(['true', 'false']);
-    // Opening focuses the chosen grouping, the menu's first group.
-    expect(optionName(document.activeElement as Element)).toBe('Main repo');
+    expect(checked()).toEqual([true, false]);
+    // Opening focuses the choice of Group sessions by, the dialog's first group.
+    expect(document.activeElement).toBe(preferenceOption('Group sessions by', 'Main repo'));
   });
 
-  it('chooses with the keyboard: End, then Enter, closes the menu with focus back on its button, and stores the choice alone', () => {
+  it('applies a choice at once, with the dialog still open, stores it alone, and Escape then gives focus back to the button', () => {
     const { storage } = renderDashboard();
-    const button = prefsButton();
-    button.focus();
-    fireEvent.click(button);
-    press('End');
-    expect(optionName(document.activeElement as Element)).toBe('Conversation');
-    // Enter on a menu item's button is a click.
-    fireEvent.click(document.activeElement as Element);
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(document.activeElement).toBe(button);
+    choosePreference(SETTING, 'Conversation', { close: false });
+    expect(preferencesDialog()).not.toBeNull();
+    expect(document.activeElement).toBe(preferenceOption(SETTING, 'Conversation'));
     expect([...(storage as ReturnType<typeof memory>).values]).toEqual([[BACKGROUND_TAB_KEY, 'conversation']]);
-    fireEvent.click(button);
-    expect(optionsOf().map((option) => option.getAttribute('aria-checked'))).toEqual(['false', 'true']);
+    press('Escape');
+    expect(preferencesDialog()).toBeNull();
+    expect(document.activeElement).toBe(preferencesButton());
+    openPreferences();
+    expect(checked()).toEqual([false, true]);
   });
 
   it('keeps the choice across a reload, under pitwall.background-tab.v1', async () => {
     const storage = memory();
     const first = renderDashboard(snap(), { storage });
-    fireEvent.click(prefsButton());
-    fireEvent.click(optionsOf()[1]!);
+    choosePreference(SETTING, 'Conversation');
     first.unmount();
     const { sockets } = renderDashboard(snap(), { storage, search: `?view=all&session=${J1}` });
     await settle();
@@ -1161,8 +1154,7 @@ describe('View preferences: Open running background sessions on', () => {
       await open('job-one');
       expect(shownTab()).toBe('Terminal');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
-      fireEvent.click(prefsButton());
-      fireEvent.click(optionsOf()[1]!);
+      choosePreference(SETTING, 'Conversation');
       await open('job-two');
       expect(shownTab()).toBe('Conversation');
       unmount();
@@ -1187,12 +1179,42 @@ describe('View preferences: Open running background sessions on', () => {
       await open('job-one');
       expect(shownTab()).toBe('Terminal');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
-      fireEvent.click(prefsButton());
-      fireEvent.click(optionsOf()[1]!);
+      choosePreference(SETTING, 'Conversation');
       await open('job-two');
       expect(shownTab()).toBe('Conversation');
     } finally {
       if (original) Object.defineProperty(window, 'localStorage', original);
     }
+  });
+});
+
+describe('Preferences: The terminal takes the keyboard (W57, W59)', () => {
+  const SETTING = 'The terminal takes the keyboard';
+  const labelOf = (radio: HTMLInputElement) => radio.labels?.[0]?.textContent;
+
+  it("is the Session view section's second radio group: When you open it, chosen by default, then Never", () => {
+    renderDashboard();
+    const section = within(openPreferences()).getByRole('region', { name: 'Session view' });
+    expect(within(section).getAllByRole('group')[1]).toBe(preferenceGroup(SETTING));
+    expect(preferenceOptions(SETTING).map(labelOf)).toEqual(['When you open it', 'Never']);
+    expect(preferenceOptions(SETTING).map((radio) => radio.checked)).toEqual([true, false]);
+  });
+
+  it('is the setting the views read as they attach: Never, chosen there, keeps the keyboard out of the terminal after a click on a row, and When you open it gives it back', async () => {
+    const { sockets, storage } = renderDashboard();
+    choosePreference(SETTING, 'Never');
+    expect((storage as ReturnType<typeof memory>).values.get(TERMINAL_FOCUS_KEY)).toBe('never');
+    await open('job-one');
+    await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+    await attachIt(sockets.last);
+    expect(terminalHasFocus()).toBe(false);
+    expect(document.activeElement).toBe(heading());
+
+    choosePreference(SETTING, 'When you open it');
+    expect((storage as ReturnType<typeof memory>).values.get(TERMINAL_FOCUS_KEY)).toBe('after-open');
+    await open('job-two');
+    await waitFor(() => expect(sockets.sockets).toHaveLength(2));
+    await attachIt(sockets.last);
+    expect(terminalHasFocus()).toBe(true);
   });
 });

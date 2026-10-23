@@ -16,7 +16,7 @@ import { Alerts, Buttons } from './controls.js';
 import { Icons, ThemeSwitches, Tokens, Type } from './foundations.js';
 import { SettleContext } from './kit.js';
 import { FinishedSections, SessionRows } from './lists.js';
-import { Dialogs, Layouts, Notices, Pages, ShortcutsDialogs } from './pages.js';
+import { Dialogs, Layouts, Notices, Pages, PreferencesDialogs, ShortcutsDialogs } from './pages.js';
 import { CopyButtons, Timestamps, Toasts, Tooltips } from './overlays.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
 import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
@@ -36,8 +36,8 @@ const SECTIONS: Section[] = [
   { id: 'icons', title: 'Icons', intro: 'The Icon component: every icon pitwall uses.', Content: Icons },
   { id: 'theme-switch', title: 'Theme switch', intro: "ThemeSwitch: System, Light and Dark. It's the real one, so pressing it changes this page's theme.", Content: ThemeSwitches },
   { id: 'buttons', title: 'Buttons', intro: 'Button in each variant, idle, disabled and busy, at each size; the spinner; key caps.', Content: Buttons },
-  { id: 'header', title: 'Header', intro: 'Header: the Repos button, the wordmark, the roots, New session, the connection, the update time, the theme switch, View preferences and the keyboard shortcuts button, at each width.', Content: Headers },
-  { id: 'repo-list', title: 'Repo list', intro: 'RepoList: the two views, then every group, as View preferences groups them. Each one keeps its own selection, so click or use ↓, ↑, Home and End.', Content: RepoLists },
+  { id: 'header', title: 'Header', intro: 'Header: the Repos button, the wordmark, the roots, New session, the connection, the update time, the theme switch, Preferences and the keyboard shortcuts button, at each width.', Content: Headers },
+  { id: 'repo-list', title: 'Repo list', intro: 'RepoList: the two views, then every group, in each mode of Group sessions by. Each one keeps its own selection, so click or use ↓, ↑, Home and End.', Content: RepoLists },
   { id: 'repo-drawer', title: 'Repo drawer', intro: 'RepoDrawer: the repo list below 900 px.', Content: RepoDrawers },
   { id: 'session-list', title: 'Session list header', intro: "SessionList's header for each selection: its name, its summary, the filters and the Sort setting.", Content: SessionListHeads },
   { id: 'filters', title: 'Filters and Sort', intro: 'FilterControls: the filter field, the filter chips and Clear filters, then the Sort setting. Each one keeps its own state.', Content: FilterSpecimens },
@@ -57,7 +57,7 @@ const SECTIONS: Section[] = [
       "The session view's Conversation tab: every kind of entry, markdown in messages (every element, cut short in a code block, what shows as text, narrow, links in code, and Copy), messages to pitwall, questions asked in a dialog (answered, multi-select, typed, with notes, and dismissed), folded tool calls closed and open, Load earlier idle and busy, Jump to latest, and its errors and notices: Load earlier failed, the transcript changed, a refresh failed, each Try again idle and busy, and the transcript gone.",
     Content: Conversations,
   },
-  { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and the header\'s View preferences, with its two radio groups.', Content: Menus },
+  { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },
   {
     id: 'confirmations',
@@ -73,6 +73,13 @@ const SECTIONS: Section[] = [
     title: 'Keyboard shortcuts dialog',
     intro: 'ShortcutsDialog, on Dialog: the keyboard map in 6.2 and the off switch for the single-key shortcuts. Each keeps its own setting here; in the app it is one, kept in pitwall.shortcuts.v1.',
     Content: ShortcutsDialogs,
+  },
+  {
+    id: 'preferences',
+    title: 'Preferences dialog',
+    intro:
+      'PreferencesDialog, on Dialog (W59): its sections, Repo list, Session view, Keyboard and Appearance, each a radio group for each setting, as it opens, with other choices, in a short window, and each section alone. Each keeps its own settings here, apart from the theme, which is the real one.',
+    Content: PreferencesDialogs,
   },
   { id: 'tooltips', title: 'Tooltips', intro: 'Tooltip on each kind of control it is on in the app, each opened by hovering it.', Content: Tooltips },
   { id: 'toasts', title: 'Toasts', intro: 'ToastProvider and its stack: a success, an error, three at most, and full width at 600 px and narrower.', Content: Toasts },

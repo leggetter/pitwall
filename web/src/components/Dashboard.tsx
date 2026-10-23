@@ -35,20 +35,23 @@
 // they act only on this dashboard's keys, never over a dialog or the repo drawer, and only while
 // they're on. One that moves focus closes an open menu first.
 //
-// View preferences (W42, groupBy.ts), in the header, sets how sessions are grouped: Main repo, the
-// default, Where it started, or Every repo it worked in. The page groups the snapshot for the chosen
-// mode, and everything that lists groups or sessions, the repo list, the views, the root tabs and
-// their badges, ?session= and the document title, uses those groups, each session counted once. The
-// session view's "Started in" line and the New session dialog's directories use the snapshot's own,
-// where each session started. A switch keeps the selected group when the new mode has it; when it
-// hasn't, All sessions in the same root tab is selected instead, a toast says so, and focus stays on
-// the View preferences button. An open session view stays open.
+// Preferences (W59, Preferences.tsx), from the header, sets how sessions are grouped (W42,
+// groupBy.ts): Main repo, the default, Where it started, or Every repo it worked in. The page
+// groups the snapshot for the chosen mode, and everything that lists groups or sessions, the repo
+// list, the views, the root tabs and their badges, ?session= and the document title, uses those
+// groups, each session counted once. The session view's "Started in" line and the New session
+// dialog's directories use the snapshot's own, where each session started. A switch keeps the
+// selected group when the new mode has it; when it hasn't, All sessions in the same root tab is
+// selected instead, a toast says so, and focus stays on the choice in Preferences. An open session
+// view stays open.
 //
-// View preferences also sets which tab a running background session's view opens on: Terminal, the
+// Preferences also sets which tab a running background session's view opens on: Terminal, the
 // default, or Conversation (W54, backgroundTab.ts), which the view reads as it opens. Stepping onto a
 // session with `j`, `k`, ↑ or ↓ tells its view so, and a terminal it opens on waits a moment before
 // attaching, so passing through attaches nothing. A click or Enter on a row tells the view it opened
-// so too, and only then may its terminal take focus as it attaches (W57).
+// so too, and only then may its terminal take focus as it attaches (W57), unless Preferences says
+// never. The dialog is rendered here, as the other dialogs are, and changes the Dashboard's own
+// settings, so the views read what it sets.
 //
 // With two or more roots, the header has a tab per root (W38, rootTabs.ts), and the open tab narrows
 // the repo list, the session list, the filter, `j` and `k`, and the New session dialog to its root.
@@ -116,6 +119,7 @@ import { HideButton } from './HideButton.js';
 import { HighlightContext } from './Highlight.js';
 import { closeMenus } from './Menu.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
+import { PreferencesDialog } from './Preferences.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { SessionList, type SessionListHeading } from './SessionList.js';
@@ -136,11 +140,11 @@ let dashboards = 0;
 export const GROUP_GONE = 'Its sessions are no longer listed under these roots.';
 
 /**
- * The empty state's sentence for a root's own group that the snapshot still has, but View
- * preferences doesn't: every session started there worked in repos, so it's listed under them (W42).
+ * The empty state's sentence for a root's own group that the snapshot still has, but Group sessions
+ * by, in Preferences, doesn't: every session started there worked in repos, so it's listed under them (W42).
  */
 export const groupMovedText = (mode: GroupBy) =>
-  `Its sessions are listed under the repos they ${mode === 'main-repo' ? 'changed most' : 'worked in'}, as View preferences groups them.`;
+  `Its sessions are listed under the repos they ${mode === 'main-repo' ? 'changed most' : 'worked in'}, as Preferences groups them.`;
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
@@ -157,7 +161,7 @@ export const unhiddenText = (label: string, listed: boolean) =>
   `Unhid ${plainText(label)}. ${listed ? "It's back in the repo list." : "It's back in the repo list once it has sessions."}`;
 
 /**
- * The toast when a switch of View preferences leaves the selected group out of the repo list, so All
+ * The toast when a switch of Group sessions by leaves the selected group out of the repo list, so All
  * sessions is selected instead (W42).
  */
 export const groupGoneText = (label: string, mode: GroupBy) =>
@@ -210,13 +214,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const { layout, compact, overlayCoversRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
   const [panelWidth] = useState(() => createPanelWidthStore(storage));
-  // Group sessions by, from View preferences (W42): the snapshot's groups, grouped again for the mode.
+  // Group sessions by, from Preferences (W42, W59): the snapshot's groups, grouped again for the mode.
   const [groupBy, setGroupBy] = useGroupBy(storage);
-  // Which tab a running background session's view opens on, from View preferences too (W54).
+  // Which tab a running background session's view opens on, from Preferences too (W54).
   const [backgroundTab, setBackgroundTab] = useBackgroundTab(storage);
-  // When a terminal may take the keyboard (W57): after you open it here, or never. Stored, with no
-  // control yet: W59's Preferences dialog takes the hook's setter.
-  const [terminalFocus] = useTerminalFocus(storage);
+  // When a terminal may take the keyboard (W57): after you open it here, or never, from Preferences
+  // too. One hook, so the setting the dialog changes is the one the views read at each attach.
+  const [terminalFocus, setTerminalFocus] = useTerminalFocus(storage);
   const startGroups = snapshot?.groups;
   const grouped = useMemo(() => groupSessions(startGroups ?? [], groupBy), [startGroups, groupBy]);
   const viewSnapshot = useMemo(() => (snapshot ? { roots: snapshot.roots, groups: grouped.groups } : undefined), [snapshot, grouped]);
@@ -243,6 +247,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const filterField = useRef<HTMLInputElement>(null);
   const shortcuts = useShortcutsStore();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   // Which open session views have a draft in the message box: no shortcut replaces or closes the view
   // then, just as Escape doesn't (6.2). By session, since each root tab keeps its view (W38).
   const drafts = useRef(new Map<string, boolean>());
@@ -256,7 +261,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const waiting = useWaiting(app, snapshot === undefined);
   const slow = slowFirstSnapshot(state);
 
-  // Every root's groups as View preferences groups them, and the open root tab's alone (W38): those
+  // Every root's groups as the chosen grouping has them, and the open root tab's alone (W38): those
   // under its root.
   const groups = grouped.groups;
   const roots = snapshot?.roots ?? [];
@@ -672,9 +677,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     }
   };
 
-  // View preferences (W42). The selected group stays when the new mode lists it. One that's listed now
-  // and won't be gives way to All sessions in its root tab: the open tab's with a toast, since the
-  // menu's button keeps focus; another tab's quietly, for when that tab is back.
+  // Group sessions by, in Preferences (W42, W59). The selected group stays when the new mode lists it.
+  // One that's listed now and won't be gives way to All sessions in its root tab: the open tab's with a
+  // toast, since focus stays on the choice in Preferences; another tab's quietly, for when that tab is back.
   const chooseGroupBy = (next: GroupBy) => {
     if (next === groupBy) return;
     setGroupBy(next);
@@ -711,7 +716,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const next = new Map(finishedOpen);
     next.set(finishedId, !(finishedOpen.get(finishedId) ?? false));
     setFinishedOpen(next);
-    // Every group of every mode, so a switch of View preferences doesn't forget one's state.
+    // Every group of every mode, so a switch of Group sessions by doesn't forget one's state.
     writeGroupState(next, new Set([...everyGroupId(startGroups ?? []), 'view:all', 'view:starred']), storage, FINISHED_STATE_KEY);
   };
 
@@ -868,7 +873,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   } else if (!scope) {
     // Only Main repo and Every repo it worked in take sessions out of a group the snapshot has.
     const mode = groupBy === 'where-started' ? undefined : groupBy;
-    // A group, a root's own included, goes once no session is listed under it, as View preferences groups them.
+    // A group, a root's own included, goes once no session is listed under it, as the chosen grouping has them.
     empty = (
       <EmptyState
         icon="directory"
@@ -1044,7 +1049,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         reposOpen={drawerOpen}
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
-        preferences={{ groupBy, onGroupBy: chooseGroupBy, backgroundTab, onBackgroundTab: setBackgroundTab }}
+        onPreferences={() => setPreferencesOpen(true)}
         tabs={
           tab === undefined
             ? undefined
@@ -1108,6 +1113,18 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       )}
 
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
+
+      {preferencesOpen && (
+        <PreferencesDialog
+          onClose={() => setPreferencesOpen(false)}
+          groupBy={groupBy}
+          onGroupBy={chooseGroupBy}
+          backgroundTab={backgroundTab}
+          onBackgroundTab={setBackgroundTab}
+          terminalFocus={terminalFocus}
+          onTerminalFocus={setTerminalFocus}
+        />
+      )}
 
       {/* Last, so it's above everything; focus that a dismissed toast had goes to the list's heading, or the view's while it covers the list. */}
       <ToastRegion {...toasts.region} onFocusLost={focusList} />

@@ -117,6 +117,11 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
           keys: [[UP, DOWN], [HOME, END], [ENTER], [ESCAPE]],
         },
         { doc: { key: '⌘/Ctrl + Enter', where: 'The New session dialog' }, what: 'In the New session dialog: start the session', keys: [[modEnter]] },
+        {
+          doc: { key: '↑ / ↓, ← / →', where: 'A radio group, in Preferences' },
+          what: 'In Preferences: choose the previous or next option, which applies at once',
+          keys: [[UP, DOWN], [LEFT, RIGHT]],
+        },
       ],
     },
     {

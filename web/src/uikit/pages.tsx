@@ -2,21 +2,25 @@
 // Notice, with fixture connection views instead of a live connection. Each page has storage and an
 // address bar of its own, in memory, so its selection never reaches the gallery's URL.
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import type { BackgroundTab } from '../backgroundTab.js';
 import type { ConnectionState, ConnectionView } from '../connection.js';
 import { Badge, StatusBadge } from '../components/Badge.js';
 import { ConnectionBadge } from '../components/ConnectionBadge.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
 import { Dashboard } from '../components/Dashboard.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
+import { AppearancePreferences, KeyboardPreferences, PreferencesDialog, RepoListPreferences, SessionViewPreferences, type PreferencesProps } from '../components/Preferences.js';
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
+import type { GroupBy } from '../groupBy.js';
 import { PANEL_WIDTH_KEY } from '../panelWidth.js';
 import { memoryNavigation } from '../selection.js';
 import { statusBadge } from '../sessions.js';
 import { ShortcutsStoreContext } from '../shortcuts.js';
 import { SORT_KEY } from '../sort.js';
+import type { TerminalFocus } from '../terminalFocus.js';
 import {
   APP_DIR,
   APP_GROUP,
@@ -189,6 +193,115 @@ export function ShortcutsDialogs() {
           <ShortcutsCase on={shortcuts.on} command={shortcuts.command} />
         </Specimen>
       ))}
+    </>
+  );
+}
+
+/** The settings the Dashboard keeps for the Preferences dialog, with state of their own, starting at `start`. */
+function usePreferenceState(start: Partial<Pick<PreferencesProps, 'groupBy' | 'backgroundTab' | 'terminalFocus'>> = {}): PreferencesProps {
+  const [groupBy, onGroupBy] = useState<GroupBy>(start.groupBy ?? 'main-repo');
+  const [backgroundTab, onBackgroundTab] = useState<BackgroundTab>(start.backgroundTab ?? 'terminal');
+  const [terminalFocus, onTerminalFocus] = useState<TerminalFocus>(start.terminalFocus ?? 'after-open');
+  return { groupBy, onGroupBy, backgroundTab, onBackgroundTab, terminalFocus, onTerminalFocus };
+}
+
+/** The single-key shortcuts in a store of their own, so a choice in one specimen changes only that one. */
+function OwnShortcuts({ on, children }: { on: boolean; children: ReactNode }) {
+  const [store] = useState(() => memoryShortcuts(on));
+  return <ShortcutsStoreContext.Provider value={store}>{children}</ShortcutsStoreContext.Provider>;
+}
+
+interface PreferencesCase {
+  title: string;
+  note: string;
+  start?: Parameters<typeof usePreferenceState>[0];
+  shortcutsOn?: boolean;
+}
+
+function PreferencesCaseDialog({ start, shortcutsOn = true }: Pick<PreferencesCase, 'start' | 'shortcutsOn'>) {
+  const settings = usePreferenceState(start);
+  return (
+    <OwnShortcuts on={shortcutsOn}>
+      <Reopenable>{(close) => <PreferencesDialog onClose={close} {...settings} />}</Reopenable>
+    </OwnShortcuts>
+  );
+}
+
+const PREFERENCES_CASES: PreferencesCase[] = [
+  {
+    title: 'As it opens',
+    note: "From the header's Preferences button, with every setting at its default, and focus on Main repo, the first group's choice. Tab goes from one group's choice to the next, the arrows choose within a group, and each choice applies at once. Escape or Close closes it, here too. Appearance is the real theme, so choosing there changes the gallery's.",
+  },
+  {
+    title: 'Other choices',
+    note: 'Every repo it worked in, Conversation, Never, and the single-key shortcuts off. The theme is the gallery’s own, as its toolbar has it.',
+    start: { groupBy: 'every-repo', backgroundTab: 'conversation', terminalFocus: 'never' },
+    shortcutsOn: false,
+  },
+];
+
+/** A section on its own, as wide as the dialog, with its body's padding. */
+function SectionStage({ children }: { children: ReactNode }) {
+  return <div className="uikit-preferences-section">{children}</div>;
+}
+
+/** Repo list on its own, with a setting of its own. */
+function RepoListSection() {
+  const settings = usePreferenceState();
+  return (
+    <SectionStage>
+      <RepoListPreferences {...settings} />
+    </SectionStage>
+  );
+}
+
+/** Session view on its own, with settings of its own. */
+function SessionViewSection() {
+  const settings = usePreferenceState();
+  return (
+    <SectionStage>
+      <SessionViewPreferences {...settings} />
+    </SectionStage>
+  );
+}
+
+export function PreferencesDialogs() {
+  return (
+    <>
+      {PREFERENCES_CASES.map((preferences) => (
+        <Specimen key={preferences.title} title={preferences.title} note={preferences.note} frame="dialog-tall">
+          <PreferencesCaseDialog start={preferences.start} shortcutsOn={preferences.shortcutsOn} />
+        </Specimen>
+      ))}
+      <Specimen
+        title="A short window"
+        note="At 375 × 540: the card is the window less 96 px tall, its header stays, and its body scrolls. Tab and the arrows bring each choice into view."
+        frame="dialog-short"
+        width={375}
+      >
+        <PreferencesCaseDialog />
+      </Specimen>
+      <Specimen title="Repo list" note="Group sessions by (W42): which group in the repo list each session is listed under, and so the groups' counts and the root tabs' badges.">
+        <RepoListSection />
+      </Specimen>
+      <Specimen
+        title="Session view"
+        note="Open running background sessions on (W54), for the views that open after the choice, never the one that's open; then The terminal takes the keyboard (W57), whose labels read on from it, for each attach after the choice."
+      >
+        <SessionViewSection />
+      </Specimen>
+      <Specimen title="Keyboard" note="The single-key shortcuts on or off: the keyboard shortcuts dialog's off switch, which stays there too (WCAG 2.1.4). A store of its own here.">
+        <OwnShortcuts on>
+          <SectionStage>
+            <KeyboardPreferences />
+          </SectionStage>
+        </OwnShortcuts>
+      </Specimen>
+      <Specimen title="Appearance" note="The theme, as the header's switch sets it, which stays as the quick way. It's the real one, so choosing here changes the gallery's theme.">
+        <SectionStage>
+          <AppearancePreferences />
+        </SectionStage>
+      </Specimen>
     </>
   );
 }
@@ -495,7 +608,7 @@ const LAYOUTS: PageCase[] = [
   },
   {
     title: 'Three columns, a running background session opened from the URL (W54)',
-    note: 'It opens on its Terminal tab, which attaches, as a click on its row would have it, with View preferences on Terminal, the default. It sends and changes nothing else.',
+    note: 'It opens on its Terminal tab, which attaches, as a click on its row would have it, with Preferences on Terminal, the default. It sends and changes nothing else.',
     width: 1280,
     search: OPEN_JOB,
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
