@@ -10,7 +10,7 @@ import { ConnectionBadge } from '../components/ConnectionBadge.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
 import { Dashboard } from '../components/Dashboard.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
-import { AppearancePreferences, KeyboardPreferences, PreferencesDialog, RepoListPreferences, SessionViewPreferences, type PreferencesProps } from '../components/Preferences.js';
+import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, type PreferencesProps } from '../components/Preferences.js';
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
@@ -205,38 +205,26 @@ function usePreferenceState(start: Partial<Pick<PreferencesProps, 'groupBy' | 'b
   return { groupBy, onGroupBy, backgroundTab, onBackgroundTab, terminalFocus, onTerminalFocus };
 }
 
-/** The single-key shortcuts in a store of their own, so a choice in one specimen changes only that one. */
-function OwnShortcuts({ on, children }: { on: boolean; children: ReactNode }) {
-  const [store] = useState(() => memoryShortcuts(on));
-  return <ShortcutsStoreContext.Provider value={store}>{children}</ShortcutsStoreContext.Provider>;
-}
-
 interface PreferencesCase {
   title: string;
   note: string;
   start?: Parameters<typeof usePreferenceState>[0];
-  shortcutsOn?: boolean;
 }
 
-function PreferencesCaseDialog({ start, shortcutsOn = true }: Pick<PreferencesCase, 'start' | 'shortcutsOn'>) {
+function PreferencesCaseDialog({ start }: Pick<PreferencesCase, 'start'>) {
   const settings = usePreferenceState(start);
-  return (
-    <OwnShortcuts on={shortcutsOn}>
-      <Reopenable>{(close) => <PreferencesDialog onClose={close} {...settings} />}</Reopenable>
-    </OwnShortcuts>
-  );
+  return <Reopenable>{(close) => <PreferencesDialog onClose={close} {...settings} />}</Reopenable>;
 }
 
 const PREFERENCES_CASES: PreferencesCase[] = [
   {
     title: 'As it opens',
-    note: "From the header's Preferences button, with every setting at its default, and focus on Main repo, the first group's choice. Tab goes from one group's choice to the next, the arrows choose within a group, and each choice applies at once. Escape or Close closes it, here too. Appearance is the real theme, so choosing there changes the gallery's.",
+    note: "From the header's Preferences button, with every setting at its default, and focus on Main repo, the first group's choice. The medium dialog, 624 px, so each option's line fits on one line, but for When you open it's two sentences (W62). Tab goes from one group's choice to the next, the arrows choose within a group, and each choice applies at once. Escape or Close closes it, here too.",
   },
   {
     title: 'Other choices',
-    note: 'Every repo it worked in, Conversation, Never, and the single-key shortcuts off. The theme is the gallery’s own, as its toolbar has it.',
+    note: 'Every repo it worked in, Conversation and Never. The single-key shortcuts and the theme aren’t here: the keyboard shortcuts dialog and the header’s theme switch have them (W62).',
     start: { groupBy: 'every-repo', backgroundTab: 'conversation', terminalFocus: 'never' },
-    shortcutsOn: false,
   },
 ];
 
@@ -269,13 +257,13 @@ export function PreferencesDialogs() {
   return (
     <>
       {PREFERENCES_CASES.map((preferences) => (
-        <Specimen key={preferences.title} title={preferences.title} note={preferences.note} frame="dialog-tall">
-          <PreferencesCaseDialog start={preferences.start} shortcutsOn={preferences.shortcutsOn} />
+        <Specimen key={preferences.title} title={preferences.title} note={preferences.note} frame="dialog">
+          <PreferencesCaseDialog start={preferences.start} />
         </Specimen>
       ))}
       <Specimen
         title="A short window"
-        note="At 375 × 540: the card is the window less 96 px tall, its header stays, and its body scrolls. Tab and the arrows bring each choice into view."
+        note="At 375 × 540: the card is the window less 32 px wide and 96 px tall, its header stays, and its body scrolls. Tab and the arrows bring each choice into view."
         frame="dialog-short"
         width={375}
       >
@@ -289,18 +277,6 @@ export function PreferencesDialogs() {
         note="Open running background sessions on (W54), for the views that open after the choice, never the one that's open; then The terminal takes the keyboard (W57), whose labels read on from it, for each attach after the choice."
       >
         <SessionViewSection />
-      </Specimen>
-      <Specimen title="Keyboard" note="The single-key shortcuts on or off: the keyboard shortcuts dialog's off switch, which stays there too (WCAG 2.1.4). A store of its own here.">
-        <OwnShortcuts on>
-          <SectionStage>
-            <KeyboardPreferences />
-          </SectionStage>
-        </OwnShortcuts>
-      </Specimen>
-      <Specimen title="Appearance" note="The theme, as the header's switch sets it, which stays as the quick way. It's the real one, so choosing here changes the gallery's theme.">
-        <SectionStage>
-          <AppearancePreferences />
-        </SectionStage>
       </Specimen>
     </>
   );

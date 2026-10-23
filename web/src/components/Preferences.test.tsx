@@ -1,18 +1,20 @@
-// Preferences in the app (W59, W42): the header's Preferences button and its dialog, opened and
-// closed, focus moving in and back, Tab staying inside, one stop per radio group, each setting
-// chosen there, applied at once and stored under its own key, and the dialog taking no single-key
-// shortcut. Then each mode of Group sessions by, chosen there, through the repo list, Needs you and
-// All sessions, the rows' group labels, the root tabs and their badges, the filter, hidden repos and
-// ?session=; the stored mode; and a switch that keeps the selection, or replaces it with focus kept,
-// and leaves the session view open. Open running background sessions on is W54's
-// (TerminalFirst.test.tsx). Made-up sessions and paths only. Where it started, W39's listing, is in
-// Dashboard.test.tsx too.
+// Preferences in the app (W59, W62, W42): the header's Preferences button and its dialog, the medium
+// one, opened and closed, focus moving in and back, Tab staying inside, one stop per radio group, each
+// setting chosen there, applied at once and stored under its own key, and the dialog taking no
+// single-key shortcut. It repeats no setting that has a button of its own (W62): the keyboard
+// shortcuts dialog's switch and the header's theme switch still set theirs, alone. Then each mode of
+// Group sessions by, chosen there, through the repo list, Needs you and All sessions, the rows' group
+// labels, the root tabs and their badges, the filter, hidden repos and ?session=; the stored mode; and
+// a switch that keeps the selection, or replaces it with focus kept, and leaves the session view open.
+// Open running background sessions on is W54's (TerminalFirst.test.tsx). Made-up sessions and paths
+// only. Where it started, W39's listing, is in Dashboard.test.tsx too.
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IndexSnapshot, WorkedIn } from '../../../src/shared/protocol.js';
 import dialogCss from './Dialog.css?raw';
+import preferencesCss from './Preferences.css?raw';
 import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import { GROUP_BY_KEY, type GroupBy } from '../groupBy.js';
 import type { StorageSource } from '../groupState.js';
@@ -24,7 +26,7 @@ import { createThemeStore, THEME_KEY, ThemeStoreContext } from '../theme.js';
 import { block, declarations, withoutComments } from '../test/css.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { chosenPreference, choosePreference, openPreferences, preferenceGroup, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
+import { chosenPreference, choosePreference, openPreferences, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
 import { shownTooltip } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 
@@ -79,7 +81,8 @@ const lightSystem = { matches: false, addEventListener: () => {} };
 
 /**
  * The Dashboard on made-up storage. The theme and the single-key shortcuts are their stores', which
- * the header and the dialog share, here on storage of their own: `theme` and `shortcuts`.
+ * the header's switch and the keyboard shortcuts dialog set, here on storage of their own: `theme`
+ * and `shortcuts`.
  */
 function renderApp(options: { mode?: GroupBy; search?: string; storage?: StorageSource; snap?: IndexSnapshot; theme?: ReturnType<typeof memory>; shortcuts?: ReturnType<typeof memory> } = {}) {
   const history = fakeHistory(options.search ?? '');
@@ -132,8 +135,6 @@ const labelOf = (radio: HTMLInputElement) => radio.labels?.[0]?.textContent;
 const GROUP_BY = 'Group sessions by';
 const BACKGROUND_TAB = 'Open running background sessions on';
 const TERMINAL_FOCUS = 'The terminal takes the keyboard';
-const SHORTCUTS = 'Single-key shortcuts';
-const THEME = 'Theme';
 
 /** Chooses a mode of Group sessions by in Preferences, by its label, and closes it. */
 function groupBy(label: string) {
@@ -173,7 +174,7 @@ describe('the Preferences dialog', () => {
     const dialog = openPreferences();
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Each change applies at once, and this browser remembers it.');
-    expect(dialog.classList.contains('sm')).toBe(true);
+    expect(dialog.classList.contains('md')).toBe(true);
     expect(dialog.querySelector('.dialog-foot')).toBeNull();
     expect(within(dialog).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close']);
   });
@@ -182,10 +183,10 @@ describe('the Preferences dialog', () => {
     renderApp();
     const dialog = openPreferences();
     const sections = within(dialog).getAllByRole('region');
-    expect(sections.map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? '')?.textContent)).toEqual(['Repo list', 'Session view', 'Keyboard', 'Appearance']);
-    expect(within(dialog).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Repo list', 'Session view', 'Keyboard', 'Appearance']);
+    expect(sections.map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? '')?.textContent)).toEqual(['Repo list', 'Session view']);
+    expect(within(dialog).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Repo list', 'Session view']);
     const groupsIn = (section: HTMLElement) => within(section).getAllByRole('group').map((each) => each.querySelector('legend')?.textContent);
-    expect(sections.map(groupsIn)).toEqual([[GROUP_BY], [BACKGROUND_TAB, TERMINAL_FOCUS], [SHORTCUTS], [THEME]]);
+    expect(sections.map(groupsIn)).toEqual([[GROUP_BY], [BACKGROUND_TAB, TERMINAL_FOCUS]]);
     for (const each of within(dialog).getAllByRole('group')) {
       expect(each.tagName).toBe('FIELDSET');
       expect(each.firstElementChild?.tagName).toBe('LEGEND');
@@ -204,30 +205,33 @@ describe('the Preferences dialog', () => {
       ['When you open it', 'Right after you open the session or its Terminal tab with a click or Enter. Never after a reload, the back button or j and k.', true],
       ['Never', 'Click the terminal, or Tab to it, to type to the session.', false],
     ]);
-    expect(options(SHORTCUTS)).toEqual([
-      ['On', 'The keys /, n, ?, j, k and s work anywhere, except while you type in a field or the terminal.', true],
-      ['Off', "Those keys do nothing, so a stray key or a speech command can't set one off.", false],
-    ]);
-    expect(describedBy(preferenceGroup(SHORTCUTS))).toBe('The keyboard shortcuts dialog, from the header, lists every key and has this switch too.');
-    expect(options(THEME)).toEqual([
-      ['System', 'Light or dark as your system is set, and it follows when that changes.', true],
-      ['Light', 'Light, whatever your system says. The terminal stays dark.', false],
-      ['Dark', 'Dark, whatever your system says.', false],
-    ]);
+    // No group has a hint: each option's line says it.
+    expect(within(dialog).getAllByRole('group').map((each) => each.hasAttribute('aria-describedby'))).toEqual([false, false, false]);
     // Each group's radios share a name no other group has, so the browser keeps them apart.
     const names = within(dialog).getAllByRole('group').map((each) => new Set(within(each).getAllByRole<HTMLInputElement>('radio').map((radio) => radio.name)));
     expect(names.every((set) => set.size === 1)).toBe(true);
-    expect(new Set(names.map((set) => [...set][0])).size).toBe(5);
+    expect(new Set(names.map((set) => [...set][0])).size).toBe(3);
+  });
+
+  it('repeats no setting that has a button of its own: no Keyboard or Appearance section, and no theme or shortcuts control (W62)', () => {
+    renderApp();
+    const dialog = openPreferences();
+    const headings = within(dialog).getAllByRole('heading').map((heading) => heading.textContent);
+    expect(headings).toEqual(['Preferences', 'Repo list', 'Session view']);
+    expect(within(dialog).queryByRole('group', { name: 'Single-key shortcuts' })).toBeNull();
+    expect(within(dialog).queryByRole('group', { name: 'Theme' })).toBeNull();
+    // Nothing else to tick or press, and no radio for the shortcuts' On and Off or the theme's three.
+    expect(within(dialog).queryAllByRole('checkbox')).toEqual([]);
+    expect(within(dialog).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close']);
+    const labels = within(dialog).getAllByRole<HTMLInputElement>('radio').map(labelOf);
+    expect(labels).toEqual(['Main repo', 'Where it started', 'Every repo it worked in', 'Terminal', 'Conversation', 'When you open it', 'Never']);
+    expect(dialog.textContent).not.toMatch(/shortcut|theme|light|dark/i);
   });
 
   it('opens on what is stored, for every setting', () => {
-    renderApp({
-      storage: memory({ [GROUP_BY_KEY]: 'every-repo', [BACKGROUND_TAB_KEY]: 'conversation', [TERMINAL_FOCUS_KEY]: 'never' }),
-      shortcuts: memory({ [SHORTCUTS_KEY]: 'off' }),
-      theme: memory({ [THEME_KEY]: 'dark' }),
-    });
+    renderApp({ storage: memory({ [GROUP_BY_KEY]: 'every-repo', [BACKGROUND_TAB_KEY]: 'conversation', [TERMINAL_FOCUS_KEY]: 'never' }) });
     openPreferences();
-    expect([GROUP_BY, BACKGROUND_TAB, TERMINAL_FOCUS, SHORTCUTS, THEME].map(chosenPreference)).toEqual(['Every repo it worked in', 'Conversation', 'Never', 'Off', 'Dark']);
+    expect([GROUP_BY, BACKGROUND_TAB, TERMINAL_FOCUS].map(chosenPreference)).toEqual(['Every repo it worked in', 'Conversation', 'Never']);
   });
 
   it("moves focus to the first group's choice as it opens, and back to its button when Escape, Close or the backdrop closes it, without its tooltip", () => {
@@ -260,18 +264,18 @@ describe('the Preferences dialog', () => {
     renderApp();
     const dialog = openPreferences();
     const close = within(dialog).getByRole('button', { name: 'Close' });
-    // System, the default, is the last group's choice, and the dialog's last stop: Light and Dark aren't stops.
-    const system = preferenceOption(THEME, 'System');
-    system.focus();
-    expect(fireEvent.keyDown(system, { key: 'Tab' })).toBe(false);
+    // When you open it, the default, is the last group's choice, and the dialog's last stop: Never isn't a stop.
+    const afterOpen = preferenceOption(TERMINAL_FOCUS, 'When you open it');
+    afterOpen.focus();
+    expect(fireEvent.keyDown(afterOpen, { key: 'Tab' })).toBe(false);
     expect(document.activeElement).toBe(close);
     expect(fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })).toBe(false);
-    expect(document.activeElement).toBe(system);
-    // Choose Dark, and it's the stop instead.
-    choosePreference(THEME, 'Dark', { close: false });
+    expect(document.activeElement).toBe(afterOpen);
+    // Choose Never, and it's the stop instead.
+    choosePreference(TERMINAL_FOCUS, 'Never', { close: false });
     close.focus();
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
-    expect(document.activeElement).toBe(preferenceOption(THEME, 'Dark'));
+    expect(document.activeElement).toBe(preferenceOption(TERMINAL_FOCUS, 'Never'));
     // Tab from a choice that isn't the last is the browser's: the dialog leaves it alone.
     const main = preferenceOption(GROUP_BY, 'Main repo');
     main.focus();
@@ -288,9 +292,15 @@ describe('the Preferences dialog', () => {
     expect(preferencesDialog()).not.toBeNull();
   });
 
-  it('is the small dialog, at most the window less 96 px tall, whose body is what scrolls, as in a 375 × 540 window', () => {
+  it('is the medium dialog, from 900 px never over the repo list, at most the window less 96 px tall, whose body is what scrolls, as in a 375 × 540 window', () => {
     renderApp();
-    expect(openPreferences().classList.contains('sm')).toBe(true);
+    const dialog = openPreferences();
+    // 624 px wide, as the New session dialog is, so its options' lines fit on one line (W62).
+    expect(dialog.classList.contains('md')).toBe(true);
+    expect(dialog.classList.contains('preferences-dialog')).toBe(true);
+    // From the sidebar breakpoint, at most the window less the repo list's width on each side.
+    const wide = block(withoutComments(preferencesCss), /@media \(min-width: 900px\)\s*\{/);
+    expect(declarations(block(wide, /\.dialog\.preferences-dialog\s*\{/))).toEqual([['width', 'min(var(--pw-dialog-md), 100%, 100vw - 2 * var(--pw-sidebar-w))']]);
     const css = withoutComments(dialogCss);
     const card = declarations(block(css, /\n\.dialog\s*\{/));
     expect(card.filter(([property]) => property === 'max-height').map(([, value]) => value)).toContain('calc(100dvh - 2 * var(--pw-space-12))');
@@ -331,42 +341,47 @@ describe('each setting, chosen in Preferences', () => {
     expect([BACKGROUND_TAB, TERMINAL_FOCUS].map(chosenPreference)).toEqual(['Conversation', 'When you open it']);
   });
 
-  it("Single-key shortcuts: off and on, the same setting as the keyboard shortcuts dialog's switch, under pitwall.shortcuts.v1", () => {
+});
+
+describe('the settings with buttons of their own, which Preferences leaves to them (W62)', () => {
+  it("Single-key shortcuts: the keyboard shortcuts dialog's switch turns them off and on, under pitwall.shortcuts.v1", () => {
     const { shortcuts } = renderApp();
-    choosePreference(SHORTCUTS, 'Off');
+    fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
+    const box = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Single-key shortcuts' });
+    expect(box.checked).toBe(true);
+    fireEvent.click(box);
     expect(shortcuts.values.get(SHORTCUTS_KEY)).toBe('off');
-    // Off: `n` does nothing, and the keyboard shortcuts dialog's switch says so.
+    fireEvent.keyDown(box, { key: 'Escape' });
+    // Off: `n` does nothing, and Preferences, which has no say in it, opens as ever.
     fireEvent.keyDown(document.body, { key: 'n' });
     expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
-    const box = screen.getByRole('checkbox', { name: 'Single-key shortcuts' });
-    expect((box as HTMLInputElement).checked).toBe(false);
-    // On again from there, and Preferences shows it.
-    fireEvent.click(box);
-    fireEvent.keyDown(box, { key: 'Escape' });
-    expect(shortcuts.values.get(SHORTCUTS_KEY)).toBe('on');
-    openPreferences();
-    expect(chosenPreference(SHORTCUTS)).toBe('On');
+    expect(within(openPreferences()).queryAllByRole('checkbox')).toEqual([]);
     fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    // On again, from the same switch.
+    fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
+    const again = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Single-key shortcuts' });
+    expect(again.checked).toBe(false);
+    fireEvent.click(again);
+    fireEvent.keyDown(again, { key: 'Escape' });
+    expect(shortcuts.values.get(SHORTCUTS_KEY)).toBe('on');
     fireEvent.keyDown(document.body, { key: 'n' });
     expect(screen.getByRole('dialog', { name: 'New session' })).toBeTruthy();
   });
 
-  it("Theme: shown at once, behind the dialog, the same choice as the header's switch, under pitwall.theme.v1", () => {
+  it("Theme: the header's switch sets it, under pitwall.theme.v1, with Preferences open or not", () => {
     const { theme } = renderApp();
     const pressed = () => within(screen.getByRole('banner')).getAllByRole('button', { pressed: true }).map((button) => button.getAttribute('aria-label'));
     expect(pressed()).toEqual(['System theme']);
-    choosePreference(THEME, 'Dark', { close: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Dark theme' }));
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     expect(theme.values.get(THEME_KEY)).toBe('dark');
     expect(pressed()).toEqual(['Dark theme']);
-    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
-    // The header's switch, the quick way, and Preferences shows its choice.
-    fireEvent.click(screen.getByRole('button', { name: 'Light theme' }));
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    openPreferences();
-    expect(chosenPreference(THEME)).toBe('Light');
-    choosePreference(THEME, 'System');
+    // Preferences changes nothing of it: choosing there leaves the theme as the switch set it.
+    choosePreference(GROUP_BY, 'Where it started');
+    choosePreference(TERMINAL_FOCUS, 'Never');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(theme.values.get(THEME_KEY)).toBe('dark');
+    fireEvent.click(screen.getByRole('button', { name: 'System theme' }));
     expect(theme.values.get(THEME_KEY)).toBe('system');
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
   });

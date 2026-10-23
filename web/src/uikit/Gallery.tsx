@@ -78,7 +78,7 @@ const SECTIONS: Section[] = [
     id: 'preferences',
     title: 'Preferences dialog',
     intro:
-      'PreferencesDialog, on Dialog (W59): its sections, Repo list, Session view, Keyboard and Appearance, each a radio group for each setting, as it opens, with other choices, in a short window, and each section alone. Each keeps its own settings here, apart from the theme, which is the real one.',
+      "PreferencesDialog, on Dialog (W59, W62): its sections, Repo list and Session view, with a radio group for each setting, as it opens, with other choices, in a short window, and each section alone. Each keeps its own settings here. The single-key shortcuts and the theme are the keyboard shortcuts dialog's and the header's switch's alone.",
     Content: PreferencesDialogs,
   },
   { id: 'tooltips', title: 'Tooltips', intro: 'Tooltip on each kind of control it is on in the app, each opened by hovering it.', Content: Tooltips },

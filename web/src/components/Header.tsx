@@ -7,8 +7,8 @@
 //
 // New session's tooltip shows its shortcut, `n`, and the shortcuts button's shows `?`. While the
 // single-key shortcuts are off, New session has no tooltip, since it would only repeat its label,
-// and the shortcuts button still opens the dialog, so they can be turned back on. Preferences, which
-// can turn them back on too, has no key.
+// and the shortcuts button still opens the dialog, so they can be turned back on. Preferences has no
+// key.
 //
 // New session says its key in aria-keyshortcuts too. The shortcuts button doesn't: ARIA 1.2 wants
 // the keys pressed, modifiers and all, and `?` is Shift and another key that differs by layout, so
