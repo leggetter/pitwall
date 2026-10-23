@@ -7,7 +7,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Spawns new sessions** in any directory under the root.
 - **Will have a supervisor session** (M5) you can talk to instead of visiting each session, knowing what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, and M2, interacting with sessions from the web UI, are done. M3, a design system and restyle, is in review in [PR #51](https://github.com/leggetter/pitwall/pull/51), with W56, a flaky relay test, still being investigated on `m3/integration`. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, and M2, interacting with sessions from the web UI, are done. M3, a design system and restyle, is in review in [PR #51](https://github.com/leggetter/pitwall/pull/51), with W61, a dev-only flaky test, still being investigated on `m3/integration`. See [`PLAN.md`](PLAN.md).
 
 ## Use
 
