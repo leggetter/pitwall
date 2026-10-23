@@ -7,7 +7,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Spawns new sessions** in any directory under the root.
 - **Will have a supervisor session** (M5) you can talk to instead of visiting each session, knowing what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, and M2, interacting with sessions from the web UI, are done. M3, a design system and restyle, is in review in [PR #51](https://github.com/leggetter/pitwall/pull/51), with W54 still being built on `m3/integration`. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, and M2, interacting with sessions from the web UI, are done. M3, a design system and restyle, is in review in [PR #51](https://github.com/leggetter/pitwall/pull/51), with W56, a flaky relay test, still being investigated on `m3/integration`. See [`PLAN.md`](PLAN.md).
 
 ## Use
 
@@ -45,7 +45,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** it gives the full Claude Code interface, including permission prompts and dialogs, without pitwall modeling any of it. `node-pty` works on Node 25. Closing the PTY detaches without stopping the session.
 - **Dialogs in the conversation** (W49): an answered question dialog shows in the Conversation tab as its questions, options and your answers, read-only. pitwall still can't answer one, and an open one isn't in the transcript, so you answer it in the terminal.
-- **In the view:** a background session's footer, where an interactive one has its message box, says to type to it in its Terminal tab, which attaches. There's no button for it, because opening the tab is what attaches (D9) (W47).
+- **In the view** (W47, W54): a running background session opens on its Terminal tab, which attaches, since that's the only place it takes input (Phil, 2026-10-22 and 2026-10-23). A finished one opens on Conversation, since attaching restarts it, and its footer says the Terminal tab asks first (D9). View preferences' "Open running background sessions on" can make running ones open on Conversation too; their footer then says to type to it in its Terminal tab, which attaches. There's no button for that, because opening the tab is what attaches (D9).
 - **Rejected:** a custom chat UI over the transcript plus `claude --resume <id> --bg "prompt"`. It would look better but can't answer dialogs. The Conversation tab is that read-only view (W9).
 
 ### D4 - The supervisor is a background Claude Code session, not an Agent SDK app
@@ -86,6 +86,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D9 - At most four attached sessions, and a confirmation before restarting one
 
 - **Why:** each attach is a PTY and a `claude attach` process. Closing the view or the tab detaches, and the session keeps running. `claude attach` restarts a background session that isn't running, which is an action, so the UI asks first.
+- **Opening a view attaches** (W54): a running background session's view opens on its Terminal tab, so opening one takes one of the four. In a root tab only the open view's terminal is attached; views kept for other root tabs keep theirs (D16). A fifth gets "4 sessions are already attached; detach one first.", with Attach again, as before. Stepping with `j`, `k`, ↑ or ↓ waits 500 ms before attaching, so passing through takes none, and the terminal takes focus only when focus is already in the view, so typing elsewhere never reaches a session.
 
 ### D6 - Group sessions by repo, as the viewer chooses: by main repo, where they started, or every repo they worked in
 
@@ -125,7 +126,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Sending:** ⌘↵ (Ctrl+Enter on other platforms) sends, and Enter adds a line. Each message starts a turn on the target session's model and can't be taken back, so a stray Enter mustn't send.
 - **When a send's outcome is unknown:** no answer, a server error or a success pitwall can't read. The UI says the message may have reached the session and to check its conversation, rather than inviting a resend that would start another turn.
-- **Shortcuts:** `/`, `n`, `?`, `j`/`k` and `s` (star the open session, W53). They're ignored while you type, in the terminal, with ⌘, Ctrl or Alt held, and while an input method composes. A setting in the shortcuts dialog turns them off (WCAG 2.1.4), and the browser remembers it.
+- **Shortcuts:** `/`, `n`, `?`, `j`/`k` and `s` (star the open session, W53). They're ignored while you type, in the terminal, with ⌘, Ctrl or Alt held, and while an input method composes. A setting in the shortcuts dialog turns them off (WCAG 2.1.4), and the browser remembers it. Onto a running background session, `j` and `k` attach only once it has stayed open for half a second, and its terminal then takes no focus, so the next `j` or `k` still steps (W54).
 - **Leaving the terminal:** F6 moves focus from the attached terminal to its tab, so the terminal isn't a keyboard trap (WCAG 2.1.2). Claude Code's docs bind nothing to F6 (checked 2026-10-21).
 - **A new line in the terminal** (Phil, 2026-10-21): Shift+Enter sends a line feed (Ctrl+J), which Claude Code's docs give as a new line in every terminal with no setup. xterm.js would send Enter's carriage return, which submits. Not with Ctrl, Alt or ⌘ as well, nor while an input method composes.
 
