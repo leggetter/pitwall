@@ -182,7 +182,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, promptLength: request.prompt.length });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
-    later(options.listDelayMs ?? 1500, () => {
+    later(options.listDelayMs ?? 800, () => {
       started.list();
       broadcast();
     });

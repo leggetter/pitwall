@@ -92,6 +92,7 @@ export class Page {
   readonly problems: Problem[] = [];
   /** The step running now, which problems are tagged with. */
   step = 'start';
+  #claimed = 0;
   readonly #cdp: Cdp;
   readonly #session: string;
   readonly #targetId: string;
@@ -101,7 +102,10 @@ export class Page {
   #loaded: (() => void) | undefined;
   readonly #off: Array<() => void> = [];
 
-  private constructor(cdp: Cdp, session: string, targetId: string, server: FakeServer, token: string) {
+  readonly #keys: boolean;
+
+  private constructor(cdp: Cdp, session: string, targetId: string, server: FakeServer, token: string, keys: boolean) {
+    this.#keys = keys;
     this.#cdp = cdp;
     this.#session = session;
     this.#targetId = targetId;
@@ -109,11 +113,15 @@ export class Page {
     this.#token = token;
   }
 
-  /** A new tab, attached, with the problem listeners, the request guard and the init script in place. */
-  static async open(cdp: Cdp, server: FakeServer, token: string): Promise<Page> {
+  /**
+   * A new tab, attached, with the problem listeners, the request guard and the init script in place.
+   * `keys` says whether key presses may be sent: only when the browser can't make the machine play a
+   * sound for one the page doesn't handle (Chrome.silent).
+   */
+  static async open(cdp: Cdp, server: FakeServer, token: string, { keys }: { keys: boolean }): Promise<Page> {
     const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true });
-    const page = new Page(cdp, sessionId, targetId, server, token);
+    const page = new Page(cdp, sessionId, targetId, server, token, keys);
     page.#listen();
     for (const domain of ['Page', 'Runtime', 'Network', 'Log']) await page.send(`${domain}.enable`);
     // Every request is held until it's checked: the fake server's go on, anything else fails.
@@ -224,10 +232,11 @@ export class Page {
       const held = [];
       for (let p = el.parentElement; p; p = p.parentElement) {
         const s = getComputedStyle(p);
-        if (/hidden|clip/.test(s.overflowX + s.overflowY)) held.push([p, p.scrollTop, p.scrollLeft]);
+        const x = /hidden|clip/.test(s.overflowX), y = /hidden|clip/.test(s.overflowY);
+        if (x || y) held.push([p, x, y, p.scrollLeft, p.scrollTop]);
       }
       el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      for (const [p, top, left] of held) { p.scrollTop = top; p.scrollLeft = left; }
+      for (const [p, x, y, left, top] of held) { if (x) p.scrollLeft = left; if (y) p.scrollTop = top; }
       const box = [...el.getClientRects()].find((r) => r.width > 0 && r.height > 0);
       if (!box) return { error: 'has no box on screen' };
       const x = box.left + box.width / 2, y = box.top + box.height / 2;
@@ -247,6 +256,7 @@ export class Page {
 
   /** A real key press: one of KEYS, or a single character, with Shift, ⌘ or Ctrl if asked. */
   async key(name: string, { shift = false, meta = false, ctrl = false }: KeyOptions = {}): Promise<void> {
+    if (!this.#keys) throw new Error(`refused to press ${name}: on macOS only chrome-headless-shell presses keys without the system alert sound (README.md)`);
     const known = KEYS[name];
     const upper = name.toUpperCase();
     const code = known?.code ?? (/^[a-z]$/i.test(name) ? `Key${upper}` : /^\d$/.test(name) ? `Digit${name}` : name);
@@ -270,6 +280,18 @@ export class Page {
     const { data } = await this.send<{ data: string }>('Page.captureScreenshot', { format: 'png' });
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, Buffer.from(data, 'base64'));
+  }
+
+  /** How many problems no step has claimed yet. */
+  get unclaimed(): number {
+    return this.problems.length - this.#claimed;
+  }
+
+  /** The problems no step has claimed yet, now claimed: each is reported once, by the step that ends next. */
+  claimProblems(): Problem[] {
+    const claimed = this.problems.slice(this.#claimed);
+    this.#claimed = this.problems.length;
+    return claimed;
   }
 
   /** What the init script recorded since this document loaded. */

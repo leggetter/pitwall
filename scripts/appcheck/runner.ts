@@ -115,7 +115,6 @@ export class Case {
     const started = Date.now();
     this.#current = result;
     this.page.step = `${this.#options.part.name} ${this.at}: ${name}`;
-    const mark = this.page.problems.length;
     let threw = false;
     try {
       await body();
@@ -134,7 +133,7 @@ export class Case {
     } catch (error) {
       result.failures.push(`couldn't check the page after the step: ${error instanceof Error ? error.message : String(error)}`);
     }
-    for (const { kind, text } of this.page.problems.slice(mark)) {
+    for (const { kind, text } of this.page.claimProblems()) {
       result.problems.push({ kind, text });
       result.failures.push(`${kind}: ${text}`);
     }
@@ -153,6 +152,21 @@ export class Case {
       if (threw) this.#broken = name;
       if (this.#options.bail) throw new BailError(`${this.#options.part.name} ${this.at}: ${name}`);
     }
+  }
+
+  /**
+   * After the part's last step: anything the page did wrong once that step had been checked, such
+   * as an error a moment later, fails a step of its own here, rather than the next case's first.
+   */
+  async finish(): Promise<void> {
+    if (this.#broken !== undefined || this.result.steps.length === 0) {
+      // The case has failed already; what's left is its own, not the next case's.
+      this.page.claimProblems();
+      return;
+    }
+    await this.page.settle(50);
+    for (const csp of await this.page.takeCsp()) this.page.problems.push({ step: this.page.step, kind: 'csp', text: csp });
+    if (this.page.unclaimed > 0) await this.step('nothing went wrong after the last step', async () => {});
   }
 
   /** A check inside a step: when `ok` is falsy, the step fails with `what`, and `detail` if given. It doesn't stop the step. */
