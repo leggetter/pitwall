@@ -83,7 +83,11 @@ Runs pitwall's headless app check against the production build. Run npm run buil
   --pending             run the parts marked pending too
   --bail                stop at the first failed step
   --timeout <minutes>   stop everything and fail after this long (default: 20)
-  --list                list the parts and exit`;
+  --list                list the parts and exit
+
+The browser is CHROME_PATH, or chrome-headless-shell where npm run appcheck:install-shell puts it.
+On macOS it must be chrome-headless-shell: Google Chrome's headless mode plays the alert sound for
+every key a page doesn't handle.`;
 
 /** Parses argv (without node and the script). Throws UsageError on anything it doesn't accept. */
 export function parseOptions(argv: readonly string[], repo: string): Options {
@@ -155,8 +159,8 @@ export function parsePorts(value: string | undefined): PortRange {
 }
 
 /**
- * Hands out the range's ports in order, and refuses one outside it, so nothing the harness starts or
- * connects to is anywhere else.
+ * Hands out the range's ports in order, and none outside it: the fake server's and Chrome's debugging
+ * port are the only ones the harness listens on or connects to.
  */
 export class PortGuard {
   readonly #range: PortRange;
@@ -170,11 +174,6 @@ export class PortGuard {
   take(what: string): number {
     if (this.#next > this.#range.to) throw new UsageError(`--ports ${this.#range.from}-${this.#range.to} has no port left for ${what}`);
     return this.#next++;
-  }
-
-  /** Throws unless `port` is inside the range: called before any connection the harness makes. */
-  check(port: number, what: string): void {
-    if (!(port >= this.#range.from && port <= this.#range.to)) throw new Error(`${what}: port ${port} is outside ${this.#range.from}-${this.#range.to}`);
   }
 }
 

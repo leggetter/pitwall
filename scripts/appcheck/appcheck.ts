@@ -13,13 +13,19 @@ import { existsSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { basename, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { findChrome, launchChrome, type Chrome } from './chrome.js';
+import { defaultHeadlessShell, findChrome, HEADLESS_SHELL, isHeadlessShell, launchChrome, type Chrome } from './chrome.js';
 import { parseOptions, PortGuard, UsageError, USAGE, type Options } from './options.js';
 import { Page } from './page.js';
 import { BailError, Case, type CaseResult, type Part } from './runner.js';
 import { importBuilt, madeUpToken, startFakeServer, type FakeServer } from './server.js';
 
 const HERE = import.meta.dirname;
+
+/** Why the check won't drive Google Chrome on macOS. */
+const SILENT_ONLY =
+  `appcheck: on macOS, Google Chrome's headless mode plays the system alert sound for every key a page doesn't handle, and the check presses hundreds. ` +
+  `It runs in ${HEADLESS_SHELL} instead, which plays none: npm run appcheck:install-shell installs it where the check looks, or set CHROME_PATH to one. ` +
+  `See "Chrome on macOS" in scripts/appcheck/README.md.`;
 const REPO = resolve(HERE, '..', '..');
 const started = Date.now();
 const log = (line: string) => console.log(line);
@@ -64,7 +70,11 @@ async function main(): Promise<number> {
 
   const chromePath = findChrome();
   if (chromePath === undefined) {
-    console.error('appcheck: no Chrome at /Applications/Google Chrome.app, or at CHROME_PATH. Set CHROME_PATH to a Chrome or Chromium binary.');
+    console.error(`appcheck: no browser at CHROME_PATH, ${defaultHeadlessShell() ?? 'the headless shell path'} or /Applications/Google Chrome.app. Run npm run appcheck:install-shell, or set CHROME_PATH.`);
+    return 2;
+  }
+  if (process.platform === 'darwin' && !isHeadlessShell(chromePath)) {
+    console.error(SILENT_ONLY);
     return 2;
   }
 
@@ -76,8 +86,12 @@ async function main(): Promise<number> {
   const token = madeUpToken();
   server = await startFakeServer({ port: serverPort, webRoot: options.webRoot, built: await importBuilt(options.dist), token });
   chrome = await launchChrome({ path: chromePath, debugPort, profileParent: options.out });
+  if (!chrome.silent) {
+    console.error(SILENT_ONLY);
+    return 2;
+  }
   summaryContext = { options, parts, chromeVersion: chrome.version };
-  page = await Page.open(chrome.cdp, server, token);
+  page = await Page.open(chrome.cdp, server, token, { keys: chrome.silent });
 
   const windows = (part: Part) => options.viewports.filter((each) => part.viewports === undefined || part.viewports.includes(each.name));
   const total = parts.reduce((sum, part) => sum + windows(part).length * options.themes.length, 0);
@@ -91,6 +105,7 @@ async function main(): Promise<number> {
           const caseStarted = Date.now();
           try {
             await part.run(t);
+            await t.finish();
           } catch (error) {
             if (error instanceof BailError) throw error;
             // A throw outside any step: the part itself is broken.
@@ -98,6 +113,7 @@ async function main(): Promise<number> {
           }
           t.result.ms = Date.now() - caseStarted;
           cases.push(t.result);
+          if (chrome.cdp.closed) throw new Error("Chrome's debugging connection closed in the middle of the run");
           const failed = t.result.steps.filter((each) => each.status === 'failed').length;
           const skipped = t.result.steps.filter((each) => each.status === 'skipped').length;
           log(`  ${failed > 0 ? 'FAIL' : 'ok  '} ${part.name.padEnd(22)} ${t.at.padEnd(14)} ${String(t.result.steps.length).padStart(3)} steps${failed > 0 ? `, ${failed} failed` : ''}${skipped > 0 ? `, ${skipped} skipped` : ''}  ${(t.result.ms / 1000).toFixed(1)} s`);
@@ -201,8 +217,15 @@ function stopEverything(): Promise<void> {
   return stopping;
 }
 
+let aborting = false;
 async function abort(reason: string, code: number) {
+  // Once: Ctrl+C reaches this process twice, from the terminal and relayed by tsx, and a second
+  // signal must not cut the cleanup short.
+  if (aborting) return;
+  aborting = true;
   log(`\nappcheck: ${reason}. Stopping the browser and the fake server.`);
+  // If stopping hangs, the browser this run started is killed by its PID on the way out.
+  setTimeout(() => process.exit(code), 15_000).unref();
   await writeSummary(reason).catch(() => {});
   await stopEverything();
   process.exit(code);
@@ -213,9 +236,9 @@ function formatDuration(ms: number): string {
   return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
 
-process.once('SIGINT', () => void abort('interrupted', 130));
-process.once('SIGTERM', () => void abort('stopped by SIGTERM', 143));
-process.once('SIGHUP', () => void abort('stopped by SIGHUP', 129));
+process.on('SIGINT', () => void abort('interrupted', 130));
+process.on('SIGTERM', () => void abort('stopped by SIGTERM', 143));
+process.on('SIGHUP', () => void abort('stopped by SIGHUP', 129));
 // The last resort, when nothing can be awaited: the browser this run started, by its PID.
 process.on('exit', () => chrome?.killNow());
 
@@ -228,6 +251,8 @@ main().then(
   },
   async (error: unknown) => {
     clearTimeout(watchdog);
+    // Stopping the browser on a signal makes the run in flight fail; abort() has it in hand.
+    if (aborting) return;
     console.error(`appcheck: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
     await writeSummary(`couldn't run: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
     await stopEverything();

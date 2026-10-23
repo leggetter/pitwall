@@ -18,6 +18,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
     "test": "vitest run",
     "appcheck": "tsx scripts/appcheck/appcheck.ts",
+    "appcheck:install-shell": "sh scripts/appcheck/install-headless-shell.sh",
     "start": "node dist/cli.js"
   },
   "dependencies": {
