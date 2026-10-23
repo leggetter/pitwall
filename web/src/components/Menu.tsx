@@ -5,7 +5,9 @@
 // activates; Escape and Tab close it. Focus goes back to the button whenever it closes from the
 // keyboard or an item, before the item runs, so an item that opens something can move focus on from
 // there. A press outside closes it without moving focus; focus moving away by itself doesn't, so a
-// page can show several open menus, as the #uikit gallery does.
+// page can show several open menus, as the #uikit gallery does. With room on neither side of its
+// button, as on a short window, it opens below, as tall as the window leaves, and scrolls (W54, as
+// View preferences grew a second group).
 //
 // A radio group (W42, View preferences) is a role="group" of role="menuitemradio" items, named by
 // its title, which shows above them. Each option has a label and may have one line saying what it
@@ -85,8 +87,11 @@ const isItem = (entry: MenuEntry): entry is MenuItem => entry.kind === undefined
 /** The gap between the button and the panel, in px. */
 const GAP = 4;
 
-/** How close the panel may come to the window's start edge, in px, when it's moved in from there. */
+/** How close the panel may come to the window's start edge, in px, when it's moved in from there, and to its foot when it scrolls. */
 const EDGE = 8;
+
+/** The least a panel that scrolls is cut to, in px: two items and a bit, so it reads as a list that goes on. */
+const MIN_LIMIT = 96;
 
 /** Everything the arrows move through: items and radio options alike. */
 const FOCUSABLE = '[role="menuitem"], [role="menuitemradio"]';
@@ -120,6 +125,8 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
   const [up, setUp] = useState(false);
   // How far the panel is moved in from the window's start edge, which aligning it to the button's end cut off.
   const [shift, setShift] = useState(0);
+  // How tall the panel may be, when it fits neither below its button nor above: it scrolls then.
+  const [limit, setLimit] = useState<number | undefined>(undefined);
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
 
@@ -142,6 +149,7 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
   useLayoutEffect(() => {
     if (!open) {
       setShift(0);
+      setLimit(undefined);
       return;
     }
     const panel = menu.current;
@@ -152,9 +160,13 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
       const { top, bottom } = trigger.getBoundingClientRect();
       // Only a button on screen can run out of room; one scrolled out of view opens below, as usual.
       const onScreen = bottom > 0 && top < window.innerHeight;
-      setUp(onScreen && window.innerHeight - bottom < height && top >= height);
+      const below = window.innerHeight - bottom;
+      setUp(onScreen && below < height && top >= height);
       // A button near the start of a narrow window: the panel, aligned to its end, would start off screen.
       setShift(onScreen && rect.left < EDGE ? EDGE - rect.left : 0);
+      // No room on either side: below, down to EDGE from the window's foot, scrolling, and never so
+      // short that an item or two can't show.
+      setLimit(onScreen && below < height && top < height ? Math.max(below - GAP - EDGE, MIN_LIMIT) : undefined);
     }
     // Without scrolling: the menu opens where its button already is, in view.
     const list = items();
@@ -306,7 +318,7 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
           role="menu"
           aria-label={label}
           onKeyDown={onMenuKeyDown}
-          style={shift > 0 ? { right: `${-shift}px` } : undefined}
+          style={shift > 0 || limit !== undefined ? { ...(shift > 0 ? { right: `${-shift}px` } : {}), ...(limit !== undefined ? { maxHeight: `${limit}px`, overflowY: 'auto' } : {}) } : undefined}
         >
           {/* An item with no icon of its own keeps the room for one, so the labels line up. */}
           {entries.map((entry) =>
