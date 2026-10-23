@@ -156,16 +156,12 @@ describe('the #uikit route', () => {
     act(() => bar().getByRole('button', { name: 'Dark theme' }).click());
     expect(root.getAttribute('data-theme')).toBe('dark');
     expect(bar().getByRole('button', { name: 'Dark theme' }).getAttribute('aria-pressed')).toBe('true');
-    // Every other switch on the page, such as those in the page specimens' headers, shows the same, and
-    // so does every Preferences dialog's Theme, a radio group (W59).
-    const themes = screen.getAllByRole('group', { name: 'Theme' }).filter((group) => !group.closest('[data-own-store]'));
-    const switches = themes.filter((group) => group.classList.contains('theme-switch'));
-    const radios = themes.filter((group) => group.tagName === 'FIELDSET');
+    // Every other switch on the page, such as those in the page specimens' headers, shows the same. Each
+    // is the header's switch: the Preferences dialogs have no Theme of their own (W62).
+    const switches = screen.getAllByRole('group', { name: 'Theme' }).filter((group) => !group.closest('[data-own-store]'));
     expect(switches.length).toBeGreaterThan(1);
-    expect(radios.length).toBeGreaterThan(1);
-    expect(switches.length + radios.length).toBe(themes.length);
+    expect(switches.every((group) => group.classList.contains('theme-switch'))).toBe(true);
     for (const group of switches) expect(within(group).getByRole('button', { name: 'Dark theme' }).getAttribute('aria-pressed')).toBe('true');
-    for (const group of radios) expect(within(group).getByRole<HTMLInputElement>('radio', { name: 'Dark' }).checked).toBe(true);
     act(() => bar().getByRole('button', { name: 'Light theme' }).click());
     expect(root.getAttribute('data-theme')).toBe('light');
     expect(window.localStorage.getItem(THEME_KEY)).toBe('light');

@@ -2,27 +2,26 @@
 // preferences menu. Phil, 2026-10-23: "the preferences pane should be a dialog with sections covering
 // the area that's being configured." The header's `preferences` icon button opens it.
 //
-// A small Dialog, with no footer: each choice applies as it's made, as the menu's did, and the page
-// behind shows it at once, so there's nothing to save or cancel. Its sections follow the page, left
-// to right, then what's the whole page's:
+// A Dialog, with no footer: each choice applies as it's made, as the menu's did, and the page behind
+// shows it at once, so there's nothing to save or cancel. Its sections follow the page, left to right:
 //
 // - Repo list: Group sessions by (W42), which decides the repo list's groups and their counts.
 // - Session view: Open running background sessions on (W54), and The terminal takes the keyboard (W57).
-// - Keyboard: the single-key shortcuts, on or off: the same store as the keyboard shortcuts dialog's
-//   off switch, which stays there, as WCAG 2.1.4's discoverable one.
-// - Appearance: the theme: the same store as the header's theme switch, which stays as the quick way.
 //
-// Each section is a <section> named by its <h3>, and each setting a RadioGroup. Sort stays in the
-// session list's header and the view's width on the divider: both are view controls, used in place.
-// Each setting keeps its own key and validation: Group by and the two session view settings are the
-// Dashboard's, passed in; the shortcuts and the theme are their stores' (shortcuts.ts, theme.ts).
+// The settings that have buttons of their own aren't repeated here (W62; Phil, 2026-10-23: "I don't
+// think we should duplicate settings that already have their own standalone buttons"): the single-key
+// shortcuts are the keyboard shortcuts dialog's off switch, and the theme is the header's switch.
+//
+// The medium dialog, 624 px, so each option's line fits on one line, all but W57's two sentences, and
+// from 900 px never over the repo list (W62, Preferences.css). Each section is a <section> named by
+// its <h3>, and each setting a RadioGroup.
+// Sort stays in the session list's header and the view's width on the divider: both are view
+// controls, used in place. Each setting keeps its own key and validation, the Dashboard's, passed in.
 
 import { useId, type ReactNode } from 'react';
 import { BACKGROUND_TAB_DESCRIPTIONS, BACKGROUND_TAB_LABELS, BACKGROUND_TAB_TITLE, BACKGROUND_TABS, type BackgroundTab } from '../backgroundTab.js';
 import { GROUP_BY_DESCRIPTIONS, GROUP_BY_LABELS, GROUP_BY_MODES, GROUP_BY_TITLE, type GroupBy } from '../groupBy.js';
-import { useShortcuts } from '../shortcuts.js';
 import { TERMINAL_FOCUS_DESCRIPTIONS, TERMINAL_FOCUS_LABELS, TERMINAL_FOCUS_TITLE, TERMINAL_FOCUSES, type TerminalFocus } from '../terminalFocus.js';
-import { useTheme, type ThemeChoice } from '../theme.js';
 import { Dialog } from './Dialog.js';
 import { RadioGroup, type RadioOption } from './RadioGroup.js';
 import './Preferences.css';
@@ -37,26 +36,7 @@ export const PREFERENCES_SUBTITLE = 'Each change applies at once, and this brows
 export const PREFERENCE_SECTIONS = {
   repoList: 'Repo list',
   sessionView: 'Session view',
-  keyboard: 'Keyboard',
-  appearance: 'Appearance',
 } as const;
-
-export const SHORTCUTS_TITLE = 'Single-key shortcuts';
-
-export const SHORTCUTS_OPTIONS: readonly RadioOption<'on' | 'off'>[] = [
-  { value: 'on', label: 'On', description: 'The keys /, n, ?, j, k and s work anywhere, except while you type in a field or the terminal.' },
-  { value: 'off', label: 'Off', description: "Those keys do nothing, so a stray key or a speech command can't set one off." },
-];
-
-export const SHORTCUTS_PREFERENCE_HINT = 'The keyboard shortcuts dialog, from the header, lists every key and has this switch too.';
-
-export const THEME_TITLE = 'Theme';
-
-export const THEME_OPTIONS: readonly RadioOption<ThemeChoice>[] = [
-  { value: 'system', label: 'System', description: 'Light or dark as your system is set, and it follows when that changes.' },
-  { value: 'light', label: 'Light', description: 'Light, whatever your system says. The terminal stays dark.' },
-  { value: 'dark', label: 'Dark', description: 'Dark, whatever your system says.' },
-];
 
 const GROUP_BY_OPTIONS: readonly RadioOption<GroupBy>[] = GROUP_BY_MODES.map((mode) => ({ value: mode, label: GROUP_BY_LABELS[mode], description: GROUP_BY_DESCRIPTIONS[mode] }));
 const BACKGROUND_TAB_OPTIONS: readonly RadioOption<BackgroundTab>[] = BACKGROUND_TABS.map((tab) => ({ value: tab, label: BACKGROUND_TAB_LABELS[tab], description: BACKGROUND_TAB_DESCRIPTIONS[tab] }));
@@ -112,26 +92,6 @@ export function SessionViewPreferences({ backgroundTab, onBackgroundTab, termina
   );
 }
 
-/** Keyboard: the single-key shortcuts, on the store the keyboard shortcuts dialog's off switch uses. */
-export function KeyboardPreferences() {
-  const { on, setOn } = useShortcuts();
-  return (
-    <PreferencesSection title={PREFERENCE_SECTIONS.keyboard}>
-      <RadioGroup legend={SHORTCUTS_TITLE} hint={SHORTCUTS_PREFERENCE_HINT} value={on ? 'on' : 'off'} options={SHORTCUTS_OPTIONS} onChange={(value) => setOn(value === 'on')} />
-    </PreferencesSection>
-  );
-}
-
-/** Appearance: the theme, on the store the header's theme switch uses. */
-export function AppearancePreferences() {
-  const { choice, setChoice } = useTheme();
-  return (
-    <PreferencesSection title={PREFERENCE_SECTIONS.appearance}>
-      <RadioGroup legend={THEME_TITLE} value={choice} options={THEME_OPTIONS} onChange={setChoice} />
-    </PreferencesSection>
-  );
-}
-
 /** The settings the Dashboard keeps, which the dialog shows and changes. */
 export type PreferencesProps = RepoListPreferencesProps & SessionViewPreferencesProps;
 
@@ -141,11 +101,9 @@ export interface PreferencesDialogProps extends PreferencesProps {
 
 export function PreferencesDialog({ onClose, groupBy, onGroupBy, backgroundTab, onBackgroundTab, terminalFocus, onTerminalFocus }: PreferencesDialogProps) {
   return (
-    <Dialog title={PREFERENCES_LABEL} subtitle={PREFERENCES_SUBTITLE} size="sm" onClose={onClose} className="preferences-dialog">
+    <Dialog title={PREFERENCES_LABEL} subtitle={PREFERENCES_SUBTITLE} size="md" onClose={onClose} className="preferences-dialog">
       <RepoListPreferences groupBy={groupBy} onGroupBy={onGroupBy} />
       <SessionViewPreferences backgroundTab={backgroundTab} onBackgroundTab={onBackgroundTab} terminalFocus={terminalFocus} onTerminalFocus={onTerminalFocus} />
-      <KeyboardPreferences />
-      <AppearancePreferences />
     </Dialog>
   );
 }

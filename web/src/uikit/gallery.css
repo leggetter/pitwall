@@ -186,9 +186,9 @@
   max-height: calc(540px - 2 * var(--pw-space-12));
 }
 
-/* The Preferences dialog's sections one at a time, each as wide as the dialog, with its body's padding (W59). */
+/* The Preferences dialog's sections one at a time, each as wide as the dialog, with its body's padding (W59, W62). */
 .uikit-preferences-section {
-  max-width: var(--pw-dialog-sm);
+  max-width: var(--pw-dialog-md);
   padding: var(--pw-space-4);
   background: var(--pw-surface-overlay);
 }
