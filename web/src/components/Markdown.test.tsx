@@ -545,6 +545,31 @@ describe("Markdown: links that ask first (W55, W48's F6)", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it("asks for a look-alike host's own address, in punycode, after the block it is in: a bare URL, an autolink, [same](same), inline code and a code block (W58)", () => {
+    // github.com with a Cyrillic і (U+0456): its text shows the look-alike, its host is punycode.
+    const lookAlike = 'https://gіthub.com/example/repo/pull/51';
+    const punycode = 'https://xn--gthub-n2e.com/example/repo/pull/51';
+    const { root } = renderMarkdown(
+      [`A bare ${lookAlike} here.`, `An autolink <${lookAlike}> here.`, `[${lookAlike}](${lookAlike})`, `Run \`gh pr view ${lookAlike}\`.`, `\`\`\`sh\n${lookAlike}\n\`\`\``, 'After the code.'].join('\n\n'),
+    );
+    const links = [...root.querySelectorAll<HTMLAnchorElement>('a')];
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual(Array.from({ length: 5 }, () => [lookAlike, punycode]));
+    const blocks = [...root.querySelectorAll<HTMLElement>(':scope > p.md-p')].slice(0, 4).concat(root.querySelector<HTMLElement>(':scope > .md-code')!);
+    links.forEach((link, index) => {
+      expect(follow(link), String(index)).toBe(true);
+      const [box] = questions(root);
+      expect(box!.querySelector('.inline-confirm-question')!.textContent, String(index)).toBe('Open this link to xn--gthub-n2e.com?');
+      expect(box!.querySelector('code.link-confirm-address')!.textContent, String(index)).toBe(punycode);
+      // Straight after its own block: a code block's comes after its box, not after the message.
+      expect(box!.previousElementSibling, String(index)).toBe(blocks[index]);
+      expect(document.activeElement).toBe(buttonSaying(box!, 'Cancel'));
+      act(() => buttonSaying(root, 'Cancel').click());
+      expect(document.activeElement).toBe(link);
+    });
+    expect(questions(root)).toEqual([]);
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('asks for a link whose text is words, naming its host', () => {
     const { root } = renderMarkdown('The fix is in [the pull request](https://github.com/example/app/pull/51).');
     expect(follow(linkSaying(root, 'the pull request'))).toBe(true);
