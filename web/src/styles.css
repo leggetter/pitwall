@@ -2995,6 +2995,14 @@ ol.md-list {
 }
 
 /*
+ * The question a link asks before it opens (W55), after the paragraph, heading or table the link is
+ * in: an inline confirmation, in the text colour even inside a quote, whose text is muted.
+ */
+.entry-markdown .inline-confirm {
+  color: var(--pw-text);
+}
+
+/*
  * A code block: --pw-surface-muted (--pw-surface inside another session's message or a message to
  * pitwall), a 1 px border, the language and a Copy button in a bar above the code, and the code in
  * code style, as written, scrolling sideways in its own box.

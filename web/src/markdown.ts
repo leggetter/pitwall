@@ -8,8 +8,12 @@
 //   ordered lists, nested; block quotes; thematic breaks; GFM tables.
 // - Inline: bold, italic, both, ~~strikethrough~~, code spans of any backtick-run length, backslash
 //   escapes, links from [text](url), <url> and bare URLs, and images, which become their alt text.
-// - Only absolute http: and https: URLs become links, as the browser parses them. A link to anything
-//   else shows as the literal text it was written as.
+// - Only absolute http: and https: URLs become links, as the browser parses them, and never one with
+//   a username or password before its host, such as https://github.com@evil.example/x, whose text
+//   names one site while it goes to another (W55). A link to anything else shows as the literal text
+//   it was written as.
+// - A link whose text isn't its own address asks before it opens (asksFirst, W55), so the renderer
+//   can ask; a bare URL and an autolink never do.
 // - Code is literal, but its bare http: and https: URLs are links too, under the same rule (W37), so a
 //   draft or a command that Claude puts in code can be opened from it. Markdown's own link syntax in
 //   code, [text](url) and <url>, stays text, as everything else in code does, and so does a code span
@@ -123,7 +127,11 @@ export function elementCount(blocks: Block[], limit = Number.POSITIVE_INFINITY):
   return count;
 }
 
-/** The absolute http: or https: URL in `text`, as the browser parses it, or undefined for anything else. */
+/**
+ * The absolute http: or https: URL in `text`, as the browser parses it, or undefined for anything else,
+ * a URL with a username or password before its host included (W55): in `https://github.com@evil.example/x`
+ * the host is evil.example, and github.com only the username.
+ */
 export function httpUrl(text: string): URL | undefined {
   let url: URL;
   try {
@@ -131,7 +139,73 @@ export function httpUrl(text: string): URL | undefined {
   } catch {
     return undefined;
   }
-  return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname !== '' ? url : undefined;
+  const http = url.protocol === 'http:' || url.protocol === 'https:';
+  return http && url.hostname !== '' && url.username === '' && url.password === '' ? url : undefined;
+}
+
+// --- Links that ask first (W55, W48's F6) ---------------------------------------------------------
+//
+// A link whose text isn't its own address asks before it opens, naming the host it really goes to
+// (components/Markdown.tsx), since its text can name one site while it goes to another. A bare URL
+// and an autolink are their own address, so they open on one click, in code too (W37).
+
+/** A link's text as it shows: its text and code, inside any formatting, with a line break as a line feed. */
+export function linkText(children: Inline[]): string {
+  let text = '';
+  const walk = (inlines: Inline[]) => {
+    for (const item of inlines) {
+      if (item.type === 'text' || item.type === 'code') text += item.text;
+      else if (item.type === 'break') text += '\n';
+      else walk(item.children);
+    }
+  };
+  walk(children);
+  return text;
+}
+
+/** What the browser's URL parser drops from either end of a URL: C0 controls and spaces. */
+const PARSER_TRIMS = /^[\u0000- ]+|[\u0000- ]+$/g;
+/** What can't be inside a link's text for it to be its own address: spaces, and the tabs and line breaks the parser drops unseen. */
+const NOT_AN_ADDRESS = /[ \t\n\r]/;
+const HAS_SCHEME = /^https?:/i;
+
+/**
+ * Whether `text` is the address `href` opens, so a link with this text can open on one click. The same
+ * address means:
+ * - The text, without the C0 controls and spaces at either end that the browser's parser drops too,
+ *   has no space, tab or line break in it (the parser would drop a tab or line break unseen).
+ * - Read as a URL: as written when it starts with `http:` or `https:` (any case), or else with the
+ *   link's own scheme and `//` before it, so `example.com/docs` is the scheme left off.
+ * - It parses as an http: or https: URL with no username or password (httpUrl), and is the link's URL
+ *   apart from one `/` at the end of the path; an empty `?` or `#` doesn't count either. The parser
+ *   already makes the case of the scheme and host, a host and its punycode, a default port, `.` and
+ *   `..` segments and percent-encoding the same.
+ * Anything else isn't: words, another URL, the other scheme (`http:` text on an `https:` link), a
+ * different query or fragment, `www.` added or left off.
+ *
+ * A bare URL or an autolink always is: its text is what was parsed to make its URL, it starts with
+ * its scheme, the parser drops the same characters from its ends as PARSER_TRIMS, and it can't hold a
+ * space, tab or line break (a bare URL ends at whitespace, an autolink holds only characters above
+ * U+0020).
+ */
+export function isOwnAddress(text: string, href: string): boolean {
+  const written = text.replace(PARSER_TRIMS, '');
+  if (written === '' || NOT_AN_ADDRESS.test(written)) return false;
+  const target = httpUrl(href);
+  if (!target) return false;
+  const read = httpUrl(HAS_SCHEME.test(written) ? written : `${target.protocol}//${written}`);
+  return read !== undefined && addressKey(read) === addressKey(target);
+}
+
+/** A URL as isOwnAddress compares it: without one `/` at the end of its path, or an empty `?` or `#`. */
+function addressKey(url: URL): string {
+  const path = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
+  return `${url.protocol}//${url.host}${path}${url.search}${url.hash}`;
+}
+
+/** Whether a link asks before it opens: when its text isn't its own address (isOwnAddress). */
+export function asksFirst(link: { href: string; children: Inline[] }): boolean {
+  return !isOwnAddress(linkText(link.children), link.href);
 }
 
 // --- Blocks ----------------------------------------------------------------------------------------

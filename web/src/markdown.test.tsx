@@ -4,9 +4,12 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  asksFirst,
   elementCount,
   httpUrl,
+  isOwnAddress,
   linkify,
+  linkText,
   MAX_BLOCK_DEPTH,
   MAX_ELEMENTS,
   MAX_INLINE_DEPTH,
@@ -703,5 +706,120 @@ describe('where a bare URL ends, in text and code (W37)', () => {
     expect(inCode('<https://example.com/a> and <https://example.com/b>,')).toEqual([text('<https://example.com/a> and <https://example.com/b>,')]);
     // A < before it with no > after it isn't an autolink: the URL is a bare one.
     expect(inCode('<https://example.com/c d')).toEqual([text('<'), url('https://example.com/c'), text(' d')]);
+  });
+});
+
+describe('a username or password before the host (W55, W48\'s F6)', () => {
+  /** github.com is only the username here: the host is evil.example. */
+  const USERINFO = 'https://github.com@evil.example/x';
+
+  it('is never an http URL, whatever the username or password', () => {
+    for (const written of [USERINFO, 'https://user:secret@example.com/', 'https://:secret@example.com/', 'https://github.com:@evil.example/', 'https://:@github.com@evil.example/', 'HTTP://GITHUB.COM@EVIL.EXAMPLE/']) {
+      expect(httpUrl(written), written).toBeUndefined();
+    }
+    // An @ in the path, and an empty userinfo, which the parser drops, are no username.
+    expect(httpUrl('https://example.com/@example')?.href).toBe('https://example.com/@example');
+    expect(httpUrl('https://@example.com/a')?.href).toBe('https://example.com/a');
+  });
+
+  it('is the text it was written as in a link, an autolink, a bare URL, an image and code', () => {
+    for (const written of [`[the pull request](${USERINFO})`, `[${USERINFO}](${USERINFO})`, `<${USERINFO}>`, USERINFO, `see ${USERINFO}.`, `\`${USERINFO}\``]) {
+      const blocks = parseMarkdown(written);
+      expect(linksIn(blocks), written).toEqual([]);
+      expect(blocks, written).toEqual([para(written.startsWith('`') ? { type: 'code', text: USERINFO } : text(written))]);
+    }
+    expect(parseMarkdown(`\`\`\`\ngh pr view ${USERINFO}\n\`\`\``)).toEqual([{ type: 'code', language: '', text: `gh pr view ${USERINFO}`, closed: true }]);
+    // An image is its alt text, with no link.
+    expect(parseInline(`![a chart](${USERINFO})`)).toEqual([text('a chart')]);
+    // A bare URL beside one is still a link.
+    expect(linkify(`${USERINFO} or https://example.com/y`)).toEqual([text(`${USERINFO} or `), link('https://example.com/y', text('https://example.com/y'))]);
+  });
+});
+
+describe('links that ask first (W55, W48\'s F6)', () => {
+  it.each([
+    ['the same URL', 'https://example.com/docs', 'https://example.com/docs'],
+    ['a / added at the end of the path', 'https://example.com/docs/', 'https://example.com/docs'],
+    ['a / left off the end of the path', 'https://example.com/docs', 'https://example.com/docs/'],
+    ['a bare host', 'https://example.com', 'https://example.com/'],
+    ['the scheme left off', 'example.com/docs', 'https://example.com/docs'],
+    ['the scheme left off an http: link', 'example.com/docs', 'http://example.com/docs'],
+    ['the scheme and a trailing / left off', 'github.com/example/app/pull/51', 'https://github.com/example/app/pull/51/'],
+    ['the scheme and host in capitals', 'HTTPS://EXAMPLE.COM/docs', 'https://example.com/docs'],
+    ['an internationalised host, which the link has in punycode', 'https://exämple.com/login', 'https://xn--exmple-cua.com/login'],
+    ['the default port', 'https://example.com:443/a', 'https://example.com/a'],
+    ['characters the parser percent-encodes', 'https://example.com/users/{id}', 'https://example.com/users/%7Bid%7D'],
+    ['spaces at either end', '  https://example.com/a ', 'https://example.com/a'],
+    ['an empty query or fragment', 'https://example.com/a?#', 'https://example.com/a'],
+    ['the same query and fragment', 'https://example.com/a?b=1&c=2#d', 'https://example.com/a?b=1&c=2#d'],
+  ])('counts as its own address: %s', (_name, written, href) => {
+    expect(isOwnAddress(written, href)).toBe(true);
+  });
+
+  it.each([
+    ['words', 'the docs', 'https://example.com/docs'],
+    ['one word', 'docs', 'https://example.com/docs'],
+    ['another URL', 'https://github.com/example/repo/pull/51', 'https://evil.example/pull/51'],
+    ['another path on the same host', 'https://example.com/docs', 'https://example.com/login'],
+    ['the other scheme', 'http://example.com/a', 'https://example.com/a'],
+    ['https: text on an http: link', 'https://example.com/a', 'http://example.com/a'],
+    ['another query', 'https://example.com/a', 'https://example.com/a?next=https://evil.example'],
+    ['another fragment', 'https://example.com/a', 'https://example.com/a#b'],
+    ['www. added', 'www.example.com', 'https://example.com/'],
+    ['www. left off', 'example.com', 'https://www.example.com/'],
+    ['another port', 'https://example.com/a', 'https://example.com:8443/a'],
+    ['two slashes at the end', 'https://example.com/a//', 'https://example.com/a'],
+    ['a look-alike host, which the link has in punycode', 'https://example.com', 'https://xn--xample-2of.com/'],
+    ['a username in the text', 'https://github.com@evil.example/x', 'https://evil.example/x'],
+    ['a tab the parser would drop unseen', 'https://exa\tmple.com/', 'https://example.com/'],
+    ['a line break', 'https://example.com/\na', 'https://example.com/a'],
+    ['a space inside', 'https://example.com /a', 'https://example.com/a'],
+    ['nothing', '', 'https://example.com/'],
+    ['a link to anything but http: and https:', 'javascript:alert(1)', 'javascript:alert(1)'],
+  ])("isn't its own address: %s", (_name, written, href) => {
+    expect(isOwnAddress(written, href)).toBe(false);
+  });
+
+  it("reads a link's text through its formatting and code, with a line break as a line feed", () => {
+    expect(linkText([text('a '), { type: 'strong', children: [text('b'), { type: 'em', children: [{ type: 'code', text: 'c' }] }] }, { type: 'break' }, { type: 'del', children: [text('d')] }])).toBe('a bc\nd');
+  });
+
+  it('asks for a link whose text is words, another URL or an image, and not for one whose text is its address, formatted or in code', () => {
+    const asks = (written: string) => linksIn(parseMarkdown(written)).map((found) => (found.type === 'link' ? asksFirst(found) : 'not a link'));
+    expect(asks('[the pull request](https://github.com/example/app/pull/51)')).toEqual([true]);
+    expect(asks('[https://github.com/example/app/pull/51](https://example.com/pull/51)')).toEqual([true]);
+    expect(asks('[![build](https://example.com/b.svg)](https://example.com/ci)')).toEqual([true]);
+    expect(asks('[https://example.com/a\nb](https://example.com/ab)')).toEqual([true]);
+    expect(asks('[https://example.com/a](https://example.com/a) [**https://example.com/b**](https://example.com/b) [`https://example.com/c`](https://example.com/c) [example.com/d](https://example.com/d/)')).toEqual([false, false, false, false]);
+  });
+
+  it('never asks for a bare URL or an autolink, in text or code, however it is written', () => {
+    const written = [
+      '<https://example.com/a> <HTTP://EXAMPLE.COM/A> <http:example.com> <https:/example.com/b> <https://example.com/c d> <https://exämple.com/login>',
+      'https://example.com/plain https://EXAMPLE.com/caps https://example.com/users/{id} https://example.com/a\u0001 https://en.example.org/wiki/A_(b) https://example.com/x?y=1#z.',
+      '`https://example.com/span` and `gh pr view https://github.com/example/app/pull/41 --web`',
+      '```\n- the loop: https://github.com/example/app/pull/41\n  - its tests (https://github.com/example/app/pull/42)\n{"url":"https://example.com/json"} <a href="https://example.com/docs">\n```',
+      '| a |\n|---|\n| https://example.com/cell |\n\n# https://example.com/heading\n\n> https://example.com/quote',
+    ].join('\n\n');
+    const found: Inline[] = [];
+    const walkInline = (inlines: Inline[]) => {
+      for (const inline of inlines) {
+        if (inline.type === 'link') found.push(inline);
+        if (inline.type === 'code' && inline.linked) walkInline(inline.linked);
+        if ('children' in inline) walkInline(inline.children);
+      }
+    };
+    const walk = (list: Block[]) => {
+      for (const item of list) {
+        if (item.type === 'paragraph' || item.type === 'heading') walkInline(item.children);
+        else if (item.type === 'code' && item.linked) walkInline(item.linked);
+        else if (item.type === 'quote') walk(item.children);
+        else if (item.type === 'list') item.items.forEach(walk);
+        else if (item.type === 'table') [...item.head, ...item.rows.flat()].forEach(walkInline);
+      }
+    };
+    walk(parseMarkdown(written));
+    expect(found).toHaveLength(21);
+    expect(found.filter((item) => item.type === 'link' && asksFirst(item)).map((item) => (item.type === 'link' ? item.href : ''))).toEqual([]);
   });
 });

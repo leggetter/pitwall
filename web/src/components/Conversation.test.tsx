@@ -335,6 +335,64 @@ describe('Conversation: messages to pitwall (W46)', () => {
   });
 });
 
+describe("Conversation: links that ask first (W55, W48's F6)", () => {
+  const ASKS = 'See [the pull request](https://github.com/example/app/pull/51), or https://example.com/runs/7.';
+
+  it("asks before a link whose text isn't its address opens, in Claude's messages, other sessions' and messages to pitwall; Escape in it leaves the view open", async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const onClose = vi.fn();
+    const server = fakeServer(
+      page([
+        claude(1, ASKS),
+        { kind: 'cross-session', at: at(2), from: 'pitwall-test-reviewer', text: ASKS, markdown: true },
+        { kind: 'to-pitwall', at: at(3), text: ASKS, markdown: true },
+        you(4, ASKS),
+      ]),
+    );
+    const result = render(
+      <ApiContext.Provider value={createApiClient({ apiKey: API_KEY, fetch: server.fetch })}>
+        <SessionView session={target()} listed onClose={onClose} />
+      </ApiContext.Provider>,
+    );
+    await settle();
+    try {
+      const body = result.container.querySelector<HTMLElement>('.session-view-body')!;
+      const entries = rows(body);
+      expect(entries.map((entry) => entry.className)).toEqual(['entry entry-assistant', 'entry entry-cross-session', 'entry entry-to-pitwall', 'entry entry-user']);
+      for (const entry of entries.slice(0, 3)) {
+        const [named, bare] = [...entry.querySelectorAll('a')];
+        // The bare URL opens on one click: nothing of pitwall's stops the browser (and the test stops happy-dom after).
+        let prevented: boolean | undefined;
+        const after = (event: Event) => {
+          prevented = event.defaultPrevented;
+          event.preventDefault();
+        };
+        document.addEventListener('click', after);
+        act(() => {
+          bare!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        document.removeEventListener('click', after);
+        expect(prevented, entry.className).toBe(false);
+        expect(entry.querySelector('.inline-confirm'), entry.className).toBeNull();
+        // The link whose text is words asks, in its own entry.
+        fireEvent.click(named!);
+        const box = entry.querySelector<HTMLElement>('.inline-confirm[role="alertdialog"]');
+        expect(box?.querySelector('.inline-confirm-question')?.textContent, entry.className).toBe('Open this link to github.com?');
+        expect(document.activeElement?.textContent).toBe('Cancel');
+        fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+        expect(entry.querySelector('.inline-confirm')).toBeNull();
+        expect(document.activeElement).toBe(named);
+      }
+      // Your prompt is plain text, as typed: no links in it at all.
+      expect(entries[3]!.querySelector('a')).toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      open.mockRestore();
+    }
+  });
+});
+
 describe('Conversation: questions asked in a dialog (W49)', () => {
   const FLOWS: AskedQuestion = {
     question: 'Which flows should retry?',

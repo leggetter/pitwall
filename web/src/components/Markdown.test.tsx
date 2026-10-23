@@ -4,12 +4,12 @@
 // and hostile input rendered in bounded time. All the text is made up.
 
 import { act, fireEvent, render } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { ClipboardContext, COPIED, COPY_FAILED, type ClipboardLike } from '../copy.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
-import { descriptionOf, hover, pass, tooltipText, unhover } from '../test/tooltips.js';
+import { descriptionOf, hover, pass, shownTooltips, tooltipText, unhover } from '../test/tooltips.js';
 import { MAX_ELEMENTS } from '../markdown.js';
-import { AS_WRITTEN, Markdown } from './Markdown.js';
+import { AS_WRITTEN, LINK_CONSEQUENCE, linkQuestion, Markdown, OPEN_LINK } from './Markdown.js';
 import { ToastProvider } from './Toast.js';
 
 function renderMarkdown(text: string, clipboard: ClipboardLike = { writeText: vi.fn(async () => {}) }) {
@@ -475,5 +475,235 @@ describe('Markdown: links in code, bounded on hostile input (W37)', () => {
     const everyday = fill('A **made-up** reply with `code`, a [link](https://example.com/a) and *emphasis*.\n\n- one item\n- two items\n\n');
     expect(renderMarkdown(links).root.querySelectorAll('pre a')).toHaveLength(1247);
     expect(renderTime(links)).toBeLessThan(2 * renderTime(everyday));
+  });
+});
+
+describe("Markdown: links that ask first (W55, W48's F6)", () => {
+  /** A link whose text names one site while it goes to another: the security review's example. */
+  const MISLEADING = '[https://github.com/example/repo/pull/51](https://evil.example/pull/51)';
+  const SHOWN = 'https://github.com/example/repo/pull/51';
+  const REAL = 'https://evil.example/pull/51';
+
+  let open: MockInstance<typeof window.open>;
+  beforeEach(() => {
+    open = vi.spyOn(window, 'open').mockImplementation(() => null);
+  });
+  afterEach(() => {
+    open.mockRestore();
+  });
+
+  /**
+   * Clicks `link` as a mouse does, or as Enter on a focused link does (a click with `detail: 0`), and
+   * says whether pitwall stopped the browser from following it. The browser's own default is stopped
+   * afterwards either way, so happy-dom never navigates.
+   */
+  function follow(link: Element, init: MouseEventInit = {}, type: 'click' | 'auxclick' = 'click'): boolean {
+    let prevented = false;
+    const after = (event: Event) => {
+      prevented = event.defaultPrevented;
+      event.preventDefault();
+    };
+    document.addEventListener(type, after);
+    try {
+      act(() => {
+        link.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, detail: 1, ...init }));
+      });
+    } finally {
+      document.removeEventListener(type, after);
+    }
+    return prevented;
+  }
+
+  const linkSaying = (root: HTMLElement, text: string) => [...root.querySelectorAll<HTMLAnchorElement>('a')].find((a) => a.textContent === text)!;
+  const questions = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>('.inline-confirm')];
+  const buttonSaying = (root: HTMLElement, label: string) => [...root.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.trim() === label)!;
+
+  it('opens a bare URL, an autolink and a link whose text is its own address on one click, as before, in text and code', () => {
+    const { root } = renderMarkdown('https://example.com/bare <https://example.com/auto> [example.com/own](https://example.com/own/) `https://example.com/span`\n\n```\nhttps://example.com/block\n```');
+    const links = [...root.querySelectorAll('a')];
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['https://example.com/bare', 'https://example.com/auto', 'https://example.com/own/', 'https://example.com/span', 'https://example.com/block']);
+    for (const a of links) {
+      expect(follow(a), a.getAttribute('href')!).toBe(false);
+      expect(follow(a, { button: 1 }, 'auxclick'), a.getAttribute('href')!).toBe(false);
+    }
+    expect(questions(root)).toEqual([]);
+    // The browser follows the link itself, as it always has: target _blank, rel noopener noreferrer.
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('asks before opening a link whose text is another address: the real host, then the full address, after the paragraph, with Cancel focused', () => {
+    const { root } = renderMarkdown(`Review ${MISLEADING} today.`);
+    const link = linkSaying(root, SHOWN);
+    expect(follow(link)).toBe(true);
+    const [box] = questions(root);
+    expect(box!.previousElementSibling).toBe(root.querySelector('p.md-p'));
+    expect(box!.querySelector('.inline-confirm-question')!.textContent).toBe('Open this link to evil.example?');
+    expect(box!.querySelector('.inline-confirm-consequence')!.textContent).toBe(`${LINK_CONSEQUENCE}${REAL}`);
+    expect(box!.querySelector('.inline-confirm-consequence code.link-confirm-address')!.textContent).toBe(REAL);
+    expect([...box!.querySelectorAll('button')].map((button) => button.textContent?.trim())).toEqual(['Cancel', OPEN_LINK]);
+    expect(document.activeElement).toBe(buttonSaying(box!, 'Cancel'));
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('asks for a link whose text is words, naming its host', () => {
+    const { root } = renderMarkdown('The fix is in [the pull request](https://github.com/example/app/pull/51).');
+    expect(follow(linkSaying(root, 'the pull request'))).toBe(true);
+    expect(questions(root).map((box) => box.textContent)).toEqual([`Open this link to github.com?${LINK_CONSEQUENCE}https://github.com/example/app/pull/51CancelOpen link`]);
+  });
+
+  it('opens nothing on Cancel, and puts focus back on the link, without opening its tooltip', () => {
+    const { root } = renderMarkdown(MISLEADING);
+    const link = linkSaying(root, SHOWN);
+    follow(link);
+    act(() => buttonSaying(root, 'Cancel').click());
+    expect(questions(root)).toEqual([]);
+    expect(document.activeElement).toBe(link);
+    expect(shownTooltips()).toEqual([]);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('opens nothing on Escape, which goes no further, and puts focus back on the link', () => {
+    const { root } = renderMarkdown(MISLEADING);
+    const link = linkSaying(root, SHOWN);
+    follow(link);
+    const outside = vi.fn();
+    document.addEventListener('keydown', outside);
+    try {
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    } finally {
+      document.removeEventListener('keydown', outside);
+    }
+    expect(outside).not.toHaveBeenCalled();
+    expect(questions(root)).toEqual([]);
+    expect(document.activeElement).toBe(link);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('opens the link on Open link, once, in a new tab with no opener or referrer, and puts focus back on the link', () => {
+    const { root } = renderMarkdown(MISLEADING);
+    const link = linkSaying(root, SHOWN);
+    follow(link);
+    act(() => buttonSaying(root, OPEN_LINK).click());
+    expect(open.mock.calls).toEqual([[REAL, '_blank', 'noopener,noreferrer']]);
+    expect(questions(root)).toEqual([]);
+    expect(document.activeElement).toBe(link);
+  });
+
+  it('asks on a middle click, and on a click with a modifier, as on any click', () => {
+    const { root } = renderMarkdown(MISLEADING);
+    const link = linkSaying(root, SHOWN);
+    for (const init of [{ button: 1 }, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }]) {
+      expect(follow(link, init, init.button === 1 ? 'auxclick' : 'click'), JSON.stringify(init)).toBe(true);
+      expect(questions(root), JSON.stringify(init)).toHaveLength(1);
+      act(() => buttonSaying(root, 'Cancel').click());
+    }
+    // A right click is the browser's own menu, which names the real address too.
+    expect(follow(link, { button: 2 }, 'auxclick')).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('names an internationalised host in punycode, as its tooltip shows it', () => {
+    const { root } = renderMarkdown('Sign in at [the bank](https://exämple.com/login).');
+    const link = linkSaying(root, 'the bank');
+    expect(descriptionOf(link)).toBe('https://xn--exmple-cua.com/login');
+    follow(link);
+    expect(questions(root)[0]!.querySelector('.inline-confirm-question')!.textContent).toBe('Open this link to xn--exmple-cua.com?');
+    expect(questions(root)[0]!.querySelector('code')!.textContent).toBe('https://xn--exmple-cua.com/login');
+    expect(linkQuestion(new URL('https://еxample.com/'))).toBe('Open this link to xn--xample-2of.com?');
+  });
+
+  it("keeps the link's own name, description, href, target and rel, before and while it asks", () => {
+    const { root } = renderMarkdown(MISLEADING);
+    const link = linkSaying(root, SHOWN);
+    const before = link.outerHTML;
+    expect([link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel'), descriptionOf(link)]).toEqual([REAL, '_blank', 'noopener noreferrer', REAL]);
+    expect(['aria-label', 'aria-haspopup', 'aria-expanded', 'role', 'title'].filter((name) => link.hasAttribute(name))).toEqual([]);
+    follow(link);
+    expect(link.outerHTML).toBe(before);
+  });
+
+  it('is announced as an alert dialog, named by its question and described by the address, as Cancel takes focus', () => {
+    const { root } = renderMarkdown(MISLEADING);
+    follow(linkSaying(root, SHOWN));
+    const [box] = questions(root);
+    expect(box!.getAttribute('role')).toBe('alertdialog');
+    expect(document.getElementById(box!.getAttribute('aria-labelledby')!)!.textContent).toBe('Open this link to evil.example?');
+    expect(document.getElementById(box!.getAttribute('aria-describedby')!)!.textContent).toBe(`${LINK_CONSEQUENCE}${REAL}`);
+    expect(box!.contains(document.activeElement)).toBe(true);
+  });
+
+  it('works without a mouse: Enter asks, Escape cancels, and Enter on Open link opens, each in Tab order after the link', () => {
+    const { root } = renderMarkdown(`${MISLEADING} and [the docs](https://example.com/docs)\n\nAfter.`);
+    const link = linkSaying(root, SHOWN);
+    act(() => link.focus());
+    // Enter on a focused link is a click with no pointer: detail 0.
+    expect(follow(link, { detail: 0 })).toBe(true);
+    expect(document.activeElement).toBe(buttonSaying(root, 'Cancel'));
+    // Tab order is document order: the paragraph's links, then the question's buttons, then what follows.
+    const stops = [...root.querySelectorAll<HTMLElement>('a[href], button')].map((el) => el.textContent?.trim());
+    expect(stops).toEqual([SHOWN, 'the docs', 'Cancel', OPEN_LINK]);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(document.activeElement).toBe(link);
+    expect(follow(link, { detail: 0 })).toBe(true);
+    act(() => buttonSaying(root, OPEN_LINK).focus());
+    // Enter on a focused button is a click too.
+    act(() => buttonSaying(root, OPEN_LINK).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 })));
+    expect(open.mock.calls).toEqual([[REAL, '_blank', 'noopener,noreferrer']]);
+    expect(document.activeElement).toBe(link);
+  });
+
+  it('shows the question straight after the block its link is in: a heading, a list item, a quote, a table and formatted text', () => {
+    const { root } = renderMarkdown(
+      [
+        '# A [heading link](https://example.com/h)',
+        '',
+        '- an [item link](https://example.com/i)',
+        '- another item',
+        '',
+        '> a [quoted link](https://example.com/q)',
+        '',
+        '| a |',
+        '|---|',
+        '| a [cell link](https://example.com/c) |',
+        '',
+        'Some ~~**[struck link](https://example.com/s)**~~ text.',
+      ].join('\n'),
+    );
+    const after: [string, (box: HTMLElement) => Element | null][] = [
+      ['heading link', () => root.querySelector('p.md-heading')],
+      ['item link', () => root.querySelector('ul.md-list > li > p')],
+      ['quoted link', () => root.querySelector('blockquote.md-quote > p')],
+      ['cell link', () => root.querySelector('.md-table-scroll')],
+      ['struck link', () => root.querySelector(':scope > p.md-p')],
+    ];
+    for (const [text, block] of after) {
+      follow(linkSaying(root, text));
+      const [box] = questions(root);
+      expect(box!.previousElementSibling, text).toBe(block(box!));
+      expect(box!.closest('del, strong, em, table, a'), text).toBeNull();
+      act(() => buttonSaying(root, 'Cancel').click());
+    }
+    expect(questions(root)).toEqual([]);
+  });
+
+  it('asks one question at a time in a block: a second link replaces the first, with Cancel focused again', () => {
+    const { root } = renderMarkdown('[one](https://one.example.com/) or [two](https://two.example.com/)');
+    follow(linkSaying(root, 'one'));
+    const first = buttonSaying(root, 'Cancel');
+    follow(linkSaying(root, 'two'));
+    expect(questions(root).map((box) => box.querySelector('.inline-confirm-question')!.textContent)).toEqual(['Open this link to two.example.com?']);
+    expect(document.activeElement).toBe(buttonSaying(root, 'Cancel'));
+    expect(first.isConnected).toBe(false);
+    act(() => buttonSaying(root, 'Cancel').click());
+    expect(document.activeElement).toBe(linkSaying(root, 'two'));
+  });
+
+  it('renders a URL with a username or password before its host as text, in a link, an autolink, a bare URL and code', () => {
+    const userinfo = 'https://github.com@evil.example/x';
+    const written = `[the pull request](${userinfo}) <${userinfo}> ${userinfo} \`${userinfo}\``;
+    const { root } = renderMarkdown(`${written}\n\n\`\`\`\ngh pr view ${userinfo}\n\`\`\``);
+    expect(root.querySelector('a')).toBeNull();
+    expect(root.querySelector('p')!.textContent).toBe(written.replace(/`/g, ''));
+    expect(root.querySelector('pre code')!.textContent).toBe(`gh pr view ${userinfo}`);
   });
 });

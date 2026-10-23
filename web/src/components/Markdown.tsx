@@ -9,6 +9,11 @@
 //   table scrolls sideways in its own box too. Each box is a Tab stop while it scrolls (ScrollBox).
 // - A link opens in a new tab with noopener and noreferrer, and its tooltip, on hover and on focus,
 //   is the URL it opens, as the browser parsed it, since its text can say anything (links.ts).
+// - A link whose text isn't its own address asks first (W55, W48's F6): a click, Enter or a middle
+//   click opens an inline confirmation instead, which names the host it goes to and shows its full
+//   address, with Cancel and Open link. It shows straight after the paragraph, heading or table the
+//   link is in, since a line of text can't hold it. A bare URL and an autolink open on one click
+//   (asksFirst, markdown.ts). The link itself is unchanged: its name, its tooltip and its href.
 // - A bare URL in code is the same link, in the code's mono face and size (W37). The code's text is
 //   unchanged: Copy copies it as written, and a link's tooltip is rendered into document.body, so
 //   text selected in the code and copied by hand holds none of it.
@@ -19,14 +24,22 @@
 // It's memoised on its text, so a conversation that re-renders as entries arrive doesn't parse or
 // render a message again.
 
-import { memo, useMemo, useRef, type ReactNode } from 'react';
-import { elementCount, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
+import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { asksFirst, elementCount, httpUrl, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
 import { CopyButton } from './CopyButton.js';
+import { InlineConfirm } from './InlineConfirm.js';
 import { ScrollBox } from './ScrollBox.js';
-import { Tooltip } from './Tooltip.js';
+import { focusQuietly, Tooltip } from './Tooltip.js';
 
 /** What a message too big to format says, after its text. */
 export const AS_WRITTEN = 'Shown as written: too much formatting to show.';
+
+/** The question a link asks before it opens (W55): the host it goes to, as the browser parsed it, so an internationalised one is in punycode. */
+export const linkQuestion = (url: URL) => `Open this link to ${url.host}?`;
+/** The question's consequence, before the full address in code style. */
+export const LINK_CONSEQUENCE = "Its text doesn't show where it goes: ";
+/** The question's confirm button, which repeats its verb and object (5: Labels). */
+export const OPEN_LINK = 'Open link';
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const blocks = useMemo(() => {
@@ -41,7 +54,9 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
       </>
     );
   }
-  return <>{blocks.map((block, index) => renderBlock(block, index))}</>;
+  // The message is a host too, for any link outside a paragraph, heading or table: links in code are
+  // bare URLs, which never ask, so none should reach it.
+  return <Asking>{blocks.map((block, index) => renderBlock(block, index))}</Asking>;
 });
 
 function renderBlocks(blocks: Block[]): ReactNode[] {
@@ -52,15 +67,15 @@ function renderBlock(block: Block, key: number): ReactNode {
   switch (block.type) {
     case 'paragraph':
       return (
-        <p key={key} className="md-p">
-          {renderInlines(block.children)}
-        </p>
+        <Asking key={key}>
+          <p className="md-p">{renderInlines(block.children)}</p>
+        </Asking>
       );
     case 'heading':
       return (
-        <p key={key} className={`md-heading md-h${block.level}`}>
-          {renderInlines(block.children)}
-        </p>
+        <Asking key={key}>
+          <p className={`md-heading md-h${block.level}`}>{renderInlines(block.children)}</p>
+        </Asking>
       );
     case 'code':
       return <CodeBlock key={key} language={block.language} text={block.text} linked={block.linked} />;
@@ -85,7 +100,11 @@ function renderBlock(block: Block, key: number): ReactNode {
     case 'rule':
       return <hr key={key} className="md-rule" />;
     case 'table':
-      return <Table key={key} align={block.align} head={block.head} rows={block.rows} />;
+      return (
+        <Asking key={key}>
+          <Table align={block.align} head={block.head} rows={block.rows} />
+        </Asking>
+      );
   }
 }
 
@@ -113,18 +132,106 @@ function renderInline(inline: Inline, key: number): ReactNode {
       );
     case 'link':
       return (
-        <Link key={key} href={inline.href}>
+        <Link key={key} href={inline.href} asks={asksFirst(inline)}>
           {renderInlines(inline.children)}
         </Link>
       );
   }
 }
 
-/** A link: a new tab, with no opener or referrer, and the URL it opens in its tooltip. */
-function Link({ href, children }: { href: string; children: ReactNode }) {
+/** Opens a link's question in the block it's in, with the link to put focus back on. */
+type Ask = (url: URL, link: HTMLAnchorElement) => void;
+const AskContext = createContext<Ask | undefined>(undefined);
+
+/** Each question's own, so a second link's question in the same block opens afresh, Cancel focused. */
+let questions = 0;
+
+/**
+ * A block a link that asks can ask from: a paragraph, a heading, a table, or the message for anything
+ * else. Its question, when one is open, shows straight after the block, at the message's width.
+ */
+function Asking({ children }: { children: ReactNode }) {
+  const [question, setQuestion] = useState<{ id: number; url: URL; link: HTMLAnchorElement }>();
+  const ask = useCallback<Ask>((url, link) => setQuestion({ id: (questions += 1), url, link }), []);
+  // Back on the link before the question goes, so focus never falls to the page.
+  const close = (link: HTMLAnchorElement) => {
+    focusQuietly(link);
+    setQuestion(undefined);
+  };
+  return (
+    <AskContext.Provider value={ask}>
+      {children}
+      {question && (
+        <LinkQuestion
+          key={question.id}
+          url={question.url}
+          onOpen={() => {
+            // As the link itself would: a new tab, with no opener or referrer.
+            window.open(question.url.href, '_blank', 'noopener,noreferrer');
+            close(question.link);
+          }}
+          onCancel={() => close(question.link)}
+        />
+      )}
+    </AskContext.Provider>
+  );
+}
+
+/**
+ * The question: the host the link goes to and its full address, as the browser parsed them, so an
+ * internationalised host is in punycode, as its tooltip shows it. An alertdialog, as the restart's is,
+ * since it interrupts opening the link; Cancel takes focus, so a screen reader reads the question and
+ * the address as it opens.
+ */
+function LinkQuestion({ url, onOpen, onCancel }: { url: URL; onOpen: () => void; onCancel: () => void }) {
+  return (
+    <InlineConfirm
+      question={linkQuestion(url)}
+      consequence={
+        <>
+          {LINK_CONSEQUENCE}
+          <code className="link-confirm-address">{url.href}</code>
+        </>
+      }
+      confirmLabel={OPEN_LINK}
+      busyLabel="Opening…"
+      icon="external"
+      variant="primary"
+      tone="warning"
+      role="alertdialog"
+      onConfirm={onOpen}
+      onCancel={onCancel}
+    />
+  );
+}
+
+/**
+ * A link: a new tab, with no opener or referrer, and the URL it opens in its tooltip. One that `asks`
+ * opens its question instead, on a click, Enter or a middle click; a modifier doesn't skip it.
+ */
+function Link({ href, asks, children }: { href: string; asks: boolean; children: ReactNode }) {
+  const ask = useContext(AskContext);
+  const question = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    const url = httpUrl(href);
+    if (url) ask?.(url, event.currentTarget);
+  };
   return (
     <Tooltip content={href}>
-      <a className="md-link" href={href} target="_blank" rel="noopener noreferrer">
+      <a
+        className="md-link"
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={asks ? question : undefined}
+        onAuxClick={
+          asks
+            ? (event) => {
+                if (event.button === 1) question(event);
+              }
+            : undefined
+        }
+      >
         {children}
       </a>
     </Tooltip>
