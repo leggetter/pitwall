@@ -15,6 +15,7 @@ import type { StorageSource } from '../groupState.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
+import { TOAST_ACTION_TIMEOUT_MS } from '../timing.js';
 import { Dashboard, listedText, OPEN_LISTED, startedText } from './Dashboard.js';
 import type { TerminalHandle } from './Terminal.js';
 
@@ -368,6 +369,35 @@ describe("not over what you're in the middle of", () => {
     await settle();
     expect(openTab()).toBe('~/code');
     expect(selectedRepo()).toBe('web');
+    expect(viewName()).toBe(STARTED.name);
+  });
+
+  it(`takes the toast away by itself after --pw-toast-action-timeout, ${TOAST_ACTION_TIMEOUT_MS / 1000} s, leaving the row as the way in`, async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(NOW);
+    const advance = (ms: number) => act(async () => void vi.advanceTimersByTime(ms));
+    const { update } = renderDashboard();
+    await open('api-one');
+    fireEvent.change(messageBox(), { target: { value: 'A made-up draft, kept.' } });
+    // New session, without waitFor, whose own timeout would wait on the fake clock.
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }));
+    const dialog = screen.getByRole('dialog', { name: 'New session' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+    for (let turn = 0; turn < 5 && screen.queryByRole('dialog', { name: 'New session' }); turn += 1) await settle();
+    expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
+    await update(snap({ in: 'web', session: startedIn('web') }));
+    expect(toastMessages()).toEqual([listedText(STARTED.name)]);
+
+    await advance(TOAST_ACTION_TIMEOUT_MS - 500);
+    expect(toastMessages()).toEqual([listedText(STARTED.name)]);
+    await advance(500);
+    await advance(500);
+    expect(toastMessages()).toEqual([]);
+    expect(viewName()).toBe('api-one');
+
+    // Its row, in All sessions, still opens it.
+    await open(STARTED.name);
     expect(viewName()).toBe(STARTED.name);
   });
 

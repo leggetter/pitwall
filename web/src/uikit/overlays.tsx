@@ -243,7 +243,7 @@ export function Toasts() {
     <>
       <Specimen
         title="Success"
-        note="Copy path, copied: the icon becomes copied for --pw-copied-timeout, and a toast says so. Success and info toasts go after --pw-toast-timeout, which stops while the pointer is over the stack or focus is in it. These stay, for the gallery."
+        note="Copy path, copied: the icon becomes copied for --pw-copied-timeout, and a toast says so. Success and info toasts go after --pw-toast-timeout, or --pw-toast-action-timeout with an action, which stops while the pointer is over the stack or focus is in it. These stay, for the gallery."
         frame="toasts"
         lasting
       >
@@ -302,7 +302,7 @@ export function Toasts() {
       </Specimen>
       <Specimen
         title="With an action"
-        note="A started session listed while you were in the middle of something, a draft say, so it didn't open (W63). It replaces the toast that said it started, which has the same key, and stays until it's dismissed or Open is used. In the app, Open selects the session's tab, group and view, and its heading takes focus; here it takes the toast away."
+        note="A started session listed while you were in the middle of something, a draft say, so it didn't open (W63). It replaces the toast that said it started, which has the same key, and goes after --pw-toast-action-timeout, 10 s, paused while hovered or focused; it stays here, for the gallery. In the app, Open selects the session's tab, group and view, and its heading takes focus; here it takes the toast away."
         frame="toasts"
         lasting
       >

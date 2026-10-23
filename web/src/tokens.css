@@ -63,6 +63,7 @@
   --pw-delay-long: 10s;       /* read by JavaScript */
   --pw-delay-attach: 500ms;   /* read by JavaScript */
   --pw-toast-timeout: 4s;     /* read by JavaScript */
+  --pw-toast-action-timeout: 10s; /* read by JavaScript */
   --pw-copied-timeout: 2s;    /* read by JavaScript */
 }
 
