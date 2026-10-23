@@ -408,9 +408,10 @@ const MARKDOWN_STUB: StubOptions = { entries: MARKDOWN_CONVERSATION };
 const CODE_LINKS = background('conversation-code-links', { state: 'working' });
 const CODE_LINKS_NARROW = background('conversation-code-links-narrow', { state: 'working' });
 const CODE_LINKS_STUB: StubOptions = { entries: LINKS_IN_CODE };
-const LINKS_ASK = background('conversation-links-ask', { state: 'working' });
-const LINKS_ASKING = background('conversation-links-asking', { state: 'working' });
-const LINKS_ASKING_NARROW = background('conversation-links-asking-narrow', { state: 'working' });
+// Interactive, so they open on Conversation whatever a background session's first tab is.
+const LINKS_ASK = session('conversation-links-ask', { title: 'Export retries' });
+const LINKS_ASKING = session('conversation-links-asking', { title: 'Export retries' });
+const LINKS_ASKING_NARROW = session('conversation-links-asking-narrow', { title: 'Export retries' });
 const LINKS_ASK_STUB: StubOptions = { entries: LINKS_THAT_ASK };
 const TO_PITWALL = session('conversation-to-pitwall', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
 const TO_PITWALL_NARROW = session('conversation-to-pitwall-narrow', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
