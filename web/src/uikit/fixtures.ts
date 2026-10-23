@@ -605,6 +605,30 @@ export const LINKS_IN_CODE: ConversationEntry[] = [
   },
 ];
 
+// Links that ask first (W55, W48's F6). Made up.
+
+/**
+ * A reply with links that ask before they open: one whose text is words, one whose text is another
+ * address, and one to an internationalised host; links that open on one click: a bare URL, an
+ * autolink and one whose text is its own address; and a URL with a username before its host, which is
+ * text, in text and in code.
+ */
+export const LINKS_THAT_ASK_TEXT = [
+  'The fix is in [the pull request](https://github.com/example/export-app/pull/51), and its run is https://example.com/ci/runs/1234.',
+  '',
+  "A link whose text is another address asks too: [https://github.com/example/export-app/pull/51](https://example.com/export-app/pull/51). One whose text is its own address doesn't: [github.com/example/export-app](https://github.com/example/export-app), or <https://example.com/changelog>.",
+  '',
+  'Sign in at [the dashboard](https://exämple.com/login) to see it.',
+  '',
+  'A URL with a username before its host is text: https://github.com@example.com/export-app/pull/51, and in code, `gh pr view https://github.com@example.com/export-app/pull/51`.',
+].join('\n');
+
+/** Your question, then the reply with links that ask. */
+export const LINKS_THAT_ASK: ConversationEntry[] = [
+  { kind: 'user', at: ago(4), text: 'Where is the fix for the export retries?' },
+  { kind: 'assistant', at: ago(3), text: LINKS_THAT_ASK_TEXT, markdown: true },
+];
+
 // Messages to pitwall (W46). Made up, in the shape of a session's SendMessage replies to pitwall's relay.
 
 /** A short reply to pitwall. */
