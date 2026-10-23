@@ -1664,16 +1664,24 @@ describe('the relay: one at a time', () => {
         child.result();
       };
     };
+    /** Waits for the fake relay to take the request just written, rather than for wall-clock time it may not get (W56). */
+    const taken = async (what: string) => {
+      await eventually(what, () => release !== undefined);
+      const taking = release!;
+      release = undefined;
+      return taking;
+    };
     const first = h.relay.send(TARGET, 'one');
     const second = h.relay.send(OTHER, 'two');
+    const releaseFirst = await taken('the first request');
     await wait(20);
     expect(h.child().written).toHaveLength(1);
-    release!();
+    releaseFirst();
     await expect(first).resolves.toEqual({ status: 'delivered' });
-    await wait(20);
+    const releaseSecond = await taken('the second request');
     expect(h.child().written).toHaveLength(2);
     expect(parseRequest(h.child().written[1]!).text).toBe('two');
-    release!();
+    releaseSecond();
     await expect(second).resolves.toEqual({ status: 'delivered' });
   });
 
