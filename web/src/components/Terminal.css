@@ -15,7 +15,8 @@
 
 /*
  * The bar: 36 px, padding 4 px 0, 8 px gaps. The badge and the hint, then the buttons at the right,
- * which wrap to a line of their own, still at the right, when the panel is too narrow for all three.
+ * which wrap to a line of their own, still at the right, when the panel is too narrow for the badge
+ * and the buttons. The hint's text wraps before they do.
  */
 .attach-bar {
   display: flex;
@@ -29,6 +30,28 @@
 
 .attach-status {
   display: inline-flex;
+}
+
+/*
+ * The two hints, F6's and how to type to it (W57), in one grid cell: the one that doesn't apply is
+ * hidden but keeps its room, so the bar is the same size whichever shows, and focus moving in or out
+ * of the screen never resizes the session's terminal. The cell takes the room between the badge and
+ * the buttons, and never pushes them to a line of their own: on a narrow panel its text wraps
+ * instead, so at 375 px the bar is two lines of text tall rather than three rows.
+ */
+.attach-hints {
+  display: grid;
+  flex: 1 1 0;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.attach-hints > .attach-hint {
+  grid-area: 1 / 1;
+}
+
+.attach-hints > [data-shown='false'] {
+  visibility: hidden;
 }
 
 /* Meta: s 13/20 in --pw-text-subtle, with the F6 key cap. */

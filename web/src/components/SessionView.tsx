@@ -19,9 +19,14 @@
 // preferences says unless it says Conversation; Conversation for the rest, finished background
 // sessions included, since attaching restarts them, and wherever the Terminal tab is off. It's decided
 // as the view is first shown, and never again: the tab you choose is yours, whatever the session does
-// after. A view opened by stepping (j, k, ↑, ↓) waits before its terminal attaches, and the terminal
-// takes no focus then (Terminal.tsx); otherwise it takes focus as it attaches, as when you open the tab
-// yourself, unless focus has meanwhile gone somewhere outside the view.
+// after. A view opened by stepping (j, k, ↑, ↓) waits before its terminal attaches (Terminal.tsx).
+//
+// The terminal takes focus as it attaches only right after you asked for it in this page (W57,
+// focusGesture.ts): a click or Enter on the session's row (`openedBy`, from the Dashboard), on the
+// Terminal tab, on Attach again or on Restart and attach, and only while focus is still in the view.
+// A view opened from the URL, a reload, back or forward, a root tab's switch or a step attaches as
+// W54 has it, but leaves focus where it is, and the terminal's bar says how to type to it. A setting
+// (terminalFocus.ts) can make it never take focus at all.
 //
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
@@ -35,6 +40,8 @@ import type { BackgroundTab } from '../backgroundTab.js';
 import { getConversation } from '../conversation.js';
 import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
 import { DraftStorageContext, hasStoredDraft } from '../drafts.js';
+import { focusGesture, spendGesture, type FocusGesture } from '../focusGesture.js';
+import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
@@ -307,6 +314,17 @@ export interface SessionViewProps {
    * --pw-delay-attach before attaching, and takes no focus when it does. Read as the view opens.
    */
   stepped?: boolean;
+  /**
+   * The click or Enter on the session's row that opened the view (W57): a terminal it opens on may
+   * take focus as it attaches, once, soon after (focusGesture.ts). Left out, as for a view opened from
+   * the URL, the back button or a step, it takes none until you open the tab or click the terminal.
+   */
+  openedBy?: FocusGesture | undefined;
+  /**
+   * When its terminal may take the keyboard (W57, terminalFocus.ts): right after you open the view or
+   * its Terminal tab in this page, the default, or never. Read each time the terminal attaches.
+   */
+  terminalFocus?: TerminalFocus | undefined;
 }
 
 type Tab = 'conversation' | 'terminal';
@@ -331,10 +349,12 @@ export function SessionView({
   star,
   backgroundTab = 'conversation',
   stepped = false,
+  openedBy,
+  terminalFocus = DEFAULT_TERMINAL_FOCUS,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
-  const ids = { title: useId(), conversationTab: useId(), conversationPanel: useId(), terminalTab: useId(), terminalPanel: useId() };
+  const ids = { title: useId(), conversationTab: useId(), conversationPanel: useId(), terminalTab: useId(), terminalPanel: useId(), typeHint: useId() };
   const ownHeading = useRef<HTMLHeadingElement>(null);
   const heading = headingRef ?? ownHeading;
   const menuButton = useRef<HTMLButtonElement>(null);
@@ -419,12 +439,25 @@ export function SessionView({
     });
   };
 
+  // The gesture the next attach may take focus with (W57): the row's click or Enter that opened the
+  // view, then the latest on the Terminal tab, Attach again or Restart and attach. Each is spent once.
+  const asked = useRef<FocusGesture | undefined>(openedBy);
+  useEffect(() => {
+    if (openedBy) asked.current = openedBy;
+  }, [openedBy]);
+
   /** Opening Terminal attaches; for a session that isn't running, the terminal first asks to restart it (D9). */
   const openTab = (next: Tab) => {
     if (next === 'terminal' && terminalOff) return;
     setChosen(next);
-    // Chosen: a terminal opened from here attaches at once, and takes focus.
-    if (next !== tab) setQuiet(false);
+    // Chosen: a terminal opened from here attaches at once, and may take focus as it does. The tab
+    // takes focus itself, as Safari doesn't give it a button that's clicked, so the attach finds
+    // focus still in the view.
+    if (next !== tab) {
+      setQuiet(false);
+      asked.current = next === 'terminal' ? focusGesture(terminalTab.current) : undefined;
+      if (next === 'terminal') focusQuietly(terminalTab.current);
+    }
     // Switching to Conversation unmounts the terminal, which detaches.
     if (next === 'conversation') setAttachStatus(undefined);
   };
@@ -434,17 +467,26 @@ export function SessionView({
     setChosen('conversation');
     setQuiet(false);
     setAttachStatus(undefined);
+    asked.current = undefined;
     terminalTab.current?.focus();
   }, []);
 
+  /** Attach again or Restart and attach, in the terminal: asked for here. */
+  const askedInTerminal = useCallback((target: Element | undefined) => {
+    asked.current = focusGesture(target);
+  }, []);
+
   /**
-   * Whether the terminal may take focus as it attaches: while focus is in this view, or nowhere, so a
-   * key typed elsewhere meanwhile, in the filter, say, never goes to the session (W54).
+   * Whether the terminal may take focus as it attaches (W57): only with a gesture from this page, soon
+   * before, and while focus is still in this view or on what was pressed, so a key typed elsewhere
+   * meanwhile, in the filter say, never goes to the session. Never with focus nowhere, as after a load,
+   * and never at all while the setting says so, though the gesture is spent either way.
    */
+  const focusRule = useRef(terminalFocus);
+  focusRule.current = terminalFocus;
   const terminalMayFocus = useCallback(() => {
-    const active = document.activeElement;
-    if (active === null || active === document.body) return true;
-    return heading.current?.closest('section')?.contains(active) ?? false;
+    const allowed = spendGesture(asked.current, heading.current?.closest('section'));
+    return allowed && focusRule.current !== 'never';
   }, [heading]);
 
   /** F6 in the terminal: focus moves to the Terminal tab, and the terminal stays open and attached (6.1 rule 14). */
@@ -693,6 +735,9 @@ export function SessionView({
             className="session-tab"
             aria-selected={tab === 'terminal'}
             aria-controls={ids.terminalPanel}
+            // Attached, it's described by the terminal's hint on how to type to it, which shows while the
+            // terminal doesn't have focus, as on this tab after F6 (W57).
+            aria-describedby={attached ? ids.typeHint : undefined}
             aria-disabled={terminalOff !== undefined || undefined}
             tabIndex={tab === 'terminal' ? 0 : -1}
             onClick={() => openTab('terminal')}
@@ -729,6 +774,8 @@ export function SessionView({
             onRestartChange={setRestart}
             wait={quiet}
             canFocus={terminalMayFocus}
+            onAsk={askedInTerminal}
+            typeHintId={ids.typeHint}
           />
         )}
       </div>

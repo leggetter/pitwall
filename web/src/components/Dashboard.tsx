@@ -47,7 +47,8 @@
 // View preferences also sets which tab a running background session's view opens on: Terminal, the
 // default, or Conversation (W54, backgroundTab.ts), which the view reads as it opens. Stepping onto a
 // session with `j`, `k`, ↑ or ↓ tells its view so, and a terminal it opens on waits a moment before
-// attaching, so passing through attaches nothing.
+// attaching, so passing through attaches nothing. A click or Enter on a row tells the view it opened
+// so too, and only then may its terminal take focus as it attaches (W57).
 //
 // With two or more roots, the header has a tab per root (W38, rootTabs.ts), and the open tab narrows
 // the repo list, the session list, the filter, `j` and `k`, and the New session dialog to its root.
@@ -61,6 +62,8 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { useBackgroundTab } from '../backgroundTab.js';
 import type { ConnectionView } from '../connection.js';
+import { focusGesture, type FocusGesture } from '../focusGesture.js';
+import { useTerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } from '../groupBy.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
@@ -211,6 +214,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const [groupBy, setGroupBy] = useGroupBy(storage);
   // Which tab a running background session's view opens on, from View preferences too (W54).
   const [backgroundTab, setBackgroundTab] = useBackgroundTab(storage);
+  // When a terminal may take the keyboard (W57): after you open it here, or never. Stored, with no
+  // control yet: W59's Preferences dialog takes the hook's setter.
+  const [terminalFocus] = useTerminalFocus(storage);
   const startGroups = snapshot?.groups;
   const grouped = useMemo(() => groupSessions(startGroups ?? [], groupBy), [startGroups, groupBy]);
   const viewSnapshot = useMemo(() => (snapshot ? { roots: snapshot.roots, groups: grouped.groups } : undefined), [snapshot, grouped]);
@@ -389,6 +395,16 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return at < 0 ? undefined : buttons[at + by];
   };
 
+  // The click or Enter on a row that opened the open session's view (W57, focusGesture.ts): a terminal
+  // it opens on may take focus as it attaches, once, soon after. Any other way of opening a view, the
+  // URL, a reload, back or forward, a root tab, a started session or a step, gives none, so its
+  // terminal leaves focus where it is. It goes once another session is open, so back to this one
+  // later gives none either.
+  const opener = useRef<{ sessionId: string; gesture: FocusGesture } | undefined>(undefined);
+  useEffect(() => {
+    if (opener.current?.sessionId !== openId) opener.current = undefined;
+  }, [openId]);
+
   // From a row, by a click or Enter: the view's heading takes focus (6.1, item 8).
   const openSession = useCallback(
     (sessionId: string) => {
@@ -396,6 +412,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         viewHeading.current?.focus();
         return;
       }
+      opener.current = { sessionId, gesture: focusGesture(rowButton(sessionId)) };
       focusView.current = { id: sessionId, on: 'heading' };
       opened.open(sessionId, 'push');
     },
@@ -952,6 +969,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
+      openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
+      terminalFocus={terminalFocus}
     />
   );
   let sessionView: ReactNode;
