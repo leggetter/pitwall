@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   asksFirst,
   elementCount,
+  hasPunycodeLabel,
   httpUrl,
   isOwnAddress,
   linkify,
@@ -837,15 +838,9 @@ describe('links that ask first (W55, W48\'s F6)', () => {
     expect(asks('[https://example.com/a](https://example.com/a) [**https://example.com/b**](https://example.com/b) [`https://example.com/c`](https://example.com/c) [example.com/d](https://example.com/d/)')).toEqual([false, false, false, false]);
   });
 
-  it('never asks for a bare URL or an autolink, in text or code, however it is written', () => {
-    const written = [
-      '<https://example.com/a> <HTTP://EXAMPLE.COM/A> <http:example.com> <https:/example.com/b> <https://example.com/c d> <https://exämple.com/login>',
-      'https://example.com/plain https://EXAMPLE.com/caps https://example.com/users/{id} https://example.com/a\u0001 https://en.example.org/wiki/A_(b) https://example.com/x?y=1#z.',
-      '`https://example.com/span` and `gh pr view https://github.com/example/app/pull/41 --web`',
-      '```\n- the loop: https://github.com/example/app/pull/41\n  - its tests (https://github.com/example/app/pull/42)\n{"url":"https://example.com/json"} <a href="https://example.com/docs">\n```',
-      '| a |\n|---|\n| https://example.com/cell |\n\n# https://example.com/heading\n\n> https://example.com/quote',
-    ].join('\n\n');
-    const found: Inline[] = [];
+  /** Every link anywhere in the blocks, in code too. */
+  const everyLink = (blocks: Block[]) => {
+    const found: Extract<Inline, { type: 'link' }>[] = [];
     const walkInline = (inlines: Inline[]) => {
       for (const inline of inlines) {
         if (inline.type === 'link') found.push(inline);
@@ -862,8 +857,59 @@ describe('links that ask first (W55, W48\'s F6)', () => {
         else if (item.type === 'table') [...item.head, ...item.rows.flat()].forEach(walkInline);
       }
     };
-    walk(parseMarkdown(written));
+    walk(blocks);
+    return found;
+  };
+
+  it('never asks for a bare URL or an autolink to an ASCII host, in text or code, however it is written', () => {
+    const written = [
+      '<https://example.com/a> <HTTP://EXAMPLE.COM/A> <http:example.com> <https:/example.com/b> <https://example.com/c d> <https://axn--b.example.com/xn--path>',
+      'https://example.com/plain https://EXAMPLE.com/caps https://example.com/users/{id} https://example.com/a\u0001 https://en.example.org/wiki/A_(b) https://example.com/x?y=1#z.',
+      '`https://example.com/span` and `gh pr view https://github.com/example/app/pull/41 --web`',
+      '```\n- the loop: https://github.com/example/app/pull/41\n  - its tests (https://github.com/example/app/pull/42)\n{"url":"https://example.com/json"} <a href="https://example.com/docs">\n```',
+      '| a |\n|---|\n| https://example.com/cell |\n\n# https://example.com/heading\n\n> https://example.com/quote',
+    ].join('\n\n');
+    const found = everyLink(parseMarkdown(written));
     expect(found).toHaveLength(21);
-    expect(found.filter((item) => item.type === 'link' && asksFirst(item)).map((item) => (item.type === 'link' ? item.href : ''))).toEqual([]);
+    expect(found.filter((item) => asksFirst(item)).map((item) => item.href)).toEqual([]);
+  });
+
+  describe('a host with a punycode label (W58)', () => {
+    /** github.com with a Cyrillic і (U+0456) for its i, which the browser's parser gives in punycode. */
+    const LOOK_ALIKE = 'https://g\u0456thub.com/example/repo/pull/51';
+    const PUNYCODE = 'https://xn--gthub-n2e.com/example/repo/pull/51';
+
+    it.each([
+      ['a bare URL', `See ${LOOK_ALIKE} today.`],
+      ['an autolink', `See <${LOOK_ALIKE}> today.`],
+      ['[same](same)', `See [${LOOK_ALIKE}](${LOOK_ALIKE}) today.`],
+      ['inline code', `Run \`gh pr view ${LOOK_ALIKE}\` today.`],
+      ['a code block', `\`\`\`\n${LOOK_ALIKE}\n\`\`\``],
+    ])("asks for a look-alike host's own address as %s", (_name, written) => {
+      const found = everyLink(parseMarkdown(written));
+      expect(found.map((item) => item.href)).toEqual([PUNYCODE]);
+      // Still its own address, since the punycode is the same host: the punycode rule is what asks.
+      expect(isOwnAddress(linkText(found[0]!.children), found[0]!.href)).toBe(true);
+      expect(asksFirst(found[0]!)).toBe(true);
+    });
+
+    it('asks for any label in punycode, the first, a subdomain or the last, written in Unicode or punycode, in any case', () => {
+      const asks = (written: string) => everyLink(parseMarkdown(written)).map((item) => [item.href, asksFirst(item)]);
+      expect(asks('https://docs.exämple.com/a https://xn--exmple-cua.com/b https://XN--EXMPLE-CUA.example.com/c https://example.xn--p1ai/d')).toEqual([
+        ['https://docs.xn--exmple-cua.com/a', true],
+        ['https://xn--exmple-cua.com/b', true],
+        ['https://xn--exmple-cua.example.com/c', true],
+        ['https://example.xn--p1ai/d', true],
+      ]);
+      // In any case, though the parser already gives an ASCII host in lower case.
+      expect(hasPunycodeLabel({ hostname: 'docs.XN--EXMPLE-CUA.com' } as URL)).toBe(true);
+    });
+
+    it('opens on one click for xn-- after a label starts, in the path, query or fragment, and for an IP address', () => {
+      for (const href of ['https://axn--b.example.com/', 'https://example.com/xn--gthub-n2e', 'https://example.com/?h=xn--gthub-n2e#xn--a', 'https://127.0.0.1:4517/', 'https://[::1]/']) {
+        expect(hasPunycodeLabel(new URL(href)), href).toBe(false);
+        expect(asksFirst({ href, children: [text(href)] }), href).toBe(false);
+      }
+    });
   });
 });
