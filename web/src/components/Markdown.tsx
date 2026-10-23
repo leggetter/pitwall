@@ -11,9 +11,10 @@
 //   is the URL it opens, as the browser parsed it, since its text can say anything (links.ts).
 // - A link whose text isn't its own address asks first (W55, W48's F6): a click, Enter or a middle
 //   click opens an inline confirmation instead, which names the host it goes to and shows its full
-//   address, with Cancel and Open link. It shows straight after the paragraph, heading or table the
-//   link is in, since a line of text can't hold it. A bare URL and an autolink open on one click
-//   (asksFirst, markdown.ts). The link itself is unchanged: its name, its tooltip and its href.
+//   address, with Cancel and Open link. It shows straight after the paragraph, heading, table or code
+//   block the link is in, since a line of text can't hold it. A bare URL and an autolink open on one
+//   click, unless a label of their host is punycode, which asks whatever the link's text (asksFirst,
+//   markdown.ts; W58). The link itself is unchanged: its name, its tooltip and its href.
 // - A bare URL in code is the same link, in the code's mono face and size (W37). The code's text is
 //   unchanged: Copy copies it as written, and a link's tooltip is rendered into document.body, so
 //   text selected in the code and copied by hand holds none of it.
@@ -54,8 +55,8 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
       </>
     );
   }
-  // The message is a host too, for any link outside a paragraph, heading or table: links in code are
-  // bare URLs, which never ask, so none should reach it.
+  // The message is a host too, for any link outside a paragraph, heading, table or code block, though
+  // links are only ever in those, so none should reach it.
   return <Asking>{blocks.map((block, index) => renderBlock(block, index))}</Asking>;
 });
 
@@ -78,7 +79,12 @@ function renderBlock(block: Block, key: number): ReactNode {
         </Asking>
       );
     case 'code':
-      return <CodeBlock key={key} language={block.language} text={block.text} linked={block.linked} />;
+      // Its bare URLs ask when their host is punycode (W58), so the question shows after the box.
+      return (
+        <Asking key={key}>
+          <CodeBlock language={block.language} text={block.text} linked={block.linked} />
+        </Asking>
+      );
     case 'list': {
       const items = block.items.map((item, index) => <li key={index}>{renderBlocks(item)}</li>);
       return block.ordered ? (
@@ -147,8 +153,9 @@ const AskContext = createContext<Ask | undefined>(undefined);
 let questions = 0;
 
 /**
- * A block a link that asks can ask from: a paragraph, a heading, a table, or the message for anything
- * else. Its question, when one is open, shows straight after the block, at the message's width.
+ * A block a link that asks can ask from: a paragraph, a heading, a table, a code block, or the message
+ * for anything else. Its question, when one is open, shows straight after the block, at the message's
+ * width.
  */
 function Asking({ children }: { children: ReactNode }) {
   const [question, setQuestion] = useState<{ id: number; url: URL; link: HTMLAnchorElement }>();
