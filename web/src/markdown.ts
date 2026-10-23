@@ -13,7 +13,8 @@
 //   names one site while it goes to another (W55). A link to anything else shows as the literal text
 //   it was written as.
 // - A link whose text isn't its own address asks before it opens (asksFirst, W55), so the renderer
-//   can ask; a bare URL and an autolink never do.
+//   can ask; a bare URL and an autolink don't. Any link to a host with a punycode label asks too, a
+//   bare URL and an autolink included, since its text can show a look-alike of another host (W58).
 // - Code is literal, but its bare http: and https: URLs are links too, under the same rule (W37), so a
 //   draft or a command that Claude puts in code can be opened from it. Markdown's own link syntax in
 //   code, [text](url) and <url>, stays text, as everything else in code does, and so does a code span
@@ -147,7 +148,10 @@ export function httpUrl(text: string): URL | undefined {
 //
 // A link whose text isn't its own address asks before it opens, naming the host it really goes to
 // (components/Markdown.tsx), since its text can name one site while it goes to another. A bare URL
-// and an autolink are their own address, so they open on one click, in code too (W37).
+// and an autolink are their own address, so they open on one click, in code too (W37), unless their
+// host has a punycode label. Then the text can show a look-alike of another host, such as gіthub.com
+// with a Cyrillic і (U+0456), so every link to such a host asks, and the question names the host in
+// punycode (W58).
 
 /** A link's text as it shows: its text and code, inside any formatting, with a line break as a line feed. */
 export function linkText(children: Inline[]): string {
@@ -215,9 +219,23 @@ function addressKey(url: URL): string {
   return `${url.protocol}//${url.host}${path}${url.search}${url.hash}`;
 }
 
-/** Whether a link asks before it opens: when its text isn't its own address (isOwnAddress). */
+/**
+ * Whether any label of `url`'s host starts with `xn--`, in any case: an internationalised name, which
+ * the browser's parser turns to punycode, or one written in punycode. Its Unicode form can look like
+ * another host, as `gіthub.com` with a Cyrillic і (U+0456) looks like github.com (W58).
+ */
+export function hasPunycodeLabel(url: URL): boolean {
+  return url.hostname.split('.').some((label) => label.slice(0, 4).toLowerCase() === 'xn--');
+}
+
+/**
+ * Whether a link asks before it opens: when its text isn't its own address (isOwnAddress), or when
+ * its host has a punycode label (hasPunycodeLabel, W58), whatever its text, since the text can show
+ * the Unicode form of a look-alike host as if it were its own address.
+ */
 export function asksFirst(link: { href: string; children: Inline[] }): boolean {
-  return !isOwnAddress(linkText(link.children), link.href);
+  const url = httpUrl(link.href);
+  return url === undefined || hasPunycodeLabel(url) || !isOwnAddress(linkText(link.children), link.href);
 }
 
 // --- Blocks ----------------------------------------------------------------------------------------
