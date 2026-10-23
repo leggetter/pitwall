@@ -113,6 +113,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** asked for after trying M2: pick a repo, then one of its sessions, then work with that session. It replaces M2's single list of grouped cards.
 - **Repo list:** Needs you, All sessions and Starred first (Starred shows whether or not anything is starred, so the list never jumps; W53), then the root's own directory, labelled with its path, then the repos in alphanumeric order, so the list never jumps.
+- **A started session is selected** (Phil, 2026-10-23: "when creating a new session, it should be automatically selected - the repo/directory and the session"): once a session started from New session is listed, its root tab, its repo or directory under Group sessions by, and its view are selected, in one history entry, and its terminal takes no keyboard focus (W57). When that would take over a draft, a running Stop or Remove, an open confirmation or restart prompt, or typing, a toast says it's listed, with Open, for 10 s; its row is the lasting way in (W63).
 - **Widths:** three columns from 1,200 px. Below that, the session view lies over the session list, starting below the header, and what it covers is inert (it can't be clicked or tabbed to). Below 900 px the repo list is a drawer, and at 600 px and narrower the session view is full width, with Back to sessions.
 - **Resizing:** the session view is 760 px by default and at least 560 px, about 80 terminal columns. The divider resizes it, and so do the actions menu's Make view wider and Make view narrower, for anyone who can't drag (WCAG 2.5.7). The width is remembered.
 
@@ -150,6 +151,6 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **What:** with two or more roots (`pitwall ~/work ~/oss`), the header shows a tab per root, and each tab narrows the repo list, Needs you, All sessions, Starred, the session list, the filter and New session to its root. With one root, the header is as before.
 - **Nothing out of sight:** a tab that isn't open shows its root's needs-you badge, and the page title's count covers every root.
-- **Each tab keeps its place:** its selection, open session and filter. Switching never detaches a terminal (D9's four count across tabs), drops a draft or stops a send. The open tab is in the URL (`&root=`) and in `pitwall.root-tab.v1`.
+- **Each tab keeps its place:** its selection, open session and filter. Switching never detaches a terminal (D9's four count across tabs), drops a draft or stops a send. The open tab is in the URL (`&root=`) and in `pitwall.root-tab.v1`. A session started from New session in a tab you've since left switches back to that tab once it's listed (W63).
 - **Nested roots:** a session belongs to the longest root that holds it, as the index decides, so the tabs always agree with the server.
 - **Why:** Phil asked for one pitwall over two roots, as tabs (2026-10-21). Rejected: two pitwalls in two browser tabs, which double the polling, scanning and relays, and one page showing other pitwalls, which would need each one's token and a looser CSP.
