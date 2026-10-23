@@ -1,18 +1,31 @@
-// View preferences in the app (W42): the header's menu with the mouse and the keyboard; each mode of
-// Group sessions by, through the repo list, Needs you and All sessions, the rows' group labels, the
-// root tabs and their badges, the filter, hidden repos and ?session=; the stored mode; and a switch
-// that keeps the selection, or replaces it with focus kept, and leaves the session view open.
-// Made-up sessions and paths only. Where it started, W39's listing, is in Dashboard.test.tsx too.
+// Preferences in the app (W59, W42): the header's Preferences button and its dialog, opened and
+// closed, focus moving in and back, Tab staying inside, one stop per radio group, each setting
+// chosen there, applied at once and stored under its own key, and the dialog taking no single-key
+// shortcut. Then each mode of Group sessions by, chosen there, through the repo list, Needs you and
+// All sessions, the rows' group labels, the root tabs and their badges, the filter, hidden repos and
+// ?session=; the stored mode; and a switch that keeps the selection, or replaces it with focus kept,
+// and leaves the session view open. Open running background sessions on is W54's
+// (TerminalFirst.test.tsx). Made-up sessions and paths only. Where it started, W39's listing, is in
+// Dashboard.test.tsx too.
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IndexSnapshot, WorkedIn } from '../../../src/shared/protocol.js';
+import dialogCss from './Dialog.css?raw';
+import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import { GROUP_BY_KEY, type GroupBy } from '../groupBy.js';
 import type { StorageSource } from '../groupState.js';
 import { hiddenKey } from '../hidden.js';
 import { VIEW_STATE_KEY } from '../selection.js';
+import { createShortcutsStore, SHORTCUTS_KEY, ShortcutsStoreContext } from '../shortcuts.js';
+import { TERMINAL_FOCUS_KEY } from '../terminalFocus.js';
+import { createThemeStore, THEME_KEY, ThemeStoreContext } from '../theme.js';
+import { block, declarations, withoutComments } from '../test/css.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
+import { chosenPreference, choosePreference, openPreferences, preferenceGroup, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
+import { shownTooltip } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 
 const WORK = '/Users/example/work';
@@ -61,12 +74,28 @@ function memory(entries: Record<string, string> = {}): StorageSource & { values:
   return Object.assign(() => storage, { values });
 }
 
-function renderApp(options: { mode?: GroupBy; search?: string; storage?: StorageSource; snap?: IndexSnapshot } = {}) {
+/** A system that prefers light, as matchMedia(DARK_QUERY) would say, which never changes here. */
+const lightSystem = { matches: false, addEventListener: () => {} };
+
+/**
+ * The Dashboard on made-up storage. The theme and the single-key shortcuts are their stores', which
+ * the header and the dialog share, here on storage of their own: `theme` and `shortcuts`.
+ */
+function renderApp(options: { mode?: GroupBy; search?: string; storage?: StorageSource; snap?: IndexSnapshot; theme?: ReturnType<typeof memory>; shortcuts?: ReturnType<typeof memory> } = {}) {
   const history = fakeHistory(options.search ?? '');
   const storage = options.storage ?? memory(options.mode ? { [GROUP_BY_KEY]: options.mode } : {});
-  const ui = (snap: IndexSnapshot) => <Dashboard view={{ state: 'live', snapshot: snap }} navigation={history.navigation} storage={storage} />;
+  const theme = options.theme ?? memory();
+  const shortcuts = options.shortcuts ?? memory();
+  const themeStore = createThemeStore({ storage: theme, darkQuery: () => lightSystem, events: { addEventListener: () => {} } });
+  const shortcutsStore = createShortcutsStore({ storage: shortcuts, events: { addEventListener: () => {} } });
+  const wrap = (children: ReactNode) => (
+    <ThemeStoreContext.Provider value={themeStore}>
+      <ShortcutsStoreContext.Provider value={shortcutsStore}>{children}</ShortcutsStoreContext.Provider>
+    </ThemeStoreContext.Provider>
+  );
+  const ui = (snap: IndexSnapshot) => wrap(<Dashboard view={{ state: 'live', snapshot: snap }} navigation={history.navigation} storage={storage} />);
   const result = render(ui(options.snap ?? twoRoots()));
-  return { ...result, history, storage, update: (snap: IndexSnapshot) => result.rerender(ui(snap)) };
+  return { ...result, history, storage, theme, shortcuts, update: (snap: IndexSnapshot) => result.rerender(ui(snap)) };
 }
 
 const repoList = () => screen.getByRole('navigation', { name: 'Repos' });
@@ -78,7 +107,7 @@ const repoItem = (label: string) => {
   return item;
 };
 const choose = (label: string) => fireEvent.click(repoItem(label));
-const rowNames = () => screen.queryAllByRole('heading', { level: 3 }).map((heading) => heading.textContent ?? '');
+const rowNames = () => screen.queryAllByRole('heading', { level: 3 }).filter((heading) => !heading.closest('[role="dialog"]')).map((heading) => heading.textContent ?? '');
 const rowItem = (name: string) => {
   const item = screen.getAllByRole('heading', { level: 3 }).find((heading) => heading.textContent === name)?.closest('li');
   if (!item) throw new Error(`no row for ${name}`);
@@ -95,19 +124,20 @@ const tab = (label: string) => {
   return found;
 };
 const tabNames = () => tabs().map((candidate) => candidate.getAttribute('aria-label') ?? candidate.textContent);
-const prefsButton = () => screen.getByRole('button', { name: 'View preferences' });
-/** Group sessions by's options; the menu's other group, Open running background sessions on, is W54's (TerminalFirst.test.tsx). */
-const options = () => within(screen.getByRole('group', { name: 'Group sessions by' })).getAllByRole('menuitemradio');
-const checkedOption = () => options().find((option) => option.getAttribute('aria-checked') === 'true');
-const optionName = (option: Element) => document.getElementById(option.getAttribute('aria-labelledby') ?? '')?.textContent;
 const toasts = () => [...document.querySelectorAll('.toast-message')].map((toast) => toast.textContent);
+/** What a radio's line says: the text its aria-describedby names. */
+const describedBy = (element: Element) => document.getElementById(element.getAttribute('aria-describedby') ?? '')?.textContent;
+const labelOf = (radio: HTMLInputElement) => radio.labels?.[0]?.textContent;
 
-/** Opens View preferences with the mouse and chooses a mode by its label. */
+const GROUP_BY = 'Group sessions by';
+const BACKGROUND_TAB = 'Open running background sessions on';
+const TERMINAL_FOCUS = 'The terminal takes the keyboard';
+const SHORTCUTS = 'Single-key shortcuts';
+const THEME = 'Theme';
+
+/** Chooses a mode of Group sessions by in Preferences, by its label, and closes it. */
 function groupBy(label: string) {
-  fireEvent.click(prefsButton());
-  const option = options().find((candidate) => optionName(candidate) === label);
-  if (!option) throw new Error(`no option ${label}`);
-  fireEvent.click(option);
+  choosePreference(GROUP_BY, label);
 }
 
 beforeEach(() => {
@@ -119,62 +149,226 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('the View preferences menu', () => {
-  it('sits after the theme switch, before the keyboard shortcuts button, an icon button named View preferences that opens a menu', () => {
+describe('the Preferences button', () => {
+  it('sits after the theme switch, before the keyboard shortcuts button: an icon button named Preferences that opens a dialog', () => {
     renderApp();
-    const button = prefsButton();
-    expect(button.getAttribute('aria-haspopup')).toBe('menu');
-    expect(button.getAttribute('aria-expanded')).toBe('false');
-    expect(button.closest('.app-header-end')).not.toBeNull();
+    const button = preferencesButton();
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(button.getAttribute('aria-label')).toBe('Preferences');
+    expect(button.hasAttribute('aria-expanded')).toBe(false);
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     const end = [...(document.querySelector('.app-header-end')?.children ?? [])];
-    const at = end.findIndex((child) => child.contains(button));
+    const at = end.indexOf(button);
+    expect(at).toBeGreaterThan(0);
     expect(end[at - 1]?.getAttribute('aria-label')).toBe('Theme');
     expect(end[at + 1]?.getAttribute('aria-label')).toBe('Keyboard shortcuts');
+    // No menu in the header any more.
+    expect(document.querySelector('header [aria-haspopup="menu"]')).toBeNull();
   });
+});
 
-  it('opens with the mouse on Group sessions by: three modes, each with a line saying what it does, Main repo chosen by default', () => {
+describe('the Preferences dialog', () => {
+  it('is a modal dialog named Preferences and described by its subtitle, with no footer, so nothing to save', () => {
     renderApp();
-    fireEvent.click(prefsButton());
-    const menu = screen.getByRole('menu', { name: 'View preferences' });
-    expect(within(menu).getByRole('group', { name: 'Group sessions by' })).toBeTruthy();
-    expect(options().map(optionName)).toEqual(['Main repo', 'Where it started', 'Every repo it worked in']);
-    expect(options().map((option) => document.getElementById(option.getAttribute('aria-describedby') ?? '')?.textContent)).toEqual([
-      'A session started in a root goes under the repo it changed most.',
-      'Each session stays under the repo or directory it started in.',
-      'A session shows under every repo it worked in, so counts can overlap.',
+    const dialog = openPreferences();
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Each change applies at once, and this browser remembers it.');
+    expect(dialog.classList.contains('sm')).toBe(true);
+    expect(dialog.querySelector('.dialog-foot')).toBeNull();
+    expect(within(dialog).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close']);
+  });
+
+  it('has a section for each area, each named by its heading, and a radio group for each setting in it, each option with its line', () => {
+    renderApp();
+    const dialog = openPreferences();
+    const sections = within(dialog).getAllByRole('region');
+    expect(sections.map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? '')?.textContent)).toEqual(['Repo list', 'Session view', 'Keyboard', 'Appearance']);
+    expect(within(dialog).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Repo list', 'Session view', 'Keyboard', 'Appearance']);
+    const groupsIn = (section: HTMLElement) => within(section).getAllByRole('group').map((each) => each.querySelector('legend')?.textContent);
+    expect(sections.map(groupsIn)).toEqual([[GROUP_BY], [BACKGROUND_TAB, TERMINAL_FOCUS], [SHORTCUTS], [THEME]]);
+    for (const each of within(dialog).getAllByRole('group')) {
+      expect(each.tagName).toBe('FIELDSET');
+      expect(each.firstElementChild?.tagName).toBe('LEGEND');
+    }
+    const options = (setting: string) => preferenceOptions(setting).map((radio) => [labelOf(radio), describedBy(radio), radio.checked]);
+    expect(options(GROUP_BY)).toEqual([
+      ['Main repo', 'A session started in a root goes under the repo it changed most.', true],
+      ['Where it started', 'Each session stays under the repo or directory it started in.', false],
+      ['Every repo it worked in', 'A session shows under every repo it worked in, so counts can overlap.', false],
     ]);
-    expect(optionName(checkedOption() as Element)).toBe('Main repo');
-    // Focus on the chosen mode.
-    expect(document.activeElement).toBe(checkedOption());
+    expect(options(BACKGROUND_TAB)).toEqual([
+      ['Terminal', 'The session attaches as its view opens, so its terminal is ready to use.', true],
+      ['Conversation', 'The session attaches only once you open its Terminal tab.', false],
+    ]);
+    expect(options(TERMINAL_FOCUS)).toEqual([
+      ['When you open it', 'Right after you open the session or its Terminal tab with a click or Enter. Never after a reload, the back button or j and k.', true],
+      ['Never', 'Click the terminal, or Tab to it, to type to the session.', false],
+    ]);
+    expect(options(SHORTCUTS)).toEqual([
+      ['On', 'The keys /, n, ?, j, k and s work anywhere, except while you type in a field or the terminal.', true],
+      ['Off', "Those keys do nothing, so a stray key or a speech command can't set one off.", false],
+    ]);
+    expect(describedBy(preferenceGroup(SHORTCUTS))).toBe('The keyboard shortcuts dialog, from the header, lists every key and has this switch too.');
+    expect(options(THEME)).toEqual([
+      ['System', 'Light or dark as your system is set, and it follows when that changes.', true],
+      ['Light', 'Light, whatever your system says. The terminal stays dark.', false],
+      ['Dark', 'Dark, whatever your system says.', false],
+    ]);
+    // Each group's radios share a name no other group has, so the browser keeps them apart.
+    const names = within(dialog).getAllByRole('group').map((each) => new Set(within(each).getAllByRole<HTMLInputElement>('radio').map((radio) => radio.name)));
+    expect(names.every((set) => set.size === 1)).toBe(true);
+    expect(new Set(names.map((set) => [...set][0])).size).toBe(5);
   });
 
-  it('switches with the keyboard: ↓ to a mode, Enter chooses it, the menu closes and focus is back on its button, never the page', () => {
+  it('opens on what is stored, for every setting', () => {
+    renderApp({
+      storage: memory({ [GROUP_BY_KEY]: 'every-repo', [BACKGROUND_TAB_KEY]: 'conversation', [TERMINAL_FOCUS_KEY]: 'never' }),
+      shortcuts: memory({ [SHORTCUTS_KEY]: 'off' }),
+      theme: memory({ [THEME_KEY]: 'dark' }),
+    });
+    openPreferences();
+    expect([GROUP_BY, BACKGROUND_TAB, TERMINAL_FOCUS, SHORTCUTS, THEME].map(chosenPreference)).toEqual(['Every repo it worked in', 'Conversation', 'Never', 'Off', 'Dark']);
+  });
+
+  it("moves focus to the first group's choice as it opens, and back to its button when Escape, Close or the backdrop closes it, without its tooltip", () => {
+    renderApp({ mode: 'where-started' });
+    const button = preferencesButton();
+    act(() => button.focus());
+    fireEvent.click(button);
+    expect(document.activeElement).toBe(preferenceOption(GROUP_BY, 'Where it started'));
+    expect(shownTooltip()).toBeNull();
+    // Escape is the dialog's: it closes, and goes no further.
+    expect(fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' })).toBe(false);
+    expect(preferencesDialog()).toBeNull();
+    expect(document.activeElement).toBe(button);
+    expect(shownTooltip()).toBeNull();
+
+    fireEvent.click(button);
+    fireEvent.click(within(openPreferences()).getByRole('button', { name: 'Close' }));
+    expect(preferencesDialog()).toBeNull();
+    expect(document.activeElement).toBe(button);
+
+    fireEvent.click(button);
+    const backdrop = openPreferences().parentElement as HTMLElement;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    expect(preferencesDialog()).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("keeps Tab inside, one stop for each radio group, its choice: from the last group's choice to Close, and back", () => {
+    renderApp();
+    const dialog = openPreferences();
+    const close = within(dialog).getByRole('button', { name: 'Close' });
+    // System, the default, is the last group's choice, and the dialog's last stop: Light and Dark aren't stops.
+    const system = preferenceOption(THEME, 'System');
+    system.focus();
+    expect(fireEvent.keyDown(system, { key: 'Tab' })).toBe(false);
+    expect(document.activeElement).toBe(close);
+    expect(fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(system);
+    // Choose Dark, and it's the stop instead.
+    choosePreference(THEME, 'Dark', { close: false });
+    close.focus();
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(preferenceOption(THEME, 'Dark'));
+    // Tab from a choice that isn't the last is the browser's: the dialog leaves it alone.
+    const main = preferenceOption(GROUP_BY, 'Main repo');
+    main.focus();
+    expect(fireEvent.keyDown(main, { key: 'Tab' })).toBe(true);
+  });
+
+  it('takes no single-key shortcut while it is open: it is modal', () => {
+    renderApp();
+    openPreferences();
+    fireEvent.keyDown(document.activeElement as Element, { key: 'n' });
+    fireEvent.keyDown(document.activeElement as Element, { key: '?' });
+    expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull();
+    expect(preferencesDialog()).not.toBeNull();
+  });
+
+  it('is the small dialog, at most the window less 96 px tall, whose body is what scrolls, as in a 375 × 540 window', () => {
+    renderApp();
+    expect(openPreferences().classList.contains('sm')).toBe(true);
+    const css = withoutComments(dialogCss);
+    const card = declarations(block(css, /\n\.dialog\s*\{/));
+    expect(card.filter(([property]) => property === 'max-height').map(([, value]) => value)).toContain('calc(100dvh - 2 * var(--pw-space-12))');
+    const body = new Map(declarations(block(css, /\.dialog-body\s*\{/)));
+    expect(body.get('overflow-y')).toBe('auto');
+    expect(body.get('min-height')).toBe('0');
+  });
+});
+
+describe('each setting, chosen in Preferences', () => {
+  it('Group sessions by: the repo list behind regroups as it is chosen, with the dialog still open and focus on the choice, and it is stored alone', () => {
     const { storage } = renderApp();
-    const button = prefsButton();
-    button.focus();
-    // Enter on a <button> is a click.
-    fireEvent.click(button);
-    fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowDown' });
-    expect(optionName(document.activeElement as Element)).toBe('Where it started');
-    fireEvent.click(document.activeElement as Element);
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(document.activeElement).toBe(button);
-    expect((storage as ReturnType<typeof memory>).values.get(GROUP_BY_KEY)).toBe('where-started');
+    expect(repoItems()).toContain('evals, git repo1 needs you');
+    choosePreference(GROUP_BY, 'Where it started', { close: false });
+    expect(preferencesDialog()).not.toBeNull();
+    expect(document.activeElement).toBe(preferenceOption(GROUP_BY, 'Where it started'));
     expect(repoItems()).toContain('~/work, directory1 needs you');
-    // Escape closes it again without choosing.
-    fireEvent.click(button);
-    expect(optionName(document.activeElement as Element)).toBe('Where it started');
-    fireEvent.keyDown(document.activeElement as Element, { key: 'End' });
-    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(document.activeElement).toBe(button);
-    expect((storage as ReturnType<typeof memory>).values.get(GROUP_BY_KEY)).toBe('where-started');
+    expect(repoItems().some((item) => item.startsWith('evals'))).toBe(false);
+    choosePreference(GROUP_BY, 'Every repo it worked in', { close: false });
+    expect(repoItems()).toContain('evals, git repo2 need you');
+    const stored = (storage as ReturnType<typeof memory>).values;
+    expect(stored.get(GROUP_BY_KEY)).toBe('every-repo');
+    expect([BACKGROUND_TAB_KEY, TERMINAL_FOCUS_KEY].map((key) => stored.has(key))).toEqual([false, false]);
   });
 
-  it('opens on the stored mode', () => {
-    renderApp({ mode: 'every-repo' });
-    fireEvent.click(prefsButton());
-    expect(optionName(checkedOption() as Element)).toBe('Every repo it worked in');
+  it('Open running background sessions on and The terminal takes the keyboard: each stored alone, under its own key', () => {
+    const storage = memory();
+    renderApp({ storage });
+    choosePreference(BACKGROUND_TAB, 'Conversation', { close: false });
+    expect(storage.values.get(BACKGROUND_TAB_KEY)).toBe('conversation');
+    expect(storage.values.has(TERMINAL_FOCUS_KEY)).toBe(false);
+    choosePreference(TERMINAL_FOCUS, 'Never', { close: false });
+    expect(storage.values.get(TERMINAL_FOCUS_KEY)).toBe('never');
+    expect([GROUP_BY_KEY, BACKGROUND_TAB_KEY].map((key) => storage.values.get(key))).toEqual([undefined, 'conversation']);
+    choosePreference(TERMINAL_FOCUS, 'When you open it');
+    expect(storage.values.get(TERMINAL_FOCUS_KEY)).toBe('after-open');
+    openPreferences();
+    expect([BACKGROUND_TAB, TERMINAL_FOCUS].map(chosenPreference)).toEqual(['Conversation', 'When you open it']);
+  });
+
+  it("Single-key shortcuts: off and on, the same setting as the keyboard shortcuts dialog's switch, under pitwall.shortcuts.v1", () => {
+    const { shortcuts } = renderApp();
+    choosePreference(SHORTCUTS, 'Off');
+    expect(shortcuts.values.get(SHORTCUTS_KEY)).toBe('off');
+    // Off: `n` does nothing, and the keyboard shortcuts dialog's switch says so.
+    fireEvent.keyDown(document.body, { key: 'n' });
+    expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
+    const box = screen.getByRole('checkbox', { name: 'Single-key shortcuts' });
+    expect((box as HTMLInputElement).checked).toBe(false);
+    // On again from there, and Preferences shows it.
+    fireEvent.click(box);
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(shortcuts.values.get(SHORTCUTS_KEY)).toBe('on');
+    openPreferences();
+    expect(chosenPreference(SHORTCUTS)).toBe('On');
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    fireEvent.keyDown(document.body, { key: 'n' });
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBeTruthy();
+  });
+
+  it("Theme: shown at once, behind the dialog, the same choice as the header's switch, under pitwall.theme.v1", () => {
+    const { theme } = renderApp();
+    const pressed = () => within(screen.getByRole('banner')).getAllByRole('button', { pressed: true }).map((button) => button.getAttribute('aria-label'));
+    expect(pressed()).toEqual(['System theme']);
+    choosePreference(THEME, 'Dark', { close: false });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(theme.values.get(THEME_KEY)).toBe('dark');
+    expect(pressed()).toEqual(['Dark theme']);
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    // The header's switch, the quick way, and Preferences shows its choice.
+    fireEvent.click(screen.getByRole('button', { name: 'Light theme' }));
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    openPreferences();
+    expect(chosenPreference(THEME)).toBe('Light');
+    choosePreference(THEME, 'System');
+    expect(theme.values.get(THEME_KEY)).toBe('system');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
   });
 });
 
@@ -372,11 +566,13 @@ describe('switching modes', () => {
     expect(toasts()).toEqual([]);
   });
 
-  it("selects All sessions in the same tab when the new mode hasn't the group, says so in a toast, and keeps focus on the menu's button", () => {
+  it("selects All sessions in the same tab when the new mode hasn't the group, says so in a toast, and keeps focus on the choice, then the button, never the page", () => {
     const { history, storage } = renderApp({ search: `?repo=${at(WORK, 'evals')}&root=${WORK}` });
     expect(listHeading().textContent).toBe('evals, git repo');
     const entries = history.entries.length;
-    groupBy('Where it started');
+    choosePreference(GROUP_BY, 'Where it started', { close: false });
+    expect(document.activeElement).toBe(preferenceOption(GROUP_BY, 'Where it started'));
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
     expect(listHeading().textContent).toBe('All sessions');
     expect(repoItem('All sessions').getAttribute('aria-current')).toBe('page');
     // The URL is replaced, not pushed, and the stored selection follows it.
@@ -384,7 +580,7 @@ describe('switching modes', () => {
     expect(history.location.search).toBe(`?view=all&root=${WORK}`);
     expect((storage as ReturnType<typeof memory>).values.get(VIEW_STATE_KEY)).toBe(`view=all&root=${WORK}`);
     expect(toasts()).toEqual(['Selected All sessions: evals has no sessions when grouped by where it started.']);
-    expect(document.activeElement).toBe(prefsButton());
+    expect(document.activeElement).toBe(preferencesButton());
     expect(document.activeElement).not.toBe(document.body);
   });
 
@@ -413,7 +609,7 @@ describe('switching modes', () => {
     // Selected, though not listed, so with no kind, as any group that has gone.
     expect(listHeading().textContent).toBe('~/work');
     expect(screen.getByText('No sessions in ~/work now')).toBeTruthy();
-    expect(screen.getByText(`Its sessions are listed under the repos they ${how}, as View preferences groups them.`)).toBeTruthy();
+    expect(screen.getByText(`Its sessions are listed under the repos they ${how}, as Preferences groups them.`)).toBeTruthy();
   });
 
   it("keeps the usual sentence for a group the snapshot no longer has", () => {

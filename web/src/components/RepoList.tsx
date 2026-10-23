@@ -4,7 +4,7 @@
 // and Enter selects. Before the first snapshot, four skeleton items stand in for the groups (4:
 // Skeletons and spinners).
 //
-// The groups are the ones View preferences makes (W42, groupBy.ts). In Main repo and Where it started
+// The groups are the ones Group sessions by makes (W42, groupBy.ts). In Main repo and Where it started
 // each session is in one group, so the groups' counts add up to All sessions'; in Every repo it worked
 // in a session can be in several, and each group counts its distinct sessions, so they can add up to
 // more. Needs you, All sessions, Starred and the Hidden section's badge count each session once.
@@ -54,7 +54,7 @@ interface Item {
   muted: boolean;
 }
 
-/** A group's item: its sessions, each once, as View preferences lists them (W42), and how many of them need you. */
+/** A group's item: its sessions, each once, as Group sessions by lists them (W42), and how many of them need you. */
 function groupItem(group: SessionGroup, roots: readonly string[]): Item {
   return {
     id: groupId(group),

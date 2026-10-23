@@ -138,17 +138,15 @@ describe('Dashboard header', () => {
     expect(screen.getByText('updated 5s ago')).toBeTruthy();
   });
 
-  it('ends the header with the theme switch, View preferences, then the keyboard shortcuts button, before and after the first snapshot', () => {
+  it('ends the header with the theme switch, Preferences, then the keyboard shortcuts button, before and after the first snapshot', () => {
     const { container, rerender } = render(<Dashboard view={{ state: 'connecting', snapshot: undefined }} />);
     const status = () => container.querySelector('header .app-header-end');
-    // The View preferences menu's anchor holds its button, which has the name (W42).
-    const name = (element: Element) => element.getAttribute('aria-label') ?? element.querySelector('button[aria-haspopup="menu"]')?.getAttribute('aria-label');
-    const lastThree = () => [...(status()?.children ?? [])].slice(-3).map(name);
+    const lastThree = () => [...(status()?.children ?? [])].slice(-3).map((element) => element.getAttribute('aria-label'));
     expect(within(status() as HTMLElement).getByRole('group', { name: 'Theme' })).toBeTruthy();
-    expect(lastThree()).toEqual(['Theme', 'View preferences', 'Keyboard shortcuts']);
+    expect(lastThree()).toEqual(['Theme', 'Preferences', 'Keyboard shortcuts']);
 
     rerender(<Dashboard view={{ state: 'live', snapshot: snapshot([]) }} />);
-    expect(lastThree()).toEqual(['Theme', 'View preferences', 'Keyboard shortcuts']);
+    expect(lastThree()).toEqual(['Theme', 'Preferences', 'Keyboard shortcuts']);
   });
 
   it("shows a heartbeat's time as the update age, newer than the snapshot's", () => {
@@ -1781,8 +1779,8 @@ describe('untrusted session text', () => {
   });
 });
 
-// Where it started, in View preferences (W42): the snapshot's groups as they are, W39's listing. The
-// other modes are in ViewPreferences.test.tsx.
+// Where it started, in Preferences (W42, W59): the snapshot's groups as they are, W39's listing. The
+// other modes are in Preferences.test.tsx.
 describe('Where it started: each session in one group (W39)', () => {
   const whereStarted = () => storageWith({ [GROUP_BY_KEY]: 'where-started' });
   const renderDashboard = (snap: IndexSnapshot | undefined, overrides: Partial<ConnectionView> = {}, options: RenderOptions = {}) =>
@@ -1912,7 +1910,7 @@ describe('Where it started: each session in one group (W39)', () => {
     expect(line()?.querySelectorAll('a, button:not(.info-tip)')).toHaveLength(0);
     const info = within(line() as HTMLElement).getByRole('button');
     expect(info.getAttribute('aria-label')).toBe(
-      "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. View preferences, in the header, sets which of these repos list the session; to find every session that worked in a repo, type its name in the filter on All sessions.",
+      "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. Group sessions by, in Preferences, sets which of these repos list the session; to find every session that worked in a repo, type its name in the filter on All sessions.",
     );
     // Rows keep their two lines.
     expect(row('from-root').children).toHaveLength(2);

@@ -198,7 +198,7 @@ describe('the open session in the URL', () => {
   });
 
   it('opens the view a loaded URL names, and nothing else: no attach, no message, no stop or remove, and no focus taken', async () => {
-    // With View preferences on Conversation: by default, a running background session opens on its
+    // With Preferences on Conversation: by default, a running background session opens on its
     // Terminal tab, which attaches (W54, TerminalFirst.test.tsx).
     const { fetch, sockets } = renderDashboard(snap(), { search: `?view=all&session=${B}`, storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
     await settle();

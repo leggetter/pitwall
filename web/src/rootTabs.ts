@@ -7,7 +7,7 @@
 // which the index chose with src/index/roots.ts's matchRoot(), the longest configured root that holds
 // the directory, or a worked-in repo's WorkedIn.root for a group the page built (W42). So with one
 // root inside another, a session under the inner one is in the inner root's tab alone, as the index
-// lists it. A tab's sessions are those its groups list, as View preferences groups them (groupBy.ts),
+// lists it. A tab's sessions are those its groups list, as the chosen grouping has them (groupBy.ts),
 // so Needs you, All sessions and their counts are its own, each session once. In Main repo a
 // root-started session can move to a repo under another root, and so to that root's tab; in Every
 // repo it worked in, a session can be in more than one tab.

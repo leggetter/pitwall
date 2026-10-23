@@ -1,13 +1,14 @@
 // The app's header (docs/design-system.md, 3): the Repos button below the sidebar breakpoint, the
 // wordmark and the roots on the left; New session, the connection badge, when the list was updated,
-// the theme switch, View preferences (W42, ViewPreferences.tsx) and the keyboard shortcuts button on
-// the right. At 600 px and narrower the right
-// side wraps under the wordmark. The roots show home as ~, with the full paths in a tooltip; the
-// update time ticks on the shared clock, with the absolute time in its tooltip.
+// the theme switch, Preferences (W59, Preferences.tsx) and the keyboard shortcuts button on the
+// right. At 600 px and narrower the right side wraps under the wordmark. The roots show home as ~,
+// with the full paths in a tooltip; the update time ticks on the shared clock, with the absolute
+// time in its tooltip.
 //
 // New session's tooltip shows its shortcut, `n`, and the shortcuts button's shows `?`. While the
 // single-key shortcuts are off, New session has no tooltip, since it would only repeat its label,
-// and the shortcuts button still opens the dialog, so they can be turned back on.
+// and the shortcuts button still opens the dialog, so they can be turned back on. Preferences, which
+// can turn them back on too, has no key.
 //
 // New session says its key in aria-keyshortcuts too. The shortcuts button doesn't: ARIA 1.2 wants
 // the keys pressed, modifiers and all, and `?` is Shift and another key that differs by layout, so
@@ -26,11 +27,11 @@ import { Button } from './Button.js';
 import { ConnectionBadge } from './ConnectionBadge.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
+import { PREFERENCES_LABEL } from './Preferences.js';
 import { RootTabs, type RootTabsProps } from './RootTabs.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
-import { ViewPreferences, type ViewPreferencesProps } from './ViewPreferences.js';
 
 export interface HeaderProps {
   state: ConnectionState;
@@ -50,13 +51,13 @@ export interface HeaderProps {
   onShortcuts?: (() => void) | undefined;
   /** With two or more roots, a tab for each, in place of the roots' path (W38). */
   tabs?: RootTabsProps | undefined;
-  /** The View preferences menu, after the theme switch (W42). It shows only when this is given. */
-  preferences?: ViewPreferencesProps | undefined;
+  /** Opens the Preferences dialog (W59). Its button, after the theme switch, shows only when this is given. */
+  onPreferences?: (() => void) | undefined;
 }
 
 export const SHORTCUTS_LABEL = 'Keyboard shortcuts';
 
-export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, preferences }: HeaderProps) {
+export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, onPreferences }: HeaderProps) {
   const shortcuts = useShortcuts();
   const tabbed = tabs !== undefined && tabs.tabs.length > 1;
   return (
@@ -92,7 +93,13 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
         <ConnectionBadge state={state} />
         {updatedAt && <Timestamp className="updated" at={updatedAt} format="updated" />}
         <ThemeSwitch />
-        {preferences && <ViewPreferences {...preferences} />}
+        {onPreferences && (
+          <Tooltip content={PREFERENCES_LABEL} relation="label">
+            <button type="button" className="icon-button ghost md" aria-haspopup="dialog" onClick={onPreferences}>
+              <Icon name="preferences" />
+            </button>
+          </Tooltip>
+        )}
         {onShortcuts && (
           <Tooltip content={SHORTCUTS_LABEL} keys={SHORTCUT_KEYS.shortcuts} relation="label">
             <button

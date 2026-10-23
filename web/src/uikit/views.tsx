@@ -13,10 +13,7 @@ import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
-import { ViewPreferences } from '../components/ViewPreferences.js';
-import type { BackgroundTab } from '../backgroundTab.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
-import type { GroupBy } from '../groupBy.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { startLabel, workedInLabels } from '../sessions.js';
 import {
@@ -196,7 +193,7 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Worked in other repos"
-        note="Line 3: the group it started in, the same whatever View preferences lists it under, and the repos it worked in, newest first, each by its label, pitwall-test-docs too, which has no group. The names are text: selecting one does nothing. The info button has the rule, and how to find every session that worked in a repo. It shows once a scan finds a repo beyond the start; rows stay two lines."
+        note="Line 3: the group it started in, the same whatever Group sessions by lists it under, and the repos it worked in, newest first, each by its label, pitwall-test-docs too, which has no group. The names are text: selecting one does nothing. The info button has the rule, and how to find every session that worked in a repo. It shows once a scan finds a repo beyond the start; rows stay two lines."
         frame="short"
       >
         <Stubbed>
@@ -215,7 +212,7 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Background, on Conversation"
-        note="As it opens with View preferences on Conversation, or once you choose the tab (W54): the actions menu in the header, older entries behind Load earlier, and where an interactive session has its message box, a note: it takes messages in its Terminal tab, which attaches (W47). No button opens the tab from there, since opening it attaches."
+        note="As it opens with Preferences on Conversation, or once you choose the tab (W54): the actions menu in the header, older entries behind Load earlier, and where an interactive session has its message box, a note: it takes messages in its Terminal tab, which attaches (W47). No button opens the tab from there, since opening it attaches."
         frame="view"
       >
         <Stubbed options={{ conversation: 'older' }}>
@@ -238,7 +235,7 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Background, opened on its Terminal tab (W54)"
-        note="A running background session opens on its Terminal tab, as View preferences has it by default, and attaches at once: nothing pressed here. Its conversation is behind the Conversation tab, with the footer's note. Nothing here asked for the terminal, so it takes no focus, and its bar says how to type to it (W57); a click or Enter on the session's row, or on the Terminal tab, would have given it focus as it attached."
+        note="A running background session opens on its Terminal tab, as Preferences has it by default, and attaches at once: nothing pressed here. Its conversation is behind the Conversation tab, with the footer's note. Nothing here asked for the terminal, so it takes no focus, and its bar says how to type to it (W57); a click or Enter on the session's row, or on the Terminal tab, would have given it focus as it attached."
         frame="view"
       >
         <Attachable script="attached">
@@ -265,7 +262,7 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Background, not running"
-        note="It has finished, so it opens on Conversation even with View preferences on Terminal (W54): attaching restarts it, and opening Terminal asks first, as its footer says. Stop is off in the menu."
+        note="It has finished, so it opens on Conversation even with Preferences on Terminal (W54): attaching restarts it, and opening Terminal asks first, as its footer says. Stop is off in the menu."
         frame="short"
       >
         <Stubbed>
@@ -1228,15 +1225,33 @@ const SAMPLE_MENU: MenuEntry[] = [
 ];
 
 /** A menu button's frame: the space below it that the open menu needs. */
-function MenuStage({ children, prefs = false }: { children: ReactNode; prefs?: boolean }) {
-  return <div className={prefs ? 'uikit-menu-stage uikit-menu-stage-prefs' : 'uikit-menu-stage'}>{children}</div>;
+function MenuStage({ children, radio = false }: { children: ReactNode; radio?: boolean }) {
+  return <div className={radio ? 'uikit-menu-stage uikit-menu-stage-radio' : 'uikit-menu-stage'}>{children}</div>;
 }
 
-/** The header's View preferences menu with choices of its own, so choosing one checks it (W42, W54). */
-function LivePreferences({ start, tab = 'terminal' }: { start: GroupBy; tab?: BackgroundTab }) {
-  const [groupBy, setGroupBy] = useState(start);
-  const [backgroundTab, setBackgroundTab] = useState(tab);
-  return <ViewPreferences groupBy={groupBy} onGroupBy={setGroupBy} backgroundTab={backgroundTab} onBackgroundTab={setBackgroundTab} />;
+/**
+ * A made-up radio group in a menu, with a choice of its own, so choosing one checks it. View
+ * preferences used the menu's radio groups (W42, W54) until it became the Preferences dialog (W59);
+ * nothing in the app has one now.
+ */
+function LiveRadioMenu() {
+  const [choice, setChoice] = useState('first');
+  const entries: MenuEntry[] = [
+    { id: 'copy', label: 'Copy session ID', icon: 'copy', onSelect: noop },
+    { kind: 'separator', id: 'separator' },
+    {
+      kind: 'radio-group',
+      id: 'made-up',
+      title: 'A made-up choice',
+      value: choice,
+      options: [
+        { value: 'first', label: 'The first', description: 'A line saying what choosing it does, which wraps under its label.' },
+        { value: 'second', label: 'The second', description: 'Another line.' },
+      ],
+      onChange: setChoice,
+    },
+  ];
+  return <MenuButton label="Made-up choices" icon="more" entries={entries} />;
 }
 
 const clickMenuButton = async (root: HTMLElement) => (await element<HTMLButtonElement>(root, 'button[aria-haspopup="menu"]')).click();
@@ -1260,29 +1275,12 @@ export function Menus() {
         </Scenario>
       </Specimen>
       <Specimen
-        title="View preferences, open (W42, W54)"
-        note="The header's menu: a ghost md preferences icon button, named View preferences by its tooltip, opening two radio groups. Group sessions by, Main repo by default, then, after a separator, Open running background sessions on, Terminal by default. Each option has one line saying what it does; the chosen ones have the check mark, and the chosen grouping takes focus as the menu opens. ↑ ↓ Home End move through both, Enter, Space or a click chooses and closes, Escape or Tab closes."
+        title="A radio group, open (W42)"
+        note="An item, a separator, then a radio group: its title, then its options, each with a line saying what it does, the chosen one with the check mark, taking focus as the menu opens. ↑ ↓ Home End move through items and options alike, Enter, Space or a click chooses and closes, Escape or Tab closes."
       >
         <Scenario run={clickMenuButton}>
-          <MenuStage prefs>
-            <LivePreferences start="main-repo" />
-          </MenuStage>
-        </Scenario>
-      </Specimen>
-      <Specimen title="View preferences, Every repo it worked in chosen" note="Opened on the mode that's chosen.">
-        <Scenario run={clickMenuButton}>
-          <MenuStage prefs>
-            <LivePreferences start="every-repo" />
-          </MenuStage>
-        </Scenario>
-      </Specimen>
-      <Specimen
-        title="View preferences, Conversation chosen (W54)"
-        note="Running background sessions open on Conversation, as finished ones always do; their Terminal tab attaches only once it's opened. A choice changes the views that open after it, never the one that's open."
-      >
-        <Scenario run={clickMenuButton}>
-          <MenuStage prefs>
-            <LivePreferences start="main-repo" tab="conversation" />
+          <MenuStage radio>
+            <LiveRadioMenu />
           </MenuStage>
         </Scenario>
       </Specimen>

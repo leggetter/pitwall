@@ -1,4 +1,4 @@
-// View preferences' Group sessions by (W42): each mode's groups from the snapshot's, the main repo's
+// Preferences' Group sessions by (W42): each mode's groups from the snapshot's, the main repo's
 // tie-breaks, the home group each row names, and the stored mode with groupState.ts's failure
 // handling. Made-up sessions and paths only.
 

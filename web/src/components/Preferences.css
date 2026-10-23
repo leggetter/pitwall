@@ -1,0 +1,24 @@
+/*
+ * The Preferences dialog (docs/design-system.md, 4: Preferences), W59: its sections in the body,
+ * which scrolls, each after a 1 px line and 16 px, its title in m 14/20 600, 12 px above its first
+ * setting, then its settings 16 px apart.
+ */
+
+.preferences-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-4);
+}
+
+.preferences-section + .preferences-section {
+  padding-top: var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+}
+
+.preferences-section-title {
+  /* 12 px above its first setting: the section's 16 px gap, less 4 px, so the title sits with what it names. */
+  margin-bottom: calc(-1 * var(--pw-space-1));
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-m);
+}

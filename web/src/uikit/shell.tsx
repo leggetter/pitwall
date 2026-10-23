@@ -1,5 +1,5 @@
-// The app shell's pieces (W21, W23, W35, W38, W42, W53): the real Header, with a tab per root when there
-// are several and View preferences, RepoList with its Hidden section, its Starred view and in each mode of Group
+// The app shell's pieces (W21, W23, W35, W38, W42, W53, W59): the real Header, with a tab per root when there
+// are several and the Preferences button, RepoList with its Hidden section, its Starred view and in each mode of Group
 // sessions by, RepoDrawer, SessionList with a group's Hide from repo list, the filters and the Sort
 // setting, with fixture props. The header is shown in windows of each
 // width, since its compact rule is a container query on the app (docs/design-system.md, 2.12). The
@@ -7,7 +7,6 @@
 
 import { useId, useState } from 'react';
 import type { IndexSnapshot } from '../../../src/shared/protocol.js';
-import type { BackgroundTab } from '../backgroundTab.js';
 import { FilterControls } from '../components/Filters.js';
 import { Header } from '../components/Header.js';
 import { HideButton } from '../components/HideButton.js';
@@ -47,13 +46,6 @@ import { memoryShortcuts, memoryStorage, storedHidden } from './stubs.js';
 
 const noop = () => {};
 const UPDATED = ago(0.05);
-
-/** View preferences with choices of its own, so its menu can be opened and a choice made (W42, W54). */
-function usePreferences(start: GroupBy = 'main-repo') {
-  const [groupBy, onGroupBy] = useState<GroupBy>(start);
-  const [backgroundTab, onBackgroundTab] = useState<BackgroundTab>('terminal');
-  return { groupBy, onGroupBy, backgroundTab, onBackgroundTab };
-}
 
 /** The Sort setting, with state of its own. */
 function LiveSort({ start = 'urgency' }: { start?: SortOrder }) {
@@ -97,7 +89,6 @@ export interface TabbedHeaderProps {
 export function TabbedHeader({ roots, attention = {}, start, state = 'live', repos = false }: TabbedHeaderProps) {
   const [active, setActive] = useState(start ?? roots[0] ?? '');
   const id = useId();
-  const preferences = usePreferences();
   return (
     <Header
       state={state}
@@ -106,7 +97,7 @@ export function TabbedHeader({ roots, attention = {}, start, state = 'live', rep
       onNewSession={noop}
       onRepos={repos ? noop : undefined}
       onShortcuts={noop}
-      preferences={preferences}
+      onPreferences={noop}
       tabs={{ tabs: roots.map((root) => ({ root, attention: attention[root] ?? 0 })), active, onSelect: setActive, tabId: (root) => `${id}-tab-${roots.indexOf(root)}` }}
     />
   );
@@ -119,27 +110,25 @@ const WORK_NEEDS_YOU = { [OTHER_ROOT]: 2 };
 const GIT_ROOTS = ['/Users/example/work/git', '/Users/example/personal/git', '/Users/example/scratch/git'];
 
 export function Headers() {
-  // One mode for these headers' View preferences, as the app has one.
-  const preferences = usePreferences();
   return (
     <>
       {BREAKPOINTS.map((breakpoint) => (
         <Specimen key={breakpoint.width} title={breakpoint.title} note={breakpoint.note} width={breakpoint.width}>
-          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} onShortcuts={noop} preferences={preferences} />
+          <Header state="live" roots={[ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={breakpoint.repos ? noop : undefined} onShortcuts={noop} onPreferences={noop} />
         </Specimen>
       ))}
       <Specimen
         title="Before the first snapshot"
-        note="No roots, no New session and no time yet; View preferences and the keyboard shortcuts button are there from the start."
+        note="No roots, no New session and no time yet; Preferences and the keyboard shortcuts button are there from the start."
         width={1100}
       >
-        <Header state="connecting" onShortcuts={noop} preferences={preferences} />
+        <Header state="connecting" onShortcuts={noop} onPreferences={noop} />
       </Specimen>
       <Specimen title="A long root" note="The start is cut short with an ellipsis and the last segment stays; the full path, home and all, is in a tooltip." width={800}>
-        <Header state="live" roots={[LONG_ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={noop} onShortcuts={noop} preferences={preferences} />
+        <Header state="live" roots={[LONG_ROOT]} updatedAt={UPDATED} onNewSession={noop} onRepos={noop} onShortcuts={noop} onPreferences={noop} />
       </Specimen>
       <Specimen title="A long root, 600 px and narrower" width={375}>
-        <Header state="reconnecting" roots={[LONG_ROOT]} updatedAt={ago(0.9)} onNewSession={noop} onRepos={noop} onShortcuts={noop} preferences={preferences} />
+        <Header state="reconnecting" roots={[LONG_ROOT]} updatedAt={ago(0.9)} onNewSession={noop} onRepos={noop} onShortcuts={noop} onPreferences={noop} />
       </Specimen>
       <Specimen
         title="Two roots"

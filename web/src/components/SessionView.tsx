@@ -97,7 +97,7 @@ export const CWD_MISSING_NOTES = {
  * A background session's footer, where an interactive session has its message box (W47, D2, D3):
  * it takes messages in its terminal. Opening the Terminal tab attaches, so the note has no button
  * that opens it; from the Conversation tab, the tab stays the one deliberate way in (D9). A running
- * one's view opens on its Terminal tab anyway, unless View preferences says Conversation (W54).
+ * one's view opens on its Terminal tab anyway, unless Preferences says Conversation (W54).
  */
 export const BACKGROUND_NOTES = {
   running: 'To message it, type in its Terminal tab, which attaches to it.',
@@ -161,11 +161,11 @@ function NoteText({ text }: { text: string }): ReactNode {
 
 /** The worked-in line's info icon: the rule behind it (W34, spike 004), and where to find the sessions that worked in a repo (W39, W42). */
 export const WORKED_IN_NOTE =
-  "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. View preferences, in the header, sets which of these repos list the session; to find every session that worked in a repo, type its name in the filter on All sessions.";
+  "A repo counts when the session changed it, or when at least 5% of its tool calls touched it, its sub-agents' included. Group sessions by, in Preferences, sets which of these repos list the session; to find every session that worked in a repo, type its name in the filter on All sessions.";
 
 /** Where a session started and the repos it worked in, as the repo list labels them. */
 export interface SessionPlacement {
-  /** Its start group's label, from the snapshot, whatever View preferences says, or a root's path for one started in the root itself. */
+  /** Its start group's label, from the snapshot, whatever Group sessions by says, or a root's path for one started in the root itself. */
   startedIn: string;
   /** The repos it worked in beyond that, newest touch first, each by its label, whether or not it has a group (W39). */
   workedIn: readonly string[];
@@ -304,7 +304,7 @@ export interface SessionViewProps {
   /** Its star toggle, before the actions menu (W53): whether it's starred, and a way to star or unstar it. */
   star?: { starred: boolean; onStar: (sessionId: string, on: boolean) => void } | undefined;
   /**
-   * The tab a running background session's view opens on (W54), View preferences' Open running
+   * The tab a running background session's view opens on (W54), Preferences' Open running
    * background sessions on, read as the view is first shown. Left out, as the gallery's specimens and
    * the tests of a view alone do, it opens on Conversation. The Dashboard always gives it.
    */
@@ -677,7 +677,7 @@ export function SessionView({
           </p>
         )}
         {placement && placement.workedIn.length > 0 && (
-          // Line 3: where it started, and the repos it worked in beyond that, the same in every mode of View preferences (W42).
+          // Line 3: where it started, and the repos it worked in beyond that, the same in every mode of Group sessions by (W42).
           // The names are text, never markup or links: selecting one does nothing.
           <p className="session-view-worked">
             <span className="session-view-worked-text">

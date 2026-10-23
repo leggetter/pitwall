@@ -203,12 +203,12 @@ export interface SelectionExtras {
 /**
  * The selection, from the URL, and a way to choose another. A URL with none takes the stored one, or
  * All sessions, and is replaced to match, except that ?session= with no selection waits for the
- * snapshot and selects that session's group: its home group in `home`, the one View preferences lists
+ * snapshot and selects that session's group: its home group in `home`, the one the chosen grouping lists
  * it under (groupBy.ts, W42), or else the first group that lists it. Choosing pushes a history entry;
  * popstate follows the URL. With more than one root, once the snapshot is in, a selection is given the
  * root of the tab it opens, as rootedSelection() says, and the URL is replaced to match.
  *
- * `snapshot` is the snapshot's roots with the groups as View preferences groups them, so a group the
+ * `snapshot` is the snapshot's roots with the groups as the chosen grouping has them, so a group the
  * page built for a repo with none in the snapshot opens its own tab.
  */
 export function useSelection(
@@ -248,7 +248,7 @@ export function useSelection(
     const sessionId = pending.current;
     if (sessionId !== undefined) {
       pending.current = undefined;
-      // The group View preferences lists it under (W42), or the first that lists it.
+      // The group the chosen grouping lists it under (W42), or the first that lists it.
       const listed = snapshot.groups.flatMap((candidate) => candidate.sessions).find((session) => session.sessionId === sessionId);
       const group = listed ? (home?.get(sessionId) ?? startGroup(snapshot.groups, listed)) : undefined;
       if (group) next = groupSelection(group, snapshot.roots);

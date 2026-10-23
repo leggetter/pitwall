@@ -195,14 +195,14 @@ export interface Listed {
   session: SessionSummary;
   /**
    * In a group's list, that group. In Needs you and All sessions, its home group (groupBy.ts): the one
-   * View preferences lists it under, or for Every repo it worked in, where it started, or a
+   * Group sessions by lists it under, or for Every repo it worked in, where it started, or a
    * root-started session's main repo (W42).
    */
   group: SessionGroup;
 }
 
 // The snapshot lists each session only under the group it started in (W39, Phil, 2026-10-21). The
-// page groups it again by View preferences (groupBy.ts, W42): in Main repo and Where it started each
+// page groups it again by the viewer's Group sessions by (groupBy.ts, W42): in Main repo and Where it started each
 // session is in one group, so a group's count is its sessions and the groups' counts under a root add
 // up to that root's; in Every repo it worked in a session can be in several, and a group counts its
 // distinct sessions. Needs you, All sessions and every other count count each session once. The repos

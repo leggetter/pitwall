@@ -6,7 +6,9 @@
 // - role="dialog", aria-modal, named by its title and described by its subtitle.
 // - Focus moves to the first field on open, Tab and Shift+Tab stay inside, and focus goes back to
 //   whatever had it, normally the button that opened it, when it closes, without opening that
-//   button's tooltip (focusQuietly), which would take the next Escape.
+//   button's tooltip (focusQuietly), which would take the next Escape. A radio group is one field,
+//   its chosen radio, as Tab has it, so the Preferences dialog opens on its first group's choice and
+//   Tab from the last group's choice goes round to the first (W59).
 // - Its header and footer are plain elements, not <header> and <footer>, which outside a sectioning
 //   element would be the page's banner and contentinfo landmarks.
 // - Escape closes it, and goes no further, so the session view behind stays open. A click on the
@@ -20,9 +22,22 @@ import './Dialog.css';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-/** What Tab can reach inside `root`, in order: not disabled, and not hidden. */
+const isRadio = (element: Element): element is HTMLInputElement => element instanceof HTMLInputElement && element.type === 'radio';
+
+/**
+ * Whether a radio is its group's Tab stop, as browsers have it: the checked one, or the first when
+ * none is (W59). A group is the radios with its name in the same form, or in none.
+ */
+function isRadioStop(radio: HTMLInputElement, candidates: readonly HTMLElement[]): boolean {
+  if (radio.name === '') return true;
+  const group = candidates.filter((element): element is HTMLInputElement => isRadio(element) && element.name === radio.name && element.form === radio.form);
+  return (group.find((each) => each.checked) ?? group[0]) === radio;
+}
+
+/** What Tab can reach inside `root`, in order: not disabled, not hidden, and one radio for each group. */
 function tabStops(root: HTMLElement | null): HTMLElement[] {
-  return [...(root?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].filter((element) => element.tabIndex >= 0 && !element.closest('[hidden]'));
+  const candidates = [...(root?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].filter((element) => element.tabIndex >= 0 && !element.closest('[hidden]'));
+  return candidates.filter((element) => !isRadio(element) || isRadioStop(element, candidates));
 }
 
 export interface DialogProps {
