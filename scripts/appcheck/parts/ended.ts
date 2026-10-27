@@ -3,8 +3,10 @@
 // never in Needs you; those older than 7 days, and a group with nothing else, only with Show older,
 // which keeps focus and isn't kept across a reload; an ended session's view, with the Conversation
 // tab alone and Copy command and Resume in background in its footer; Copy command's command; a
-// resume that works, after which the view opens the Terminal tab, attached, with no keyboard; and
-// each way a resume fails, as the fake server answers each session by its name.
+// resume that works, after which the view opens the Terminal tab, attached, with no keyboard, the
+// snapshot arriving after the answer or before it; each way a resume fails, as the fake server
+// answers each session by its name; and a copy's warning kept in its toast once the snapshot lists
+// the original as running in its terminal, which takes the footer away.
 
 import { COPY_SHORT_ID, DEMO_APP, NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -23,6 +25,8 @@ const footButton = (label: string) => `[...(${VIEW}?.querySelectorAll('.ended-ac
 const ALERT = `${VIEW}?.querySelector('.resume-failure')`;
 const NOTE_TEXT = 'It ended when its Claude Code process exited. Resume it here in the background, or copy the command that resumes it in a terminal.';
 const GONE_TEXT = "It ended when its Claude Code process exited, and its directory no longer exists, so it can't be resumed.";
+const COPY_TEXT = `It was open in another Claude Code process after all, so Claude Code started a copy as ${COPY_SHORT_ID} instead. The copy is listed as a background session with no name, which you can stop and remove.`;
+const ON_A_TAB = `document.activeElement?.getAttribute('role') === 'tab' && !!document.activeElement.closest('section.session-view')`;
 
 /** The ways a resume fails, by the session the fake server fails it for, in W66's words. */
 const FAILURES = [
@@ -35,9 +39,10 @@ const FAILURES = [
   },
   {
     name: NAMES.endedCopy,
-    what: "409, a copy started instead: a warning in the server's words alone",
+    what: "409, a copy started instead: a warning in the server's words alone, and a toast, which is what announces it",
     tone: 'warning',
-    text: `Claude Code started a copy insteadIt was open in another Claude Code process after all, so Claude Code started a copy as ${COPY_SHORT_ID} instead. The copy is listed as a background session with no name, which you can stop and remove.`,
+    text: `Claude Code started a copy instead${COPY_TEXT}`,
+    toast: `Couldn't resume ${NAMES.endedCopy}. ${COPY_TEXT}`,
   },
   {
     name: NAMES.endedBusy,
@@ -172,6 +177,26 @@ const part: Part = {
       await t.shot('resumed');
     });
 
+    await t.step('Resume in background, listed as running before the server answers: the Terminal tab all the same, focus moved from Resume to it', async () => {
+      const sessionId = id(NAMES.ended);
+      await t.fresh({ search: `?view=all&session=${sessionId}` });
+      server.resumeOrder.listedFirst = true;
+      await page.waitFor('its view', `${viewName} === ${q(NAMES.ended)}`);
+      await page.click('Resume in background', footButton('Resume in background'));
+      await page.waitFor('the Terminal tab', `${viewTab} === 'Terminal'`, 5000);
+      t.expect(!(await page.evaluate<string[]>(toasts)).some((each) => each.startsWith('Resumed')), 'before the server answered', await page.evaluate(toasts));
+      t.expect(await page.evaluate(ON_A_TAB), 'focus moved to the Terminal tab, not the page', await page.evaluate(focused));
+      await page.waitFor('the toast', `${toasts}.includes(${q(`Resumed ${NAMES.ended} in the background.`)})`, 5000);
+      await page.waitFor('the attach', `${attachStatus} === 'attached'`, 5000);
+      await page.settle(200);
+      t.expectEqual(server.records.resumes, [NAMES.ended], 'one resume, of it');
+      t.expectEqual(server.records.attaches.map((each) => ({ name: each.name, restart: each.restart })), [{ name: NAMES.ended, restart: false }], 'attached once, with no restart');
+      t.expectEqual(await page.evaluate(viewTab), 'Terminal', 'still on the Terminal tab after the answer');
+      t.expect(await page.evaluate(ON_A_TAB), 'focus still on the tab', await page.evaluate(focused));
+      t.expect(!(await page.evaluate(inTerminal)), 'the terminal took no keyboard');
+      await t.shot('resumed-listed-first');
+    });
+
     for (const failure of FAILURES) {
       await t.step(`a resume that fails, ${failure.what}`, async () => {
         const sessionId = id(failure.name);
@@ -183,7 +208,14 @@ const part: Part = {
         await page.waitFor('the alert', `!!${ALERT}`, 5000);
         await page.settle(100);
         t.expect(await page.evaluate(`${ALERT}.classList.contains(${q(failure.tone)})`), `a ${failure.tone} alert`, await page.evaluate(`${ALERT}.className`));
-        t.expectEqual(await page.evaluate(`${ALERT}.getAttribute('role')`), 'alert', 'announced');
+        if ('toast' in failure) {
+          // Its toast outlives the footer, and announces it, so the warning has no role of its own.
+          t.expectEqual(await page.evaluate(`${ALERT}.getAttribute('role')`), null, 'not announced by the footer');
+          t.expect((await page.evaluate<string[]>(toasts)).includes(failure.toast), 'announced by its toast', await page.evaluate(toasts));
+        } else {
+          t.expectEqual(await page.evaluate(`${ALERT}.getAttribute('role')`), 'alert', 'announced');
+          t.expectEqual(await page.evaluate(toasts), [], 'no toast');
+        }
         const shown = await page.evaluate<string>(`${ALERT}.textContent`);
         t.expect(shown.startsWith(failure.text), 'what it says', shown);
         if (failure.tone === 'warning') t.expect(!(await page.evaluate(`!!${ALERT}.querySelector('.alert-detail')`)), "the server's sentence alone, as text");
@@ -202,6 +234,24 @@ const part: Part = {
       t.expectEqual(await page.evaluate(ACTIONS), [], 'no Copy command or Resume in background');
       t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.session-view-missing')?.textContent`), 'Directory no longer exists', 'line 2 says the directory has gone');
       await t.shot('gone');
+    });
+
+    await t.step('a copy started instead, then the original listed as running in its terminal: the footer goes, the toast stays, focus on the Terminal tab', async () => {
+      server.clearRecords();
+      server.resumeOrder.copyReopens = true;
+      t.allow(new RegExp(`/api/sessions/${id(NAMES.endedCopy)}/resume$`), 'the refused resume this step asks for');
+      await openFromUrl(NAMES.endedCopy);
+      await page.click('Resume in background', footButton('Resume in background'));
+      const toast = `Couldn't resume ${NAMES.endedCopy}. ${COPY_TEXT}`;
+      await page.waitFor('the toast', `${toasts}.includes(${q(toast)})`, 5000);
+      await page.waitFor('the footer to go', `!${VIEW}?.querySelector('.ended-foot')`, 5000);
+      await page.settle(100);
+      t.expect(await page.evaluate(`!!${VIEW}.querySelector('.relay-box')`), 'the message box in its place: it is running in its terminal');
+      t.expect((await page.evaluate<string[]>(toasts)).includes(toast), 'the warning stays, in its toast', await page.evaluate(toasts));
+      t.expect(await page.evaluate(ON_A_TAB), 'focus moved from Resume to the Terminal tab, not the page', await page.evaluate(focused));
+      t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'an interactive session: still on Conversation');
+      t.expectEqual(server.records.attaches, [], 'nothing attached');
+      await t.shot('copy-reopened');
     });
   },
 };

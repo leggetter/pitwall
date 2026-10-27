@@ -219,6 +219,18 @@ export class World {
     };
   }
 
+  /**
+   * NAMES.endedCopy's original, open in a terminal again (W67): listed under the same id as a running
+   * interactive session, as the index lists it once a resume has started a copy (spike 006, finding 5).
+   */
+  reopen(sessionId: string): void {
+    const was = this.#sessions.get(sessionId);
+    if (!was) return;
+    const open: SessionSummary = { ...was };
+    delete open.ended;
+    this.#sessions.set(sessionId, { ...open, pid: 42_001, alive: true, status: 'idle', finished: false, lastActivityAt: new Date().toISOString() });
+  }
+
   /** What the index shows on a session's row after a relayed message: its latest exchange. */
   relayed(sessionId: string, exchange: RelayExchange): void {
     const session = this.#sessions.get(sessionId);
