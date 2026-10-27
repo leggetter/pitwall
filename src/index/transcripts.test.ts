@@ -12,6 +12,9 @@ import {
   defaultConfigDir,
   encodeProjectDir,
   isSafeSessionId,
+  isTypedPrompt,
+  readNewestEntries,
+  setNameOf,
   stripSystemReminders,
   TITLE_MAX,
   userPromptOf,
@@ -271,6 +274,42 @@ describe('applyEntry', () => {
       user([toolResult('output')]),
     );
     expect(fields.userPrompt).toBe('second prompt');
+  });
+});
+
+describe('applyEntry: what the ended-session scanner needs (W66)', () => {
+  const named = (type: 'custom-title' | 'agent-name', name: unknown) =>
+    type === 'custom-title' ? { type, customTitle: name, sessionId: 'pitwall-test-session' } : { type, agentName: name, sessionId: 'pitwall-test-session' };
+
+  it('keeps whether the newest user or assistant entry, in file order, ran in the background', () => {
+    expect(fieldsOf(user('go'), assistant([text('done')], 'm1', { sessionKind: 'bg' })).inBackground).toBe(true);
+    expect(fieldsOf(user('go', { sessionKind: 'bg' }), assistant([text('done')])).inBackground).toBe(false);
+    // A tool call or thinking with no text still counts: it's the newest entry.
+    expect(fieldsOf(assistant([text('done')]), assistant([toolUse('Bash')], 'm2', { sessionKind: 'bg' })).inBackground).toBe(true);
+    expect(fieldsOf(aiTitle('only a title')).inBackground).toBeUndefined();
+  });
+
+  it('keeps the newest name set with --name, from either entry, which is not activity', () => {
+    const prompt = user('go');
+    const fields = fieldsOf(named('custom-title', 'first'), named('agent-name', 'first'), prompt, named('custom-title', '  second\n name '));
+    expect(fields.setName).toBe('second name');
+    expect(fields.lastActivityMs).toBe(Date.parse(prompt.timestamp as string));
+    expect(fieldsOf(named('custom-title', 'a'), named('agent-name', 'b')).setName).toBe('b');
+    for (const value of [undefined, 42, '', '   ', { name: 'x' }]) {
+      expect(fieldsOf(named('agent-name', 'kept'), named('agent-name', value)).setName, String(value)).toBe('kept');
+    }
+    const fromLines: Fields = {};
+    applyLine(fromLines, JSON.stringify(named('agent-name', 'from a line')));
+    expect(fromLines.setName).toBe('from a line');
+  });
+
+  it('notes a typed prompt: promptSource typed, on a user entry that is not meta', () => {
+    expect(fieldsOf(user('typed', { promptSource: 'typed' })).typedPrompt).toBe(true);
+    for (const extra of [{ promptSource: 'sdk' }, { promptSource: 'queued' }, { promptSource: 'typed', isMeta: true }, {}]) {
+      expect(fieldsOf(user('x', extra)).typedPrompt, JSON.stringify(extra)).toBeUndefined();
+    }
+    expect(isTypedPrompt({ type: 'assistant', promptSource: 'typed' })).toBe(false);
+    expect(setNameOf({ type: 'ai-title', aiTitle: 'not a name' })).toBeUndefined();
   });
 });
 
@@ -813,6 +852,45 @@ describe('createTranscriptReader', () => {
       expect(missing.lastUserPrompt).toBeUndefined();
       expect(missing.lastActivityAt).toBe(newest.timestamp);
     });
+  });
+});
+
+describe('readNewestEntries', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-newest-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('reads the newest entries once, as the reader does, with what the ended-session scanner needs', async () => {
+    const file = path.join(dir, 'made-up.jsonl');
+    const prompt = user('the last prompt', { promptSource: 'typed' });
+    const latest = assistant([text('Shall I go on?')]);
+    await writeFile(file, jsonl(user('an early prompt', { promptSource: 'typed' }), filler(5000), prompt, latest, { type: 'agent-name', agentName: 'pitwall-test-a' }, aiTitle('A title')));
+    expect(await readNewestEntries(file, { initialWindowBytes: 1024, maxWindowBytes: 2048 })).toEqual({
+      info: {
+        transcript: 'ok',
+        lastActivityAt: latest.timestamp,
+        lastUserPrompt: 'the last prompt',
+        askedYou: { reason: 'question', excerpt: 'Shall I go on?' },
+        aiTitle: 'A title',
+      },
+      inBackground: false,
+      setName: 'pitwall-test-a',
+      typedPrompt: true,
+    });
+  });
+
+  it('says nothing of the background or a typed prompt it did not read, and is undefined for a file that has gone', async () => {
+    const file = path.join(dir, 'made-up.jsonl');
+    await writeFile(file, jsonl(filler(200)));
+    expect(await readNewestEntries(file)).toEqual({ info: { transcript: 'ok' }, typedPrompt: false });
+    expect(await readNewestEntries(path.join(dir, 'gone.jsonl'))).toBeUndefined();
+    await expect(readNewestEntries(dir)).rejects.toThrow();
   });
 });
 

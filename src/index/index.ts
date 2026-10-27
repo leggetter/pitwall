@@ -10,6 +10,7 @@ import {
 } from '../shared/protocol.js';
 import { createAgentsSource, type AgentRow, type AgentsSource } from './agents.js';
 import { ConversationCursorError, readConversationPage, RelayAddressBook } from './conversation.js';
+import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, groupLabel, type GroupResolver } from './grouping.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
@@ -61,6 +62,12 @@ export interface Indexer {
    * file ('stale'), and never for anything else.
    */
   conversation(sessionId: string, before?: string): Promise<ConversationPage | undefined>;
+  /**
+   * Polls again as soon as it can: now, or straight after the poll that's running. For a change
+   * pitwall made itself, such as resuming an ended session, so the snapshot shows it within a poll
+   * rather than up to an interval later. Never throws.
+   */
+  pollSoon(): void;
   stop(): void;
 }
 
@@ -82,15 +89,24 @@ export interface IndexerDeps {
    * waits for a scan. Without one, no session has workedIn.
    */
   workedIn?: WorkedInScanner;
+  /**
+   * The interactive sessions that have ended (ended.ts), read synchronously on every poll, which
+   * never waits for a scan. A scan that finds a different set makes the index poll soon. Without
+   * one, none are listed.
+   */
+  ended?: EndedScanner;
 }
 
 /**
  * Polls `claude agents --json --all` every `intervalMs`, keeps the sessions whose
  * cwd is under a root, groups them by repo and adds what their transcripts
- * say. The first poll starts straight away. Polls never overlap: a tick that
- * comes while one is still running is skipped. Listeners hear about every
- * completed poll, changed or not, including one whose source failed, so a
- * quiet but healthy index can be told apart from a stuck one by `generatedAt`.
+ * say. Interactive sessions that have ended, which `claude agents` no longer
+ * lists, are added from their transcripts (ended.ts). The first poll starts
+ * straight away. Polls never overlap: a tick that comes while one is still
+ * running is skipped, and pollSoon() runs one straight after. Listeners hear
+ * about every completed poll, changed or not, including one whose source
+ * failed, so a quiet but healthy index can be told apart from a stuck one by
+ * `generatedAt`.
  */
 export function startIndexer(options: IndexerOptions): Indexer {
   const now = Date.now;
@@ -99,6 +115,7 @@ export function startIndexer(options: IndexerOptions): Indexer {
     groups: createGroupResolver({ now }),
     transcripts: createTranscriptReader({ now }),
     workedIn: createWorkedInScanner({ now }),
+    ended: createEndedScanner({ now }),
     now,
     home: os.homedir(),
     concurrency: 8,
@@ -116,6 +133,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const relayBook = options.relayName === undefined ? undefined : new RelayAddressBook(options.relayName);
   let running = false;
   let stopped = false;
+  /** pollSoon() was called while a poll ran: poll again once it's done. */
+  let soon = false;
 
   async function tick(): Promise<void> {
     if (running || stopped) return;
@@ -151,10 +170,22 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       }
     } finally {
       running = false;
+      if (soon && !stopped) {
+        soon = false;
+        void tick();
+      }
     }
   }
 
+  function pollSoon(): void {
+    if (stopped) return;
+    if (running) soon = true;
+    else void tick();
+  }
+
   const timer = setInterval(() => void tick(), intervalMs);
+  // A scan that found sessions newly ended, or no longer ended, shows at the next poll: make that one soon.
+  const unsubscribeEnded = deps.ended?.subscribe(pollSoon);
   void tick();
 
   return {
@@ -167,7 +198,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
     },
     async conversation(sessionId, before) {
       if (!current.has(sessionId)) return undefined;
-      const file = deps.transcripts.transcriptFile(sessionId);
+      const file = transcriptFile(deps, sessionId);
       if (file === undefined) return undefined;
       // The newest page is tried twice, in case the file shrank while it was read.
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -180,13 +211,21 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       }
       return undefined;
     },
+    pollSoon,
     stop() {
       stopped = true;
       clearInterval(timer);
       listeners.clear();
+      unsubscribeEnded?.();
       deps.workedIn?.stop();
+      deps.ended?.stop();
     },
   };
+}
+
+/** A session's transcript: the reader's for a listed session, the ended scanner's for an ended one. */
+function transcriptFile(deps: IndexerDeps, sessionId: string): string | undefined {
+  return deps.transcripts.transcriptFile(sessionId) ?? deps.ended?.file(sessionId);
 }
 
 async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexSnapshot | undefined): Promise<IndexSnapshot> {
@@ -202,6 +241,8 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
     return { generatedAt, roots: resolvedRoots, groups: previous?.groups ?? [], source };
   }
 
+  // Every session `claude agents --all` lists, those left out below included: none of them has ended.
+  const listed = new Set(result.rows.map((row) => row.sessionId));
   const rows = result.rows.filter((row) => !calls(() => options.exclude?.(row), false));
   const placed = await mapLimit(rows, deps.concurrency, async (row): Promise<PlacedSession | undefined> => {
     const { path: cwd, missing } = await inspectCwd(row.cwd, deps.realpath);
@@ -218,12 +259,54 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
     return { root, group, summary };
   });
 
-  const kept = placed.filter((p): p is PlacedSession => p !== undefined);
-  deps.transcripts.retain(new Set(kept.map((p) => p.summary.sessionId)));
+  const live = placed.filter((p): p is PlacedSession => p !== undefined);
+  deps.transcripts.retain(new Set(live.map((p) => p.summary.sessionId)));
+  const kept = [...live, ...(await placeEnded(listed, resolvedRoots, options, deps, nowMs))];
   deps.groups.prune();
   addWorkedIn(kept, resolvedRoots, deps);
 
   return { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } };
+}
+
+/**
+ * The interactive sessions that have ended (ended.ts), as the last scan found them, less any this
+ * poll's `claude agents --all` lists, so a session is never both. Hands the scanner this poll's
+ * listing, which starts a scan without waiting for it. Each is placed as a listed session is: its
+ * start directory's realpath under a root, its group, and toSessionSummary with SummaryExtras.ended,
+ * kind 'interactive' and no process. Nothing here can fail the poll.
+ */
+async function placeEnded(
+  listed: ReadonlySet<string>,
+  roots: readonly string[],
+  options: IndexerOptions,
+  deps: IndexerDeps,
+  nowMs: number,
+): Promise<PlacedSession[]> {
+  const scanner = deps.ended;
+  if (scanner === undefined) return [];
+  let sessions: EndedSession[];
+  try {
+    scanner.track(listed, roots);
+    sessions = scanner.sessions(listed, nowMs);
+  } catch {
+    return [];
+  }
+  const placed = await mapLimit(sessions, deps.concurrency, async (ended): Promise<PlacedSession | undefined> => {
+    // sessions() leaves out what `listed` names; this keeps "never both" true whatever the scanner does.
+    if (listed.has(ended.sessionId)) return undefined;
+    const row: AgentRow = { sessionId: ended.sessionId, name: ended.name, kind: 'interactive', cwd: ended.cwd, startedAt: ended.startedAt };
+    if (calls(() => options.exclude?.(row), false)) return undefined;
+    // Afresh, as for a listed session: the scan's root check may be a scan old.
+    const { path: cwd, missing } = await inspectCwd(ended.cwd, deps.realpath);
+    const root = matchRoot(cwd, roots);
+    if (root === undefined) return undefined;
+    const group = await deps.groups.resolve(cwd);
+    const summary = toSessionSummary(row, ended.transcript, nowMs, { cwdMissing: missing, ended: true });
+    const relay = calls(() => options.relayExchange?.(ended.sessionId), undefined);
+    if (relay !== undefined) summary.relay = relay;
+    return { root, group, summary };
+  });
+  return placed.filter((p): p is PlacedSession => p !== undefined);
 }
 
 /**
@@ -240,7 +323,7 @@ function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: Inde
     scanner.track(
       kept.map(({ root, group, summary }) => ({
         sessionId: summary.sessionId,
-        file: deps.transcripts.transcriptFile(summary.sessionId),
+        file: transcriptFile(deps, summary.sessionId),
         // A session started in no repo has the root's group or a directory's, which no repo matches.
         startKey: group.kind === 'git' ? group.key : root,
       })),

@@ -166,7 +166,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
         info.size < state.offset ||
         info.size - state.offset > maxWindow;
       if (reset || state === undefined) {
-        state = await firstRead(handle, file, info.size, info.ino, info.dev);
+        state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow);
         files.set(sessionId, state);
       } else if (info.size > state.offset) {
         const chunk = await readRange(handle, state.offset, info.size);
@@ -177,14 +177,6 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
     } finally {
       await handle.close().catch(() => undefined);
     }
-  }
-
-  async function firstRead(handle: FileHandle, file: string, size: number, ino: number, dev: number): Promise<FileState> {
-    let state = await readWindow(handle, file, size, ino, dev, Math.min(size, initialWindow));
-    if (size > initialWindow && !isComplete(state.fields)) {
-      state = await readWindow(handle, file, size, ino, dev, Math.min(size, maxWindow));
-    }
-    return state;
   }
 
   return {
@@ -217,7 +209,69 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
   };
 }
 
+/** What readNewestEntries() finds: the fields `read` gives a listed session, and three that ended.ts needs. */
+export interface NewestEntries {
+  info: TranscriptInfo;
+  /** Fields.inBackground. Undefined when no user or assistant entry was read. */
+  inBackground?: boolean;
+  /** Fields.setName. */
+  setName?: string;
+  /** Fields.typedPrompt: a typed prompt among the entries read, not necessarily the whole file's. */
+  typedPrompt: boolean;
+}
+
+/**
+ * Reads a transcript's newest entries once, as `read` does the first time it sees a file: the last
+ * 256 KiB, or 2 MiB when those lack a field `read` looks for. For the ended-session scanner
+ * (ended.ts), whose transcripts belong to sessions that have stopped writing, so there's nothing
+ * to read incrementally, and a file is read again only when it changes. Undefined when the file
+ * has gone; rejects on any other failure.
+ */
+export async function readNewestEntries(
+  file: string,
+  options: Pick<TranscriptReaderOptions, 'initialWindowBytes' | 'maxWindowBytes'> = {},
+): Promise<NewestEntries | undefined> {
+  const initialWindow = options.initialWindowBytes ?? 256 * KIB;
+  const maxWindow = Math.max(options.maxWindowBytes ?? 2 * MIB, initialWindow);
+  let handle: FileHandle;
+  try {
+    handle = await open(file, 'r');
+  } catch (err) {
+    if (isGone(err)) return undefined;
+    throw err;
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error('not a file');
+    const state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow);
+    const { fields } = state;
+    const newest: NewestEntries = { info: toInfo(state), typedPrompt: fields.typedPrompt === true };
+    if (fields.inBackground !== undefined) newest.inBackground = fields.inBackground;
+    if (fields.setName !== undefined) newest.setName = fields.setName;
+    return newest;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
 // --- Reading -----------------------------------------------------------------
+
+/** The last `initialWindow` bytes, or `maxWindow` when those lack a field. */
+async function firstRead(
+  handle: FileHandle,
+  file: string,
+  size: number,
+  ino: number,
+  dev: number,
+  initialWindow: number,
+  maxWindow: number,
+): Promise<FileState> {
+  let state = await readWindow(handle, file, size, ino, dev, Math.min(size, initialWindow));
+  if (size > initialWindow && !isComplete(state.fields)) {
+    state = await readWindow(handle, file, size, ino, dev, Math.min(size, maxWindow));
+  }
+  return state;
+}
 
 interface FileState {
   file: string;
@@ -329,12 +383,30 @@ export interface Fields {
   promptAfterText?: boolean;
   /** The newest `ai-title` entry's title, in file order. */
   aiTitle?: string;
+  /**
+   * Whether the newest user or assistant entry, in file order, has `sessionKind: "bg"`: Claude Code
+   * marks every entry a session writes while it runs in the background (spike 006, finding 7).
+   * Only the ended-session scanner uses it (ended.ts).
+   */
+  inBackground?: boolean;
+  /** The newest name set with `--name`: a `custom-title` entry's title or an `agent-name` entry's name, in file order (ended.ts). */
+  setName?: string;
+  /** True once a prompt the user typed has been read: `promptSource: "typed"` on a user entry that isn't meta (ended.ts). */
+  typedPrompt?: boolean;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
 export function applyLine(fields: Fields, line: string): void {
   // Cheap pre-filter: every entry the index uses names one of these types.
-  if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"ai-title"')) return;
+  if (
+    !line.includes('"user"') &&
+    !line.includes('"assistant"') &&
+    !line.includes('"ai-title"') &&
+    !line.includes('"custom-title"') &&
+    !line.includes('"agent-name"')
+  ) {
+    return;
+  }
   let entry: unknown;
   try {
     entry = JSON.parse(line);
@@ -353,6 +425,12 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     if (title !== undefined) fields.aiTitle = title;
     return;
   }
+  if (type === 'custom-title' || type === 'agent-name') {
+    // No timestamp either, and not activity.
+    const name = setNameOf(entry);
+    if (name !== undefined) fields.setName = name;
+    return;
+  }
   if (type !== 'user' && type !== 'assistant') return;
 
   const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
@@ -360,6 +438,8 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if (at !== undefined && (fields.lastActivityMs === undefined || at > fields.lastActivityMs)) {
     fields.lastActivityMs = at;
   }
+  fields.inBackground = entry.sessionKind === 'bg';
+  if (isTypedPrompt(entry)) fields.typedPrompt = true;
 
   if (type === 'assistant') {
     const text = assistantTextOf(entry);
@@ -405,6 +485,28 @@ export function aiTitleOf(entry: Record<string, unknown>): string | undefined {
   if (typeof entry.aiTitle !== 'string') return undefined;
   const title = titleText(entry.aiTitle);
   return title === '' ? undefined : title;
+}
+
+/**
+ * The name a `custom-title` entry's `customTitle` or an `agent-name` entry's `agentName` sets, as
+ * `--name` writes them, on one line and at most 120 characters. Claude Code writes the two as a
+ * pair and writes them again as the session goes on, so the newest is near the end of the file.
+ * Internal and undocumented, so anything but a non-empty string is ignored.
+ */
+export function setNameOf(entry: Record<string, unknown>): string | undefined {
+  const raw = entry.type === 'custom-title' ? entry.customTitle : entry.type === 'agent-name' ? entry.agentName : undefined;
+  if (typeof raw !== 'string') return undefined;
+  const name = titleText(raw);
+  return name === '' ? undefined : name;
+}
+
+/**
+ * True for a user entry the user typed, by Claude Code's own marker, `promptSource: "typed"`, and
+ * not meta. Other sources include `sdk` (`claude -p` and the Agent SDK), `system`, `queued` and
+ * `suggestion_accepted`. Internal and undocumented (spike 006, finding 7).
+ */
+export function isTypedPrompt(entry: Record<string, unknown>): boolean {
+  return entry.type === 'user' && entry.promptSource === 'typed' && entry.isMeta !== true;
 }
 
 /** A title as the index shows it: on one line, trimmed, at most 120 characters. */
