@@ -86,9 +86,32 @@ export interface SessionSummary {
    * state 'done', 'stopped' or 'failed'. Plain `claude agents --json` leaves
    * these out; pitwall lists with `--all` and shows them muted, last in their
    * group. A 'done' session whose process is still alive is idle, not
-   * finished. Never true together with `stale`.
+   * finished. Also true for an interactive session that has ended (`ended`).
+   * Never true together with `stale`.
    */
   finished: boolean;
+  /**
+   * True for an interactive session that has ended (W66, spike 006): its
+   * process has exited, as when its terminal closed or the machine restarted,
+   * so `claude agents --all` no longer lists it, and pitwall found it from its
+   * transcript. Always with kind 'interactive', alive false and finished true,
+   * and never with shortId, pid, status, state or waitingFor.
+   *
+   * - `cwd` is the directory it started in, whose project folder holds its
+   *   transcript, not where a later `cd` left it.
+   * - `name` is the newest name set with `--name`; otherwise the directory's
+   *   basename and the session id's first 8 characters, such as
+   *   `pitwall-5e66fcb3`, because Claude Code's default name for an unnamed
+   *   session isn't recorded anywhere pitwall can read.
+   * - `startedAt` and `lastActivityAt` are its first and newest entries' times.
+   *
+   * Listed while lastActivityAt is at most ENDED_LISTED_DAYS old, at most
+   * ENDED_LISTED_MAX of them, newest first. The web UI shows those from the
+   * last ENDED_SHOWN_DAYS, and the rest behind Show older (Phil, 2026-10-27).
+   * Resume one with resumePath(): it keeps its sessionId, and is listed again
+   * as a background session.
+   */
+  ended?: true;
   /**
    * Set when the session has finished its turn and its newest assistant message
    * looks like it asked the user something, with no user prompt since. A
@@ -527,8 +550,8 @@ export const SPAWN_PATH = '/api/sessions';
 
 /**
  * Result of stop and remove. Both apply to background sessions only; others
- * get 409. More than 4 stop or remove commands at once get 429 with
- * `Retry-After`.
+ * get 409, ended interactive sessions included. More than 4 stop, remove or
+ * resume commands at once get 429 with `Retry-After`.
  */
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -540,6 +563,46 @@ export function stopPath(sessionId: string): string {
 /** Remove a background session with `claude rm`. Claude Code keeps a worktree that has unpushed commits. */
 export function removePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/remove`;
+}
+
+/** How long an ended interactive session stays listed, by its newest entry (SessionSummary.ended). */
+export const ENDED_LISTED_DAYS = 30;
+
+/** The most ended interactive sessions a snapshot lists, newest first. */
+export const ENDED_LISTED_MAX = 100;
+
+/** How far back the web UI shows ended sessions before Show older (Phil, 2026-10-27). */
+export const ENDED_SHOWN_DAYS = 7;
+
+/**
+ * The result of resuming an ended interactive session.
+ *
+ * - ok: Claude Code resumed it in the background under its own session id,
+ *   with no prompt, so it waits for one. `shortId` is the id `claude attach`
+ *   takes.
+ * - not ok: `hint` is a command for the user to run, such as the one that
+ *   trusts a workspace. `copyShortId` is set when Claude Code started a copy
+ *   under a new id instead, because the session was open in another Claude
+ *   Code process after all (spike 006, finding 5); the copy is a background
+ *   session with no name.
+ */
+export type ResumeResult =
+  | { ok: true; shortId: string }
+  | { ok: false; error: string; hint?: string; copyShortId?: string };
+
+/**
+ * Resume an ended interactive session (SessionSummary.ended) in the
+ * background: `claude --resume <sessionId> --bg`, with no prompt, in the
+ * session's own `cwd`, never a directory the request names. POST, no body.
+ *
+ * - 404 when the snapshot doesn't list the session, and 409 when it isn't
+ *   ended, when its directory no longer exists, when a resume of it is
+ *   already running, or when a fresh `claude agents --json` lists it, as when
+ *   its terminal is open again.
+ * - 429 with `Retry-After` past 4 stop, remove or resume commands at once.
+ */
+export function resumePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/resume`;
 }
 
 // ---------------------------------------------------------------------------
