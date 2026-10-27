@@ -78,6 +78,14 @@ export interface FakeServer {
   clearRecords(): void;
   /** Sends the snapshot to every authenticated index socket, as the index does after a poll that changed it. */
   broadcast(): void;
+  /**
+   * The order a resume's answer and the snapshot that follows it arrive in (W67), for the steps that
+   * check the other order; reset() puts both back to false. `listedFirst`: NAMES.ended is listed as
+   * running before the 200, which comes a moment later, as a poll can beat the answer. `copyReopens`:
+   * a moment after NAMES.endedCopy's 409, the snapshot lists the original as running in its terminal,
+   * as the next poll most likely does, since the server polls soon before it answers.
+   */
+  readonly resumeOrder: { listedFirst: boolean; copyReopens: boolean };
   close(): Promise<void>;
 }
 
@@ -93,6 +101,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const headers = Object.entries(security.securityHeaders(port));
   const world = new World();
   let records = emptyRecords();
+  const resumeOrder = { listedFirst: false, copyReopens: false };
   const timers = new Set<NodeJS.Timeout>();
   const indexSockets = new Set<WebSocket>();
   const attachSockets = new Set<WebSocket>();
@@ -192,11 +201,18 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
           hint: `cd ${session.cwd} && claude`,
         } satisfies ResumeResult);
       case NAMES.endedCopy:
-        return json(res, 409, {
+        json(res, 409, {
           ok: false,
           error: `It was open in another Claude Code process after all, so Claude Code started a copy as ${COPY_SHORT_ID} instead. The copy is listed as a background session with no name, which you can stop and remove.`,
           copyShortId: COPY_SHORT_ID,
         } satisfies ResumeResult);
+        if (resumeOrder.copyReopens) {
+          later(options.listDelayMs ?? 800, () => {
+            world.reopen(sessionId);
+            broadcast();
+          });
+        }
+        return;
       case NAMES.endedBusy:
         res.setHeader('Retry-After', '1');
         return json(res, 429, { ok: false, error: 'pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' } satisfies ResumeResult);
@@ -210,11 +226,18 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         return;
     }
     const resumed = world.resume(sessionId);
-    json(res, 200, { ok: true, shortId: resumed.shortId } satisfies ResumeResult);
-    later(options.listDelayMs ?? 800, () => {
+    const answer = () => json(res, 200, { ok: true, shortId: resumed.shortId } satisfies ResumeResult);
+    const list = () => {
       resumed.list();
       broadcast();
-    });
+    };
+    if (resumeOrder.listedFirst) {
+      list();
+      later(options.listDelayMs ?? 800, answer);
+      return;
+    }
+    answer();
+    later(options.listDelayMs ?? 800, list);
   }
 
   /** New session: pitwall's JSON checks, a made-up background session, and its listing a moment later. */
@@ -342,12 +365,15 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     get records() {
       return records;
     },
+    resumeOrder,
     reset(resetOptions) {
       for (const timer of timers) clearTimeout(timer);
       timers.clear();
       for (const ws of [...indexSockets, ...attachSockets]) ws.terminate();
       world.reset(resetOptions);
       records = emptyRecords();
+      resumeOrder.listedFirst = false;
+      resumeOrder.copyReopens = false;
     },
     clearRecords() {
       records = emptyRecords();
