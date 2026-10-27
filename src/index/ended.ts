@@ -7,8 +7,9 @@
 // ended interactive session when:
 // - its first entry with an `entrypoint` says `cli`. `sdk-cli` is `claude -p`, pitwall's own relay
 //   among them, and `sdk-ts` is the Agent SDK; anything else, such as an editor's, is left out;
-// - `claude agents --json --all` doesn't list its session id. A listed session always wins: the
-//   index filters by the current listing on every poll (sessions()), so none is ever in both;
+// - `claude agents --json --all` doesn't list its session id in any row, a row the index can't
+//   otherwise use included (listedSessionIds(), W81). A listed session always wins: the index
+//   filters by the current listing on every poll (sessions()), so none is ever in both;
 // - its newest user or assistant entry has no `sessionKind: "bg"`. One that last ran in the
 //   background was removed on purpose with `claude rm`, which keeps the transcript (finding 6);
 // - it has no `continued-in` entry after its newest user or assistant entry, in file order. Claude

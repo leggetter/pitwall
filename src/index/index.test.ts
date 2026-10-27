@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type RelayAlert, type RelayOff } from '../shared/protocol.js';
-import type { AgentRow, AgentsResult } from './agents.js';
+import { createAgentsSource, type AgentRow, type AgentsResult } from './agents.js';
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
@@ -1370,6 +1370,29 @@ describe('createIndexer with ended interactive sessions (W66)', () => {
     const indexer = createIndexer({ roots: ['/work'], exclude: (r) => r.sessionId === 'relay' }, deps);
     await flush();
     expect(ended.tracked).toEqual([{ listed: ['live', 'outside', 'relay'], roots: ['/work'] }]);
+    const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
+    expect(sessions.map((s) => [s.sessionId, s.ended === true])).toEqual([
+      ['live', false],
+      ['gone-for-good', true],
+    ]);
+    indexer.stop();
+  });
+
+  it('counts a session as listed in a row parseAgentRows skips, an unknown kind, no startedAt or a relative cwd, so it never shows as ended (W81)', async () => {
+    const { deps, ended } = setup();
+    const startedAt = NOW - 60_000;
+    const output = [
+      { sessionId: 'live', kind: 'interactive', cwd: '/work/repo/a', startedAt, pid: 1000 },
+      { sessionId: 'odd-kind', kind: 'remote', cwd: '/work/repo/b', startedAt, pid: 1001 },
+      { sessionId: 'no-start', kind: 'interactive', cwd: '/work/repo/c', pid: 1002 },
+      { sessionId: 'relative', kind: 'interactive', cwd: 'repo/d', startedAt, pid: 1003 },
+    ];
+    // The real source and parser, over made-up output: no `claude` runs.
+    deps.agents = createAgentsSource({ run: async () => JSON.stringify(output) });
+    ended.found = ['odd-kind', 'no-start', 'relative', 'gone-for-good'].map((id) => endedSession(id, '/work/repo/e', 5));
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    expect(ended.tracked).toEqual([{ listed: ['live', 'no-start', 'odd-kind', 'relative'], roots: ['/work'] }]);
     const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
     expect(sessions.map((s) => [s.sessionId, s.ended === true])).toEqual([
       ['live', false],

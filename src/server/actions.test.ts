@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import type { AgentRow, AgentsResult } from '../index/agents.js';
+import { createAgentsSource, type AgentRow, type AgentsResult } from '../index/agents.js';
 import type { Indexer } from '../index/index.js';
 import {
   removePath,
@@ -1073,6 +1073,27 @@ describe('resume, hardened after the W73 security look (W81)', () => {
       const [call] = started.run.calls;
       expect(call?.options.cwd).toBe(worker());
       expect(call?.options.env).toEqual({ PATH: '/usr/bin', PWD: viaAlias });
+    });
+  });
+
+  describe('2: the fresh claude agents counts its session id in any row', () => {
+    it('answers 409 and resumes nothing when the session is in a row parseAgentRows skips: an unknown kind, no startedAt, a relative cwd', async () => {
+      const rows = [
+        { sessionId: ENDED_ID, kind: 'remote', cwd: repo, startedAt: Date.parse('2026-10-27T00:00:00.000Z'), pid: 5151 },
+        { sessionId: ENDED_ID, kind: 'interactive', cwd: repo, pid: 5151 },
+        { sessionId: ENDED_ID, kind: 'interactive', cwd: 'repo', startedAt: Date.parse('2026-10-27T00:00:00.000Z'), pid: 5151 },
+      ];
+      for (const row of rows) {
+        // The real source and parser, over made-up output: no `claude` runs.
+        const agents = createAgentsSource({ run: async () => JSON.stringify([row]) });
+        const indexer = fakeIndexer();
+        const started = await start(fakeRunner(resumedOutput()), { agents }, indexer);
+        const res = await postAsPage(started, resumePath(ENDED_ID));
+        expect(res.status, JSON.stringify(row)).toBe(409);
+        expect(errorOf(res)).toMatch(/running again.*would start a copy/);
+        expect(started.run.calls).toEqual([]);
+        expect(indexer.pollSoon).toHaveBeenCalled();
+      }
     });
   });
 });

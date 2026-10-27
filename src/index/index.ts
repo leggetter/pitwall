@@ -8,7 +8,7 @@ import {
   type RelayOff,
   type SourceHealth,
 } from '../shared/protocol.js';
-import { createAgentsSource, type AgentRow, type AgentsSource } from './agents.js';
+import { createAgentsSource, listedSessionIds, type AgentRow, type AgentsSource } from './agents.js';
 import { ConversationCursorError, readConversationPage, RelayAddressBook } from './conversation.js';
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { oneLine } from './exec.js';
@@ -269,8 +269,9 @@ async function poll(
     return { generatedAt, roots: resolvedRoots, groups: previous?.groups ?? [], source };
   }
 
-  // Every session `claude agents --all` lists, those left out below included: none of them has ended.
-  const listed = new Set(result.rows.map((row) => row.sessionId));
+  // Every session `claude agents --all` lists, those left out below included, and those in rows
+  // parseAgentRows() skipped, such as one with an unknown kind (W81): none of them has ended.
+  const listed = listedSessionIds(result);
   const rows = result.rows.filter((row) => !calls(() => options.exclude?.(row), false));
   const placed = await mapLimit(rows, deps.concurrency, async (row): Promise<PlacedSession | undefined> => {
     const { path: cwd, missing } = await inspectCwd(row.cwd, deps.realpath);
