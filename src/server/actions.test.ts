@@ -521,10 +521,17 @@ describe('spawn: running claude --bg', () => {
     await postAsPage(started, resumePath(ENDED_ID));
     expect(started.run.calls).toHaveLength(4);
     for (const call of started.run.calls) {
-      // Resume also sets PWD to where it runs.
-      const pwd = call.args[0] === '--resume' ? { PWD: call.options.cwd } : {};
+      // Spawn and resume also set PWD to where they run; stop and remove run in the temp directory.
+      const pwd = call.args[0] === '--resume' || call.args[0] === '--bg' ? { PWD: call.options.cwd } : {};
       expect(call.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', ...pwd });
     }
+  });
+
+  it("sets PWD to the directory it runs in, the realpath, not pitwall's own", async () => {
+    const started = await start(fakeRunner(backgrounded()), { env: { PATH: '/usr/bin', PWD: '/Users/example/pitwall' } });
+    expect((await spawnAsPage(started, { ...valid(), cwd: join(root, 'alias', 'worker') })).status).toBe(201);
+    expect(started.run.calls[0]?.options.env).toEqual({ PATH: '/usr/bin', PWD: join(repo, 'packages', 'worker') });
+    expect(started.run.calls[0]?.options.env.PWD).toBe(started.run.calls[0]?.options.cwd);
   });
 
   it("answers 422 with Claude Code's message and a hint for an untrusted workspace, and never trusts it", async () => {
