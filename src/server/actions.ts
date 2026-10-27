@@ -44,8 +44,9 @@
 // and for stop and remove the `shortId` of the session resolveSession()
 // returned, never the raw route parameter. `claude rm` never gets
 // `--discard-unpushed` or `--force-remove-worktree`. Resume runs in the
-// resolved session's own `cwd`, never a directory the request names, with its
-// `sessionId` and no prompt, so no message text is on the command line.
+// resolved session's own `cwd`, never a directory the request names, with
+// `PWD` set to it, its `sessionId` and no prompt, so no message text is on the
+// command line.
 import { realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -527,7 +528,10 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
         );
       }
 
-      const result = await run(claudeBin, resumeArgs(sessionId), { cwd, env: env(), timeoutMs });
+      // PWD is the directory it runs in, not pitwall's own, which childEnvironment() passes on. Claude
+      // Code finds the session in that directory's project folder: a CLI that prefers PWD to the real
+      // cwd, to keep a symlinked path, would otherwise look in pitwall's.
+      const result = await run(claudeBin, resumeArgs(sessionId), { cwd, env: { ...env(), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
           indexer.pollSoon();

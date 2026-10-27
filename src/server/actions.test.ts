@@ -520,7 +520,11 @@ describe('spawn: running claude --bg', () => {
     await postAsPage(started, removePath(BG_ID));
     await postAsPage(started, resumePath(ENDED_ID));
     expect(started.run.calls).toHaveLength(4);
-    for (const call of started.run.calls) expect(call.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example' });
+    for (const call of started.run.calls) {
+      // Resume also sets PWD to where it runs.
+      const pwd = call.args[0] === '--resume' ? { PWD: call.options.cwd } : {};
+      expect(call.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', ...pwd });
+    }
   });
 
   it("answers 422 with Claude Code's message and a hint for an untrusted workspace, and never trusts it", async () => {
@@ -782,6 +786,15 @@ describe('resume (W66)', () => {
     expect(call?.args).toEqual(['--resume', ENDED_ID, '--bg']);
     expect(call?.options.cwd).toBe(worker());
     expect(call?.options.timeoutMs).toBe(30_000);
+  });
+
+  it("sets PWD to the directory it runs in, not pitwall's own, and scrubs the rest", async () => {
+    const env = { PATH: '/usr/bin', PWD: '/Users/example/pitwall', PITWALL_TOKEN: TOKEN, CLAUDE_CODE_SESSION_ID: '99999999-9999-4999-8999-999999999999' };
+    const started = await start(fakeRunner(resumedOutput()), { env });
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    const [call] = started.run.calls;
+    expect(call?.options.env).toEqual({ PATH: '/usr/bin', PWD: worker() });
+    expect(call?.options.env.PWD).toBe(call?.options.cwd);
   });
 
   it('takes nothing from the request: a body naming another directory or session changes nothing', async () => {
