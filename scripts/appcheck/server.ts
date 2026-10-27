@@ -3,14 +3,15 @@
 // the v3 WebSocket challenge, all imported from the server build (dist/server, dist/shared), never
 // copied. Behind them it answers the snapshot, the directory list, conversation pages, the relay,
 // attach (a made-up terminal stream), spawn, stop, remove and resume from the made-up World in
-// fixtures.ts.
+// fixtures.ts, and the editor list and open in an editor (W72), which opens nothing.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
 // only security.js, static.js and protocol.js from the build, which read nothing but webRoot.
 //
 // What the page did is recorded in `records`, for the parts to check: attaches, keys and resizes sent
-// to an attached session, spawns, relayed messages, stops and removes, resumes, and every request.
+// to an attached session, spawns, relayed messages, stops and removes, resumes, opens in an editor,
+// and every request.
 
 import { randomBytes } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -19,7 +20,19 @@ import type { Duplex } from 'node:stream';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import type { AttachClientMessage, ConversationPage, DirectoryList, IndexSnapshot, RelayResult, ResumeResult, SpawnRequest, SpawnResult } from '../../src/shared/protocol.js';
+import type {
+  ActionResult,
+  AttachClientMessage,
+  ConversationPage,
+  DirectoryList,
+  EditorId,
+  EditorList,
+  IndexSnapshot,
+  RelayResult,
+  ResumeResult,
+  SpawnRequest,
+  SpawnResult,
+} from '../../src/shared/protocol.js';
 import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
@@ -50,11 +63,16 @@ export interface Records {
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
   resumes: string[];
+  /** Each open in an editor the server answered (W72), by the session's name and the editor's id. Nothing is opened. */
+  opens: Array<{ name: string; editor: EditorId }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], spawns: [], relays: [], actions: [], resumes: [], requests: [] });
+const emptyRecords = (): Records => ({ attaches: [], inputs: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], requests: [] });
+
+/** The editors the fake server says it found at startup (W72), as pitwall's would on a Mac with both. */
+export const EDITORS: EditorList = { editors: [{ id: 'vscode', label: 'VS Code' }, { id: 'cursor', label: 'Cursor' }] };
 
 export interface FakeServerOptions {
   port: number;
@@ -154,9 +172,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const url = new URL(req.url ?? '/', origin);
     if (method === 'GET' && url.pathname === protocol.SNAPSHOT_PATH) return json(res, 200, world.snapshot() satisfies IndexSnapshot);
     if (method === 'GET' && url.pathname === protocol.DIRECTORIES_PATH) return json(res, 200, world.directories() satisfies DirectoryList);
+    if (method === 'GET' && url.pathname === protocol.EDITORS_PATH) return json(res, 200, EDITORS);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -180,7 +199,24 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       return json(res, 200, { ok: true });
     }
     if (route === 'resume' && method === 'POST') return resume(req, res, session.sessionId);
+    if (route === 'open' && method === 'POST') return openInEditor(req, res, session.sessionId);
     return end(res, 405);
+  }
+
+  /**
+   * Open in an editor (W72), with pitwall's own checks and words (src/server/editors.ts): JSON, `{ editor }`
+   * alone with an editor in EDITORS, and a directory that's there. It records the open and opens nothing.
+   */
+  async function openInEditor(req: IncomingMessage, res: ServerResponse, sessionId: string) {
+    if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 400, { ok: false, error: 'Send the request as application/json.' } satisfies ActionResult);
+    const body = await readJson(req);
+    const editor = isRecord(body) && Object.keys(body).length === 1 ? EDITORS.editors.find((each) => each.id === body.editor) : undefined;
+    if (!editor) return json(res, 400, { ok: false, error: "That isn't an editor pitwall knows." } satisfies ActionResult);
+    const session = world.session(sessionId);
+    if (!session) return end(res, 404);
+    if (session.cwdMissing) return json(res, 409, { ok: false, error: `Its directory, ${session.cwd}, no longer exists.` } satisfies ActionResult);
+    records.opens.push({ name: session.name, editor: editor.id });
+    return json(res, 200, { ok: true } satisfies ActionResult);
   }
 
   /**
@@ -217,7 +253,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         return;
       case NAMES.endedBusy:
         res.setHeader('Retry-After', '1');
-        return json(res, 429, { ok: false, error: 'pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' } satisfies ResumeResult);
+        return json(res, 429, { ok: false, error: 'pitwall is already running 4 stop, remove, resume or open commands. Try again in a moment.' } satisfies ResumeResult);
       case NAMES.endedRefused:
         return json(res, 409, { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." } satisfies ResumeResult);
       case NAMES.endedSlow:

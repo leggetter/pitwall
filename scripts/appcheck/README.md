@@ -16,7 +16,7 @@ npm run appcheck -- --out scratch/appcheck
   - `<dir>/shots/<part>/` holds each part's named screenshots.
   - `<dir>/failures/<part>/` holds a screenshot of the page as each failed step left it.
 - **Exit code:** 0 when every step passed, 1 when any failed, 2 when it couldn't run, such as with no build or no Chrome.
-- **Time:** under 5 minutes for a full run, 11 parts in 110 cases and about 720 steps, on the Mac it was written on. One part at one size takes seconds.
+- **Time:** about 5 minutes for a full run, 12 parts in 120 cases and about 830 steps, on the Mac it was written on. One part at one size takes seconds.
 
 ## Running part of it
 
@@ -95,9 +95,10 @@ Behind those it answers from `fixtures.ts`:
 - attach, with a made-up terminal screen;
 - spawn, whose session is listed 800 ms later, as the index lists one on a later poll;
 - stop and remove;
+- the editor list, both VS Code and Cursor, and open in an editor (W72), with pitwall's checks on the body and the directory, which records each open and opens nothing;
 - resume, for the ended sessions (W67), chosen by each one's name in `NAMES`, with the status and words pitwall's own resume route gives (W66, `src/server/actions.ts`): `ended` resumes, and is listed 800 ms later as a running background session under the same id; `endedAsked` gets 422, Claude Code's "Workspace not trusted" line with the command that trusts the directory; `endedCopy` gets 409 with `copyShortId`, a copy started instead; `endedBusy` gets 429 with `Retry-After`; `endedRefused` gets 409, running again; `endedSlow` gets 504, `claude --resume` too slow; and `endedNoAnswer` gets no answer at all, the connection closed. `resumeOrder` turns two of them around for the steps that check the other order, until the next reset: with `listedFirst`, `ended` is listed first and answered 800 ms later; with `copyReopens`, 800 ms after `endedCopy`'s 409, the original is listed as running in its terminal again.
 
-It records what the page sent, such as attaches, keys typed into a terminal, spawns, relayed messages and resumes, for parts to check through `t.server.records`.
+It records what the page sent, such as attaches, keys typed into a terminal, spawns, relayed messages, resumes and opens in an editor, for parts to check through `t.server.records`.
 
 **A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session.
 
