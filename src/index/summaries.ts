@@ -32,6 +32,12 @@ function turnIsOver(row: AgentRow, stale: boolean): boolean {
 export interface SummaryExtras {
   /** The working directory no longer exists. */
   cwdMissing?: boolean;
+  /**
+   * An interactive session that has ended, found from its transcript (ended.ts) rather than listed
+   * by `claude agents`: SessionSummary.ended, and finished, so the sort, the Finished section and
+   * Needs you treat it as they treat a finished background session.
+   */
+  ended?: boolean;
 }
 
 export function toSessionSummary(
@@ -50,9 +56,10 @@ export function toSessionSummary(
     alive,
     startedAt: row.startedAt,
     stale,
-    finished: isFinished({ kind: row.kind, alive, pid: row.pid, state: row.state }),
+    finished: extras.ended === true || isFinished({ kind: row.kind, alive, pid: row.pid, state: row.state }),
     transcript: transcript.transcript,
   };
+  if (extras.ended === true) summary.ended = true;
   if (extras.cwdMissing === true) summary.cwdMissing = true;
   if (row.shortId !== undefined) summary.shortId = row.shortId;
   if (row.pid !== undefined) summary.pid = row.pid;
@@ -86,7 +93,8 @@ const FINISHED_STATES: readonly BackgroundState[] = ['done', 'stopped', 'failed'
  * live process, and state 'done', 'stopped' or 'failed'. Plain
  * `claude agents --json` leaves these out; `--all` lists them. A 'done'
  * session whose process is still alive is idle, not finished: attaching to it
- * doesn't restart anything.
+ * doesn't restart anything. An ended interactive session is finished too, but
+ * toSessionSummary sets that from SummaryExtras.ended, not from this rule.
  */
 export function isFinished(session: {
   kind: SessionKind;

@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type RelayAlert, type RelayOff } from '../shared/protocol.js';
 import type { AgentRow, AgentsResult } from './agents.js';
+import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
 import { createTranscriptReader, encodeProjectDir, type TranscriptInfo } from './transcripts.js';
@@ -1071,6 +1072,269 @@ describe('a root inside a repo', () => {
     });
     const rootSession = snapshot.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === ids.root);
     expect(rootSession?.workedIn).toMatchObject([{ key: app, label: 'app', root, changes: 1 }]);
+  });
+});
+
+describe('createIndexer with ended interactive sessions (W66)', () => {
+  /** A fake scanner: `found` is what the last scan found; `tracked` records each track(). */
+  function fakeEnded() {
+    const state = {
+      found: [] as EndedSession[],
+      tracked: [] as { listed: string[]; roots: string[] }[],
+      listener: undefined as (() => void) | undefined,
+      stopped: false,
+      throws: false,
+    };
+    const scanner: EndedScanner = {
+      track(listed, roots) {
+        if (state.throws) throw new Error('scanner bug');
+        state.tracked.push({ listed: [...listed].sort(), roots: [...roots] });
+      },
+      // Unfiltered, unlike the real one, so the index's own check shows.
+      sessions: () => state.found,
+      file: (id) => state.found.find((s) => s.sessionId === id)?.file,
+      subscribe(listener) {
+        state.listener = listener;
+        return () => (state.listener = undefined);
+      },
+      settled: async () => undefined,
+      stats: () => ({ scans: 0, statted: 0, bytesRead: 0, tailReads: 0, fullReads: 0, lastScanMs: 0 }),
+      stop: () => {
+        state.stopped = true;
+      },
+    };
+    return { scanner, ended: state };
+  }
+
+  const endedSession = (id: string, cwd: string, minutesAgo: number, extra: Partial<EndedSession> = {}): EndedSession => ({
+    sessionId: id,
+    file: `/made-up/projects/${id}.jsonl`,
+    cwd,
+    name: `${path.basename(cwd)}-${id.slice(0, 8)}`,
+    startedAt: new Date(NOW - (minutesAgo + 30) * 60_000).toISOString(),
+    transcript: { transcript: 'ok', lastActivityAt: new Date(NOW - minutesAgo * 60_000).toISOString(), lastUserPrompt: 'Fix the flaky test' },
+    ...extra,
+  });
+
+  function setup() {
+    const { state, deps } = harness();
+    const fake = fakeEnded();
+    deps.ended = fake.scanner;
+    return { state, deps, ...fake };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('lists ended sessions where they started, as finished interactive sessions with no process, after the live ones', async () => {
+    const { state, deps, ended } = setup();
+    state.result = { ok: true, rows: [row('live', '/work/repo/a', { startedAt: new Date(NOW - 3 * 3_600_000).toISOString() })] };
+    state.transcripts.set('live', { transcript: 'ok', lastActivityAt: new Date(NOW - 2 * 3_600_000).toISOString() });
+    ended.found = [
+      endedSession('ended-new', '/work/repo/b', 5, { transcript: { transcript: 'ok', lastActivityAt: new Date(NOW - 5 * 60_000).toISOString(), askedYou: { reason: 'question', excerpt: 'Push it?' } } }),
+      endedSession('ended-old', '/work/other/c', 60, { name: 'named-by-flag' }),
+    ];
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    const groups = indexer.latest()?.groups ?? [];
+    expect(groups.map((g) => [g.key, g.sessions.map((s) => s.sessionId)])).toEqual([
+      ['/work/repo', ['live', 'ended-new']],
+      ['/work/other', ['ended-old']],
+    ]);
+    expect(groups[0]?.sessions[1]).toEqual({
+      sessionId: 'ended-new',
+      name: 'b-ended-ne',
+      kind: 'interactive',
+      cwd: '/work/repo/b',
+      alive: false,
+      startedAt: new Date(NOW - 35 * 60_000).toISOString(),
+      stale: false,
+      finished: true,
+      ended: true,
+      askedYou: { reason: 'question', excerpt: 'Push it?' },
+      lastActivityAt: new Date(NOW - 5 * 60_000).toISOString(),
+      transcript: 'ok',
+    });
+    expect(groups[1]?.sessions[0]).toMatchObject({ name: 'named-by-flag', lastUserPrompt: 'Fix the flaky test', ended: true });
+    // The transcript reader isn't asked about them: the scanner read them.
+    expect(state.reads).toEqual(['live']);
+    indexer.stop();
+  });
+
+  it('hands the scanner every session id claude agents listed, excluded ones included, and never lists one of those as ended', async () => {
+    const { state, deps, ended } = setup();
+    state.result = { ok: true, rows: [row('live', '/work/repo/a'), row('relay', '/work/repo/r'), row('outside', '/elsewhere/x')] };
+    ended.found = [endedSession('live', '/work/repo/a', 5), endedSession('relay', '/work/repo/r', 5), endedSession('gone-for-good', '/work/repo/c', 5)];
+    const indexer = createIndexer({ roots: ['/work'], exclude: (r) => r.sessionId === 'relay' }, deps);
+    await flush();
+    expect(ended.tracked).toEqual([{ listed: ['live', 'outside', 'relay'], roots: ['/work'] }]);
+    const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
+    expect(sessions.map((s) => [s.sessionId, s.ended === true])).toEqual([
+      ['live', false],
+      ['gone-for-good', true],
+    ]);
+    indexer.stop();
+  });
+
+  it('checks the start directory afresh: one that has gone is marked, one no longer under a root is left out, and the exclude hook applies', async () => {
+    const { deps, ended } = setup();
+    deps.realpath = async (p) => {
+      if (p === '/work/repo/removed') throw Object.assign(new Error('no such file or directory'), { code: 'ENOENT' });
+      if (p === '/work/link') return '/elsewhere/target';
+      return p;
+    };
+    ended.found = [endedSession('removed', '/work/repo/removed', 5), endedSession('moved', '/work/link', 6), endedSession('hidden', '/work/repo/h', 7)];
+    const indexer = createIndexer({ roots: ['/work'], exclude: (r) => r.sessionId === 'hidden' }, deps);
+    await flush();
+    const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
+    expect(sessions.map((s) => [s.sessionId, s.cwdMissing === true])).toEqual([['removed', true]]);
+    indexer.stop();
+  });
+
+  it("gives the worked-in scanner ended sessions too, with the scanner's transcript, and adds what it found", async () => {
+    const { state, deps, ended } = setup();
+    const tracked: TrackedSession[][] = [];
+    deps.workedIn = {
+      track: (sessions) => tracked.push([...sessions]),
+      workedIn: (id) => (id === 'ended' ? [{ key: '/work/api', root: '/work', calls: 3, changes: 1, lastAt: new Date(NOW).toISOString() }] : undefined),
+      settled: async () => undefined,
+      stats: () => ({ bytesRead: 0, calls: 0, scans: 0, gitRuns: 0, gitPeak: 0 }),
+      stop: () => undefined,
+    };
+    state.files.set('live', '/made-up/projects/live.jsonl');
+    state.result = { ok: true, rows: [row('live', '/work/repo/a')] };
+    ended.found = [endedSession('ended', '/work/repo/b', 5)];
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    expect(tracked[0]?.map((t) => [t.sessionId, t.file, t.startKey])).toEqual([
+      ['live', '/made-up/projects/live.jsonl', '/work/repo'],
+      ['ended', '/made-up/projects/ended.jsonl', '/work/repo'],
+    ]);
+    const endedSummary = indexer.latest()?.groups[0]?.sessions.find((s) => s.sessionId === 'ended');
+    expect(endedSummary?.workedIn).toEqual([{ key: '/work/api', label: 'api', root: '/work', calls: 3, changes: 1, lastAt: new Date(NOW).toISOString() }]);
+    indexer.stop();
+  });
+
+  it("answers conversation for an ended session from the scanner's transcript", async () => {
+    vi.useRealTimers();
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-ended-'));
+    try {
+      const { deps, ended } = setup();
+      const file = path.join(dir, 'ended.jsonl');
+      await writeFile(file, `${JSON.stringify({ type: 'user', timestamp: new Date(NOW).toISOString(), message: { content: 'an old prompt' } })}\n`);
+      ended.found = [endedSession('ended', '/work/repo/b', 5, { file })];
+      const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+      await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+      expect(await indexer.conversation('ended')).toEqual({ sessionId: 'ended', entries: [{ kind: 'user', at: new Date(NOW).toISOString(), text: 'an old prompt' }] });
+      indexer.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('polls soon when the scanner found a different set, and leaves ended sessions out when it throws', async () => {
+    const { state, deps, ended } = setup();
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+    await flush();
+    expect(state.listCalls).toBe(1);
+    ended.found = [endedSession('ended', '/work/repo/b', 5)];
+    ended.listener?.();
+    await flush();
+    expect(state.listCalls).toBe(2);
+    expect(indexer.latest()?.groups.flatMap((g) => g.sessions.map((s) => s.sessionId))).toEqual(['ended']);
+
+    ended.throws = true;
+    indexer.pollSoon();
+    await flush();
+    expect(state.listCalls).toBe(3);
+    expect(indexer.latest()?.groups).toEqual([]);
+    expect(indexer.latest()?.source).toEqual({ ok: true });
+    indexer.stop();
+    expect(ended.stopped).toBe(true);
+    expect(ended.listener).toBeUndefined();
+  });
+
+  it('pollSoon polls now, or once the running poll is done, never two at once', async () => {
+    const { state, deps } = setup();
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+    await flush();
+    expect(state.listCalls).toBe(1);
+    indexer.pollSoon();
+    await flush();
+    expect(state.listCalls).toBe(2);
+
+    let release!: () => void;
+    state.gate = new Promise((resolve) => (release = resolve));
+    indexer.pollSoon();
+    await flush();
+    expect(state.listCalls).toBe(3);
+    // Asked twice more while that one runs: one more poll, after it.
+    indexer.pollSoon();
+    indexer.pollSoon();
+    await flush();
+    expect(state.listCalls).toBe(3);
+    state.gate = undefined;
+    release();
+    await flush();
+    await flush();
+    expect(state.listCalls).toBe(4);
+    indexer.stop();
+    indexer.pollSoon();
+    await flush();
+    expect(state.listCalls).toBe(4);
+  });
+});
+
+describe('the indexer with a real ended-session scanner', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-ended-')));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('shows a session that ended within a poll of the scan, and only as listed once it is resumed', async () => {
+    const root = path.join(dir, 'work');
+    const cwd = path.join(root, 'app');
+    await mkdir(cwd, { recursive: true });
+    const configDir = path.join(dir, 'claude');
+    const sessionId = '5e66fcb3-0000-4000-8000-000000000000';
+    const projectDir = path.join(configDir, 'projects', encodeProjectDir(cwd));
+    await mkdir(projectDir, { recursive: true });
+    const file = path.join(projectDir, `${sessionId}.jsonl`);
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const entry = (type: string, content: unknown) => ({ type, timestamp: at, cwd, entrypoint: 'cli', ...(type === 'user' ? { promptSource: 'typed' } : {}), message: { role: type, content } });
+    await writeFile(file, `${JSON.stringify(entry('user', 'Tidy the docs'))}\n${JSON.stringify(entry('assistant', [{ type: 'text', text: 'Tidied.' }]))}\n`);
+    await utimes(file, new Date(at), new Date(at));
+
+    const { state, deps } = harness();
+    deps.now = Date.now;
+    deps.ended = createEndedScanner({ configDir });
+    deps.groups = { resolve: async (p) => ({ key: p, kind: 'directory' }), prune() {} };
+    state.result = { ok: true, rows: [] };
+    const snapshots: IndexSnapshot[] = [];
+    // A long interval: only the scanner's prompt makes the second poll.
+    const indexer = createIndexer({ roots: [root], intervalMs: 600_000 }, deps);
+    indexer.subscribe((snapshot) => snapshots.push(snapshot));
+    while (snapshots.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(snapshots[0]?.groups).toEqual([]);
+    expect(snapshots[1]?.groups.flatMap((g) => g.sessions)).toMatchObject([{ sessionId, name: `app-5e66fcb3`, ended: true, finished: true, lastUserPrompt: 'Tidy the docs' }]);
+    expect(await indexer.conversation(sessionId)).toMatchObject({ entries: [{ kind: 'user', text: 'Tidy the docs' }, { kind: 'assistant', text: 'Tidied.' }] });
+
+    // Resumed: claude agents lists it as a background session, and the next poll shows only that.
+    state.result = { ok: true, rows: [row(sessionId, cwd, { kind: 'background', shortId: '5e66fcb3', state: 'blocked', status: 'idle' })] };
+    indexer.pollSoon();
+    while (snapshots.length < 3) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(snapshots[2]?.groups.flatMap((g) => g.sessions).map((s) => [s.sessionId, s.kind, s.ended === true])).toEqual([[sessionId, 'background', false]]);
+    indexer.stop();
   });
 });
 

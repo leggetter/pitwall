@@ -164,6 +164,33 @@ describe('toSessionSummary', () => {
     expect(toSessionSummary(row(), { transcript: 'ok' }, NOW)).not.toHaveProperty('cwdMissing');
   });
 
+  it('maps an ended interactive session (W66): finished and ended, with no process, keeping its question', () => {
+    const asked: AskedYou = { reason: 'question', excerpt: 'Shall I push it?' };
+    const ended = row({ name: 'repo-55555555', pid: undefined, status: undefined });
+    const summary = toSessionSummary(ended, { transcript: 'ok', lastActivityAt: iso(NOW - DAY), askedYou: asked, aiTitle: 'Push the fix' }, NOW, { ended: true });
+    expect(summary).toEqual({
+      sessionId: '55555555-5555-4555-8555-555555555555',
+      name: 'repo-55555555',
+      title: 'Push the fix',
+      titleSource: 'claude-code',
+      kind: 'interactive',
+      cwd: '/work/repo',
+      alive: false,
+      startedAt: iso(NOW - DAY),
+      stale: false,
+      finished: true,
+      ended: true,
+      askedYou: asked,
+      lastActivityAt: iso(NOW - DAY),
+      transcript: 'ok',
+    });
+    expect(toSessionSummary(row(), { transcript: 'ok' }, NOW)).not.toHaveProperty('ended');
+    // Sorted with the finished sessions, last, its question lifting it over none of them.
+    const live = session('live', { lastActivityAt: iso(NOW - 3 * DAY) });
+    const done = session('done', { kind: 'background', alive: false, state: 'done', finished: true, lastActivityAt: iso(NOW - 2 * DAY) });
+    expect([summary, done, live].sort(compareSessions).map((s) => s.sessionId)).toEqual(['live', summary.sessionId, 'done']);
+  });
+
   describe('title', () => {
     const titled = (aiTitle: string, overrides: Partial<AgentRow> = {}) =>
       toSessionSummary(row(overrides), { transcript: 'ok', aiTitle }, NOW);

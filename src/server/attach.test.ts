@@ -97,6 +97,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     latest: () => latest ?? undefined,
     subscribe: () => () => {},
     conversation: async () => undefined,
+    pollSoon: () => {},
     stop: () => {},
   };
 }
