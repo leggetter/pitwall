@@ -5,6 +5,7 @@
 //                               then Authorization: Bearer <apiKey> or Bearer <token>, else 401.
 //                               A state-changing method (anything but GET and HEAD) also needs
 //                               the apiKey, not the token, and an Origin, else 403
+//   GET /api/directories        then directories.ts: the directories under the snapshot's roots
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
 //                               snapshot, else 503; the session in it, else 404. Every route that
 //                               takes a session id, and every M2 input path, goes through it.
@@ -34,6 +35,7 @@ import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../in
 import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
 import { registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
+import { registerDirectories, type DirectoryOptions } from './directories.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
@@ -109,6 +111,8 @@ export interface ServerInternals {
    * so they never run `claude`.
    */
   attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
+  /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
+  directories?: DirectoryOptions;
 }
 
 export async function startServerWithInternals(
@@ -137,8 +141,10 @@ export async function startServerWithInternals(
   const spawned = new RecentSpawns();
   // The ended sessions resume brought back lately, by session id, which the snapshot shows as ended until its next poll.
   const resumed = new RecentSpawns();
-  // The input routes: spawn, stop and remove (W12), resume (W66), the relay (W11), then any a test adds.
+  // The directory list (W70), then the input routes: spawn, stop and remove (W12), resume (W66), the
+  // relay (W11), then any a test adds.
   const routes = (app: Hono) => {
+    registerDirectories(app, indexer, internals.directories);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
