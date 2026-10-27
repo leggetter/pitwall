@@ -6,17 +6,19 @@
 // Every fixture is made once, when the gallery loads, so a re-render never changes a session's id.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { SessionSummary } from '../../../src/shared/protocol.js';
+import type { ConversationEntry, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { slowFirstSnapshot } from '../components/Dashboard.js';
+import { EndedFooter, useResume } from '../components/EndedSession.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
-import { ToastProvider } from '../components/Toast.js';
+import { ToastProvider, useToast } from '../components/Toast.js';
+import { COPIED, COPY_FAILED, useCopy } from '../copy.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
-import { startLabel, workedInLabels } from '../sessions.js';
+import { resumeCommand, startLabel, workedInLabels } from '../sessions.js';
 import {
   ago,
   APP_DIR,
@@ -431,6 +433,8 @@ export function SessionViews() {
 }
 
 // W67: an ended interactive session's view, and its footer in each state of Resume in background.
+// A few whole views, then the footer alone for each state of a resume: a whole view for each would
+// make the gallery slow enough, under the test suite's load, that other specimens' scenarios time out.
 interface EndedCase {
   title: string;
   note?: string;
@@ -448,73 +452,17 @@ const resumeThen = (then: (root: HTMLElement) => Promise<unknown>) => async (roo
 };
 const ENDED_TITLE = { title: 'Update the getting started guide', titleSource: 'claude-code' } as const;
 const failureShown = (root: HTMLElement) => element(root, '.resume-failure');
+/** A short conversation for the whole views here, which are about the header, the tabs and the footer. */
+const ENDED_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(2 * 24 * 60 + 2), text: 'Update the made-up getting started guide for the new export flags.' },
+  { kind: 'assistant', at: ago(2 * 24 * 60), markdown: true, text: 'Done: the guide covers `--retries` and `--backoff`, with an example of each.' },
+];
 
-const ENDED_CASES: EndedCase[] = [
+const ENDED_VIEWS: EndedCase[] = [
   {
     title: 'Ended',
     note: "Its Claude Code process exited, as when its terminal closed: Ended where a session's status goes, the Conversation tab alone, and, where an interactive session has its message box, the note, then Copy command and Resume in background, secondary then primary. Interactive, with no /bg note: there's no terminal to type it in.",
     session: endedSession('view-ended', ENDED_TITLE),
-  },
-  {
-    title: 'Ended, and it asked you',
-    note: "The outlined Asked you, whose info button says it has ended, so it isn't counted as needing you.",
-    session: endedSession('view-ended-asked', { askedYou: { reason: 'question', excerpt: 'Should the made-up export keep archived projects?' } }),
-  },
-  {
-    title: 'Resuming',
-    note: 'Resume in background is busy while its request is out, and stays busy once it has resumed until pitwall lists it as running.',
-    session: endedSession('view-ended-resuming', ENDED_TITLE),
-    options: { resume: 'resuming' },
-    run: resumeThen((root) => text(root, 'Resuming…')),
-  },
-  {
-    title: 'Resumed',
-    note: "A toast says so. In the app, within a poll the snapshot lists it as a running background session, and the view opens its Terminal tab, taking no focus. Here nothing lists it, so after 15 s it's Resume in background again.",
-    session: endedSession('view-ended-resumed', ENDED_TITLE),
-    options: { resume: 'resumed' },
-    run: resumeThen((root) => text(specimenOf(root), 'Resumed pitwall-test-view-ended-resumed in the background.')),
-  },
-  {
-    title: "Couldn't resume",
-    note: "It's running again, so pitwall didn't resume it, which would start a copy: pitwall's sentence, then the server's reason in code style, in a danger alert above the buttons, which keep their place.",
-    session: endedSession('view-ended-refused', ENDED_TITLE),
-    options: { resume: 'refused' },
-    run: resumeThen(failureShown),
-  },
-  {
-    title: "Couldn't resume: not trusted",
-    note: "Claude Code's Workspace not trusted line, then the command the server sent to run: in a command chip, with its own copy button, as New session's trust failure has it.",
-    session: endedSession('view-ended-hint', ENDED_TITLE),
-    options: { resume: 'hint' },
-    run: resumeThen(failureShown),
-  },
-  {
-    title: 'A copy started instead',
-    note: "It was open in another Claude Code process after all, so Claude Code started a copy: a warning, whose body is the server's sentence alone, which names the copy and says what to do.",
-    session: endedSession('view-ended-copied', ENDED_TITLE),
-    options: { resume: 'copied' },
-    run: resumeThen(failureShown),
-  },
-  {
-    title: 'Too many at once',
-    note: 'A 429: pitwall is already running four stop, remove or resume commands.',
-    session: endedSession('view-ended-busy', ENDED_TITLE),
-    options: { resume: 'busy' },
-    run: resumeThen(failureShown),
-  },
-  {
-    title: "Couldn't resume: it took too long",
-    note: "A 504: claude --resume didn't finish in time. Its reason, as for any status.",
-    session: endedSession('view-ended-timeout', ENDED_TITLE),
-    options: { resume: 'timeout' },
-    run: resumeThen(failureShown),
-  },
-  {
-    title: "pitwall didn't answer",
-    note: "No answer at all: pitwall's sentence alone.",
-    session: endedSession('view-ended-failed', ENDED_TITLE),
-    options: { resume: 'failed' },
-    run: resumeThen(failureShown),
   },
   {
     title: 'Ended, directory gone',
@@ -533,28 +481,107 @@ const ENDED_CASES: EndedCase[] = [
     session: endedSession('view-ended-compact', ENDED_TITLE),
     width: 375,
   },
+];
+
+const ENDED_FOOTERS: EndedCase[] = [
   {
-    title: "Couldn't resume: not trusted, 600 px and narrower",
-    session: endedSession('view-ended-hint-compact', ENDED_TITLE),
+    title: 'Footer: resuming',
+    note: 'Resume in background is busy while its request is out, and stays busy once it has resumed until pitwall lists it as running.',
+    session: endedSession('foot-resuming', ENDED_TITLE),
+    options: { resume: 'resuming' },
+    run: resumeThen((root) => text(root, 'Resuming…')),
+  },
+  {
+    title: 'Footer: resumed',
+    note: "A toast says so. In the app, within a poll the snapshot lists it as a running background session, and the view opens its Terminal tab, taking no focus. Here nothing lists it, so after 15 s it's Resume in background again.",
+    session: endedSession('foot-resumed', ENDED_TITLE),
+    options: { resume: 'resumed' },
+    run: resumeThen((root) => text(specimenOf(root), 'Resumed pitwall-test-foot-resumed in the background.')),
+  },
+  {
+    title: "Footer: couldn't resume, running again",
+    note: "It's running again, so pitwall didn't resume it, which would start a copy: pitwall's sentence, then the server's reason in code style, in a danger alert above the buttons, which keep their place.",
+    session: endedSession('foot-refused', ENDED_TITLE),
+    options: { resume: 'refused' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: couldn't resume, not trusted",
+    note: "Claude Code's Workspace not trusted line, then the command the server sent to run: in a command chip, with its own copy button, as New session's trust failure has it.",
+    session: endedSession('foot-hint', ENDED_TITLE),
+    options: { resume: 'hint' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: 'Footer: a copy started instead',
+    note: "It was open in another Claude Code process after all, so Claude Code started a copy: a warning, whose body is the server's sentence alone, which names the copy and says what to do.",
+    session: endedSession('foot-copied', ENDED_TITLE),
+    options: { resume: 'copied' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: 'Footer: too many at once',
+    note: 'A 429: pitwall is already running four stop, remove or resume commands.',
+    session: endedSession('foot-busy', ENDED_TITLE),
+    options: { resume: 'busy' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: couldn't resume, it took too long",
+    note: "A 504: claude --resume didn't finish in time. Its reason, as for any status.",
+    session: endedSession('foot-timeout', ENDED_TITLE),
+    options: { resume: 'timeout' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: pitwall didn't answer",
+    note: "No answer at all: pitwall's sentence alone.",
+    session: endedSession('foot-failed', ENDED_TITLE),
+    options: { resume: 'failed' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: couldn't resume, not trusted, 375 px",
+    session: endedSession('foot-hint-compact', ENDED_TITLE),
     options: { resume: 'hint' },
     run: resumeThen(failureShown),
     width: 375,
   },
 ];
 
+/** An ended session's footer alone, as its view has it: Resume in background against the stub API, and Copy command against the stub clipboard. */
+function EndedFoot({ session }: { session: SessionSummary }) {
+  const resume = useResume(session, noop);
+  const copy = useCopy();
+  const toast = useToast();
+  const command = resumeCommand(session);
+  const onCopy = command === undefined ? undefined : () => void copy(command).then((ok) => toast(ok ? { tone: 'success', message: COPIED } : { tone: 'error', message: COPY_FAILED }));
+  return (
+    <footer className="session-view-foot">
+      <EndedFooter session={session} resume={resume} onCopy={onCopy} />
+    </footer>
+  );
+}
+
 export function EndedViews() {
-  return ENDED_CASES.map((each) => (
-    // With a toasts' stack of its own, as the app has, whose toasts stay here.
-    <Specimen key={each.title} title={each.title} note={each.note} frame="view" lasting {...(each.width === undefined ? {} : { width: each.width })}>
+  // With a toasts' stack of its own, as the app has, whose toasts stay here.
+  const specimen = (each: EndedCase, footer: boolean) => (
+    <Specimen key={each.title} title={each.title} note={each.note} frame={footer ? undefined : 'view'} lasting {...(each.width === undefined ? {} : { width: each.width })}>
       <ToastProvider>
-        <Stubbed options={each.options}>
+        <Stubbed options={{ entries: ENDED_CONVERSATION, ...each.options }}>
           <MaybeScenario run={each.run}>
-            <SessionView session={each.session} listed onClose={noop} compact={each.width !== undefined && each.width <= 600} />
+            {footer ? <EndedFoot session={each.session} /> : <SessionView session={each.session} listed onClose={noop} compact={each.width !== undefined && each.width <= 600} />}
           </MaybeScenario>
         </Stubbed>
       </ToastProvider>
     </Specimen>
-  ));
+  );
+  return (
+    <>
+      {ENDED_VIEWS.map((each) => specimen(each, false))}
+      {ENDED_FOOTERS.map((each) => specimen(each, true))}
+    </>
+  );
 }
 
 const CONVERSATION_ALL = background('conversation-all', { state: 'working' });
