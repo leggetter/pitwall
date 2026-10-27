@@ -1,11 +1,13 @@
-// Starting, stopping and removing background sessions (W12): the API calls,
-// through the app's ApiClient (api.ts), which sends the apiKey, never the
-// token, and the checks the "New session" dialog makes before it sends one.
+// Starting, stopping and removing background sessions (W12), and resuming an
+// ended interactive session in the background (W67): the API calls, through
+// the app's ApiClient (api.ts), which sends the apiKey, never the token, and
+// the checks the "New session" dialog makes before it sends one.
 // The server (src/server/actions.ts) is the authority on every check.
 
 import { useEffect, useState } from 'react';
 import {
   removePath,
+  resumePath,
   SPAWN_PATH,
   stopPath,
   type IndexSnapshot,
@@ -75,6 +77,41 @@ export async function sessionAction(api: ApiClient, sessionId: string, action: S
   if (result.kind === 'ok' && body?.ok === true) return { kind: 'done' };
   if (result.kind === 'failed' && body?.ok === false && typeof body.error === 'string') return { kind: 'refused', error: body.error };
   const failed: ActionOutcome = { kind: 'failed', error: couldNot(`${action} the session`, result.status) };
+  return result.status === undefined ? failed : { ...failed, status: result.status };
+}
+
+export type ResumeOutcome =
+  /** Claude Code resumed it in the background, under its own session id (spike 006). */
+  | { kind: 'resumed' }
+  /**
+   * Claude Code started a copy under a new id instead, `copyShortId`, because the session was open in
+   * another Claude Code process after all (spike 006, finding 5). The copy is a background session.
+   */
+  | { kind: 'copied'; error: string; copyShortId: string }
+  /** The server or Claude Code refused, with why. `hint` is a command for the user to run, such as the one that trusts a workspace. */
+  | { kind: 'refused'; error: string; hint?: string }
+  | { kind: 'unauthorized' }
+  /** No answer pitwall understands. `status` is the HTTP status, when the server answered. */
+  | { kind: 'failed'; error: string; status?: number };
+
+/**
+ * Resumes an ended interactive session in the background with POST resumePath() (W67), sent as Stop
+ * and Remove are. Never rejects.
+ */
+export async function resumeSession(api: ApiClient, sessionId: string): Promise<ResumeOutcome> {
+  const result = await api.post(resumePath(sessionId), {});
+  if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
+  const body = asRecord(result.body);
+  // Its short id isn't needed: the snapshot lists the session under its own id once it's running.
+  if (result.kind === 'ok' && body?.ok === true) return { kind: 'resumed' };
+  if (result.kind === 'failed' && body?.ok === false && typeof body.error === 'string') {
+    if (typeof body.copyShortId === 'string' && body.copyShortId !== '') return { kind: 'copied', error: body.error, copyShortId: body.copyShortId };
+    return typeof body.hint === 'string' && body.hint !== '' ? { kind: 'refused', error: body.error, hint: body.hint } : { kind: 'refused', error: body.error };
+  }
+  // A 429 with no reason of its own still says when to try again.
+  const retryAfter = result.kind === 'failed' ? result.retryAfter : undefined;
+  const wait = retryAfter === undefined ? '' : ` Try again in ${retryAfter} ${retryAfter === 1 ? 'second' : 'seconds'}.`;
+  const failed: ResumeOutcome = { kind: 'failed', error: `${couldNot('resume the session', result.status)}${wait}` };
   return result.status === undefined ? failed : { ...failed, status: result.status };
 }
 

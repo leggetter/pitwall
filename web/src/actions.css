@@ -164,7 +164,8 @@
 
 /* The New session dialog's failure: the trust sentence, then the command chip and its copy button, each on a line of their own. */
 .spawn-trust,
-.spawn-failure .copy-command {
+.spawn-failure .copy-command,
+.resume-failure .copy-command {
   margin-top: var(--pw-space-2);
 }
 
@@ -173,5 +174,28 @@
 .session-actions {
   display: flex;
   flex-direction: column;
+  gap: var(--pw-space-2);
+}
+
+/*
+ * An ended interactive session's footer (W67): the note, then a refused resume's alert, then Copy
+ * command and Resume in background at the right, secondary then primary, 8 px apart, wrapping. Under
+ * a kept draft's message box, 12 px below it.
+ */
+
+.ended-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-2);
+}
+
+.relay-box + .ended-foot {
+  margin-top: var(--pw-space-3);
+}
+
+.ended-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--pw-space-2);
 }

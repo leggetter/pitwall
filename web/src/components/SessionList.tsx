@@ -1,16 +1,18 @@
 // The session list (docs/design-system.md, 3: Session list): the page alerts, then a header that
 // stays put, with the selection's name, its summary, a group's Hide from repo list button, the
 // filters and the Sort setting, then the two-line rows, each with its star toggle (W53), which
-// scroll, and a Finished section, collapsed by default, at the end.
+// scroll, and a Finished section, collapsed by default, at the end. Ended interactive sessions are in
+// it too (W67), and Show older, at its foot, lists those older than ENDED_SHOWN_DAYS.
 //
 // The rows come sorted. While the pointer is over the list or focus is inside it, a snapshot that
 // would reorder them waits until both have left, so nothing moves under the reader; rows that are
 // added or removed apply at once, and every row updates in place.
 
 import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
-import type { SessionGroup } from '../../../src/shared/protocol.js';
+import { ENDED_SHOWN_DAYS, type SessionGroup } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
+import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import { ScrollBox } from './ScrollBox.js';
 import { SessionRow } from './SessionRow.js';
@@ -68,6 +70,11 @@ export interface SessionListProps {
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
   /** Covered by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
   inert?: boolean;
+  /**
+   * Show older, at the foot of the Finished section, while the selection has ended sessions older than
+   * ENDED_SHOWN_DAYS (W67). The section shows for it even when none of its rows is shown.
+   */
+  older?: OlderEnded | undefined;
 }
 
 /** "4 sessions", or "2 of 4 sessions" while the filters hide some, then the need-you badge or "Nothing needs you". */
@@ -115,6 +122,24 @@ function useHeldOrder(items: readonly Listed[], holding: boolean, key: string): 
   return next.flatMap((id) => byId.get(id) ?? []);
 }
 
+/**
+ * Show older (W67): the selection's ended sessions last active more than ENDED_SHOWN_DAYS ago, and the
+ * page's one switch for them, which isn't kept across reloads.
+ */
+export interface OlderEnded {
+  /** How many of the selection's ended sessions are that old, as the filters show them. */
+  count: number;
+  /** Whether Show older is on: they're listed, and the button hides them again. */
+  shown: boolean;
+  onToggle: () => void;
+}
+
+/** The button's label: "Show 3 older sessions", or "Hide older sessions" once they're shown. */
+export const olderText = (count: number, shown: boolean) => (shown ? 'Hide older sessions' : `Show ${count} older ${count === 1 ? 'session' : 'sessions'}`);
+
+/** The line after it, which describes it: which sessions are older. */
+export const OLDER_NOTE = `Ended more than ${ENDED_SHOWN_DAYS} days ago`;
+
 export interface FinishedSectionProps {
   finished: readonly Listed[];
   collapsed: boolean;
@@ -125,11 +150,18 @@ export interface FinishedSectionProps {
   openSessionId?: string | undefined;
   starred?: ReadonlySet<string> | undefined;
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
+  /** Show older, after the rows, while the selection has older ended sessions (W67). */
+  older?: OlderEnded | undefined;
 }
 
-/** "Finished (n)", plus how many of them asked you something, over the finished rows. */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar }: FinishedSectionProps) {
+/**
+ * "Finished (n)", plus how many of them asked you something, over the finished rows; then, while the
+ * selection has ended sessions older than ENDED_SHOWN_DAYS, Show older, which lists them, or Hide older
+ * once they're listed. It's the same button with its other name, so focus stays on it.
+ */
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, older }: FinishedSectionProps) {
   const listId = useId();
+  const olderNoteId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
   const asked = finished.reduce((count, { session }) => count + (session.askedYou ? 1 : 0), 0);
   return (
@@ -153,6 +185,16 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
             onStar={onStar}
           />
         ))}
+        {older && older.count > 0 && (
+          <li className="finished-older">
+            <Button size="sm" aria-describedby={olderNoteId} onClick={older.onToggle} data-older-toggle="">
+              {olderText(older.count, older.shown)}
+            </Button>
+            <span className="finished-older-note" id={olderNoteId}>
+              {OLDER_NOTE}
+            </span>
+          </li>
+        )}
       </ul>
     </li>
   );
@@ -179,6 +221,7 @@ export function SessionList({
   starred,
   onStar,
   inert = false,
+  older,
 }: SessionListProps) {
   const headingId = useId();
   const main = useRef<HTMLElement>(null);
@@ -275,7 +318,7 @@ export function SessionList({
                 onStar={onStar}
               />
             ))}
-            {shownFinished.length > 0 && (
+            {(shownFinished.length > 0 || (older !== undefined && older.count > 0)) && (
               <FinishedSection
                 finished={shownFinished}
                 collapsed={finishedCollapsed}
@@ -286,6 +329,7 @@ export function SessionList({
                 openSessionId={openSessionId}
                 starred={starred}
                 onStar={onStar}
+                older={older}
               />
             )}
           </ul>

@@ -68,6 +68,13 @@
 // Stop or Remove, an open confirmation or restart prompt, in the view open here or in the session's
 // tab, or typing in the columns. Then a toast says it's listed, with Open, in place of the one that
 // said it started.
+//
+// Ended interactive sessions (W67) are listed in their groups' Finished sections. Those last active
+// more than ENDED_SHOWN_DAYS before the snapshot's time are left out of the snapshot's groups here,
+// before anything groups or counts them, so every list, count, badge and the repo list leave them out,
+// and a group with nothing else goes from the repo list, until Show older is on: one switch for the
+// page, in the selection's Finished section and its empty states, never stored. The session view finds
+// a session among all of them, so one that's hidden still shows in a view that's open, or a URL's.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
@@ -105,11 +112,13 @@ import {
   filterListed,
   filterNeedle,
   groupLabel,
+  isOlderEnded,
   listScope,
   NO_FILTERS,
   noMatchText,
   sessionsIn,
   startLabel,
+  withoutOlderEnded,
   workedInLabels,
   type Filters,
 } from '../sessions.js';
@@ -131,7 +140,7 @@ import { NewSessionDialog } from './NewSessionDialog.js';
 import { PreferencesDialog } from './Preferences.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
-import { SessionList, type SessionListHeading } from './SessionList.js';
+import { olderText, SessionList, type SessionListHeading } from './SessionList.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from './SessionView.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { SortSelect } from './SortSelect.js';
@@ -243,7 +252,24 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // too. One hook, so the setting the dialog changes is the one the views read at each attach.
   const [terminalFocus, setTerminalFocus] = useTerminalFocus(storage);
   const startGroups = snapshot?.groups;
-  const grouped = useMemo(() => groupSessions(startGroups ?? [], groupBy), [startGroups, groupBy]);
+  // Show older (W67): off at each load, and never stored (coordinator, W67).
+  const [showOlder, setShowOlder] = useState(false);
+  // "Now" for the ended sessions' window: the snapshot's own time, so what's hidden changes only with a snapshot.
+  const endedNow = snapshot ? Date.parse(snapshot.generatedAt) : Number.NaN;
+  // The snapshot's groups without the older ended sessions, unless Show older is on: what everything below lists and counts.
+  const windowedGroups = useMemo(
+    () => (startGroups === undefined || showOlder ? startGroups : withoutOlderEnded(startGroups, endedNow)),
+    [startGroups, showOlder, endedNow],
+  );
+  const grouped = useMemo(() => groupSessions(windowedGroups ?? [], groupBy), [windowedGroups, groupBy]);
+  // Every session, the older ended ones too: for the session view, and for Show older's counts.
+  const groupedAll = useMemo(
+    () => (windowedGroups === startGroups ? grouped : groupSessions(startGroups ?? [], groupBy)),
+    [windowedGroups, startGroups, grouped, groupBy],
+  );
+  const anyOlder = useMemo(() => (startGroups ?? []).some((group) => group.sessions.some((session) => isOlderEnded(session, endedNow))), [startGroups, endedNow]);
+  // The New session dialog's directories are the repo list's groups', so not a group of older ended sessions alone.
+  const dialogSnapshot = useMemo(() => (snapshot && windowedGroups ? { roots: snapshot.roots, groups: windowedGroups } : undefined), [snapshot, windowedGroups]);
   const viewSnapshot = useMemo(() => (snapshot ? { roots: snapshot.roots, groups: grouped.groups } : undefined), [snapshot, grouped]);
   // With two or more roots, `tab` is the open root tab: the selection's root (W38).
   const [selection, choose, { tab, follow: followSelection }] = useSelection(viewSnapshot, { navigation, storage, home: grouped.home });
@@ -307,13 +333,26 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   );
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
   const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
+  // The selection's ended sessions older than ENDED_SHOWN_DAYS (W67), as the filters show them, with
+  // Show older on or off: how many its button says, and whether the selection has one at all.
+  const olderCount = useMemo(() => {
+    if (!anyOlder) return 0;
+    const every = tabGroups(groupedAll.groups, tab);
+    const everyScope = scopeFor(every, selection, starred.set);
+    if (!everyScope) return 0;
+    const older = listScope(every, everyScope, sort, groupedAll.home).finished.filter(({ session }) => isOlderEnded(session, endedNow));
+    return filterListed(older, filters).length;
+  }, [anyOlder, groupedAll, tab, selection, starred.set, sort, endedNow, filters]);
+  // Every session pitwall lists, the older ended ones too, each once: the session view shows one
+  // wherever it's listed, so Hide older never says an open one is no longer listed.
+  const everyListed = useMemo(() => (groupedAll === grouped ? everySession : sessionsIn(groupedAll.groups)), [groupedAll, grouped, everySession]);
   // What pitwall last knew of each session, for one that leaves the snapshot while it's open, or that
   // the back button returns to: the view keeps showing it, and says it's no longer listed.
   const known = useRef(new Map<string, SessionSummary>());
   useEffect(() => {
-    for (const session of everySession) known.current.set(session.sessionId, session);
-  }, [everySession]);
-  const listedSession = (sessionId: string) => everySession.find((session) => session.sessionId === sessionId);
+    for (const session of everyListed) known.current.set(session.sessionId, session);
+  }, [everyListed]);
+  const listedSession = (sessionId: string) => everyListed.find((session) => session.sessionId === sessionId);
   const listedOpen = openId === undefined ? undefined : listedSession(openId);
   const shownOpen = listedOpen ?? (openId === undefined ? undefined : known.current.get(openId));
 
@@ -761,7 +800,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (next === groupBy) return;
     setGroupBy(next);
     if (!snapshot) return;
-    const after = groupSessions(snapshot.groups, next).groups;
+    const after = groupSessions(windowedGroups ?? snapshot.groups, next).groups;
     const instead = (current: Selection, root: string | undefined): Selection | undefined =>
       'view' in current || findGroup(groups, current) === undefined || findGroup(after, current) !== undefined ? undefined : viewIn('all', root);
     if (tab !== undefined) {
@@ -788,14 +827,40 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   };
 
   const finishedId = finishedStateId(selection, selectedGroup);
-  const toggleFinished = () => {
-    if (finishedId === undefined) return;
+  const setFinished = (id: string, open: boolean) => {
     const next = new Map(finishedOpen);
-    next.set(finishedId, !(finishedOpen.get(finishedId) ?? false));
+    next.set(id, open);
     setFinishedOpen(next);
     // Every group of every mode, so a switch of Group sessions by doesn't forget one's state.
     writeGroupState(next, new Set([...everyGroupId(startGroups ?? []), 'view:all', 'view:starred']), storage, FINISHED_STATE_KEY);
   };
+  const toggleFinished = () => {
+    if (finishedId !== undefined) setFinished(finishedId, !(finishedOpen.get(finishedId) ?? false));
+  };
+
+  // Show older and Hide older (W67): one switch for the page. Turning it on opens the selection's
+  // Finished section, where they're listed, a group's whose only sessions were older included. The
+  // button there keeps focus, as the same button with its other name. From an empty state, whose
+  // button goes with it, focus goes to that one, Hide older now; and when Hide older takes the whole
+  // selection away, as a group of older sessions alone, to the session list's heading.
+  const focusOlder = useRef(false);
+  const toggleOlder = () => {
+    const next = !showOlder;
+    setShowOlder(next);
+    const id = finishedStateId(selection, selectedGroup ?? findGroup(groupedAll.groups, selection));
+    if (next && id !== undefined && !(finishedOpen.get(id) ?? false)) setFinished(id, true);
+    focusOlder.current = true;
+  };
+  useEffect(() => {
+    if (!focusOlder.current) return;
+    focusOlder.current = false;
+    (app.current?.querySelector<HTMLElement>('.session-list [data-older-toggle]') ?? listHeading.current)?.focus();
+  });
+  /** An empty state's Show older, while the selection has older ended sessions it would list. */
+  const showOlderAction =
+    olderCount > 0 && !showOlder ? (
+      <Button onClick={() => toggleOlder()}>{olderText(olderCount, false)}</Button>
+    ) : undefined;
 
   const showError = serverError !== undefined && serverError !== dismissedError;
   const relayAlert = snapshot?.relayAlert;
@@ -941,9 +1006,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         title={`No Claude Code sessions under ${plainText(formatRoots(tab === undefined ? snapshot.roots : [tab]))}`}
         sentence="Start one here, or start Claude Code in any terminal under these directories and it appears here."
         actions={
-          <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
-            New session
-          </Button>
+          <>
+            <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
+              New session
+            </Button>
+            {/* Every session under the roots is an older ended one (W67). */}
+            {showOlderAction}
+          </>
         }
       />
     );
@@ -956,7 +1025,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         icon="directory"
         title={`No sessions in ${plainText(name)} now`}
         sentence={'view' in selection || mode === undefined || findGroup(startGroups ?? [], selection) === undefined ? GROUP_GONE : groupMovedText(mode)}
-        actions={showAll}
+        actions={
+          <>
+            {showAll}
+            {/* A group whose only sessions are older ended ones (W67). */}
+            {showOlderAction}
+          </>
+        }
       />
     );
   } else if (scope.kind === 'needs-you' && total === 0) {
@@ -969,7 +1044,19 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   } else if (scope.kind === 'starred' && total === 0) {
-    empty = <EmptyState icon="star" title={NO_STARRED.title} sentence={NO_STARRED.sentence} actions={showAll} />;
+    empty = (
+      <EmptyState
+        icon="star"
+        title={NO_STARRED.title}
+        sentence={NO_STARRED.sentence}
+        actions={
+          <>
+            {showAll}
+            {showOlderAction}
+          </>
+        }
+      />
+    );
   } else if (shown === 0 && total > 0) {
     const { title, sentence } = noMatchText(filters, plainText(name));
     empty = (
@@ -998,6 +1085,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
                 Search all sessions
               </Button>
             )}
+            {/* What the filter finds is all older ended sessions (W67). */}
+            {showOlderAction}
           </>
         }
       />
@@ -1168,6 +1257,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             starred={starred.set}
             onStar={starred.star}
             inert={overlaid}
+            older={olderCount > 0 ? { count: olderCount, shown: showOlder, onToggle: toggleOlder } : undefined}
           />
         </HighlightContext.Provider>
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
@@ -1181,7 +1271,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
       {newSession && snapshot && (
         <NewSessionDialog
-          snapshot={snapshot}
+          snapshot={dialogSnapshot ?? snapshot}
           tab={tab}
           onClose={() => setNewSession(false)}
           onStarted={(session) => {
