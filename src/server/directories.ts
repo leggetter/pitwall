@@ -13,20 +13,28 @@
 // - It lists directories only. `readdir` with `withFileTypes` reports a symlink as a symlink, never
 //   as what it points to, so a symlink is neither listed nor followed, and nothing listed is outside
 //   its root.
-// - It skips a name that starts with `.`, `node_modules`, and a name with a C0 or C1 control, DEL, a
-//   bidi control (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069), or U+FFFD, which is
-//   what a name that isn't valid UTF-8 reads as, so it couldn't be typed back. Nothing inside a
-//   skipped folder is read.
+// - A folder swapped for a symlink after its parent was read isn't followed either: each folder's
+//   realpath, just before and just after it's read, must be the root's realpath plus its path, or it's
+//   left out, with nothing inside it.
+// - It skips a name that starts with `.`, `node_modules`, a name that starts or ends with whitespace,
+//   which can't be told apart on screen, and a name with a C0 or C1 control, DEL, a bidi control
+//   (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069), or U+FFFD, which is what a name that
+//   isn't valid UTF-8 reads as, so it couldn't be typed back. Nothing inside a skipped folder is read.
 // - A folder it can't read is left out, silently, with nothing inside it. A root it can't read lists
 //   none.
 // - An entry with a `.git` entry of its own, a folder or a file (a worktree's), is `repo: true`.
-// - It stops a root at DIRECTORY_MAX entries or after 2 seconds, with `truncated: true`. A read that
+// - It stops a root at DIRECTORY_MAX entries or after 2 seconds, with `truncated: true`. A call that
 //   hangs, as on a network mount, is given up on at the deadline.
+// - At most DIRECTORY_READS file system calls run at once, for all the roots together. Node's file
+//   calls share libuv's four threads with the rest of pitwall, the index's reads included, and a call
+//   that hangs keeps its thread after the walk gives up on it; so a call keeps its slot until it
+//   really settles, and no new walk starts while any is still out. Until then, a request gets the
+//   last result, or an empty one that says it's truncated.
 //
 // A result is reused for 30 seconds, and requests while a walk runs share it. The list only helps to
 // type a directory: a spawn checks its `cwd` as before (actions.ts).
 import type { Dirent } from 'node:fs';
-import { readdir as fsReaddir } from 'node:fs/promises';
+import { readdir as fsReaddir, realpath as fsRealpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { Hono } from 'hono';
 import type { Indexer } from '../index/index.js';
@@ -42,20 +50,68 @@ import {
 export const DIRECTORY_WALK_MS = 2000;
 /** How long a result is reused. */
 export const DIRECTORY_CACHE_MS = 30_000;
-/** Directory reads at once, per root. */
-export const DIRECTORY_READS = 16;
+/** File system calls at once, for every root a lister walks: half of libuv's four threads at most. */
+export const DIRECTORY_READS = 2;
 
 /** C0 and C1 controls, DEL, the bidi controls, and U+FFFD, which an undecodable name reads as. */
 const UNLISTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufffd]/;
+/** Whitespace at either end, U+00A0 and U+3000 included, which can't be seen on screen. */
+const EDGE_SPACE = /^\s|\s$/;
 
 /** Whether a folder with this name is listed, and walked into. */
 export function isListable(name: string): boolean {
-  return name !== '' && !name.startsWith('.') && name !== 'node_modules' && !UNLISTABLE.test(name);
+  return name !== '' && !name.startsWith('.') && name !== 'node_modules' && !UNLISTABLE.test(name) && !EDGE_SPACE.test(name);
 }
 
 export type ReadDirectory = (dir: string) => Promise<Dirent[]>;
+export type RealPath = (path: string) => Promise<string>;
 
 const defaultReaddir: ReadDirectory = (dir) => fsReaddir(dir, { withFileTypes: true });
+
+/** What a call the gate never ran resolves to, because its walk gave up while it waited. */
+const SKIPPED = Symbol('skipped');
+
+/**
+ * At most `limit` file system calls at once. A call keeps its slot until it settles, even after its
+ * walk has given up on it, so calls that hang hold at most `limit` of libuv's threads between them.
+ */
+export class ReadGate {
+  #free: number;
+  #running = 0;
+  readonly #waiting: Array<() => void> = [];
+
+  constructor(limit: number) {
+    this.#free = Math.max(1, limit);
+  }
+
+  /** A call is running, or waiting for a slot. */
+  get busy(): boolean {
+    return this.#running > 0 || this.#waiting.length > 0;
+  }
+
+  /** Runs `call` in a slot, or skips it when `abandoned()` says its walk gave up while it waited. */
+  async run<T>(call: () => Promise<T>, abandoned: () => boolean): Promise<T | typeof SKIPPED> {
+    if (this.#free > 0) this.#free -= 1;
+    else await new Promise<void>((resolve) => this.#waiting.push(resolve));
+    if (abandoned()) {
+      this.#release();
+      return SKIPPED;
+    }
+    this.#running += 1;
+    try {
+      return await call();
+    } finally {
+      this.#running -= 1;
+      this.#release();
+    }
+  }
+
+  #release(): void {
+    const next = this.#waiting.shift();
+    if (next) next();
+    else this.#free += 1;
+  }
+}
 
 export interface DirectoryOptions {
   /** Levels below a root. Default DIRECTORY_DEPTH. */
@@ -66,12 +122,16 @@ export interface DirectoryOptions {
   timeLimitMs?: number;
   /** Milliseconds a result is reused. Default DIRECTORY_CACHE_MS. */
   cacheMs?: number;
-  /** Reads at once, per root. Default DIRECTORY_READS. */
+  /** File system calls at once, for all the roots a lister walks. Default DIRECTORY_READS. */
   concurrency?: number;
+  /** The slots for those calls. Default: a new ReadGate for each lister, or for each walkRoot() without one. */
+  gate?: ReadGate;
   /** Milliseconds since the epoch, for the cache. Default Date.now. */
   now?: () => number;
   /** Default `readdir` with `withFileTypes`. Tests wrap it, to count, slow or fail reads. */
   readdir?: ReadDirectory;
+  /** Default `realpath`. */
+  realpath?: RealPath;
 }
 
 /** Never a real result: what a read that missed the deadline resolves to. */
@@ -105,7 +165,9 @@ export async function walkRoot(root: string, options: DirectoryOptions = {}): Pr
   const depth = options.depth ?? DIRECTORY_DEPTH;
   const max = options.max ?? DIRECTORY_MAX;
   const concurrency = Math.max(1, options.concurrency ?? DIRECTORY_READS);
+  const gate = options.gate ?? new ReadGate(concurrency);
   const readdir = options.readdir ?? defaultReaddir;
+  const realpath = options.realpath ?? fsRealpath;
 
   let expired = false;
   let timer: NodeJS.Timeout | undefined;
@@ -117,15 +179,50 @@ export async function walkRoot(root: string, options: DirectoryOptions = {}): Pr
     timer.unref?.();
   });
 
+  /** A file system call through the gate, or EXPIRED once the deadline has passed. */
+  const call = async <T>(fn: () => Promise<T>): Promise<T | typeof EXPIRED> => {
+    if (expired) return EXPIRED;
+    const result = await Promise.race([gate.run(fn, () => expired), deadline]);
+    return result === SKIPPED ? EXPIRED : result;
+  };
+
+  // Each folder's realpath must be this plus its path, so one swapped for a symlink isn't followed.
+  let real: string | typeof EXPIRED;
+  try {
+    real = await call(() => realpath(root));
+  } catch {
+    clearTimeout(timer);
+    return { root, dirs: [], truncated: false };
+  }
+  if (real === EXPIRED) {
+    clearTimeout(timer);
+    return { root, dirs: [], truncated: true };
+  }
+  const realRoot = real;
+
+  /** Whether `abs` still resolves to where its path says, under the real root. Throws when it can't be resolved. */
+  const inPlace = async (abs: string, rel: string): Promise<boolean | typeof EXPIRED> => {
+    const resolved = await call(() => realpath(abs));
+    return resolved === EXPIRED ? EXPIRED : resolved === path.join(realRoot, rel);
+  };
+
   const read = async (rel: string, wantChildren: boolean): Promise<Read> => {
     if (expired) return { kind: 'expired' };
+    const abs = rel === '' ? root : path.join(root, rel);
     let entries: Dirent[] | typeof EXPIRED;
     try {
-      entries = await Promise.race([readdir(rel === '' ? root : path.join(root, rel)), deadline]);
+      const before = await inPlace(abs, rel);
+      if (before === EXPIRED) return { kind: 'expired' };
+      if (!before) return { kind: 'unreadable' };
+      entries = await call(() => readdir(abs));
+      if (entries === EXPIRED) return { kind: 'expired' };
+      // Swapped while it was read: what was read may be somewhere else.
+      const after = await inPlace(abs, rel);
+      if (after === EXPIRED) return { kind: 'expired' };
+      if (!after) return { kind: 'unreadable' };
     } catch {
       return { kind: 'unreadable' };
     }
-    if (entries === EXPIRED) return { kind: 'expired' };
     let repo = false;
     const children: string[] = [];
     for (const entry of entries) {
@@ -221,20 +318,29 @@ export interface DirectoryLister {
 export function createDirectoryLister(options: DirectoryOptions = {}): DirectoryLister {
   const now = options.now ?? Date.now;
   const cacheMs = options.cacheMs ?? DIRECTORY_CACHE_MS;
+  const gate = options.gate ?? new ReadGate(options.concurrency ?? DIRECTORY_READS);
+  const walkOptions = { ...options, gate };
   let cached: { key: string; promise: Promise<DirectoryList>; doneAt?: number } | undefined;
+  // The last finished result, for while calls a walk gave up on are still out.
+  let last: { key: string; list: DirectoryList } | undefined;
 
   return {
     list(roots) {
       const key = JSON.stringify(roots);
       if (cached && cached.key === key && (cached.doneAt === undefined || now() - cached.doneAt < cacheMs)) return cached.promise;
+      // A call that hung still holds its thread: walking again would only add to them.
+      if (gate.busy) {
+        return Promise.resolve(last?.key === key ? last.list : { roots: roots.map((root) => ({ root, dirs: [], truncated: true })) });
+      }
       const entry: NonNullable<typeof cached> = {
         key,
-        promise: Promise.all(roots.map((root) => walkRoot(root, options))).then((walked) => ({ roots: walked })),
+        promise: Promise.all(roots.map((root) => walkRoot(root, walkOptions))).then((walked) => ({ roots: walked })),
       };
       cached = entry;
       entry.promise.then(
-        () => {
+        (list) => {
           entry.doneAt = now();
+          last = { key, list };
         },
         () => {
           // walkRoot never rejects; if it somehow did, the next request walks again.
