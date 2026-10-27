@@ -28,6 +28,7 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ATTACH_COMMAND, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachEnv, type AttachSession, type AttachStatus, type EndNotice } from '../attach.js';
+import { isComposing } from '../composing.js';
 import { plainText } from '../format.js';
 import type { BadgeLook } from '../sessions.js';
 import { ATTACH_DELAY_MS, cssTime } from '../timing.js';
@@ -127,15 +128,6 @@ function isLeaveKey(event: KeyboardEvent): boolean {
  * return for Enter with or without Shift, and that submits.
  */
 export const NEW_LINE = '\n';
-
-/**
- * Whether an input method is composing, so the key is the IME's: `isComposing`, or keyCode 229,
- * which Safari gives the key that ends a composition after its compositionend, with `isComposing`
- * already false. xterm.js handles both itself.
- */
-export function isComposing(event: KeyboardEvent): boolean {
-  return event.isComposing || event.keyCode === 229;
-}
 
 /**
  * Shift+Enter with no other modifier, and not while an input method composes. With Ctrl, Alt or ⌘

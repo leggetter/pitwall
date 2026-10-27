@@ -283,6 +283,13 @@ describe('Another directory under a root…', () => {
     expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })).toBe(true);
     expect(input.value).toBe('demo');
     expect(isOpen(input)).toBe(true);
+    // An Escape that ends a composition, Safari's 229 included, closes neither the list nor the dialog.
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(isOpen(input)).toBe(true);
+    expect(input.value).toBe('demo');
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
     // Composition over, the keys are the list's again.
     key(input, 'Enter');
     expect(input.value).toBe('~/code/demo-api');
