@@ -75,6 +75,24 @@ No real session was messaged, attached to, resumed, stopped or removed. What the
    - **The dialog:** A ran in a gitignored folder inside the pitwall checkout, and Claude Code asked whether to allow the parent `CLAUDE.md`'s import of `AGENTS.md`. The driver then looked only for a trust prompt, so it typed into the dialog, and its Enter chose the default, "No, disable external imports".
    - With saving off, nothing about that folder reached `~/.claude.json`. The driver was changed to stop at any dialog, and B and C ran in the checkout itself, where Phil had settled both.
 
+## Found while building it (W66, 2026-10-27)
+
+9. **A conversation that went on under another id.**
+   - Four of Phil's `cli` transcripts end with `{ type: "continued-in", continuedInSessionId, sessionId, timestamp }`, after their last turn, with no turn after it.
+   - Each `continuedInSessionId` was a session `claude agents --all` listed as background, with its transcript in the same project folder, as after `/bg`.
+   - Listing the old transcript as ended would show the conversation twice, and resuming it would bring back an older branch of it. So a transcript whose newest `continued-in` entry follows its last turn isn't an ended session (coordinator's review).
+
+10. **Ending a session that runs background work.**
+    - In the live check against W66, `/exit` in two test sessions opened a dialog, because a plugin's monitor was running in them: "Background work is running. The following will stop when you exit", with **Exit and stop tasks**, **Move to background and exit** and **Stay**.
+    - The driver typed nothing into it and ended both with SIGTERM instead, as a closed terminal would. Each left `claude agents` and was listed as ended with its transcript whole. In the one checked for leftover processes, nothing it started outlived it.
+    - Spike 005 measures this properly. The dialog also offers a second way into the background beside `/bg`.
+
+11. **The live check through pitwall.** On W66's branch, with the server's `PWD` set to another directory:
+    - pitwall listed an ended `pitwall-test-*` session with the contract's fields;
+    - its resume route answered 200 in about 1 s;
+    - the next snapshot listed the session as a running background one with the same id;
+    - reopened in a terminal with `claude --resume`, the session got 409, "It's running again…", from the route's fresh `claude agents` check, and no copy was started.
+
 ## Recommendation
 
 Build it, as Phil agreed on 2026-10-23, with his choices of 2026-10-27 (`PLAN.md`, "Resuming ended interactive sessions" in M3.1):
