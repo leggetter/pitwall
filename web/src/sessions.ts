@@ -97,8 +97,14 @@ export function attachCommand(session: SessionSummary): string | undefined {
 /** A session id `claude --resume` takes as one word: letters, digits, `_` and `-`, not starting with `-`. */
 const RESUME_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/;
 
-/** C0 controls and DEL: a directory with one would paste as something other than the command shown. */
-const CONTROLS = /[\u0000-\u001f\u007f]/;
+/**
+ * C0 controls, DEL and C1 controls, and the bidi marks (U+061C, U+200E, U+200F), embeddings and
+ * overrides (U+202A to U+202E) and isolates (U+2066 to U+2069): a directory with one would paste as
+ * something other than the command shown, or read differently from what's copied. plainText() drops
+ * most of these from what's shown, so the command shown when the clipboard refuses wouldn't be what
+ * was copied either.
+ */
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 /** `value` in POSIX single quotes, each `'` in it closed, escaped and opened again: one word to any shell. */
 export function posixQuote(value: string): string {
@@ -110,12 +116,12 @@ export function posixQuote(value: string): string {
  * --resume <sessionId>`, for Copy command, or undefined. Only for one whose directory is still there,
  * since Claude Code finds a session's transcript by the directory it runs in. The directory is always
  * quoted, so it pastes into Warp, Cursor's terminal or any shell as one word; one with a control
- * character, and an id that fails a conservative pattern, give none, as attachCommand() refuses an
- * unsafe short id.
+ * or bidi character (UNSAFE), and an id that fails a conservative pattern, give none, as
+ * attachCommand() refuses an unsafe short id.
  */
 export function resumeCommand(session: SessionSummary): string | undefined {
   if (!session.ended || session.cwdMissing) return undefined;
-  if (!RESUME_ID.test(session.sessionId) || session.cwd === '' || CONTROLS.test(session.cwd)) return undefined;
+  if (!RESUME_ID.test(session.sessionId) || session.cwd === '' || UNSAFE.test(session.cwd)) return undefined;
   return `cd ${posixQuote(session.cwd)} && claude --resume ${session.sessionId}`;
 }
 

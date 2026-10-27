@@ -16,7 +16,7 @@ import { isOlderEnded, posixQuote, resumeCommand, statusBadge, withoutOlderEnded
 import { STARRED_KEY } from '../starred.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { toastMessages } from '../test/toasts.js';
+import { toastMessages, toastSaying } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
 import {
   COPY_STARTED,
@@ -99,6 +99,21 @@ const notes = () => [ended(5, 'notes-ended-old', { cwd: NOTES, lastActivityAt: m
 const snap = (demo: SessionSummary[] = sessions(), notesSessions: SessionSummary[] = notes()): IndexSnapshot =>
   snapshot([group({ key: DEMO, label: 'demo-app', sessions: demo }), ...(notesSessions.length > 0 ? [group({ key: NOTES, label: 'notes', kind: 'directory', sessions: notesSessions })] : [])]);
 
+/** A second root, ~/oss, with one running session in blog, so the header has a tab per root (W38). */
+const OSS = '/Users/example/oss';
+const BLOG = `${OSS}/blog`;
+const twoRoots = (demo: SessionSummary[] = sessions()): IndexSnapshot => {
+  const one = snap(demo);
+  const blog = group({ key: BLOG, label: 'blog', root: OSS, sessions: [session({ sessionId: id(8), name: 'blog-live', cwd: BLOG, lastActivityAt: minutesAgo(1) })] });
+  return { ...one, roots: [CODE, OSS], groups: [...one.groups, blog] };
+};
+/** Opens a root tab by its label, as shown. */
+function openRoot(label: string) {
+  const tab = [...document.querySelectorAll<HTMLElement>('.root-tab')].find((each) => each.querySelector('.root-tab-label')?.textContent === label);
+  if (!tab) throw new Error(`no root tab ${label}`);
+  fireEvent.click(tab);
+}
+
 /** demo-ended, resumed: the same id, now a running background session waiting for a prompt (spike 006). */
 const resumedSessions = () =>
   sessions().map((each) =>
@@ -106,6 +121,10 @@ const resumedSessions = () =>
       ? session({ sessionId: ENDED, name: 'demo-ended', title: 'Tidy the made-up export job', cwd: DEMO, kind: 'background', shortId: '00000000', state: 'blocked', status: 'idle', lastActivityAt: minutesAgo(0) })
       : each,
   );
+
+/** demo-ended, open in its terminal again: the same id, a running interactive session, as when a resume starts a copy (spike 006, finding 5). */
+const reopenedSessions = () =>
+  sessions().map((each) => (each.sessionId === ENDED ? session({ sessionId: ENDED, name: 'demo-ended', title: 'Tidy the made-up export job', cwd: DEMO, lastActivityAt: minutesAgo(0) }) : each));
 
 type Answer = { status: number; body?: unknown; retryAfter?: string } | 'network' | 'held';
 
@@ -242,6 +261,17 @@ describe('what the page derives from an ended session', () => {
     expect(resumeCommand(ended(2, 'a', { sessionId: '-h' }))).toBeUndefined();
     expect(resumeCommand(ended(2, 'a', { sessionId: 'abc; rm x' }))).toBeUndefined();
     expect(resumeCommand(session({ sessionId: LIVE }))).toBeUndefined();
+  });
+
+  it('has none for a directory with DEL, a C1 control or a bidi control in it, which could read differently from what’s copied, and one past ASCII otherwise', () => {
+    const unsafe = ['\u007f', '\u0080', '\u0085', '\u009b', '\u009f', '\u061c', '\u200e', '\u200f', '\u202a', '\u202d', '\u202e', '\u2066', '\u2068', '\u2069'];
+    for (const char of unsafe) {
+      expect(resumeCommand(ended(2, 'a', { cwd: `${CODE}/demo${char}-app` })), `U+${char.codePointAt(0)?.toString(16).padStart(4, '0')}`).toBeUndefined();
+    }
+    // Just outside the ranges: still a command, quoted as any other.
+    for (const char of ['\u00a0', '\u00e9', '\u200d', '\u2065', '\u206a']) {
+      expect(resumeCommand(ended(2, 'a', { cwd: `${CODE}/demo${char}-app` }))).toBe(`cd '${CODE}/demo${char}-app' && claude --resume ${ENDED}`);
+    }
   });
 
   it(`hides ended sessions last active more than ${ENDED_SHOWN_DAYS} days before the snapshot's time, and nothing else`, () => {
@@ -574,6 +604,21 @@ describe('Resume in background', () => {
     expect(within(footer()!).getByRole('button', { name: 'Resume in background' }).getAttribute('aria-busy')).toBeNull();
   });
 
+  it('doesn’t open the Terminal tab for a listing after it has given up on one', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(NOW);
+    const { update, sockets } = renderDashboard();
+    await open('demo-ended');
+    fireEvent.click(button('Resume in background'));
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    await act(() => vi.advanceTimersByTimeAsync(RESUME_LISTED_MS));
+    expect(within(footer()!).getByRole('button', { name: 'Resume in background' })).toBeTruthy();
+    update(snap(resumedSessions()));
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    expect(within(view()).getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
+    expect(sockets.sockets).toHaveLength(0);
+  });
+
   it('opens the Terminal tab once the snapshot lists it as a running background session, with focus on the tab and none in the terminal (W57), and keeps its star', async () => {
     const storage = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [ENDED] }) });
     const { update, sockets } = renderDashboard(snap(), { storage });
@@ -604,6 +649,62 @@ describe('Resume in background', () => {
     await settle();
     expect(JSON.parse(socket.sent[1] ?? '{}')).toMatchObject({ type: 'open', sessionId: ENDED });
     expect(document.activeElement).not.toBe(terminals.at(-1)?.screen);
+  });
+
+  it('opens the Terminal tab just the same when the snapshot lists it as running before the server answers, moving focus from Resume to the tab', async () => {
+    const { fetch, update, sockets } = renderDashboard(snap(), { answers: ['held'] });
+    await open('demo-ended');
+    const resume = button('Resume in background');
+    resume.focus();
+    fireEvent.click(resume);
+    await settle();
+    update(snap(resumedSessions()));
+    await settle();
+    expect(view().querySelector('.ended-foot')).toBeNull();
+    const terminalTab = within(view()).getByRole('tab', { name: /^Terminal/ });
+    expect(terminalTab.getAttribute('aria-selected')).toBe('true');
+    // Never the page: Resume in background went with the footer.
+    expect(document.activeElement).toBe(terminalTab);
+    await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+    await fetch.release(200, { ok: true, shortId: '00000000' });
+    expect(toastMessages()).toEqual(['Resumed demo-ended in the background.']);
+    expect(terminalTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(terminalTab);
+    expect(sockets.sockets).toHaveLength(1);
+  });
+
+  it('opens the Terminal tab once, so a root tab opened again later leaves the tab you chose, whichever came first', async () => {
+    const { fetch, update, sockets } = renderDashboard(twoRoots(), { answers: ['held'] });
+    await open('demo-ended');
+    fireEvent.click(button('Resume in background'));
+    await settle();
+    update(twoRoots(resumedSessions()));
+    await settle();
+    await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+    await fetch.release(200, { ok: true, shortId: '00000000' });
+    // Back to the conversation, by choice, which detaches.
+    fireEvent.click(within(view()).getByRole('tab', { name: 'Conversation' }));
+    await settle();
+    const kept = view();
+    openRoot('~/oss');
+    await settle();
+    expect(kept.hidden).toBe(true);
+    openRoot('~/code');
+    await settle();
+    expect(kept.hidden).toBe(false);
+    expect(within(kept).getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
+    expect(sockets.sockets).toHaveLength(1);
+  });
+
+  it('moves focus from the footer to the heading when the session leaves the list, which takes the footer away', async () => {
+    const { update } = renderDashboard();
+    await open('demo-ended');
+    button('Copy command').focus();
+    update(snap(sessions().filter((each) => each.sessionId !== ENDED)));
+    await settle();
+    expect(within(view()).getByText('This session is no longer listed, so this is what it showed last.')).toBeTruthy();
+    expect(footer()).toBeNull();
+    expect(document.activeElement).toBe(view().querySelector('h2'));
   });
 
   it('stays on Conversation once it’s running when Preferences says so', async () => {
@@ -669,7 +770,7 @@ describe('Resume in background', () => {
     expect(within(alert).getByRole('button', { name: 'Copy trust command' })).toBeTruthy();
   });
 
-  it('warns when Claude Code started a copy instead, in the server’s words alone, which name the copy', async () => {
+  it('warns when Claude Code started a copy instead, in the server’s words alone, which name the copy, and in a toast, which is what announces it', async () => {
     renderDashboard(snap(), { answers: [{ status: 409, body: { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' } }] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
@@ -680,6 +781,44 @@ describe('Resume in background', () => {
     expect(alert.querySelector('.inline-alert-body')?.textContent).toBe(COPY_ERROR);
     // pitwall's own sentence, so not in Claude Code's code style.
     expect(alert.querySelector('.alert-detail')).toBeNull();
+    // Announced once: by the toast, an alert in the toasts' live region, not by the footer's warning too.
+    expect(alert.getAttribute('role')).toBeNull();
+    expect(toastMessages()).toEqual([`Couldn't resume demo-ended. ${COPY_ERROR}`]);
+    expect(toastSaying(`Couldn't resume demo-ended. ${COPY_ERROR}`).getAttribute('role')).toBe('alert');
+  });
+
+  it('keeps the copy’s warning, in its toast, when the next snapshot lists the session as running in its terminal, which takes the footer away', async () => {
+    const { update } = renderDashboard(snap(), { answers: [{ status: 409, body: { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' } }] });
+    await open('demo-ended');
+    const resume = button('Resume in background');
+    resume.focus();
+    fireEvent.click(resume);
+    await settle();
+    expect(document.activeElement).toBe(resume);
+    update(snap(reopenedSessions()));
+    await settle();
+    expect(view().querySelector('.ended-foot')).toBeNull();
+    expect(view().querySelector('.relay-box')).not.toBeNull();
+    expect(toastMessages()).toEqual([`Couldn't resume demo-ended. ${COPY_ERROR}`]);
+    // Resume in background went with the footer: focus goes to the Terminal tab, off for an interactive session, never the page.
+    const terminalTab = within(view()).getByRole('tab', { name: /^Terminal/ });
+    expect(document.activeElement).toBe(terminalTab);
+    expect(within(view()).getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('still says a copy started, in a toast, when the snapshot lists the session as running before the server answers', async () => {
+    const { fetch, update, sockets } = renderDashboard(snap(), { answers: ['held'] });
+    await open('demo-ended');
+    fireEvent.click(button('Resume in background'));
+    await settle();
+    update(snap(reopenedSessions()));
+    await settle();
+    expect(view().querySelector('.ended-foot')).toBeNull();
+    await fetch.release(409, { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' });
+    expect(toastMessages()).toEqual([`Couldn't resume demo-ended. ${COPY_ERROR}`]);
+    // Running in its terminal: an interactive session, so the view stays on Conversation, and nothing attaches.
+    expect(within(view()).getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
+    expect(sockets.sockets).toHaveLength(0);
   });
 
   it('keeps j and k from moving the view while its request is out', async () => {
