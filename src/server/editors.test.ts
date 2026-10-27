@@ -140,6 +140,9 @@ let root: string;
 let repo: string;
 /** A directory whose name starts with `-`: absolute, so it's never read as an option. */
 let dashed: string;
+/** Directories under the root whose names have a bidi override and a C1 control (W81). */
+let bidiDir: string;
+let c1Dir: string;
 let webRoot: string;
 
 beforeAll(async () => {
@@ -147,9 +150,11 @@ beforeAll(async () => {
   root = join(tmp, 'root');
   repo = join(root, 'repo');
   dashed = join(root, '-n');
+  bidiDir = join(root, 'safe\u202eexe.txt');
+  c1Dir = join(root, 'csi\u009b2J');
   webRoot = join(tmp, 'web');
   const outside = join(tmp, 'outside');
-  for (const dir of [repo, dashed, webRoot, outside]) await mkdir(dir, { recursive: true });
+  for (const dir of [repo, dashed, bidiDir, c1Dir, webRoot, outside]) await mkdir(dir, { recursive: true });
   await symlink(outside, join(root, 'escape'));
   await symlink(repo, join(root, 'alias'));
 });
@@ -167,6 +172,8 @@ const ESCAPE_ID = '66666666-6666-4666-8666-666666666666';
 const DASHED_ID = '77777777-7777-4777-8777-777777777777';
 const RELATIVE_ID = '88888888-8888-4888-8888-888888888888';
 const ALIAS_ID = '99999999-9999-4999-8999-aaaaaaaaaaaa';
+const BIDI_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const C1_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function session(sessionId: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -207,6 +214,9 @@ function snapshot(): IndexSnapshot {
           session(RELATIVE_ID, { cwd: '--new-window' }),
           // A symlink under the root to a directory under it.
           session(ALIAS_ID, { cwd: join(root, 'alias') }),
+          // Directories under the root with a bidi override and a C1 control in their names (W81).
+          session(BIDI_ID, { cwd: bidiDir }),
+          session(C1_ID, { cwd: c1Dir }),
         ],
       },
     ],
@@ -522,6 +532,16 @@ describe('POST openInEditorPath: refusals', () => {
     const relative = await open(started, RELATIVE_ID);
     expect(relative.status).toBe(409);
     expect(errorOf(relative)).toBe('The directory must be an absolute path.');
+    expect(started.runFile.calls).toEqual([]);
+  });
+
+  it('409 for a directory with a bidi override or a C1 control, as spawn and resume refuse it, opening nothing (W81)', async () => {
+    const started = await start();
+    for (const id of [BIDI_ID, C1_ID]) {
+      const res = await open(started, id);
+      expect(res.status, id).toBe(409);
+      expect(errorOf(res)).toBe('The directory path contains control characters or bidi controls.');
+    }
     expect(started.runFile.calls).toEqual([]);
   });
 

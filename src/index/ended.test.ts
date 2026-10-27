@@ -247,6 +247,18 @@ describe('the ended-session scanner: the rule (spike 006, finding 7)', () => {
     expect(s.stats().tailReads).toBe(1);
   });
 
+  it('leaves out one whose start directory has a C1 control or a bidi character, reading no further than its start (W81)', async () => {
+    for (const character of ['\u0085', '\u009b', '\u061c', '\u200e', '\u200f', '\u202a', '\u202e', '\u2066', '\u2069']) {
+      const odd = path.join(work, `safe${character}exe.txt`);
+      await write(odd, [typed(odd, ago(5), 'Odd'), reply(odd, ago(4), 'Done.')]);
+    }
+    const inOss = await plain(path.join(oss, 'lib'));
+    const s = scanner();
+    await scan(s);
+    expect(ids(s)).toEqual([inOss.sessionId]);
+    expect(s.stats().tailReads).toBe(1);
+  });
+
   it("lists only a transcript named for a canonical UUID: `claude --resume` takes a name too, so deploy.jsonl isn't one (W81)", async () => {
     for (const id of ['deploy', 'ABCDEF01-0000-4000-8000-000000000000', '00000001000040008000000000000000', '00000001-0000-4000-8000-00000000000', 'g0000001-0000-4000-8000-000000000000']) {
       await plain(app, 5, { id });

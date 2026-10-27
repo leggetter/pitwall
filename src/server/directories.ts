@@ -37,6 +37,7 @@ import type { Dirent } from 'node:fs';
 import { readdir as fsReaddir, realpath as fsRealpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { Hono } from 'hono';
+import { hasUnsafeCharacters } from '../index/guards.js';
 import type { Indexer } from '../index/index.js';
 import {
   DIRECTORIES_PATH,
@@ -53,14 +54,14 @@ export const DIRECTORY_CACHE_MS = 30_000;
 /** File system calls at once, for every root a lister walks: half of libuv's four threads at most. */
 export const DIRECTORY_READS = 2;
 
-/** C0 and C1 controls, DEL, the bidi controls, and U+FFFD, which an undecodable name reads as. */
-const UNLISTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufffd]/;
+/** U+FFFD, which an undecodable name reads as. The controls and bidi controls are hasUnsafeCharacters()'s. */
+const REPLACEMENT = '\ufffd';
 /** Whitespace at either end, U+00A0 and U+3000 included, which can't be seen on screen. */
 const EDGE_SPACE = /^\s|\s$/;
 
 /** Whether a folder with this name is listed, and walked into. */
 export function isListable(name: string): boolean {
-  return name !== '' && !name.startsWith('.') && name !== 'node_modules' && !UNLISTABLE.test(name) && !EDGE_SPACE.test(name);
+  return name !== '' && !name.startsWith('.') && name !== 'node_modules' && !hasUnsafeCharacters(name) && !name.includes(REPLACEMENT) && !EDGE_SPACE.test(name);
 }
 
 export type ReadDirectory = (dir: string) => Promise<Dirent[]>;
