@@ -6,10 +6,12 @@
 //                               A state-changing method (anything but GET and HEAD) also needs
 //                               the apiKey, not the token, and an Origin, else 403
 //   GET /api/directories        then directories.ts: the directories under the snapshot's roots
+//   GET /api/editors            then editors.ts: the editors found at startup
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
 //                               snapshot, else 503; the session in it, else 404. Every route that
 //                               takes a session id, and every M2 input path, goes through it.
-//                               At most 4 conversation pages are read at once, else 429
+//                               At most 4 conversation pages are read at once, else 429. Stop,
+//                               remove, resume and open in an editor share one limit of 4, else 429
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
 //                               at most 32 connections in the handshake at once, on /ws and
 //                               /attach together, else close 1013 with no challenge; then the
@@ -33,9 +35,10 @@ import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
 import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
-import { registerActions, type ActionOptions } from './actions.js';
+import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
+import { registerEditors, type EditorOptions } from './editors.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
@@ -113,6 +116,11 @@ export interface ServerInternals {
   attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
   /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
   directories?: DirectoryOptions;
+  /**
+   * Open in an editor (W72, editors.ts): tests pass the editors found and a fake runFile, so nothing
+   * depends on this machine's editors and none is ever opened. Its limit is `actions.maxConcurrentCommands`.
+   */
+  editors?: Omit<EditorOptions, 'slots'>;
 }
 
 export async function startServerWithInternals(
@@ -141,11 +149,14 @@ export async function startServerWithInternals(
   const spawned = new RecentSpawns();
   // The ended sessions resume brought back lately, by session id, which the snapshot shows as ended until its next poll.
   const resumed = new RecentSpawns();
+  // Stop, remove, resume and open in an editor, running now: one limit for all four.
+  const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
   // The directory list (W70), then the input routes: spawn, stop and remove (W12), resume (W66), the
-  // relay (W11), then any a test adds.
+  // editors and open in an editor (W72), whose detection starts here, the relay (W11), then any a test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
-    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions });
+    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots });
+    registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };

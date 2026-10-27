@@ -24,7 +24,8 @@
 //     400, 404, 503  from resolveSession(): not a safe id, not listed, no snapshot yet
 //     409  not a background session with a valid short id, or Claude Code refused, with
 //          its message: `claude rm` keeps a worktree that has unpushed commits and says so
-//     429  4 stop, remove and resume commands are already running. Retry-After is set
+//     429  4 stop, remove, resume and open commands are already running (CommandSlots, shared
+//          with open in an editor, editors.ts). Retry-After is set
 //     502, 504  as for spawn
 //
 //   POST resumePath(id)           no body                              answers: ResumeResult
@@ -101,6 +102,11 @@ export interface ActionOptions {
   spawnRate?: { max: number; windowMs: number };
   /** Stop, remove and resume commands allowed to run at once, together. Default 4. */
   maxConcurrentCommands?: number;
+  /**
+   * The slots those commands take, shared with open in an editor (editors.ts). The server makes one
+   * for both. Default: new ones, `maxConcurrentCommands` of them.
+   */
+  slots?: CommandSlots;
 }
 
 export const DEFAULT_ACTION_TIMEOUT_MS = 30_000;
@@ -181,7 +187,12 @@ export async function validateSpawnRequest(body: unknown, roots: readonly string
   return { ok: true, spawn };
 }
 
-async function checkDirectory(cwd: unknown, roots: readonly string[]): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+/**
+ * Whether `cwd` is still a directory under one of `roots`, through its realpath, so a symlink that now
+ * points outside them is refused. Resume and open in an editor check a listed session's own directory
+ * with it afresh, since it may have gone, or changed, since the poll.
+ */
+export async function checkDirectory(cwd: unknown, roots: readonly string[]): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   if (typeof cwd !== 'string' || cwd === '') return invalid('The directory is required.');
   if (cwd.length > MAX_CWD_LENGTH) return invalid('The directory path is too long.');
   if (CONTROL.test(cwd)) return invalid('The directory path contains control characters.');
@@ -352,12 +363,41 @@ export class SpawnLimiter {
   }
 }
 
+/**
+ * The stop, remove, resume and open commands running now, at most `max` together, so a stuck UI can't
+ * pile them up. Open in an editor (editors.ts) takes a slot from the same CommandSlots, so the limit is
+ * one for all four.
+ */
+export class CommandSlots {
+  #running = 0;
+
+  constructor(readonly max: number = DEFAULT_MAX_CONCURRENT_COMMANDS) {}
+
+  /** What a refused request says, with 429 and `Retry-After: 1`. */
+  get busyError(): string {
+    return `pitwall is already running ${this.max} stop, remove, resume or open commands. Try again in a moment.`;
+  }
+
+  /** Takes a slot, and returns what gives it back, or undefined when all are taken. Synchronous, so two requests can't both take the last. */
+  acquire(): (() => void) | undefined {
+    if (this.#running >= this.max) return undefined;
+    this.#running += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#running -= 1;
+    };
+  }
+}
+
 /** The stop route as a Hono pattern. stopPath() encodes its argument, so the pattern is decoded back. */
 const STOP_ROUTE = decodeURIComponent(stopPath(':sessionId'));
 const REMOVE_ROUTE = decodeURIComponent(removePath(':sessionId'));
 const RESUME_ROUTE = decodeURIComponent(resumePath(':sessionId'));
 
-const LOOKUP_ERRORS = {
+/** What resolveSession()'s refusals say, by status. */
+export const LOOKUP_ERRORS = {
   400: 'That is not a valid session id.',
   404: "That session isn't in pitwall's list.",
   503: "pitwall hasn't listed the sessions yet. Try again in a moment.",
@@ -447,12 +487,11 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
     },
   );
 
-  const maxCommands = options.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS;
-  // Stop, remove and resume commands running now.
-  let commands = 0;
+  // Stop, remove and resume commands running now, and open in an editor's (editors.ts).
+  const slots = options.slots ?? new CommandSlots(options.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
   const busy = (c: Context) => {
     c.header('Retry-After', '1');
-    return { ok: false as const, error: `pitwall is already running ${maxCommands} stop, remove or resume commands. Try again in a moment.` };
+    return { ok: false as const, error: slots.busyError };
   };
 
   const act = async (c: Context, verb: 'stop' | 'rm') => {
@@ -469,13 +508,13 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
     if (shortId === undefined || !SHORT_ID_PATTERN.test(shortId)) {
       return answer({ ok: false, error: "This session has no short id that's safe to act on." }, 409);
     }
-    if (commands >= maxCommands) return answer(busy(c), 429);
-    commands += 1;
+    const release = slots.acquire();
+    if (!release) return answer(busy(c), 429);
     let result: CommandResult;
     try {
       result = await run(claudeBin, [verb, shortId], { cwd: os.tmpdir(), env: env(), timeoutMs });
     } finally {
-      commands -= 1;
+      release();
     }
     if (result.kind === 'failed') {
       if (result.reason === 'timeout') return answer({ ok: false, error: `claude ${verb} ${result.message}.` }, 504);
@@ -509,8 +548,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       return answer({ ok: false, error: `It started in ${cwd}, which no longer exists, and Claude Code resumes a session only from where it started.` }, 409);
     }
     if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
-    if (commands >= maxCommands) return answer(busy(c), 429);
-    commands += 1;
+    const release = slots.acquire();
+    if (!release) return answer(busy(c), 429);
     resuming.add(sessionId);
     try {
       // Afresh, as spawn checks its directory: it may have gone, or changed, since the poll.
@@ -579,7 +618,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       indexer.noteRestart(sessionId, now());
       return answer({ ok: true, shortId: resumed.shortId }, 200);
     } finally {
-      commands -= 1;
+      release();
       resuming.delete(sessionId);
     }
   });
