@@ -9,7 +9,7 @@ import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.
 import { FinishedSection, type OlderEnded } from '../components/SessionList.js';
 import { SessionRow } from '../components/SessionRow.js';
 import { listScope, type Listed } from '../sessions.js';
-import { APP_DIR, AWKWARD_ROWS, ENDED_ROWS, FINISHED_ROWS, group, JOBS_DIR, OLDER_ENDED_ROWS, ROOT, STATE_ROWS, STATUS_ROWS, WORKED_SNAPSHOT } from './fixtures.js';
+import { APP_DIR, AWKWARD_ROWS, ENDED_ROWS, FINISHED_ROWS, group, JOBS_DIR, OLDER_ENDED_ROWS, ROOT, STATE_ROWS, STATUS_ROWS, statusRow, WORKED_SNAPSHOT } from './fixtures.js';
 import { Specimen } from './kit.js';
 
 /** Rows all in one group, as a group's own list has them. */
@@ -165,14 +165,14 @@ function States({ showGroup }: { showGroup: boolean }) {
 }
 
 /** Long text and narrow lists, at the widths the session list has from 1,200 px. */
-const NARROW_ROWS = [STATUS_ROWS[0]!, STATUS_ROWS[1]!, STATUS_ROWS[2]!, STATUS_ROWS[11]!, ...AWKWARD_ROWS.slice(0, 4)];
+const NARROW_ROWS = [statusRow('waiting'), statusRow('blocked'), statusRow('asked-you'), statusRow('stale'), ...AWKWARD_ROWS.slice(0, 4)];
 
 export function SessionRows() {
   return (
     <>
       <Specimen
         title="Every status, in a group"
-        note="One row per status, named after it: waiting, blocked, asked you, busy, working, idle, unknown, not running, done, stopped, failed, stale and ended (W67). Idle has no badge in the list; the session view shows it. Click a row to mark it open."
+        note="One row per status, named after it: waiting, blocked with Claude Code's own line on line 2, asked you, busy, working, idle, unknown, not running, done, stopped, failed, stale and ended (W67), then waiting for your prompt after a restart, blocked with a job file pitwall couldn't read, and blocked with nothing that needs you, which has no badge (W69). Idle has no badge in the list; the session view shows it. Click a row to mark it open."
       >
         <Rows rows={inGroup('pitwall-test-statuses', STATUS_ROWS)} />
       </Specimen>
