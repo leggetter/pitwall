@@ -4,9 +4,12 @@
 // say what's wrong before sending.
 //
 // - Fields: Directory, a select of the groups' directories plus "Another directory under a root…",
-//   which reveals a path field; Name and Model, optional, Model's "Other…" revealing a field; and the
-//   first prompt. With a root tab open (W38), the directories are that tab's, and a typed one must be
-//   in that tab, so the session is listed where it was started from.
+//   which reveals a combobox of the directories under the roots (W70), fetched once per opening, the
+//   first time it's chosen, and narrowed as you type (directories.ts); Name and Model, optional,
+//   Model's "Other…" revealing a field; and the first prompt. With a root tab open (W38), the
+//   directories are that tab's, and a typed one must be in that tab, so the session is listed where
+//   it was started from. A chosen directory is sent as its absolute path; a typed one as before, or
+//   from a `~/` path under a root.
 // - Problems show after the first submit, then follow the typing; a submit puts focus on the first
 //   field with one. ⌘/Ctrl + Enter submits from any field.
 // - While the request is out, Start session is busy, every other control is aria-disabled, and
@@ -15,8 +18,18 @@
 //   directory, it has the command to run, in a command chip with its copy button.
 
 import { useContext, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
-import type { IndexSnapshot, SpawnRequest } from '../../../src/shared/protocol.js';
+import type { DirectoryList, IndexSnapshot, SpawnRequest } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
+import {
+  directoryCount,
+  directoryOptions,
+  fetchDirectories,
+  matchDirectories,
+  MAX_SHOWN,
+  resolveTypedDirectory,
+  typedDirectoryProblem,
+  type DirectoryOption,
+} from '../directories.js';
 import { plainText, shortenHome } from '../format.js';
 import {
   directoryChoices,
@@ -30,10 +43,12 @@ import {
 } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
+import { Combobox } from './Combobox.js';
 import { CopyCommand } from './CopyCommand.js';
 import { Dialog } from './Dialog.js';
 import { Icon } from './Icon.js';
 import { KeyCaps, modEnter } from './KeyCaps.js';
+import { Spinner } from './Spinner.js';
 import '../actions.css';
 
 /** The picker's "type one" choice. No path can contain a NUL, so it can't collide with one. */
@@ -45,6 +60,19 @@ export const TRUST_TEXT = "pitwall never trusts a directory for you. Run this in
 
 type Failure = { kind: 'refused'; error: string; hint?: string } | { kind: 'failed'; error: string };
 
+/** The directory list, fetched the first time "Another directory under a root…" is chosen. */
+type Listing = { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; list: DirectoryList } | { kind: 'failed' };
+
+/** What the field says under the list while it loads, when it's cut short, and when nothing matches (4: Combobox). */
+export const DIRECTORY_TEXT = {
+  loading: 'Loading directories…',
+  failed: "Couldn't list the directories. Type a path.",
+  truncated: 'Not every directory is listed. You can type a path.',
+  none: 'No directories match. A typed path still works.',
+  empty: 'No directories to list. You can type a path.',
+  narrow: 'Keep typing to narrow them.',
+} as const;
+
 export interface NewSessionDialogProps {
   /** For the roots and the groups' directories. */
   snapshot: Pick<IndexSnapshot, 'roots' | 'groups'>;
@@ -53,6 +81,47 @@ export interface NewSessionDialogProps {
   onStarted: (started: StartedSession) => void;
   /** With two or more roots, the open root tab, whose directories alone it offers (W38). */
   tab?: string | undefined;
+}
+
+/**
+ * The lines under the directory list: loading, how many of how many, none to list or none match, and
+ * not every one listed. `listed` is how many the root or roots offer, `total` how many match.
+ */
+function directoryStatus(listing: Listing, truncated: boolean, listed: number, total: number) {
+  if (listing.kind === 'loading') {
+    return (
+      <p className="combobox-status-line">
+        <Spinner /> {DIRECTORY_TEXT.loading}
+      </p>
+    );
+  }
+  if (listing.kind !== 'ready') return undefined;
+  const lines: string[] = [];
+  if (listed === 0) lines.push(DIRECTORY_TEXT.empty);
+  else if (total === 0) lines.push(DIRECTORY_TEXT.none);
+  else if (total > MAX_SHOWN) lines.push(`${MAX_SHOWN} of ${total.toLocaleString('en')}. ${DIRECTORY_TEXT.narrow}`);
+  if (truncated) lines.push(DIRECTORY_TEXT.truncated);
+  if (lines.length === 0) return undefined;
+  return lines.map((line) => (
+    <p key={line} className="combobox-status-line">
+      {line}
+    </p>
+  ));
+}
+
+/** What a screen reader hears once the typing stops: the same, with the count always. */
+function directoryAnnouncement(listing: Listing, truncated: boolean, listed: number, total: number): string | undefined {
+  if (listing.kind === 'loading') return DIRECTORY_TEXT.loading;
+  if (listing.kind !== 'ready') return undefined;
+  const count =
+    listed === 0
+      ? 'No directories to list.'
+      : total === 0
+      ? 'No directories match.'
+      : total > MAX_SHOWN
+        ? `${MAX_SHOWN} of ${directoryCount(total)}. ${DIRECTORY_TEXT.narrow}`
+        : `${directoryCount(total)}.`;
+  return truncated ? `${count} Not every directory is listed.` : count;
 }
 
 export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessionDialogProps) {
@@ -66,6 +135,13 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
   const roots = tab === undefined ? snapshot.roots : [tab];
   const [dirChoice, setDirChoice] = useState(() => choices[0]?.path ?? OTHER);
   const [customDir, setCustomDir] = useState('');
+  // The option chosen from the list, while the field still shows it.
+  const [accepted, setAccepted] = useState<{ label: string; path: string }>();
+  const [listing, setListing] = useState<Listing>({ kind: 'idle' });
+  const listAbort = useRef<AbortController | undefined>(undefined);
+  const combobox = useRef<HTMLInputElement>(null);
+  // Set when a choice reveals the combobox, so focus moves into it once it's there.
+  const revealing = useRef(false);
   const [name, setName] = useState('');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
@@ -79,13 +155,59 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     alive.current = true;
     return () => {
       alive.current = false;
+      listAbort.current?.abort();
     };
   }, []);
 
-  const cwd = dirChoice === OTHER ? customDir.trim() : dirChoice;
+  /** Fetches the directory list, once per opening of the dialog. */
+  const listDirectories = () => {
+    if (listing.kind !== 'idle') return;
+    if (!api) {
+      setListing({ kind: 'failed' });
+      return;
+    }
+    const controller = new AbortController();
+    listAbort.current = controller;
+    setListing({ kind: 'loading' });
+    void fetchDirectories(api, controller.signal).then((list) => {
+      if (alive.current) setListing(list ? { kind: 'ready', list } : { kind: 'failed' });
+    });
+  };
+
+  // With no directory to choose but a typed one, the field is there from the start.
+  useEffect(() => {
+    if (dirChoice === OTHER) listDirectories();
+    // Only as the dialog opens: a later choice fetches from its change handler.
+  }, []);
+
+  useEffect(() => {
+    if (dirChoice !== OTHER || !revealing.current) return;
+    revealing.current = false;
+    combobox.current?.focus();
+  }, [dirChoice]);
+
+  const chooseDirectory = (event: ChangeEvent<HTMLSelectElement>) => {
+    if (busy) return;
+    const value = event.target.value;
+    if (value === OTHER && dirChoice !== OTHER) {
+      revealing.current = true;
+      listDirectories();
+    }
+    setDirChoice(value);
+  };
+
+  const offered = useMemo(() => (listing.kind === 'ready' ? directoryOptions(listing.list, snapshot.roots, tab) : undefined), [listing, snapshot.roots, tab]);
+  const matches = useMemo(() => (offered ? matchDirectories(offered.options, customDir) : undefined), [offered, customDir]);
+  const comboOptions = useMemo(
+    () => (matches?.shown ?? []).map((option): DirectoryOption & { marker: string | undefined } => ({ ...option, marker: option.repo ? 'repo' : undefined })),
+    [matches],
+  );
+
+  const typed = customDir.trim();
+  const cwd = dirChoice !== OTHER ? dirChoice : accepted !== undefined && typed === accepted.label ? accepted.path : resolveTypedDirectory(typed, snapshot.roots);
   const model = modelChoice === OTHER ? customModel.trim() : modelChoice;
   const problems = {
-    cwd: directoryProblem(cwd, snapshot.roots, tab),
+    cwd: dirChoice !== OTHER ? directoryProblem(cwd, snapshot.roots, tab) : typedDirectoryProblem(typed, cwd, snapshot.roots, tab),
     name: nameProblem(name),
     model: modelChoice === OTHER && model === '' ? 'Type a model alias, or choose the default.' : modelProblem(model),
     prompt: promptProblem(prompt),
@@ -187,7 +309,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
             id={ids.dir}
             className="select-input"
             value={dirChoice}
-            onChange={edit(setDirChoice)}
+            onChange={chooseDirectory}
             {...disabled}
             aria-invalid={(dirChoice !== OTHER && shown.cwd !== undefined) || undefined}
             aria-describedby={describedBy(`${ids.dir}-roots`, dirChoice !== OTHER && shown.cwd && `${ids.dir}-problem`)}
@@ -202,25 +324,35 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
           <Icon name="select" className="select-icon" />
         </span>
         {dirChoice === OTHER && (
-          <input
+          <Combobox
             id={ids.customDir}
-            type="text"
-            className="field-input mono"
-            aria-label="Directory path"
-            placeholder={`${roots[0] ?? '/'}/…`}
-            autoComplete="off"
-            spellCheck={false}
+            inputRef={combobox}
+            label="Directory path"
+            listLabel="Directories"
+            placeholder={`${roots[0] === undefined ? '' : shortenHome(roots[0])}/…`}
             value={customDir}
-            onChange={edit(setCustomDir)}
-            readOnly={busy}
-            {...disabled}
-            aria-invalid={shown.cwd !== undefined || undefined}
-            aria-describedby={describedBy(`${ids.dir}-roots`, shown.cwd && `${ids.dir}-problem`)}
+            onInput={setCustomDir}
+            options={comboOptions}
+            onAccept={(option) => {
+              setCustomDir(option.label);
+              setAccepted({ label: option.label, path: option.path });
+            }}
+            status={directoryStatus(listing, offered?.truncated ?? false, offered?.options.length ?? 0, matches?.total ?? 0)}
+            announcement={directoryAnnouncement(listing, offered?.truncated ?? false, offered?.options.length ?? 0, matches?.total ?? 0)}
+            openOnMount
+            busy={busy}
+            invalid={shown.cwd !== undefined}
+            describedBy={describedBy(`${ids.dir}-roots`, listing.kind === 'failed' && `${ids.dir}-list`, shown.cwd && `${ids.dir}-problem`)}
           />
         )}
         <p className="field-hint" id={`${ids.dir}-roots`}>
           Under {roots.map((root) => plainText(shortenHome(root))).join(' or ')}.
         </p>
+        {dirChoice === OTHER && listing.kind === 'failed' && (
+          <p className="field-hint" id={`${ids.dir}-list`}>
+            {DIRECTORY_TEXT.failed}
+          </p>
+        )}
         {shown.cwd && (
           <p className="field-problem" id={`${ids.dir}-problem`}>
             {shown.cwd}

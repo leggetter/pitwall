@@ -2684,6 +2684,100 @@ mark.match {
 }
 
 /*
+ * The combobox (docs/design-system.md, 4: Combobox; W70): a field and, 4 px under it, a popup with a
+ * menu panel's look, over what follows: the listbox, which scrolls past about seven options, then
+ * status lines in meta type. The highlighted option has the menu items' keyboard highlight, since
+ * focus stays in the field. Paths are in the field's mono type, cut in the middle when there isn't
+ * room, with a quiet "repo" after a repo's.
+ */
+.combobox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.combobox-popup {
+  position: absolute;
+  top: calc(100% + var(--pw-space-1));
+  right: 0;
+  left: 0;
+  z-index: var(--pw-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  padding: var(--pw-space-1);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-overlay);
+  box-shadow: var(--pw-shadow-2);
+}
+
+.combobox-list {
+  max-height: calc(7.5 * var(--pw-control-lg));
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.combobox-option {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border-radius: var(--pw-radius-sm);
+  color: var(--pw-text);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
+  line-height: var(--pw-leading-s);
+  cursor: pointer;
+}
+
+.combobox-option-marker {
+  flex: none;
+  margin-left: auto;
+  color: var(--pw-text-subtle);
+  font-family: var(--pw-font-sans);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
+}
+
+@media (hover: hover) {
+  .combobox-option:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.combobox-option[aria-selected='true'] {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  background: var(--pw-surface-hover);
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.combobox-status {
+  display: flex;
+  flex-direction: column;
+  padding: var(--pw-space-1) var(--pw-space-2);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.combobox-list:not([hidden]) + .combobox-status {
+  margin-top: var(--pw-space-1);
+  border-top: 1px solid var(--pw-border);
+}
+
+.combobox-status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+}
+
+/*
  * A radio group in a menu (W42, View preferences): its title in label type, then its options, the
  * chosen one with a check mark in the icon's place. An option's line saying what it does wraps under
  * its label, so the panel is as wide as its content up to 20rem, and never wider than the app leaves,
@@ -3380,9 +3474,16 @@ ol.md-list {
   .repo-drawer,
   .dialog,
   .menu,
+  .combobox-popup,
   .toast,
   .tooltip {
     outline: 1px solid CanvasText;
+  }
+
+  /* The combobox's highlighted option: its fill and inset ring are gone. */
+  .combobox-option[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 
   /* Fields, buttons with an edge, and the boxes whose edge is a ring: an inline alert, a confirmation, the Jump to latest bar. */

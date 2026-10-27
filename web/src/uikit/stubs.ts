@@ -4,6 +4,7 @@
 // the real clipboard.
 
 import {
+  DIRECTORIES_PATH,
   PROTOCOL_VERSION,
   SPAWN_PATH,
   WS_CLOSE_TOO_MANY,
@@ -21,7 +22,7 @@ import type { StorageSource } from '../groupState.js';
 import { writeHidden, type HiddenGroup } from '../hidden.js';
 import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
 import { writeStarred } from '../starred.js';
-import { APP_DIR, CONVERSATION, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
+import { APP_DIR, CONVERSATION, DIALOG_DIRECTORIES, MANY_DIRECTORIES, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
 const forever = () => new Promise<ApiResult>(() => {});
@@ -63,6 +64,12 @@ export interface StubOptions {
   relay?: RelayResult | 'sending' | 'unreachable' | 'refused-request';
   /** What starting a session gets. `trust` is Claude Code refusing an untrusted directory. */
   spawn?: 'started' | 'trust' | 'failed' | 'starting';
+  /**
+   * The directory list for New session's "Another directory under a root…" (W70). `loading` never
+   * answers; `empty` has none under the root; `many` has 312; `truncated` says the walk stopped early;
+   * `failed` is a 500.
+   */
+  directories?: 'ok' | 'loading' | 'empty' | 'many' | 'truncated' | 'failed';
   /** What Stop and Remove get. `busy` never answers. */
   stop?: 'done' | 'refused' | 'busy';
   remove?: 'done' | 'refused' | 'busy';
@@ -84,6 +91,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
   const fetchedOlder = new Map<string, number>();
   const answer = (method: 'GET' | 'POST', path: string): Promise<ApiResult> => {
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
+    if (method === 'GET' && path === DIRECTORIES_PATH) return directories(options.directories ?? 'ok');
     const match = SESSION_PATH.exec(path);
     if (!match) return Promise.resolve(failed(404));
     const sessionId = decodeURIComponent(match[1] ?? '');
@@ -149,6 +157,24 @@ function relay(result: NonNullable<StubOptions['relay']>): Promise<ApiResult> {
   if (result === 'unreachable') return Promise.resolve(failed());
   if (result === 'refused-request') return Promise.resolve(failed(403));
   return Promise.resolve(ok(result));
+}
+
+function directories(result: NonNullable<StubOptions['directories']>): Promise<ApiResult> {
+  const [listed] = DIALOG_DIRECTORIES.roots;
+  switch (result) {
+    case 'loading':
+      return forever();
+    case 'failed':
+      return Promise.resolve(failed(500));
+    case 'empty':
+      return Promise.resolve(ok({ roots: DIALOG_DIRECTORIES.roots.map((root) => ({ ...root, dirs: [] })) }));
+    case 'many':
+      return Promise.resolve(ok(MANY_DIRECTORIES));
+    case 'truncated':
+      return Promise.resolve(ok({ roots: listed ? [{ ...listed, truncated: true }] : [] }));
+    case 'ok':
+      return Promise.resolve(ok(DIALOG_DIRECTORIES));
+  }
 }
 
 function spawn(result: NonNullable<StubOptions['spawn']>): Promise<ApiResult> {
