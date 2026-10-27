@@ -48,7 +48,7 @@ const FAILURES = [
     name: NAMES.endedBusy,
     what: "429: a danger alert with pitwall's reason",
     tone: 'danger',
-    text: "Couldn't resume the session. pitwall is already running 4 stop, remove or resume commands. Try again in a moment.",
+    text: "Couldn't resume the session. pitwall is already running 4 stop, remove, resume or open commands. Try again in a moment.",
   },
   {
     name: NAMES.endedRefused,
