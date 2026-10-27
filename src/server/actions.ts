@@ -1,8 +1,9 @@
 // Spawn, stop and remove (W12): the HTTP routes that start a background
 // session with `claude --bg`, and stop or remove one with `claude stop` and
-// `claude rm`.
+// `claude rm`. And resume (W66): bring an ended interactive session back as a
+// background session with `claude --resume <id> --bg`.
 //
-// All three are POSTs, so the /api/* middleware in server.ts has already
+// All four are POSTs, so the /api/* middleware in server.ts has already
 // required the apiKey (never the raw token) and this server's Origin. Then:
 //
 //   POST SPAWN_PATH               body: SpawnRequest as JSON           answers: SpawnResult
@@ -23,21 +24,45 @@
 //     400, 404, 503  from resolveSession(): not a safe id, not listed, no snapshot yet
 //     409  not a background session with a valid short id, or Claude Code refused, with
 //          its message: `claude rm` keeps a worktree that has unpushed commits and says so
-//     429  4 stop and remove commands are already running. Retry-After is set
+//     429  4 stop, remove and resume commands are already running. Retry-After is set
 //     502, 504  as for spawn
+//
+//   POST resumePath(id)           no body                              answers: ResumeResult
+//     200  resumed: { ok: true, shortId }, the id `claude attach` takes. It waits for a prompt
+//     400, 404, 503  from resolveSession()
+//     409  not an ended session (SessionSummary.ended); its directory has gone, or is no longer a
+//          directory under a root; a resume of it is already running; a fresh `claude agents`
+//          lists it, as when its terminal is open again (spike 006, finding 5); or Claude Code
+//          started a copy instead, with `copyShortId`, which pitwall leaves for the user
+//     422  Claude Code says the workspace isn't trusted, with `hint`, as for spawn
+//     429  as for stop and remove, whose limit it shares
+//     502  the fresh `claude agents` failed, so nothing was resumed; or Claude Code failed,
+//          with its first error line, or reported no id
+//     504  `claude --resume` didn't finish in time. The session may still appear
 //
 // Every command is built from validated values only: the realpath of `cwd`,
 // and for stop and remove the `shortId` of the session resolveSession()
 // returned, never the raw route parameter. `claude rm` never gets
-// `--discard-unpushed` or `--force-remove-worktree`.
+// `--discard-unpushed` or `--force-remove-worktree`. Resume runs in the
+// resolved session's own `cwd`, never a directory the request names, with its
+// `sessionId` and no prompt, so no message text is on the command line.
 import { realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import type { Indexer } from '../index/index.js';
+import { createAgentsSource, type AgentsSource } from '../index/agents.js';
+import { isSafeSessionId, type Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
-import { removePath, SPAWN_PATH, stopPath, type ActionResult, type SpawnResult } from '../shared/protocol.js';
+import {
+  removePath,
+  resumePath,
+  SPAWN_PATH,
+  stopPath,
+  type ActionResult,
+  type ResumeResult,
+  type SpawnResult,
+} from '../shared/protocol.js';
 import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
@@ -52,17 +77,27 @@ export interface ActionOptions {
   env?: NodeJS.ProcessEnv;
   /** The server's token. Any variable whose value contains it is left out of a child's environment. */
   token?: string;
-  /** Records each short id a spawn reports, so attach knows the session is starting (attach.ts). */
+  /** Records each short id a spawn or a resume reports, so attach knows the session is starting (attach.ts). */
   spawned?: Pick<RecentSpawns, 'add'>;
+  /**
+   * Records each session id a resume brought back, so attach knows a session the snapshot still
+   * shows as ended is starting (attach.ts). Keyed by session id, since an ended session has no short id.
+   */
+  resumed?: Pick<RecentSpawns, 'add'>;
+  /**
+   * The fresh `claude agents --json --all` a resume reads first. Default createAgentsSource(), the
+   * index's own source, which runs it through the scrubbed environment. Tests pass a fake.
+   */
+  agents?: Pick<AgentsSource, 'list'>;
   /** Milliseconds since the epoch, for the rate limit. Default Date.now. */
   now?: () => number;
-  /** Default 30 seconds, for each of `claude --bg`, `claude stop` and `claude rm`. */
+  /** Default 30 seconds, for each of `claude --bg`, `claude stop`, `claude rm` and `claude --resume`. */
   timeoutMs?: number;
   /** Spawns allowed to run at once. Default 1. */
   maxConcurrentSpawns?: number;
   /** Spawns allowed per window. Default 5 a minute. */
   spawnRate?: { max: number; windowMs: number };
-  /** Stop and remove commands allowed to run at once, together. Default 4. */
+  /** Stop, remove and resume commands allowed to run at once, together. Default 4. */
   maxConcurrentCommands?: number;
 }
 
@@ -182,12 +217,14 @@ export function spawnArgs(spawn: ValidSpawn): string[] {
 
 /**
  * The id and name from `claude --bg`'s output: its line
- * `backgrounded · <id> · <name>`. Undefined when there's no such line, or
- * the id isn't one that's safe to act on.
+ * `backgrounded · <id> · <name>`, or `backgrounded · <id> (<state>)` from
+ * `claude --resume <id> --bg`, which has no name. Undefined when there's no
+ * such line, or the id isn't one that's safe to act on.
  */
 export function parseBackgrounded(stdout: string): { shortId: string; name?: string } | undefined {
   for (const line of cleanText(stdout).split('\n')) {
-    const match = /^\s*backgrounded\s+·\s+(\S+)(?:\s+·\s+(.*?))?\s*$/.exec(line);
+    // A resume prints a state in brackets instead of a name: `backgrounded · 5e66fcb3 (idle — send a prompt to start)`.
+    const match = /^\s*backgrounded\s+·\s+(\S+)(?:\s+·\s+(.*?)|\s+\(.*\))?\s*$/.exec(line);
     if (!match) continue;
     const shortId = match[1] as string;
     if (!SHORT_ID_PATTERN.test(shortId)) return undefined;
@@ -195,6 +232,26 @@ export function parseBackgrounded(stdout: string): { shortId: string; name?: str
     return name ? { shortId, name } : { shortId };
   }
   return undefined;
+}
+
+/**
+ * The copy's short id from Claude Code's note when `claude --resume <id> --bg`
+ * found the session open in another Claude Code process (spike 006, finding
+ * 5): `note: session <id> is open in another Claude Code process, so this
+ * started a copy as <copy>. The original conversation is unchanged.` It still
+ * exits 0. `found` without `shortId` when there's a note but its id isn't one
+ * that's safe to act on. Undefined when there's no note.
+ */
+export function parseCopyNote(output: string): { found: true; shortId?: string } | undefined {
+  const match = /\bstarted a copy as ([^\s.,;:]+)/.exec(cleanText(output));
+  if (!match) return undefined;
+  const shortId = match[1] as string;
+  return SHORT_ID_PATTERN.test(shortId) ? { found: true, shortId } : { found: true };
+}
+
+/** The arguments for resuming an ended session in the background, with no prompt. */
+export function resumeArgs(sessionId: string): string[] {
+  return ['--resume', sessionId, '--bg'];
 }
 
 /**
@@ -215,6 +272,15 @@ export function trustHint(dir: string): string {
 /** Claude Code's output as text: terminal escapes and controls other than tab and newline removed, trimmed. */
 function cleanText(text: string): string {
   return text.replace(ESCAPES, '').replace(/\r\n?/g, '\n').replace(CONTROLS_BUT_NEWLINES, '').trim();
+}
+
+/** Claude Code's `Workspace not trusted. ...` line, at most 500 characters, when that's what it said. */
+function untrustedLine(message: string): string | undefined {
+  return cleanText(message)
+    .split('\n')
+    .find((line) => line.includes('Workspace not trusted'))
+    ?.trim()
+    .slice(0, 500);
 }
 
 /** The first non-empty line, at most 500 characters. */
@@ -287,6 +353,7 @@ export class SpawnLimiter {
 /** The stop route as a Hono pattern. stopPath() encodes its argument, so the pattern is decoded back. */
 const STOP_ROUTE = decodeURIComponent(stopPath(':sessionId'));
 const REMOVE_ROUTE = decodeURIComponent(removePath(':sessionId'));
+const RESUME_ROUTE = decodeURIComponent(resumePath(':sessionId'));
 
 const LOOKUP_ERRORS = {
   400: 'That is not a valid session id.',
@@ -295,10 +362,10 @@ const LOOKUP_ERRORS = {
 } as const;
 
 /**
- * Adds the spawn, stop and remove routes. Call it after the /api/* checks
- * and before the /api/* catch-all, as ServerInternals.routes does.
+ * Adds the spawn, stop, remove and resume routes. Call it after the /api/*
+ * checks and before the /api/* catch-all, as ServerInternals.routes does.
  */
-export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, options: ActionOptions = {}): void {
+export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'pollSoon'>, options: ActionOptions = {}): void {
   const run = options.run ?? runCommand;
   const claudeBin = options.claudeBin ?? 'claude';
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
@@ -358,12 +425,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
       }
       if (result.code !== 0) {
         const message = said(result);
-        const untrusted = cleanText(message)
-          .split('\n')
-          .find((line) => line.includes('Workspace not trusted'));
-        if (untrusted !== undefined) {
-          return spawnResult(c, { ok: false, error: untrusted.trim().slice(0, 500), hint: trustHint(spawn.cwd) }, 422);
-        }
+        const untrusted = untrustedLine(message);
+        if (untrusted !== undefined) return spawnResult(c, { ok: false, error: untrusted, hint: trustHint(spawn.cwd) }, 422);
         return spawnResult(c, { ok: false, error: firstLine(message) ?? `claude --bg exited with code ${result.code}.` }, 502);
       }
       const started = parseBackgrounded(result.stdout);
@@ -381,8 +444,12 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
   );
 
   const maxCommands = options.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS;
-  // Stop and remove commands running now.
+  // Stop, remove and resume commands running now.
   let commands = 0;
+  const busy = (c: Context) => {
+    c.header('Retry-After', '1');
+    return { ok: false as const, error: `pitwall is already running ${maxCommands} stop, remove or resume commands. Try again in a moment.` };
+  };
 
   const act = async (c: Context, verb: 'stop' | 'rm') => {
     c.header('Cache-Control', 'no-store');
@@ -398,10 +465,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
     if (shortId === undefined || !SHORT_ID_PATTERN.test(shortId)) {
       return answer({ ok: false, error: "This session has no short id that's safe to act on." }, 409);
     }
-    if (commands >= maxCommands) {
-      c.header('Retry-After', '1');
-      return answer({ ok: false, error: `pitwall is already running ${maxCommands} stop or remove commands. Try again in a moment.` }, 429);
-    }
+    if (commands >= maxCommands) return answer(busy(c), 429);
     commands += 1;
     let result: CommandResult;
     try {
@@ -421,4 +485,93 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
 
   app.post(STOP_ROUTE, (c) => act(c, 'stop'));
   app.post(REMOVE_ROUTE, (c) => act(c, 'rm'));
+
+  const agents = options.agents ?? createAgentsSource({ claudeBin });
+  // Session ids being resumed now: a second resume of one waits for the first's answer.
+  const resuming = new Set<string>();
+
+  app.post(RESUME_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const answer = (result: ResumeResult, status: 200 | 400 | 404 | 409 | 422 | 429 | 502 | 503 | 504) => c.json(result, status);
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return answer({ ok: false, error: LOOKUP_ERRORS[lookup.status] }, lookup.status);
+    const { session } = lookup;
+    // From the resolved summary, never the route parameter.
+    const { sessionId, cwd } = session;
+    if (session.ended !== true || !isSafeSessionId(sessionId)) {
+      return answer({ ok: false, error: 'Only an interactive session that has ended can be resumed from pitwall.' }, 409);
+    }
+    if (session.cwdMissing === true) {
+      return answer({ ok: false, error: `It started in ${cwd}, which no longer exists, and Claude Code resumes a session only from where it started.` }, 409);
+    }
+    if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
+    if (commands >= maxCommands) return answer(busy(c), 429);
+    commands += 1;
+    resuming.add(sessionId);
+    try {
+      // Afresh, as spawn checks its directory: it may have gone, or changed, since the poll.
+      const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
+      if (!dir.ok) return answer({ ok: false, error: dir.error }, 409);
+
+      // A session that's open in a terminal again gets an unnamed copy, and Claude Code still exits 0
+      // (spike 006, finding 5), so it's checked first, and nothing runs when the check can't be made.
+      const listing = await agents.list();
+      if (!listing.ok) {
+        return answer({ ok: false, error: `pitwall couldn't check that the session isn't running again, so it didn't resume it: ${listing.error}.` }, 502);
+      }
+      if (listing.rows.some((row) => row.sessionId === sessionId)) {
+        indexer.pollSoon();
+        return answer(
+          { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." },
+          409,
+        );
+      }
+
+      const result = await run(claudeBin, resumeArgs(sessionId), { cwd, env: env(), timeoutMs });
+      if (result.kind === 'failed') {
+        if (result.reason === 'timeout') {
+          indexer.pollSoon();
+          return answer({ ok: false, error: `claude --resume ${result.message}. The session may still appear in the list.` }, 504);
+        }
+        return answer({ ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
+      }
+      if (result.code !== 0) {
+        const message = said(result);
+        const untrusted = untrustedLine(message);
+        if (untrusted !== undefined) return answer({ ok: false, error: untrusted, hint: trustHint(cwd) }, 422);
+        return answer({ ok: false, error: firstLine(message) ?? `claude --resume exited with code ${result.code}.` }, 502);
+      }
+
+      // Exit 0 either way: the copy's note says it wasn't this session that resumed.
+      const copy = parseCopyNote(`${result.stdout}\n${result.stderr}`);
+      if (copy !== undefined) {
+        indexer.pollSoon();
+        const copied: ResumeResult = {
+          ok: false,
+          error: `It was open in another Claude Code process after all, so Claude Code started a copy${copy.shortId === undefined ? '' : ` as ${copy.shortId}`} instead. The copy is listed as a background session with no name, which you can stop and remove.`,
+        };
+        // Left alone: it's the user's to stop and remove. Attach treats it as starting, as a spawn.
+        if (copy.shortId !== undefined) {
+          copied.copyShortId = copy.shortId;
+          options.spawned?.add(copy.shortId);
+        }
+        return answer(copied, 409);
+      }
+      const resumed = parseBackgrounded(result.stdout);
+      indexer.pollSoon();
+      if (!resumed) {
+        const line = firstLine(result.stdout);
+        return answer(
+          { ok: false, error: `Claude Code didn't report the resumed session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
+          502,
+        );
+      }
+      options.spawned?.add(resumed.shortId);
+      options.resumed?.add(sessionId);
+      return answer({ ok: true, shortId: resumed.shortId }, 200);
+    } finally {
+      commands -= 1;
+      resuming.delete(sessionId);
+    }
+  });
 }

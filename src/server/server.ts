@@ -102,13 +102,13 @@ export interface ServerInternals {
    * W10-W12's input routes will be. Tests use it for a state-changing route.
    */
   routes?: (app: Hono) => void;
-  /** Spawn, stop and remove (W12, actions.ts): tests pass a fake command runner and limits. */
+  /** Spawn, stop, remove and resume (W12, W66, actions.ts): tests pass a fake command runner, agents source and limits. */
   actions?: ActionOptions;
   /**
    * For the attach socket. Tests pass a fake PTY spawner and agents source,
    * so they never run `claude`.
    */
-  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'processAlive' | 'now'>>;
+  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
 }
 
 export async function startServerWithInternals(
@@ -133,11 +133,13 @@ export async function startServerWithInternals(
 
   // Messages to interactive sessions (W11, D8). Started on the first one, stopped on close().
   const relay = options.relay ?? createRelayManager();
-  // What spawn started lately, so attach can tell a session that's starting from one that crashed.
+  // What spawn and resume started lately, so attach can tell a session that's starting from one that crashed.
   const spawned = new RecentSpawns();
-  // The input routes: spawn, stop and remove (W12), the relay (W11), then any a test adds.
+  // The ended sessions resume brought back lately, by session id, which the snapshot shows as ended until its next poll.
+  const resumed = new RecentSpawns();
+  // The input routes: spawn, stop and remove (W12), resume (W66), the relay (W11), then any a test adds.
   const routes = (app: Hono) => {
-    registerActions(app, indexer, { token, spawned, ...internals.actions });
+    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };
@@ -174,6 +176,7 @@ export async function startServerWithInternals(
     spawnPty,
     onAuthenticated,
     spawned,
+    resumed,
     slots,
     ...internals.attach,
   });

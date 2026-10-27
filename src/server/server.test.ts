@@ -682,6 +682,19 @@ describe('startServer', () => {
       expect(indexer.conversation).toHaveBeenCalledWith(SID, undefined);
     });
 
+    it('serves an ended interactive session (W66) as any listed one: it has a transcript, and no process', async () => {
+      const listed = withSession('2026-10-16T00:00:00.000Z', 'repo-66666666', SID);
+      const [only] = listed.groups[0]?.sessions ?? [];
+      Object.assign(only as object, { alive: false, finished: true, ended: true, transcript: 'ok' });
+      const indexer = fakeIndexer(listed);
+      indexer.conversations.set(SID, page);
+      const server = await start(indexer);
+      const res = await get(server.port, conversationPath(SID), bearer);
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual(page);
+      expect(indexer.conversation).toHaveBeenCalledWith(SID, undefined);
+    });
+
     it('passes a well-formed before cursor to the index', async () => {
       const indexer = withPage();
       const server = await start(indexer);

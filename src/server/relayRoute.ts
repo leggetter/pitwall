@@ -10,7 +10,8 @@
 //        not a safe id. The relay then makes look-alike spaces plain and CRLF
 //        LF (relayText.ts plainSpaces(), W43), which only shortens it
 //   404  resolveSession(): not in the current snapshot
-//   409  not an interactive session with a live process
+//   409  not an interactive session with a live process, such as one that has
+//        ended (SessionSummary.ended), which has no process to deliver to
 //   413  the body is over 64 KiB
 //   415  the body isn't `Content-Type: application/json`
 //   429  the relay is busy, or restarting. Retry-After is set
@@ -69,6 +70,9 @@ export function registerRelay(app: Hono, indexer: Pick<Indexer, 'latest'>, relay
       const { session } = lookup;
       if (session.kind !== 'interactive') {
         return answer(c, failed('Only interactive sessions are messaged through the relay. Attach to a background session instead.'), 409);
+      }
+      if (session.ended === true) {
+        return answer(c, failed("That session has ended, so there's no process to deliver to. Resume it in the background first."), 409);
       }
       if (!session.alive || session.pid === undefined) {
         return answer(c, failed("That session isn't running, so there's nothing to message."), 409);
