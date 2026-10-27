@@ -7,6 +7,13 @@
 // terminal (W47). Under line 2, a line says where to answer while it waits on you, and another what to
 // do about a directory that has gone (W47).
 //
+// An ended interactive session (W67), whose process has exited, has the Conversation tab alone, Ended
+// as its status, and in the footer a note with Resume in background and Copy command, which its actions
+// menu has too, in place of Stop (EndedSession.tsx). Resumed from here, it's listed again under the
+// same id as a running background session, and the view then opens its Terminal tab once, as W54 opens
+// a running background session's view, with no focus taken (W57): nothing in the page asked for the
+// terminal, and it attaches seconds after the press.
+//
 // Two more states take the view's place: waiting, while a ?session= from the URL waits for the first
 // snapshot, and unlisted, for one that pitwall doesn't list under its roots (3: Session view).
 //
@@ -45,7 +52,7 @@ import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js'
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
-import { attachCommand, statusBadge } from '../sessions.js';
+import { attachCommand, resumeCommand, statusBadge } from '../sessions.js';
 import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
 import { Alert } from './Alert.js';
@@ -53,6 +60,7 @@ import { Badge, StatusBadge } from './Badge.js';
 import { Button } from './Button.js';
 import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
+import { COPY_RESUME_COMMAND, EndedFooter, RESUME_LABEL, useResume } from './EndedSession.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
@@ -60,7 +68,7 @@ import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
-import { FINISHED_ASKED_HINT, SESSION_VIEW_ID, STALE_HINT } from './SessionRow.js';
+import { finishedAskedHint, SESSION_VIEW_ID, STALE_HINT } from './SessionRow.js';
 import { StarButton } from './StarButton.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
 import { Timestamp } from './Timestamp.js';
@@ -387,7 +395,17 @@ export function SessionView({
   );
   const conversation = useConversation(session.lastActivityAt, loader);
   const actions = useSessionActions(session, onClose);
+  // Resumed from this view (W67): it opens its Terminal tab once the snapshot lists it as running.
+  const resumedHere = useRef(false);
+  const resume = useResume(
+    session,
+    useCallback(() => {
+      resumedHere.current = true;
+    }, []),
+  );
 
+  // An ended interactive session (W67): no process, so no Terminal tab and no message box.
+  const ended = session.ended === true;
   // An interactive session, or a background one that can't be attached from here.
   const background = session.kind === 'background';
   const terminalOff = !background
@@ -498,6 +516,25 @@ export function SessionView({
   /** F6 in the terminal: focus moves to the Terminal tab, and the terminal stays open and attached (6.1 rule 14). */
   const focusTerminalTab = useCallback(() => terminalTab.current?.focus(), []);
 
+  // Resumed from here (W67), and now listed as the session it has become: a running background
+  // session's view opens on its Terminal tab, as Preferences says (W54), so this one goes there once,
+  // as it would have opened. Its terminal takes no focus (W57): the press was seconds before the
+  // attach, and asked to resume, not to type. Resume in background has gone with the footer, so focus
+  // it had goes to the Terminal tab, the way in, rather than the page. In a root tab that isn't open
+  // (W38), this waits until that tab is.
+  useLayoutEffect(() => {
+    if (!resumedHere.current || ended || hidden) return;
+    resumedHere.current = false;
+    const active = document.activeElement;
+    const lost = active === null || active === document.body || !active.isConnected;
+    if (openingTab() === 'terminal') {
+      asked.current = undefined;
+      setQuiet(false);
+      setChosen('terminal');
+    }
+    if (lost) focusQuietly(terminalTab.current ?? heading.current);
+  }, [ended, hidden]);
+
   // Escape from anywhere a nearer layer didn't take it (6.2): a confirmation cancels, and a busy one, or
   // a draft in the message box, keeps the view open. Otherwise the view closes.
   const onEscape = () => {
@@ -533,11 +570,15 @@ export function SessionView({
   const waiting = waitingNote(session, listed, background && !terminalOff);
   const canAct = background && listed;
   const busy = actions.running !== undefined;
+  // j, k, ↑ and ↓ wait for a resume's request too, so its result shows in the view it was asked from.
+  const requesting = busy || resume.phase === 'running';
+  const resumeCopy = ended ? resumeCommand(session) : undefined;
+  const canResume = ended && listed && !session.cwdMissing;
   const onRunningRef = useRef(onRunningChange);
   onRunningRef.current = onRunningChange;
   useEffect(() => {
-    onRunningRef.current?.(busy);
-  }, [busy]);
+    onRunningRef.current?.(requesting);
+  }, [requesting]);
   useEffect(() => () => onRunningRef.current?.(false), []);
   // A confirmation or the terminal's restart prompt, open, for a started session that would replace the view (W63).
   const prompting = actions.confirming !== undefined || (tab === 'terminal' && restart !== undefined);
@@ -573,9 +614,24 @@ export function SessionView({
   const entries: MenuEntry[] = [
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
+    ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),
     ...widthEntries,
+    // An ended session can be resumed, never stopped or removed: it has no process (W67).
+    ...(canResume
+      ? [
+          { kind: 'separator' as const, id: 'separator' },
+          {
+            id: 'resume',
+            label: RESUME_LABEL,
+            icon: 'restart' as const,
+            disabled: resume.phase !== 'idle',
+            hint: resume.phase === 'running' ? 'Wait for the current action to finish.' : 'It has resumed. It shows as a background session once pitwall lists it.',
+            onSelect: resume.run,
+          },
+        ]
+      : []),
     // An interactive session can't be stopped from here, so Stop session is off, saying how /bg changes that.
-    ...(!background && listed
+    ...(!background && !ended && listed
       ? [
           { kind: 'separator' as const, id: 'separator' },
           { id: 'stop', label: 'Stop session', icon: 'stop' as const, disabled: true, hint: STOP_INTERACTIVE_HINT, onSelect: () => {} },
@@ -647,7 +703,7 @@ export function SessionView({
           {session.finished && session.askedYou && (
             <span className="session-view-badge">
               <Badge look="outline">Asked you</Badge>
-              <InfoTip text={FINISHED_ASKED_HINT} className="session-view-info" />
+              <InfoTip text={finishedAskedHint(session)} className="session-view-info" />
             </span>
           )}
           {session.stale && (
@@ -660,8 +716,8 @@ export function SessionView({
           )}
           <span className="session-view-kind">
             {KIND_LABELS[session.kind]}
-            {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. */}
-            {!background && <InfoTip text={BG_NOTE} className="session-view-info" />}
+            {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. Not once it has ended: there's no terminal to type /bg in. */}
+            {!background && !ended && <InfoTip text={BG_NOTE} className="session-view-info" />}
           </span>
           {session.lastActivityAt && <Timestamp className="session-view-activity" at={session.lastActivityAt} prefix="Active " />}
           <span className="session-view-cwd">
@@ -739,73 +795,81 @@ export function SessionView({
           <Icon name="conversation" />
           Conversation
         </button>
-        {/* Disabled, it says why in a tooltip, which describes it. */}
-        <Tooltip content={terminalOff} relation="description">
-          <button
-            ref={terminalTab}
-            type="button"
-            role="tab"
-            id={ids.terminalTab}
-            className="session-tab"
-            aria-selected={tab === 'terminal'}
-            aria-controls={ids.terminalPanel}
-            // Attached, it's described by the terminal's hint on how to type to it, which shows while the
-            // terminal doesn't have focus, as on this tab after F6 (W57).
-            aria-describedby={attached ? ids.typeHint : undefined}
-            aria-disabled={terminalOff !== undefined || undefined}
-            tabIndex={tab === 'terminal' ? 0 : -1}
-            onClick={() => openTab('terminal')}
-          >
-            <Icon name="terminal" />
-            Terminal
-            {attached && (
-              <>
-                <span className="session-tab-dot" aria-hidden="true" />
-                <span className="visually-hidden">, attached</span>
-              </>
-            )}
-          </button>
-        </Tooltip>
+        {/* Disabled, it says why in a tooltip, which describes it. An ended session has none: there's no process to attach to (W67). */}
+        {!ended && (
+          <Tooltip content={terminalOff} relation="description">
+            <button
+              ref={terminalTab}
+              type="button"
+              role="tab"
+              id={ids.terminalTab}
+              className="session-tab"
+              aria-selected={tab === 'terminal'}
+              aria-controls={ids.terminalPanel}
+              // Attached, it's described by the terminal's hint on how to type to it, which shows while the
+              // terminal doesn't have focus, as on this tab after F6 (W57).
+              aria-describedby={attached ? ids.typeHint : undefined}
+              aria-disabled={terminalOff !== undefined || undefined}
+              tabIndex={tab === 'terminal' ? 0 : -1}
+              onClick={() => openTab('terminal')}
+            >
+              <Icon name="terminal" />
+              Terminal
+              {attached && (
+                <>
+                  <span className="session-tab-dot" aria-hidden="true" />
+                  <span className="visually-hidden">, attached</span>
+                </>
+              )}
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
       <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation' || hidden} />
 
-      <div
-        className="session-view-terminal"
-        role="tabpanel"
-        id={ids.terminalPanel}
-        aria-labelledby={ids.terminalTab}
-        hidden={tab !== 'terminal'}
-      >
-        {tab === 'terminal' && attachEnv && (
-          <SessionTerminal
-            sessionId={sessionId}
-            env={attachEnv}
-            onClose={leaveTerminal}
-            onLeave={focusTerminalTab}
-            onStatus={setAttachStatus}
-            onRestartChange={setRestart}
-            wait={quiet}
-            canFocus={terminalMayFocus}
-            onAsk={askedInTerminal}
-            typeHintId={ids.typeHint}
-          />
-        )}
-      </div>
+      {!ended && (
+        <div
+          className="session-view-terminal"
+          role="tabpanel"
+          id={ids.terminalPanel}
+          aria-labelledby={ids.terminalTab}
+          hidden={tab !== 'terminal'}
+        >
+          {tab === 'terminal' && attachEnv && (
+            <SessionTerminal
+              sessionId={sessionId}
+              env={attachEnv}
+              onClose={leaveTerminal}
+              onLeave={focusTerminalTab}
+              onStatus={setAttachStatus}
+              onRestartChange={setRestart}
+              wait={quiet}
+              canFocus={terminalMayFocus}
+              onAsk={askedInTerminal}
+              typeHintId={ids.typeHint}
+            />
+          )}
+        </div>
+      )}
 
       {session.kind === 'interactive' && (listed || drafting) && (
         <footer className="session-view-foot">
-          <RelayBox
-            session={session}
-            listed={listed}
-            replyShown={replyShown}
-            onDraftChange={(has) => {
-              draft.current = has;
-              setDrafting(has);
-              onDraftChange?.(has);
-            }}
-          />
+          {/* An ended session has no message box, except to keep a draft, which is never lost to the session going (W31). */}
+          {(!ended || drafting) && (
+            <RelayBox
+              session={session}
+              listed={listed}
+              replyShown={replyShown}
+              onDraftChange={(has) => {
+                draft.current = has;
+                setDrafting(has);
+                onDraftChange?.(has);
+              }}
+            />
+          )}
+          {ended && listed && <EndedFooter session={session} resume={resume} onCopy={resumeCopy ? () => copy('Resume command', resumeCopy) : undefined} />}
         </footer>
       )}
       {background && !terminalOff && tab === 'conversation' && (

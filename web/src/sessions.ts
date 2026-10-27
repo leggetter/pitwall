@@ -1,17 +1,18 @@
 // What the screen derives from a session: whether it needs Phil, which status
 // badge it gets, where it sorts, and whether it passes the filters.
 
-import type { SessionGroup, SessionKind, SessionSummary } from '../../src/shared/protocol.js';
+import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionKind, type SessionSummary } from '../../src/shared/protocol.js';
 import { shortenHome } from './format.js';
 
 /**
  * A session that is waiting on Phil, a background session blocked on him, or
  * one that ended its turn by asking him something. Never a stale or finished
  * one: a finished session's question still shows on its row, muted, but it
- * isn't counted anywhere.
+ * isn't counted anywhere. Nor an ended interactive session (W67), which is
+ * finished too, whatever it asked.
  */
 export function needsAttention(session: SessionSummary): boolean {
-  if (session.stale || session.finished) return false;
+  if (session.stale || session.finished || session.ended) return false;
   return session.status === 'waiting' || session.state === 'blocked' || session.askedYou !== undefined;
 }
 
@@ -30,6 +31,7 @@ export type SessionStatus =
   | 'failed'
   | 'done'
   | 'stopped'
+  | 'ended'
   | 'not-running'
   | 'busy'
   | 'working'
@@ -49,9 +51,11 @@ export interface StatusBadge {
  * Waiting first, then blocked (unless stale), then asked you, then the
  * session's state or status. A finished session shows its state (done,
  * stopped or failed) even when it asked something; its row shows that
- * separately, as an outline badge.
+ * separately, as an outline badge. An ended interactive session (W67), whose process has exited,
+ * shows Ended, as a stopped one shows Stopped: it has no status or state.
  */
 export function statusBadge(session: SessionSummary): StatusBadge {
+  if (session.ended) return { status: 'ended', label: 'Ended', look: 'subtle-neutral' };
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
   if (session.status === 'waiting') return { status: 'waiting', label: `Waiting${reason}`, look: 'solid-warning' };
   if (session.state === 'blocked' && !session.stale) return { status: 'blocked', label: `Blocked${reason}`, look: 'solid-warning' };
@@ -88,6 +92,58 @@ export function attachCommand(session: SessionSummary): string | undefined {
   if (session.kind !== 'background' || !session.shortId) return undefined;
   if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/.test(session.shortId)) return undefined;
   return `claude attach ${session.shortId}`;
+}
+
+/** A session id `claude --resume` takes as one word: letters, digits, `_` and `-`, not starting with `-`. */
+const RESUME_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/;
+
+/** C0 controls and DEL: a directory with one would paste as something other than the command shown. */
+const CONTROLS = /[\u0000-\u001f\u007f]/;
+
+/** `value` in POSIX single quotes, each `'` in it closed, escaped and opened again: one word to any shell. */
+export function posixQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The command that resumes an ended interactive session in a terminal (W67): `cd '<cwd>' && claude
+ * --resume <sessionId>`, for Copy command, or undefined. Only for one whose directory is still there,
+ * since Claude Code finds a session's transcript by the directory it runs in. The directory is always
+ * quoted, so it pastes into Warp, Cursor's terminal or any shell as one word; one with a control
+ * character, and an id that fails a conservative pattern, give none, as attachCommand() refuses an
+ * unsafe short id.
+ */
+export function resumeCommand(session: SessionSummary): string | undefined {
+  if (!session.ended || session.cwdMissing) return undefined;
+  if (!RESUME_ID.test(session.sessionId) || session.cwd === '' || CONTROLS.test(session.cwd)) return undefined;
+  return `cd ${posixQuote(session.cwd)} && claude --resume ${session.sessionId}`;
+}
+
+// Ended interactive sessions (W67, Phil, 2026-10-27): the server lists them for ENDED_LISTED_DAYS,
+// and the page shows those from the last ENDED_SHOWN_DAYS. Older ones are left out of every list,
+// every count and the repo list until Show older, one switch for the page, is on.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * An ended session last active more than ENDED_SHOWN_DAYS before `now`, the snapshot's generatedAt,
+ * so what's hidden changes only with a snapshot. A `now` that isn't a time hides nothing.
+ */
+export function isOlderEnded(session: SessionSummary, now: number): boolean {
+  return session.ended === true && activityMs(session) < now - ENDED_SHOWN_DAYS * DAY_MS;
+}
+
+/**
+ * The groups without their older ended sessions, leaving out a group that then has none, as the
+ * snapshot leaves out an empty group. The same array when there are none to take out.
+ */
+export function withoutOlderEnded(groups: SessionGroup[], now: number): SessionGroup[] {
+  if (!groups.some((group) => group.sessions.some((session) => isOlderEnded(session, now)))) return groups;
+  return groups.flatMap((group) => {
+    const sessions = group.sessions.filter((session) => !isOlderEnded(session, now));
+    if (sessions.length === group.sessions.length) return [group];
+    return sessions.length === 0 ? [] : [{ ...group, sessions }];
+  });
 }
 
 /**

@@ -1,7 +1,9 @@
 // A session row (docs/design-system.md, 4: Session rows), two lines at most: which session it is,
 // its badges, when it was last active and its star toggle (W53); then what it asked, or what it was
-// last asked, after its group's label in Needs you, All sessions and Starred. The rest, such as its replies, its relay exchange, its
-// directory, the repos it worked in and the message box, is in the session view, one click away.
+// last asked, after its group's label in Needs you, All sessions and Starred. A finished session's row
+// is muted, an ended interactive session's too (W67), with Ended as its status. The rest, such as its
+// replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
+// session view, one click away.
 //
 // Tooltips, on hover only, since none of them is on the name's button: the session's id and start
 // time on its name; the whole title and where it came from; Stale's and a finished Asked you's
@@ -23,6 +25,13 @@ import { Tooltip } from './Tooltip.js';
 export const STALE_HINT =
   'Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters.';
 export const FINISHED_ASKED_HINT = "Its last message asked you something. It has finished, so it isn't counted as needing you.";
+/** The same, for an ended interactive session (W67), whose badge says Ended rather than finished. */
+export const ENDED_ASKED_HINT = "Its last message asked you something. It has ended, so it isn't counted as needing you.";
+
+/** The hint for a finished session's Asked you: an ended one's, or a finished background session's. */
+export function finishedAskedHint(session: SessionSummary): string {
+  return session.ended ? ENDED_ASKED_HINT : FINISHED_ASKED_HINT;
+}
 const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = {
   'claude-code': "Claude Code's title, from the session's first prompt",
   pitwall: "pitwall's title, from the session's recent turns",
@@ -121,7 +130,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const badges = [
     badge && <StatusBadge key="status" badge={badge} />,
     finished && session.askedYou && (
-      <Badge key="asked" look="outline" hint={FINISHED_ASKED_HINT}>
+      <Badge key="asked" look="outline" hint={finishedAskedHint(session)}>
         Asked you
       </Badge>
     ),

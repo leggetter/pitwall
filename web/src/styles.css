@@ -1147,6 +1147,7 @@ h2.empty-state-title:focus {
 
 .badge.state-idle,
 .badge.state-stopped,
+.badge.state-ended,
 .badge.state-unknown {
   background: var(--pw-state-idle-bg);
   box-shadow: inset 0 0 0 1px var(--pw-state-idle-border);
@@ -1855,6 +1856,26 @@ mark.match {
 
 .finished-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
+}
+
+/*
+ * Show older (W67), after the Finished section's rows while the selection has ended sessions older
+ * than ENDED_SHOWN_DAYS: an outline sm button, as Load earlier is, then the meta line that describes
+ * it, wrapping under it when the list is narrow. A row's padding and line, so it lines up with them.
+ */
+.finished-older {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+}
+
+.finished-older-note {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
 /* The Sort setting, at the right of the filters' line (section 3: Session list). */
