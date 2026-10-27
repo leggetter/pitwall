@@ -770,7 +770,8 @@ export type ResumeResult =
  * only for a session id that is a UUID (W73, W81).
  *
  * - 404 when the snapshot doesn't list the session, and 409 when it isn't
- *   ended, when its directory no longer exists or now resolves elsewhere,
+ *   ended or its id isn't a UUID, when its directory no longer exists or
+ *   now resolves elsewhere,
  *   when a resume of it is already running, or when a fresh
  *   `claude agents --json` lists its session id in any row, as when its
  *   terminal is open again.
