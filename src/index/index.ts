@@ -7,19 +7,22 @@ import {
   type RelayExchange,
   type RelayOff,
   type SourceHealth,
+  type SubagentList,
 } from '../shared/protocol.js';
 import { createAgentsSource, listedSessionIds, type AgentRow, type AgentsSource } from './agents.js';
-import { ConversationCursorError, readConversationPage, RelayAddressBook } from './conversation.js';
+import { ConversationCursorError, readConversationPage, RelayAddressBook, type ConversationReadOptions } from './conversation.js';
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, groupLabel, type GroupResolver } from './grouping.js';
 import { createJobReader, type JobNeeds, type JobReader } from './jobs.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
+import { createSubagentTracker, isSafeAgentId, type SubagentLabels, type SubagentTracker } from './subagents.js';
 import { buildGroups, isFinished, restartHolds, toSessionSummary, type PlacedSession } from './summaries.js';
 import { createTranscriptReader, isSafeSessionId, type TranscriptReader } from './transcripts.js';
 import { createWorkedInScanner, type WorkedInScanner } from './workedIn.js';
 
 export { isSafeSessionId } from './transcripts.js';
+export { isSafeAgentId } from './subagents.js';
 export { ConversationCursorError, isWellFormedCursor } from './conversation.js';
 export type { AgentRow } from './agents.js';
 
@@ -63,6 +66,21 @@ export interface Indexer {
    * file ('stale'), and never for anything else.
    */
   conversation(sessionId: string, before?: string): Promise<ConversationPage | undefined>;
+  /**
+   * The sub-agents of a session in the latest snapshot (W76), read afresh from its `subagents`
+   * folder and what's new in its transcripts: running ones first, then the newest started, at most
+   * SUBAGENTS_MAX. Undefined for a session not in the latest snapshot; an empty list for one with
+   * no transcript or no sub-agents. Never rejects.
+   */
+  subagents(sessionId: string): Promise<SubagentList | undefined>;
+  /**
+   * One page of a sub-agent's own transcript (W76), as conversation() reads a session's: newest
+   * first, with `before` cursors, and the page's sessionId the session's. Undefined for a session
+   * not in the latest snapshot, and for an agent id that isn't one of the session's sub-agents by
+   * a fresh listing of its folder. A sub-agent listed only by its meta file so far has an empty
+   * page. Rejects with ConversationCursorError as conversation() does, and never for anything else.
+   */
+  subagentConversation(sessionId: string, agentId: string, before?: string): Promise<ConversationPage | undefined>;
   /**
    * Polls again as soon as it can: now, or straight after the poll that's running. For a change
    * pitwall made itself, such as resuming an ended session, so the snapshot shows it within a poll
@@ -110,6 +128,13 @@ export interface IndexerDeps {
    * needs you as it did before W69 (NeedsYou's 'blocked').
    */
   jobs?: JobReader;
+  /**
+   * Each session's sub-agents (subagents.ts, W76): their running count, read synchronously on every
+   * poll, which never waits for a scan; their list and transcripts; and the labels conversation
+   * pages give their entries. A scan that changes a running count makes the index poll soon.
+   * Without one, no session has subagentsRunning, and every list is empty.
+   */
+  subagents?: SubagentTracker;
 }
 
 /**
@@ -132,6 +157,7 @@ export function startIndexer(options: IndexerOptions): Indexer {
     workedIn: createWorkedInScanner({ now }),
     ended: createEndedScanner({ now }),
     jobs: createJobReader(),
+    subagents: createSubagentTracker({ now }),
     now,
     home: os.homedir(),
     concurrency: 8,
@@ -204,7 +230,18 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const timer = setInterval(() => void tick(), intervalMs);
   // A scan that found sessions newly ended, or no longer ended, shows at the next poll: make that one soon.
   const unsubscribeEnded = deps.ended?.subscribe(pollSoon);
+  // Likewise a sub-agent scan that changed a session's running count.
+  const unsubscribeSubagents = deps.subagents?.subscribe(pollSoon);
   void tick();
+
+  /** The labels for a session's conversation entries (W76), or none when they can't be had. */
+  async function labelsOf(sessionId: string): Promise<SubagentLabels | undefined> {
+    try {
+      return await deps.subagents?.labels(sessionId);
+    } catch {
+      return undefined;
+    }
+  }
 
   return {
     latest: () => latest,
@@ -218,16 +255,31 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       if (!current.has(sessionId)) return undefined;
       const file = transcriptFile(deps, sessionId);
       if (file === undefined) return undefined;
-      // The newest page is tried twice, in case the file shrank while it was read.
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          return (await readConversationPage(file, sessionId, before, relayBook === undefined ? {} : { relay: relayBook }))?.page;
-        } catch (err) {
-          if (err instanceof ConversationCursorError) throw err;
-          if (before !== undefined) return undefined;
-        }
+      const subagents = await labelsOf(sessionId);
+      return readPage(file, sessionId, before, { ...(relayBook === undefined ? {} : { relay: relayBook }), ...(subagents === undefined ? {} : { subagents }) });
+    },
+    async subagents(sessionId) {
+      if (!current.has(sessionId)) return undefined;
+      const empty: SubagentList = { sessionId, subagents: [], truncated: false };
+      try {
+        return (await deps.subagents?.list(sessionId)) ?? empty;
+      } catch {
+        return empty;
       }
-      return undefined;
+    },
+    async subagentConversation(sessionId, agentId, before) {
+      if (!current.has(sessionId) || !isSafeAgentId(agentId) || deps.subagents === undefined) return undefined;
+      let found: { file?: string } | undefined;
+      try {
+        found = await deps.subagents.transcript(sessionId, agentId);
+      } catch {
+        return undefined;
+      }
+      if (found === undefined) return undefined;
+      // Listed by its meta file, with no transcript yet: nothing to page, and no page to be before.
+      if (found.file === undefined) return before === undefined ? { sessionId, entries: [] } : undefined;
+      const subagents = await labelsOf(sessionId);
+      return readPage(found.file, sessionId, before, { sidechain: true, noFollow: true, ...(subagents === undefined ? {} : { subagents }) });
     },
     pollSoon,
     noteRestart(sessionId, atMs) {
@@ -240,10 +292,28 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       clearInterval(timer);
       listeners.clear();
       unsubscribeEnded?.();
+      unsubscribeSubagents?.();
       deps.workedIn?.stop();
       deps.ended?.stop();
+      deps.subagents?.stop();
     },
   };
+}
+
+/**
+ * One page of a transcript, for conversation() and subagentConversation(): the newest page is tried
+ * twice, in case the file shrank while it was read. Rejects only with ConversationCursorError.
+ */
+async function readPage(file: string, sessionId: string, before: string | undefined, options: ConversationReadOptions): Promise<ConversationPage | undefined> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return (await readConversationPage(file, sessionId, before, options))?.page;
+    } catch (err) {
+      if (err instanceof ConversationCursorError) throw err;
+      if (before !== undefined) return undefined;
+    }
+  }
+  return undefined;
 }
 
 /** A session's transcript: the reader's for a listed session, the ended scanner's for an ended one. */
@@ -302,6 +372,7 @@ async function poll(
   const kept = [...live, ...(await placeEnded(listed, resolvedRoots, options, deps, nowMs))];
   deps.groups.prune();
   addWorkedIn(kept, resolvedRoots, deps);
+  addSubagentsRunning(kept, deps);
   // A restart is noted only for a session in the snapshot, so one no longer listed won't come back.
   const keptIds = new Set(kept.map((p) => p.summary.sessionId));
   for (const id of restarts.keys()) if (!keptIds.has(id)) restarts.delete(id);
@@ -379,6 +450,35 @@ function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: Inde
     }
   } catch {
     // What was added stays, and the poll goes on: a scanner failure only leaves workedIn out.
+  }
+}
+
+/**
+ * Hands the sub-agent tracker this poll's sessions, which queues scans of the live ones without
+ * waiting for them, and adds each live session's running count from earlier scans, when it's at
+ * least 1 (SessionSummary.subagentsRunning). A session seen for the first time has none until its
+ * first scan, which makes the index poll soon. Nothing here can fail the poll.
+ */
+function addSubagentsRunning(kept: PlacedSession[], deps: IndexerDeps): void {
+  const tracker = deps.subagents;
+  if (tracker === undefined) return;
+  try {
+    tracker.track(
+      kept.map(({ summary }) => ({
+        sessionId: summary.sessionId,
+        file: transcriptFile(deps, summary.sessionId),
+        alive: summary.alive,
+        ...(summary.pid === undefined ? {} : { pid: summary.pid }),
+        startedAt: summary.startedAt,
+      })),
+    );
+    for (const { summary } of kept) {
+      // Read for every session, so the tracker knows what the snapshot shows: 0 for one not alive.
+      const running = tracker.running(summary.sessionId);
+      if (summary.alive && running >= 1) summary.subagentsRunning = running;
+    }
+  } catch {
+    // What was added stays, and the poll goes on.
   }
 }
 

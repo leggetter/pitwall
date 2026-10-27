@@ -7,16 +7,20 @@ import { join } from 'node:path';
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { ConversationCursorError, createIndexer, type Indexer } from '../index/index.js';
+import { createSubagentTracker } from '../index/subagents.js';
 import {
   ATTACH_PATH,
   conversationPath,
   PROTOCOL_VERSION,
   SNAPSHOT_PATH,
+  subagentConversationPath,
+  subagentsPath,
   WS_CLOSE_UNAUTHORIZED,
   WS_PATH,
   type ConversationPage,
   type IndexSnapshot,
   type ServerMessage,
+  type SubagentList,
 } from '../shared/protocol.js';
 import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from './index.js';
 import { securityHeaders } from './security.js';
@@ -35,12 +39,18 @@ interface FakeIndexer extends Indexer {
   listenerCount(): number;
   /** What conversation() answers, by session id: a page, or an error to reject with. */
   conversations: Map<string, ConversationPage | Error>;
+  /** What subagents() answers, by session id. */
+  subagentLists: Map<string, SubagentList>;
+  /** What subagentConversation() answers, by `<sessionId>/<agentId>`: a page, or an error to reject with. */
+  subagentPages: Map<string, ConversationPage | Error>;
 }
 
 function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
   let latest = initial;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   const conversations = new Map<string, ConversationPage | Error>();
+  const subagentLists = new Map<string, SubagentList>();
+  const subagentPages = new Map<string, ConversationPage | Error>();
   return {
     latest: () => latest,
     subscribe(listener) {
@@ -55,6 +65,14 @@ function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
       return answer;
     }),
     conversations,
+    subagents: vi.fn(async (sessionId: string) => subagentLists.get(sessionId)),
+    subagentConversation: vi.fn(async (sessionId: string, agentId: string, _before?: string) => {
+      const answer = subagentPages.get(`${sessionId}/${agentId}`);
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }),
+    subagentLists,
+    subagentPages,
     pollSoon: vi.fn(),
     noteRestart: vi.fn(),
     stop: vi.fn(),
@@ -913,6 +931,262 @@ describe('startServer', () => {
           indexer.stop();
         }
       });
+    });
+  });
+
+  describe('the sub-agent API (W76)', () => {
+    const SID = '77777777-7777-4777-8777-777777777777';
+    const AGENT = 'a7bfea4102a9f1853';
+    const list: SubagentList = {
+      sessionId: SID,
+      subagents: [
+        { agentId: AGENT, description: 'Build the made-up feature', agentType: 'general-purpose', background: true, state: 'running', startedAt: '2026-10-16T00:00:01.000Z', lastActivityAt: '2026-10-16T00:00:09.000Z', toolCalls: 4 },
+        { agentId: 'b1', description: 'Sub-agent', state: 'unknown', toolCalls: 0 },
+      ],
+      truncated: false,
+    };
+    const page: ConversationPage = { sessionId: SID, entries: [{ kind: 'assistant', at: '2026-10-16T00:00:02.000Z', text: 'Looking.', markdown: true }], before: 'eyJ2IjoxfQ' };
+    const CURSOR = Buffer.from(JSON.stringify({ v: 1, o: 10, d: '1', i: '2', f: 'AAAAAAAAAAA' })).toString('base64url');
+
+    function withSubagents(answer: ConversationPage | Error = page): FakeIndexer {
+      const indexer = fakeIndexer(withSession('2026-10-16T00:00:00.000Z', 'pitwall-test-subagents', SID));
+      indexer.subagentLists.set(SID, list);
+      indexer.subagentPages.set(`${SID}/${AGENT}`, answer);
+      indexer.conversations.set(SID, { sessionId: SID, entries: [] });
+      return indexer;
+    }
+
+    const asked = (indexer: FakeIndexer) => vi.mocked(indexer.subagents).mock.calls.length + vi.mocked(indexer.subagentConversation).mock.calls.length;
+
+    it('serves the paths the contract names', () => {
+      expect(subagentsPath(SID)).toBe(`/api/sessions/${SID}/subagents`);
+      expect(subagentConversationPath(SID, AGENT)).toBe(`/api/sessions/${SID}/subagents/${AGENT}/conversation`);
+      expect(subagentConversationPath(SID, AGENT, 'a b')).toBe(`/api/sessions/${SID}/subagents/${AGENT}/conversation?before=a%20b`);
+    });
+
+    it('needs a credential, this Origin and this Host on both routes, without asking the index', async () => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      for (const path of [subagentsPath(SID), subagentConversationPath(SID, AGENT)]) {
+        for (const headers of [{}, { authorization: 'Bearer wrong' }, { authorization: TOKEN }] as Record<string, string>[]) {
+          const res = await get(server.port, path, headers);
+          expect(res.status, path).toBe(401);
+          expect(res.body).toBe('');
+        }
+        for (const value of ['http://evil.example', 'null', `http://localhost:${server.port}`]) {
+          expect((await get(server.port, path, { origin: value, ...bearer })).status, value).toBe(403);
+        }
+        expect((await get(server.port, path, { host: 'evil.example', ...bearer })).status).toBe(403);
+      }
+      expect(asked(indexer)).toBe(0);
+    });
+
+    it("returns a listed session's sub-agents as JSON, uncached, with the token or the apiKey", async () => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      const res = await get(server.port, subagentsPath(SID), { origin: origin(server.port), ...bearer });
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/^application\/json/);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(JSON.parse(res.body)).toEqual(list);
+      expect(indexer.subagents).toHaveBeenCalledWith(SID);
+      const apiKey = await apiKeyOf(server.port);
+      expect((await get(server.port, subagentsPath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) })).status).toBe(200);
+    });
+
+    it("returns a sub-agent's page, passing a well-formed cursor to the index", async () => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      const res = await get(server.port, subagentConversationPath(SID, AGENT), bearer);
+      expect(res.status).toBe(200);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(JSON.parse(res.body)).toEqual(page);
+      expect(indexer.subagentConversation).toHaveBeenCalledWith(SID, AGENT, undefined);
+      expect((await get(server.port, subagentConversationPath(SID, AGENT, CURSOR), bearer)).status).toBe(200);
+      expect(indexer.subagentConversation).toHaveBeenLastCalledWith(SID, AGENT, CURSOR);
+    });
+
+    it('returns 404 for a session not listed and 503 before the first snapshot, without asking the index', async () => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      const other = '88888888-8888-4888-8888-888888888888';
+      for (const path of [subagentsPath(other), subagentConversationPath(other, AGENT)]) {
+        const res = await get(server.port, path, bearer);
+        expect(res.status).toBe(404);
+        expect(res.headers['cache-control']).toBe('no-store');
+      }
+      const early = await start(fakeIndexer());
+      expect((await get(early.port, subagentsPath(SID), bearer)).status).toBe(503);
+      expect((await get(early.port, subagentConversationPath(SID, AGENT), bearer)).status).toBe(503);
+      expect(asked(indexer)).toBe(0);
+    });
+
+    it('returns 404 for an agent the index says is not one of the session’s, and when the index has no list', async () => {
+      const indexer = fakeIndexer(withSession('2026-10-16T00:00:00.000Z', 'pitwall-test-subagents', SID));
+      const server = await start(indexer);
+      expect((await get(server.port, subagentConversationPath(SID, 'zz9'), bearer)).status).toBe(404);
+      expect(indexer.subagentConversation).toHaveBeenCalledWith(SID, 'zz9', undefined);
+      expect((await get(server.port, subagentsPath(SID), bearer)).status).toBe(404);
+    });
+
+    it.each([
+      ['an encoded ../ out of the folder', `/api/sessions/${SID}/subagents/..%2F..%2Fsecret.txt/conversation`],
+      ['an encoded / in the id', `/api/sessions/${SID}/subagents/a%2Fb/conversation`],
+      ['a dot', `/api/sessions/${SID}/subagents/a.b/conversation`],
+      ['a hyphen', `/api/sessions/${SID}/subagents/a-b/conversation`],
+      ['an encoded NUL', `/api/sessions/${SID}/subagents/a%00b/conversation`],
+      ['a double-encoded ..', `/api/sessions/${SID}/subagents/%252e%252e/conversation`],
+      ['a bad escape', `/api/sessions/${SID}/subagents/%E0%A4%A/conversation`],
+      ['too long', `/api/sessions/${SID}/subagents/${'a'.repeat(65)}/conversation`],
+      ['an unsafe session id', '/api/sessions/..%2F..%2Fsecret.txt/subagents'],
+    ])('answers %s with 400 or 404, and never asks the index for an unsafe id', async (_name, path) => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      const res = await raw(server.port, `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nAuthorization: Bearer ${TOKEN}\r\nConnection: close\r\n\r\n`);
+      expect([400, 404]).toContain(statusOf(res));
+      expect(res).not.toContain('SECRET');
+      expect(asked(indexer)).toBe(0);
+    });
+
+    it.each([
+      ['an encoded ..', `/api/sessions/${SID}/subagents/%2e%2e/conversation`],
+      ['a plain ..', `/api/sessions/${SID}/subagents/../conversation`],
+    ])('resolves %s as a URL does, to the session’s own conversation, never a sub-agent’s', async (_name, path) => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      const res = await raw(server.port, `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nAuthorization: Bearer ${TOKEN}\r\nConnection: close\r\n\r\n`);
+      expect(statusOf(res)).toBe(200);
+      expect(indexer.conversation).toHaveBeenCalledWith(SID, undefined);
+      expect(asked(indexer)).toBe(0);
+    });
+
+    it.each([
+      ['empty', '?before='],
+      ['not a cursor', `?before=${Buffer.from('{"v":1}').toString('base64url')}`],
+      ['given twice', `?before=${CURSOR}&before=${CURSOR}`],
+    ])('returns 400 for a before cursor that is %s, without asking the index', async (_name, query) => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      expect((await get(server.port, `${subagentConversationPath(SID, AGENT)}${query}`, bearer)).status).toBe(400);
+      expect(asked(indexer)).toBe(0);
+    });
+
+    it('returns 400 for a cursor the index finds invalid, and 410 for a stale one', async () => {
+      const invalid = await start(withSubagents(new ConversationCursorError('invalid')));
+      expect((await get(invalid.port, subagentConversationPath(SID, AGENT, CURSOR), bearer)).status).toBe(400);
+      const stale = await start(withSubagents(new ConversationCursorError('stale')));
+      const res = await get(stale.port, subagentConversationPath(SID, AGENT, CURSOR), bearer);
+      expect(res.status).toBe(410);
+      expect(res.body).toBe('');
+    });
+
+    it('shares the limit of 4 reads with the session’s conversation pages: 429 with Retry-After for more, on every one of the routes', async () => {
+      const indexer = withSubagents();
+      const waiting: (() => void)[] = [];
+      vi.mocked(indexer.conversation).mockImplementation(() => new Promise((resolve) => waiting.push(() => resolve({ sessionId: SID, entries: [] }))));
+      vi.mocked(indexer.subagents).mockImplementation(() => new Promise((resolve) => waiting.push(() => resolve(list))));
+      vi.mocked(indexer.subagentConversation).mockImplementation(() => new Promise((resolve) => waiting.push(() => resolve(page))));
+      const server = await start(indexer);
+      const slow = [
+        get(server.port, conversationPath(SID), bearer),
+        get(server.port, subagentsPath(SID), bearer),
+        get(server.port, subagentConversationPath(SID, AGENT), bearer),
+        get(server.port, subagentConversationPath(SID, AGENT), bearer),
+      ];
+      await waitFor(() => waiting.length === MAX_CONVERSATION_READS);
+      for (const path of [conversationPath(SID), subagentsPath(SID), subagentConversationPath(SID, AGENT)]) {
+        const refused = await get(server.port, path, bearer);
+        expect(refused.status, path).toBe(429);
+        expect(refused.headers['retry-after']).toBe('1');
+      }
+      for (const finish of waiting.splice(0)) finish();
+      expect((await Promise.all(slow)).map((res) => res.status)).toEqual([200, 200, 200, 200]);
+      // Each finished read frees its place.
+      vi.mocked(indexer.subagents).mockImplementation(async () => list);
+      expect((await get(server.port, subagentsPath(SID), bearer)).status).toBe(200);
+    });
+
+    it('frees its place when the index fails, with no detail', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const indexer = withSubagents(new Error('boom /secret/path'));
+      vi.mocked(indexer.subagents).mockImplementation(async () => {
+        throw new Error('boom /secret/path');
+      });
+      const server = await start(indexer);
+      for (let i = 0; i < MAX_CONVERSATION_READS + 1; i++) {
+        for (const path of [subagentsPath(SID), subagentConversationPath(SID, AGENT)]) {
+          const res = await get(server.port, path, bearer);
+          expect(res.status).toBe(500);
+          expect(res.body).toBe('');
+        }
+      }
+    });
+
+    it('refuses other methods: 403 with the raw token, 404 with the apiKey and this Origin', async () => {
+      const indexer = withSubagents();
+      const server = await start(indexer);
+      const apiKey = await apiKeyOf(server.port);
+      const allowed = { authorization: `Bearer ${apiKey}`, origin: origin(server.port) };
+      for (const path of [subagentsPath(SID), subagentConversationPath(SID, AGENT)]) {
+        expect((await get(server.port, path, bearer, 'POST')).status).toBe(403);
+        expect((await get(server.port, path, allowed, 'POST')).status).toBe(404);
+      }
+      expect(asked(indexer)).toBe(0);
+    });
+
+    it('with a real index and sub-agent folder: lists, pages, and refuses an agent that isn’t the session’s', async () => {
+      const dir = join(tmp, 'subagents-real');
+      const main = join(dir, `${SID}.jsonl`);
+      const folder = join(dir, SID, 'subagents');
+      await mkdir(folder, { recursive: true });
+      const at = (s: number) => new Date(Date.parse('2026-10-16T00:00:00.000Z') + s * 1000).toISOString();
+      await writeFile(join(folder, `agent-${AGENT}.meta.json`), JSON.stringify({ description: 'Build the made-up feature', toolUseId: 'toolu_x1', requestShape: 'background' }));
+      await writeFile(
+        join(folder, `agent-${AGENT}.jsonl`),
+        Array.from({ length: 55 }, (_, i) => JSON.stringify({ type: 'assistant', isSidechain: true, agentId: AGENT, timestamp: at(10 + i), message: { id: `m${i}`, content: [{ type: 'text', text: `Step ${i}` }] } })).join('\n') + '\n',
+      );
+      // Outside the folder, where `../` would lead.
+      await writeFile(join(dir, SID, 'agent-up.jsonl'), 'SECRET\n');
+      await writeFile(main, `${JSON.stringify({ type: 'assistant', timestamp: at(5), message: { id: 'm', content: [{ type: 'tool_use', id: 'toolu_x1', name: 'Agent', input: { description: 'Build the made-up feature' } }] } })}\n`);
+      const indexer = createIndexer(
+        { roots: ['/work'], intervalMs: 60_000 },
+        {
+          agents: { list: async () => ({ ok: true, rows: [{ sessionId: SID, name: 'pitwall-test-subagents', kind: 'interactive', cwd: '/work/repo', pid: 4242, status: 'idle', startedAt: at(0) }] }) },
+          groups: { resolve: async (cwd) => ({ key: cwd, kind: 'directory' }), prune() {} },
+          transcripts: { read: async () => ({ transcript: 'ok' }), transcriptFile: () => main, retain() {} },
+          subagents: createSubagentTracker(),
+          realpath: async (p) => p,
+          now: Date.now,
+          home: '/home/someone',
+          concurrency: 2,
+        },
+      );
+      await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+      try {
+        const server = await start(indexer);
+        const listed = await get(server.port, subagentsPath(SID), bearer);
+        expect(listed.status).toBe(200);
+        expect(JSON.parse(listed.body)).toMatchObject({ sessionId: SID, truncated: false, subagents: [{ agentId: AGENT, description: 'Build the made-up feature', state: 'running', background: true }] });
+
+        const newest = JSON.parse((await get(server.port, subagentConversationPath(SID, AGENT), bearer)).body) as ConversationPage;
+        expect(newest.sessionId).toBe(SID);
+        expect(newest.entries).toHaveLength(50);
+        const older = await get(server.port, subagentConversationPath(SID, AGENT, newest.before), bearer);
+        expect((JSON.parse(older.body) as ConversationPage).entries.map((e) => e.text)).toEqual(['Step 0', 'Step 1', 'Step 2', 'Step 3', 'Step 4']);
+
+        for (const path of [subagentConversationPath(SID, 'up'), `/api/sessions/${SID}/subagents/..%2Fagent-up/conversation`, subagentConversationPath(SID, 'b1')]) {
+          const res = await raw(server.port, `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nAuthorization: Bearer ${TOKEN}\r\nConnection: close\r\n\r\n`);
+          expect(statusOf(res), path).toBe(404);
+          expect(res).not.toContain('SECRET');
+        }
+
+        // Rewritten: the old cursor is stale.
+        await rm(join(folder, `agent-${AGENT}.jsonl`));
+        await writeFile(join(folder, `agent-${AGENT}.jsonl`), `${JSON.stringify({ type: 'assistant', isSidechain: true, timestamp: at(99), message: { content: 'Again.' } })}\n`);
+        expect((await get(server.port, subagentConversationPath(SID, AGENT, newest.before), bearer)).status).toBe(410);
+      } finally {
+        indexer.stop();
+      }
     });
   });
 

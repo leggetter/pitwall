@@ -10,8 +10,12 @@
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
 //                               snapshot, else 503; the session in it, else 404. Every route that
 //                               takes a session id, and every M2 input path, goes through it.
-//                               At most 4 conversation pages are read at once, else 429. Stop,
-//                               remove, resume and open in an editor share one limit of 4, else 429
+//                               At most 4 conversation reads at once, else 429: a session's
+//                               conversation pages, its sub-agent list and its sub-agents' pages
+//                               (W76) share the limit. A sub-agent's id is letters and digits
+//                               and one of the session's, by a fresh listing of its folder, else
+//                               404. Stop, remove, resume and open in an editor share one limit
+//                               of 4, else 429
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
 //                               at most 32 connections in the handshake at once, on /ws and
 //                               /attach together, else close 1013 with no challenge; then the
@@ -31,10 +35,19 @@ import { createServer, STATUS_CODES, type IncomingMessage, type Server } from 'n
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { getRequestListener } from '@hono/node-server';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
-import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
+import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
+import {
+  ATTACH_PATH,
+  CONVERSATION_STALE_STATUS,
+  conversationPath,
+  SNAPSHOT_PATH,
+  subagentConversationPath,
+  subagentsPath,
+  WS_PATH,
+  type ConversationPage,
+} from '../shared/protocol.js';
 import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
@@ -69,6 +82,9 @@ export const DEFAULT_PORT = 4517;
  * pattern is decoded back.
  */
 const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
+/** The sub-agent routes (W76), decoded the same way. */
+const SUBAGENTS_ROUTE = decodeURIComponent(subagentsPath(':sessionId'));
+const SUBAGENT_CONVERSATION_ROUTE = decodeURIComponent(subagentConversationPath(':sessionId', ':agentId'));
 
 /**
  * The status for a `before` cursor made for another version of the
@@ -285,13 +301,12 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     return c.json(snapshot);
   });
 
-  // Read from the transcript, a page at a time and at most about 8 MiB per
-  // page, only for sessions in the latest snapshot. The guard checks the id
-  // first, and the cursor is checked before the index sees it.
-  app.get(CONVERSATION_ROUTE, async (c) => {
-    c.header('Cache-Control', 'no-store');
-    const lookup = resolveSession(indexer, c.req.param('sessionId'));
-    if (!lookup.ok) return c.body(null, lookup.status);
+  /**
+   * A page of a transcript, for the session's conversation and a sub-agent's (W76) alike: the
+   * cursor is checked before the index sees it, the shared limit applies, and a cursor the index
+   * can't use is 400, or 410 when it's stale.
+   */
+  async function pageOf(c: Context, read: (before: string | undefined) => Promise<ConversationPage | undefined>): Promise<Response> {
     const cursors = c.req.queries('before');
     if (cursors !== undefined && cursors.length !== 1) return c.body(null, 400);
     const before = cursors?.[0];
@@ -303,7 +318,7 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     conversationReads += 1;
     let page;
     try {
-      page = await indexer.conversation(lookup.session.sessionId, before);
+      page = await read(before);
     } catch (error) {
       if (error instanceof ConversationCursorError) {
         return c.body(null, error.reason === 'stale' ? STALE_CURSOR_STATUS : 400);
@@ -314,6 +329,47 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     }
     if (!page) return c.body(null, 404);
     return c.json(page);
+  }
+
+  // Read from the transcript, a page at a time and at most about 8 MiB per
+  // page, only for sessions in the latest snapshot. The guard checks the id
+  // first, and the cursor is checked before the index sees it.
+  app.get(CONVERSATION_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    return pageOf(c, (before) => indexer.conversation(lookup.session.sessionId, before));
+  });
+
+  // A listed session's sub-agents (W76), from its folder and its transcripts. Under the same limit
+  // as the pages, since it can read what's new in every sub-agent's transcript.
+  app.get(SUBAGENTS_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    if (conversationReads >= MAX_CONVERSATION_READS) {
+      c.header('Retry-After', '1');
+      return c.body(null, 429);
+    }
+    conversationReads += 1;
+    try {
+      const list = await indexer.subagents(lookup.session.sessionId);
+      return list === undefined ? c.body(null, 404) : c.json(list);
+    } finally {
+      conversationReads -= 1;
+    }
+  });
+
+  // One of a listed session's sub-agents' own transcript, paged as the session's is (W76). The
+  // agent id is checked before the index sees it, and the index finds its file only by listing
+  // the session's folder, never by building a path from the id.
+  app.get(SUBAGENT_CONVERSATION_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    const agentId = c.req.param('agentId');
+    if (agentId === undefined || !isSafeAgentId(agentId)) return c.body(null, 404);
+    return pageOf(c, (before) => indexer.subagentConversation(lookup.session.sessionId, agentId, before));
   });
 
   routes?.(app);

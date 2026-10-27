@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, open, rename, rm, stat, truncate as truncateFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, open, rename, rm, stat, symlink, truncate as truncateFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -1481,5 +1481,88 @@ describe('readConversationPage: questions asked in a dialog (W49)', () => {
         expect(isWellFormedCursor(cursor(bad)), JSON.stringify(bad)).toBe(false);
       }
     });
+  });
+});
+
+describe('readConversationPage: sub-agents (W76)', () => {
+  const labels = {
+    descriptions: new Map([
+      ['a1b2c3', 'Build the made-up feature'],
+      ['d4e5f6', 'Review the made-up change'],
+    ]),
+    started: new Map([['toolu_agent1', 'a1b2c3']]),
+  };
+  const sidechain = { isSidechain: true, agentId: 'a1b2c3' };
+
+  it("reads a sub-agent's own transcript with `sidechain`, which a session's read leaves out", async () => {
+    const file = await transcript(
+      jsonl(
+        user('Do the made-up thing.', sidechain),
+        assistant([text('Looking.')], 'msg_s1', sidechain),
+        assistant([toolUse('toolu_s1', 'Bash', { command: 'npm test' })], 'msg_s2', sidechain),
+        { ...toolResult('toolu_s1', false), ...sidechain },
+        assistant([text('All green.')], 'msg_s3', sidechain),
+      ),
+    );
+    expect((await page(file)).entries).toEqual([]);
+    const read = await page(file, undefined, { sidechain: true });
+    expect(read.sessionId).toBe(SID);
+    expect(read.entries.map((e) => [e.kind, e.text])).toEqual([
+      ['user', 'Do the made-up thing.'],
+      ['assistant', 'Looking.'],
+      ['tool', 'Bash: npm test'],
+      ['assistant', 'All green.'],
+    ]);
+    expect(read.entries[2]?.toolError).toBe(false);
+  });
+
+  it('pages a sub-agent’s transcript with cursors, as a session’s', async () => {
+    const entries: unknown[] = [];
+    for (let i = 0; i < PAGE_ENTRIES + 10; i++) entries.push(assistant([text(`Step ${i}`)], `msg_p${i}`, sidechain));
+    const file = await transcript(jsonl(...entries));
+    const { pages, entries: all } = await allPages(file, { sidechain: true });
+    expect(pages).toHaveLength(2);
+    expect(all.map((e) => e.text)).toEqual(Array.from({ length: PAGE_ENTRIES + 10 }, (_, i) => `Step ${i}`));
+  });
+
+  it('labels the Agent call that started one, a SendMessage call to one, and its report, with its id and description', async () => {
+    const file = await transcript(
+      jsonl(
+        assistant([toolUse('toolu_agent1', 'Agent', { description: 'Build the made-up feature', prompt: 'Go.', run_in_background: true })], 'msg_1'),
+        toolResult('toolu_agent1'),
+        assistant([toolUse('toolu_agent2', 'Agent', { description: 'Not one of its sub-agents' })], 'msg_2'),
+        assistant([toolUse('toolu_send1', 'SendMessage', { to: 'd4e5f6', message: 'Carry on.' })], 'msg_3'),
+        assistant([toolUse('toolu_send2', 'SendMessage', { to: ' a1b2c3 ' })], 'msg_4'),
+        assistant([toolUse('toolu_send3', 'SendMessage', { to: 'someone-else', message: 'Hello.' })], 'msg_5'),
+        user('<task-notification>\n<task-id>a1b2c3</task-id>\n<status>completed</status>\n<summary>Agent finished</summary>\n</task-notification>', { origin: { kind: 'task-notification' } }),
+        user('The made-up report.', { origin: { kind: 'peer', from: 'a1b2c3' } }),
+        user('From a peer that is no sub-agent.', { origin: { kind: 'peer', from: 'zz9' } }),
+        user(`Another Claude session sent a message:\n<cross-session-message from="d4e5f6">Done reviewing.</cross-session-message>`),
+      ),
+    );
+    const entries = (await page(file, undefined, { subagents: labels })).entries;
+    expect(entries.map((e) => [e.kind, e.subagent?.agentId])).toEqual([
+      ['tool', 'a1b2c3'],
+      ['tool', undefined],
+      ['tool', 'd4e5f6'],
+      ['tool', 'a1b2c3'],
+      ['tool', undefined],
+      ['notice', undefined],
+      ['cross-session', 'a1b2c3'],
+      ['cross-session', undefined],
+      ['cross-session', 'd4e5f6'],
+    ]);
+    expect(entries[0]).toMatchObject({ text: 'Agent: Build the made-up feature', subagent: { agentId: 'a1b2c3', description: 'Build the made-up feature' } });
+    expect(entries[6]).toMatchObject({ text: 'The made-up report.', subagent: { agentId: 'a1b2c3', description: 'Build the made-up feature' } });
+    // Without labels, nothing is labelled.
+    expect((await page(file)).entries.some((e) => e.subagent !== undefined)).toBe(false);
+  });
+
+  it('with `noFollow`, a symlink is no page', async () => {
+    const real = await transcript(jsonl(assistant([text('Behind a link.')], 'msg_l', sidechain)));
+    const link = path.join(tmp, `link${fileCounter++}.jsonl`);
+    await symlink(real, link);
+    expect(await readConversationPage(link, SID, undefined, { sidechain: true, noFollow: true })).toBeUndefined();
+    expect((await page(link, undefined, { sidechain: true })).entries).toHaveLength(1);
   });
 });
