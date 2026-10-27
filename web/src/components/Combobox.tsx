@@ -12,7 +12,8 @@
 //   it without moving. Enter accepts the highlighted option and never submits the form; ⌘/Ctrl +
 //   Enter is left to the form. Escape closes an open list, and goes no further, so the dialog stays;
 //   with the list shut it goes on as before. Tab leaves without accepting. ← → Home End move the
-//   caret and leave the options.
+//   caret and leave the options. While an input method is composing, every key is its own: ↓ picks
+//   its candidates and Enter confirms them, so none of these apply.
 // - A click on an option accepts it, and focus stays in the field. A click in the field opens the
 //   list; a press outside it closes it, and so does focus moving to another control in its form, as
 //   when a submit puts focus on a field with a problem. Focus leaving the page, as when you switch
@@ -21,6 +22,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
+import { isComposing } from './Terminal.js';
 import { plainText } from '../format.js';
 
 export interface ComboboxOption {
@@ -144,7 +146,8 @@ export function Combobox<T extends ComboboxOption>({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (busy) return;
+    // The input method's keys, as Terminal.tsx has them, Safari's 229 after compositionend included.
+    if (busy || isComposing(event.nativeEvent)) return;
     const count = options.length;
     const now = latest.current;
     const current = now.active >= 0 && now.active < count ? now.active : -1;

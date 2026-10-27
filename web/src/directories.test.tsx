@@ -159,6 +159,19 @@ describe('matching', () => {
     expect(labels('~/code/', LIST, [CODE])).toHaveLength(8);
   });
 
+  it('matches a name stored decomposed (NFD) with text typed composed (NFC), and the other way round, keeping the name as stored', () => {
+    const nfd = 'cafe\u0301';
+    const nfc = 'caf\u00e9';
+    const list: DirectoryList = { roots: [{ root: CODE, dirs: [{ path: nfd }, { path: `${nfc}-two` }, { path: 'cafeteria' }], truncated: false }] };
+    const { options } = directoryOptions(list, [CODE]);
+    const match = (text: string) => matchDirectories(options, text).shown.map((option) => option.rel);
+    expect(match(nfc)).toEqual([nfd, `${nfc}-two`]);
+    expect(match(nfd)).toEqual([nfd, `${nfc}-two`]);
+    expect(match(`~/code/${nfc.toUpperCase()}`)).toEqual([nfd, `${nfc}-two`]);
+    // What's shown and sent is the name as the server listed it.
+    expect(options[0]).toMatchObject({ label: `~/code/${nfd}`, path: `${CODE}/${nfd}` });
+  });
+
   it(`shows at most ${MAX_SHOWN}, and says how many matched`, () => {
     const many: DirectoryList = {
       roots: [{ root: CODE, dirs: Array.from({ length: 312 }, (_, i) => ({ path: `project-${String(i).padStart(3, '0')}` })), truncated: false }],

@@ -205,7 +205,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
   );
 
   const typed = customDir.trim();
-  const cwd = dirChoice !== OTHER ? dirChoice : accepted !== undefined && typed === accepted.label ? accepted.path : resolveTypedDirectory(typed, snapshot.roots);
+  // The chosen option's path only while the field shows exactly its label, untrimmed, so what's sent is what's shown.
+  const cwd = dirChoice !== OTHER ? dirChoice : accepted !== undefined && customDir === accepted.label ? accepted.path : resolveTypedDirectory(typed, snapshot.roots);
   const model = modelChoice === OTHER ? customModel.trim() : modelChoice;
   const problems = {
     cwd: dirChoice !== OTHER ? directoryProblem(cwd, snapshot.roots, tab) : typedDirectoryProblem(typed, cwd, snapshot.roots, tab),
