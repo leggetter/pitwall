@@ -1805,9 +1805,9 @@ describe('createIndexer: sub-agents (W76)', () => {
       await writeFile(main, `${await readFile(main, 'utf8')}${steps('x', 1, 60).replaceAll('"isSidechain":true,', '')}`);
       const sessionPage = await indexer.conversation('live');
       await expect(indexer.subagentConversation('live', 'a1', sessionPage?.before)).rejects.toMatchObject({ reason: 'stale' });
-      // Rewritten since: stale.
+      // Rewritten since, with other content (a file system may reuse the inode): stale.
       await rm(path.join(folder, 'agent-a1.jsonl'));
-      await writeFile(path.join(folder, 'agent-a1.jsonl'), steps('a1', 20, 70));
+      await writeFile(path.join(folder, 'agent-a1.jsonl'), steps('a1', 500, 70));
       await expect(indexer.subagentConversation('live', 'a1', newest?.before)).rejects.toMatchObject({ reason: 'stale' });
 
       // A session that leaves the snapshot is no longer served.
