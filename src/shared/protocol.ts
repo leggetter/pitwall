@@ -583,6 +583,46 @@ export type SpawnResult =
 export const SPAWN_PATH = '/api/sessions';
 
 /**
+ * The directories under the roots, for the New session dialog's "Another
+ * directory under a root…" field, which narrows them as you type (Phil,
+ * 2026-10-27). GET, no query, answered with a DirectoryList. The same token,
+ * Host and Origin checks as every other route.
+ *
+ * The server walks each root to DIRECTORY_DEPTH levels below it, and lists
+ * directories only: never a file or a symlink, and never a folder whose name
+ * starts with `.`, is `node_modules`, or has a control or bidi control
+ * character, nor anything inside one. It stops a root at DIRECTORY_MAX entries
+ * or after 2 seconds, and says so with `truncated`. A result is reused for 30
+ * seconds, and requests during a walk share it. A root it can't read lists
+ * none. A spawn still checks its `cwd` as before: the list only helps to type it.
+ */
+export const DIRECTORIES_PATH = '/api/directories';
+
+/** How many levels below a root the directory list goes. */
+export const DIRECTORY_DEPTH = 3;
+
+/** The most directories listed under one root. */
+export const DIRECTORY_MAX = 5000;
+
+export interface DirectoryEntry {
+  /** Relative to its root, `/`-separated, with no leading or trailing slash. */
+  path: string;
+  /** Set when the directory has a `.git` entry: a repo's top level or a worktree. */
+  repo?: true;
+}
+
+export interface DirectoryList {
+  roots: Array<{
+    /** The root, as IndexSnapshot.roots lists it. */
+    root: string;
+    /** Shallower first, then by path, compared by UTF-16 code unit. */
+    dirs: DirectoryEntry[];
+    /** True when the walk stopped early, at DIRECTORY_MAX entries or the time limit. */
+    truncated: boolean;
+  }>;
+}
+
+/**
  * Result of stop and remove. Both apply to background sessions only; others
  * get 409, ended interactive sessions included. More than 4 stop, remove or
  * resume commands at once get 429 with `Retry-After`.
