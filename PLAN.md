@@ -288,7 +288,7 @@ In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 
 1. **A durable home for the headless app-check tools.** The integrated check every M3 review ran, and each work item's part of it, lived in the session scratchpad and went with the 2026-10-23 reboot. Every later review needs them, so they come first, committed to the repo or kept in a gitignored folder. Done: `scripts/appcheck/` (W64).
 2. **Resuming ended interactive sessions** (Phil, 2026-10-23: after M3). After his laptop restarted, every interactive session left the list. It starts with a live check of `claude --resume <id> --bg` on a throwaway session. See "Sessions gone after a restart" in M3. The live check is spike 006 (W65). Done: W66 and W67 built it, merged in #71 and #72.
-3. **Spike 005, ending an interactive session** (below). It's about the same session lifecycle as 2, so it follows it.
+3. **Spike 005, ending an interactive session** (below). It's about the same session lifecycle as 2, so it follows it. Done 2026-10-27 (W80); building it waits on Phil.
 4. **Sub-agents in the session view** (Phil, 2026-10-23: after M3). See "Sub-agents in the session view" in M3.
    - **What the data says** (coordinator, 2026-10-27, from transcript structure and the coordinator's own session):
      - Each sub-agent has a transcript and a `.meta.json` (description, type, the tool call that started it, its depth) in a `subagents` folder beside the session's transcript.
@@ -309,6 +309,15 @@ In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 ### Spike 005 - Ending an interactive session (after M3)
 
 Phil, 2026-10-21: run it after M3. Whether pitwall can end a session running in a terminal by signalling its Claude process, leaving the tab at its shell prompt. Pitwall never closes the tab itself.
+
+- **Done 2026-10-27** ([`docs/spikes/005-ending-an-interactive-session.md`](docs/spikes/005-ending-an-interactive-session.md), W80):
+  - **It works.** Eight throwaway Haiku sessions in `~/oss/pitwall-sandbox`, removed afterwards. SIGTERM, SIGINT and SIGHUP each ended a session in 0.6 to 1.8 s (exit 143, 0 and 129), printing `claude --resume <id>`.
+  - **Hooks and processes:** SessionEnd hooks ran. Every MCP server, monitor, background command and sub-agent ended with it, and nothing was orphaned.
+  - **The transcript** stayed whole, and both an idle session and one killed mid-reply resumed.
+  - **The row** left `claude agents` at once.
+  - **What it costs:** a reply being written is lost; running work is killed, not moved to the background; a commit in progress doesn't happen, though the repo is left consistent, with no lock.
+  - **The idle guard needs the transcript:** a plugin's monitor keeps every session `busy`, so "idle" has to come from W69's turn end.
+  - **Decision for Phil:** build "End session" for interactive sessions, with the guards below? The coordinator's recommendation is yes.
 
 - **Run by:** the coordinator, never a sub-agent, on about six throwaway `pitwall-test-*` sessions on Haiku, in a scratch folder Phil creates and trusts himself.
 - **Measure:** SIGTERM, SIGINT and SIGHUP; the exit code; whether the transcript is whole and `claude --resume` reopens it; what happens to a background command, a sub-agent and a stdio MCP server; whether SessionEnd hooks run; whether the row leaves `claude agents`; and what a kill during a commit leaves behind, such as `.git/index.lock`.
@@ -450,6 +459,7 @@ Same way of working as M3, on `m3.1/integration`.
 | W77 | Sub-agents in the web UI: the session view's Sub-agents tab, a sub-agent's transcript read-only, the conversation's entries labelled by description, and the row's running count | `m3.1/subagents-web` | M | In progress |
 | W78 | Spike 008: how a background session started from pitwall gets a dropped or pasted file or image, and where pitwall keeps it | coordinator | S | Queued, after the builds in progress |
 | W79 | Attachments in New session's first prompt: drop and paste, the list with Remove, and an upload route | `m3.1/attachments` | M | Queued, after W78 |
+| W80 | Spike 005: ending an interactive session with a signal | coordinator, in `~/oss/pitwall-sandbox` | S | Done 2026-10-27 ([`docs/spikes/005-ending-an-interactive-session.md`](docs/spikes/005-ending-an-interactive-session.md)). Eight throwaway Haiku sessions, removed afterwards. The first run met Claude Code's trust prompt, because the coordinator had made the sandbox a git repo; the driver typed nothing and stopped it, and the repo moved into a subfolder so the sandbox kept the trust it inherits from `~/oss`. Findings in the Spike 005 section; the inspector printed one of Phil's MCP URLs with its API key into the coordinator's session only, and now redacts them |
 
 ## M2 work breakdown
 
@@ -677,7 +687,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] Resume ended interactive sessions (W65 to W67, merged in #71 and #72)
 - [x] Needs you from each session's context (W69, merged in #74)
 - [x] Directory autocomplete in New session (W70, merged in #73)
-- [ ] Spike 005: ending an interactive session (after M3)
+- [x] Spike 005: ending an interactive session (W80, 2026-10-27; building it waits on Phil)
 - [ ] Sub-agents in the session view (after M3)
 - [ ] Open in an editor, from pitwall's server (after M3)
 - [ ] M4: my open pull requests
