@@ -659,13 +659,14 @@ Three columns, left to right: where to look (the repo list), what's there (the s
 │ pitwall  ~/git                                 [+ New session]  ● Live  7s ago  ◐  ⚙  ⌨   │
 ├─ repo list, 240 px ─┬─ session list (≥ 360 px) ─────────────┬┬─ session view ─────────────┤
 │ Needs you       [2] │ ⑂ pitwall      4 sessions [2 need you] ││ name · title     ★  ⋯  ✕  │
-│ All sessions     12 │ [Filter sessions   /] [Interactive]    ││ badge · kind · 5m · cwd   │
-│ Starred           2 │ [Background]         Sort [Urgency ▾]  │├ Conversation | Terminal ──┤
-│ ─────────────────── │────────────────────────────────────────││ body (scrolls)            │
-│ ▢ ~/git           3 │▌name · title           [waiting] 1m  ★ ││                           │
-│ ⑂ pitwall       [2] │  Asked: Which queue should failed…     ││                           │
-│ ⑂ api-server      4 │ name · title                [busy] 6s  ││                           │
-│ ▢ scratch         1 │ Finished (3)  ›                        │├ footer: message box ──────┤
+│ All sessions     12 │ [Filter sessions                    /] ││ badge · kind · 5m · cwd   │
+│ Starred           2 │ [Interactive] [Background]             │├ Conversation | Terminal ──┤
+│ ─────────────────── │                       Sort [Urgency ▾] ││ body (scrolls)            │
+│ ▢ ~/git           3 │────────────────────────────────────────││                           │
+│ ⑂ pitwall       [2] │▌name · title           [waiting] 1m  ★ ││                           │
+│ ⑂ api-server      4 │  Asked: Which queue should failed…     ││                           │
+│ ▢ scratch         1 │ name · title                [busy] 6s  ││                           │
+│                     │ Finished (3)  ›                        │├ footer: message box ──────┤
 └─────────────────────┴────────────────────────────────────────┴┴───────────────────────────┘
 ```
 
@@ -772,10 +773,16 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
       - A selected group that has left the snapshot and isn't hidden has no button: there's no item to hide. One that's hidden has Show in repo list; once that's pressed the button goes, and focus goes to the heading.
       - The views have none.
     - No summary where it would only repeat the empty state below it (W31): over no sessions at all ("0 sessions · Nothing needs you" above "No Claude Code sessions under *roots*"), over Needs you with nothing in it ("Nothing needs you" above "Nothing needs you right now"), and over Starred with nothing in it (W53). The filter's no-match state keeps it, since "0 of 4 sessions" says what the filter hides.
-  - **Line 2,** 8 px below, wrapping:
-    - the [filter field](#search), at least 200 px wide and growing;
-    - then the [filter chips](#filter-chips) and "Clear filters";
-    - then, at the right, the sort setting: a visible "Sort" label (label style, `--pw-text-muted`), 6 px before a native [select](#inputs-textareas-and-selects), 28 px tall. It's in the filters' `role="search"` form, after the chips, so it wraps with them: at 360 px the field has its own line, and the chips and Sort share the next.
+  - **Line 2,** 8 px below, and the lines after it: the filters, then the sort setting, together in the filters' `role="search"` form, 8 px between lines. Turning a filter on or off, a chip or text in the field, moves nothing in them, at any width, and doesn't change how many lines they take, so the rows below stay put too (W75; Phil, 2026-10-27: "selecting a filter changes the alignment/rows"). Where they wrap depends on the width alone.
+    - The [filter field](#search), on a line of its own, the column's full width, so its placeholder shows whole.
+    - Then the [filter chips](#filter-chips), each as wide off as on, and "Clear filters" after them, which keeps its room while no filter is on.
+    - Then, at the right, the sort setting: a visible "Sort" label (label style, `--pw-text-muted`), 6 px before a native [select](#inputs-textareas-and-selects), 28 px tall, 12 px after Clear filters' room. The chips, Clear filters and Sort take about 450 px, so:
+      - **A session list about 480 px wide or more** (900 px windows): Sort shares the chips' line, at its right. 2 lines.
+      - **About 340 to 480 px** (360 px at a 1,200 px window, 375 px, 440 px at 1,440 px): Sort has a line of its own after the chips', at the right. 3 lines.
+      - **Narrower** (a 320 px window): Clear filters' room wraps under the chips, in their group, and Sort comes after it. 4 lines.
+    - **Why Clear filters keeps its room** (measured at 375 px, W75): it's 88 px, and below about 480 px there's no room for it beside the chips and Sort. Appearing, it pushed Sort onto the next line; going, it brought it back. With its room kept, Sort is always on the line it stays on. Clear filters can't go to a line of its own after Sort either: Sort would have to come before it on the page, out of the keyboard order.
+    - **What it costs:** with no filter on, the bar is a line taller than before W75, when the field shared its line where it could: 64 px, not 28, at a 900 px window, and 96 px, not 64, at 375, 1,200 and 1,440 px. With a filter on it's as tall as it was, except at 320 px, a line taller either way.
+    - **Still open:** at 320 px, line 1 can wrap when a filter goes on, as the summary grows from "18 sessions" to "13 of 18 sessions", and that moves the whole bar down a line, though nothing in it moves against the rest. Line 1 isn't the bar's; it's left for now.
 - **Rows:** [session rows](#session-rows) in a `<ul>`, in the order the sort setting picks (Phil, 2026-10-20):
   - **Urgency,** the default: the sessions that need you first, whatever the reason (W69), then busy, then most recently active, with stale sessions after those. This is the index's order; the web UI sorts every list itself, in each order.
   - **Recent:** most recently active first.
@@ -904,7 +911,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 
 ### Search
 
-- **The filter field:** height 28 px, at least 200 px wide and growing to fill its line (see [Session list](#session-list)). A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px, and padding-right 32 px once there's text. A placeholder too long for the field ends in an ellipsis.
+- **The filter field:** height 28 px, the whole width of a line it has to itself (see [Session list](#session-list)). A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px, and padding-right 32 px once there's text. A placeholder too long for the field ends in an ellipsis.
 - **Right side:** a `/` key cap while it's empty and unfocused, 4 px from the right edge and centred, while the single-key shortcuts are on; a ghost sm `clear` icon button ("Clear filter"), 2 px from the right edge, once there's text. Clearing with it keeps focus in the field. The browser's own clear button is hidden.
   - The key cap is a hint, `aria-hidden`, and clicks go through it to the field. The field says the same in `aria-keyshortcuts="/"`, only while the shortcuts are on.
   - While the shortcuts are on, the text keeps 32 px clear on the right, focused or not, so the placeholder doesn't move when the key cap goes.
@@ -965,7 +972,8 @@ A text field with a list of suggestions that narrows as you type (W70; Phil, 202
 
 ### Filter chips
 
-- **Size:** 24 px tall, padding 0 8 px, label style (xs 12/20, 500), `--pw-radius-sm`, an optional count after the label in tabular numbers.
+- **Size:** 24 px tall, label style (xs 12/20, 500), `--pw-radius-sm`, an optional count after the label in tabular numbers.
+  - **As wide off as on** (W75), so pressing one moves nothing after it: on, padding 0 8 px, with the check before the label; off, padding 0 18 px, the check's 20 px (16 px and its 4 px gap) shared between the sides, so the label is centred. The label moves 10 px within its chip as the check comes and goes; the chip's box doesn't.
 - **Off:** `--pw-surface`, `--pw-shadow-control`, text `--pw-text-muted`. Hover: `--pw-surface-hover`, text `--pw-text`.
 - **On:** `--pw-selected`, `--pw-ring-selected` in place of the control edge, text `--pw-info-tint-fg`, and a 16 px `copied` (check) icon before the label, 4 px from it.
 - **Focus:** `--pw-ring-focus` added to the chip's edge or ring.
@@ -973,6 +981,7 @@ A text field with a list of suggestions that narrows as you type (W70; Phil, 202
 - **The chips:** "Interactive" and "Background", which combine as OR, so either one alone narrows the list and both together show every session.
   - "Needs you" is a view in the [repo list](#repo-list), replacing today's "Needs attention only" checkbox, and finished sessions have their own [section](#finished-section), so neither is a chip.
   - A ghost sm "Clear filters" button appears after the chips, inside their group so it wraps with them, when any chip is on or the field has text. It clears the text and the chips, and puts focus in the field, since the button itself goes away.
+  - While no filter is on, its room is kept (W75): an unseen copy in its place, a `<span>` with the button's classes and label, `visibility: hidden` and `aria-hidden="true"`, so it's no button, takes no focus and says nothing to a screen reader. So what comes after it, such as the session list's Sort, never moves as the button comes and goes.
 
 ### Tabs
 
