@@ -14,7 +14,8 @@
 //     415  the body isn't `Content-Type: application/json`
 //     422  Claude Code says the workspace isn't trusted. `hint` is the command that trusts it,
 //          for the user to run. pitwall never grants trust itself
-//     429  another spawn is still running, or too many in the last minute. Retry-After is set
+//     429  another spawn is still running, or too many sessions started in the last minute, new and
+//          resumed together (SpawnLimiter). Retry-After is set
 //     502  Claude Code failed or refused, with its first error line, or wasn't found
 //     503  no snapshot yet, so the roots aren't known
 //     504  `claude --bg` didn't finish in time. The session may still appear
@@ -39,7 +40,8 @@
 //          under a root (W81); or Claude Code started a copy instead, with `copyShortId`, which
 //          pitwall leaves for the user
 //     422  Claude Code says the workspace isn't trusted, with `hint`, as for spawn
-//     429  as for stop and remove, whose limit it shares
+//     429  as for stop and remove, whose limit it shares; or, since it starts a long-lived session,
+//          past spawn's limit of sessions started in the last minute, which it shares (W81)
 //     502  the fresh `claude agents` failed, so nothing was resumed; or Claude Code failed,
 //          with its first error line, or reported no id
 //     504  `claude --resume` didn't finish in time. The session may still appear
@@ -102,7 +104,7 @@ export interface ActionOptions {
   timeoutMs?: number;
   /** Spawns allowed to run at once. Default 1. */
   maxConcurrentSpawns?: number;
-  /** Spawns allowed per window. Default 5 a minute. */
+  /** Sessions started per window, spawns and resumes together (W81). Default 5 a minute. */
   spawnRate?: { max: number; windowMs: number };
   /** Stop, remove and resume commands allowed to run at once, together. Default 4. */
   maxConcurrentCommands?: number;
@@ -321,9 +323,13 @@ function said(result: Extract<CommandResult, { kind: 'exited' }>): string {
   return result.stderr.trim() !== '' ? result.stderr : result.stdout;
 }
 
+/** Why a start was refused, with how many seconds to wait, for 429 and `Retry-After`. */
+export type LimitRefusal = { ok: false; error: string; retryAfterSeconds: number };
+
 /**
- * Counts spawns, so a stuck UI can't fork-bomb sessions: at most `max`
- * running at once, and `rate.max` started per `rate.windowMs`.
+ * Counts the long-lived sessions pitwall starts, so a stuck UI can't fork-bomb them: at most `max`
+ * spawns running at once, and `rate.max` sessions started per `rate.windowMs`, spawns and resumes
+ * together (W81).
  */
 export class SpawnLimiter {
   private running = 0;
@@ -336,24 +342,16 @@ export class SpawnLimiter {
   ) {}
 
   /**
-   * Takes a slot, or says how many seconds to wait. Synchronous, so two
-   * requests can't both pass between the check and the take.
+   * Takes a spawn's slot, and counts it as a start, or says how many seconds to wait. Synchronous,
+   * so two requests can't both pass between the check and the take.
    */
-  acquire(): { ok: true; release: () => void } | { ok: false; error: string; retryAfterSeconds: number } {
+  acquire(): { ok: true; release: () => void } | LimitRefusal {
     const now = this.now();
-    this.started = this.started.filter((at) => now - at < this.rate.windowMs);
     if (this.running >= this.maxConcurrent) {
       return { ok: false, error: 'Another session is still starting. Try again in a moment.', retryAfterSeconds: 1 };
     }
-    if (this.started.length >= this.rate.max) {
-      const oldest = this.started[0] as number;
-      const seconds = Math.max(1, Math.ceil((oldest + this.rate.windowMs - now) / 1000));
-      return {
-        ok: false,
-        error: `pitwall starts at most ${this.rate.max} sessions every ${Math.round(this.rate.windowMs / 1000)} seconds. Try again in ${seconds}s.`,
-        retryAfterSeconds: seconds,
-      };
-    }
+    const limited = this.limited(now);
+    if (limited) return limited;
     this.running += 1;
     this.started.push(now);
     let released = false;
@@ -364,6 +362,32 @@ export class SpawnLimiter {
         released = true;
         this.running -= 1;
       },
+    };
+  }
+
+  /**
+   * Counts a resume as a start, or says how many seconds to wait. Only the per-window limit applies:
+   * a resume runs alongside spawns, under the stop, remove, resume and open commands' own limit
+   * (CommandSlots). Synchronous, as acquire() is.
+   */
+  countStart(): { ok: true } | LimitRefusal {
+    const now = this.now();
+    const limited = this.limited(now);
+    if (limited) return limited;
+    this.started.push(now);
+    return { ok: true };
+  }
+
+  /** The refusal when `rate.max` sessions started in the window before `now`, after forgetting older starts. */
+  private limited(now: number): LimitRefusal | undefined {
+    this.started = this.started.filter((at) => now - at < this.rate.windowMs);
+    if (this.started.length < this.rate.max) return undefined;
+    const oldest = this.started[0] as number;
+    const seconds = Math.max(1, Math.ceil((oldest + this.rate.windowMs - now) / 1000));
+    return {
+      ok: false,
+      error: `pitwall starts at most ${this.rate.max} sessions every ${Math.round(this.rate.windowMs / 1000)} seconds, new and resumed together. Try again in ${seconds}s.`,
+      retryAfterSeconds: seconds,
     };
   }
 }
@@ -577,6 +601,13 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       // Nothing that can wait comes between this check and the run.
       const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
       if (!dir.ok) return answer({ ok: false, error: dir.error }, 409);
+
+      // It starts a long-lived session, so it counts toward spawn's per-minute limit, which it shares.
+      const start = limiter.countStart();
+      if (!start.ok) {
+        c.header('Retry-After', String(start.retryAfterSeconds));
+        return answer({ ok: false, error: start.error }, 429);
+      }
 
       // It runs in the realpath just checked, never the snapshot's path, so a symlink swapped after
       // the check can't move it. PWD is the snapshot's `cwd`, not pitwall's own, which
