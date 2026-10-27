@@ -62,7 +62,7 @@ describe('reading the list', () => {
             { path: 'a//b' },
             { path: 'trailing/' },
             { path: 'bell\u0007' },
-            { path: 'rtl‮' },
+            { path: 'rtl\u202e' },
             { path: 'c1\u0085' },
             { path: 7 },
             'text',
