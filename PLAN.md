@@ -276,6 +276,14 @@ The work after M3, on its own integration branch, `m3.1/integration`, merged int
 
 - **Filters that don't move the bar** (Phil, 2026-10-27: "selecting a filter changes the alignment/rows"). The session list's filter bar is one wrapping flex line: the field (at least 200 px, growing), the chips, Clear filters once a filter is on, and Sort at the right. Clear filters appearing changes where it wraps: at about 500 px the field and chips share line 1 with Sort on line 2, and with a chip on, the field takes line 1 alone and the chips, Clear filters and Sort share line 2. Nothing should move when a filter turns on or off (coordinator's call: the field on its own line, so its placeholder shows whole, and the chips, Clear filters and Sort on the next). W75.
 
+- **Attachments in New session's first prompt** (Phil, 2026-10-27: "It should be possible to drop items/attachments, paste items, into the opening session prompt", queued behind the builds in progress). Today the first prompt is a plain textarea: pasted text works, but a dropped or pasted file or image does nothing. `claude --bg` takes the prompt as one argument, so an attachment has to reach the session another way.
+  - **Spike first** (spike 008, W78, the coordinator, on throwaway `pitwall-test-*` sessions):
+    - Does a file path, or an `@path` mention, in a `--bg` prompt let the session read the file, including an image the model can see?
+    - Is there a documented way to attach a file at start?
+    - Where should pitwall keep an upload: a private folder such as `~/.pitwall/attachments/<id>/` (mode 0700), never inside the session's directory, and for how long?
+    - The upload route's limits: size, count, types, and file names cleaned.
+  - **Then build** (W79): drop and paste on the first prompt's textarea, the attachments listed under it with Remove, and a new upload route behind the same token, `Host` and `Origin` checks. Probably the session view's message box too, once the first prompt works.
+
 In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 
 1. **A durable home for the headless app-check tools.** The integrated check every M3 review ran, and each work item's part of it, lived in the session scratchpad and went with the 2026-10-23 reboot. Every later review needs them, so they come first, committed to the repo or kept in a gitignored folder. Done: `scripts/appcheck/` (W64).
@@ -440,6 +448,8 @@ Same way of working as M3, on `m3.1/integration`.
 | W75 | Filters that don't move the bar: the field on its own line, and the chips, Clear filters and Sort on the next, so turning a filter on or off moves nothing, at any width the app check runs | `m3.1/filter-bar` | S | In progress |
 | W76 | Sub-agents in the index and server: each session's sub-agents from its `subagents` folder and its transcript's start and end records, `subagentsRunning` on every live session without holding up the poll, `ConversationEntry.subagent`, and the two read routes | `m3.1/subagents-index` | M | In progress |
 | W77 | Sub-agents in the web UI: the session view's Sub-agents tab, a sub-agent's transcript read-only, the conversation's entries labelled by description, and the row's running count | `m3.1/subagents-web` | M | In progress |
+| W78 | Spike 008: how a background session started from pitwall gets a dropped or pasted file or image, and where pitwall keeps it | coordinator | S | Queued, after the builds in progress |
+| W79 | Attachments in New session's first prompt: drop and paste, the list with Remove, and an upload route | `m3.1/attachments` | M | Queued, after W78 |
 
 ## M2 work breakdown
 
