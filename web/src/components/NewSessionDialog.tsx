@@ -170,7 +170,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     listAbort.current = controller;
     setListing({ kind: 'loading' });
     void fetchDirectories(api, controller.signal).then((list) => {
-      if (alive.current) setListing(list ? { kind: 'ready', list } : { kind: 'failed' });
+      // An aborted request, as when the dialog closed, says nothing.
+      if (alive.current && !controller.signal.aborted) setListing(list ? { kind: 'ready', list } : { kind: 'failed' });
     });
   };
 
