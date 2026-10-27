@@ -46,7 +46,7 @@ export const DIRECTORY_CACHE_MS = 30_000;
 export const DIRECTORY_READS = 16;
 
 /** C0 and C1 controls, DEL, the bidi controls, and U+FFFD, which an undecodable name reads as. */
-const UNLISTABLE = /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩�]/;
+const UNLISTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufffd]/;
 
 /** Whether a folder with this name is listed, and walked into. */
 export function isListable(name: string): boolean {

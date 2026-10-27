@@ -55,7 +55,7 @@ beforeAll(async () => {
   await symlink(outside, join(root, 'link-out'));
   await symlink(join(root, 'zeta'), join(root, 'link-in'));
   // Names a terminal or a bidi-aware renderer would show as something else.
-  for (const name of ['bell\u0007name', 'c1\u0085name', 'del\u007fname', 'rtl‮name', 'isolate⁦name', 'mark‏name', 'arabic؜mark']) {
+  for (const name of ['bell\u0007name', 'c1\u0085name', 'del\u007fname', 'rtl\u202ename', 'isolate\u2066name', 'mark\u200fname', 'arabic\u061cmark']) {
     await mkdir(join(root, name, 'inside'), { recursive: true });
   }
 });
@@ -100,11 +100,11 @@ describe('the walk', () => {
     for (const path of listed) {
       expect(path).not.toMatch(/(^|\/)\./);
       expect(path).not.toMatch(/node_modules/);
-      expect(path).not.toMatch(/[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/);
+      expect(path).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
       expect(path).not.toMatch(/inside/);
     }
     expect(isListable('ok-name')).toBe(true);
-    for (const name of ['', '.git', '.env', 'node_modules', 'a\u0000b', 'a\nb', 'a\u009bb', 'a‪b', 'a⁩b', 'a�b']) {
+    for (const name of ['', '.git', '.env', 'node_modules', 'a\u0000b', 'a\nb', 'a\u009bb', 'a\u202ab', 'a\u2069b', 'a\ufffdb']) {
       expect(isListable(name)).toBe(false);
     }
     // Only the exact name: a folder called node_modules2 is listed.
