@@ -94,7 +94,8 @@ export { WS_CLOSE_TRY_AGAIN };
 export const STILL_STARTING = 'This session is still starting. Try again in a moment.';
 
 export interface AttachOptions {
-  indexer: Pick<Indexer, 'latest'>;
+  /** noteRestart records a restart you confirmed, for NeedsYou's 'restarted' (W69). */
+  indexer: Pick<Indexer, 'latest' | 'noteRestart'>;
   token: string;
   /** The server's one allowed origin, which the proof is bound to. Read at each handshake, because the port is known only once listening. */
   origin: () => string;
@@ -277,6 +278,8 @@ export function createAttachServer(options: AttachOptions): AttachServer {
       pty = started;
       state = 'attached';
       send({ type: 'attached' });
+      // A restart you confirmed (D9): it needs your prompt until you send one (NeedsYou's 'restarted', W69).
+      if (decision === 'confirm') safely(() => indexer.noteRestart(session.sessionId, now()));
 
       let paused = false;
       const resumeWhenDrained = () => {

@@ -17,8 +17,9 @@ export interface TranscriptInfo {
   lastUserPrompt?: string;
   /**
    * Set when the newest assistant text asks the user something and no prompt
-   * has come since. The session's status isn't known here: `toSessionSummary`
-   * drops this for a session that is still working.
+   * has come since. Whether the turn is over isn't decided here:
+   * `toSessionSummary` drops this while it runs, by `turnEnded`, or by the
+   * session's status when the transcript marks no turn's end.
    */
   askedYou?: AskedYou;
   /**
@@ -26,6 +27,20 @@ export interface TranscriptInfo {
    * entry), on one line, at most 120 characters. Internal and undocumented.
    */
   aiTitle?: string;
+  /**
+   * Whether the session's last turn has ended, read from the transcript (spike 007, finding 4):
+   * true when a `system` entry with `subtype: 'turn_duration'` follows the newest user or assistant
+   * entry, sidechains' aside, and false when one of those came after it. Undefined when the entries
+   * read have no `turn_duration` at all, as from an older Claude Code: `toSessionSummary` then goes
+   * by Claude Code's status, as before W69.
+   */
+  turnEnded?: boolean;
+  /**
+   * Milliseconds since the epoch: the newest prompt's time, a prompt being a user entry that
+   * lastUserPrompt would show or that the user typed (isTypedPrompt). For NeedsYou's 'restarted',
+   * which holds until a prompt newer than the restart.
+   */
+  lastPromptMs?: number;
 }
 
 export interface TranscriptReaderOptions {
@@ -405,6 +420,14 @@ export interface Fields {
    * The entry's `continuedInSessionId` isn't read.
    */
   continuedElsewhere?: boolean;
+  /**
+   * True when a `turn_duration` entry comes after the newest user or assistant entry that isn't a
+   * sidechain's, in file order; false when one of those came after it. Undefined until the first
+   * `turn_duration` entry is read (TranscriptInfo.turnEnded).
+   */
+  turnEnded?: boolean;
+  /** The newest prompt's timestamp, in file order (TranscriptInfo.lastPromptMs). */
+  lastPromptMs?: number;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -416,7 +439,8 @@ export function applyLine(fields: Fields, line: string): void {
     !line.includes('"ai-title"') &&
     !line.includes('"custom-title"') &&
     !line.includes('"agent-name"') &&
-    !line.includes('"continued-in"')
+    !line.includes('"continued-in"') &&
+    !line.includes('"turn_duration"')
   ) {
     return;
   }
@@ -449,6 +473,11 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     if (name !== undefined) fields.setName = name;
     return;
   }
+  if (type === 'system') {
+    // Claude Code writes it when a turn ends, after the turn's last entry (spike 007, finding 4). Not activity.
+    if (entry.subtype === 'turn_duration' && entry.isSidechain !== true) fields.turnEnded = true;
+    return;
+  }
   if (type !== 'user' && type !== 'assistant') return;
 
   const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
@@ -459,7 +488,11 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   fields.inBackground = entry.sessionKind === 'bg';
   // A turn after a `continued-in` means the conversation came back here.
   fields.continuedElsewhere = false;
-  if (isTypedPrompt(entry)) fields.typedPrompt = true;
+  // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
+  // sub-agent's, which can run on after the main turn has ended.
+  if (fields.turnEnded !== undefined && entry.isSidechain !== true) fields.turnEnded = false;
+  const typed = isTypedPrompt(entry);
+  if (typed) fields.typedPrompt = true;
 
   if (type === 'assistant') {
     const text = assistantTextOf(entry);
@@ -477,6 +510,9 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if (prompt !== undefined) {
     fields.userPrompt = prompt;
     fields.promptAfterText = true;
+  }
+  if ((prompt !== undefined || typed) && at !== undefined && (fields.lastPromptMs === undefined || at > fields.lastPromptMs)) {
+    fields.lastPromptMs = at;
   }
 }
 
@@ -634,6 +670,8 @@ function toInfo(state: FileState): TranscriptInfo {
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
   if (fields.aiTitle !== undefined) info.aiTitle = fields.aiTitle;
+  if (fields.turnEnded !== undefined) info.turnEnded = fields.turnEnded;
+  if (fields.lastPromptMs !== undefined) info.lastPromptMs = fields.lastPromptMs;
   return info;
 }
 

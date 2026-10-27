@@ -330,6 +330,55 @@ describe('applyEntry: what the ended-session scanner needs (W66)', () => {
   });
 });
 
+/** Claude Code's entry at the end of a turn (spike 007, finding 4). */
+function turnDuration(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { type: 'system', subtype: 'turn_duration', durationMs: 1234, timestamp: nextTimestamp(), ...extra };
+}
+
+describe("applyEntry: the turn's end and the newest prompt (W69)", () => {
+  it('says the turn has ended when a turn_duration entry follows the newest user or assistant entry', () => {
+    const asked = assistant([text('Tea or coffee?')]);
+    expect(fieldsOf(user('go'), asked, { type: 'system', subtype: 'stop_hook_summary' }, turnDuration()).turnEnded).toBe(true);
+    // A tool call, a tool result or a new prompt after it means a turn is running again.
+    expect(fieldsOf(user('go'), asked, turnDuration(), user('next')).turnEnded).toBe(false);
+    expect(fieldsOf(user('go'), asked, turnDuration(), assistant([toolUse('Bash')], 'm2')).turnEnded).toBe(false);
+    expect(fieldsOf(user('go'), asked, turnDuration(), user([toolResult('r')])).turnEnded).toBe(false);
+  });
+
+  it("is undefined until a turn_duration entry is read, as in an older Claude Code's transcript", () => {
+    expect(fieldsOf(user('go'), assistant([text('Tea or coffee?')])).turnEnded).toBeUndefined();
+    expect(fieldsOf().turnEnded).toBeUndefined();
+  });
+
+  it("ignores a sidechain's entries, which a sub-agent can write after the main turn ended", () => {
+    expect(fieldsOf(user('go'), assistant([text('Asked?')]), turnDuration(), assistant([text('sub-agent')], 's1', { isSidechain: true })).turnEnded).toBe(true);
+    expect(fieldsOf(user('go'), assistant([text('Asked?')]), turnDuration({ isSidechain: true })).turnEnded).toBeUndefined();
+  });
+
+  it('ignores other system entries and the away recap', () => {
+    const fields = fieldsOf(user('go'), assistant([text('Asked?')]), { type: 'system', subtype: 'away_summary', content: 'recap', timestamp: nextTimestamp() });
+    expect(fields.turnEnded).toBeUndefined();
+    expect(fields.lastActivityMs).toBeDefined();
+  });
+
+  it("keeps the newest prompt's time, a typed one included, and not a tool result's or a cross-session message's", () => {
+    const prompt = user('first');
+    const typedCommand = user('<command-name>/compact</command-name>', { promptSource: 'typed' });
+    expect(fieldsOf(prompt).lastPromptMs).toBe(Date.parse(prompt.timestamp as string));
+    expect(fieldsOf(prompt, typedCommand).lastPromptMs).toBe(Date.parse(typedCommand.timestamp as string));
+    const later = fieldsOf(prompt, user([toolResult('r')]), user('<cross-session-message from="x">hi</cross-session-message>', { isMeta: true, origin: { kind: 'peer' } }));
+    expect(later.lastPromptMs).toBe(Date.parse(prompt.timestamp as string));
+    expect(fieldsOf(user('no time', { timestamp: undefined })).lastPromptMs).toBeUndefined();
+  });
+
+  it('reads turn_duration lines through the pre-filter', () => {
+    const fields: Fields = {};
+    applyLine(fields, JSON.stringify(assistant([text('Done?')])));
+    applyLine(fields, JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 9 }));
+    expect(fields.turnEnded).toBe(true);
+  });
+});
+
 describe('aiTitleOf', () => {
   it('collapses whitespace and truncates to 120 characters', () => {
     expect(aiTitleOf(aiTitle('Review\tthe\n\nauth   flow'))).toBe('Review the auth flow');
@@ -440,6 +489,7 @@ describe('createTranscriptReader', () => {
       transcript: 'ok',
       lastActivityAt: reply.timestamp,
       lastUserPrompt: 'add a test',
+      lastPromptMs: Date.parse(prompt.timestamp as string),
     });
   });
 
@@ -664,6 +714,22 @@ describe('createTranscriptReader', () => {
     }
   });
 
+  describe("the turn's end (W69)", () => {
+    it('reports the turn ended, and running again, as new lines arrive', async () => {
+      const r = reader();
+      await writeFile(file, jsonl(user('go'), assistant([text('Should I push it?')], 'm1')));
+      expect(await r.read(SID, [CWD])).not.toHaveProperty('turnEnded');
+      await appendFile(file, jsonl({ type: 'system', subtype: 'stop_hook_summary' }, turnDuration()));
+      const ended = await r.read(SID, [CWD]);
+      expect(ended.turnEnded).toBe(true);
+      expect(ended.askedYou).toEqual({ reason: 'question', excerpt: 'Should I push it?' });
+      await appendFile(file, jsonl(user('yes, push it')));
+      const running = await r.read(SID, [CWD]);
+      expect(running.turnEnded).toBe(false);
+      expect(running).not.toHaveProperty('askedYou');
+    });
+  });
+
   describe('incremental reads', () => {
     it('reads only the bytes added since the last read', async () => {
       const r = reader();
@@ -764,6 +830,7 @@ describe('createTranscriptReader', () => {
         transcript: 'ok',
         lastActivityAt: expect.any(String),
         lastUserPrompt: 'fresh start',
+        lastPromptMs: expect.any(Number),
       });
     });
 
@@ -893,6 +960,7 @@ describe('readNewestEntries', () => {
         transcript: 'ok',
         lastActivityAt: latest.timestamp,
         lastUserPrompt: 'the last prompt',
+        lastPromptMs: Date.parse(prompt.timestamp as string),
         askedYou: { reason: 'question', excerpt: 'Shall I go on?' },
         aiTitle: 'A title',
       },

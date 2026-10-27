@@ -112,6 +112,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     subscribe: () => () => {},
     conversation: async () => undefined,
     pollSoon: () => {},
+    noteRestart: () => {},
     stop: () => {},
   };
 }
@@ -576,6 +577,42 @@ describe('the attach socket', () => {
       const client = await ready(server.port);
       send(client, { type: 'open', sessionId: DONE_ID, cols: 80, rows: 24 });
       expect(await client.next()).toEqual({ type: 'needs-restart' });
+    });
+
+    it('notes a restart you confirmed, by session id, for Needs you (W69)', async () => {
+      const at = Date.parse('2026-10-27T12:00:00.000Z');
+      const indexer = { ...fakeIndexer(), noteRestart: vi.fn() };
+      const { server } = await start({ indexer, now: () => at });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      expect(await client.next()).toEqual({ type: 'needs-restart' });
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24, restart: true });
+      expect(await client.next()).toEqual({ type: 'attached' });
+      expect(indexer.noteRestart.mock.calls).toEqual([[IDLE_ID, at]]);
+    });
+
+    it('notes no restart for an attach that restarts nothing, even when told restart: true', async () => {
+      const indexer = { ...fakeIndexer(), noteRestart: vi.fn() };
+      const { server } = await start({ indexer });
+      await attached(server.port);
+      const told = await ready(server.port);
+      send(told, { type: 'open', sessionId: BG_ID, cols: 80, rows: 24, restart: true });
+      expect(await told.next()).toEqual({ type: 'attached' });
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
+    });
+
+    it('notes no restart when the PTY fails to start', async () => {
+      const indexer = { ...fakeIndexer(), noteRestart: vi.fn() };
+      const spawner = fakeSpawner();
+      spawner.spawn.mockImplementation(() => {
+        throw new Error('made-up failure');
+      });
+      const { server } = await start({ indexer, spawner });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24, restart: true });
+      expect(await client.next()).toMatchObject({ type: 'error' });
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
     });
   });
 

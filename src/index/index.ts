@@ -13,9 +13,10 @@ import { ConversationCursorError, readConversationPage, RelayAddressBook } from 
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { oneLine } from './exec.js';
 import { createGroupResolver, groupLabel, type GroupResolver } from './grouping.js';
+import { createJobReader, type JobNeeds, type JobReader } from './jobs.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
-import { buildGroups, toSessionSummary, type PlacedSession } from './summaries.js';
-import { createTranscriptReader, type TranscriptReader } from './transcripts.js';
+import { buildGroups, isFinished, restartHolds, toSessionSummary, type PlacedSession } from './summaries.js';
+import { createTranscriptReader, isSafeSessionId, type TranscriptReader } from './transcripts.js';
 import { createWorkedInScanner, type WorkedInScanner } from './workedIn.js';
 
 export { isSafeSessionId } from './transcripts.js';
@@ -68,6 +69,14 @@ export interface Indexer {
    * rather than up to an interval later. Never throws.
    */
   pollSoon(): void;
+  /**
+   * Records that you resumed the session, or confirmed a restart of it, at `atMs`, milliseconds
+   * since the epoch, and polls soon. Until its transcript has a prompt newer than that, it needs you
+   * with NeedsYou's 'restarted', unless it's stale or finished. Kept in memory only, so it ends when
+   * pitwall does, and dropped once the session is no longer listed. An unsafe id or a time that
+   * isn't finite is ignored. Never throws.
+   */
+  noteRestart(sessionId: string, atMs: number): void;
   stop(): void;
 }
 
@@ -95,6 +104,12 @@ export interface IndexerDeps {
    * one, none are listed.
    */
   ended?: EndedScanner;
+  /**
+   * What each background job's `state.json` says it needs (jobs.ts), read on every poll for the
+   * background rows that haven't finished. Without one, no job's file is read, and a blocked job
+   * needs you as it did before W69 (NeedsYou's 'blocked').
+   */
+  jobs?: JobReader;
 }
 
 /**
@@ -116,6 +131,7 @@ export function startIndexer(options: IndexerOptions): Indexer {
     transcripts: createTranscriptReader({ now }),
     workedIn: createWorkedInScanner({ now }),
     ended: createEndedScanner({ now }),
+    jobs: createJobReader(),
     now,
     home: os.homedir(),
     concurrency: 8,
@@ -135,6 +151,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   let stopped = false;
   /** pollSoon() was called while a poll ran: poll again once it's done. */
   let soon = false;
+  /** Session id to when you resumed it or confirmed its restart, in this run (noteRestart). */
+  const restarts = new Map<string, number>();
 
   async function tick(): Promise<void> {
     if (running || stopped) return;
@@ -142,7 +160,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
     try {
       let snapshot: IndexSnapshot;
       try {
-        snapshot = await poll(options, deps, latest);
+        snapshot = await poll(options, deps, latest, restarts);
       } catch (err) {
         // poll() handles every expected failure itself; this guards against bugs.
         const message = oneLine(err instanceof Error ? err.message : String(err));
@@ -212,6 +230,11 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       return undefined;
     },
     pollSoon,
+    noteRestart(sessionId, atMs) {
+      if (stopped || !isSafeSessionId(sessionId) || !Number.isFinite(atMs)) return;
+      restarts.set(sessionId, atMs);
+      pollSoon();
+    },
     stop() {
       stopped = true;
       clearInterval(timer);
@@ -228,7 +251,12 @@ function transcriptFile(deps: IndexerDeps, sessionId: string): string | undefine
   return deps.transcripts.transcriptFile(sessionId) ?? deps.ended?.file(sessionId);
 }
 
-async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexSnapshot | undefined): Promise<IndexSnapshot> {
+async function poll(
+  options: IndexerOptions,
+  deps: IndexerDeps,
+  previous: IndexSnapshot | undefined,
+  restarts: Map<string, number>,
+): Promise<IndexSnapshot> {
   const resolvedRoots = await resolveRoots(options.roots, deps.realpath);
   const result = await deps.agents.list();
   const nowMs = deps.now();
@@ -249,11 +277,19 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
     const root = matchRoot(cwd, resolvedRoots);
     if (root === undefined) return undefined;
     // A cwd that has gone fails `git -C`, so it groups as a plain directory.
-    const [group, transcript] = await Promise.all([
+    const [group, transcript, job] = await Promise.all([
       deps.groups.resolve(cwd),
       deps.transcripts.read(row.sessionId, [row.cwd, cwd]),
+      readJob(deps, row),
     ]);
-    const summary = toSessionSummary(row, transcript, nowMs, { cwdMissing: missing });
+    const restartedAtMs = restarts.get(row.sessionId);
+    const summary = toSessionSummary(row, transcript, nowMs, {
+      cwdMissing: missing,
+      ...(job === undefined ? {} : { job }),
+      ...(restartedAtMs === undefined ? {} : { restartedAtMs }),
+    });
+    // A prompt since the restart ends its wait for good, even if the transcript can't be read later.
+    if (restartedAtMs !== undefined && !restartHolds(restartedAtMs, transcript)) restarts.delete(row.sessionId);
     const relay = calls(() => options.relayExchange?.(row.sessionId), undefined);
     if (relay !== undefined) summary.relay = relay;
     return { root, group, summary };
@@ -261,9 +297,13 @@ async function poll(options: IndexerOptions, deps: IndexerDeps, previous: IndexS
 
   const live = placed.filter((p): p is PlacedSession => p !== undefined);
   deps.transcripts.retain(new Set(live.map((p) => p.summary.sessionId)));
+  deps.jobs?.retain(new Set(rows.flatMap((row) => (row.shortId === undefined ? [] : [row.shortId]))));
   const kept = [...live, ...(await placeEnded(listed, resolvedRoots, options, deps, nowMs))];
   deps.groups.prune();
   addWorkedIn(kept, resolvedRoots, deps);
+  // A restart is noted only for a session in the snapshot, so one no longer listed won't come back.
+  const keptIds = new Set(kept.map((p) => p.summary.sessionId));
+  for (const id of restarts.keys()) if (!keptIds.has(id)) restarts.delete(id);
 
   return { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } };
 }
@@ -338,6 +378,21 @@ function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: Inde
     }
   } catch {
     // What was added stays, and the poll goes on: a scanner failure only leaves workedIn out.
+  }
+}
+
+/**
+ * What a background row's job file says it needs, for one that hasn't finished: a finished session
+ * never needs you, so its file isn't read. Undefined with no reader, for an interactive row, and for
+ * a row with no short id.
+ */
+async function readJob(deps: IndexerDeps, row: AgentRow): Promise<JobNeeds | undefined> {
+  if (deps.jobs === undefined || row.kind !== 'background' || row.shortId === undefined) return undefined;
+  if (isFinished({ kind: row.kind, alive: row.pid !== undefined, pid: row.pid, state: row.state })) return undefined;
+  try {
+    return await deps.jobs.read(row.shortId, row.sessionId);
+  } catch {
+    return { kind: 'unknown' };
   }
 }
 
