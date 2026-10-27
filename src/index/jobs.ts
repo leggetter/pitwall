@@ -5,13 +5,19 @@
 // another session is 'unknown', never an exception. `claude agents --json` doesn't carry the line
 // (spike 007, finding 2).
 //
+// Only a regular file in a real folder directly under the jobs folder is read: the job's folder may
+// not be a symlink, and the file is opened with O_NOFOLLOW and O_NONBLOCK, so a symlink, a FIFO or a
+// device there is 'unknown' at once and can't hold up a poll.
+//
 // What's taken, and nothing else:
 //   sessionId  must equal the row's, or the file is 'unknown'
-//   needs      a string, trimmed, its control characters and terminal escapes removed, cut to 200;
+//   needs      a string, trimmed, its control characters, bidi marks and terminal escapes removed,
+//              cut to 200;
 //              absent, null or empty is 'none', and so is the start placeholder, "send a prompt to
 //              start", which a resumed session shows though it asked nothing (spike 006, finding 2)
 
-import { open, type FileHandle } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { isRecord } from './guards.js';
 import { cap, truncate } from './text.js';
@@ -29,12 +35,15 @@ export type JobNeeds =
 export interface JobReaderOptions {
   /** The directory holding one folder per job. Default `<configDir>/jobs`, `~/.claude/jobs` unless `$CLAUDE_CONFIG_DIR` is set. */
   jobsDir?: string;
+  /** Milliseconds since the epoch, to tell how recently a file changed. Default `Date.now`. */
+  now?: () => number;
 }
 
 export interface JobReader {
   /**
    * What the job `shortId` needs, from its `state.json`, checked against the row's `sessionId`. A
-   * file whose size and mtime haven't changed since the last read isn't parsed again. Never rejects.
+   * file whose size and mtime haven't changed since the last read isn't parsed again, unless it
+   * changed in the last CACHE_SETTLE_MS, when a same-size rewrite could share its mtime. Never rejects.
    */
   read(shortId: string, sessionId: string): Promise<JobNeeds>;
   /** Forgets every job not in `shortIds`. */
@@ -48,11 +57,22 @@ export const JOB_FILE_MAX_BYTES = 256 * 1024;
 /** Claude Code's line for a job that was started with no prompt, as a resumed session is. Not an ask. */
 export const START_PLACEHOLDER = 'send a prompt to start';
 
+/**
+ * A file changed this recently is parsed again whatever the cache says: a rewrite of the same size
+ * within one mtime tick would otherwise look unchanged.
+ */
+export const CACHE_SETTLE_MS = 2000;
+
+/** Read-only, without following a symlink at the file, and without waiting on a FIFO's writer. 0 where a flag doesn't exist. */
+const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
 /** A short id that's safe as one folder name: never empty, `.` or `..`, and no separator. */
 const SAFE_SHORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-// Terminal escapes (CSI, OSC and two-character ones), then any control character left: C0, DEL and C1.
+// Terminal escapes (CSI, OSC and two-character ones), then any control character left: C0, DEL and
+// C1, and the bidi marks (U+061C, U+200E, U+200F), embeddings and overrides (U+202A to U+202E) and
+// isolates (U+2066 to U+2069), which would make the line read differently from what it says.
 const ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-_]/g;
-const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g;
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const UNKNOWN: JobNeeds = { kind: 'unknown' };
 const NONE: JobNeeds = { kind: 'none' };
 
@@ -68,15 +88,19 @@ interface Cached {
 
 export function createJobReader(options: JobReaderOptions = {}): JobReader {
   const jobsDir = options.jobsDir ?? path.join(defaultConfigDir(), 'jobs');
+  const now = options.now ?? Date.now;
   const cache = new Map<string, Cached>();
 
   return {
     async read(shortId, sessionId) {
       if (!SAFE_SHORT_ID.test(shortId)) return UNKNOWN;
-      const file = path.join(jobsDir, shortId, 'state.json');
+      const folder = path.join(jobsDir, shortId);
+      const file = path.join(folder, 'state.json');
       let handle: FileHandle;
       try {
-        handle = await open(file, 'r');
+        // The job's folder itself, not where a symlink there points; the jobs folder may be a symlink.
+        if (!(await lstat(folder)).isDirectory()) throw new Error('not a folder');
+        handle = await open(file, OPEN_FLAGS);
       } catch {
         cache.delete(shortId);
         return UNKNOWN;
@@ -95,7 +119,8 @@ export function createJobReader(options: JobReaderOptions = {}): JobReader {
           cached.dev === info.dev &&
           cached.ino === info.ino &&
           cached.size === info.size &&
-          cached.mtimeMs === info.mtimeMs
+          cached.mtimeMs === info.mtimeMs &&
+          now() - info.mtimeMs >= CACHE_SETTLE_MS
         ) {
           return cached.needs;
         }
