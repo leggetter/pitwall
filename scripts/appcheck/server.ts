@@ -2,16 +2,17 @@
 // with pitwall's own security headers and CSP, its Host and Origin checks, its static file rules and
 // the v3 WebSocket challenge, all imported from the server build (dist/server, dist/shared), never
 // copied. Behind them it answers the snapshot, the directory list, conversation pages, the relay,
-// attach (a made-up terminal stream), spawn, stop, remove and resume from the made-up World in
-// fixtures.ts, and the editor list and open in an editor (W72), which opens nothing.
+// attach (a made-up terminal screen at the size the page gives, drawn again on each resize), spawn,
+// stop, remove and resume from the made-up World in fixtures.ts, and the editor list and open in an
+// editor (W72), which opens nothing.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
 // only security.js, static.js and protocol.js from the build, which read nothing but webRoot.
 //
 // What the page did is recorded in `records`, for the parts to check: attaches, keys and resizes sent
-// to an attached session, spawns, relayed messages, stops and removes, resumes, opens in an editor,
-// and every request.
+// to an attached session, the sizes it gave each one, spawns, relayed messages, stops and removes,
+// resumes, opens in an editor, and every request.
 
 import { randomBytes } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -30,10 +31,11 @@ import type {
   IndexSnapshot,
   RelayResult,
   ResumeResult,
+  SessionSummary,
   SpawnRequest,
   SpawnResult,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions } from './fixtures.js';
+import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -58,6 +60,8 @@ export interface Records {
   attaches: Array<{ sessionId: string; name: string; restart: boolean }>;
   /** Every key and resize the page sent an attached session. */
   inputs: Array<{ name: string; type: 'input' | 'resize'; data: string }>;
+  /** Every size the page gave an attached session, in order: its `open`'s, then each resize's (W74). */
+  sizes: Array<{ name: string; from: 'open' | 'resize' } & TerminalSize>;
   spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; promptLength: number }>;
   relays: Array<{ name: string; length: number }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
@@ -69,7 +73,7 @@ export interface Records {
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], requests: [] });
+const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], requests: [] });
 
 /** The editors the fake server says it found at startup (W72), as pitwall's would on a Mac with both. */
 export const EDITORS: EditorList = { editors: [{ id: 'vscode', label: 'VS Code' }, { id: 'cursor', label: 'Cursor' }] };
@@ -355,8 +359,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   }
 
   function attachSocket(ws: WebSocket) {
-    let opened: { name: string } | undefined;
+    let opened: { session: SessionSummary } | undefined;
     ws.on('close', () => attachSockets.delete(ws));
+    /** The made-up screen at the session's size, drawn afresh, as Claude Code redraws on a resize. */
+    const draw = (session: SessionSummary, size: TerminalSize) => ws.send(Buffer.from(terminalScreen(session, size), 'utf8'), { binary: true });
     handshake(
       ws,
       () => {
@@ -367,7 +373,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       (raw) => {
         const message = raw as AttachClientMessage;
         if (opened && (message.type === 'input' || message.type === 'resize')) {
-          records.inputs.push({ name: opened.name, type: message.type, data: message.type === 'input' ? message.data : `${message.cols}x${message.rows}` });
+          const { name } = opened.session;
+          records.inputs.push({ name, type: message.type, data: message.type === 'input' ? message.data : `${message.cols}x${message.rows}` });
+          if (message.type === 'resize') {
+            records.sizes.push({ name, from: 'resize', cols: message.cols, rows: message.rows });
+            draw(opened.session, message);
+          }
           return;
         }
         if (message.type !== 'open' || opened) return;
@@ -377,10 +388,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
           return ws.close(1008);
         }
         if ((session.finished || !session.alive) && message.restart !== true) return ws.send(JSON.stringify({ type: 'needs-restart' }));
-        opened = { name: session.name };
+        opened = { session };
         records.attaches.push({ sessionId: session.sessionId, name: session.name, restart: message.restart === true });
+        records.sizes.push({ name: session.name, from: 'open', cols: message.cols, rows: message.rows });
         ws.send(JSON.stringify({ type: 'attached' }));
-        ws.send(Buffer.from(terminalScreen(session), 'utf8'), { binary: true });
+        draw(session, message);
       },
     );
   }

@@ -369,9 +369,34 @@ export class World {
   }
 }
 
-/** The screen a made-up attached session shows, as a PTY would send it. */
-export function terminalScreen(session: SessionSummary): string {
-  const name = `\u001b[1m${session.name}\u001b[0m, a made-up session for the app check`;
-  if (session.status === 'waiting') return `${name}\r\n\r\nAllow the made-up deploy check to run?\r\n\u001b[36m❯ 1. Yes\u001b[0m\r\n  2. No, and tell Claude what to do differently\r\n`;
-  return `${name}\r\n\r\n\u001b[32m>\u001b[0m `;
+/** A terminal's size, as the page sends it with `open` and `resize`. */
+export interface TerminalSize {
+  cols: number;
+  rows: number;
+}
+
+/**
+ * What ends the made-up screen's last row, in its last column, in a colour of its own, so the page
+ * draws it in an element of its own (W74).
+ */
+export const FOOTER_END = 'last column';
+
+/**
+ * The screen a made-up attached session shows at `size`, as a PTY would send it, drawn afresh on a
+ * cleared screen, as Claude Code redraws it on every resize. Like Claude Code's, it fills the screen
+ * (W74): a prompt box across every column above a footer pinned to the last row, which ends with
+ * FOOTER_END in the last column. The cursor is left in the prompt.
+ */
+export function terminalScreen(session: SessionSummary, { cols, rows }: TerminalSize): string {
+  const at = (row: number, col = 1) => `\u001b[${row};${col}H`;
+  const dim = (text: string) => `\u001b[2m${text}\u001b[0m`;
+  const lines = [`${at(1)}\u001b[1m${session.name}\u001b[0m, a made-up session for the app check`];
+  if (session.status === 'waiting') {
+    lines.push(`${at(3)}Allow the made-up deploy check to run?`, `${at(4)}\u001b[36m❯ 1. Yes\u001b[0m`, `${at(5)}  2. No, and tell Claude what to do differently`);
+  }
+  const inside = Math.max(0, cols - 2);
+  lines.push(`${at(rows - 2)}${dim(`╭${'─'.repeat(inside)}╮`)}`, `${at(rows - 1)}${dim('│')}${at(rows - 1, cols)}${dim('│')}`);
+  const end = FOOTER_END.slice(0, cols);
+  lines.push(`${at(rows)}${'  ? for made-up shortcuts'.slice(0, cols - end.length).padEnd(cols - end.length)}\u001b[36m${end}\u001b[0m`);
+  return `\u001b[H\u001b[2J${lines.join('')}${at(rows - 1, 3)}\u001b[32m>\u001b[0m `;
 }
