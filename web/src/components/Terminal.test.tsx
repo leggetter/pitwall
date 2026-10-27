@@ -92,15 +92,17 @@ vi.mock('../xterm.js', () => ({
   },
 }));
 
-const observers: { callback: ResizeObserverCallback; disconnected: boolean }[] = [];
+const observers: { callback: ResizeObserverCallback; disconnected: boolean; targets: Element[] }[] = [];
 
 class FakeResizeObserver {
-  private entry: { callback: ResizeObserverCallback; disconnected: boolean };
+  private entry: { callback: ResizeObserverCallback; disconnected: boolean; targets: Element[] };
   constructor(callback: ResizeObserverCallback) {
-    this.entry = { callback, disconnected: false };
+    this.entry = { callback, disconnected: false, targets: [] };
     observers.push(this.entry);
   }
-  observe() {}
+  observe(target: Element) {
+    this.entry.targets.push(target);
+  }
   unobserve() {}
   disconnect() {
     this.entry.disconnected = true;
@@ -343,6 +345,29 @@ describe('SessionView: attach, from the Terminal tab', () => {
     // The same size again sends nothing.
     act(() => observers.at(-1)!.callback([], {} as ResizeObserver));
     expect(sent(socket).filter((message) => message.type === 'resize')).toHaveLength(1);
+  });
+
+  it("opens xterm.js in a box of its own inside the screen's padding, the box the fit addon measures, and watches that box for resizes (W74)", async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket, terminal } = await attach(view, fake);
+    const box = terminal.container;
+    expect(box.className).toBe('attach-terminal-fit');
+    // Inside the screen, which keeps the padding, edge and fill, and holding only the terminal.
+    expect(box.parentElement?.className).toBe('attach-terminal');
+    expect(box.parentElement?.children).toHaveLength(1);
+    expect([...box.children].map((child) => child.className)).toEqual(['fake-terminal']);
+    expect(observers.at(-1)!.targets).toEqual([box]);
+
+    // The size that fits that box is the session's, on attach and on each resize.
+    terminal.nextSize = { cols: 78, rows: 23 };
+    await ready(socket);
+    expect(sent(socket).at(-1)).toEqual({ type: 'open', sessionId: BG, cols: 80, rows: 24 });
+    act(() => socket.receive({ type: 'attached' }));
+    expect(sent(socket).at(-1)).toEqual({ type: 'resize', cols: 78, rows: 23 });
+    terminal.nextSize = { cols: 77, rows: 22 };
+    act(() => observers.at(-1)!.callback([], {} as ResizeObserver));
+    expect(sent(socket).at(-1)).toEqual({ type: 'resize', cols: 77, rows: 22 });
   });
 
   describe('a session that is not running', () => {

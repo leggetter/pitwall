@@ -71,13 +71,15 @@
 }
 
 /*
- * The screen. The fit addon sizes the terminal to this box, less its padding. Its 1 px edge is what
- * sets it apart in the dark theme, where --pw-term-bg is the page's own --pw-bg; it's decorative
- * (2.5), as the fill already shows where the screen is in the light theme. Ligatures are off, so
- * `->`, `!=` and `//` show as typed (2.7).
+ * The screen: its padding, edge and fill. Its 1 px edge is what sets it apart in the dark theme,
+ * where --pw-term-bg is the page's own --pw-bg; it's decorative (2.5), as the fill already shows
+ * where the screen is in the light theme. Ligatures are off, so `->`, `!=` and `//` show as typed
+ * (2.7).
  */
 .attach-terminal {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
   padding: var(--pw-space-1-5);
   overflow: hidden;
@@ -85,4 +87,17 @@
   background: var(--pw-term-bg);
   box-shadow: 0 0 0 1px var(--pw-border-strong);
   font-variant-ligatures: none;
+}
+
+/*
+ * The box xterm.js opens in, which the fit addon sizes the terminal to (W74): the screen's content
+ * box, whatever the terminal holds, and no padding, border or margin of its own. The fit addon takes
+ * its parent's computed height and width as the room it has, and with the page's border-box sizing
+ * those include any padding, so the screen's own padding has to be outside it.
+ */
+.attach-terminal-fit {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
