@@ -1031,6 +1031,16 @@ describe('resume, hardened after the W73 security look (W81)', () => {
   const worker = () => join(repo, 'packages', 'worker');
   const errorOf = (res: HttpResult) => (res.json as { error: string }).error;
 
+  /** A runner for spawn and resume both, answering each as Claude Code would. */
+  function either(): RunCommand & { calls: Call[] } {
+    const calls: Call[] = [];
+    const run = vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+      calls.push({ file, args, options });
+      return args[0] === '--resume' ? resumedOutput(String(args[1]).slice(0, 8)) : backgrounded();
+    });
+    return Object.assign(run, { calls });
+  }
+
   /** A fresh `claude agents` that, as the security look's probe did, points `link` at `target` while it runs. */
   function swapping(link: string, target: string) {
     const agents = fakeAgents();
@@ -1108,6 +1118,51 @@ describe('resume, hardened after the W73 security look (W81)', () => {
         expect(agents.list).not.toHaveBeenCalled();
         expect(started.run.calls).toEqual([]);
       }
+    });
+  });
+
+  describe("4: spawn's per-minute start limit is shared", () => {
+    const limited = (res: HttpResult, retryAfter: string) => {
+      expect(res.status).toBe(429);
+      expect(res.headers['retry-after']).toBe(retryAfter);
+      expect(errorOf(res)).toMatch(/at most 5 sessions every 60 seconds, new and resumed together/);
+    };
+
+    it('answers the sixth start in a minute with 429 and Retry-After when it is a resume after 5 spawns, running nothing', async () => {
+      let now = 1_000_000;
+      const started = await start(either(), { now: () => now });
+      for (let i = 0; i < 5; i++) expect((await spawnAsPage(started, valid())).status, `spawn ${i}`).toBe(201);
+      now += 20_000;
+      limited(await postAsPage(started, resumePath(ENDED_ID)), '40');
+      expect(started.run.calls).toHaveLength(5);
+      now += 40_000;
+      expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    });
+
+    it('answers the sixth start in a minute with 429 and Retry-After when it is a spawn or a resume after 5 resumes', async () => {
+      let now = 1_000_000;
+      const started = await start(either(), { now: () => now });
+      for (let i = 0; i < 5; i++) expect((await postAsPage(started, resumePath(i % 2 === 0 ? ENDED_ID : ENDED_OTHER_ID))).status, `resume ${i}`).toBe(200);
+      now += 30_000;
+      limited(await spawnAsPage(started, valid()), '30');
+      limited(await postAsPage(started, resumePath(ENDED_QUOTED_ID)), '30');
+      expect(started.run.calls).toHaveLength(5);
+    });
+
+    it('counts spawns and resumes together, and not a resume that was refused before it ran', async () => {
+      const agents = fakeAgents();
+      const started = await start(either(), { now: () => 1_000_000, agents });
+      for (let i = 0; i < 2; i++) expect((await spawnAsPage(started, valid())).status).toBe(201);
+      for (let i = 0; i < 2; i++) expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+      // Refused before it ran: open again, and a directory outside the roots.
+      agents.result = { ok: true, rows: [agentRow(ENDED_OTHER_ID)] };
+      expect((await postAsPage(started, resumePath(ENDED_OTHER_ID))).status).toBe(409);
+      agents.result = { ok: true, rows: [] };
+      expect((await postAsPage(started, resumePath(ENDED_ESCAPE_ID))).status).toBe(409);
+      expect((await spawnAsPage(started, valid())).status).toBe(201);
+      limited(await postAsPage(started, resumePath(ENDED_ID)), '60');
+      limited(await spawnAsPage(started, valid()), '60');
+      expect(started.run.calls).toHaveLength(5);
     });
   });
 });
