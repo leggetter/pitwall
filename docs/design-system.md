@@ -8,6 +8,7 @@ pitwall's design system is inspired by Hookdeck's UX. It's pitwall's own design 
   - It renders every component the web UI has today, in every state. Its toolbar has the app's own [theme switch](#theme-switch), so it shows and stores the theme the app uses. Components in section 4 that aren't built yet join it as they're built.
   - It uses the real components from `web/src/components/` with made-up fixtures and stubs (`web/src/uikit/`). It doesn't need the token, and makes no API or WebSocket calls.
   - It's in dev builds only: `npm run dev` builds in Vite's development mode, and `npm run build` leaves the gallery out, which `web/src/uikit/build.test.tsx` checks.
+  - A specimen put into its state by using it, such as a menu opened or a tooltip hovered, has a scenario that does that once it's on screen (`web/src/uikit/kit.tsx`). Each of its steps waits up to 3 s of looking for what it brought about. A wait between two looks longer than a long task's 50 ms counts as 50 ms: the page was busy elsewhere, such as rendering the other specimens, or the machine was, so nothing looked (W71). A scenario that doesn't finish says so on its specimen, and `web/src/uikit/route.test.tsx` fails, naming the specimen.
   - **Every M3 PR adds the components and states it introduces to the gallery.** Where this doc and the gallery disagree, fix whichever is wrong in the same PR.
 - **How to read it:** every rule is written so it can be built from this doc alone. Values are exact. Where a value is a choice rather than a requirement, the reason is given.
 

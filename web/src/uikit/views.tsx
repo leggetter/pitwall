@@ -252,8 +252,7 @@ export function SessionViews() {
       >
         <Attachable script="attached">
           <Stubbed>
-            {/* Longer than a scenario's usual 3 s: under the whole test suite's load, the gallery's first attaches took 3.4 to 4.4 s (W54). */}
-            <Scenario run={async (root) => until('the terminal to attach', () => root.querySelector('.session-tab-dot'), 10_000)}>
+            <Scenario run={async (root) => until('the terminal to attach', () => root.querySelector('.session-tab-dot'))}>
               <SessionView session={OPENS_ON_TERMINAL} listed onClose={noop} backgroundTab="terminal" />
             </Scenario>
           </Stubbed>
