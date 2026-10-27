@@ -585,6 +585,10 @@ export function subagentsPath(sessionId: string): string {
  * page's `sessionId` is the session's. 404 unless the session is listed and
  * the agent is one of its sub-agents; 410 for a stale cursor; the same limit
  * as conversationPath().
+ *
+ * In a sub-agent's page, a 'user' entry is what started or messaged it: the
+ * session, or the sub-agent named by `startedBy`, never the user's own
+ * prompt. The UI labels it so, for example "From the session".
  */
 export function subagentConversationPath(sessionId: string, agentId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(agentId)}/conversation`;
