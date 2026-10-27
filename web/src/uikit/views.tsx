@@ -6,7 +6,7 @@
 // Every fixture is made once, when the gallery loads, so a re-render never changes a session's id.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { ConversationEntry, SessionSummary } from '../../../src/shared/protocol.js';
+import type { ConversationEntry, Editor, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { slowFirstSnapshot } from '../components/Dashboard.js';
@@ -17,6 +17,7 @@ import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSession
 import { ToastProvider, useToast } from '../components/Toast.js';
 import { COPIED, COPY_FAILED, useCopy } from '../copy.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
+import { EditorsContext } from '../editors.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { resumeCommand, startLabel, workedInLabels } from '../sessions.js';
 import {
@@ -113,6 +114,31 @@ const STEPPED_ONTO = background('view-stepped-onto', { state: 'working' });
 const MENU_BACKGROUND = background('view-menu', { state: 'working' });
 const MENU_DONE = background('view-menu-done', { state: 'done', alive: false, pid: undefined, finished: true });
 const MENU_INTERACTIVE = session('view-menu-interactive');
+// W72: the editors pitwall's server found, as the app has them from EDITORS_PATH.
+const VSCODE: Editor = { id: 'vscode', label: 'VS Code' };
+const CURSOR: Editor = { id: 'cursor', label: 'Cursor' };
+const EDITOR_MENUS = [
+  {
+    title: 'Actions menu, two editors found',
+    note: "Open in VS Code and Open in Cursor, after the copies, one for each editor pitwall's server found at startup (W72). Each opens the session's own directory, through the server: the page never sends a path. Not while the directory has gone, or once it's no longer listed.",
+    editors: [VSCODE, CURSOR],
+    session: background('view-menu-two-editors', { state: 'working' }),
+  },
+  {
+    title: 'Actions menu, one editor found',
+    note: 'Only Cursor is installed, so only Open in Cursor.',
+    editors: [CURSOR],
+    session: background('view-menu-one-editor', { state: 'working' }),
+  },
+  {
+    title: 'Actions menu, no editor found',
+    note: 'Neither is installed, so neither is offered, and there is no separator for them: the menu is as it was before W72.',
+    editors: [],
+    session: background('view-menu-no-editor', { state: 'working' }),
+  },
+];
+const OPENED = background('view-opened-in-editor', { state: 'working' });
+const NOT_OPENED = background('view-not-opened-in-editor', { state: 'working' });
 const COMPACT = session('view-compact', { title: 'Export retries' });
 const STARRED_VIEW = session('view-starred', { title: 'Export retries' });
 const STARRED_COMPACT = session('view-starred-compact', { title: 'Export retries' });
@@ -433,6 +459,49 @@ export function SessionViews() {
           </Scenario>
         </Stubbed>
       </Specimen>
+      {EDITOR_MENUS.map((menu) => (
+        <Specimen key={menu.title} title={menu.title} note={menu.note} frame="short">
+          <EditorsContext.Provider value={menu.editors}>
+            <Stubbed>
+              <Scenario run={openMenu}>
+                <SessionView session={menu.session} listed onClose={noop} />
+              </Scenario>
+            </Stubbed>
+          </EditorsContext.Provider>
+        </Specimen>
+      ))}
+      <Specimen title="Opened in an editor" note="An info toast, naming the session and the editor. The menu closes, and focus goes back to its button." frame="short" lasting>
+        <ToastProvider>
+          <EditorsContext.Provider value={[VSCODE, CURSOR]}>
+            <Stubbed options={{ open: 'opened' }}>
+              <Scenario
+                run={async (root) => {
+                  await chooseFromMenu(root, 'Open in Cursor');
+                  await text(specimenOf(root), `Opened ${OPENED.name}'s directory in Cursor.`);
+                }}
+              >
+                <SessionView session={OPENED} listed onClose={noop} />
+              </Scenario>
+            </Stubbed>
+          </EditorsContext.Provider>
+        </ToastProvider>
+      </Specimen>
+      <Specimen title="Didn't open in an editor" note="An error toast, which stays until it's dismissed: pitwall's sentence, then the server's reason." frame="short" lasting>
+        <ToastProvider>
+          <EditorsContext.Provider value={[VSCODE, CURSOR]}>
+            <Stubbed options={{ open: 'refused' }}>
+              <Scenario
+                run={async (root) => {
+                  await chooseFromMenu(root, 'Open in Cursor');
+                  await text(specimenOf(root), "Cursor didn't open");
+                }}
+              >
+                <SessionView session={NOT_OPENED} listed onClose={noop} />
+              </Scenario>
+            </Stubbed>
+          </EditorsContext.Provider>
+        </ToastProvider>
+      </Specimen>
       {CONVERSATION_STATES.map((state) => (
         <Specimen key={state.title} title={state.title} note={state.note} frame="short" {...(state.waited ? { waited: state.waited } : {})}>
           <Stubbed options={state.options}>
@@ -550,7 +619,7 @@ const ENDED_FOOTERS: EndedCase[] = [
   },
   {
     title: 'Footer: too many at once',
-    note: 'A 429: pitwall is already running four stop, remove or resume commands.',
+    note: 'A 429: pitwall is already running four stop, remove, resume or open commands.',
     session: endedSession('foot-busy', ENDED_TITLE),
     options: { resume: 'busy' },
     run: resumeThen(failureShown),
