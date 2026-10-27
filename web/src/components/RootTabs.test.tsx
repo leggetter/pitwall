@@ -348,9 +348,15 @@ describe("an inactive tab's badge", () => {
   it('appears and clears as sessions there need you and stop needing you', () => {
     const list = sessions();
     const { update } = renderDashboard(twoRoots(list));
-    update(twoRoots({ ...list, p2: { ...list.p2, status: 'busy', waitingFor: undefined } as SessionSummary }));
+    update(twoRoots({ ...list, p2: { ...list.p2, status: 'busy', waitingFor: undefined, needsYou: undefined } as SessionSummary }));
     expect(badge('~/personal')).toBeUndefined();
-    update(twoRoots({ ...list, p1: { ...list.p1, ...waiting }, p3: { ...list.p3, askedYou: { reason: 'question', excerpt: 'Made up?' } } }));
+    update(
+      twoRoots({
+        ...list,
+        p1: { ...list.p1, ...waiting, needsYou: { reason: 'prompt' } },
+        p3: { ...list.p3, askedYou: { reason: 'question', excerpt: 'Made up?' }, needsYou: { reason: 'asked' } },
+      }),
+    );
     expect(badge('~/personal')).toBe('3 need you');
 
     // Opened, it has none, and the tab left carries its own.

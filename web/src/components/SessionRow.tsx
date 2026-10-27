@@ -1,6 +1,6 @@
 // A session row (docs/design-system.md, 4: Session rows), two lines at most: which session it is,
-// its badges, when it was last active and its star toggle (W53); then what it asked, or what it was
-// last asked, after its group's label in Needs you, All sessions and Starred. A finished session's row
+// its badges, when it was last active and its star toggle (W53); then what it needs or asked, or what
+// it was last asked, after its group's label in Needs you, All sessions and Starred. A finished session's row
 // is muted, an ended interactive session's too (W67), with Ended as its status. The rest, such as its
 // replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
 // session view, one click away.
@@ -15,7 +15,7 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
-import { groupLabel, needsAttention, rowStatusBadge } from '../sessions.js';
+import { groupLabel, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
 import { StarButton } from './StarButton.js';
@@ -49,8 +49,24 @@ function titleHint(title: string, source: SessionSummary['titleSource']): string
 /** Clicks on these inside a row do their own thing, rather than opening the session. */
 const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="button"]';
 
-/** Line 2: what the session asked you, or else what you last asked it, or why the transcript can't say. */
+/**
+ * Line 2: what a background job's own line says it needs (W69), or what the session asked you, or
+ * else what you last asked it, or why the transcript can't say.
+ */
 function whatItWants(session: SessionSummary): { content: ReactNode; hint?: string } | undefined {
+  // Claude Code's line, from the job's file, not the transcript: shown whatever the transcript's state.
+  const needs = needsText(session);
+  if (needs !== undefined) {
+    const text = plainText(needs);
+    return {
+      content: (
+        <span className="asked">
+          <span className="asked-label">Needs:</span> {text}
+        </span>
+      ),
+      hint: text,
+    };
+  }
   if (session.transcript !== 'ok') {
     return { content: <span className="transcript-note">Transcript {session.transcript === 'missing' ? 'not found' : 'unreadable'}</span> };
   }

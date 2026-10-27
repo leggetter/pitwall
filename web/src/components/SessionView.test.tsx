@@ -702,6 +702,23 @@ describe('SessionView: notes that say what to do (W47)', () => {
       expect(waitNote(stale.view)).toBeNull();
     });
 
+    it("says the same for a job whose own line says what it needs (W69), but nothing for one whose context needs nothing", () => {
+      const { env } = attachEnv();
+      const asks = renderView(waitingJob({ state: 'blocked', status: 'idle', waitingFor: undefined, needsYou: { reason: 'claude-code', text: 'Tea or coffee?' } }), { env });
+      expect(badgeText(asks.view)).toBe('Blocked');
+      expect(waitNote(asks.view)?.textContent).toBe(WAITING_NOTES.background);
+      asks.unmount();
+      // Resumed, with Claude Code's "send a prompt to start": Idle, as its process is, and no note.
+      const placeholder = renderView(waitingJob({ state: 'blocked', status: 'idle', waitingFor: undefined, needsYou: undefined }), { env });
+      expect(badgeText(placeholder.view)).toBe('Idle');
+      expect(waitNote(placeholder.view)).toBeNull();
+      placeholder.unmount();
+      // Restarted from pitwall: it waits for your prompt, with nothing to answer.
+      const restarted = renderView(waitingJob({ state: 'working', status: 'busy', waitingFor: undefined, needsYou: { reason: 'restarted' } }), { env });
+      expect(badgeText(restarted.view)).toBe('Waiting for your prompt');
+      expect(waitNote(restarted.view)).toBeNull();
+    });
+
     it("shows what it's waiting on as Claude Code gives it, as text, in the badge alone", () => {
       const odd = '<b>made-up</b> dialog: "Pick one" & more';
       const { view } = renderView(waitingTty({ waitingFor: odd }));
