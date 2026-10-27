@@ -915,6 +915,52 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
   - It filters the session list's selection: one group, Needs you or All sessions. The repo list's counts don't change.
 - **Accessibility:** inside `role="search"`; a visually hidden label "Filter sessions"; placeholder "Filter by session, title, repo or directory".
 
+### Combobox
+
+A text field with a list of suggestions that narrows as you type (W70; Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). The WAI-ARIA APG's [editable combobox with list autocomplete](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-autocomplete-list/): what's typed stays as typed, and the list only offers. The [New session dialog](#dialogs)'s "Another directory under a root…" uses it; anything that later needs one builds on it.
+
+- **Component:** `Combobox` (`web/src/components/Combobox.tsx`), with the value, the options to show (already narrowed, best first), `onInput`, `onAccept`, status lines and an announcement. The caller narrows; the component draws the field and the list and handles the keys. The directory list's narrowing is `web/src/directories.ts`.
+- **Anatomy:**
+  - **The field:** a [text field](#inputs-textareas-and-selects), in the mono path style when it takes paths, with its label, help text and problem as any field has them.
+  - **The popup:** 4 px under the field, as wide as it, over what follows (`--pw-z-dropdown`): a [menu](#menus) panel's look, `--pw-surface-overlay`, `--pw-shadow-2`, `--pw-radius-md`, padding 4 px.
+  - **The listbox:** its options, scrolling past about seven (`7.5 × --pw-control-lg`). Each option is 32 px tall at least, padding 6 px 8 px, `--pw-radius-sm`, in the field's type (mono s 13/20, ligatures off, for paths), cut in the middle when there isn't room (`MiddleEllipsis`, 5: Labels). A quiet marker at its end, xs 12/20 in `--pw-text-subtle`, such as "repo".
+  - **Status lines:** after the options, divided from them by 1 px `--pw-border`, in meta type and `--pw-text-muted`, padding 4 px 8 px: loading, how many there are, none match, not every one listed. With no options, they're all the popup shows.
+- **States:**
+  - **Closed:** the field alone. It opens as a choice reveals the field and focus moves into it, on a click in the field, on typing, and on ↓ or ↑.
+  - **Open:** the options and the status lines. With neither, the popup stays shut and `aria-expanded` is false.
+  - **Highlighted option:** the menu items' keyboard highlight, a `--pw-surface-hover` fill with `--pw-ring-focus-inset`, since focus stays in the field and a fill alone is under 3:1. Hover gives the fill alone. Forced colours: a 2 px `Highlight` outline, and the popup a 1 px `CanvasText` outline, as a menu has.
+  - **Loading:** a status line with a spinner, "Loading directories…".
+  - **Busy:** while the dialog's action runs, the field is read-only and `aria-disabled`, and the popup shuts.
+  - **Invalid:** the field's own invalid state and problem, as any field's.
+- **Keys** (focus stays in the field throughout):
+  - ↓ opens the list on the first option, or moves to the next, wrapping; ↑ opens it on the last, or moves to the previous, wrapping. Alt + ↓ opens it without highlighting; Alt + ↑ closes it.
+  - Enter accepts the highlighted option and closes the list. It never submits the form, with or without one highlighted; ⌘/Ctrl + Enter is left to the form, so it still starts the session.
+  - Escape closes an open list, and goes no further, so the dialog stays open. With the list shut, it goes on as before, closing the dialog.
+  - Tab and Shift + Tab leave without accepting, and close the list.
+  - ← → Home End move the caret and take the highlight off the options.
+- **Pointer:** a click on an option accepts it and focus stays in the field (the press is `preventDefault()`ed, so the field never blurs). A press anywhere outside closes the list, and so does focus moving to another control in its form, as when a submit puts focus on a field with a problem. Focus leaving the page, as when you switch windows, leaves it as it was, as a menu does.
+- **ARIA:** the field is `role="combobox"`, `aria-autocomplete="list"`, `aria-expanded`, `aria-controls` its listbox, and, while one is highlighted, `aria-activedescendant` that option. The listbox is `role="listbox"`, named ("Directories"); each option `role="option"`, `aria-selected` on the highlighted one, its marker after a visually hidden comma, so it's heard as "~/code/outpost, repo".
+- **The count is announced** in a visually hidden `role="status"` (`aria-live="polite"`) region, 500 ms after the list last changed (`ANNOUNCE_DELAY_MS`), so typing isn't talked over at every key: "12 directories.", "50 of 312 directories. Keep typing to narrow them.", "No directories match.", and " Not every directory is listed." after it when that's so. It's emptied as the list closes.
+- **Text:** option labels are text, through `plainText()`, never markup.
+- **Moving focus on a choice:** choosing "Another directory under a root…" moves focus into the field it reveals. That's a change of focus on a select's change, which WCAG 3.2.2 asks to be expected: the option is the select's last, and ends in "…", which says it opens more choices (5: Casing and style).
+
+**The directory combobox** (New session's "Another directory under a root…"):
+
+- **The list:** `GET /api/directories` (`DIRECTORIES_PATH`), once per opening of the dialog, the first time the choice is made. The server walks each root three levels down, directories only: no symlinks, nothing hidden, no `node_modules`, no names with control or bidi characters, and nothing it can't read. A folder with a `.git` entry is a repo. Typing makes no requests.
+- **Options:** the open [root tab](#root-tabs)'s directories, or every root's without tabs, each as the root shortened to `~` and the path under it, such as `~/code/outpost`, with "repo" on repos. A directory under an inner root is that root's tab's, not the outer one's (W38).
+- **Matching:** case-insensitive. Every whitespace-separated term must be in the path under the root, or in the whole shortened path when the text starts with `~` or `/`. Text starting with `/` also matches the absolute path, so a pasted path finds its option.
+- **Ranking,** on the last term, from its last `/`: the last segment equal to it, then the last segment starting with it, then any segment starting with it, then the rest; ties go to the shallower, then alphabetically, ignoring case. At most 50 show.
+- **The value:** a chosen option shows as its shortened path, and the request sends its absolute path, the root, `/`, then the path. Typed text works as before: an absolute path as it is, and a `~/` path whose start is a root's shortened form under that root, so a directory deeper than three levels, or one the list stopped short of, can still be typed. The dialog's checks and the server's still apply.
+- **Placeholder:** the first offered root shortened, then `/…`: "~/code/…".
+- **Wording:**
+  - Loading: "Loading directories…"
+  - Many: "50 of 312. Keep typing to narrow them."
+  - None match: "No directories match. A typed path still works."
+  - None to list: "No directories to list. You can type a path."
+  - Cut short (`truncated`, at 5,000 directories or 2 seconds): "Not every directory is listed. You can type a path."
+  - Couldn't list them: a field hint under "Under *roots*.", linked to the field: "Couldn't list the directories. Type a path." The list stays shut and the field takes a typed path.
+  - A `~` path under no root: "Use a directory under ~/code."; a relative path: "Use an absolute path, or one that starts with ~/."
+
 ### Filter chips
 
 - **Size:** 24 px tall, padding 0 8 px, label style (xs 12/20, 500), `--pw-radius-sm`, an optional count after the label in tabular numbers.
@@ -1468,7 +1514,7 @@ For a destructive or surprising action in the session view, without a dialog.
 **New session dialog:**
 
 - **Fields:**
-  - Directory: a select of the groups' directories, plus "Another directory under a root…", which reveals a mono path field. Help text: "Under *roots*.", linked to both.
+  - Directory: a select of the groups' directories, plus "Another directory under a root…", which reveals the [directory combobox](#combobox), with focus in it and its list open, narrowing the directories under the roots as you type (W70). Help text: "Under *roots*.", linked to both.
     - With [root tabs](#root-tabs), the open tab's root alone: its groups' directories, then its root, and "Under *root*.". A typed directory must be in that tab, under its root and under no other root inside it, where the index would list the session: "Use a directory under ~/work. ~/personal has its own tab." (W38).
   - Name: optional, placeholder "Claude Code names it from the prompt".
   - Model: optional; a select of Default, the aliases, and "Other…", which reveals a mono field.
@@ -1867,13 +1913,14 @@ Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They'
 | ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself | Show the next / previous session, with focus on its heading. Nothing while the message box has a draft or a Stop, Remove or resume runs |
 | Enter | On a session row | Open the session |
 | ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
-| Escape | Layered, nearest first | Close a tooltip or menu (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, the restart before attaching, or a link's question while focus is in it) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
+| Escape | Layered, nearest first | Close a tooltip, a menu or a combobox's list (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, the restart before attaching, or a link's question while focus is in it) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view. Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
 | ⌘/Ctrl + Enter | The message box | Send |
 | ⌘/Ctrl + Enter | The New session dialog | Start the session |
 | ← / →, Home / End | The root tabs, with two or more roots | Move focus between the roots' tabs; Enter or Space opens the focused tab, with its own selection and open session |
 | ← / →, Home / End | The session view's tabs | Move focus between Conversation and Terminal; Enter or Space opens the focused tab |
 | ← / →, Home / End | The divider | Resize the session view by 16 px; jump to the minimum or maximum |
 | ↑ / ↓, Home / End, Enter, Escape | An open menu | Move, jump, activate, close |
+| ↓ / ↑, Alt + ↓, Enter, Escape | A combobox, such as New session's directory | Open the list, or move through it, wrapping; open it without highlighting; accept the highlighted option, never submitting the form; close the list, leaving the dialog open (W70) |
 | ↑ / ↓, ← / → | A radio group, in Preferences | Choose the previous or next option, which applies at once; Tab moves on to the next group (W59) |
 | F6 | The terminal | Leave the terminal, to the Terminal tab |
 | Shift + Enter | The terminal | A new line in Claude Code's prompt: a line feed (Ctrl+J), where Enter's carriage return submits. Not with Ctrl, Alt or ⌘ too, nor while an input method composes |

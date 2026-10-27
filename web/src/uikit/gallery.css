@@ -167,10 +167,11 @@
 
 /*
  * For the keyboard shortcuts dialog, whose whole map shows in a tall enough window: at 375 px, where
- * its rows wrap most, with about 48 px to spare below it (W41's Shift+Enter row took 53 px).
+ * its rows wrap most, with about 48 px to spare below it (W41's Shift+Enter row took 53 px; W70's
+ * combobox row 77 px, when the card already ended 57 px below 1,540 px in chrome-headless-shell).
  */
 .uikit-frame-dialog-tall {
-  height: 1540px;
+  height: 1722px;
 }
 
 /*
