@@ -91,18 +91,23 @@ const LONG_REPLY =
   'replaced rather than duplicated. I added tests for a batch that fails once, one that fails every time, and ' +
   'one that times out, and the full suite passes. I left the timeout at 30 seconds, as you asked.';
 
-/** Every status a row can show, one row each, named after it. */
+/**
+ * Every status a row can show, one row each, named after it. The index sets needsYou from each
+ * session's context (W69); a blocked job whose own line asks nothing, as a resumed one's "send a
+ * prompt to start", has none, and shows as idle.
+ */
 export const STATUS_ROWS: SessionSummary[] = [
   session('waiting', {
     status: 'waiting',
     waitingFor: 'permission prompt',
+    needsYou: { reason: 'prompt' },
     lastUserPrompt: 'Add a retry with backoff to the export job.',
     lastActivityAt: ago(1),
   }),
   background('blocked', {
     state: 'blocked',
     status: 'idle',
-    waitingFor: 'input needed',
+    needsYou: { reason: 'claude-code', text: 'Should failed exports go to a quarantine folder, or back on the queue?' },
     lastUserPrompt: 'Move failed exports somewhere we can inspect them.',
     lastActivityAt: ago(2),
   }),
@@ -110,6 +115,7 @@ export const STATUS_ROWS: SessionSummary[] = [
     title: 'CSV export for projects',
     titleSource: 'claude-code',
     askedYou: { reason: 'open-questions', excerpt: 'Should the CSV export include archived projects?' },
+    needsYou: { reason: 'asked' },
     lastUserPrompt: 'Add a CSV export to the projects page.',
     lastActivityAt: ago(3),
   }),
@@ -136,6 +142,12 @@ export const STATUS_ROWS: SessionSummary[] = [
     lastActivityAt: ago(60 * 24 * 12),
   }),
   endedSession('ended', { lastActivityAt: ago(60 * 20) }),
+  // W69: resumed from pitwall in this run, waiting for your first prompt.
+  background('restarted', { state: 'blocked', status: 'idle', needsYou: { reason: 'restarted' }, lastUserPrompt: 'Tidy the export docs.', lastActivityAt: ago(60 * 3) }),
+  // W69: blocked, and pitwall couldn't read the job's file, so it still needs you.
+  background('blocked-unread', { state: 'blocked', status: 'idle', needsYou: { reason: 'blocked' }, lastUserPrompt: 'Rotate the export bucket keys.', lastActivityAt: ago(5) }),
+  // W69: blocked with Claude Code's "send a prompt to start", after pitwall restarted: nothing needs you, so no badge.
+  background('blocked-idle', { state: 'blocked', status: 'idle', lastUserPrompt: 'Check the export queue depth.', lastActivityAt: ago(60 * 4) }),
 ];
 
 /** Finished rows, which sit in a group's "Finished" list. */
@@ -196,12 +208,23 @@ export const AWKWARD_ROWS: SessionSummary[] = [
       excerpt:
         'Should exported files older than 30 days be deleted by the nightly job, moved to the archive bucket first, or kept until someone removes them by hand?',
     },
+    needsYou: { reason: 'asked' },
     lastActivityAt: ago(2),
   }),
   session('long-reason', {
     status: 'waiting',
     waitingFor: 'permission prompt for a command that writes outside the working directory',
+    needsYou: { reason: 'prompt' },
     lastActivityAt: ago(1),
+  }),
+  background('long-needs', {
+    state: 'blocked',
+    status: 'idle',
+    needsYou: {
+      reason: 'claude-code',
+      text: 'Which of the three made-up retention rules should the nightly export follow: delete after 30 days, archive after 30 days, or keep until someone removes the files by hand?',
+    },
+    lastActivityAt: ago(2),
   }),
   background('unbroken', {
     state: 'working',
@@ -217,10 +240,11 @@ export const STATE_ROWS = {
   default: session('default', { status: 'busy', lastActivityAt: ago(0.2) }),
   hover: session('hover', { status: 'busy', lastActivityAt: ago(0.3) }),
   open: session('open', { status: 'busy', lastActivityAt: ago(2) }),
-  needsYou: session('needs-you', { status: 'waiting', waitingFor: 'dialog open', lastUserPrompt: 'Pick the export format for the archive.' }),
+  needsYou: session('needs-you', { status: 'waiting', waitingFor: 'dialog open', needsYou: { reason: 'prompt' }, lastUserPrompt: 'Pick the export format for the archive.' }),
   needsYouOpen: session('needs-you-open', {
     status: 'waiting',
     waitingFor: 'permission prompt',
+    needsYou: { reason: 'prompt' },
     lastUserPrompt: 'Delete the old export files.',
   }),
   finished: finished('finished', 'done', { cwd: JOBS_DIR }),
@@ -229,7 +253,14 @@ export const STATE_ROWS = {
 
 // Groups, for the group sections and the dashboards.
 
-const appSessions = [STATUS_ROWS[0]!, STATUS_ROWS[1]!, STATUS_ROWS[3]!, STATUS_ROWS[5]!];
+/** A status row by its name, after pitwall-test-. */
+export function statusRow(name: string): SessionSummary {
+  const row = STATUS_ROWS.find((candidate) => candidate.name === `pitwall-test-${name}`);
+  if (!row) throw new Error(`no status row ${name}`);
+  return row;
+}
+
+const appSessions = [statusRow('waiting'), statusRow('blocked'), statusRow('busy'), statusRow('idle')];
 export const APP_GROUP = group('pitwall-test-app', appSessions);
 export const NOTES_GROUP = group('pitwall-test-notes', [session('notes', { cwd: NOTES_DIR, lastActivityAt: ago(30) })], {
   key: NOTES_DIR,
@@ -314,6 +345,7 @@ export const WORKED_MULTI = session('across-repos', {
   titleSource: 'claude-code',
   status: 'waiting',
   waitingFor: 'permission prompt',
+  needsYou: { reason: 'prompt' },
   lastUserPrompt: 'Make the API retry the export too, and update the docs.',
   lastActivityAt: ago(1),
   workedIn: touched(API_DIR, DOCS_DIR),
@@ -322,6 +354,7 @@ export const WORKED_MULTI = session('across-repos', {
 export const WORKED_FROM_ROOT = session('from-root', {
   cwd: ROOT,
   askedYou: { reason: 'question', excerpt: 'Should the API return 429 or 503 while an export retries?' },
+  needsYou: { reason: 'asked' },
   lastUserPrompt: 'Look at how the API reports a retrying export.',
   lastActivityAt: ago(6),
   workedIn: touched(API_DIR, DOCS_DIR),
@@ -358,6 +391,7 @@ export const PREFS_DELIVERY = session('delivery-plan', {
   cwd: ROOT,
   status: 'waiting',
   waitingFor: 'permission prompt',
+  needsYou: { reason: 'prompt' },
   lastUserPrompt: 'Draft the delivery plan in the docs, and check the service for the dates.',
   lastActivityAt: ago(1),
   workedIn: [

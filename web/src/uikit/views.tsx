@@ -85,15 +85,23 @@ const MISSING_INTERACTIVE = session('view-missing-dir', {
   cwdMissing: true,
   lastActivityAt: ago(10 * 24 * 60),
   askedYou: { reason: 'question', excerpt: 'Should the made-up export keep archived projects?' },
+  needsYou: { reason: 'asked' },
 });
 const MISSING_BACKGROUND = background('view-missing-dir-job', { state: 'working', cwd: GONE_DIR, cwdMissing: true });
 const MISSING_FINISHED = background('view-missing-dir-done', { state: 'done', alive: false, pid: undefined, finished: true, cwd: GONE_DIR, cwdMissing: true });
 const MISSING_QUIET = session('view-missing-dir-quiet', { alive: false, pid: undefined, status: undefined, cwd: GONE_DIR, cwdMissing: true });
 const MISSING_GONE = background('view-missing-dir-gone', { state: 'working', cwd: GONE_DIR, cwdMissing: true });
 // W47: a running session waiting on you, and where to answer.
-const WAITING_INTERACTIVE = session('view-waiting', { title: 'Export retries', status: 'waiting', waitingFor: 'input needed' });
-const WAITING_BACKGROUND = background('view-waiting-job', { state: 'working', status: 'waiting', waitingFor: 'permission prompt' });
-const WAITING_BLOCKED = background('view-waiting-blocked', { state: 'blocked', status: 'idle', waitingFor: 'a made-up question' });
+const WAITING_INTERACTIVE = session('view-waiting', { title: 'Export retries', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } });
+const WAITING_BACKGROUND = background('view-waiting-job', { state: 'working', status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } });
+const WAITING_BLOCKED = background('view-waiting-blocked', {
+  state: 'blocked',
+  status: 'idle',
+  needsYou: { reason: 'claude-code', text: 'Should the made-up export keep archived projects?' },
+});
+// W69: needs you from its context, or not.
+const RESTARTED_VIEW = background('view-restarted', { state: 'blocked', status: 'idle', needsYou: { reason: 'restarted' } });
+const BLOCKED_IDLE_VIEW = background('view-blocked-idle', { state: 'blocked', status: 'idle' });
 const LONG_TITLE = session('view-with-a-long-name-for-the-header', {
   title: 'Retry each failed export batch three times with backoff, keeping the 30 second timeout',
   cwd: `${APP_DIR}/packages/exports/src/jobs/retry`,
@@ -296,9 +304,31 @@ export function SessionViews() {
           <SessionView session={WAITING_BACKGROUND} listed onClose={noop} />
         </Stubbed>
       </Specimen>
-      <Specimen title="Blocked, background" note="A blocked job, which Claude Code reports with status idle, is waiting on you too: the same line. A stale one has none." frame="short">
+      <Specimen
+        title="Blocked, background"
+        note="A blocked job whose own line says what it needs, or whose job file pitwall couldn't read, is waiting on you too: the same line. A stale one has none (W69)."
+        frame="short"
+      >
         <Stubbed>
           <SessionView session={WAITING_BLOCKED} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Waiting for your prompt"
+        note="Resumed, or restarted after you confirmed it, in this run of pitwall: solid until you send it a prompt. Nothing to answer, so no line under line 2 (W69)."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={RESTARTED_VIEW} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Blocked, but nothing needs you"
+        note="Claude Code says blocked, but its context asks nothing, as a resumed session's &quot;send a prompt to start&quot; after pitwall restarted: Idle, as its process is, and no line (W69)."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={BLOCKED_IDLE_VIEW} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen

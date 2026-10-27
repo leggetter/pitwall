@@ -722,7 +722,10 @@ const STATES: ConnectionState[] = ['connecting', 'live', 'reconnecting', 'unauth
 export function Notices() {
   return (
     <>
-      <Specimen title="Status badges" note="Each session status, as statusBadge() gives it. Solid is for needing you only. The list leaves Idle out; the session view shows it.">
+      <Specimen
+        title="Status badges"
+        note="Each session status, as statusBadge() gives it. Solid is for needing you only: Waiting, Blocked and Waiting for your prompt, by the session's needsYou (W69). A blocked job that needs nothing shows Idle. The list leaves Idle out; the session view shows it."
+      >
         <p className="uikit-row">
           {STATUS_ROWS.map((row) => (
             <StatusBadge key={row.sessionId} badge={statusBadge(row)} />
