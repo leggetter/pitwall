@@ -20,7 +20,7 @@ import { Dialogs, Layouts, Notices, Pages, PreferencesDialogs, ShortcutsDialogs 
 import { CopyButtons, Timestamps, Toasts, Tooltips } from './overlays.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
 import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
-import { Confirmations, Conversations, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
+import { Confirmations, Conversations, EndedViews, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import './gallery.css';
 
 interface Section {
@@ -42,13 +42,20 @@ const SECTIONS: Section[] = [
   { id: 'session-list', title: 'Session list header', intro: "SessionList's header for each selection: its name, its summary, the filters and the Sort setting.", Content: SessionListHeads },
   { id: 'filters', title: 'Filters and Sort', intro: 'FilterControls: the filter field, the filter chips and Clear filters, then the Sort setting. Each one keeps its own state.', Content: FilterSpecimens },
   { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, two lines, in the session list it always sits in: in a group, and in Needs you and All sessions.', Content: SessionRows },
-  { id: 'finished', title: 'Finished section', intro: 'FinishedSection, at the foot of the session list.', Content: FinishedSections },
+  { id: 'finished', title: 'Finished section', intro: 'FinishedSection, at the foot of the session list, with ended sessions and Show older (W67).', Content: FinishedSections },
   {
     id: 'session-view',
     title: 'Session view',
     intro:
       'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state, including waiting for the first snapshot, unlisted, and the conversation loading, failed (Try again idle and busy), missing and empty. The Layouts section shows it as the third column.',
     Content: SessionViews,
+  },
+  {
+    id: 'ended-view',
+    title: 'Ended session view',
+    intro:
+      "SessionView for an ended interactive session (W67): the Conversation tab alone, Ended, and the footer's note with Copy command and Resume in background, idle, busy, resumed and after each failure, with its directory gone, its actions menu, and at 375 px.",
+    Content: EndedViews,
   },
   {
     id: 'conversation',

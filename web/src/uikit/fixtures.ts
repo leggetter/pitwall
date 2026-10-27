@@ -68,6 +68,15 @@ export function finished(name: string, state: 'done' | 'stopped' | 'failed', ove
   return background(name, { state, alive: false, pid: undefined, finished: true, lastActivityAt: ago(95), ...overrides });
 }
 
+/**
+ * An interactive session that has ended (W67): its process exited, as when its terminal closed, so it's
+ * finished, with no process, status or state, and listed from its transcript. Ended two days ago unless
+ * `overrides` say otherwise.
+ */
+export function endedSession(name: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
+  return session(name, { ended: true, finished: true, alive: false, pid: undefined, status: undefined, lastActivityAt: ago(2 * 24 * 60), ...overrides });
+}
+
 export function group(label: string, sessions: SessionSummary[], overrides: Partial<SessionGroup> = {}): SessionGroup {
   return { key: `${ROOT}/${label}`, label, kind: 'git', root: ROOT, sessions, ...overrides };
 }
@@ -126,6 +135,7 @@ export const STATUS_ROWS: SessionSummary[] = [
     startedAt: ago(60 * 24 * 30),
     lastActivityAt: ago(60 * 24 * 12),
   }),
+  endedSession('ended', { lastActivityAt: ago(60 * 20) }),
 ];
 
 /** Finished rows, which sit in a group's "Finished" list. */
@@ -142,6 +152,29 @@ export const FINISHED_ROWS: SessionSummary[] = [
 export function exchange(status: RelayExchange['status'], reply?: string): RelayExchange {
   return reply === undefined ? { sentAt: ago(7), status } : { sentAt: ago(7), status, reply: { at: ago(5), text: reply } };
 }
+
+/** A directory that has gone, as a removed worktree's has. */
+const GONE_WORKTREE = `${APP_DIR}/.claude/worktrees/pitwall-test-export-fix`;
+
+/**
+ * A Finished section's rows with ended sessions in it (W67), all from the last ENDED_SHOWN_DAYS: one
+ * that asked something, a finished background session among them, and one whose directory has gone.
+ */
+export const ENDED_ROWS: SessionSummary[] = [
+  endedSession('ended-docs', { title: 'Update the getting started guide', titleSource: 'claude-code', lastActivityAt: ago(60 * 20), lastUserPrompt: 'Update the made-up getting started guide.' }),
+  finished('done-beside-ended', 'done', { lastActivityAt: ago(60 * 30) }),
+  endedSession('ended-asked', {
+    lastActivityAt: ago(60 * 24 * 2),
+    askedYou: { reason: 'question', excerpt: 'Should the made-up export keep archived projects?' },
+  }),
+  endedSession('ended-gone', { cwd: GONE_WORKTREE, cwdMissing: true, lastActivityAt: ago(60 * 24 * 5) }),
+];
+
+/** Ended sessions older than ENDED_SHOWN_DAYS, behind Show older (W67). */
+export const OLDER_ENDED_ROWS: SessionSummary[] = [
+  endedSession('ended-last-week', { lastActivityAt: ago(60 * 24 * 9) }),
+  endedSession('ended-last-month', { lastActivityAt: ago(60 * 24 * 26) }),
+];
 
 /** Rows with long or awkward text, and the transcript notes. */
 export const AWKWARD_ROWS: SessionSummary[] = [
@@ -191,6 +224,7 @@ export const STATE_ROWS = {
     lastUserPrompt: 'Delete the old export files.',
   }),
   finished: finished('finished', 'done', { cwd: JOBS_DIR }),
+  ended: endedSession('state-ended', { lastActivityAt: ago(60 * 26) }),
 };
 
 // Groups, for the group sections and the dashboards.

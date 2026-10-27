@@ -1,14 +1,15 @@
 // Session rows and the Finished section (W19, W21, W23): the real SessionRow and FinishedSection,
-// with fixture sessions, in the session list's own surface, and rows with their star toggles (W53). Each row is shown as it is in a group,
+// with fixture sessions, in the session list's own surface, and rows with their star toggles (W53),
+// ended sessions' rows and Show older among them (W67). Each row is shown as it is in a group,
 // and as it is in Needs you and All sessions, where line 2 starts with its group's label. Each
 // specimen keeps its own open state, so it can be clicked.
 
 import { useState } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
-import { FinishedSection } from '../components/SessionList.js';
+import { FinishedSection, type OlderEnded } from '../components/SessionList.js';
 import { SessionRow } from '../components/SessionRow.js';
 import { listScope, type Listed } from '../sessions.js';
-import { APP_DIR, AWKWARD_ROWS, FINISHED_ROWS, group, JOBS_DIR, ROOT, STATE_ROWS, STATUS_ROWS, WORKED_SNAPSHOT } from './fixtures.js';
+import { APP_DIR, AWKWARD_ROWS, ENDED_ROWS, FINISHED_ROWS, group, JOBS_DIR, OLDER_ENDED_ROWS, ROOT, STATE_ROWS, STATUS_ROWS, WORKED_SNAPSHOT } from './fixtures.js';
 import { Specimen } from './kit.js';
 
 /** Rows all in one group, as a group's own list has them. */
@@ -67,21 +68,40 @@ function Rows({ rows, showGroup = false, openSessionId, starred }: { rows: Liste
   );
 }
 
-/** A Finished section at the foot of a list, opening and closing as in the app. */
-function Finished({ rows, collapsed = false, showGroup = false }: { rows: Listed[]; collapsed?: boolean; showGroup?: boolean }) {
+/**
+ * A Finished section at the foot of a list, opening and closing as in the app. With `older`, the
+ * selection's ended sessions older than ENDED_SHOWN_DAYS, behind Show older, which shows them after
+ * the rows, or from the start with `olderShown` (W67).
+ */
+function Finished({
+  rows,
+  collapsed = false,
+  showGroup = false,
+  older = [],
+  olderShown = false,
+}: {
+  rows: Listed[];
+  collapsed?: boolean;
+  showGroup?: boolean;
+  older?: Listed[];
+  olderShown?: boolean;
+}) {
   const [isCollapsed, setCollapsed] = useState(collapsed);
   const [open, setOpen] = useState<string>();
+  const [shown, setShown] = useState(olderShown);
+  const toggle: OlderEnded | undefined = older.length > 0 ? { count: older.length, shown, onToggle: () => setShown((value) => !value) } : undefined;
   return (
     <div className="session-list uikit-rows">
       <div className="session-list-body">
         <ul className="sessions">
           <FinishedSection
-            finished={rows}
+            finished={shown ? [...rows, ...older] : rows}
             collapsed={isCollapsed}
             onToggle={() => setCollapsed((value) => !value)}
             showGroup={showGroup}
             onOpen={(id) => setOpen((current) => (current === id ? undefined : id))}
             openSessionId={open}
+            older={toggle}
           />
         </ul>
       </div>
@@ -125,6 +145,7 @@ function StarredStates({ showGroup }: { showGroup: boolean }) {
       <StateRow caption="Not starred: no star until the row is hovered or focused" session={STATE_ROWS.hover} showGroup={showGroup} starred={false} />
       <StateRow caption="Not starred, hovered: the outlined star" session={STATE_ROWS.hover} hovered showGroup={showGroup} starred={false} />
       <StateRow caption="Finished and starred" session={STATE_ROWS.finished} showGroup={showGroup} starred />
+      <StateRow caption="Ended and starred (W67)" session={STATE_ROWS.ended} showGroup={showGroup} starred />
     </div>
   );
 }
@@ -138,6 +159,7 @@ function States({ showGroup }: { showGroup: boolean }) {
       <StateRow caption="Needs you: the bar and the badge, no tint" session={STATE_ROWS.needsYou} showGroup={showGroup} />
       <StateRow caption="Needs you and open: the ring and the bar" session={STATE_ROWS.needsYouOpen} open showGroup={showGroup} />
       <StateRow caption="Finished: the name at 400, muted" session={STATE_ROWS.finished} showGroup={showGroup} />
+      <StateRow caption="Ended (W67): muted as finished, with Ended where a finished session has its state" session={STATE_ROWS.ended} showGroup={showGroup} />
     </div>
   );
 }
@@ -150,7 +172,7 @@ export function SessionRows() {
     <>
       <Specimen
         title="Every status, in a group"
-        note="One row per status, named after it: waiting, blocked, asked you, busy, working, idle, unknown, not running, done, stopped, failed and stale. Idle has no badge in the list; the session view shows it. Click a row to mark it open."
+        note="One row per status, named after it: waiting, blocked, asked you, busy, working, idle, unknown, not running, done, stopped, failed, stale and ended (W67). Idle has no badge in the list; the session view shows it. Click a row to mark it open."
       >
         <Rows rows={inGroup('pitwall-test-statuses', STATUS_ROWS)} />
       </Specimen>
@@ -215,6 +237,27 @@ export function FinishedSections() {
       </Specimen>
       <Specimen title="Open, in All sessions" note="With each row's group label.">
         <Finished rows={acrossGroups(FINISHED_ROWS)} showGroup />
+      </Specimen>
+      <Specimen
+        title="With ended sessions, and Show older (W67)"
+        note="Ended interactive sessions from the last 7 days, muted, with Ended where a finished background session has its state, sorted with them. Those older than 7 days are behind Show older, an outline sm button after the rows, described by the line after it. Press it: they're listed after the rest, and it reads Hide older sessions, the same button, so focus stays on it. In the app it's one switch for the page, and isn't kept across reloads."
+      >
+        <Finished rows={inGroup('pitwall-test-app', ENDED_ROWS)} older={inGroup('pitwall-test-app', OLDER_ENDED_ROWS)} />
+      </Specimen>
+      <Specimen title="Show older on" note="The older ended sessions listed, last, and Hide older sessions in Show older's place.">
+        <Finished rows={inGroup('pitwall-test-app', ENDED_ROWS)} older={inGroup('pitwall-test-app', OLDER_ENDED_ROWS)} olderShown />
+      </Specimen>
+      <Specimen title="With ended sessions, in All sessions" note="With each row's group label, and the count of every older one in the view.">
+        <Finished rows={acrossGroups(ENDED_ROWS)} older={acrossGroups(OLDER_ENDED_ROWS)} showGroup />
+      </Specimen>
+      <Specimen
+        title="Only older ended sessions"
+        note="A group with other sessions, whose finished ones all ended more than 7 days ago: Finished (0), with Show older inside it. A group with nothing else isn't in the repo list until Show older is on."
+      >
+        <Finished rows={[]} older={inGroup('pitwall-test-app', OLDER_ENDED_ROWS)} />
+      </Specimen>
+      <Specimen title="With ended sessions, 375 px wide" note="The session list's width at 375 px. The line after Show older wraps under it when there's no room beside it." width={375}>
+        <Finished rows={acrossGroups(ENDED_ROWS)} older={acrossGroups(OLDER_ENDED_ROWS)} showGroup />
       </Specimen>
     </>
   );
