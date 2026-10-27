@@ -22,6 +22,7 @@ M1, the read-only index, M2, interacting with sessions from the web UI, and M3, 
 - **TypeScript in strict mode,** Node >= 22, npm.
 - **Dependencies are pinned exactly and must be at least 14 days old.** Pick the newest version published 14 or more days ago (`npm view <pkg> time --json`) and install with `npm install <pkg>@<version> --before=<date>`, so transitive dependencies follow the same cutoff. `.npmrc` enforces exact versions. Prefer a few lines of code over a new dependency.
 - **Commits and PRs:** conventional commits for commit messages and PR titles. Keep the PR summary short and put detail in a `<details>` block.
+- **Worktrees go in `.worktrees/<name>`** inside the main checkout, which `.gitignore` ignores (Phil, 2026-10-27), not in folders beside it. ripgrep, the editors' search, vitest and tsc leave them alone, and New session's directory list skips hidden folders. A plain `git clean -fdx` skips them as nested repositories; only `-ff` would delete them.
 - **Write as if the repo may go public.** It's private, but don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
 
 ## Commands
