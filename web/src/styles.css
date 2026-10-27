@@ -498,7 +498,7 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-/* Line 2: the filters, growing, with room at the right for W23's Sort select. */
+/* Line 2 on: the filters and the Sort select, which lay themselves out (.filter-controls). */
 .session-list-filters {
   display: flex;
   flex-wrap: wrap;
@@ -790,7 +790,12 @@ textarea {
   margin-left: auto;
 }
 
-/* The filters: the field, the chips and Clear filters. */
+/*
+ * The filters: the field on a line of its own, then the chips and Clear filters, and whatever comes
+ * after them, such as Sort. Turning a filter on or off moves none of it, at any width (W75): the
+ * field never shares its line, a chip is as wide off as on, and Clear filters keeps its room while
+ * it's away. So where the line wraps depends on the width alone.
+ */
 
 .filter-controls {
   display: flex;
@@ -801,14 +806,14 @@ textarea {
   min-width: 0;
 }
 
-/* The filter field (Search, in section 4) */
+/* The filter field (Search, in section 4): its line's whole width, so its placeholder shows whole. */
 
 .filter-field {
   position: relative;
   display: flex;
-  flex: 1 1 200px;
+  flex: 1 1 100%;
   align-items: center;
-  min-width: min(200px, 100%);
+  min-width: 0;
 }
 
 .filter-field-icon {
@@ -888,12 +893,17 @@ textarea {
   gap: var(--pw-space-2);
 }
 
+/*
+ * A chip is as wide off as on (W75). On, the 16 px check and the 4 px gap after it come before the
+ * label; off, that 20 px is shared between the sides, so the label is centred and nothing after the
+ * chip moves when it's pressed.
+ */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--pw-space-1);
   height: var(--pw-control-sm);
-  padding: 0 var(--pw-space-2);
+  padding: 0 calc(var(--pw-space-2) + (16px + var(--pw-space-1)) / 2);
   border: 0;
   border-radius: var(--pw-radius-sm);
   background: var(--pw-surface);
@@ -920,7 +930,12 @@ textarea {
   box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
 }
 
+.chip > svg {
+  flex: none;
+}
+
 .chip[aria-pressed='true'] {
+  padding: 0 var(--pw-space-2);
   background: var(--pw-selected);
   box-shadow: var(--pw-ring-selected);
   color: var(--pw-info-tint-fg);
@@ -928,6 +943,15 @@ textarea {
 
 .chip[aria-pressed='true']:focus-visible {
   box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+/*
+ * Clear filters' room while no filter is on: a copy of the button, unseen, so the chips' line keeps
+ * its width and Sort keeps its place as the button comes and goes (W75). It's aria-hidden and can't
+ * take focus, so it's nothing to a screen reader or the keyboard.
+ */
+.filter-clear-room {
+  visibility: hidden;
 }
 
 /* At 600 px and narrower, the header's right side wraps under the wordmark. */
