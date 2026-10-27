@@ -208,14 +208,18 @@ describe('the ended-session scanner: the rule (spike 006, finding 7)', () => {
   });
 
   it('leaves out one with no typed prompt, and finds a typed prompt anywhere in the file, reading it in full only then', async () => {
+    // Each filler is over 400 bytes, so 20 of them are more than the 1 KiB chunk and the 4 KiB window
+    // below, however short the temp directory's path, which every entry's cwd repeats.
+    const filler = (n: number, minutes: number) => Array.from({ length: n }, (_, i) => reply(app, ago(minutes), `${'x'.repeat(400)} ${i}`));
+    // No typed prompt anywhere, and longer than one chunk: read on to its end.
     await write(app, [
       typed(app, ago(9), 'From the SDK', { promptSource: 'sdk' }),
+      ...filler(20, 8),
       typed(app, ago(8), 'Queued', { promptSource: 'queued' }),
       typed(app, ago(7), 'Meta', { isMeta: true }),
       reply(app, ago(6), 'Nothing typed.'),
     ]);
     // A typed prompt only in the middle: past the first chunk of the start, and before the end's window.
-    const filler = (n: number, minutes: number) => Array.from({ length: n }, (_, i) => reply(app, ago(minutes), `${'x'.repeat(400)} ${i}`));
     const middle = await write(app, [
       typed(app, ago(50), 'Not typed', { promptSource: 'system' }),
       ...filler(20, 49),
@@ -302,12 +306,13 @@ describe('the ended-session scanner: how much it lists and reads', () => {
 
   it('reads an unchanged transcript once, and a changed one again, from where its start was left', async () => {
     let now = NOW;
-    const s = scanner({ now: () => now, chunkBytes: 1024 });
+    // The default 64 KiB chunk, so each small file is one chunk, whatever the temp directory's path.
+    const s = scanner({ now: () => now });
     const quick = await plain(app, 30);
     const untyped = await write(app, [typed(app, ago(29), 'Not typed', { promptSource: 'sdk' }), reply(app, ago(28), 'Done.')]);
     await scan(s);
     const first = s.stats();
-    // Both are small enough that the first chunk of their start was all of them.
+    // Both are well under one chunk, so the first read of their start was all of them.
     expect(first).toMatchObject({ scans: 1, tailReads: 2, fullReads: 0 });
 
     now += ENDED_RESCAN_MS;
