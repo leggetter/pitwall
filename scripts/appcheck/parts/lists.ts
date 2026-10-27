@@ -1,6 +1,7 @@
 // The lists (docs/design-system.md, 3: Repo list, Root tabs, Session list; 4: Session rows): the repo
 // list's Needs you, All sessions and Starred, then its groups; two-line rows; the session list's
-// filter, chips and sort; and, with two roots, a tab per root.
+// filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75); and,
+// with two roots, a tab per root.
 
 import { API_SERVER, CODE, NAMES, OSS } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -13,10 +14,50 @@ const chip = (label: string) => `[...document.querySelectorAll('.session-list .f
 const SORT = `document.querySelector('.session-list .sort select')`;
 const star = (name: string) => `document.querySelector(${q(`.session-list button.star-toggle[aria-label="Star ${name}"]`)})`;
 const BACKGROUND = [NAMES.prompting, NAMES.running, NAMES.running2, NAMES.running3];
+const CLEAR_FILTERS = `[...document.querySelectorAll('.session-list .filter-chips button')].find((b) => b.textContent.trim() === 'Clear filters')`;
+
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+type Boxes = Record<string, Box | null>;
+
+/**
+ * The filter bar's boxes, in the window, by name: the bar itself (its role="search" form, so the rows
+ * under it), the field, each chip by its label, and Sort. With `withClear`, Clear filters' too.
+ */
+const barBoxes = (withClear = false) => `(() => {
+  const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
+  const bar = document.querySelector('.session-list form[role="search"]');
+  const boxes = { 'the bar': box(bar), 'the field': box(bar?.querySelector('.filter-field')) };
+  for (const chip of bar?.querySelectorAll('.filter-chips .chip') ?? []) boxes[chip.textContent.trim()] = box(chip);
+  boxes.Sort = box(bar?.querySelector('.sort'));
+  if (${withClear}) boxes['Clear filters'] = box(${CLEAR_FILTERS});
+  return boxes;
+})()`;
+
+/** What moved more than 0.5 px from `before` to `after`: each box's edge or size, in words. */
+function moved(before: Boxes, after: Boxes): string[] {
+  const out: string[] = [];
+  for (const [name, was] of Object.entries(before)) {
+    const now = after[name];
+    if (!was || !now) {
+      out.push(`${name}: ${was ? 'gone' : 'missing before'}`);
+      continue;
+    }
+    for (const side of ['left', 'top', 'width', 'height'] as const) {
+      const by = now[side] - was[side];
+      if (Math.abs(by) > 0.5) out.push(`${name}: ${side} ${was[side].toFixed(1)} to ${now[side].toFixed(1)}`);
+    }
+  }
+  return out;
+}
 
 const part: Part = {
   name: 'lists',
-  title: 'The repo list (Needs you, All sessions, Starred, groups), root tabs, two-line rows, and the filter and sort',
+  title: 'The repo list (Needs you, All sessions, Starred, groups), root tabs, two-line rows, the filter and sort, and a filter bar that filtering never moves',
   async run(t) {
     const { page } = t;
 
@@ -108,6 +149,72 @@ const part: Part = {
       await t.shot('chip-background');
       await page.click('Background', chip('Background'));
       await page.waitFor('the chip to clear', `${rowNames}.length === 9`);
+    });
+
+    // W75: the field on a line of its own, then the chips, Clear filters and Sort, at every width, and
+    // turning a filter on or off moves none of it (Phil, 2026-10-27: "selecting a filter changes the
+    // alignment/rows").
+    let unfiltered: Boxes = {};
+
+    await t.step('the filter bar: the field on a line of its own, its placeholder whole, then the chips and Sort at the right', async () => {
+      unfiltered = await page.evaluate<Boxes>(barBoxes());
+      const { 'the bar': bar, 'the field': field, Interactive, Background, Sort } = unfiltered;
+      t.expect(bar && field && Interactive && Background && Sort, 'the bar, the field, both chips and Sort', unfiltered);
+      if (!bar || !field || !Interactive || !Background || !Sort) return;
+      t.expect(Math.abs(field.width - bar.width) <= 0.5, "the field is the bar's whole width", { field: field.width, bar: bar.width });
+      const others = { Interactive, Background, Sort };
+      const beside = Object.entries(others).filter(([, box]) => box.top < field.top + field.height);
+      t.expect(beside.length === 0, 'nothing shares the field\'s line', beside);
+      t.expect(Math.abs(Interactive.top - Background.top) <= 0.5 && Background.left > Interactive.left, 'the chips share the next line, in order', { Interactive, Background });
+      t.expect(Math.abs(Sort.left + Sort.width - (bar.left + bar.width)) <= 0.5, "Sort ends at the bar's right edge", { Sort, bar });
+      t.expect(Sort.top >= Interactive.top - 4, 'Sort is on the chips\' line or after it', { Sort, Interactive });
+      const placeholder = await page.evaluate<{ text: number; room: number }>(`(() => {
+        const input = ${FIELD};
+        const style = getComputedStyle(input);
+        const context = document.createElement('canvas').getContext('2d');
+        context.font = style.font;
+        return { text: context.measureText(input.placeholder).width, room: input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) };
+      })()`);
+      t.expect(placeholder.text <= placeholder.room, 'the placeholder shows whole, with no ellipsis', placeholder);
+      await t.shot('filter-bar');
+    });
+
+    await t.step('turning a chip on, then text, then Clear filters moves nothing in the filter bar', async () => {
+      await page.click('Interactive', chip('Interactive'));
+      await page.waitFor('Interactive on, and Clear filters', `${chip('Interactive')}.getAttribute('aria-pressed') === 'true' && !!${CLEAR_FILTERS}`);
+      const chipOn = await page.evaluate<Boxes>(barBoxes(true));
+      t.expectEqual(moved(unfiltered, chipOn), [], 'with Interactive on, nothing moved');
+      await t.shot('filter-bar-chip-on');
+
+      await page.click('the filter field', FIELD);
+      await page.type('pitwall');
+      await page.waitFor('the text, and the field\'s clear button', `${FIELD}.value === 'pitwall' && !!document.querySelector('.session-list .filter-clear')`);
+      const withText = await page.evaluate<Boxes>(barBoxes(true));
+      t.expectEqual(moved(chipOn, withText), [], 'with text as well, nothing moved, Clear filters included');
+
+      await page.click('Clear filters', CLEAR_FILTERS);
+      await page.waitFor('the filters to clear', `${FIELD}.value === '' && ${chip('Interactive')}.getAttribute('aria-pressed') === 'false' && !${CLEAR_FILTERS}`);
+      t.expectEqual(moved(unfiltered, await page.evaluate<Boxes>(barBoxes())), [], 'with the filters cleared, everything is where it started');
+    });
+
+    await t.step('text alone, then both chips, move nothing either, and Clear filters shows in the same place', async () => {
+      await page.click('the filter field', FIELD);
+      await page.type('export');
+      await page.waitFor('the text, and Clear filters', `${FIELD}.value === 'export' && !!${CLEAR_FILTERS}`);
+      const textOnly = await page.evaluate<Boxes>(barBoxes(true));
+      t.expectEqual(moved(unfiltered, textOnly), [], 'with text alone, nothing moved');
+      await page.key('Escape');
+      await page.waitFor('the text to clear', `${FIELD}.value === '' && !${CLEAR_FILTERS}`);
+
+      await page.click('Interactive', chip('Interactive'));
+      await page.click('Background', chip('Background'));
+      await page.waitFor('both chips on', `${chip('Interactive')}.getAttribute('aria-pressed') === 'true' && ${chip('Background')}.getAttribute('aria-pressed') === 'true'`);
+      const bothOn = await page.evaluate<Boxes>(barBoxes(true));
+      t.expectEqual(moved(textOnly, bothOn), [], 'with both chips on, nothing moved, and Clear filters is where the text put it');
+      await page.click('Interactive', chip('Interactive'));
+      await page.click('Background', chip('Background'));
+      await page.waitFor('both chips off', `!${CLEAR_FILTERS}`);
+      t.expectEqual(moved(unfiltered, await page.evaluate<Boxes>(barBoxes())), [], 'with both off again, everything is where it started');
     });
 
     await t.step('Sort by name orders the rows by name, and is kept', async () => {
