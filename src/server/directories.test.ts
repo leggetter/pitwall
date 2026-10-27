@@ -367,6 +367,8 @@ function fakeIndexer(snapshot: IndexSnapshot | undefined): Indexer {
     latest: () => snapshot,
     subscribe: () => () => {},
     conversation: async () => undefined,
+    subagents: async () => undefined,
+    subagentConversation: async () => undefined,
     pollSoon: () => {},
     noteRestart: () => {},
     stop: () => {},

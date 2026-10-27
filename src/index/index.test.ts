@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import { createEndedScanner, type EndedScanner, type EndedSession } from './ende
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
 import { createJobReader, type JobNeeds } from './jobs.js';
+import { createSubagentTracker } from './subagents.js';
 import { createTranscriptReader, encodeProjectDir, type TranscriptInfo } from './transcripts.js';
 import { createWorkedInScanner, type RepoWorkedIn, type TrackedSession, type WorkedInScanner } from './workedIn.js';
 
@@ -1653,5 +1654,191 @@ describe('startIndexer', () => {
     });
     expect(snapshot.groups).toEqual([]);
     expect(snapshot.roots).toEqual([await realpath(os.tmpdir())]);
+  });
+});
+
+describe('createIndexer: sub-agents (W76)', () => {
+  // Synthetic transcripts and sub-agents only, in a temp folder shaped like Claude Code's.
+  const at = (seconds: number) => new Date(NOW - 3_600_000 + seconds * 1000).toISOString();
+  const line = (value: unknown) => `${JSON.stringify(value)}\n`;
+  const call = (id: string, description: string, seconds: number) =>
+    line({ type: 'assistant', timestamp: at(seconds), message: { id: `msg_${id}`, content: [{ type: 'tool_use', id: `toolu_${id}`, name: 'Agent', input: { description, run_in_background: true } }] } }) +
+    line({ type: 'user', timestamp: at(seconds), message: { content: [{ type: 'tool_result', tool_use_id: `toolu_${id}`, content: `Async agent launched successfully. agentId: ${id}` }] }, toolUseResult: { isAsync: true, status: 'async_launched', agentId: id } });
+  const ended = (id: string, seconds: number) =>
+    line({ type: 'user', timestamp: at(seconds), origin: { kind: 'task-notification' }, message: { content: `<task-notification><task-id>${id}</task-id><status>completed</status></task-notification>` } }) +
+    line({ type: 'user', timestamp: at(seconds + 1), origin: { kind: 'peer', from: id }, message: { content: `Report from ${id}.` } });
+  const steps = (id: string, seconds: number, count: number) =>
+    Array.from({ length: count }, (_, i) => line({ type: 'assistant', isSidechain: true, agentId: id, timestamp: at(seconds + i), message: { id: `m_${id}_${i}`, content: [{ type: 'text', text: `${id} step ${i}` }] } })).join('');
+
+  let dir: string;
+  let main: string;
+  let folder: string;
+
+  beforeEach(async () => {
+    vi.useRealTimers();
+    dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-subagents-'));
+    folder = path.join(dir, 'live', 'subagents');
+    await mkdir(folder, { recursive: true });
+    main = path.join(dir, 'live.jsonl');
+    for (const [id, description, seconds] of [['a1', 'First made-up job', 20], ['a2', 'Second made-up job', 30]] as const) {
+      await writeFile(path.join(folder, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description, toolUseId: `toolu_${id}`, spawnDepth: 1, requestShape: 'background' }));
+      await writeFile(path.join(folder, `agent-${id}.jsonl`), steps(id, seconds, 3));
+    }
+    await writeFile(path.join(folder, 'agent-m1.meta.json'), JSON.stringify({ description: 'Only a meta so far', toolUseId: 'toolu_m1' }));
+    await writeFile(main, call('a1', 'First made-up job', 10) + call('a2', 'Second made-up job', 11));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** An indexer listing `live` and `none`, both alive, and `gone`, a finished background session, all with transcripts. */
+  async function started() {
+    const { state, deps } = harness();
+    const none = path.join(dir, 'none.jsonl');
+    const gone = path.join(dir, 'gone.jsonl');
+    await writeFile(none, line({ type: 'user', timestamp: at(1), message: { content: 'a prompt' } }));
+    await mkdir(path.join(dir, 'gone', 'subagents'), { recursive: true });
+    await writeFile(path.join(dir, 'gone', 'subagents', 'agent-g1.jsonl'), steps('g1', 5, 1));
+    await writeFile(gone, call('g1', 'Never ended', 4));
+    state.files.set('live', main).set('none', none).set('gone', gone);
+    state.result = {
+      ok: true,
+      rows: [
+        row('live', '/work/repo/a', { startedAt: at(0) }),
+        row('none', '/work/repo/b', { startedAt: at(0) }),
+        row('gone', '/work/repo/c', { kind: 'background', shortId: 'gone1', pid: undefined, state: 'done', status: undefined, startedAt: at(0) }),
+      ],
+    };
+    deps.subagents = createSubagentTracker();
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+    return { indexer, state };
+  }
+
+  function sessionIn(snapshot: IndexSnapshot | undefined, id: string) {
+    return snapshot?.groups.flatMap((group) => group.sessions).find((session) => session.sessionId === id);
+  }
+
+  /** The first snapshot, from now on, that `predicate` holds for. */
+  function snapshotWhere(indexer: ReturnType<typeof createIndexer>, predicate: (snapshot: IndexSnapshot) => boolean): Promise<IndexSnapshot> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error('no such snapshot'));
+      }, 3000);
+      const off = indexer.subscribe((snapshot) => {
+        if (!predicate(snapshot)) return;
+        clearTimeout(timer);
+        off();
+        resolve(snapshot);
+      });
+    });
+  }
+
+  it('adds subagentsRunning to a live session while any run, polls soon when its scan changes it, and drops it once none do', async () => {
+    const { indexer } = await started();
+    try {
+      // The first poll has no scan to go on; the scan it starts makes the index poll again.
+      const counted = await snapshotWhere(indexer, (s) => sessionIn(s, 'live')?.subagentsRunning !== undefined);
+      // a1, a2 and m1, which has only its meta so far.
+      expect(sessionIn(counted, 'live')?.subagentsRunning).toBe(3);
+      expect(sessionIn(counted, 'none')).not.toHaveProperty('subagentsRunning');
+      // Not alive: no count, though its sub-agent never ended.
+      expect(sessionIn(counted, 'gone')).not.toHaveProperty('subagentsRunning');
+
+      await appendFile(main, ended('a1', 100));
+      const fewer = snapshotWhere(indexer, (s) => sessionIn(s, 'live')?.subagentsRunning === 2);
+      indexer.pollSoon();
+      await fewer;
+
+      await appendFile(main, ended('a2', 110) + call('m1', 'Only a meta so far', 111) + ended('m1', 112));
+      const none = snapshotWhere(indexer, (s) => sessionIn(s, 'live') !== undefined && sessionIn(s, 'live')?.subagentsRunning === undefined);
+      indexer.pollSoon();
+      await none;
+    } finally {
+      indexer.stop();
+    }
+  });
+
+  it('lists a listed session’s sub-agents, an empty list for one with none, and nothing for one not listed', async () => {
+    const { indexer } = await started();
+    try {
+      await snapshotWhere(indexer, () => true);
+      const list = await indexer.subagents('live');
+      expect(list?.sessionId).toBe('live');
+      expect(list?.truncated).toBe(false);
+      expect(list?.subagents.map((s) => [s.agentId, s.state, s.description])).toEqual([
+        ['a2', 'running', 'Second made-up job'],
+        ['a1', 'running', 'First made-up job'],
+        ['m1', 'running', 'Only a meta so far'],
+      ]);
+      expect((await indexer.subagents('gone'))?.subagents).toMatchObject([{ agentId: 'g1', state: 'unknown', description: 'Never ended' }]);
+      expect(await indexer.subagents('none')).toEqual({ sessionId: 'none', subagents: [], truncated: false });
+      expect(await indexer.subagents('never-listed')).toBeUndefined();
+    } finally {
+      indexer.stop();
+    }
+  });
+
+  it('pages a sub-agent’s own transcript, only for one of a listed session’s sub-agents', async () => {
+    await writeFile(path.join(folder, 'agent-a1.jsonl'), steps('a1', 20, 60));
+    const { indexer, state } = await started();
+    try {
+      await snapshotWhere(indexer, () => true);
+      const newest = await indexer.subagentConversation('live', 'a1');
+      expect(newest?.sessionId).toBe('live');
+      expect(newest?.entries).toHaveLength(50);
+      expect(newest?.entries.at(-1)).toMatchObject({ kind: 'assistant', text: 'a1 step 59' });
+      const older = await indexer.subagentConversation('live', 'a1', newest?.before);
+      expect(older?.entries.map((e) => e.text)).toEqual(Array.from({ length: 10 }, (_, i) => `a1 step ${i}`));
+      expect(older?.before).toBeUndefined();
+
+      // Listed by its meta only: an empty page, and no page before it.
+      expect(await indexer.subagentConversation('live', 'm1')).toEqual({ sessionId: 'live', entries: [] });
+      expect(await indexer.subagentConversation('live', 'm1', newest?.before)).toBeUndefined();
+      for (const agentId of ['zz9', '../a1', 'a1/../a1', 'a1.jsonl', '', 'g1']) {
+        expect(await indexer.subagentConversation('live', agentId)).toBeUndefined();
+      }
+      expect(await indexer.subagentConversation('never-listed', 'a1')).toBeUndefined();
+      await expect(indexer.subagentConversation('live', 'a1', 'not a cursor')).rejects.toMatchObject({ reason: 'invalid' });
+      // The session's own cursor is for another file: stale.
+      await writeFile(main, `${await readFile(main, 'utf8')}${steps('x', 1, 60).replaceAll('"isSidechain":true,', '')}`);
+      const sessionPage = await indexer.conversation('live');
+      await expect(indexer.subagentConversation('live', 'a1', sessionPage?.before)).rejects.toMatchObject({ reason: 'stale' });
+      // Rewritten since: stale.
+      await rm(path.join(folder, 'agent-a1.jsonl'));
+      await writeFile(path.join(folder, 'agent-a1.jsonl'), steps('a1', 20, 70));
+      await expect(indexer.subagentConversation('live', 'a1', newest?.before)).rejects.toMatchObject({ reason: 'stale' });
+
+      // A session that leaves the snapshot is no longer served.
+      state.result = { ok: true, rows: [row('none', '/work/repo/b')] };
+      await new Promise<void>((resolve) => {
+        const off = indexer.subscribe(() => {
+          off();
+          resolve();
+        });
+        indexer.pollSoon();
+      });
+      expect(await indexer.subagentConversation('live', 'a1')).toBeUndefined();
+      expect(await indexer.subagents('live')).toBeUndefined();
+    } finally {
+      indexer.stop();
+    }
+  });
+
+  it("labels the session's conversation entries with its sub-agents", async () => {
+    await appendFile(main, ended('a1', 100));
+    const { indexer } = await started();
+    try {
+      await snapshotWhere(indexer, () => true);
+      const entries = (await indexer.conversation('live'))?.entries ?? [];
+      expect(entries.filter((e) => e.subagent !== undefined).map((e) => [e.kind, e.subagent])).toEqual([
+        ['tool', { agentId: 'a1', description: 'First made-up job' }],
+        ['tool', { agentId: 'a2', description: 'Second made-up job' }],
+        ['cross-session', { agentId: 'a1', description: 'First made-up job' }],
+      ]);
+    } finally {
+      indexer.stop();
+    }
   });
 });

@@ -229,6 +229,8 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     latest: () => latest ?? undefined,
     subscribe: () => () => {},
     conversation: async () => undefined,
+    subagents: async () => undefined,
+    subagentConversation: async () => undefined,
     pollSoon: vi.fn(),
     noteRestart: vi.fn(),
     stop: () => {},
