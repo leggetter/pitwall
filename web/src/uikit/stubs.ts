@@ -66,6 +66,12 @@ export interface StubOptions {
   /** What Stop and Remove get. `busy` never answers. */
   stop?: 'done' | 'refused' | 'busy';
   remove?: 'done' | 'refused' | 'busy';
+  /**
+   * What Resume in background gets (W67). `resuming` never answers; `hint` is Claude Code refusing an
+   * untrusted directory, with the command that trusts it; `copied` is Claude Code starting a copy
+   * instead; `busy` is pitwall already running four commands; `failed` is no answer at all.
+   */
+  resume?: 'resumed' | 'resuming' | 'refused' | 'hint' | 'copied' | 'busy' | 'failed';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
@@ -91,6 +97,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
+    if (method === 'POST' && route === 'resume') return resume(options.resume ?? 'resumed');
     return Promise.resolve(failed(404));
   };
   return {
@@ -166,6 +173,33 @@ function action(route: 'stop' | 'remove', result: 'done' | 'refused' | 'busy'): 
       ? 'claude rm kept the worktree ~/code/pitwall-test-app/.claude/worktrees/pitwall-test-export-fix, because it has unpushed commits.'
       : 'claude stop failed: the session had already exited.';
   return Promise.resolve(failed(409, { ok: false, error }));
+}
+
+function resume(result: NonNullable<StubOptions['resume']>): Promise<ApiResult> {
+  switch (result) {
+    case 'resuming':
+      return forever();
+    case 'resumed':
+      return Promise.resolve(ok({ ok: true, shortId: 'pt000000' }));
+    case 'refused':
+      return Promise.resolve(failed(409, { ok: false, error: 'claude agents lists it again: it may be open in a terminal.' }));
+    case 'hint':
+      return Promise.resolve(
+        failed(422, { ok: false, error: "Claude Code hasn't trusted ~/code/pitwall-test-app, so it can't resume a session there.", hint: TRUST_HINT }),
+      );
+    case 'copied':
+      return Promise.resolve(
+        failed(409, {
+          ok: false,
+          error: 'note: the session is open in another Claude Code process, so this started a copy as pt0copy1. The original conversation is unchanged.',
+          copyShortId: 'pt0copy1',
+        }),
+      );
+    case 'busy':
+      return Promise.resolve(failed(429, { ok: false, error: 'pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' }));
+    case 'failed':
+      return Promise.resolve(failed());
+  }
 }
 
 /**

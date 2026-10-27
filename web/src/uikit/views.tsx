@@ -1,5 +1,6 @@
 // The session view and what's in it (W19, W22, W24, W27, W28): the real SessionView, its conversation,
-// its actions menu and their inline confirmations, RelayBox in every send state, and the terminal,
+// its actions menu and their inline confirmations, RelayBox in every send state, an ended session's
+// footer with each result of Resume in background (W67), and the terminal,
 // each given a stub API (stubs.ts) and put into its state by a scenario (kit.tsx), as a person
 // would: opening the menu, choosing an item, opening a tab, opening a fold, scrolling up.
 // Every fixture is made once, when the gallery loads, so a re-render never changes a session's id.
@@ -20,6 +21,7 @@ import {
   ago,
   APP_DIR,
   background,
+  endedSession,
   exchange,
   LINKS_IN_CODE,
   LINKS_THAT_ASK,
@@ -426,6 +428,126 @@ export function SessionViews() {
       </Specimen>
     </>
   );
+}
+
+// W67: an ended interactive session's view, and its footer in each state of Resume in background.
+interface EndedCase {
+  title: string;
+  note?: string;
+  session: SessionSummary;
+  options?: StubOptions;
+  run?: (root: HTMLElement) => Promise<unknown>;
+  /** A window this wide, compact at 600 px and narrower. */
+  width?: number;
+}
+
+/** Presses Resume in background, then waits for `then`. */
+const resumeThen = (then: (root: HTMLElement) => Promise<unknown>) => async (root: HTMLElement) => {
+  await press(root, 'Resume in background');
+  await then(root);
+};
+const ENDED_TITLE = { title: 'Update the getting started guide', titleSource: 'claude-code' } as const;
+const failureShown = (root: HTMLElement) => element(root, '.resume-failure');
+
+const ENDED_CASES: EndedCase[] = [
+  {
+    title: 'Ended',
+    note: "Its Claude Code process exited, as when its terminal closed: Ended where a session's status goes, the Conversation tab alone, and, where an interactive session has its message box, the note, then Copy command and Resume in background, secondary then primary. Interactive, with no /bg note: there's no terminal to type it in.",
+    session: endedSession('view-ended', ENDED_TITLE),
+  },
+  {
+    title: 'Ended, and it asked you',
+    note: "The outlined Asked you, whose info button says it has ended, so it isn't counted as needing you.",
+    session: endedSession('view-ended-asked', { askedYou: { reason: 'question', excerpt: 'Should the made-up export keep archived projects?' } }),
+  },
+  {
+    title: 'Resuming',
+    note: 'Resume in background is busy while its request is out, and stays busy once it has resumed until pitwall lists it as running.',
+    session: endedSession('view-ended-resuming', ENDED_TITLE),
+    options: { resume: 'resuming' },
+    run: resumeThen((root) => text(root, 'Resuming…')),
+  },
+  {
+    title: 'Resumed',
+    note: "A toast says so. In the app, within a poll the snapshot lists it as a running background session, and the view opens its Terminal tab, taking no focus. Here nothing lists it, so after 15 s it's Resume in background again.",
+    session: endedSession('view-ended-resumed', ENDED_TITLE),
+    options: { resume: 'resumed' },
+    run: resumeThen((root) => text(specimenOf(root), 'Resumed pitwall-test-view-ended-resumed in the background.')),
+  },
+  {
+    title: "Couldn't resume",
+    note: "pitwall's sentence, then the server's reason in code style, in a danger alert above the buttons, which keep their place.",
+    session: endedSession('view-ended-refused', ENDED_TITLE),
+    options: { resume: 'refused' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Couldn't resume: not trusted",
+    note: "The server sent a command to run: in a command chip, with its own copy button, as New session's trust failure has it.",
+    session: endedSession('view-ended-hint', ENDED_TITLE),
+    options: { resume: 'hint' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: 'A copy started instead',
+    note: 'It was open in another Claude Code process after all, so Claude Code started a copy: a warning, with the copy’s short id and Claude Code’s note.',
+    session: endedSession('view-ended-copied', ENDED_TITLE),
+    options: { resume: 'copied' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: 'Too many at once',
+    note: 'A 429: pitwall is already running four stop, remove or resume commands.',
+    session: endedSession('view-ended-busy', ENDED_TITLE),
+    options: { resume: 'busy' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "pitwall didn't answer",
+    note: "No answer at all: pitwall's sentence alone.",
+    session: endedSession('view-ended-failed', ENDED_TITLE),
+    options: { resume: 'failed' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: 'Ended, directory gone',
+    note: "Its worktree was removed, so it can't be resumed: line 2 says the directory no longer exists, and the footer's note says why, with nothing to press. The actions menu has Copy session ID alone.",
+    session: endedSession('view-ended-gone', { ...ENDED_TITLE, cwd: GONE_DIR, cwdMissing: true }),
+  },
+  {
+    title: 'Actions menu, ended',
+    note: 'Copy session ID, Copy resume command, then Resume in background. No Stop or Remove: there is no process.',
+    session: endedSession('view-ended-menu', ENDED_TITLE),
+    run: openMenu,
+  },
+  {
+    title: 'Ended, 600 px and narrower',
+    note: 'The note wraps; the buttons stay at the right, and wrap onto a line each when there isn’t room for both.',
+    session: endedSession('view-ended-compact', ENDED_TITLE),
+    width: 375,
+  },
+  {
+    title: "Couldn't resume: not trusted, 600 px and narrower",
+    session: endedSession('view-ended-hint-compact', ENDED_TITLE),
+    options: { resume: 'hint' },
+    run: resumeThen(failureShown),
+    width: 375,
+  },
+];
+
+export function EndedViews() {
+  return ENDED_CASES.map((each) => (
+    // With a toasts' stack of its own, as the app has, whose toasts stay here.
+    <Specimen key={each.title} title={each.title} note={each.note} frame="view" lasting {...(each.width === undefined ? {} : { width: each.width })}>
+      <ToastProvider>
+        <Stubbed options={each.options}>
+          <MaybeScenario run={each.run}>
+            <SessionView session={each.session} listed onClose={noop} compact={each.width !== undefined && each.width <= 600} />
+          </MaybeScenario>
+        </Stubbed>
+      </ToastProvider>
+    </Specimen>
+  ));
 }
 
 const CONVERSATION_ALL = background('conversation-all', { state: 'working' });
