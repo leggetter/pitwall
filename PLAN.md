@@ -9,7 +9,7 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
 | **Status** | M0 to M3 done; M3.1, the work after M3, is in progress on `m3.1/integration`. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, plus what Phil's try-out and daily use asked for, merged into `main` on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51) as 626a121, a merge commit that keeps each work item's history, approved by Phil. W48's security review asked for changes twice; W50 to W52, W55, W57 and W58 fixed every finding, and its re-check approved M3 for main. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - M3.1 on `m3.1/integration`: W63 to W66 and W68 are done; W67, the web UI for resuming ended interactive sessions, is in review; W69, Needs you from each session's context, follows it<br>- Then the rest of "M3.1 - After M3" below, in order: spike 005, the sub-agents view, open in an editor<br>- Then M4, my open pull requests |
+| **Next steps** | - M3.1 on `m3.1/integration`: W63 to W66 and W68 are done; W67, the web UI for resuming ended interactive sessions, is in review; W69, Needs you from each session's context, and W70, directory autocomplete in New session, follow it<br>- Then the rest of "M3.1 - After M3" below, in order: spike 005, the sub-agents view, open in an editor<br>- Then M4, my open pull requests |
 
 ## Who is this for
 
@@ -263,6 +263,14 @@ The work after M3, on its own integration branch, `m3.1/integration`, merged int
     - Reason 4 is kept in memory, so it ends when pitwall restarts. Pressing Resume or confirming the restart in this run is the click Phil meant.
   - **Not now:** Claude Code's recap (`away_summary`, spike 007, finding 8) and a model's judgement. Both are M6's refinement of reason 3.
   - **Built as** W69, after W67, which touches the same web files.
+- **Directory autocomplete in New session** (Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). Today "Another directory under a root…" reveals a text field that takes an absolute path.
+  - **Phil's choice:** keep the select of the directories that have sessions, and make "Another directory under a root…" reveal an autocomplete that narrows as you type: "It allow a new session in a previously worked directory or you to choose another dir via autocomplete."
+  - **Coordinator's calls:**
+    - The server lists every directory to 3 levels below each root (`DIRECTORIES_PATH`), and the page narrows them itself, so typing makes no requests. On 2026-10-27 that was 1,601 under one of Phil's roots and 1,340 under the other, with hidden folders and `node_modules` left out.
+    - The list skips symlinks and anything hidden, so it never leads outside a root. A spawn checks its directory as before.
+    - Options read as the root plus the path, such as `~/work/outpost`, marked when they're a repo. With a root tab open, only that root's (W38).
+    - A typed path that isn't listed, such as one deeper than 3 levels, still works.
+  - **Built as** W70, after W67, which touches the same files.
 
 In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 
@@ -407,6 +415,7 @@ Same way of working as M3, on `m3.1/integration`.
 | W67 | Ended sessions in the web UI: Ended in the Finished section, Show older, and the session view's Resume in background and Copy command | `m3.1/ended-web` | M | In review ([#72](https://github.com/leggetter/pitwall/pull/72)). A sub-agent's review (Phil, 2026-10-27: "get a sub agent to review any PRs and then make the call to merge") found two rare orderings: the snapshot before the 200, which dropped focus and left the Terminal tab unopened, and a copy's warning lost with its footer. It also suggested refusing C1 and bidi controls in the copied command. Sent back to the builder |
 | W68 | Spike 007: what says a session needs you, after Phil asked that Needs you come from each session's context | coordinator, on `m3.1/integration` | S | Done 2026-10-27 ([`docs/spikes/007-what-needs-you.md`](docs/spikes/007-what-needs-you.md)). Two throwaway Haiku background sessions, removed afterwards. A background job's `state.json` has Claude Code's own `needs` line; `claude agents --json` doesn't carry it; a stop clears it, and neither a wake nor an attach restart brings it back. The transcript keeps the question and marks each turn's end with `turn_duration`, which all 27 of Phil's recent interactive transcripts have. A plugin's monitor keeps a session `busy`, which hid `askedYou`. Contract (coordinator): `NeedsYou` and `SessionSummary.needsYou`, and `askedYou`'s turn end read from the transcript |
 | W69 | Needs you from each session's context: the index sets `needsYou` from `NeedsYou`'s five reasons, reading each background job's `needs` line behind one adapter, and the web UI's Needs you, count, sort and badges follow it | `m3.1/needs-you` | M | To do, after W67 |
+| W70 | Directory autocomplete in New session: `GET /api/directories` lists the directories under each root, and "Another directory under a root…" reveals a combobox that narrows them as you type | `m3.1/dir-autocomplete` | M | To do, after W67 |
 
 ## M2 work breakdown
 
@@ -633,6 +642,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] A durable home for the app-check tools (W64, merged in #70)
 - [ ] Resume ended interactive sessions (after M3)
 - [ ] Needs you from each session's context (W69)
+- [ ] Directory autocomplete in New session (W70)
 - [ ] Spike 005: ending an interactive session (after M3)
 - [ ] Sub-agents in the session view (after M3)
 - [ ] Open in an editor, from pitwall's server (after M3)
