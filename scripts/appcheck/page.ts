@@ -153,7 +153,9 @@ export class Page {
     });
     on('Runtime.exceptionThrown', ({ exceptionDetails }) => problem('exception', exceptionDetails.exception?.description ?? exceptionDetails.text));
     on('Log.entryAdded', ({ entry }) => {
-      if (entry.level === 'error' || entry.source === 'security') problem(`log.${entry.source}.${entry.level}`, entry.text);
+      // With the URL it's about, when it has one, such as a failed request's, shown as every URL is.
+      const about = typeof entry.url === 'string' && entry.url !== '' ? ` ${this.#shown(entry.url)}` : '';
+      if (entry.level === 'error' || entry.source === 'security') problem(`log.${entry.source}.${entry.level}`, `${entry.text}${about}`);
     });
     on('Network.requestWillBeSent', ({ requestId, request }) => this.#urls.set(requestId, this.#shown(request.url)));
     on('Network.responseReceived', ({ response }) => {
@@ -313,12 +315,21 @@ export class Page {
     await this.#blank();
     this.#server.reset(reset);
     await this.send('Storage.clearDataForOrigin', { origin: this.origin, storageTypes: 'local_storage,session_storage' });
-    for (const [key, value] of Object.entries(storage)) {
-      await this.send('DOMStorage.setDOMStorageItem', { storageId: { securityOrigin: this.origin, isLocalStorage: true }, key, value });
-    }
+    // DOMStorage needs a frame on the origin, and about:blank isn't one, so the items are set by a
+    // script that runs before the app's own on this one load, then goes, so a reload keeps what the app wrote.
+    const seeded =
+      Object.keys(storage).length === 0
+        ? undefined
+        : await this.send<{ identifier: string }>('Page.addScriptToEvaluateOnNewDocument', {
+            source: `(() => { if (location.origin !== ${JSON.stringify(this.origin)}) return; for (const [key, value] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(key, value); })()`,
+          });
     await this.send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
     await this.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
-    await this.#load(() => this.send('Page.navigate', { url: `${this.origin}/${search}#token=${this.#token}` }), 'the app');
+    try {
+      await this.#load(() => this.send('Page.navigate', { url: `${this.origin}/${search}#token=${this.#token}` }), 'the app');
+    } finally {
+      if (seeded) await this.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: seeded.identifier });
+    }
     await this.waitFor('the app to be ready', ready, 15_000);
     await this.evaluate('document.fonts.ready.then(() => true)');
     await this.settle();

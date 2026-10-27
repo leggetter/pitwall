@@ -1,5 +1,5 @@
 // The made-up world the fake server serves: sessions under /Users/example/code (and, for two root
-// tabs, /Users/example/oss), their conversations, and what spawn and the relay change. Nothing here
+// tabs, /Users/example/oss), their conversations, and what spawn, the relay and resume change. Nothing here
 // comes from a real session or transcript: every name is pitwall-test-*, every path is under
 // /Users/example, and every link goes to example.com or github.com/example.
 //
@@ -20,6 +20,8 @@ export const OSS = '/Users/example/oss';
 export const API_SERVER = `${CODE}/api-server`;
 export const DEMO_APP = `${CODE}/demo-app`;
 export const BLOG = `${OSS}/blog`;
+/** A directory whose only session ended long ago (W67), so it's in the repo list only with Show older on. */
+export const DOCS_SITE = `${CODE}/docs-site`;
 
 /** The sessions parts use, by role. */
 export const NAMES = {
@@ -42,7 +44,32 @@ export const NAMES = {
   inApi: 'pitwall-test-in-api',
   /** Under the second root, waiting, so its tab has a need-you badge. */
   blog: 'pitwall-test-blog-notes',
+  /**
+   * Ended interactive sessions (W67), in demo-app's Finished section, all from the last 7 days. The
+   * fake server's resume answers each by its name: `ended` resumes, and is listed a moment later as a
+   * running background session under the same id; the rest fail, one way each.
+   */
+  ended: 'pitwall-test-ended-notes',
+  /** Ended, having asked something, so never in Needs you. Resume: refused, with the command that trusts the directory. */
+  endedAsked: 'pitwall-test-ended-asked',
+  /** Resume: Claude Code started a copy instead. */
+  endedCopy: 'pitwall-test-ended-copy',
+  /** Resume: 429, with Retry-After. */
+  endedBusy: 'pitwall-test-ended-busy',
+  /** Resume: 409, with pitwall's reason. */
+  endedRefused: 'pitwall-test-ended-refused',
+  /** Resume: no answer at all, the connection closed. */
+  endedNoAnswer: 'pitwall-test-ended-no-answer',
+  /** Ended, and its directory has gone, so it can't be resumed. */
+  endedGone: 'pitwall-test-ended-gone',
+  /** Ended ten days ago: behind Show older, in demo-app. */
+  endedOld: 'pitwall-test-ended-old',
+  /** Ended twenty days ago, alone in docs-site: the group is in the repo list only with Show older on. */
+  endedOldOnly: 'pitwall-test-ended-old-docs',
 } as const;
+
+/** The short id the copy Claude Code starts in place of NAMES.endedCopy has. */
+export const COPY_SHORT_ID = 'pt67copy';
 
 /** What a link in the conversation says and where it goes (the links part). */
 export const LINKS = {
@@ -91,11 +118,13 @@ export class World {
   }
 
   snapshot(): IndexSnapshot {
-    const pick = (cwd: string) => [...this.#sessions.values()].filter((each) => each.cwd === cwd && !this.#isSpawned(each));
+    // A group's sessions: those started in its directory, or in a worktree of it under .claude/, as a removed one was (W67).
+    const pick = (cwd: string) => [...this.#sessions.values()].filter((each) => (each.cwd === cwd || each.cwd.startsWith(`${cwd}/.claude/`)) && !this.#isSpawned(each));
     const groups: SessionGroup[] = [
       { key: CODE, label: 'code', kind: 'directory', root: CODE, sessions: pick(CODE) },
       { key: API_SERVER, label: 'api-server', kind: 'git', root: CODE, sessions: pick(API_SERVER) },
       { key: DEMO_APP, label: 'demo-app', kind: 'git', root: CODE, sessions: pick(DEMO_APP) },
+      { key: DOCS_SITE, label: 'docs-site', kind: 'directory', root: CODE, sessions: pick(DOCS_SITE) },
       ...(this.#roots === 2 ? [{ key: BLOG, label: 'blog', kind: 'git' as const, root: OSS, sessions: pick(BLOG) }] : []),
     ];
     // A started session is listed in the group of its directory, or its root's own, as the index lists it.
@@ -160,6 +189,34 @@ export class World {
     };
   }
 
+  /**
+   * NAMES.ended, resumed (W67): `list` puts it in the snapshot as the index lists one on a later poll,
+   * under the same id, as a running background session waiting for a prompt (spike 006).
+   */
+  resume(sessionId: string): { shortId: string; list: () => void } {
+    const shortId = sessionId.slice(0, 8);
+    return {
+      shortId,
+      list: () => {
+        const was = this.#sessions.get(sessionId);
+        if (!was) return;
+        const resumed: SessionSummary = { ...was };
+        delete resumed.ended;
+        this.#sessions.set(sessionId, {
+          ...resumed,
+          kind: 'background',
+          shortId,
+          pid: 42_000,
+          alive: true,
+          status: 'idle',
+          state: 'blocked',
+          finished: false,
+          lastActivityAt: new Date().toISOString(),
+        });
+      },
+    };
+  }
+
   /** What the index shows on a session's row after a relayed message: its latest exchange. */
   relayed(sessionId: string, exchange: RelayExchange): void {
     const session = this.#sessions.get(sessionId);
@@ -195,6 +252,9 @@ export class World {
         ...extra,
       };
     };
+    // An ended interactive session (W67), last active `days` ago: finished, with no process, status or state.
+    const ended = (name: string, days: number, extra: Partial<SessionSummary> = {}): SessionSummary =>
+      session(name, { ended: true, finished: true, alive: false, pid: undefined, status: undefined, lastUserPrompt: 'Tidy the made-up guide.', lastActivityAt: this.#ago(days * 24 * 60), ...extra });
     const job = (name: string, extra: Partial<SessionSummary> = {}): SessionSummary =>
       session(name, { kind: 'background', shortId: `pt64${String(n + 1).padStart(2, '0')}`, status: undefined, state: 'working', ...extra });
     const worked = (label: string, changes: number, calls: number) => ({ key: `${CODE}/${label}`, label, root: CODE, calls, changes, lastAt: this.#ago(2) });
@@ -214,6 +274,15 @@ export class World {
       session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)] }),
       session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route' }),
       session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed' }),
+      ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes' }),
+      ended(NAMES.endedAsked, 1, { askedYou: { reason: 'question', excerpt: 'Should the made-up guide keep the old screenshots?' } }),
+      ended(NAMES.endedCopy, 3),
+      ended(NAMES.endedBusy, 3.5),
+      ended(NAMES.endedRefused, 4),
+      ended(NAMES.endedNoAnswer, 4.5),
+      ended(NAMES.endedGone, 5, { cwd: `${DEMO_APP}/.claude/worktrees/pitwall-test-gone`, cwdMissing: true }),
+      ended(NAMES.endedOld, 10),
+      ended(NAMES.endedOldOnly, 20, { cwd: DOCS_SITE }),
     ];
     return all;
   }

@@ -3,7 +3,8 @@
 // fails on its own: on its own checks (t.expect), on anything it throws, such as a wait that timed
 // out or a click on something covered, and, after every step, on the page itself: a console error or
 // warning, an exception, a CSP violation, a failed request, a request off the fake server, or the
-// page scrolling sideways. A step that throws leaves the page in a state the next can't trust, so the
+// page scrolling sideways. A failed request the step brings about on purpose, which it names with
+// t.allow, is reported but passes. A step that throws leaves the page in a state the next can't trust, so the
 // rest of that case is skipped; the next case starts afresh.
 
 import { join } from 'node:path';
@@ -31,6 +32,8 @@ export interface StepResult {
   ms: number;
   failures: string[];
   problems: Array<Omit<Problem, 'step'>>;
+  /** Problems the step said it brings about, with why (Case.allow): reported, but not failures. */
+  allowed?: Array<Omit<Problem, 'step'> & { why: string }>;
   /** A screenshot taken when it failed, relative to the output folder. */
   shot?: string;
 }
@@ -78,6 +81,8 @@ export class Case {
   readonly #options: CaseOptions;
   #current: StepResult | undefined;
   #broken: string | undefined;
+  /** What the step running now said it brings about (allow). */
+  #allowed: Array<{ pattern: RegExp; why: string }> = [];
 
   constructor(options: CaseOptions) {
     this.#options = options;
@@ -114,6 +119,7 @@ export class Case {
     }
     const started = Date.now();
     this.#current = result;
+    this.#allowed = [];
     this.page.step = `${this.#options.part.name} ${this.at}: ${name}`;
     let threw = false;
     try {
@@ -134,9 +140,15 @@ export class Case {
       result.failures.push(`couldn't check the page after the step: ${error instanceof Error ? error.message : String(error)}`);
     }
     for (const { kind, text } of this.page.claimProblems()) {
+      const allowed = this.#allowed.find(({ pattern }) => pattern.test(`${kind} ${text}`));
+      if (allowed) {
+        (result.allowed ??= []).push({ kind, text, why: allowed.why });
+        continue;
+      }
       result.problems.push({ kind, text });
       result.failures.push(`${kind}: ${text}`);
     }
+    this.#allowed = [];
     this.#current = undefined;
     result.ms = Date.now() - started;
     if (result.failures.length > 0) {
@@ -167,6 +179,17 @@ export class Case {
     await this.page.settle(50);
     for (const csp of await this.page.takeCsp()) this.page.problems.push({ step: this.page.step, kind: 'csp', text: csp });
     if (this.page.unclaimed > 0) await this.step('nothing went wrong after the last step', async () => {});
+  }
+
+  /**
+   * Inside a step: a problem the step brings about on purpose, such as the HTTP error a refused request
+   * gets, which the page reports as a failed request. A problem whose `kind text` matches `pattern` is
+   * reported in the summary with `why`, and doesn't fail the step. Only for this step, and only what
+   * it names: keep the pattern to the one request, by its path.
+   */
+  allow(pattern: RegExp, why: string): void {
+    if (!this.#current) throw new Error(`t.allow(${pattern}) outside a step`);
+    this.#allowed.push({ pattern, why });
   }
 
   /** A check inside a step: when `ok` is falsy, the step fails with `what`, and `detail` if given. It doesn't stop the step. */
