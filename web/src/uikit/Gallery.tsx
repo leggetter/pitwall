@@ -54,7 +54,7 @@ const SECTIONS: Section[] = [
     id: 'ended-view',
     title: 'Ended session view',
     intro:
-      "SessionView for an ended interactive session (W67): the Conversation tab alone, Ended, and the footer's note with Copy command and Resume in background, idle, busy, resumed and after each failure, with its directory gone, its actions menu, and at 375 px.",
+      "SessionView for an ended interactive session (W67): the Conversation tab alone, Ended, and the footer's note with Copy command and Resume in background, with its directory gone, its actions menu and at 375 px; then the footer alone, as the view has it, busy, resumed and after each failure, and at 375 px.",
     Content: EndedViews,
   },
   {
