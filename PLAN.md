@@ -281,7 +281,20 @@ In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 1. **A durable home for the headless app-check tools.** The integrated check every M3 review ran, and each work item's part of it, lived in the session scratchpad and went with the 2026-10-23 reboot. Every later review needs them, so they come first, committed to the repo or kept in a gitignored folder. Done: `scripts/appcheck/` (W64).
 2. **Resuming ended interactive sessions** (Phil, 2026-10-23: after M3). After his laptop restarted, every interactive session left the list. It starts with a live check of `claude --resume <id> --bg` on a throwaway session. See "Sessions gone after a restart" in M3. The live check is spike 006 (W65). Done: W66 and W67 built it, merged in #71 and #72.
 3. **Spike 005, ending an interactive session** (below). It's about the same session lifecycle as 2, so it follows it.
-4. **Sub-agents in the session view** (Phil, 2026-10-23: after M3). See "Sub-agents in the session view" in M3. Not yet designed.
+4. **Sub-agents in the session view** (Phil, 2026-10-23: after M3). See "Sub-agents in the session view" in M3.
+   - **What the data says** (coordinator, 2026-10-27, from transcript structure and the coordinator's own session):
+     - Each sub-agent has a transcript and a `.meta.json` (description, type, the tool call that started it, its depth) in a `subagents` folder beside the session's transcript.
+     - The session's transcript records its start and a task notification when it ends (statuses seen: `completed`, `failed`).
+     - In Phil's last 7 days, 10 sessions started 135 sub-agents: a median of 6 and at most 72 per session; 129 at depth 1 and 6 started by another sub-agent.
+   - **Claude Code's own footer** in the Terminal tab ("← 4 agents · 1 shell · ↓ to manage") lists the machine's background sessions and this session's running background tasks, only while you're attached to a background session (test sessions with no sub-agents still showed "5 agents").
+   - **Phil (2026-10-27): "I don't know. You'll know because you've built the code."** So these are the coordinator's calls:
+     - **The tab:** a third tab in the session view, "Sub-agents (6)", for every kind of session, finished and ended ones included. Running ones first, then the newest started first, as one flat list, with "Started by *description*" on the nested ones.
+     - **Each row:** description, type, a state badge (Running, Done, Failed, Stopped, or nothing when unknown), started, last active and the tool-call count.
+     - **Its transcript:** opening a row shows the sub-agent's transcript read-only, in the conversation component, with Back to the list.
+     - **The conversation:** a report reads "From sub-agent: *description*" instead of the agent's id, and the Agent and SendMessage calls name it the same way, linking to its row.
+     - **The session's row:** "· 2 sub-agents running" while any run (`SessionSummary.subagentsRunning`), and nothing otherwise. The list itself stays out of the snapshot (D15).
+   - **Contract** (coordinator): `SubagentState`, `SubagentSummary`, `SubagentList`, `SUBAGENTS_MAX`, `subagentsPath()`, `subagentConversationPath()`, `SessionSummary.subagentsRunning` and `ConversationEntry.subagent`.
+   - **Built as** W76 (index and server) and W77 (web UI), in parallel against the contract.
 5. **Open in an editor** (Phil, 2026-10-23: option A). See "Open in an editor" in M3. It's small, and its security look can share one pass with 2's new spawn path. Started ahead of 3 and 4 on 2026-10-27, since spike 005 waits on a folder Phil trusts and 4 isn't designed yet: W72 builds it, and W73 is the shared security look.
 6. **M4, my open pull requests.** It moves behind these because Phil's daily use of pitwall during M3 found gaps in the session lifecycle that stop it being his main tool, and those come first.
 
@@ -425,6 +438,8 @@ Same way of working as M3, on `m3.1/integration`.
 | W73 | A security look at the two new routes that start processes: W66's resume and W72's open in an editor, by a sub-agent, after W72 merges (the M3.1 bullet's "its security look shares one pass") | coordinator, with a sub-agent | S | To do, after W72 |
 | W74 | The terminal's last row and column fit: the fit addon measures a box with no padding, and the app check checks that the screen's last row and column are inside the visible box at every size | `m3.1/terminal-fit` | S | In progress |
 | W75 | Filters that don't move the bar: the field on its own line, and the chips, Clear filters and Sort on the next, so turning a filter on or off moves nothing, at any width the app check runs | `m3.1/filter-bar` | S | In progress |
+| W76 | Sub-agents in the index and server: each session's sub-agents from its `subagents` folder and its transcript's start and end records, `subagentsRunning` on every live session without holding up the poll, `ConversationEntry.subagent`, and the two read routes | `m3.1/subagents-index` | M | In progress |
+| W77 | Sub-agents in the web UI: the session view's Sub-agents tab, a sub-agent's transcript read-only, the conversation's entries labelled by description, and the row's running count | `m3.1/subagents-web` | M | In progress |
 
 ## M2 work breakdown
 
