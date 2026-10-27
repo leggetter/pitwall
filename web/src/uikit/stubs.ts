@@ -82,7 +82,7 @@ export interface StubOptions {
   resume?: 'resumed' | 'resuming' | 'refused' | 'hint' | 'copied' | 'busy' | 'timeout' | 'failed';
   /**
    * What Open in an editor gets (W72), in the server's words (src/server/editors.ts). `opening` never
-   * answers; `refused` is the editor exiting non-zero.
+   * answers; `refused` is `open -a` exiting non-zero, as when the app has moved since pitwall started.
    */
   open?: 'opened' | 'opening' | 'refused';
 }
@@ -243,7 +243,7 @@ function openEditor(result: NonNullable<StubOptions['open']>): Promise<ApiResult
     case 'opening':
       return forever();
     case 'refused':
-      return Promise.resolve(failed(502, { ok: false, error: "Cursor didn't open: /usr/bin/open exited with code 1." }));
+      return Promise.resolve(failed(502, { ok: false, error: "Cursor didn't open. If it has moved, restart pitwall so it looks again." }));
     case 'opened':
       return Promise.resolve(ok({ ok: true }));
   }

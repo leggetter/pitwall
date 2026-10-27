@@ -5,7 +5,7 @@
 //
 // The session view's actions menu has "Open in VS Code" and "Open in Cursor", one per editor found,
 // while the session is listed and its directory exists. With none found, or the list not had, it has
-// neither. The result is a toast: "Opened name's directory in Cursor.", or an error toast with the
+// neither. The result is a toast: "Opened name's directory in Cursor.", a success one, or an error toast with the
 // server's reason after pitwall's sentence.
 
 import { createContext, useEffect, useState } from 'react';
@@ -81,7 +81,7 @@ export function openToast(name: string, editor: Editor, outcome: OpenOutcome): T
   const what = `open ${plainText(name)}'s directory in ${editor.label}`;
   switch (outcome.kind) {
     case 'opened':
-      return { tone: 'info', message: `Opened ${plainText(name)}'s directory in ${editor.label}.` };
+      return { tone: 'success', message: `Opened ${plainText(name)}'s directory in ${editor.label}.` };
     case 'refused':
       return { tone: 'error', message: `${couldNot(what, undefined)} ${plainText(outcome.error)}` };
     case 'failed':

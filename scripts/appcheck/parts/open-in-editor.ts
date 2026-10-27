@@ -1,7 +1,7 @@
 // Open in an editor (W72; docs/design-system.md, 4: Session view: header, tabs and footer, the
 // actions menu): the page GETs the editor list once, after it has authenticated; a listed session's
 // actions menu has Open in VS Code and Open in Cursor after the copies, one per editor the server
-// found; choosing one POSTs that editor alone, and an info toast says it opened; a session whose
+// found; choosing one POSTs that editor alone, and a success toast says it opened; a session whose
 // directory has gone has neither. The fake server says it found both, records each open, and opens
 // nothing.
 
@@ -47,13 +47,13 @@ const part: Part = {
       await t.shot('menu');
     });
 
-    await t.step("choosing Open in Cursor asks the server for that editor alone, and an info toast says it opened", async () => {
+    await t.step("choosing Open in Cursor asks the server for that editor alone, and a success toast says it opened", async () => {
       await page.click('Open in Cursor', menuItem('Open in Cursor'));
       const message = `Opened ${NAMES.running}'s directory in Cursor.`;
       await page.waitFor('the toast', `${toasts}.includes(${q(message)})`);
       t.expectEqual(server.records.opens, [{ name: NAMES.running, editor: 'cursor' }], 'one open, of this session, in Cursor');
       t.expect(server.records.requests.includes(`POST /api/sessions/${id(NAMES.running)}/open 200`), 'POSTed to its open path', server.records.requests);
-      t.expect(await page.evaluate<boolean>(`!!document.querySelector('.toasts .toast.info')`), 'an info toast');
+      t.expect(await page.evaluate<boolean>(`!!document.querySelector('.toasts .toast.success')`), 'a success toast');
       t.expect(!(await page.evaluate<boolean>(`!!${VIEW}?.querySelector('[role="menu"]')`)), 'the menu closed');
       t.expectEqual(await page.evaluate(focused), 'Session actions', 'focus is back on the menu button');
       await t.shot('opened');

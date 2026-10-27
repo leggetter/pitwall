@@ -56,7 +56,7 @@ describe('openInEditor', () => {
   });
 
   it("is refused with the server's words, or failed with the status when it gave none", async () => {
-    const error = "Cursor didn't open: /usr/bin/open exited with code 1.";
+    const error = "Cursor didn't open. If it has moved, restart pitwall so it looks again.";
     expect(await openInEditor(api(async () => json(502, { ok: false, error })), BG, 'cursor')).toEqual({ kind: 'refused', error });
     expect(await openInEditor(api(async () => json(500)), BG, 'cursor')).toEqual({ kind: 'failed', status: 500 });
     expect(await openInEditor(api(async () => json(200, { ok: 'yes' })), BG, 'cursor')).toEqual({ kind: 'failed', status: 200 });
@@ -64,7 +64,7 @@ describe('openInEditor', () => {
   });
 
   it('has a toast for each outcome, naming the session and the editor, and none for unauthorized', () => {
-    expect(openToast('pitwall-test-bg', CURSOR, { kind: 'opened' })).toEqual({ tone: 'info', message: "Opened pitwall-test-bg's directory in Cursor." });
+    expect(openToast('pitwall-test-bg', CURSOR, { kind: 'opened' })).toEqual({ tone: 'success', message: "Opened pitwall-test-bg's directory in Cursor." });
     expect(openToast('pitwall-test-bg', VSCODE, { kind: 'refused', error: 'Its directory, /tmp/x, no longer exists.' })).toEqual({
       tone: 'error',
       message: "Couldn't open pitwall-test-bg's directory in VS Code. Its directory, /tmp/x, no longer exists.",
@@ -251,18 +251,18 @@ describe('the actions menu', () => {
 });
 
 describe('opening', () => {
-  it("POSTs the editor to the session's open path, then says so in an info toast", async () => {
+  it("POSTs the editor to the session's open path, then says so in a success toast", async () => {
     const fetch = fakeServer({ status: 200, body: { ok: true } });
     renderDashboard([VSCODE, CURSOR], fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in Cursor');
     await waitFor(() => expect(toastMessages()).toEqual(["Opened pitwall-test-bg's directory in Cursor."]));
     expect(posts(fetch)).toEqual([[openInEditorPath(BG), { editor: 'cursor' }]]);
-    expect(toastSaying("Opened pitwall-test-bg's directory in Cursor.").className).toContain('info');
+    expect(toastSaying("Opened pitwall-test-bg's directory in Cursor.").className).toContain('success');
   });
 
   it("says why it didn't open in an error toast, in the server's words after pitwall's sentence", async () => {
-    const error = "Cursor didn't open: /usr/bin/open exited with code 1.";
+    const error = "Cursor didn't open. If it has moved, restart pitwall so it looks again.";
     renderDashboard([CURSOR], fakeServer({ status: 502, body: { ok: false, error } }));
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in Cursor');

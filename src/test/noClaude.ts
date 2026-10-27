@@ -15,9 +15,11 @@
 //
 // It also refuses to open an editor (W72), with or without PITWALL_LIVE: no
 // test, live or not, opens VS Code or Cursor. That's `code`, `cursor` or
-// `code-insiders` by any path, and macOS's `open` with `-a` or `-b`, which opens
-// an app, as server/editors.ts runs it. A plain `open <file>`, the CLI's way to
-// open the browser, still goes through.
+// `code-insiders` by any path; macOS's `open` with a flag group that has `a` or
+// `b` (`-a`, `-b`, `-na`, `-ga`), which names an app, as server/editors.ts runs
+// it; `open` or `xdg-open` with a `vscode:`, `vscode-insiders:` or `cursor:` URL;
+// and any of those behind `env`, after its options and assignments. A plain
+// `open <file>`, the CLI's way to open the browser, still goes through.
 import childProcess from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
@@ -41,8 +43,15 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
 const CLAUDE_IN_COMMAND = /(?:^|[\s;&|()`'"/])claude(?=$|[\s;&|()`'"])/;
 /** The editors' commands (W72). */
 const EDITORS = new Set(['code', 'cursor', 'code-insiders']);
-/** An editor's command, or `open -a` or `open -b`, in a shell command line. */
-const EDITOR_IN_COMMAND = /(?:^|[\s;&|()`'"/])(?:code|cursor|code-insiders|open\s+(?:\S+\s+)*-[ab])(?=$|[\s;&|()`'"])/;
+/** A short-flag group of `open`'s that names an app: `-a`, `-b`, or one with either in it, such as `-na`. Not `--args`. */
+const APP_FLAGS = /^-[A-Za-z]*[ab][A-Za-z]*$/;
+/** A URL an editor registers for, which `open` or `xdg-open` hands to it. */
+const EDITOR_URL = /^(?:vscode|vscode-insiders|cursor):/i;
+/** In a shell command line: an editor's command, `open` with a flag group that names an app, or an editor's URL. */
+const EDITOR_IN_COMMAND =
+  /(?:(?:^|[\s;&|()`'"/])(?:code|cursor|code-insiders|open\s+(?:\S+\s+)*-[A-Za-z]*[ab][A-Za-z]*)(?=$|[\s;&|()`'"]))|(?:(?:^|[\s;&|()`'"=])(?:vscode|vscode-insiders|cursor):)/i;
+/** env's options that take a value as the next argument. */
+const ENV_VALUE_OPTIONS = new Set(['-u', '--unset', '-P', '-C', '--chdir']);
 
 /** The refusals since the last call, which the guard's own tests use. */
 export function takeRefusals(): string[] {
@@ -61,10 +70,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-/** Whether running `file` with `args`, without a shell, opens an editor: its command, or `open -a` or `open -b`. */
-function opensEditor(file: string, args: readonly string[]): boolean {
+/**
+ * Whether running `file` with `args`, without a shell, opens an editor: its command; `open` with a
+ * flag group that names an app; `open` or `xdg-open` with an editor's URL; or any of those behind env.
+ */
+function opensEditor(file: string, args: readonly string[], depth = 0): boolean {
   const name = path.basename(file);
-  return EDITORS.has(name) || (name === 'open' && args.some((arg) => arg === '-a' || arg === '-b'));
+  if (EDITORS.has(name)) return true;
+  if ((name === 'open' || name === 'xdg-open') && args.some((arg) => EDITOR_URL.test(arg))) return true;
+  if (name === 'open' && args.some((arg) => APP_FLAGS.test(arg))) return true;
+  return name === 'env' && depth < 4 && envOpensEditor(args, depth + 1);
+}
+
+/** Whether env, with these arguments, runs something that opens an editor: the command after its options and NAME=value assignments. */
+function envOpensEditor(args: readonly string[], depth: number): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i] as string;
+    if (arg === '--') return i + 1 < args.length && opensEditor(args[i + 1] as string, args.slice(i + 2), depth);
+    // -S splits its string into words, which env then reads as more of its own arguments.
+    if (arg === '-S' || arg === '--split-string') return envOpensEditor([...(args[i + 1] ?? '').split(/\s+/).filter(Boolean), ...args.slice(i + 2)], depth);
+    if (arg.startsWith('-S')) return envOpensEditor([...arg.slice(2).split(/\s+/).filter(Boolean), ...args.slice(i + 1)], depth);
+    if (arg.startsWith('--split-string=')) return envOpensEditor([...arg.slice(15).split(/\s+/).filter(Boolean), ...args.slice(i + 1)], depth);
+    if (ENV_VALUE_OPTIONS.has(arg)) {
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('-') || /^[^=]+=/.test(arg)) continue;
+    return opensEditor(arg, args.slice(i + 1), depth);
+  }
+  return false;
 }
 
 /** For spawn, spawnSync, execFile and execFileSync: `(file, args?, options?)`. Any time, PITWALL_LIVE or not. */

@@ -151,6 +151,7 @@ beforeAll(async () => {
   const outside = join(tmp, 'outside');
   for (const dir of [repo, dashed, webRoot, outside]) await mkdir(dir, { recursive: true });
   await symlink(outside, join(root, 'escape'));
+  await symlink(repo, join(root, 'alias'));
 });
 
 afterAll(async () => {
@@ -165,6 +166,7 @@ const GONE_ID = '55555555-5555-4555-8555-555555555555';
 const ESCAPE_ID = '66666666-6666-4666-8666-666666666666';
 const DASHED_ID = '77777777-7777-4777-8777-777777777777';
 const RELATIVE_ID = '88888888-8888-4888-8888-888888888888';
+const ALIAS_ID = '99999999-9999-4999-8999-aaaaaaaaaaaa';
 
 function session(sessionId: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -203,6 +205,8 @@ function snapshot(): IndexSnapshot {
           session(DASHED_ID, { cwd: dashed }),
           // Never one the index lists: a cwd an editor could read as an option.
           session(RELATIVE_ID, { cwd: '--new-window' }),
+          // A symlink under the root to a directory under it.
+          session(ALIAS_ID, { cwd: join(root, 'alias') }),
         ],
       },
     ],
@@ -440,6 +444,12 @@ describe('POST openInEditorPath: opening', () => {
     expect(started.runFile.calls).toHaveLength(3);
   });
 
+  it('opens the realpath it checked, not the path the snapshot has, so a symlink swapped in later goes nowhere else', async () => {
+    const started = await start();
+    expect((await open(started, ALIAS_ID)).status).toBe(200);
+    expect(started.runFile.calls[0]?.args).toEqual(['-a', CURSOR_APP, repo]);
+  });
+
   it('passes a directory whose name starts with - as an absolute path, so it is never an option', async () => {
     const started = await start();
     expect((await open(started, DASHED_ID)).status).toBe(200);
@@ -516,9 +526,11 @@ describe('POST openInEditorPath: refusals', () => {
   });
 
   it("502 when the editor doesn't start or exits non-zero: a short line, never its output", async () => {
+    const moved = "Cursor didn't open. If it has moved, restart pitwall so it looks again.";
     const failures: Array<[unknown, string]> = [
-      [new RunError('exit', 'exited with code 1', 1), "Cursor didn't open: /usr/bin/open exited with code 1."],
-      [new RunError('not-found', '/usr/bin/open was not found'), "Cursor didn't open: /usr/bin/open was not found."],
+      // As `open -a` exits when the bundle found at startup has moved, and a command that has gone isn't found.
+      [new RunError('exit', 'exited with code 1', 1), moved],
+      [new RunError('not-found', '/usr/bin/open was not found'), moved],
       [new RunError('signal', 'was killed by SIGKILL'), "Cursor didn't open: /usr/bin/open was stopped by a signal."],
       [new RunError('spawn', 'spawn EACCES: some detail from the OS'), "Cursor didn't open: /usr/bin/open couldn't be started."],
       [new Error('LSOpenURLsWithRole() failed with error -10810 for the file /secret.'), "Cursor didn't open: /usr/bin/open couldn't be started."],
@@ -604,10 +616,11 @@ describe('POST openInEditorPath: the limit it shares with stop, remove and resum
 describe('no test opens a real editor', () => {
   it("the real runFile is refused by the test guard, so the route answers 502 and nothing opens", async () => {
     const indexer = fakeIndexer();
-    // No runFile: the route's default, the real one. The editor named doesn't exist either.
+    // No runFile: the route's default, the real one. Neither the opener nor the app exists, so even a
+    // broken guard couldn't open anything: never /usr/bin/open, which LaunchServices would answer.
     const server = await startServerWithInternals(
       { indexer, token: TOKEN, webRoot, port: 0 },
-      { editors: { found: [{ id: 'cursor', label: 'Cursor', file: MAC_OPEN, args: ['-a', '/nonexistent/pitwall-test/Cursor.app'] }] } },
+      { editors: { found: [{ id: 'cursor', label: 'Cursor', file: '/nonexistent/pitwall-test/open', args: ['-a', '/nonexistent/pitwall-test/Cursor.app'] }] } },
     );
     running.push(server);
     const started = { server, apiKey: await apiKeyOf(server.port), runFile: fakeRunFile() };

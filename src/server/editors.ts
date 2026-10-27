@@ -16,7 +16,9 @@
 //     409  its directory has gone: `cwdMissing` in the snapshot, or no longer a directory under a root
 //          now, through its realpath, as resume checks it
 //     429  4 stop, remove, resume and open commands are already running (CommandSlots). Retry-After is set
-//     502  the editor didn't start, or exited non-zero: a short line, never its output
+//     502  the editor didn't start, or exited non-zero: a short line, never its output. When `open` or the
+//          command exits non-zero or has gone, as when the app moved after startup, it says to restart
+//          pitwall so it looks again
 //     504  it didn't return within 10 seconds. It may still open
 //
 // Detection runs once, as the server starts, and never again:
@@ -31,8 +33,10 @@
 //
 // The command is built from those absolute paths and the session's own `cwd` from the snapshot, never
 // a path the request names, as separate arguments with no shell, through runFile and the scrubbed
-// environment (childEnvironment()), in the temp directory, as stop and remove run. `cwd` is absolute,
-// checked again here, so it can never be read as an option.
+// environment (childEnvironment()), in the temp directory, as stop and remove run. The directory it
+// gets is the realpath checkDirectory() checked is under a root, not the snapshot's text, so a symlink
+// swapped in after the poll can't send the editor outside the roots. A realpath is absolute, so it can
+// never be read as an option.
 import { constants } from 'node:fs';
 import { access as fsAccess, lstat as fsLstat, stat as fsStat } from 'node:fs/promises';
 import os from 'node:os';
@@ -198,14 +202,12 @@ function failure(editor: FoundEditor, error: unknown, timeoutMs: number): { stat
     return { status: 504, error: `${editor.label} didn't answer within ${Math.round(timeoutMs / 1000)} seconds. It may still open.` };
   }
   const reason = error instanceof RunError ? error.reason : 'spawn';
-  const why =
-    reason === 'not-found'
-      ? `${editor.file} was not found`
-      : reason === 'exit' && error instanceof RunError && error.exitCode !== undefined
-        ? `${editor.file} exited with code ${error.exitCode}`
-        : reason === 'signal'
-          ? `${editor.file} was stopped by a signal`
-          : `${editor.file} couldn't be started`;
+  // `open -a` exits 1 for a bundle that has gone, and a command that has gone isn't found: most likely
+  // the app moved, or was removed, after pitwall looked at startup.
+  if (reason === 'exit' || reason === 'not-found') {
+    return { status: 502, error: `${editor.label} didn't open. If it has moved, restart pitwall so it looks again.` };
+  }
+  const why = reason === 'signal' ? `${editor.file} was stopped by a signal` : `${editor.file} couldn't be started`;
   return { status: 502, error: `${editor.label} didn't open: ${why}.` };
 }
 
@@ -265,12 +267,12 @@ export function registerEditors(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
       }
       try {
         // Afresh, as resume checks it: it may have gone, or been swapped for a symlink, since the poll.
-        // checkDirectory() refuses a path that isn't absolute, so the argument after the editor's own
-        // always starts with `/` and can't be read as an option.
+        // checkDirectory() refuses a path that isn't absolute. The editor gets the realpath it checked
+        // is under a root, which starts with `/`, so it can't be read as an option.
         const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
         if (!dir.ok) return refuse(c, dir.error, 409);
         try {
-          await run(editor.file, openArgs(editor, cwd), { cwd: os.tmpdir(), env: childEnvironment(options.env ?? process.env, options.token), timeoutMs });
+          await run(editor.file, openArgs(editor, dir.path), { cwd: os.tmpdir(), env: childEnvironment(options.env ?? process.env, options.token), timeoutMs });
         } catch (error) {
           const failed = failure(editor, error, timeoutMs);
           return answer(c, { ok: false, error: failed.error }, failed.status);
