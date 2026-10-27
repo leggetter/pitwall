@@ -33,10 +33,10 @@
 //          and needs you until you send one (Indexer.noteRestart, NeedsYou's 'restarted', W69)
 //     400, 404, 503  from resolveSession()
 //     409  not an ended session (SessionSummary.ended); a resume of it is already running; a fresh
-//          `claude agents` lists it, as when its terminal is open again (spike 006, finding 5);
-//          then, checked after that listing, immediately before the run, its directory has gone,
-//          or no longer resolves to a directory under a root (W81); or Claude Code started a copy
-//          instead, with `copyShortId`, which pitwall leaves for the user
+//          `claude agents` lists its session id in any row, as when its terminal is open again
+//          (spike 006, finding 5); then, checked after that listing, immediately before the run,
+//          its directory has gone, or no longer resolves to a directory under a root (W81); or
+//          Claude Code started a copy instead, with `copyShortId`, which pitwall leaves for the user
 //     422  Claude Code says the workspace isn't trusted, with `hint`, as for spawn
 //     429  as for stop and remove, whose limit it shares
 //     502  the fresh `claude agents` failed, so nothing was resumed; or Claude Code failed,
@@ -55,7 +55,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { createAgentsSource, type AgentsSource } from '../index/agents.js';
+import { createAgentsSource, listedSessionIds, type AgentsSource } from '../index/agents.js';
 import { isSafeSessionId, type Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
 import {
@@ -556,11 +556,12 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
     try {
       // A session that's open in a terminal again gets an unnamed copy, and Claude Code still exits 0
       // (spike 006, finding 5), so it's checked first, and nothing runs when the check can't be made.
+      // Its session id in any row counts, one parseAgentRows() skipped included (W81).
       const listing = await agents.list();
       if (!listing.ok) {
         return answer({ ok: false, error: `pitwall couldn't check that the session isn't running again, so it didn't resume it: ${listing.error}.` }, 502);
       }
-      if (listing.rows.some((row) => row.sessionId === sessionId)) {
+      if (listedSessionIds(listing).has(sessionId)) {
         indexer.pollSoon();
         return answer(
           { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." },

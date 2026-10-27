@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createAgentsSource, parseAgentRows } from './agents.js';
+import { createAgentsSource, listedSessionIds, parseAgentRows } from './agents.js';
 import { RunError, type RunFile } from './exec.js';
 
 // Synthetic rows, shaped like Claude Code 2.1.301's and 2.1.302's `claude agents --json --all`.
@@ -183,7 +183,7 @@ describe('createAgentsSource', () => {
       return JSON.stringify([interactive]);
     });
     const result = await source.list();
-    expect(result).toEqual({ ok: true, rows: parseAgentRows([interactive]) });
+    expect(result).toEqual({ ok: true, rows: parseAgentRows([interactive]), sessionIds: [interactive.sessionId] });
     expect(calls).toEqual([
       { file: 'claude-test', args: ['agents', '--json', '--all'], options: { cwd: '/tmp/pitwall-test-cwd', timeoutMs: 1234 } },
     ]);
@@ -214,7 +214,31 @@ describe('createAgentsSource', () => {
   });
 
   it('returns an empty list', async () => {
-    expect(await sourceWith(async () => '[]\n').list()).toEqual({ ok: true, rows: [] });
+    expect(await sourceWith(async () => '[]\n').list()).toEqual({ ok: true, rows: [], sessionIds: [] });
+  });
+
+  it('names every session id in its output, in rows parseAgentRows skips too, so none of them reads as ended (W81)', async () => {
+    const odd = [
+      { ...interactive, sessionId: '33333333-3333-4333-8333-333333333333', kind: 'remote' },
+      { ...interactive, sessionId: '44444444-4444-4444-8444-444444444444', startedAt: undefined },
+      { ...interactive, sessionId: '55555555-5555-4555-8555-555555555555', cwd: 'relative/dir' },
+    ];
+    const output = [interactive, ...odd, { ...background, sessionId: interactive.sessionId }, { sessionId: 42 }, 'not a row', null];
+    const result = await sourceWith(async () => JSON.stringify(output)).list();
+    if (!result.ok) throw new Error(result.error);
+    expect(result.rows.map((row) => row.sessionId)).toEqual([interactive.sessionId]);
+    expect(result.sessionIds).toEqual([interactive.sessionId, ...odd.map((row) => row.sessionId)]);
+    expect([...listedSessionIds(result)]).toEqual(result.sessionIds);
+  });
+
+  it("listedSessionIds adds the rows' ids, for a source that doesn't say", () => {
+    const rows = parseAgentRows([interactive, background]);
+    expect([...listedSessionIds({ ok: true, rows })]).toEqual([interactive.sessionId, background.sessionId]);
+    expect([...listedSessionIds({ ok: true, rows, sessionIds: ['66666666-6666-4666-8666-666666666666'] })]).toEqual([
+      '66666666-6666-4666-8666-666666666666',
+      interactive.sessionId,
+      background.sessionId,
+    ]);
   });
 
   const failures: Array<[string, RunFile, string]> = [

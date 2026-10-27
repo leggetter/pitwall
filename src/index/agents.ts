@@ -25,7 +25,19 @@ export interface AgentRow {
   startedAt: string;
 }
 
-export type AgentsResult = { ok: true; rows: AgentRow[] } | { ok: false; error: string };
+export type AgentsResult =
+  | {
+      ok: true;
+      rows: AgentRow[];
+      /**
+       * The `sessionId` of every row with a string one, those parseAgentRows() skipped included: a row
+       * with an unknown `kind`, no `startedAt` or a relative `cwd` is still a session Claude Code lists,
+       * so it isn't one that has ended (W73, W81). createAgentsSource() always sets it. Read it with
+       * listedSessionIds(), which adds `rows`' ids, for a source that leaves it out, as tests' fakes do.
+       */
+      sessionIds?: string[];
+    }
+  | { ok: false; error: string };
 
 export interface AgentsSourceOptions {
   /** Default 'claude'. */
@@ -81,9 +93,27 @@ export function createAgentsSource(options: AgentsSourceOptions = {}): AgentsSou
       if (!Array.isArray(parsed)) {
         return { ok: false, error: `${COMMAND} didn't print a JSON array` };
       }
-      return { ok: true, rows: parseAgentRows(parsed) };
+      return { ok: true, rows: parseAgentRows(parsed), sessionIds: rawSessionIds(parsed) };
     },
   };
+}
+
+/**
+ * Every session id a listing names, in any row: its `sessionIds` and its rows' ids. A session in it
+ * is running or listed, whatever its row looked like, so it hasn't ended. The index decides what's
+ * ended with it, and the resume route checks a fresh listing with it.
+ */
+export function listedSessionIds(result: Extract<AgentsResult, { ok: true }>): Set<string> {
+  const ids = new Set(result.sessionIds);
+  for (const row of result.rows) ids.add(row.sessionId);
+  return ids;
+}
+
+/** The `sessionId` of every row that is an object with a string one, valid row or not. */
+function rawSessionIds(input: readonly unknown[]): string[] {
+  const ids = new Set<string>();
+  for (const item of input) if (isRecord(item) && typeof item.sessionId === 'string') ids.add(item.sessionId);
+  return [...ids];
 }
 
 function describeRunFailure(err: unknown, claudeBin: string): string {
