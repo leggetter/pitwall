@@ -49,8 +49,9 @@ export interface AskedYou {
  * - 'asked': its last turn ended by asking you something (askedYou).
  * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
  *   pitwall, and no prompt has been sent to it since.
- * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why,
- *   because the job's `state.json` was missing or unreadable. Kept so that a
+ * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why:
+ *   the job's `state.json` was missing, unreadable, malformed or another
+ *   session's, or the row has no short id to find it by. Kept so that a
  *   question is never hidden.
  */
 export interface NeedsYou {
@@ -232,11 +233,11 @@ export interface SessionGroup {
    * duplication"). A group with no sessions is left out, the root's own group
    * included.
    *
-   * Sorted: sessions that need the user first (status 'waiting', or a background
-   * job that is blocked and not stale), then askedYou, then busy, then by
-   * lastActivityAt descending (startedAt when there's none). Stale sessions
-   * next, and finished sessions (`finished`) last. Finished sessions are
-   * sorted by activity alone, so an askedYou doesn't lift one.
+   * Sorted: sessions that need the user first (`needsYou`, whatever the
+   * reason), then busy, then the rest, each by lastActivityAt descending
+   * (startedAt when there's none). Stale sessions next, and finished sessions
+   * (`finished`) last. Finished sessions are sorted by activity alone, so an
+   * askedYou doesn't lift one.
    */
   sessions: SessionSummary[];
 }
