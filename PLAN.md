@@ -274,6 +274,8 @@ The work after M3, on its own integration branch, `m3.1/integration`, merged int
 
 - **The terminal's last row cut off** (Phil, 2026-10-27, attached to a background session: "It just feels like the bottom pin section shown in any [Claude] terminal is cut off a bit at the bottom"). Claude Code's pinned footer is the screen's last row. The fit addon (`@xterm/addon-fit` 0.11.0) sizes the terminal from its parent's computed height, less the terminal element's own padding; the parent, `.attach-terminal`, has 6 px of padding, and the page's `box-sizing: border-box` puts that padding inside the computed height. So the terminal can get one row more than fits, depending on the panel's height, and the last row runs into the bottom padding and is clipped, and likewise the last column (coordinator, from the code). W74.
 
+- **Filters that don't move the bar** (Phil, 2026-10-27: "selecting a filter changes the alignment/rows"). The session list's filter bar is one wrapping flex line: the field (at least 200 px, growing), the chips, Clear filters once a filter is on, and Sort at the right. Clear filters appearing changes where it wraps: at about 500 px the field and chips share line 1 with Sort on line 2, and with a chip on, the field takes line 1 alone and the chips, Clear filters and Sort share line 2. Nothing should move when a filter turns on or off (coordinator's call: the field on its own line, so its placeholder shows whole, and the chips, Clear filters and Sort on the next). W75.
+
 In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 
 1. **A durable home for the headless app-check tools.** The integrated check every M3 review ran, and each work item's part of it, lived in the session scratchpad and went with the 2026-10-23 reboot. Every later review needs them, so they come first, committed to the repo or kept in a gitignored folder. Done: `scripts/appcheck/` (W64).
@@ -422,6 +424,7 @@ Same way of working as M3, on `m3.1/integration`.
 | W72 | Open in an editor: `GET /api/editors` lists VS Code and Cursor where they're installed, and `POST /api/sessions/:id/open` opens a listed session's own directory in one, from the session view | `m3.1/open-in-editor` | S | In progress |
 | W73 | A security look at the two new routes that start processes: W66's resume and W72's open in an editor, by a sub-agent, after W72 merges (the M3.1 bullet's "its security look shares one pass") | coordinator, with a sub-agent | S | To do, after W72 |
 | W74 | The terminal's last row and column fit: the fit addon measures a box with no padding, and the app check checks that the screen's last row and column are inside the visible box at every size | `m3.1/terminal-fit` | S | In progress |
+| W75 | Filters that don't move the bar: the field on its own line, and the chips, Clear filters and Sort on the next, so turning a filter on or off moves nothing, at any width the app check runs | `m3.1/filter-bar` | S | In progress |
 
 ## M2 work breakdown
 
