@@ -32,11 +32,12 @@
 //     200  resumed: { ok: true, shortId }, the id `claude attach` takes. It waits for a prompt,
 //          and needs you until you send one (Indexer.noteRestart, NeedsYou's 'restarted', W69)
 //     400, 404, 503  from resolveSession()
-//     409  not an ended session (SessionSummary.ended); a resume of it is already running; a fresh
-//          `claude agents` lists its session id in any row, as when its terminal is open again
-//          (spike 006, finding 5); then, checked after that listing, immediately before the run,
-//          its directory has gone, or no longer resolves to a directory under a root (W81); or
-//          Claude Code started a copy instead, with `copyShortId`, which pitwall leaves for the user
+//     409  not an ended session (SessionSummary.ended), or its id isn't a UUID; a resume of it is
+//          already running; a fresh `claude agents` lists its session id in any row, as when its
+//          terminal is open again (spike 006, finding 5); then, checked after that listing,
+//          immediately before the run, its directory has gone, or no longer resolves to a directory
+//          under a root (W81); or Claude Code started a copy instead, with `copyShortId`, which
+//          pitwall leaves for the user
 //     422  Claude Code says the workspace isn't trusted, with `hint`, as for spawn
 //     429  as for stop and remove, whose limit it shares
 //     502  the fresh `claude agents` failed, so nothing was resumed; or Claude Code failed,
@@ -49,15 +50,17 @@
 // `--discard-unpushed` or `--force-remove-worktree`. Resume runs in the
 // realpath of the resolved session's own `cwd`, checked immediately before it
 // starts, never a directory the request names, with `PWD` set to that `cwd`,
-// its `sessionId` and no prompt, so no message text is on the command line.
+// its `sessionId`, a UUID, and no prompt, so no message text is on the command
+// line.
 import { realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { createAgentsSource, listedSessionIds, type AgentsSource } from '../index/agents.js';
-import { isSafeSessionId, type Indexer } from '../index/index.js';
+import type { Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
+import { isSessionUuid } from '../index/transcripts.js';
 import {
   removePath,
   resumePath,
@@ -541,9 +544,9 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
     const lookup = resolveSession(indexer, c.req.param('sessionId'));
     if (!lookup.ok) return answer({ ok: false, error: LOOKUP_ERRORS[lookup.status] }, lookup.status);
     const { session } = lookup;
-    // From the resolved summary, never the route parameter.
+    // From the resolved summary, never the route parameter. A UUID only: `claude --resume` takes a name too.
     const { sessionId, cwd } = session;
-    if (session.ended !== true || !isSafeSessionId(sessionId)) {
+    if (session.ended !== true || !isSessionUuid(sessionId)) {
       return answer({ ok: false, error: 'Only an interactive session that has ended can be resumed from pitwall.' }, 409);
     }
     if (session.cwdMissing === true) {
