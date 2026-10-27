@@ -136,6 +136,7 @@ describe('the ended-session scanner: the rule (spike 006, finding 7)', () => {
           transcript: 'ok',
           lastActivityAt: ago(29),
           lastUserPrompt: 'Fix the flaky test in the scheduler',
+          lastPromptMs: Date.parse(ago(30)),
           aiTitle: 'Fix the scheduler race',
           askedYou: { reason: 'question', excerpt: 'I found the race. Shall I push the fix?' },
         },

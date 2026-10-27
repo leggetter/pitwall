@@ -137,6 +137,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     subscribe: () => () => {},
     conversation: async () => undefined,
     pollSoon: vi.fn(),
+    noteRestart: vi.fn(),
     stop: () => {},
   };
 }
@@ -812,15 +813,27 @@ describe('resume (W66)', () => {
     expect(started.run.calls[0]?.options.cwd).toBe(worker());
   });
 
-  it('records the short id for attach and the session id as resumed, and makes the index poll soon', async () => {
+  it('records the short id for attach, the session id as resumed, and the restart for Needs you, which polls soon (W69)', async () => {
     const spawned = { add: vi.fn() };
     const resumed = { add: vi.fn() };
     const indexer = fakeIndexer();
-    const started = await start(fakeRunner(resumedOutput('66666666')), { spawned, resumed }, indexer);
+    const at = Date.parse('2026-10-27T12:00:00.000Z');
+    const started = await start(fakeRunner(resumedOutput('66666666')), { spawned, resumed, now: () => at }, indexer);
     expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
     expect(spawned.add.mock.calls).toEqual([['66666666']]);
     expect(resumed.add.mock.calls).toEqual([[ENDED_ID]]);
-    expect(indexer.pollSoon).toHaveBeenCalled();
+    // By the session id, from the resolved summary, at the resume's time. noteRestart polls soon itself.
+    expect(indexer.noteRestart).toHaveBeenCalledTimes(1);
+    expect(indexer.noteRestart).toHaveBeenCalledWith(ENDED_ID, at);
+  });
+
+  it('notes no restart for a resume that failed, or started a copy instead (W69)', async () => {
+    for (const answer of [copyOutput('ee8a7a26'), exited(1, '', 'something broke\n'), exited(0, 'nothing useful\n')]) {
+      const indexer = fakeIndexer();
+      const started = await start(fakeRunner(answer), {}, indexer);
+      expect((await postAsPage(started, resumePath(ENDED_ID))).status).not.toBe(200);
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
+    }
   });
 
   it("answers 409 for a session that hasn't ended, without checking or running anything", async () => {

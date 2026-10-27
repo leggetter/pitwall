@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AskedYou, SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
-import { buildGroups, compareGroups, compareSessions, isFinished, isStale, toSessionSummary, type PlacedSession } from './summaries.js';
+import { buildGroups, compareGroups, compareSessions, isFinished, isStale, restartHolds, toSessionSummary, type PlacedSession } from './summaries.js';
 import { titleText, type TranscriptInfo } from './transcripts.js';
 
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
+const asked: AskedYou = { reason: 'question', excerpt: 'Ship it?' };
 const DAY = 24 * 60 * 60 * 1000;
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -262,24 +263,129 @@ describe('toSessionSummary', () => {
     it('is absent when the transcript did not ask', () => {
       expect(toSessionSummary(row(), { transcript: 'ok' }, NOW)).not.toHaveProperty('askedYou');
     });
+
+    describe("with the turn's end read from the transcript (spike 007, findings 4 and 6)", () => {
+      const ended: TranscriptInfo = { ...transcript, turnEnded: true };
+      const running: TranscriptInfo = { ...transcript, turnEnded: false };
+
+      it("is kept once the turn has ended, though a plugin's monitor keeps Claude Code's status at busy or working", () => {
+        expect(toSessionSummary(row({ status: 'busy' }), ended, NOW).askedYou).toEqual(asked);
+        expect(toSessionSummary(background({ state: 'working', status: 'busy', pid: 9 }), ended, NOW).askedYou).toEqual(asked);
+        expect(toSessionSummary(background({ state: 'blocked' }), ended, NOW).askedYou).toEqual(asked);
+      });
+
+      it('is dropped while the turn runs, whatever the status says', () => {
+        expect(toSessionSummary(row({ status: 'idle' }), running, NOW)).not.toHaveProperty('askedYou');
+        expect(toSessionSummary(background({ state: 'done', pid: 9, status: 'idle' }), running, NOW)).not.toHaveProperty('askedYou');
+      });
+
+      it('is still dropped while a prompt is on screen, and on a stale session', () => {
+        expect(toSessionSummary(row({ status: 'waiting' }), ended, NOW)).not.toHaveProperty('askedYou');
+        const stale = toSessionSummary(background({ state: 'blocked' }), { ...ended, lastActivityAt: iso(NOW - 9 * DAY) }, NOW);
+        expect(stale.stale).toBe(true);
+        expect(stale).not.toHaveProperty('askedYou');
+      });
+
+      it("goes by Claude Code's status for a transcript with no turn_duration entries, as from an older Claude Code", () => {
+        expect(transcript).not.toHaveProperty('turnEnded');
+        expect(toSessionSummary(row({ status: 'busy' }), transcript, NOW)).not.toHaveProperty('askedYou');
+        expect(toSessionSummary(row({ status: 'idle' }), transcript, NOW).askedYou).toEqual(asked);
+      });
+    });
+  });
+
+  describe('needsYou (W69)', () => {
+    const background = (overrides: Partial<AgentRow> = {}) =>
+      row({ kind: 'background', shortId: 'ab12', pid: 77, status: 'idle', state: 'blocked', ...overrides });
+    const quiet: TranscriptInfo = { transcript: 'ok', lastActivityAt: iso(NOW - 60_000) };
+    const askedTurn: TranscriptInfo = { ...quiet, askedYou: asked, turnEnded: true };
+    const needs = (text: string) => ({ kind: 'needs' as const, text });
+
+    it("is 'prompt' while Claude Code shows a prompt, before any other reason", () => {
+      const summary = toSessionSummary(background({ status: 'waiting', waitingFor: 'permission prompt' }), askedTurn, NOW, {
+        job: needs('Tea or coffee?'),
+        restartedAtMs: NOW - 1000,
+      });
+      expect(summary.needsYou).toEqual({ reason: 'prompt' });
+      expect(toSessionSummary(row({ status: 'waiting' }), quiet, NOW).needsYou).toEqual({ reason: 'prompt' });
+    });
+
+    it("is 'claude-code' with the job's own line, ahead of asked you", () => {
+      const summary = toSessionSummary(background(), askedTurn, NOW, { job: needs('Do you prefer tea or coffee?') });
+      expect(summary.needsYou).toEqual({ reason: 'claude-code', text: 'Do you prefer tea or coffee?' });
+    });
+
+    it("is 'asked' when the last turn asked you, ahead of a restart", () => {
+      expect(toSessionSummary(row(), askedTurn, NOW, { restartedAtMs: NOW - 1000 }).needsYou).toEqual({ reason: 'asked' });
+      expect(toSessionSummary(background(), askedTurn, NOW, { job: { kind: 'none' } }).needsYou).toEqual({ reason: 'asked' });
+    });
+
+    it("is 'restarted' after a restart, until a prompt newer than it", () => {
+      const restartedAtMs = NOW - 30_000;
+      const working = background({ state: 'working', status: 'busy' });
+      expect(toSessionSummary(working, { ...quiet, lastPromptMs: restartedAtMs - 5000 }, NOW, { job: { kind: 'none' }, restartedAtMs }).needsYou).toEqual({
+        reason: 'restarted',
+      });
+      expect(toSessionSummary(working, quiet, NOW, { restartedAtMs }).needsYou).toEqual({ reason: 'restarted' });
+      expect(toSessionSummary(working, { ...quiet, lastPromptMs: restartedAtMs + 1 }, NOW, { restartedAtMs })).not.toHaveProperty('needsYou');
+    });
+
+    it("is 'blocked' for a blocked job whose file couldn't be used, or wasn't read", () => {
+      expect(toSessionSummary(background(), quiet, NOW, { job: { kind: 'unknown' } }).needsYou).toEqual({ reason: 'blocked' });
+      expect(toSessionSummary(background(), quiet, NOW).needsYou).toEqual({ reason: 'blocked' });
+      expect(toSessionSummary(background({ shortId: undefined }), quiet, NOW).needsYou).toEqual({ reason: 'blocked' });
+    });
+
+    it("is absent for a blocked job whose file was read and asks nothing, as a resumed session's placeholder", () => {
+      expect(toSessionSummary(background(), quiet, NOW, { job: { kind: 'none' } })).not.toHaveProperty('needsYou');
+    });
+
+    it('is absent for a session with no reason', () => {
+      expect(toSessionSummary(row({ status: 'idle' }), quiet, NOW)).not.toHaveProperty('needsYou');
+      expect(toSessionSummary(row({ status: 'busy' }), quiet, NOW)).not.toHaveProperty('needsYou');
+      expect(toSessionSummary(background({ state: 'working', status: 'busy' }), quiet, NOW, { job: { kind: 'unknown' } })).not.toHaveProperty('needsYou');
+    });
+
+    it('is never set on a stale or a finished session, whatever its reasons', () => {
+      const old: TranscriptInfo = { ...askedTurn, lastActivityAt: iso(NOW - 9 * DAY) };
+      const stale = toSessionSummary(background({ status: 'waiting' }), old, NOW, { job: needs('Still there?'), restartedAtMs: NOW - 1000 });
+      expect(stale.stale).toBe(true);
+      expect(stale).not.toHaveProperty('needsYou');
+      const done = toSessionSummary(background({ state: 'done', pid: undefined, status: undefined }), askedTurn, NOW, { job: needs('?'), restartedAtMs: NOW - 1000 });
+      expect(done.finished).toBe(true);
+      expect(done).not.toHaveProperty('needsYou');
+      const endedSession = toSessionSummary(row({ pid: undefined, status: undefined }), askedTurn, NOW, { ended: true, restartedAtMs: NOW - 1000 });
+      expect(endedSession.askedYou).toEqual(asked);
+      expect(endedSession).not.toHaveProperty('needsYou');
+    });
+  });
+});
+
+describe('restartHolds', () => {
+  it('holds until the transcript has a prompt newer than the restart', () => {
+    expect(restartHolds(NOW, {})).toBe(true);
+    expect(restartHolds(NOW, { lastPromptMs: NOW - 1 })).toBe(true);
+    expect(restartHolds(NOW, { lastPromptMs: NOW })).toBe(true);
+    expect(restartHolds(NOW, { lastPromptMs: NOW + 1 })).toBe(false);
   });
 });
 
 describe('compareSessions', () => {
-  it('puts waiting first, then asked you, then busy, then the most recently active, with stale sessions last', () => {
-    const asked: AskedYou = { reason: 'question', excerpt: 'Ship it?' };
+  it('puts needs you first, whatever the reason, then busy, then the most recently active, with stale sessions last', () => {
     const sessions = [
       session('idle', { status: 'idle', lastActivityAt: iso(NOW - 1000) }),
       session('busy', { status: 'busy', lastActivityAt: iso(NOW - 500) }),
-      session('asked-old', { status: 'idle', askedYou: asked, lastActivityAt: iso(NOW - 90_000) }),
+      session('asked-old', { status: 'idle', askedYou: asked, needsYou: { reason: 'asked' }, lastActivityAt: iso(NOW - 90_000) }),
       session('stale', { alive: false, stale: true, kind: 'background', state: 'blocked', lastActivityAt: iso(NOW) }),
-      session('asked-new', { status: 'idle', askedYou: asked, lastActivityAt: iso(NOW - 10_000) }),
-      session('waiting', { status: 'waiting', lastActivityAt: iso(NOW - 99_000) }),
+      session('restarted', { status: 'busy', needsYou: { reason: 'restarted' }, lastActivityAt: iso(NOW - 5000) }),
+      session('asked-new', { status: 'idle', askedYou: asked, needsYou: { reason: 'asked' }, lastActivityAt: iso(NOW - 10_000) }),
+      session('waiting', { status: 'waiting', needsYou: { reason: 'prompt' }, lastActivityAt: iso(NOW - 99_000) }),
     ];
     expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual([
-      'waiting',
+      'restarted',
       'asked-new',
       'asked-old',
+      'waiting',
       'busy',
       'idle',
       'stale',
@@ -292,7 +398,7 @@ describe('compareSessions', () => {
       session('stale', { alive: false, stale: true, kind: 'background', lastActivityAt: iso(NOW) }),
       session('busy', { status: 'busy', lastActivityAt: iso(NOW - 9000) }),
       session('idle-new', { status: 'idle', lastActivityAt: iso(NOW - 1000) }),
-      session('waiting', { status: 'waiting', lastActivityAt: iso(NOW - 99_000) }),
+      session('waiting', { status: 'waiting', needsYou: { reason: 'prompt' }, lastActivityAt: iso(NOW - 99_000) }),
       session('no-status', { alive: false, lastActivityAt: iso(NOW - 3000) }),
     ];
     expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual([
@@ -305,29 +411,15 @@ describe('compareSessions', () => {
     ]);
   });
 
-  it('puts a blocked background job first, as Claude Code reports it: blocked and idle', () => {
+  it('puts a blocked job first when it needs you, and among the idle ones when it does not (W69)', () => {
+    const blocked = { kind: 'background' as const, shortId: 'bg1', status: 'idle' as const, state: 'blocked' as const };
     const sessions = [
       session('busy', { status: 'busy', lastActivityAt: iso(NOW - 5000) }),
       session('idle-newer', { status: 'idle', lastActivityAt: iso(NOW - 1000) }),
-      session('blocked', { kind: 'background', shortId: 'bg1', status: 'idle', state: 'blocked', lastActivityAt: iso(NOW - 60_000) }),
+      session('blocked-asks', { ...blocked, needsYou: { reason: 'claude-code', text: 'Tea or coffee?' }, lastActivityAt: iso(NOW - 60_000) }),
+      session('blocked-placeholder', { ...blocked, lastActivityAt: iso(NOW - 2000) }),
     ];
-    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual(['blocked', 'busy', 'idle-newer']);
-  });
-
-  it('ranks a blocked job with waiting sessions, by activity, ahead of asked you', () => {
-    const asked: AskedYou = { reason: 'question', excerpt: 'Ship it?' };
-    const sessions = [
-      session('asked', { status: 'idle', askedYou: asked, lastActivityAt: iso(NOW - 100) }),
-      session('waiting-old', { status: 'waiting', lastActivityAt: iso(NOW - 50_000) }),
-      session('blocked-no-process', { kind: 'background', alive: false, state: 'blocked', lastActivityAt: iso(NOW - 20_000) }),
-      session('blocked-new', { kind: 'background', status: 'idle', state: 'blocked', lastActivityAt: iso(NOW - 1000) }),
-    ];
-    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual([
-      'blocked-new',
-      'blocked-no-process',
-      'waiting-old',
-      'asked',
-    ]);
+    expect(sessions.sort(compareSessions).map((s) => s.sessionId)).toEqual(['blocked-asks', 'busy', 'idle-newer', 'blocked-placeholder']);
   });
 
   it('keeps a stale blocked job last', () => {
@@ -389,7 +481,7 @@ describe('buildGroups', () => {
       [
         placed('a1', `${root}/alpha`, { lastActivityAt: iso(NOW - 50_000) }),
         placed('b1', `${root}/beta`, { lastActivityAt: iso(NOW - 1000) }),
-        placed('a2', `${root}/alpha`, { status: 'waiting', lastActivityAt: iso(NOW - 90_000) }),
+        placed('a2', `${root}/alpha`, { status: 'waiting', needsYou: { reason: 'prompt' }, lastActivityAt: iso(NOW - 90_000) }),
         placed('r1', root, { lastActivityAt: iso(NOW - 20_000) }, root, 'directory'),
         placed('w1', `${root}/main-repo`, { lastActivityAt: iso(NOW - 30_000) }, `${root}/worktrees`),
       ],

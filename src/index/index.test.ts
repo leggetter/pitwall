@@ -8,10 +8,12 @@ import type { AgentRow, AgentsResult } from './agents.js';
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { createGroupResolver } from './grouping.js';
 import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
+import { createJobReader, type JobNeeds } from './jobs.js';
 import { createTranscriptReader, encodeProjectDir, type TranscriptInfo } from './transcripts.js';
 import { createWorkedInScanner, type RepoWorkedIn, type TrackedSession, type WorkedInScanner } from './workedIn.js';
 
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function row(id: string, cwd: string, overrides: Partial<AgentRow> = {}): AgentRow {
   return {
@@ -300,7 +302,7 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
-  it('keeps askedYou only for sessions that have finished their turn, and sorts them after waiting', async () => {
+  it('keeps askedYou only for sessions that have finished their turn, and sorts them with the others that need you', async () => {
     const { state, deps } = harness();
     const asked = { reason: 'question' as const, excerpt: 'Ship it?' };
     const at = (s: number) => new Date(NOW - s * 1000).toISOString();
@@ -320,11 +322,11 @@ describe('createIndexer', () => {
     const indexer = createIndexer({ roots: ['/work'] }, deps);
     await flush();
     const sessions = indexer.latest()?.groups[0]?.sessions ?? [];
-    expect(sessions.map((s) => [s.sessionId, s.askedYou?.excerpt])).toEqual([
-      ['waiting', undefined],
-      ['idle-asked', 'Ship it?'],
-      ['busy-asked', undefined],
-      ['idle', undefined],
+    expect(sessions.map((s) => [s.sessionId, s.askedYou?.excerpt, s.needsYou?.reason])).toEqual([
+      ['idle-asked', 'Ship it?', 'asked'],
+      ['waiting', undefined, 'prompt'],
+      ['busy-asked', undefined, undefined],
+      ['idle', undefined, undefined],
     ]);
     indexer.stop();
   });
@@ -844,6 +846,184 @@ describe('the indexer with a real scanner', () => {
   });
 });
 
+describe("Needs you from each session's context (W69)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** The harness with a fake job reader answering `jobs` by short id, 'unknown' for any other. */
+  function withJobs(jobs: Record<string, JobNeeds>) {
+    const { state, deps } = harness();
+    const reads: string[][] = [];
+    const retained: string[][] = [];
+    deps.jobs = {
+      async read(shortId, sessionId) {
+        reads.push([shortId, sessionId]);
+        return jobs[shortId] ?? { kind: 'unknown' };
+      },
+      retain(ids) {
+        retained.push([...ids].sort());
+      },
+    };
+    return { state, deps, reads, retained };
+  }
+
+  const blockedJob = (id: string, shortId: string, overrides: Partial<AgentRow> = {}) =>
+    row(id, `/work/repo/${id}`, { kind: 'background', shortId, status: 'idle', state: 'blocked', ...overrides });
+  const reasons = (snapshot: IndexSnapshot | undefined) =>
+    Object.fromEntries((snapshot?.groups ?? []).flatMap((g) => g.sessions.map((s) => [s.sessionId, s.needsYou ?? null])));
+
+  it("reads each unfinished background job's file, and needs you only when the context says so", async () => {
+    const { state, deps, reads, retained } = withJobs({
+      ask1: { kind: 'needs', text: 'Do you prefer tea or coffee?' },
+      none1: { kind: 'none' },
+    });
+    state.result = {
+      ok: true,
+      rows: [
+        blockedJob('asks', 'ask1'),
+        // Resumed, with Claude Code's "send a prompt to start": the job's file was read and asks nothing.
+        blockedJob('placeholder', 'none1'),
+        // Its file couldn't be used, so the old rule applies and the question is never hidden.
+        blockedJob('unreadable', 'gone1'),
+        blockedJob('done', 'done1', { pid: undefined, status: undefined, state: 'done' }),
+        row('interactive', '/work/repo/i', { status: 'idle' }),
+      ],
+    };
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    expect(reasons(indexer.latest())).toEqual({
+      asks: { reason: 'claude-code', text: 'Do you prefer tea or coffee?' },
+      placeholder: null,
+      unreadable: { reason: 'blocked' },
+      done: null,
+      interactive: null,
+    });
+    // Never a finished job's file, or an interactive session's.
+    expect(reads.sort()).toEqual([
+      ['ask1', 'asks'],
+      ['gone1', 'unreadable'],
+      ['none1', 'placeholder'],
+    ]);
+    expect(retained.at(-1)).toEqual(['ask1', 'done1', 'gone1', 'none1']);
+    indexer.stop();
+  });
+
+  it('falls back to the old rule for every blocked job when there is no job reader, or it throws', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [blockedJob('a', 'aaa1')] };
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    expect(reasons(indexer.latest())).toEqual({ a: { reason: 'blocked' } });
+    indexer.stop();
+
+    const throwing = harness();
+    throwing.state.result = { ok: true, rows: [blockedJob('b', 'bbb1')] };
+    throwing.deps.jobs = {
+      read: async () => {
+        throw new Error('made-up failure');
+      },
+      retain: () => undefined,
+    };
+    const second = createIndexer({ roots: ['/work'] }, throwing.deps);
+    await flush();
+    expect(reasons(second.latest())).toEqual({ b: { reason: 'blocked' } });
+    second.stop();
+  });
+
+  it("needs you when the last turn ended asking you, though a plugin's monitor keeps the job busy and working", async () => {
+    const { state, deps } = withJobs({ mon1: { kind: 'none' } });
+    state.result = { ok: true, rows: [blockedJob('monitor', 'mon1', { pid: 4242, status: 'busy', state: 'working' })] };
+    state.transcripts.set('monitor', {
+      transcript: 'ok',
+      lastActivityAt: new Date(NOW - 60_000).toISOString(),
+      askedYou: { reason: 'question', excerpt: 'Do you prefer tea or coffee?' },
+      turnEnded: true,
+    });
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    const [summary] = indexer.latest()?.groups[0]?.sessions ?? [];
+    expect(summary?.askedYou?.excerpt).toBe('Do you prefer tea or coffee?');
+    expect(summary?.needsYou).toEqual({ reason: 'asked' });
+    indexer.stop();
+  });
+
+  it('needs you after a restart you asked for, until a prompt newer than it, and polls soon', async () => {
+    const { state, deps } = withJobs({ res1: { kind: 'none' } });
+    const restartedAt = NOW - 10_000;
+    state.result = { ok: true, rows: [blockedJob('resumed', 'res1', { state: 'working', status: 'busy' })] };
+    state.transcripts.set('resumed', { transcript: 'ok', lastActivityAt: new Date(NOW - DAY_MS).toISOString(), lastPromptMs: NOW - DAY_MS });
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+    await flush();
+    expect(reasons(indexer.latest())).toEqual({ resumed: null });
+
+    indexer.noteRestart('resumed', restartedAt);
+    await flush();
+    expect(state.listCalls).toBe(2);
+    expect(reasons(indexer.latest())).toEqual({ resumed: { reason: 'restarted' } });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reasons(indexer.latest())).toEqual({ resumed: { reason: 'restarted' } });
+
+    // You sent it a prompt: it no longer needs you, even if its transcript can't be read later.
+    state.transcripts.set('resumed', { transcript: 'ok', lastActivityAt: new Date(NOW).toISOString(), lastPromptMs: restartedAt + 5000 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reasons(indexer.latest())).toEqual({ resumed: null });
+    state.transcripts.set('resumed', { transcript: 'unreadable' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reasons(indexer.latest())).toEqual({ resumed: null });
+    indexer.stop();
+  });
+
+  it('drops a restart once its session is no longer listed, keeps it through a failed poll, and ignores a bad one', async () => {
+    const { state, deps } = withJobs({ res1: { kind: 'none' } });
+    const listed: AgentsResult = { ok: true, rows: [blockedJob('resumed', 'res1', { state: 'working', status: 'idle' })] };
+    state.result = listed;
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+    await flush();
+    indexer.noteRestart('resumed', NOW);
+    indexer.noteRestart('../escape', NOW);
+    indexer.noteRestart('resumed-too', Number.NaN);
+    await flush();
+    expect(reasons(indexer.latest())).toEqual({ resumed: { reason: 'restarted' } });
+
+    state.result = { ok: false, error: 'made-up failure' };
+    await vi.advanceTimersByTimeAsync(60_000);
+    state.result = listed;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reasons(indexer.latest())).toEqual({ resumed: { reason: 'restarted' } });
+
+    state.result = { ok: true, rows: [] };
+    await vi.advanceTimersByTimeAsync(60_000);
+    state.result = listed;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reasons(indexer.latest())).toEqual({ resumed: null });
+    indexer.stop();
+  });
+
+  it('never needs you for a restart of a session that is stale or finished', async () => {
+    const { state, deps } = withJobs({ old1: { kind: 'none' }, fin1: { kind: 'none' } });
+    state.result = {
+      ok: true,
+      rows: [
+        blockedJob('stale', 'old1', { startedAt: new Date(NOW - 30 * DAY_MS).toISOString() }),
+        blockedJob('finished', 'fin1', { pid: undefined, status: undefined, state: 'stopped' }),
+      ],
+    };
+    const indexer = createIndexer({ roots: ['/work'] }, deps);
+    await flush();
+    indexer.noteRestart('stale', NOW);
+    indexer.noteRestart('finished', NOW);
+    await flush();
+    expect(reasons(indexer.latest())).toEqual({ stale: null, finished: null });
+    indexer.stop();
+  });
+});
+
 describe('the indexer against temporary directories', () => {
   let dir: string;
 
@@ -992,8 +1172,8 @@ describe('the indexer against temporary directories', () => {
         kind: 'git',
         key: repo,
         sessions: [
-          [ids.worktree, 'ok', false],
           [ids.asked, 'ok', false],
+          [ids.worktree, 'ok', false],
           [ids.repo, 'ok', false],
           [ids.stale, 'missing', true],
           [ids.staleAlive, 'ok', true],
@@ -1287,6 +1467,90 @@ describe('createIndexer with ended interactive sessions (W66)', () => {
     indexer.pollSoon();
     await flush();
     expect(state.listCalls).toBe(4);
+  });
+});
+
+describe("the indexer with real transcripts and job files (W69)", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-jobs-')));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("sets needsYou from each session's job file and transcript", async () => {
+    const root = path.join(dir, 'work');
+    const cwd = path.join(root, 'app');
+    await mkdir(cwd, { recursive: true });
+    const configDir = path.join(dir, 'claude');
+    const projectDir = path.join(configDir, 'projects', encodeProjectDir(cwd));
+    await mkdir(projectDir, { recursive: true });
+    const ids = {
+      placeholder: '70000000-0000-4000-8000-000000000001',
+      monitor: '70000000-0000-4000-8000-000000000002',
+      asks: '70000000-0000-4000-8000-000000000003',
+      mismatched: '70000000-0000-4000-8000-000000000004',
+      older: '70000000-0000-4000-8000-000000000005',
+    };
+    const at = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+    const lines = (...entries: unknown[]) => entries.map((e) => `${JSON.stringify(e)}\n`).join('');
+    const prompt = (minutes: number, content: string) => ({ type: 'user', timestamp: at(minutes), message: { role: 'user', content } });
+    const reply = (minutes: number, text: string) => ({ type: 'assistant', timestamp: at(minutes), message: { id: `m${minutes}`, role: 'assistant', content: [{ type: 'text', text }] } });
+    const turnEnd = (minutes: number) => ({ type: 'system', subtype: 'turn_duration', durationMs: 1000, timestamp: at(minutes) });
+    const transcript = (id: string, text: string) => writeFile(path.join(projectDir, `${id}.jsonl`), text);
+    await transcript(ids.placeholder, lines(prompt(30, 'Tidy the docs'), reply(29, 'Tidied.'), turnEnd(29)));
+    await transcript(ids.monitor, lines(prompt(20, 'Pick a drink'), reply(19, 'Do you prefer tea or coffee?'), turnEnd(19)));
+    await transcript(ids.asks, lines(prompt(10, 'Plan the migration'), reply(9, 'Working on it.')));
+    await transcript(ids.mismatched, lines(prompt(8, 'Run the checks'), reply(7, 'Checked.'), turnEnd(7)));
+    // An older Claude Code's transcript: no turn_duration entries, so the status decides.
+    await transcript(ids.older, lines(prompt(5, 'Look at the logs'), reply(4, 'Shall I open an issue?')));
+
+    const jobsDir = path.join(configDir, 'jobs');
+    const job = async (shortId: string, fields: Record<string, unknown>) => {
+      await mkdir(path.join(jobsDir, shortId), { recursive: true });
+      await writeFile(path.join(jobsDir, shortId, 'state.json'), JSON.stringify(fields));
+    };
+    await job('ph000001', { sessionId: ids.placeholder, state: 'blocked', needs: 'send a prompt to start' });
+    await job('mn000002', { sessionId: ids.monitor, state: 'running' });
+    await job('as000003', { sessionId: ids.asks, state: 'blocked', needs: 'Which table goes first?' });
+    await job('mm000004', { sessionId: '70000000-0000-4000-8000-0000000000ff', state: 'blocked', needs: 'Not this one?' });
+
+    const background = (id: string, shortId: string, overrides: Partial<AgentRow>) =>
+      row(id, cwd, { kind: 'background', shortId, startedAt: at(60), ...overrides });
+    const rows = [
+      background(ids.placeholder, 'ph000001', { status: 'idle', state: 'blocked' }),
+      background(ids.monitor, 'mn000002', { status: 'busy', state: 'working' }),
+      background(ids.asks, 'as000003', { status: 'idle', state: 'blocked' }),
+      background(ids.mismatched, 'mm000004', { status: 'idle', state: 'blocked' }),
+      row(ids.older, cwd, { status: 'idle', startedAt: at(60) }),
+    ];
+    const now = () => NOW;
+    const indexer = createIndexer(
+      { roots: [root], intervalMs: 60_000 },
+      {
+        agents: { list: async () => ({ ok: true, rows }) },
+        groups: { resolve: async (p) => ({ key: p, kind: 'directory' }), prune() {} },
+        transcripts: createTranscriptReader({ configDir, now }),
+        jobs: createJobReader({ jobsDir }),
+        now,
+        home: dir,
+        concurrency: 4,
+      },
+    );
+    const snapshot = await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+    indexer.stop();
+    const byId = new Map(snapshot.groups.flatMap((g) => g.sessions).map((s) => [s.sessionId, s]));
+    expect(byId.get(ids.placeholder)?.needsYou).toBeUndefined();
+    expect(byId.get(ids.monitor)?.needsYou).toEqual({ reason: 'asked' });
+    expect(byId.get(ids.monitor)?.askedYou?.excerpt).toBe('Do you prefer tea or coffee?');
+    expect(byId.get(ids.asks)?.needsYou).toEqual({ reason: 'claude-code', text: 'Which table goes first?' });
+    expect(byId.get(ids.mismatched)?.needsYou).toEqual({ reason: 'blocked' });
+    expect(byId.get(ids.older)?.needsYou).toEqual({ reason: 'asked' });
+    // Needs you first, by activity; the blocked job that asks nothing sorts as idle, last.
+    expect(snapshot.groups[0]?.sessions.map((s) => s.sessionId)).toEqual([ids.older, ids.mismatched, ids.asks, ids.monitor, ids.placeholder]);
   });
 });
 

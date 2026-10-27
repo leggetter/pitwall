@@ -56,6 +56,7 @@ function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
     }),
     conversations,
     pollSoon: vi.fn(),
+    noteRestart: vi.fn(),
     stop: vi.fn(),
     push(snapshot) {
       latest = snapshot;

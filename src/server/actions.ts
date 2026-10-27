@@ -28,7 +28,8 @@
 //     502, 504  as for spawn
 //
 //   POST resumePath(id)           no body                              answers: ResumeResult
-//     200  resumed: { ok: true, shortId }, the id `claude attach` takes. It waits for a prompt
+//     200  resumed: { ok: true, shortId }, the id `claude attach` takes. It waits for a prompt,
+//          and needs you until you send one (Indexer.noteRestart, NeedsYou's 'restarted', W69)
 //     400, 404, 503  from resolveSession()
 //     409  not an ended session (SessionSummary.ended); its directory has gone, or is no longer a
 //          directory under a root; a resume of it is already running; a fresh `claude agents`
@@ -90,7 +91,7 @@ export interface ActionOptions {
    * index's own source, which runs it through the scrubbed environment. Tests pass a fake.
    */
   agents?: Pick<AgentsSource, 'list'>;
-  /** Milliseconds since the epoch, for the rate limit. Default Date.now. */
+  /** Milliseconds since the epoch, for the rate limit and the time of a resume (Indexer.noteRestart). Default Date.now. */
   now?: () => number;
   /** Default 30 seconds, for each of `claude --bg`, `claude stop`, `claude rm` and `claude --resume`. */
   timeoutMs?: number;
@@ -366,15 +367,16 @@ const LOOKUP_ERRORS = {
  * Adds the spawn, stop, remove and resume routes. Call it after the /api/*
  * checks and before the /api/* catch-all, as ServerInternals.routes does.
  */
-export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'pollSoon'>, options: ActionOptions = {}): void {
+export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'pollSoon' | 'noteRestart'>, options: ActionOptions = {}): void {
   const run = options.run ?? runCommand;
+  const now = options.now ?? Date.now;
   const claudeBin = options.claudeBin ?? 'claude';
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const env = () => childEnvironment(options.env ?? process.env, options.token);
   const limiter = new SpawnLimiter(
     options.maxConcurrentSpawns ?? DEFAULT_MAX_CONCURRENT_SPAWNS,
     options.spawnRate ?? DEFAULT_SPAWN_RATE,
-    options.now ?? Date.now,
+    now,
   );
 
   const spawnResult = (c: Context, result: SpawnResult, status: 201 | 400 | 413 | 415 | 422 | 429 | 502 | 503 | 504) => {
@@ -563,8 +565,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
         return answer(copied, 409);
       }
       const resumed = parseBackgrounded(result.stdout);
-      indexer.pollSoon();
       if (!resumed) {
+        indexer.pollSoon();
         const line = firstLine(result.stdout);
         return answer(
           { ok: false, error: `Claude Code didn't report the resumed session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
@@ -573,6 +575,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       }
       options.spawned?.add(resumed.shortId);
       options.resumed?.add(sessionId);
+      // You asked for it back, so it needs your prompt until you send one (NeedsYou's 'restarted', W69). Polls soon.
+      indexer.noteRestart(sessionId, now());
       return answer({ ok: true, shortId: resumed.shortId }, 200);
     } finally {
       commands -= 1;
