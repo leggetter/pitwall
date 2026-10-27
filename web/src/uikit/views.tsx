@@ -514,7 +514,7 @@ const ENDED_FOOTERS: EndedCase[] = [
   },
   {
     title: 'Footer: a copy started instead',
-    note: "It was open in another Claude Code process after all, so Claude Code started a copy: a warning, whose body is the server's sentence alone, which names the copy and says what to do.",
+    note: "It was open in another Claude Code process after all, so Claude Code started a copy: a warning, whose body is the server's sentence alone, which names the copy and says what to do, and an error toast that says the same, which outlives the footer and is what announces it.",
     session: endedSession('foot-copied', ENDED_TITLE),
     options: { resume: 'copied' },
     run: resumeThen(failureShown),
@@ -551,7 +551,7 @@ const ENDED_FOOTERS: EndedCase[] = [
 
 /** An ended session's footer alone, as its view has it: Resume in background against the stub API, and Copy command against the stub clipboard. */
 function EndedFoot({ session }: { session: SessionSummary }) {
-  const resume = useResume(session, noop);
+  const resume = useResume(session);
   const copy = useCopy();
   const toast = useToast();
   const command = resumeCommand(session);

@@ -11,8 +11,9 @@
 // as its status, and in the footer a note with Resume in background and Copy command, which its actions
 // menu has too, in place of Stop (EndedSession.tsx). Resumed from here, it's listed again under the
 // same id as a running background session, and the view then opens its Terminal tab once, as W54 opens
-// a running background session's view, with no focus taken (W57): nothing in the page asked for the
-// terminal, and it attaches seconds after the press.
+// a running background session's view, whether the snapshot says so before the server's answer or
+// after, with no focus taken (W57): nothing in the page asked for the terminal, and it attaches seconds
+// after the press. Focus in the footer as it goes moves to the Terminal tab, or the heading.
 //
 // Two more states take the view's place: waiting, while a ?session= from the URL waits for the first
 // snapshot, and unlisted, for one that pitwall doesn't list under its roots (3: Session view).
@@ -396,13 +397,13 @@ export function SessionView({
   const conversation = useConversation(session.lastActivityAt, loader);
   const actions = useSessionActions(session, onClose);
   // Resumed from this view (W67): it opens its Terminal tab once the snapshot lists it as running.
-  const resumedHere = useRef(false);
-  const resume = useResume(
-    session,
-    useCallback(() => {
-      resumedHere.current = true;
-    }, []),
-  );
+  const resume = useResume(session);
+  const { takePressed } = resume;
+  // The ended footer went with focus inside it: focus moves in the view, never to the page.
+  const footFocus = useRef(false);
+  const onFootFocusLeaving = useCallback(() => {
+    footFocus.current = true;
+  }, []);
 
   // An ended interactive session (W67): no process, so no Terminal tab and no message box.
   const ended = session.ended === true;
@@ -518,22 +519,28 @@ export function SessionView({
 
   // Resumed from here (W67), and now listed as the session it has become: a running background
   // session's view opens on its Terminal tab, as Preferences says (W54), so this one goes there once,
-  // as it would have opened. Its terminal takes no focus (W57): the press was seconds before the
-  // attach, and asked to resume, not to type. Resume in background has gone with the footer, so focus
-  // it had goes to the Terminal tab, the way in, rather than the page. In a root tab that isn't open
-  // (W38), this waits until that tab is.
+  // as it would have opened. The press counts from when it's made until it fails or is given up on, so
+  // this happens whether the snapshot lists it as running before the server answers or after; taking
+  // it clears it, so it can't happen again later. Its terminal takes no focus (W57): the press was
+  // seconds before the attach, and asked to resume, not to type. In a root tab that isn't open (W38),
+  // this waits until that tab is.
   useLayoutEffect(() => {
-    if (!resumedHere.current || ended || hidden) return;
-    resumedHere.current = false;
-    const active = document.activeElement;
-    const lost = active === null || active === document.body || !active.isConnected;
+    if (ended || hidden || !takePressed()) return;
     if (openingTab() === 'terminal') {
       asked.current = undefined;
       setQuiet(false);
       setChosen('terminal');
     }
-    if (lost) focusQuietly(terminalTab.current ?? heading.current);
   }, [ended, hidden]);
+
+  // The ended footer went with focus inside it, Resume in background's say, as the session was listed
+  // as running or left the list: focus goes to the Terminal tab, the way in, or the heading where
+  // there's none, rather than the page.
+  useLayoutEffect(() => {
+    if (!footFocus.current) return;
+    footFocus.current = false;
+    focusQuietly(terminalTab.current ?? heading.current);
+  });
 
   // Escape from anywhere a nearer layer didn't take it (6.2): a confirmation cancels, and a busy one, or
   // a draft in the message box, keeps the view open. Otherwise the view closes.
@@ -869,7 +876,9 @@ export function SessionView({
               }}
             />
           )}
-          {ended && listed && <EndedFooter session={session} resume={resume} onCopy={resumeCopy ? () => copy('Resume command', resumeCopy) : undefined} />}
+          {ended && listed && (
+            <EndedFooter session={session} resume={resume} onCopy={resumeCopy ? () => copy('Resume command', resumeCopy) : undefined} onFocusLeaving={onFootFocusLeaving} />
+          )}
         </footer>
       )}
       {background && !terminalOff && tab === 'conversation' && (

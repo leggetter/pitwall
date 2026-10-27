@@ -8,13 +8,15 @@
 //
 // Resume in background is busy while its request is out, and stays busy once Claude Code has resumed
 // it, until the snapshot lists the session as running, or RESUME_LISTED_MS has passed. Resumed, a
-// toast says so, and the view shows it as the background session it now is. Refused, an inline alert
-// above the buttons says why: the server's or Claude Code's message, whatever the status, the command
-// to run when there's one, as New session's trust failure has it, or a warning that Claude Code started
-// a copy instead, in the server's words. A result that
-// arrives after the view has gone is a toast naming the session, as Stop and Remove's is.
+// toast says so, and the view shows it as the background session it now is, whether the snapshot
+// lists it as running before the server answers or after. Refused, an inline alert above the buttons
+// says why: the server's or Claude Code's message, whatever the status, or the command to run when
+// there's one, as New session's trust failure has it. A copy Claude Code started instead is a warning
+// in the server's words, and an error toast too, which outlives the footer: the next snapshot most
+// likely lists the session as running, which takes the footer away, and the copy keeps running. A
+// result that arrives after the view has gone is a toast naming the session, as Stop and Remove's is.
 
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { couldNot, plainText } from '../format.js';
@@ -65,6 +67,12 @@ export interface Resume {
   failure: ResumeFailure | undefined;
   /** Resumes the session, unless a resume is out or waiting. */
   run: () => void;
+  /**
+   * Takes the press: true if Resume was pressed here and the resume hasn't failed or been given up on
+   * since, then false until the next press. The view takes it once the snapshot lists the session as
+   * running, before the server's answer or after, to open its Terminal tab, so it can't fire later.
+   */
+  takePressed: () => boolean;
 }
 
 /**
@@ -86,18 +94,25 @@ export function resumeToast(name: string, outcome: ResumeOutcome): ToastInput | 
   }
 }
 
-/** Resume in background for `session`, an ended interactive session. `onResumed` runs once Claude Code has resumed it. */
-export function useResume(session: SessionSummary, onResumed: () => void): Resume {
+/** Resume in background for `session`, an ended interactive session. */
+export function useResume(session: SessionSummary): Resume {
   const api = useContext(ApiContext);
   const toast = useToast();
   const alive = useRef(true);
   const [phase, setPhase] = useState<ResumePhase>('idle');
   const phaseRef = useRef<ResumePhase>('idle');
   const [failure, setFailure] = useState<ResumeFailure>();
+  // Set on the press, not on the answer: the snapshot can list the session as running before the server answers.
+  const pressed = useRef(false);
   const { sessionId, name, ended } = session;
   const moveTo = useCallback((next: ResumePhase) => {
     phaseRef.current = next;
     setPhase(next);
+  }, []);
+  const takePressed = useCallback(() => {
+    const was = pressed.current;
+    pressed.current = false;
+    return was;
   }, []);
 
   useEffect(() => {
@@ -114,7 +129,11 @@ export function useResume(session: SessionSummary, onResumed: () => void): Resum
       moveTo('idle');
       return;
     }
-    const timer = setTimeout(() => moveTo('idle'), RESUME_LISTED_MS);
+    // Given up on: a listing after this didn't come from the press, as far as the view knows.
+    const timer = setTimeout(() => {
+      pressed.current = false;
+      moveTo('idle');
+    }, RESUME_LISTED_MS);
     return () => clearTimeout(timer);
   }, [phase, ended, moveTo]);
 
@@ -126,6 +145,7 @@ export function useResume(session: SessionSummary, onResumed: () => void): Resum
       return;
     }
     moveTo('running');
+    pressed.current = true;
     void resumeSession(api, sessionId).then((outcome) => {
       if (!alive.current) {
         // The view went while the request was out: the result is a toast from the app's stack, which is still there.
@@ -135,17 +155,25 @@ export function useResume(session: SessionSummary, onResumed: () => void): Resum
       }
       if (outcome.kind === 'resumed') {
         toast({ tone: 'success', message: resumedText(name) });
+        // If the snapshot already lists it as running, the wait ends at once.
         moveTo('waiting');
-        onResumed();
         return;
       }
+      pressed.current = false;
       moveTo('idle');
+      // A copy keeps running whatever the footer does, so it's a toast too, which stays until it's
+      // dismissed: the snapshot that lists the session as running takes the footer and its warning
+      // away, and may have already. The toast is what announces it (ResumeAlert).
+      if (outcome.kind === 'copied') {
+        const copied = resumeToast(name, outcome);
+        if (copied) toast(copied);
+      }
       // On 'unauthorized' the app has already replaced the dashboard with the token notice.
       if (outcome.kind !== 'unauthorized') setFailure(outcome);
     });
-  }, [api, sessionId, name, toast, onResumed, moveTo]);
+  }, [api, sessionId, name, toast, moveTo]);
 
-  return { phase, failure, run };
+  return { phase, failure, run, takePressed };
 }
 
 export interface EndedFooterProps {
@@ -153,17 +181,32 @@ export interface EndedFooterProps {
   resume: Resume;
   /** Copies the command that resumes it in a terminal, or undefined when there's none (resumeCommand()). */
   onCopy: (() => void) | undefined;
+  /**
+   * Called as the footer goes with focus inside it, as when the snapshot lists the session as running
+   * while Resume in background has focus: the view then says where focus goes, rather than the page.
+   */
+  onFocusLeaving?: (() => void) | undefined;
 }
 
 /**
  * The note, then why the last resume didn't happen, then Copy command and Resume in background, at
  * the right, secondary then primary, as a dialog's footer has them. A missing directory leaves the note.
  */
-export function EndedFooter({ session, resume, onCopy }: EndedFooterProps) {
+export function EndedFooter({ session, resume, onCopy, onFocusLeaving }: EndedFooterProps) {
   const gone = session.cwdMissing === true;
   const busy = resume.phase !== 'idle';
+  const root = useRef<HTMLDivElement>(null);
+  const leaving = useRef(onFocusLeaving);
+  leaving.current = onFocusLeaving;
+  // A layout effect's cleanup runs before React takes the footer out of the page, so focus is still in it.
+  useLayoutEffect(() => {
+    const node = root.current;
+    return () => {
+      if (node?.contains(document.activeElement)) leaving.current?.();
+    };
+  }, []);
   return (
-    <div className="ended-foot">
+    <div className="ended-foot" ref={root}>
       <p className="session-view-note">{gone ? ENDED_GONE_NOTE : ENDED_NOTE}</p>
       {!gone && resume.failure && <ResumeAlert failure={resume.failure} />}
       {!gone && (
@@ -182,12 +225,16 @@ export function EndedFooter({ session, resume, onCopy }: EndedFooterProps) {
   );
 }
 
-/** A refusal or failure in danger, with the command to run when there's one; a copy Claude Code started, in warning. */
+/**
+ * A refusal or failure in danger, with the command to run when there's one; a copy Claude Code
+ * started, in warning, with no role: its toast, which outlives the footer, is what announces it, so
+ * it isn't announced twice.
+ */
 function ResumeAlert({ failure }: { failure: ResumeFailure }) {
   if (failure.kind === 'copied') {
     return (
       // The server's sentence names the copy, so it's the body alone: pitwall's words, not Claude Code's, so not in code style.
-      <Alert tone="warning" role="alert" title={COPY_STARTED} className="resume-failure">
+      <Alert tone="warning" title={COPY_STARTED} className="resume-failure">
         {plainText(failure.error)}
       </Alert>
     );
