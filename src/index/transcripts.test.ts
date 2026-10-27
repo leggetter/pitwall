@@ -303,6 +303,23 @@ describe('applyEntry: what the ended-session scanner needs (W66)', () => {
     expect(fromLines.setName).toBe('from a line');
   });
 
+  it('notes a continued-in entry after the newest turn, and forgets it once a turn follows, whatever its target', () => {
+    const continued = (target: unknown) => ({ type: 'continued-in', continuedInSessionId: target, sessionId: 'pitwall-test-session', timestamp: nextTimestamp() });
+    const prompt = user('go');
+    const turn = assistant([text('moving on')]);
+    const fields = fieldsOf(prompt, turn, continued('a-new-session'));
+    expect(fields.continuedElsewhere).toBe(true);
+    // Not activity, though it has a timestamp.
+    expect(fields.lastActivityMs).toBe(Date.parse(turn.timestamp as string));
+    for (const target of [undefined, 42, '']) expect(fieldsOf(user('go'), continued(target)).continuedElsewhere, String(target)).toBe(true);
+    expect(fieldsOf(user('go'), continued('a-new-session'), aiTitle('a title')).continuedElsewhere).toBe(true);
+    expect(fieldsOf(user('go'), continued('a-new-session'), user('back again')).continuedElsewhere).toBe(false);
+    expect(fieldsOf(user('go')).continuedElsewhere).toBe(false);
+    const fromLines: Fields = {};
+    applyLine(fromLines, JSON.stringify(continued('a-new-session')));
+    expect(fromLines.continuedElsewhere).toBe(true);
+  });
+
   it('notes a typed prompt: promptSource typed, on a user entry that is not meta', () => {
     expect(fieldsOf(user('typed', { promptSource: 'typed' })).typedPrompt).toBe(true);
     for (const extra of [{ promptSource: 'sdk' }, { promptSource: 'queued' }, { promptSource: 'typed', isMeta: true }, {}]) {
@@ -882,13 +899,14 @@ describe('readNewestEntries', () => {
       inBackground: false,
       setName: 'pitwall-test-a',
       typedPrompt: true,
+      continuedElsewhere: false,
     });
   });
 
   it('says nothing of the background or a typed prompt it did not read, and is undefined for a file that has gone', async () => {
     const file = path.join(dir, 'made-up.jsonl');
     await writeFile(file, jsonl(filler(200)));
-    expect(await readNewestEntries(file)).toEqual({ info: { transcript: 'ok' }, typedPrompt: false });
+    expect(await readNewestEntries(file)).toEqual({ info: { transcript: 'ok' }, typedPrompt: false, continuedElsewhere: false });
     expect(await readNewestEntries(path.join(dir, 'gone.jsonl'))).toBeUndefined();
     await expect(readNewestEntries(dir)).rejects.toThrow();
   });

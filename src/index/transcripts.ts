@@ -209,7 +209,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
   };
 }
 
-/** What readNewestEntries() finds: the fields `read` gives a listed session, and three that ended.ts needs. */
+/** What readNewestEntries() finds: the fields `read` gives a listed session, and four that ended.ts needs. */
 export interface NewestEntries {
   info: TranscriptInfo;
   /** Fields.inBackground. Undefined when no user or assistant entry was read. */
@@ -218,6 +218,8 @@ export interface NewestEntries {
   setName?: string;
   /** Fields.typedPrompt: a typed prompt among the entries read, not necessarily the whole file's. */
   typedPrompt: boolean;
+  /** Fields.continuedElsewhere. */
+  continuedElsewhere: boolean;
 }
 
 /**
@@ -245,7 +247,11 @@ export async function readNewestEntries(
     if (!info.isFile()) throw new Error('not a file');
     const state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow);
     const { fields } = state;
-    const newest: NewestEntries = { info: toInfo(state), typedPrompt: fields.typedPrompt === true };
+    const newest: NewestEntries = {
+      info: toInfo(state),
+      typedPrompt: fields.typedPrompt === true,
+      continuedElsewhere: fields.continuedElsewhere === true,
+    };
     if (fields.inBackground !== undefined) newest.inBackground = fields.inBackground;
     if (fields.setName !== undefined) newest.setName = fields.setName;
     return newest;
@@ -393,6 +399,12 @@ export interface Fields {
   setName?: string;
   /** True once a prompt the user typed has been read: `promptSource: "typed"` on a user entry that isn't meta (ended.ts). */
   typedPrompt?: boolean;
+  /**
+   * True when the newest `continued-in` entry comes after the newest user or assistant entry, in
+   * file order: the conversation carried on under another session id, as `/bg` does (ended.ts).
+   * The entry's `continuedInSessionId` isn't read.
+   */
+  continuedElsewhere?: boolean;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -403,7 +415,8 @@ export function applyLine(fields: Fields, line: string): void {
     !line.includes('"assistant"') &&
     !line.includes('"ai-title"') &&
     !line.includes('"custom-title"') &&
-    !line.includes('"agent-name"')
+    !line.includes('"agent-name"') &&
+    !line.includes('"continued-in"')
   ) {
     return;
   }
@@ -425,6 +438,11 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     if (title !== undefined) fields.aiTitle = title;
     return;
   }
+  if (type === 'continued-in') {
+    // Not activity: Claude Code writes it after the last turn, when the conversation moves on.
+    fields.continuedElsewhere = true;
+    return;
+  }
   if (type === 'custom-title' || type === 'agent-name') {
     // No timestamp either, and not activity.
     const name = setNameOf(entry);
@@ -439,6 +457,8 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     fields.lastActivityMs = at;
   }
   fields.inBackground = entry.sessionKind === 'bg';
+  // A turn after a `continued-in` means the conversation came back here.
+  fields.continuedElsewhere = false;
   if (isTypedPrompt(entry)) fields.typedPrompt = true;
 
   if (type === 'assistant') {
