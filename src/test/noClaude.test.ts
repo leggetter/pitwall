@@ -14,6 +14,11 @@ const { failOnRefusals, takeRefusals } = await import('./noClaude.js');
 
 const CLAUDE = '/nonexistent/pitwall-test/claude';
 const REFUSED = /would run claude without PITWALL_LIVE=1/;
+/** Editors that don't exist either (W72): even a broken guard couldn't open one. */
+const CODE = '/nonexistent/pitwall-test/code';
+const CURSOR = '/nonexistent/pitwall-test/cursor';
+const OPEN = '/nonexistent/pitwall-test/open';
+const EDITOR_REFUSED = /would open an editor/;
 
 describe('the no-claude guard', () => {
   let saved: string | undefined;
@@ -72,6 +77,30 @@ describe('the no-claude guard', () => {
     expect(spawnSync('/nonexistent/pitwall-test-no-such-claude').error).toMatchObject({ code: 'ENOENT' });
     expect(spawnSync('/nonexistent/claude-test').error).toMatchObject({ code: 'ENOENT' });
     expect(execSync('echo ~/.claude/projects CLAUDE_CONFIG_DIR claude-code', { encoding: 'utf8' })).toContain('claude-code');
+    expect(takeRefusals()).toEqual([]);
+  });
+
+  it('refuses to open an editor (W72): code, cursor, or open -a or -b, by any API or a shell', () => {
+    expect(() => spawn(CODE, ['/tmp'])).toThrow(EDITOR_REFUSED);
+    expect(() => spawnSync(CURSOR, ['/tmp'])).toThrow(EDITOR_REFUSED);
+    expect(() => execFile(OPEN, ['-a', '/Applications/Cursor.app', '/tmp'], () => {})).toThrow(EDITOR_REFUSED);
+    expect(() => execFileSync(OPEN, ['-b', 'com.microsoft.VSCode', '/tmp'])).toThrow(EDITOR_REFUSED);
+    expect(() => promisify(execFile)(CODE, ['/tmp'])).toThrow(EDITOR_REFUSED);
+    expect(() => exec(`${CURSOR} /tmp`, () => {})).toThrow(EDITOR_REFUSED);
+    expect(() => execSync(`true && ${OPEN} -a Cursor /tmp`)).toThrow(EDITOR_REFUSED);
+    expect(() => spawnSync('/bin/sh', ['-c', `${CODE} /tmp`])).toThrow(EDITOR_REFUSED);
+    expect(() => spawnSync(CODE, ['/tmp'], { shell: true })).toThrow(EDITOR_REFUSED);
+    expect(takeRefusals()).toHaveLength(9);
+  });
+
+  it('refuses to open an editor with PITWALL_LIVE=1 too, and lets a plain open <file> through, as the CLI opens the browser', () => {
+    process.env.PITWALL_LIVE = '1';
+    expect(() => spawnSync(CODE, ['/tmp'])).toThrow(EDITOR_REFUSED);
+    expect(takeRefusals()).toHaveLength(1);
+    delete process.env.PITWALL_LIVE;
+    expect(spawnSync(OPEN, ['/nonexistent/pitwall-test/launch.html']).error).toMatchObject({ code: 'ENOENT' });
+    expect(spawnSync('/nonexistent/pitwall-test/vscode-cli').error).toMatchObject({ code: 'ENOENT' });
+    expect(execSync('echo claude-code pitwall-test-cursor-row', { encoding: 'utf8' })).toContain('cursor-row');
     expect(takeRefusals()).toEqual([]);
   });
 

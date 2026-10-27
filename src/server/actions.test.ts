@@ -666,7 +666,7 @@ describe('stop and remove', () => {
       const refused = await postAsPage(started, path);
       expect(refused.status).toBe(429);
       expect(refused.headers['retry-after']).toBe('1');
-      expect((refused.json as { error: string }).error).toMatch(/already running 4 stop, remove or resume commands/);
+      expect((refused.json as { error: string }).error).toMatch(/already running 4 stop, remove, resume or open commands/);
     }
     expect(run.calls).toHaveLength(4);
 
@@ -929,7 +929,7 @@ describe('resume (W66)', () => {
       const refused = await postAsPage(started, path);
       expect(refused.status, path).toBe(429);
       expect(refused.headers['retry-after']).toBe('1');
-      expect(errorOf(refused)).toMatch(/already running 4 stop, remove or resume commands/);
+      expect(errorOf(refused)).toMatch(/already running 4 stop, remove, resume or open commands/);
     }
     hold = false;
     for (const finish of waiting.splice(0)) finish();
