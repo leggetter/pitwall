@@ -762,12 +762,17 @@ export type ResumeResult =
  * Resume an ended interactive session (SessionSummary.ended) in the
  * background: `claude --resume <sessionId> --bg`, with no prompt, in the
  * session's own `cwd`, never a directory the request names. POST, no body.
+ * It runs in the directory's real path as checked just before it starts, and
+ * only for a session id that is a UUID (W73, W81).
  *
  * - 404 when the snapshot doesn't list the session, and 409 when it isn't
- *   ended, when its directory no longer exists, when a resume of it is
- *   already running, or when a fresh `claude agents --json` lists it, as when
- *   its terminal is open again.
- * - 429 with `Retry-After` past 4 stop, remove or resume commands at once.
+ *   ended, when its directory no longer exists or now resolves elsewhere,
+ *   when a resume of it is already running, or when a fresh
+ *   `claude agents --json` lists its session id in any row, as when its
+ *   terminal is open again.
+ * - 429 with `Retry-After` past 4 stop, remove, resume or open commands at
+ *   once, and, since it starts a long-lived session, past spawn's limit of
+ *   sessions started in the last minute, which it shares (W81).
  */
 export function resumePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/resume`;
