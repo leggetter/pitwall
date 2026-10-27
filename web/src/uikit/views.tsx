@@ -476,21 +476,21 @@ const ENDED_CASES: EndedCase[] = [
   },
   {
     title: "Couldn't resume",
-    note: "pitwall's sentence, then the server's reason in code style, in a danger alert above the buttons, which keep their place.",
+    note: "It's running again, so pitwall didn't resume it, which would start a copy: pitwall's sentence, then the server's reason in code style, in a danger alert above the buttons, which keep their place.",
     session: endedSession('view-ended-refused', ENDED_TITLE),
     options: { resume: 'refused' },
     run: resumeThen(failureShown),
   },
   {
     title: "Couldn't resume: not trusted",
-    note: "The server sent a command to run: in a command chip, with its own copy button, as New session's trust failure has it.",
+    note: "Claude Code's Workspace not trusted line, then the command the server sent to run: in a command chip, with its own copy button, as New session's trust failure has it.",
     session: endedSession('view-ended-hint', ENDED_TITLE),
     options: { resume: 'hint' },
     run: resumeThen(failureShown),
   },
   {
     title: 'A copy started instead',
-    note: 'It was open in another Claude Code process after all, so Claude Code started a copy: a warning, with the copy’s short id and Claude Code’s note.',
+    note: "It was open in another Claude Code process after all, so Claude Code started a copy: a warning, whose body is the server's sentence alone, which names the copy and says what to do.",
     session: endedSession('view-ended-copied', ENDED_TITLE),
     options: { resume: 'copied' },
     run: resumeThen(failureShown),
@@ -500,6 +500,13 @@ const ENDED_CASES: EndedCase[] = [
     note: 'A 429: pitwall is already running four stop, remove or resume commands.',
     session: endedSession('view-ended-busy', ENDED_TITLE),
     options: { resume: 'busy' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Couldn't resume: it took too long",
+    note: "A 504: claude --resume didn't finish in time. Its reason, as for any status.",
+    session: endedSession('view-ended-timeout', ENDED_TITLE),
+    options: { resume: 'timeout' },
     run: resumeThen(failureShown),
   },
   {

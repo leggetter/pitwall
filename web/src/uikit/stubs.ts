@@ -21,7 +21,7 @@ import type { StorageSource } from '../groupState.js';
 import { writeHidden, type HiddenGroup } from '../hidden.js';
 import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
 import { writeStarred } from '../starred.js';
-import { CONVERSATION, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
+import { APP_DIR, CONVERSATION, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
 const forever = () => new Promise<ApiResult>(() => {});
@@ -67,11 +67,12 @@ export interface StubOptions {
   stop?: 'done' | 'refused' | 'busy';
   remove?: 'done' | 'refused' | 'busy';
   /**
-   * What Resume in background gets (W67). `resuming` never answers; `hint` is Claude Code refusing an
-   * untrusted directory, with the command that trusts it; `copied` is Claude Code starting a copy
-   * instead; `busy` is pitwall already running four commands; `failed` is no answer at all.
+   * What Resume in background gets (W67), in W66's words. `resuming` never answers; `refused` is a
+   * session that's running again; `hint` is Claude Code refusing an untrusted directory, with the
+   * command that trusts it; `copied` is Claude Code starting a copy instead; `busy` is pitwall already
+   * running four commands; `timeout` is `claude --resume` not finishing; `failed` is no answer at all.
    */
-  resume?: 'resumed' | 'resuming' | 'refused' | 'hint' | 'copied' | 'busy' | 'failed';
+  resume?: 'resumed' | 'resuming' | 'refused' | 'hint' | 'copied' | 'busy' | 'timeout' | 'failed';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
@@ -182,21 +183,24 @@ function resume(result: NonNullable<StubOptions['resume']>): Promise<ApiResult> 
     case 'resumed':
       return Promise.resolve(ok({ ok: true, shortId: 'pt000000' }));
     case 'refused':
-      return Promise.resolve(failed(409, { ok: false, error: 'claude agents lists it again: it may be open in a terminal.' }));
+      return Promise.resolve(failed(409, { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." }));
     case 'hint':
       return Promise.resolve(
-        failed(422, { ok: false, error: "Claude Code hasn't trusted ~/code/pitwall-test-app, so it can't resume a session there.", hint: TRUST_HINT }),
+        failed(422, { ok: false, error: `Workspace not trusted. Run \`claude\` in ${APP_DIR} once and accept the trust prompt, then retry.`, hint: TRUST_HINT }),
       );
     case 'copied':
       return Promise.resolve(
         failed(409, {
           ok: false,
-          error: 'note: the session is open in another Claude Code process, so this started a copy as pt0copy1. The original conversation is unchanged.',
+          error:
+            'It was open in another Claude Code process after all, so Claude Code started a copy as pt0copy1 instead. The copy is listed as a background session with no name, which you can stop and remove.',
           copyShortId: 'pt0copy1',
         }),
       );
     case 'busy':
       return Promise.resolve(failed(429, { ok: false, error: 'pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' }));
+    case 'timeout':
+      return Promise.resolve(failed(504, { ok: false, error: "claude --resume didn't finish within 30s. The session may still appear in the list." }));
     case 'failed':
       return Promise.resolve(failed());
   }

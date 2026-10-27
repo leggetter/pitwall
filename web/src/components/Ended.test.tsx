@@ -109,6 +109,12 @@ const resumedSessions = () =>
 
 type Answer = { status: number; body?: unknown; retryAfter?: string } | 'network' | 'held';
 
+// W66's answers (src/server/actions.ts on m3.1/ended-index), as a real resume would get them.
+const COPY_ERROR =
+  'It was open in another Claude Code process after all, so Claude Code started a copy as ee8a7a26 instead. The copy is listed as a background session with no name, which you can stop and remove.';
+const RUNNING_AGAIN = "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy.";
+const TIMED_OUT = "claude --resume didn't finish within 30s. The session may still appear in the list.";
+
 /**
  * Every GET is a conversation page; each POST gets the next answer, or the last, and all are
  * recorded. A 'held' answer waits until the test calls `release`.
@@ -263,7 +269,7 @@ describe('what the page derives from an ended session', () => {
     expect(ENDED_ASKED_HINT).toBe("Its last message asked you something. It has ended, so it isn't counted as needing you.");
     expect(resumeToast('demo-ended', { kind: 'resumed' })).toEqual({ tone: 'success', message: 'Resumed demo-ended in the background.' });
     expect(resumeToast('demo-ended', { kind: 'refused', error: 'made up.' })?.message).toBe("Couldn't resume demo-ended. made up.");
-    expect(resumeToast('demo-ended', { kind: 'copied', error: 'made up.', copyShortId: 'ee8a7a26' })?.message).toBe("Couldn't resume demo-ended: Claude Code started a copy instead, ee8a7a26.");
+    expect(resumeToast('demo-ended', { kind: 'copied', error: COPY_ERROR, copyShortId: 'ee8a7a26' })?.message).toBe(`Couldn't resume demo-ended. ${COPY_ERROR}`);
     expect(resumeToast('demo-ended', { kind: 'failed', error: 'x', status: 502 })?.message).toBe("Couldn't resume demo-ended (HTTP 502).");
     expect(resumeToast('demo-ended', { kind: 'unauthorized' })).toBeUndefined();
   });
@@ -625,6 +631,10 @@ describe('Resume in background', () => {
 
   it.each([
     ['a 409, with the server’s reason', { status: 409, body: { ok: false, error: 'Made up: a resume of it is already running.' } }, "Couldn't resume the session. Made up: a resume of it is already running."],
+    ['a 409 for a session that’s running again', { status: 409, body: { ok: false, error: RUNNING_AGAIN } }, `Couldn't resume the session. ${RUNNING_AGAIN}`],
+    ['a 422 with no hint', { status: 422, body: { ok: false, error: 'Workspace not trusted. Made up.' } }, "Couldn't resume the session. Workspace not trusted. Made up."],
+    ['a 502, with the server’s reason', { status: 502, body: { ok: false, error: "Couldn't run claude: made up." } }, "Couldn't resume the session. Couldn't run claude: made up."],
+    ['a 504, with the server’s reason', { status: 504, body: { ok: false, error: TIMED_OUT } }, `Couldn't resume the session. ${TIMED_OUT}`],
     ['a 404, with the server’s reason', { status: 404, body: { ok: false, error: 'Made up: not listed.' } }, "Couldn't resume the session. Made up: not listed."],
     ['a 429, with the server’s reason', { status: 429, body: { ok: false, error: 'Made up: try again in a moment.' }, retryAfter: '1' }, "Couldn't resume the session. Made up: try again in a moment."],
     ['a 429 with no reason, by its Retry-After', { status: 429, retryAfter: '2' }, "Couldn't resume the session (HTTP 429). Try again in 2 seconds."],
@@ -647,27 +657,29 @@ describe('Resume in background', () => {
   });
 
   it('gives the command to run, to copy, when the server has a hint', async () => {
-    renderDashboard(snap(), { answers: [{ status: 422, body: { ok: false, error: "Made up: Claude Code hasn't trusted this directory.", hint: `cd ${DEMO} && claude` } }] });
+    const untrusted = `Workspace not trusted. Run \`claude\` in ${DEMO} once and accept the trust prompt, then retry.`;
+    renderDashboard(snap(), { answers: [{ status: 422, body: { ok: false, error: untrusted, hint: `cd ${DEMO} && claude` } }] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
     const alert = footer()!.querySelector<HTMLElement>('.resume-failure')!;
+    expect(alert.querySelector('.alert-detail')?.textContent).toBe(untrusted);
     expect(alert.textContent).toContain(RESUME_HINT_TEXT);
     expect(alert.querySelector('.command-chip')?.textContent).toBe(`cd ${DEMO} && claude`);
     expect(within(alert).getByRole('button', { name: 'Copy trust command' })).toBeTruthy();
   });
 
-  it('warns when Claude Code started a copy instead', async () => {
-    renderDashboard(snap(), { answers: [{ status: 409, body: { ok: false, error: 'Made up: it was open in another process.', copyShortId: 'ee8a7a26' } }] });
+  it('warns when Claude Code started a copy instead, in the server’s words alone, which name the copy', async () => {
+    renderDashboard(snap(), { answers: [{ status: 409, body: { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' } }] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
     const alert = footer()!.querySelector<HTMLElement>('.resume-failure')!;
     expect(alert.classList.contains('warning')).toBe(true);
     expect(alert.querySelector('.inline-alert-title')?.textContent).toBe(COPY_STARTED);
-    expect(alert.querySelector('.inline-alert-body')?.textContent).toBe(
-      "It's open in another Claude Code process, so the copy, ee8a7a26, is listed as a background session. Made up: it was open in another process.",
-    );
+    expect(alert.querySelector('.inline-alert-body')?.textContent).toBe(COPY_ERROR);
+    // pitwall's own sentence, so not in Claude Code's code style.
+    expect(alert.querySelector('.alert-detail')).toBeNull();
   });
 
   it('keeps j and k from moving the view while its request is out', async () => {

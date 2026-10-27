@@ -9,8 +9,9 @@
 // Resume in background is busy while its request is out, and stays busy once Claude Code has resumed
 // it, until the snapshot lists the session as running, or RESUME_LISTED_MS has passed. Resumed, a
 // toast says so, and the view shows it as the background session it now is. Refused, an inline alert
-// above the buttons says why: Claude Code's message, the command to run when there's one, as New
-// session's trust failure has it, or a warning that Claude Code started a copy instead. A result that
+// above the buttons says why: the server's or Claude Code's message, whatever the status, the command
+// to run when there's one, as New session's trust failure has it, or a warning that Claude Code started
+// a copy instead, in the server's words. A result that
 // arrives after the view has gone is a toast naming the session, as Stop and Remove's is.
 
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
@@ -41,8 +42,8 @@ export const RESUME_REFUSED = "Couldn't resume the session.";
 /** The sentence before a command the server says to run, as New session's trust failure has it. */
 export const RESUME_HINT_TEXT = "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then resume it again:";
 /**
- * The warning's title when Claude Code started a copy instead. Its body: "It's open in another Claude
- * Code process, so the copy, *short id*, is listed as a background session.", then the server's message.
+ * The warning's title when Claude Code started a copy instead. Its body is the server's message alone,
+ * which is pitwall's own sentence and already names the copy and what to do about it (W66).
  */
 export const COPY_STARTED = 'Claude Code started a copy instead';
 
@@ -76,7 +77,6 @@ export function resumeToast(name: string, outcome: ResumeOutcome): ToastInput | 
     case 'resumed':
       return { tone: 'success', message: resumedText(name) };
     case 'copied':
-      return { tone: 'error', message: `Couldn't ${named}: Claude Code started a copy instead, ${plainText(outcome.copyShortId)}.` };
     case 'refused':
       return { tone: 'error', message: `${couldNot(named, undefined)} ${plainText(outcome.error)}` };
     case 'failed':
@@ -186,9 +186,9 @@ export function EndedFooter({ session, resume, onCopy }: EndedFooterProps) {
 function ResumeAlert({ failure }: { failure: ResumeFailure }) {
   if (failure.kind === 'copied') {
     return (
+      // The server's sentence names the copy, so it's the body alone: pitwall's words, not Claude Code's, so not in code style.
       <Alert tone="warning" role="alert" title={COPY_STARTED} className="resume-failure">
-        It&apos;s open in another Claude Code process, so the copy, <Detail>{plainText(failure.copyShortId)}</Detail>, is listed as a background session.{' '}
-        <Detail>{plainText(failure.error)}</Detail>
+        {plainText(failure.error)}
       </Alert>
     );
   }
