@@ -49,6 +49,9 @@ let root: string;
 let repo: string;
 let outside: string;
 let webRoot: string;
+/** Directories under the root whose names have a bidi override and a C1 control (W81). */
+let bidiDir: string;
+let c1Dir: string;
 /** A second directory under the root, for a symlink that's swapped to it. */
 let otherDir: string;
 
@@ -66,8 +69,12 @@ beforeAll(async () => {
   await writeFile(join(repo, 'README.md'), 'not a directory');
   await symlink(outside, join(root, 'escape'));
   await symlink(join(repo, 'packages'), join(root, 'alias'));
+  bidiDir = join(root, 'safe\u202eexe.txt');
+  c1Dir = join(root, 'csi\u009b2J');
   otherDir = join(root, 'other');
-  await mkdir(otherDir, { recursive: true });
+  for (const dir of [bidiDir, c1Dir, otherDir]) await mkdir(dir, { recursive: true });
+  // A plain name that leads to one with a bidi override.
+  await symlink(bidiDir, join(root, 'bidi-link'));
 });
 
 afterAll(async () => {
@@ -87,6 +94,8 @@ const ENDED_ESCAPE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ENDED_QUOTED_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 /** Ended sessions some W81 tests add to the snapshot. */
 const ENDED_LINK_ID = '12345678-1234-4234-8234-123456789abc';
+const ENDED_BIDI_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const ENDED_C1_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
 function session(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sessionId'>): SessionSummary {
   return {
@@ -436,6 +445,16 @@ describe('spawn: validation', () => {
     await expect400({ ...valid(), cwd: 'root/repo' }, /absolute/);
     await expect400({ ...valid(), cwd: `${repo}\n` }, /control characters/);
     await expect400({ ...valid(), cwd: `/${'a'.repeat(5000)}` }, /too long/);
+  });
+
+  it('refuses a cwd with a C1 control or a bidi character, or one that leads to such a path, without running anything (W81)', async () => {
+    // Directories that exist under the root, which ran before W81.
+    await expect400({ ...valid(), cwd: bidiDir }, /contains control characters or bidi controls/);
+    await expect400({ ...valid(), cwd: c1Dir }, /contains control characters or bidi controls/);
+    for (const character of ['\u0085', '\u009b', '\u061c', '\u200e', '\u200f', '\u202a', '\u202e', '\u2066', '\u2069']) {
+      await expect400({ ...valid(), cwd: join(repo, `a${character}b`) }, /contains control characters or bidi controls/);
+    }
+    await expect400({ ...valid(), cwd: join(root, 'bidi-link') }, /bidi-link leads to a path with control characters or bidi controls/);
   });
 
   it("refuses a cwd that doesn't exist, or isn't a directory", async () => {
@@ -1163,6 +1182,30 @@ describe('resume, hardened after the W73 security look (W81)', () => {
       limited(await postAsPage(started, resumePath(ENDED_ID)), '60');
       limited(await spawnAsPage(started, valid()), '60');
       expect(started.run.calls).toHaveLength(5);
+    });
+  });
+
+  describe('5: no control or bidi character in its directory', () => {
+    it('answers 409 for a directory with a bidi override or a C1 control, running nothing, so no hint carries one', async () => {
+      for (const [id, dir] of [
+        [ENDED_BIDI_ID, bidiDir],
+        [ENDED_C1_ID, c1Dir],
+      ] as const) {
+        const untrusted = exited(1, '', `Workspace not trusted. Run \`claude\` in ${dir} once and accept the trust prompt, then retry.\n`);
+        const started = await start(fakeRunner(untrusted), {}, fakeIndexer(snapshotWith(ended(id, dir))));
+        const res = await postAsPage(started, resumePath(id));
+        expect(res.status, dir).toBe(409);
+        expect(res.json).toEqual({ ok: false, error: 'The directory path contains control characters or bidi controls.' });
+        expect(started.run.calls).toEqual([]);
+      }
+    });
+
+    it('answers 409 for a directory that leads to such a path', async () => {
+      const link = join(root, 'bidi-link');
+      const started = await start(fakeRunner(resumedOutput()), {}, fakeIndexer(snapshotWith(ended(ENDED_BIDI_ID, link))));
+      const res = await postAsPage(started, resumePath(ENDED_BIDI_ID));
+      expect([res.status, errorOf(res)]).toEqual([409, `${link} leads to a path with control characters or bidi controls.`]);
+      expect(started.run.calls).toEqual([]);
     });
   });
 });

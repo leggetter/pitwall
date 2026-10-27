@@ -22,7 +22,8 @@
 // - it has a typed prompt: `promptSource: "typed"` on a user entry that isn't meta;
 // - its start directory, the `cwd` of its first entry that has one, not a later entry's (which
 //   follows `cd`), encodes to its folder's name, because `claude --resume` looks the session up
-//   from that directory; and the directory's realpath is at or under a root;
+//   from that directory; it has no control or bidi character (hasUnsafeCharacters(), W81), since
+//   it's shown, and quoted in commands to copy; and the directory's realpath is at or under a root;
 // - its newest entry is at most ENDED_LISTED_DAYS old. A file whose mtime is older isn't read.
 // At most ENDED_LISTED_MAX are listed, newest first.
 //
@@ -59,7 +60,7 @@
 import { open, readdir, realpath as fsRealpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { ENDED_LISTED_DAYS, ENDED_LISTED_MAX } from '../shared/protocol.js';
-import { isRecord } from './guards.js';
+import { hasUnsafeCharacters, isRecord } from './guards.js';
 import { matchRoot, type Realpath } from './roots.js';
 import {
   defaultConfigDir,
@@ -189,8 +190,6 @@ interface Listed {
 const NEWLINE = 0x0a;
 /** Lines past a transcript's first entry are parsed only when they name one of these. */
 const MARKS = ['"promptSource"', '"custom-title"', '"agent-name"'].map((mark) => Buffer.from(mark));
-/** C0 controls and DEL. A start directory with one is skipped: it would read differently in a command than it runs. */
-const CONTROL = /[\u0000-\u001f\u007f]/;
 const JSONL = '.jsonl';
 
 const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -330,7 +329,7 @@ export function createEndedScanner(options: EndedScannerOptions = {}): EndedScan
     const current = state;
     if (!hasStart(current)) await readStart(file, current, entry.size, () => hasStart(current));
     if (current.entrypoint !== undefined && current.entrypoint !== 'cli') current.never = true;
-    if (current.cwd !== undefined && (encodeProjectDir(current.cwd) !== folder || CONTROL.test(current.cwd))) current.never = true;
+    if (current.cwd !== undefined && (encodeProjectDir(current.cwd) !== folder || hasUnsafeCharacters(current.cwd))) current.never = true;
     if (current.never || !hasStart(current)) return undefined;
 
     // Under a root, by the realpath, before anything costlier is read.

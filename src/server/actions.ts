@@ -60,6 +60,7 @@ import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { createAgentsSource, listedSessionIds, type AgentsSource } from '../index/agents.js';
+import { hasUnsafeCharacters } from '../index/guards.js';
 import type { Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
 import { isSessionUuid } from '../index/transcripts.js';
@@ -141,9 +142,6 @@ export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,39}$/;
  */
 export const SHORT_ID_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
 
-/** C0 controls and DEL. Never in a cwd: they'd make the hint's command read differently from what it runs. */
-const CONTROL = /[\u0000-\u001f\u007f]/;
-
 // Terminal escapes, then the remaining controls except tab and newline.
 const ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-_]/g;
 const CONTROLS_BUT_NEWLINES = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
@@ -198,11 +196,15 @@ export async function validateSpawnRequest(body: unknown, roots: readonly string
  * points outside them is refused. Spawn, resume and open in an editor all check with it, and run in
  * the `path` it returns, never in `cwd` itself; resume and open check a listed session's own directory
  * afresh, immediately before they run, since it may have gone, or changed, since the poll.
+ *
+ * Neither `cwd` nor its realpath may have a control or bidi character (hasUnsafeCharacters()): a
+ * directory with one would read differently, in an error or in the trust hint's command, from the
+ * one it names.
  */
 export async function checkDirectory(cwd: unknown, roots: readonly string[]): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   if (typeof cwd !== 'string' || cwd === '') return invalid('The directory is required.');
   if (cwd.length > MAX_CWD_LENGTH) return invalid('The directory path is too long.');
-  if (CONTROL.test(cwd)) return invalid('The directory path contains control characters.');
+  if (hasUnsafeCharacters(cwd)) return invalid('The directory path contains control characters or bidi controls.');
   if (!path.isAbsolute(cwd)) return invalid('The directory must be an absolute path.');
   let real: string;
   try {
@@ -211,6 +213,7 @@ export async function checkDirectory(cwd: unknown, roots: readonly string[]): Pr
     const code = (error as NodeJS.ErrnoException).code;
     return invalid(code === 'ENOENT' || code === 'ENOTDIR' ? `${cwd} doesn't exist.` : `${cwd} can't be read.`);
   }
+  if (hasUnsafeCharacters(real)) return invalid(`${cwd} leads to a path with control characters or bidi controls.`);
   if (matchRoot(real, roots) === undefined) {
     return invalid(`${cwd} isn't under ${roots.length === 1 ? 'the root' : 'any of the roots'}: ${roots.join(', ')}.`);
   }
@@ -628,6 +631,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       if (result.code !== 0) {
         const message = said(result);
         const untrusted = untrustedLine(message);
+        // The path PWD named, which checkDirectory() found free of control and bidi characters.
         if (untrusted !== undefined) return answer({ ok: false, error: untrusted, hint: trustHint(cwd) }, 422);
         return answer({ ok: false, error: firstLine(message) ?? `claude --resume exited with code ${result.code}.` }, 502);
       }
