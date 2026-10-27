@@ -470,7 +470,7 @@ export function SessionViews() {
           </EditorsContext.Provider>
         </Specimen>
       ))}
-      <Specimen title="Opened in an editor" note="An info toast, naming the session and the editor. The menu closes, and focus goes back to its button." frame="short" lasting>
+      <Specimen title="Opened in an editor" note="A success toast, naming the session and the editor. The menu closes, and focus goes back to its button." frame="short" lasting>
         <ToastProvider>
           <EditorsContext.Provider value={[VSCODE, CURSOR]}>
             <Stubbed options={{ open: 'opened' }}>
