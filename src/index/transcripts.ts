@@ -29,8 +29,9 @@ export interface TranscriptInfo {
   aiTitle?: string;
   /**
    * Whether the session's last turn has ended, read from the transcript (spike 007, finding 4):
-   * true when a `system` entry with `subtype: 'turn_duration'` follows the newest user or assistant
-   * entry, sidechains' aside, and false when one of those came after it. Undefined when the entries
+   * true when a `system` entry with `subtype: 'turn_duration'` follows the newest entry that runs a
+   * turn (an assistant entry, a prompt or a tool's result, sidechains' aside), and false when one of
+   * those came after it. A meta entry, a local command or a manual /compact doesn't count. Undefined when the entries
    * read have no `turn_duration` at all, as from an older Claude Code: `toSessionSummary` then goes
    * by Claude Code's status, as before W69.
    */
@@ -421,9 +422,9 @@ export interface Fields {
    */
   continuedElsewhere?: boolean;
   /**
-   * True when a `turn_duration` entry comes after the newest user or assistant entry that isn't a
-   * sidechain's, in file order; false when one of those came after it. Undefined until the first
-   * `turn_duration` entry is read (TranscriptInfo.turnEnded).
+   * True when a `turn_duration` entry comes after the newest entry that runs a turn, in file order:
+   * an assistant entry, a prompt or a tool's result, not a sidechain's; false when one of those came
+   * after it. Undefined until the first `turn_duration` entry is read (TranscriptInfo.turnEnded).
    */
   turnEnded?: boolean;
   /** The newest prompt's timestamp, in file order (TranscriptInfo.lastPromptMs). */
@@ -488,13 +489,13 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   fields.inBackground = entry.sessionKind === 'bg';
   // A turn after a `continued-in` means the conversation came back here.
   fields.continuedElsewhere = false;
-  // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
-  // sub-agent's, which can run on after the main turn has ended.
-  if (fields.turnEnded !== undefined && entry.isSidechain !== true) fields.turnEnded = false;
   const typed = isTypedPrompt(entry);
   if (typed) fields.typedPrompt = true;
 
   if (type === 'assistant') {
+    // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
+    // sub-agent's, which can run on after the main turn has ended.
+    if (fields.turnEnded !== undefined && entry.isSidechain !== true) fields.turnEnded = false;
     const text = assistantTextOf(entry);
     if (text === undefined) return;
     const sameMessage =
@@ -511,6 +512,10 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     fields.userPrompt = prompt;
     fields.promptAfterText = true;
   }
+  // Only a prompt or a tool's result means a turn is running again. A meta entry, a local command such
+  // as /model and its output, or a manual /compact's summary come with no turn and no turn_duration
+  // after them, so they leave the last turn's end, and the question it asked, as they were.
+  if (fields.turnEnded !== undefined && (prompt !== undefined || isToolResult(entry))) fields.turnEnded = false;
   if ((prompt !== undefined || typed) && at !== undefined && (fields.lastPromptMs === undefined || at > fields.lastPromptMs)) {
     fields.lastPromptMs = at;
   }
@@ -614,6 +619,14 @@ export function userPromptOf(entry: Record<string, unknown>): string | undefined
   if (text === '' || text.includes('<cross-session-message')) return undefined;
   if (NOT_A_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix))) return undefined;
   return truncate(text, USER_PROMPT_MAX);
+}
+
+/** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
+function isToolResult(entry: Record<string, unknown>): boolean {
+  if (entry.type !== 'user' || entry.isSidechain === true) return false;
+  const message = entry.message;
+  const content = isRecord(message) ? message.content : undefined;
+  return Array.isArray(content) && content.some((block) => isRecord(block) && block.type === 'tool_result');
 }
 
 /** A string content, or the text blocks of an array content joined with newlines. */
