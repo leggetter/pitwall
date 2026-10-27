@@ -1005,6 +1005,23 @@ describe("Needs you from each session's context (W69)", () => {
     indexer.stop();
   });
 
+  it("doesn't need you for a restart that didn't wake the session, as when claude attach starts and then fails", async () => {
+    const { state, deps } = withJobs({ cr1: { kind: 'none' } });
+    // Crashed: working with no process. You confirm the restart, but claude attach exits without waking it.
+    const crashed = blockedJob('crashed', 'cr1', { state: 'working', status: undefined, pid: undefined });
+    state.result = { ok: true, rows: [crashed] };
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+    await flush();
+    indexer.noteRestart('crashed', NOW);
+    await flush();
+    expect(reasons(indexer.latest())).toEqual({ crashed: null });
+    // Woken later, by another attach, it has a process and waits for your prompt.
+    state.result = { ok: true, rows: [{ ...crashed, pid: 5150, status: 'idle' }] };
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reasons(indexer.latest())).toEqual({ crashed: { reason: 'restarted' } });
+    indexer.stop();
+  });
+
   it('never needs you for a restart of a session that is stale or finished', async () => {
     const { state, deps } = withJobs({ old1: { kind: 'none' }, fin1: { kind: 'none' } });
     state.result = {

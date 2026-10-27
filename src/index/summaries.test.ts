@@ -330,6 +330,15 @@ describe('toSessionSummary', () => {
       expect(toSessionSummary(working, { ...quiet, lastPromptMs: restartedAtMs + 1 }, NOW, { restartedAtMs })).not.toHaveProperty('needsYou');
     });
 
+    it("is not 'restarted' while the session has no process, as when claude attach exited without waking it", () => {
+      const restartedAtMs = NOW - 30_000;
+      const crashed = background({ state: 'working', status: undefined, pid: undefined });
+      expect(toSessionSummary(crashed, quiet, NOW, { job: { kind: 'none' }, restartedAtMs })).not.toHaveProperty('needsYou');
+      expect(toSessionSummary(background({ pid: undefined, status: undefined }), quiet, NOW, { job: { kind: 'none' }, restartedAtMs })).not.toHaveProperty('needsYou');
+      // Woken, it has a process again, and waits for your prompt.
+      expect(toSessionSummary(background({ state: 'working', status: 'idle', pid: 4321 }), quiet, NOW, { restartedAtMs }).needsYou).toEqual({ reason: 'restarted' });
+    });
+
     it("is 'blocked' for a blocked job whose file couldn't be used, or wasn't read", () => {
       expect(toSessionSummary(background(), quiet, NOW, { job: { kind: 'unknown' } }).needsYou).toEqual({ reason: 'blocked' });
       expect(toSessionSummary(background(), quiet, NOW).needsYou).toEqual({ reason: 'blocked' });

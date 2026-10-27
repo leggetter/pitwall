@@ -108,8 +108,9 @@ export function toSessionSummary(
  * 1. 'prompt': Claude Code shows a prompt, status 'waiting'.
  * 2. 'claude-code': the job's `state.json` has a `needs` line that isn't the start placeholder.
  * 3. 'asked': askedYou is set, so the last turn ended asking you something.
- * 4. 'restarted': you resumed it, or confirmed its restart, in this run of pitwall, and the
- *    transcript has no prompt newer than that (restartHolds()).
+ * 4. 'restarted': you resumed it, or confirmed its restart, in this run of pitwall, its process is
+ *    running, and the transcript has no prompt newer than that (restartHolds()). A restart that
+ *    didn't wake it, as when `claude attach` exits at once, leaves no process, so no reason.
  * 5. 'blocked': Claude Code says it's blocked, and the job's file couldn't be used, or wasn't read.
  * So `state: 'blocked'` alone no longer counts when the job's file was read and asks nothing.
  */
@@ -118,7 +119,7 @@ function needsYouOf(row: AgentRow, summary: SessionSummary, transcript: Transcri
   if (row.status === 'waiting') return { reason: 'prompt' };
   if (extras.job?.kind === 'needs') return { reason: 'claude-code', text: extras.job.text };
   if (summary.askedYou !== undefined) return { reason: 'asked' };
-  if (extras.restartedAtMs !== undefined && restartHolds(extras.restartedAtMs, transcript)) return { reason: 'restarted' };
+  if (extras.restartedAtMs !== undefined && row.pid !== undefined && restartHolds(extras.restartedAtMs, transcript)) return { reason: 'restarted' };
   if (row.state === 'blocked' && (extras.job === undefined || extras.job.kind === 'unknown')) return { reason: 'blocked' };
   return undefined;
 }

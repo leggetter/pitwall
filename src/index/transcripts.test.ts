@@ -345,6 +345,32 @@ describe("applyEntry: the turn's end and the newest prompt (W69)", () => {
     expect(fieldsOf(user('go'), asked, turnDuration(), user([toolResult('r')])).turnEnded).toBe(false);
   });
 
+  it('keeps the turn ended through user entries that start no turn: a meta entry, a local command and its output, a manual /compact', () => {
+    const asked = () => [user('go'), assistant([text('Tea or coffee?')]), turnDuration()];
+    const meta = user('<local-command-caveat>Caveat: made up.</local-command-caveat>', { isMeta: true });
+    const command = user('<command-name>/model</command-name>\n<command-message>model</command-message>', { promptSource: 'typed' });
+    const output = user('<local-command-stdout>Set model to a made-up one</local-command-stdout>');
+    const compact = user('This session is being continued from a previous conversation…', { isCompactSummary: true });
+    for (const [what, entries] of [
+      ['meta', [meta]],
+      ['/model', [command, output]],
+      ['/compact', [user('<command-name>/compact</command-name>', { promptSource: 'typed' }), compact]],
+    ] as const) {
+      const fields = fieldsOf(...asked(), ...entries);
+      expect(fields.turnEnded, what).toBe(true);
+      expect(fields.promptAfterText, what).not.toBe(true);
+    }
+  });
+
+  it('runs a turn again only for an assistant entry, a prompt or a tool result', () => {
+    const asked = () => [user('go'), assistant([text('Tea or coffee?')]), turnDuration()];
+    expect(fieldsOf(...asked(), assistant([toolUse('Bash')], 'm2')).turnEnded).toBe(false);
+    expect(fieldsOf(...asked(), user('tea, please')).turnEnded).toBe(false);
+    expect(fieldsOf(...asked(), user([toolResult('ok')])).turnEnded).toBe(false);
+    // A sub-agent's tool result doesn't.
+    expect(fieldsOf(...asked(), user([toolResult('ok')], { isSidechain: true })).turnEnded).toBe(true);
+  });
+
   it("is undefined until a turn_duration entry is read, as in an older Claude Code's transcript", () => {
     expect(fieldsOf(user('go'), assistant([text('Tea or coffee?')])).turnEnded).toBeUndefined();
     expect(fieldsOf().turnEnded).toBeUndefined();
