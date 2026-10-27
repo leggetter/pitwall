@@ -58,6 +58,36 @@ const part: Part = {
       t.expect(asked?.what.includes('Asked: Should I retry'), 'a session that asked shows its question on line 2', asked);
     });
 
+    await t.step("a row's time has a fixed slot, right-aligned, so the badges beside it line up whatever the time's width", async () => {
+      await chooseInRepoList(t, 'All sessions');
+      // Each shown row with a status badge: its badge's right edge, its time's text and the box of its slot and its text.
+      const rows = await page.evaluate<Array<{ name: string; time: string; badgeRight: number; slotLeft: number; slotRight: number; slotWidth: number; textRight: number; textWidth: number }>>(`[...document.querySelectorAll('.session-list .sessions > li.session')].filter((li) => !li.closest('[hidden]') && li.querySelector('.session-line .badge[data-status]') && li.querySelector('time.activity')).map((li) => {
+        const badge = li.querySelector('.session-line .badge[data-status]').getBoundingClientRect();
+        const time = li.querySelector('time.activity');
+        const slot = time.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(time);
+        const text = range.getBoundingClientRect();
+        return { name: li.querySelector('.session-name').textContent.trim(), time: time.textContent, badgeRight: Math.round(badge.right), slotLeft: Math.round(slot.left), slotRight: Math.round(slot.right), slotWidth: Math.round(slot.width), textRight: Math.round(text.right), textWidth: Math.round(text.width) };
+      })`);
+      t.expect(rows.length >= 4, 'rows with a badge and a time', rows);
+      const widths = new Set(rows.map((each) => each.textWidth));
+      t.expect(widths.size >= 2, 'times of different widths, such as "3m ago" and "12m ago"', rows.map(({ time, textWidth }) => ({ time, textWidth })));
+      t.expectEqual([...new Set(rows.map((each) => each.badgeRight))].length, 1, "every badge's right edge at the same x");
+      t.expectEqual([...new Set(rows.map((each) => each.slotWidth))].length, 1, 'every time in a slot of the same width');
+      const unaligned = rows.filter((each) => Math.abs(each.textRight - each.slotRight) > 1);
+      t.expect(unaligned.length === 0, 'each time right-aligned in its slot', unaligned);
+      const header = await page.evaluate<{ width: number; min: number; textRight: number; right: number } | null>(`(() => {
+        const el = document.querySelector('header time.updated');
+        if (!el) return null;
+        const box = el.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        return { width: Math.round(box.width), min: Math.round(parseFloat(getComputedStyle(el).minWidth)), textRight: Math.round(range.getBoundingClientRect().right), right: Math.round(box.right) };
+      })()`);
+      t.expect(header !== null && header.width === header.min && Math.abs(header.textRight - header.right) <= 1, 'the header\'s "updated" time in its own fixed slot, right-aligned', header);
+    });
+
     await t.step('the filter narrows the list, and Escape clears it', async () => {
       await page.click('the filter field', FIELD);
       await page.type('export');

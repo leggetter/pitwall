@@ -748,11 +748,17 @@ textarea {
   flex: none;
 }
 
+/*
+ * A fixed slot, right-aligned (section 4: Timestamps), sized for "updated 59m ago", so New session
+ * and the connection badge stay put as it ticks from 9s to 10s. A longer one grows it, never cut.
+ */
 .updated {
+  min-width: 13.5ch;
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -1722,12 +1728,19 @@ mark.match {
   min-width: 0;
 }
 
+/*
+ * A fixed slot, right-aligned (section 4: Timestamps), sized for the widest short form, "59m ago"
+ * (about 6.7ch in Inter), so the badges before it line up down the list and stay put as it ticks
+ * (Phil, 2026-10-27). A rare longer one, such as "120d ago", grows it rather than being cut.
+ */
 .activity {
   flex: none;
+  min-width: 7ch;
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
 }
 
