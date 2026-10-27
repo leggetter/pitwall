@@ -247,6 +247,18 @@ describe('the ended-session scanner: the rule (spike 006, finding 7)', () => {
     expect(s.stats().tailReads).toBe(1);
   });
 
+  it("lists only a transcript named for a canonical UUID: `claude --resume` takes a name too, so deploy.jsonl isn't one (W81)", async () => {
+    for (const id of ['deploy', 'ABCDEF01-0000-4000-8000-000000000000', '00000001000040008000000000000000', '00000001-0000-4000-8000-00000000000', 'g0000001-0000-4000-8000-000000000000']) {
+      await plain(app, 5, { id });
+    }
+    const valid = await plain(app, 6);
+    const s = scanner();
+    await scan(s);
+    expect(ids(s)).toEqual([valid.sessionId]);
+    // Nothing of the others was read, or even statted.
+    expect(s.stats().statted).toBe(1);
+  });
+
   it('matches the roots by the start directory’s realpath, and keeps the directory as recorded', async () => {
     const link = path.join(tmp, 'link-to-work');
     await symlink(work, link);

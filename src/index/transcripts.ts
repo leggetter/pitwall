@@ -101,6 +101,19 @@ export function isSafeSessionId(sessionId: string): boolean {
   return SAFE_SESSION_ID.test(sessionId);
 }
 
+/** A UUID in its canonical form: 32 lowercase hex digits in groups of 8, 4, 4, 4 and 12, as Claude Code writes session ids. */
+const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * True for a session id that is a canonical UUID. Stricter than isSafeSessionId(), for the ids
+ * pitwall finds itself and hands to `claude --resume`: an ended session's transcript file name
+ * (ended.ts), and the resume route's id. `claude --resume` takes a session name too, so an id such as
+ * `deploy`, from a crafted `deploy.jsonl`, could resume some other session (W73, W81).
+ */
+export function isSessionUuid(sessionId: string): boolean {
+  return SESSION_UUID.test(sessionId);
+}
+
 export function defaultConfigDir(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string {
   const fromEnv = env.CLAUDE_CONFIG_DIR;
   return fromEnv ? path.resolve(fromEnv) : path.join(home, '.claude');

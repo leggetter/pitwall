@@ -3,8 +3,10 @@
 // lists them. Their transcripts stay, and this finds them there.
 //
 // The rule (spike 006, finding 7). A transcript `<configDir>/projects/<folder>/<sessionId>.jsonl`,
-// one level down only (a sub-agent's transcript sits in a subfolder and isn't a session), is an
-// ended interactive session when:
+// one level down only (a sub-agent's transcript sits in a subfolder and isn't a session), whose
+// sessionId is a canonical UUID (isSessionUuid(), W81: `claude --resume` takes a name too, so a
+// crafted `deploy.jsonl` must not become `claude --resume deploy`), is an ended interactive session
+// when:
 // - its first entry with an `entrypoint` says `cli`. `sdk-cli` is `claude -p`, pitwall's own relay
 //   among them, and `sdk-ts` is the Agent SDK; anything else, such as an editor's, is left out;
 // - `claude agents --json --all` doesn't list its session id in any row, a row the index can't
@@ -62,7 +64,7 @@ import { matchRoot, type Realpath } from './roots.js';
 import {
   defaultConfigDir,
   encodeProjectDir,
-  isSafeSessionId,
+  isSessionUuid,
   isTypedPrompt,
   readNewestEntries,
   setNameOf,
@@ -394,7 +396,7 @@ export function createEndedScanner(options: EndedScannerOptions = {}): EndedScan
       for (const name of names) {
         if (!name.endsWith(JSONL)) continue;
         const sessionId = name.slice(0, -JSONL.length);
-        if (!isSafeSessionId(sessionId)) continue;
+        if (!isSessionUuid(sessionId)) continue;
         const file = path.join(projectsDir, folder, name);
         // Listed, so not ended: what's known about it is kept, and nothing is read.
         if (listed.has(sessionId)) {

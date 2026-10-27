@@ -1096,6 +1096,20 @@ describe('resume, hardened after the W73 security look (W81)', () => {
       }
     });
   });
+
+  describe('3: only a session id that is a UUID', () => {
+    it("answers 409 for an ended session whose id isn't a canonical UUID, as a crafted deploy.jsonl gives, without checking or running anything", async () => {
+      for (const id of ['deploy', 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD', '66666666666646668666666666666666', '66666666-6666-4666-8666-66666666666']) {
+        const agents = fakeAgents();
+        const started = await start(fakeRunner(resumedOutput()), { agents }, fakeIndexer(snapshotWith(ended(id, repo))));
+        const res = await postAsPage(started, resumePath(id));
+        expect(res.status, id).toBe(409);
+        expect(errorOf(res)).toMatch(/Only an interactive session that has ended can be resumed/);
+        expect(agents.list).not.toHaveBeenCalled();
+        expect(started.run.calls).toEqual([]);
+      }
+    });
+  });
 });
 
 describe('helpers', () => {
