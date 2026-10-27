@@ -80,6 +80,11 @@ export interface StubOptions {
    * running four commands; `timeout` is `claude --resume` not finishing; `failed` is no answer at all.
    */
   resume?: 'resumed' | 'resuming' | 'refused' | 'hint' | 'copied' | 'busy' | 'timeout' | 'failed';
+  /**
+   * What Open in an editor gets (W72), in the server's words (src/server/editors.ts). `opening` never
+   * answers; `refused` is the editor exiting non-zero.
+   */
+  open?: 'opened' | 'opening' | 'refused';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
@@ -107,6 +112,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
     if (method === 'POST' && route === 'resume') return resume(options.resume ?? 'resumed');
+    if (method === 'POST' && route === 'open') return openEditor(options.open ?? 'opened');
     return Promise.resolve(failed(404));
   };
   return {
@@ -224,11 +230,22 @@ function resume(result: NonNullable<StubOptions['resume']>): Promise<ApiResult> 
         }),
       );
     case 'busy':
-      return Promise.resolve(failed(429, { ok: false, error: 'pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' }));
+      return Promise.resolve(failed(429, { ok: false, error: 'pitwall is already running 4 stop, remove, resume or open commands. Try again in a moment.' }));
     case 'timeout':
       return Promise.resolve(failed(504, { ok: false, error: "claude --resume didn't finish within 30s. The session may still appear in the list." }));
     case 'failed':
       return Promise.resolve(failed());
+  }
+}
+
+function openEditor(result: NonNullable<StubOptions['open']>): Promise<ApiResult> {
+  switch (result) {
+    case 'opening':
+      return forever();
+    case 'refused':
+      return Promise.resolve(failed(502, { ok: false, error: "Cursor didn't open: /usr/bin/open exited with code 1." }));
+    case 'opened':
+      return Promise.resolve(ok({ ok: true }));
   }
 }
 

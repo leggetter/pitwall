@@ -1,7 +1,8 @@
 // The session view (docs/design-system.md, 3: Session view, and 4: Session view: header, tabs and
 // footer): one session, as the third column from 1,200 px or over the session list below that. A
 // header with its name and title, status, kind, last activity and directory, where it started and
-// the repos it worked in when there are any (W34), and the actions menu;
+// the repos it worked in when there are any (W34), and the actions menu, with Open in VS Code and Open
+// in Cursor for the editors pitwall's server found (W72, editors.ts);
 // the Conversation and Terminal tabs; the body, which is all that scrolls; and the footer: the message
 // box for an interactive session, or for a background one a note that it takes messages in its
 // terminal (W47). Under line 2, a line says where to answer while it waits on you, and another what to
@@ -41,13 +42,14 @@
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import type { SessionSummary } from '../../../src/shared/protocol.js';
+import type { Editor, EditorId, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import type { BackgroundTab } from '../backgroundTab.js';
 import { getConversation } from '../conversation.js';
 import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
 import { DraftStorageContext, hasStoredDraft } from '../drafts.js';
+import { EditorsContext, openInEditor, openLabel, openToast } from '../editors.js';
 import { focusGesture, spendGesture, type FocusGesture } from '../focusGesture.js';
 import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
@@ -447,6 +449,10 @@ export function SessionView({
   const copyText = useCopy();
   const toast = useToast();
   const [refused, setRefused] = useState<Refused>();
+  // Open in an editor (W72): the editors the server found, and the one being opened in, if any.
+  const editors = useContext(EditorsContext);
+  const [openingIn, setOpeningIn] = useState<EditorId>();
+  const openingRef = useRef(false);
 
   // A refused copy's text, shown under line 2, is selected so it can be copied by hand. It stays until the next copy.
   useEffect(() => {
@@ -463,6 +469,22 @@ export function SessionView({
         setRefused({ label, text });
         toast({ tone: 'error', message: COPY_FAILED });
       }
+    });
+  };
+
+  /**
+   * Opens the session's directory in `editor`, through pitwall's server (W72). The result is a toast,
+   * from the app's stack, so it still arrives when the view has gone meanwhile.
+   */
+  const openIn = (editor: Editor) => {
+    if (!api || openingRef.current) return;
+    openingRef.current = true;
+    setOpeningIn(editor.id);
+    void openInEditor(api, sessionId, editor.id).then((outcome) => {
+      openingRef.current = false;
+      if (alive.current) setOpeningIn(undefined);
+      const shown = openToast(session.name, editor, outcome);
+      if (shown) toast(shown);
     });
   };
 
@@ -620,10 +642,27 @@ export function SessionView({
         { id: 'reset-width', label: 'Reset view width', disabled: !canReset, hint: WIDTH_HINTS.reset, onSelect: () => panel.set(panelReset(panel.get().appWidth), true) },
       ]
     : [];
+  // One item per editor the server found (W72), while it's listed and its directory exists: an ended
+  // session's too, since its directory may still be there. None found, none shown.
+  const editorEntries: MenuEntry[] =
+    api && listed && !session.cwdMissing && editors.length > 0
+      ? [
+          { kind: 'separator', id: 'editors-separator' },
+          ...editors.map((editor) => ({
+            id: `open-${editor.id}`,
+            label: openLabel(editor),
+            icon: 'external' as const,
+            disabled: openingIn !== undefined,
+            hint: 'Wait for the editor to open.',
+            onSelect: () => openIn(editor),
+          })),
+        ]
+      : [];
   const entries: MenuEntry[] = [
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),
+    ...editorEntries,
     ...widthEntries,
     // An ended session can be resumed, never stopped or removed: it has no process (W67).
     ...(canResume

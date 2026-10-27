@@ -47,7 +47,7 @@ const SECTIONS: Section[] = [
     id: 'session-view',
     title: 'Session view',
     intro:
-      'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state, including waiting for the first snapshot, unlisted, and the conversation loading, failed (Try again idle and busy), missing and empty. The Layouts section shows it as the third column.',
+      'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state, including waiting for the first snapshot, unlisted, and the conversation loading, failed (Try again idle and busy), missing and empty; and the actions menu with no, one and two editors found, and the toasts after Open in an editor (W72). The Layouts section shows it as the third column.',
     Content: SessionViews,
   },
   {

@@ -2,6 +2,17 @@
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
+// No web test reaches the network. happy-dom's fetch is a real one, and the app's default fetch
+// calls it: a test that renders App without a fetch of its own would otherwise send its requests to
+// whatever listens on 127.0.0.1:4517, such as a pitwall that's running, as the editor list's GET
+// (W72) does as soon as the page has an apiKey. So it fails, as a network error does, which the app
+// takes as the request failing. A test that needs answers passes the app a fake fetch.
+if (typeof window !== 'undefined') {
+  const offline = () => Promise.reject(new TypeError('web tests never reach the network: pass the app a fake fetch'));
+  window.fetch = offline;
+  globalThis.fetch = offline;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();

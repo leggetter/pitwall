@@ -1,6 +1,7 @@
 // Made-up fixtures for the web UI tests. Nothing here comes from a real session.
 
-import type { IndexSnapshot, NeedsYou, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
+import { EDITORS_PATH, type IndexSnapshot, type NeedsYou, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
+import type { FetchLike } from '../api.js';
 import type { SocketFactory, SocketLike } from '../connection.js';
 
 export const NOW = Date.parse('2026-03-02T12:00:00.000Z');
@@ -183,4 +184,19 @@ export function fakeSockets() {
       return socket;
     },
   };
+}
+
+/**
+ * `fetch` behind a server that also answers the editor list (W72), which the app GETs once, as soon
+ * as it has an apiKey. That request is answered here, with `body`, none by default, and recorded in
+ * `editorCalls`, so a test of the app's other requests counts and checks only its own in `fetch`.
+ */
+export function withEditorList(fetch: FetchLike, body: unknown = { editors: [] }): FetchLike & { editorCalls: Array<[string, RequestInit]> } {
+  const editorCalls: Array<[string, RequestInit]> = [];
+  const answer: FetchLike = async (url, init) => {
+    if (url !== EDITORS_PATH) return fetch(url, init);
+    editorCalls.push([url, init]);
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  return Object.assign(answer, { editorCalls });
 }

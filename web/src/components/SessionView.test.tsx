@@ -12,7 +12,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { App } from '../App.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
 import type { ConnectionView } from '../connection.js';
-import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
+import { fakeSockets, group, minutesAgo, NOW, session, snapshot, withEditorList } from '../test/fixtures.js';
 import { tooltipText } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
@@ -896,7 +896,8 @@ describe('SessionView in the app', () => {
   async function appWithSession(fetch: FetchLike) {
     window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
     const fake = fakeSockets();
-    render(<App createSocket={fake.factory} fetch={fetch} />);
+    // The editor list is answered apart (W72), so `fetch` sees the conversation's requests alone.
+    render(<App createSocket={fake.factory} fetch={withEditorList(fetch)} />);
     await handshake(fake.last, KEY_A, `${'n'.repeat(41)}01`);
     act(() => fake.last.receive({ type: 'snapshot', snapshot: snap() }));
     return fake;

@@ -4,6 +4,7 @@ import { AttachContext, type AttachEnv } from './attach.js';
 import { Dashboard } from './components/Dashboard.js';
 import { NoTokenNotice, TokenRejectedNotice } from './components/Notice.js';
 import { defaultSocketFactory, useConnection, type SocketFactory } from './connection.js';
+import { EditorsContext, useEditorList } from './editors.js';
 import { useToken } from './token.js';
 import { UikitRoute } from './uikit/route.js';
 
@@ -28,6 +29,8 @@ function Connected({ token, createSocket, fetch }: { token: string; createSocket
   // connection hands it a fresh key on every handshake.
   const api = useMemo(() => createApiClient({ fetch }), [fetch]);
   const view = useConnection(token, { createSocket, keys: api.keys });
+  // The editors pitwall's server found (W72), fetched once, as soon as the connection has an apiKey.
+  const editors = useEditorList(api);
   // Attach sockets answer their own challenge with the same token (W10).
   const attach = useMemo<AttachEnv>(() => ({ token, createSocket, host: window.location.host }), [token, createSocket]);
   // Only a 4401 on the WebSocket means the token is no good. An HTTP 401 means
@@ -37,7 +40,9 @@ function Connected({ token, createSocket, fetch }: { token: string; createSocket
   return (
     <ApiContext.Provider value={api}>
       <AttachContext.Provider value={attach}>
-        <Dashboard view={view} />
+        <EditorsContext.Provider value={editors}>
+          <Dashboard view={view} />
+        </EditorsContext.Provider>
       </AttachContext.Provider>
     </ApiContext.Provider>
   );
