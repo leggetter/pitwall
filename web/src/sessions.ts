@@ -5,15 +5,16 @@ import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionKind, type SessionSumm
 import { shortenHome } from './format.js';
 
 /**
- * A session that is waiting on Phil, a background session blocked on him, or
- * one that ended its turn by asking him something. Never a stale or finished
- * one: a finished session's question still shows on its row, muted, but it
- * isn't counted anywhere. Nor an ended interactive session (W67), which is
- * finished too, whatever it asked.
+ * A session the index says needs Phil (SessionSummary.needsYou, W69), for one of NeedsYou's reasons,
+ * judged from its context: a prompt on screen, a background job's own line on what it needs, a last
+ * turn that asked him something, a restart he asked for, or blocked where pitwall couldn't read why.
+ * `state: 'blocked'` alone isn't one. Never a stale or finished one, which the index never marks,
+ * checked here too: a finished session's question still shows on its row, muted, but it isn't
+ * counted anywhere. Nor an ended interactive session (W67), which is finished too, whatever it asked.
  */
 export function needsAttention(session: SessionSummary): boolean {
   if (session.stale || session.finished || session.ended) return false;
-  return session.status === 'waiting' || session.state === 'blocked' || session.askedYou !== undefined;
+  return session.needsYou !== undefined;
 }
 
 /**
@@ -26,6 +27,7 @@ export type BadgeLook = 'solid-warning' | 'subtle-warning' | 'subtle-info' | 'su
 export type SessionStatus =
   | 'waiting'
   | 'blocked'
+  | 'restarted'
   | 'asked'
   | 'blocked-stale'
   | 'failed'
@@ -48,28 +50,54 @@ export interface StatusBadge {
 }
 
 /**
- * Waiting first, then blocked (unless stale), then asked you, then the
- * session's state or status. A finished session shows its state (done,
- * stopped or failed) even when it asked something; its row shows that
- * separately, as an outline badge. An ended interactive session (W67), whose process has exited,
- * shows Ended, as a stopped one shows Stopped: it has no status or state.
+ * Why it needs you first, by NeedsYou's reason (W69): the solid badges are for those alone. Then the
+ * session's state or status.
+ * - 'prompt': "Waiting: *reason*", as Claude Code gives waitingFor.
+ * - 'claude-code' and 'blocked': "Blocked". The job's own line is on the row's line 2.
+ * - 'restarted': "Waiting for your prompt".
+ * - 'asked': "Asked you", subtle, as before W69.
+ * A blocked job that needs nothing of you shows as its process does: idle, with no badge in the list
+ * and "Idle" in the session view, or Busy, or Not running. A stale one keeps its "Blocked" text,
+ * outlined. A finished session shows its state (done, stopped or failed) even when it asked
+ * something; its row shows that separately, as an outline badge. An ended interactive session
+ * (W67), whose process has exited, shows Ended, as a stopped one shows Stopped: it has no status or
+ * state.
  */
 export function statusBadge(session: SessionSummary): StatusBadge {
   if (session.ended) return { status: 'ended', label: 'Ended', look: 'subtle-neutral' };
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
-  if (session.status === 'waiting') return { status: 'waiting', label: `Waiting${reason}`, look: 'solid-warning' };
-  if (session.state === 'blocked' && !session.stale) return { status: 'blocked', label: `Blocked${reason}`, look: 'solid-warning' };
-  if (session.askedYou && !session.stale && !session.finished) return { status: 'asked', label: 'Asked you', look: 'subtle-warning' };
+  switch (needsAttention(session) ? session.needsYou?.reason : undefined) {
+    case 'prompt':
+      return { status: 'waiting', label: `Waiting${reason}`, look: 'solid-warning' };
+    case 'claude-code':
+    case 'blocked':
+      return { status: 'blocked', label: `Blocked${reason}`, look: 'solid-warning' };
+    case 'restarted':
+      return { status: 'restarted', label: 'Waiting for your prompt', look: 'solid-warning' };
+    case 'asked':
+      return { status: 'asked', label: 'Asked you', look: 'subtle-warning' };
+  }
   // A stale blocked job keeps its "Blocked" text but loses the attention styling.
-  if (session.state === 'blocked') return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
+  if (session.state === 'blocked' && session.stale) return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
   if (session.state === 'failed') return { status: 'failed', label: 'Failed', look: 'subtle-danger' };
   if (session.state === 'done') return { status: 'done', label: 'Done', look: 'subtle-success' };
   if (session.state === 'stopped') return { status: 'stopped', label: 'Stopped', look: 'subtle-neutral' };
   if (!session.alive) return { status: 'not-running', label: 'Not running', look: 'outline' };
   if (session.status === 'busy') return { status: 'busy', label: 'Busy', look: 'subtle-info', dot: true };
-  if (session.status === 'idle') return { status: 'idle', label: 'Idle', look: 'subtle-neutral' };
+  // Blocked, though its context says it needs nothing of you, as a resumed session's "send a prompt to start": idle.
+  if (session.status === 'idle' || session.state === 'blocked') return { status: 'idle', label: 'Idle', look: 'subtle-neutral' };
   if (session.state === 'working') return { status: 'working', label: 'Working', look: 'subtle-info', dot: true };
   return { status: 'unknown', label: 'Unknown', look: 'subtle-neutral' };
+}
+
+/**
+ * Claude Code's own line on what a background job needs, as plain text, for the row's line 2, where
+ * a question it asked would go: set only while it's why the session needs you ('claude-code').
+ */
+export function needsText(session: SessionSummary): string | undefined {
+  if (!needsAttention(session) || session.needsYou?.reason !== 'claude-code') return undefined;
+  const text = session.needsYou.text?.trim();
+  return text === undefined || text === '' ? undefined : text;
 }
 
 /**
@@ -325,17 +353,16 @@ function compareIds(a: SessionSummary, b: SessionSummary): number {
 }
 
 /**
- * The index's own order (src/index/summaries.ts, compareSessions), which is the Urgency sort: waiting
- * or blocked first, then asked you, then busy, then most recently active. Stale sessions after those,
- * and finished sessions last, by activity alone.
+ * The index's own order (src/index/summaries.ts, compareSessions), which is the Urgency sort: needs
+ * you first, whatever the reason (W69), then busy, then most recently active. Stale sessions after
+ * those, and finished sessions last, by activity alone.
  */
 export function compareSessions(a: SessionSummary, b: SessionSummary): number {
   const bucket = (session: SessionSummary) => (session.finished ? 2 : session.stale ? 1 : 0);
   const rank = (session: SessionSummary) => {
-    if (session.status === 'waiting' || (session.state === 'blocked' && !session.stale)) return 0;
-    if (session.askedYou !== undefined) return 1;
-    if (session.status === 'busy') return 2;
-    return 3;
+    if (needsAttention(session)) return 0;
+    if (session.status === 'busy') return 1;
+    return 2;
   };
   const ba = bucket(a);
   const bb = bucket(b);

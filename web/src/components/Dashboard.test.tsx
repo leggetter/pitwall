@@ -1125,6 +1125,59 @@ describe('sessions that asked you something', () => {
   });
 });
 
+describe("Needs you from each session's context (W69)", () => {
+  const job = { kind: 'background' as const, state: 'blocked' as const, status: 'idle' as const };
+
+  function contextSnapshot(): IndexSnapshot {
+    return snapshot([
+      group({
+        sessions: [
+          session({ ...job, name: 'tea', shortId: 'bg01', needsYou: { reason: 'claude-code', text: 'Do you prefer tea or coffee?' }, lastActivityAt: minutesAgo(1) }),
+          // Resumed with Claude Code's "send a prompt to start": blocked, but its context asks nothing.
+          session({ ...job, name: 'placeholder', shortId: 'bg02', needsYou: undefined, lastActivityAt: minutesAgo(0.5) }),
+          session({ ...job, name: 'unread', shortId: 'bg03', needsYou: { reason: 'blocked' }, lastActivityAt: minutesAgo(3) }),
+          session({ ...job, name: 'resumed', shortId: 'bg04', state: 'working', status: 'busy', needsYou: { reason: 'restarted' }, lastActivityAt: minutesAgo(4) }),
+          session({ name: 'busy-asks', status: 'busy', askedYou: { reason: 'question', excerpt: 'Ship it?' }, needsYou: { reason: 'asked' }, lastActivityAt: minutesAgo(5) }),
+        ],
+      }),
+    ]);
+  }
+
+  it('gives each reason its badge, solid for all but Asked you, and a blocked job that needs nothing no badge', () => {
+    renderDashboard(contextSnapshot());
+    expect(badges('tea')).toEqual(['Blocked']);
+    expect(status('tea')).toBe('blocked');
+    expect(badges('unread')).toEqual(['Blocked']);
+    expect(status('unread')).toBe('blocked');
+    expect(badges('resumed')).toEqual(['Waiting for your prompt']);
+    expect(status('resumed')).toBe('restarted');
+    expect(badges('busy-asks')).toEqual(['Asked you']);
+    expect(status('busy-asks')).toBe('asked');
+    expect(badges('placeholder')).toEqual([]);
+    expect(row('placeholder').dataset.attention).toBeUndefined();
+    for (const name of ['tea', 'unread', 'resumed', 'busy-asks']) expect(row(name).dataset.attention, name).toBe('true');
+  });
+
+  it("shows the job's own line on line 2, where a question would go, as text", () => {
+    renderDashboard(contextSnapshot());
+    expect(row('tea').querySelector('.asked')?.textContent).toBe('Needs: Do you prefer tea or coffee?');
+    expect(row('unread').querySelector('.asked')).toBeNull();
+    const { container } = renderDashboard(
+      snapshot([group({ sessions: [session({ ...job, name: 'html', shortId: 'bg05', needsYou: { reason: 'claude-code', text: '<img src=x onerror="alert(1)"> <b>ok</b>?' } })] })]),
+    );
+    expect(container.querySelector('.session img, .session b')).toBeNull();
+    expect(row('html').querySelector('.asked')?.textContent).toBe('Needs: <img src=x onerror="alert(1)"> <b>ok</b>?');
+  });
+
+  it('counts and lists exactly the sessions with needsYou, sorted together by activity', () => {
+    renderDashboard(contextSnapshot());
+    expect(summary()).toBe('5 sessions4 need you');
+    expect(document.title).toBe('(4) pitwall');
+    choose('Needs you');
+    expect(visibleRowNames()).toEqual(['tea', 'unread', 'resumed', 'busy-asks']);
+  });
+});
+
 describe('finished sessions', () => {
   const ROOT = '/Users/example/code';
   const id = (name: string) => `${ROOT}\0${ROOT}/${name}`;

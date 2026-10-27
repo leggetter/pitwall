@@ -1,6 +1,6 @@
 // Made-up fixtures for the web UI tests. Nothing here comes from a real session.
 
-import type { IndexSnapshot, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
+import type { IndexSnapshot, NeedsYou, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import type { SocketFactory, SocketLike } from '../connection.js';
 
 export const NOW = Date.parse('2026-03-02T12:00:00.000Z');
@@ -11,7 +11,24 @@ export function minutesAgo(minutes: number): string {
 
 let counter = 0;
 
-/** A session. Overrides set to `undefined` remove the field, as JSON would. */
+/**
+ * The needsYou the index would set from these fields alone (src/index/summaries.ts, W69), as for a
+ * job whose file it couldn't read and a session with no restart: 'prompt' while waiting, 'asked' for
+ * askedYou, 'blocked' for a blocked job; never on a stale or finished one.
+ */
+export function indexNeedsYou(session: Pick<SessionSummary, 'stale' | 'finished' | 'status' | 'state' | 'askedYou'>): NeedsYou | undefined {
+  if (session.stale || session.finished) return undefined;
+  if (session.status === 'waiting') return { reason: 'prompt' };
+  if (session.askedYou !== undefined) return { reason: 'asked' };
+  if (session.state === 'blocked') return { reason: 'blocked' };
+  return undefined;
+}
+
+/**
+ * A session. Overrides set to `undefined` remove the field, as JSON would. Without a needsYou of its
+ * own, it gets the one the index would set from its other fields (indexNeedsYou); `needsYou:
+ * undefined` gives none, as for a blocked job whose file asks nothing.
+ */
 export function session(overrides: Partial<SessionSummary> = {}): SessionSummary {
   counter += 1;
   const merged: SessionSummary = {
@@ -30,6 +47,10 @@ export function session(overrides: Partial<SessionSummary> = {}): SessionSummary
     transcript: 'ok',
     ...overrides,
   };
+  if (!('needsYou' in overrides)) {
+    const needsYou = indexNeedsYou(merged);
+    if (needsYou !== undefined) merged.needsYou = needsYou;
+  }
   for (const key of Object.keys(merged) as (keyof SessionSummary)[]) {
     if (merged[key] === undefined) delete merged[key];
   }

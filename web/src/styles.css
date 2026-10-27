@@ -1090,7 +1090,8 @@ h2.empty-state-title:focus {
 .badge-attention,
 .badge-solid-warning,
 .badge.state-waiting,
-.badge.state-blocked {
+.badge.state-blocked,
+.badge.state-restarted {
   background: var(--pw-state-attention-bg);
   color: var(--pw-state-attention-fg);
 }

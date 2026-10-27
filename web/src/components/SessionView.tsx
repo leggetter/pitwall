@@ -139,13 +139,15 @@ export const WAITING_NOTES = {
 } as const;
 
 /**
- * Whether a running session is waiting on you: its status is `waiting`, or it's a background job
- * that's blocked, which Claude Code reports with status `idle`, unless it's stale. These are the two
- * with the solid Waiting or Blocked badge (statusBadge()).
+ * Whether a running session is waiting on you to answer something: it has the solid Waiting or
+ * Blocked badge (statusBadge()), which says so from its context (needsYou, W69): a prompt on screen,
+ * a background job's own line on what it needs, or blocked where pitwall couldn't read why. A
+ * blocked job that needs nothing of you, as a resumed one's "send a prompt to start", has neither.
  */
 function isWaiting(session: SessionSummary): boolean {
   if (!session.alive) return false;
-  return session.status === 'waiting' || (session.kind === 'background' && session.state === 'blocked' && !session.stale);
+  const { status } = statusBadge(session);
+  return status === 'waiting' || status === 'blocked';
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { middleEllipsisParts, plainText, relativeTime, shortenHome, updatedAgo } from './format.js';
-import { attachCommand, needsAttention, rowStatusBadge, statusBadge, type SessionStatus } from './sessions.js';
+import { attachCommand, needsAttention, needsText, rowStatusBadge, statusBadge, type SessionStatus } from './sessions.js';
 import { NOW, session } from './test/fixtures.js';
 
 describe('shortenHome', () => {
@@ -71,6 +71,19 @@ describe('plainText', () => {
 });
 
 describe('session helpers', () => {
+  it("needsAttention is exactly the sessions with the index's needsYou (W69), never stale, finished or ended", () => {
+    for (const reason of ['prompt', 'claude-code', 'asked', 'restarted', 'blocked'] as const) {
+      expect(needsAttention(session({ needsYou: { reason } })), reason).toBe(true);
+    }
+    // Blocked alone isn't a reason: a resumed job's "send a prompt to start" asks nothing.
+    expect(needsAttention(session({ kind: 'background', state: 'blocked', needsYou: undefined }))).toBe(false);
+    expect(needsAttention(session({ status: 'waiting', askedYou: { reason: 'question', excerpt: 'Ship it?' }, needsYou: undefined }))).toBe(false);
+    // Never stale, finished or ended, whatever the snapshot says.
+    expect(needsAttention(session({ kind: 'background', state: 'blocked', stale: true, needsYou: { reason: 'blocked' } }))).toBe(false);
+    expect(needsAttention(session({ finished: true, needsYou: { reason: 'asked' } }))).toBe(false);
+    expect(needsAttention(session({ ended: true, finished: true, needsYou: { reason: 'restarted' } }))).toBe(false);
+  });
+
   it('needsAttention covers waiting, blocked and asked you, never stale', () => {
     expect(needsAttention(session({ status: 'waiting' }))).toBe(true);
     expect(needsAttention(session({ kind: 'background', state: 'blocked' }))).toBe(true);
@@ -103,7 +116,9 @@ describe('session helpers', () => {
       label: 'Waiting: input needed',
       look: 'solid-warning',
     });
-    expect(badge({ kind: 'background', state: 'blocked', askedYou: asked })).toEqual({ status: 'blocked', label: 'Blocked', look: 'solid-warning' });
+    // As the index puts them: asked you before blocked where pitwall couldn't read the job's file.
+    expect(badge({ kind: 'background', state: 'blocked', askedYou: asked })).toEqual({ status: 'asked', label: 'Asked you', look: 'subtle-warning' });
+    expect(badge({ kind: 'background', state: 'blocked' })).toEqual({ status: 'blocked', label: 'Blocked', look: 'solid-warning' });
     expect(badge({ status: 'idle', askedYou: asked })).toEqual({ status: 'asked', label: 'Asked you', look: 'subtle-warning' });
     // Finished: the state, not the question, which the row shows apart, as an outline badge.
     expect(badge({ kind: 'background', state: 'done', alive: false, status: undefined, finished: true, askedYou: asked })).toEqual({
@@ -121,6 +136,44 @@ describe('session helpers', () => {
     expect(badge({ kind: 'background', state: 'blocked', stale: true, alive: false })).toEqual({ status: 'blocked-stale', label: 'Blocked', look: 'outline' });
     expect(badge({ kind: 'background', state: 'blocked', stale: true, askedYou: asked })).toEqual({ status: 'blocked-stale', label: 'Blocked', look: 'outline' });
     expect(badge({ status: 'idle' })).toEqual({ status: 'idle', label: 'Idle', look: 'subtle-neutral' });
+  });
+
+  it("statusBadge follows needsYou's reason: solid for each but asked you (W69)", () => {
+    const asked = { reason: 'question' as const, excerpt: 'Ship it?' };
+    const job = { kind: 'background' as const, shortId: 'bg1', state: 'blocked' as const, status: 'idle' as const };
+    const badge = (overrides: Parameters<typeof session>[0]) => statusBadge(session(overrides));
+    expect(badge({ status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } })).toEqual({
+      status: 'waiting',
+      label: 'Waiting: permission prompt',
+      look: 'solid-warning',
+    });
+    expect(badge({ ...job, needsYou: { reason: 'claude-code', text: 'Tea or coffee?' } })).toEqual({ status: 'blocked', label: 'Blocked', look: 'solid-warning' });
+    expect(badge({ ...job, needsYou: { reason: 'blocked' } })).toEqual({ status: 'blocked', label: 'Blocked', look: 'solid-warning' });
+    expect(badge({ ...job, state: 'working', status: 'busy', needsYou: { reason: 'restarted' } })).toEqual({
+      status: 'restarted',
+      label: 'Waiting for your prompt',
+      look: 'solid-warning',
+    });
+    expect(badge({ status: 'busy', askedYou: asked, needsYou: { reason: 'asked' } })).toEqual({ status: 'asked', label: 'Asked you', look: 'subtle-warning' });
+  });
+
+  it('statusBadge shows a blocked job that needs nothing of you as its process is: idle, busy or not running (W69)', () => {
+    const job = { kind: 'background' as const, shortId: 'bg1', state: 'blocked' as const, needsYou: undefined };
+    expect(statusBadge(session({ ...job, status: 'idle' }))).toEqual({ status: 'idle', label: 'Idle', look: 'subtle-neutral' });
+    expect(statusBadge(session({ ...job, status: undefined }))).toEqual({ status: 'idle', label: 'Idle', look: 'subtle-neutral' });
+    expect(rowStatusBadge(session({ ...job, status: 'idle' }))).toBeUndefined();
+    expect(statusBadge(session({ ...job, status: 'busy' }))).toMatchObject({ status: 'busy', label: 'Busy' });
+    expect(statusBadge(session({ ...job, alive: false, pid: undefined, status: undefined }))).toEqual({ status: 'not-running', label: 'Not running', look: 'outline' });
+    // A stale one keeps its outline badge.
+    expect(statusBadge(session({ ...job, stale: true, alive: false }))).toEqual({ status: 'blocked-stale', label: 'Blocked', look: 'outline' });
+  });
+
+  it('needsText is the job line, only while it is why the session needs you', () => {
+    const job = { kind: 'background' as const, shortId: 'bg1', state: 'blocked' as const };
+    expect(needsText(session({ ...job, needsYou: { reason: 'claude-code', text: 'Do you prefer tea or coffee?' } }))).toBe('Do you prefer tea or coffee?');
+    expect(needsText(session({ ...job, needsYou: { reason: 'claude-code', text: '   ' } }))).toBeUndefined();
+    expect(needsText(session({ ...job, needsYou: { reason: 'blocked' } }))).toBeUndefined();
+    expect(needsText(session({ ...job, stale: true, needsYou: { reason: 'claude-code', text: 'Old?' } }))).toBeUndefined();
   });
 
   it("statusBadge gives each state the Badges table's label and look, in sentence case, with a dot for busy and working", () => {

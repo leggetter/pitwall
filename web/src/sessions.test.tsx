@@ -109,8 +109,8 @@ describe('listScope', () => {
     const finishedAsked = session({ name: 'finished-asked', ...done, shortId: 'b8', askedYou: { reason: 'question', excerpt: 'PR?' } });
     const more = group({ key: `${ROOT}/more`, label: 'more', sessions: [asked, stale, finishedAsked] });
     const { current, finished } = listScope([app, jobs, more], { kind: 'needs-you' });
-    // Waiting and blocked before asked you, however recent.
-    expect(names(current)).toEqual(['background-blocked', 'interactive-waiting', 'asked']);
+    // Every reason alike, by activity (W69): asked you was active most recently.
+    expect(names(current)).toEqual(['asked', 'background-blocked', 'interactive-waiting']);
     expect(finished).toEqual([]);
   });
 
@@ -154,9 +154,9 @@ describe('the Sort setting', () => {
     expect(both(undefined)).toEqual(both('urgency'));
   });
 
-  it("Urgency is the index's order: waiting or blocked, asked you, busy, then by activity, stale after; finished ones by activity alone", () => {
+  it("Urgency is the index's order: needs you, whatever the reason, busy, then by activity, stale after; finished ones by activity alone", () => {
     expect(both('urgency')).toEqual({
-      current: ['Beta', 'repo-2', 'alpha', 'repo-10', 'stale-one'],
+      current: ['repo-2', 'Beta', 'alpha', 'repo-10', 'stale-one'],
       finished: ['done-new', 'done-mid', 'Done-old'],
     });
   });
