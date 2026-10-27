@@ -20,7 +20,7 @@ import { constants } from 'node:fs';
 import { lstat, open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { isRecord } from './guards.js';
-import { cap, truncate } from './text.js';
+import { plainLine } from './text.js';
 import { defaultConfigDir } from './transcripts.js';
 
 /** What a job's file says it needs. */
@@ -68,11 +68,6 @@ const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants
 
 /** A short id that's safe as one folder name: never empty, `.` or `..`, and no separator. */
 const SAFE_SHORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-// Terminal escapes (CSI, OSC and two-character ones), then any control character left: C0, DEL and
-// C1, and the bidi marks (U+061C, U+200E, U+200F), embeddings and overrides (U+202A to U+202E) and
-// isolates (U+2066 to U+2069), which would make the line read differently from what it says.
-const ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-_]/g;
-const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const UNKNOWN: JobNeeds = { kind: 'unknown' };
 const NONE: JobNeeds = { kind: 'none' };
 
@@ -159,7 +154,5 @@ export function parseJobState(text: string, sessionId: string): JobNeeds {
 
 /** Claude Code's line as plain text: escapes and control characters removed, on one line, trimmed, at most NEEDS_MAX. */
 export function needsText(raw: string): string {
-  // Bounded first, so a huge value isn't scanned in full. Line breaks and tabs become spaces, so words don't run together.
-  const plain = cap(raw, 8 * NEEDS_MAX).replace(ESCAPES, '').replace(/[\t\n\v\f\r]+/g, ' ').replace(CONTROLS, '');
-  return truncate(plain.replace(/\s+/g, ' ').trim(), NEEDS_MAX);
+  return plainLine(raw, NEEDS_MAX);
 }
