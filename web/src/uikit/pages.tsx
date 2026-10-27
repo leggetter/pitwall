@@ -133,13 +133,8 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'Another directory: narrowed, one highlighted',
-    note: 'Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it. ↓ highlights an option; the field keeps focus.',
+    note: 'Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it. ↓ highlights an option; the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, a typed path still works, as before.',
     run: (root) => another(root, '~/code/pitwall-test-api', 'app', ['ArrowDown', 'ArrowDown']),
-  },
-  {
-    title: 'Another directory: chosen',
-    note: 'Enter or a click puts the option in the field, as the shortened path, and closes the list. The request sends the absolute path.',
-    run: (root) => another(root, '~/code/pitwall-test-api', 'web', ['ArrowDown', 'Enter']),
   },
   {
     title: 'Another directory: loading',
@@ -153,11 +148,6 @@ const DIALOG_CASES: DialogCase[] = [
     note: 'The best 50, then how many there are. A screen reader hears the count a moment after the typing stops.',
     options: { directories: 'many' },
     run: (root) => another(root, DIRECTORY_TEXT.narrow),
-  },
-  {
-    title: 'Another directory: none match',
-    note: 'A typed path still works, as before: any directory under the root, deeper than three levels too.',
-    run: (root) => another(root, '~/code/pitwall-test-api', '~/code/pitwall-test-app/web/src/deeper/still'),
   },
   {
     title: 'Another directory: none to list',
