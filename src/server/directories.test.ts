@@ -1,14 +1,14 @@
 // The directory list (W70): the walk, its limits and cache, and the route through the real HTTP
 // server and its /api/* checks. Temporary folders only, made here and removed afterwards.
 import type { Dirent } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Indexer } from '../index/index.js';
 import { DIRECTORIES_PATH, DIRECTORY_DEPTH, type DirectoryList, type IndexSnapshot } from '../shared/protocol.js';
-import { compareEntries, createDirectoryLister, isListable, walkRoot, type ReadDirectory } from './directories.js';
+import { compareEntries, createDirectoryLister, DIRECTORY_READS, isListable, ReadGate, walkRoot, type ReadDirectory } from './directories.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
@@ -55,7 +55,8 @@ beforeAll(async () => {
   await symlink(outside, join(root, 'link-out'));
   await symlink(join(root, 'zeta'), join(root, 'link-in'));
   // Names a terminal or a bidi-aware renderer would show as something else.
-  for (const name of ['bell\u0007name', 'c1\u0085name', 'del\u007fname', 'rtl\u202ename', 'isolate\u2066name', 'mark\u200fname', 'arabic\u061cmark']) {
+  // And names that start or end with whitespace, which can't be told apart on screen.
+  for (const name of ['bell\u0007name', 'c1\u0085name', 'del\u007fname', 'rtl\u202ename', 'isolate\u2066name', 'mark\u200fname', 'arabic\u061cmark', 'zeta ', ' zeta', 'nbsp\u00a0', '\u3000ideographic']) {
     await mkdir(join(root, name, 'inside'), { recursive: true });
   }
 });
@@ -98,15 +99,18 @@ describe('the walk', () => {
     const listed = paths(await walkRoot(root));
     expect(listed).not.toContain('file.txt');
     for (const path of listed) {
+      expect(path).not.toMatch(/(^|\/)\s|\s($|\/)/);
       expect(path).not.toMatch(/(^|\/)\./);
       expect(path).not.toMatch(/node_modules/);
       expect(path).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
       expect(path).not.toMatch(/inside/);
     }
     expect(isListable('ok-name')).toBe(true);
-    for (const name of ['', '.git', '.env', 'node_modules', 'a\u0000b', 'a\nb', 'a\u009bb', 'a\u202ab', 'a\u2069b', 'a\ufffdb']) {
-      expect(isListable(name)).toBe(false);
+    for (const name of ['', '.git', '.env', 'node_modules', 'a\u0000b', 'a\nb', 'a\u009bb', 'a\u202ab', 'a\u2069b', 'a\ufffdb', 'notes ', ' notes', 'notes\t', 'notes\u00a0', '\u3000notes', 'notes\ufeff']) {
+      expect(isListable(name), JSON.stringify(name)).toBe(false);
     }
+    // Spaces inside a name are fine.
+    expect(isListable('my notes')).toBe(true);
     // Only the exact name: a folder called node_modules2 is listed.
     expect(isListable('node_modules2')).toBe(true);
   });
@@ -175,6 +179,46 @@ describe('the walk', () => {
     }
   });
 
+  it("doesn't follow a folder swapped for a symlink after its parent was read", async () => {
+    const swapRoot = await mkdtemp(join(tmp, 'swap-root-'));
+    await dirs(swapRoot, 'a/inside', 'b');
+    let swapped = false;
+    const racing: ReadDirectory = async (dir) => {
+      const entries = await readdir(dir, { withFileTypes: true });
+      if (dir === swapRoot && !swapped) {
+        swapped = true;
+        await rename(join(swapRoot, 'a'), join(tmp, `${swapRoot.split('/').pop()}-a-moved`));
+        await symlink(outside, join(swapRoot, 'a'));
+      }
+      return entries;
+    };
+    const walked = await walkRoot(swapRoot, { readdir: racing });
+    expect(swapped).toBe(true);
+    expect(paths(walked)).toEqual(['b']);
+  });
+
+  it("drops what it read from a folder swapped for a symlink while it was read", async () => {
+    const swapRoot = await mkdtemp(join(tmp, 'swap-during-'));
+    await dirs(swapRoot, 'a/inside', 'b');
+    const racing: ReadDirectory = async (dir) => {
+      if (dir === join(swapRoot, 'a')) {
+        await rename(dir, join(tmp, `${swapRoot.split('/').pop()}-a-moved`));
+        await symlink(outside, dir);
+      }
+      return readdir(dir, { withFileTypes: true });
+    };
+    const walked = await walkRoot(swapRoot, { readdir: racing });
+    expect(paths(walked)).toEqual(['b']);
+  });
+
+  it('walks a root given through a symlink, under its real path', async () => {
+    const real = await mkdtemp(join(tmp, 'real-root-'));
+    await dirs(real, 'p/q');
+    const link = `${real}-link`;
+    await symlink(real, link);
+    expect(await walkRoot(link)).toEqual({ root: link, dirs: [{ path: 'p' }, { path: 'p/q' }], truncated: false });
+  });
+
   it('lists none for a root it can not read, or that has gone', async () => {
     expect(await walkRoot(join(tmp, 'no-such-root'))).toEqual({ root: join(tmp, 'no-such-root'), dirs: [], truncated: false });
   });
@@ -182,6 +226,68 @@ describe('the walk', () => {
   it('sorts as the contract says: by depth, then by UTF-16 code unit', () => {
     const entries = [{ path: 'b/a' }, { path: 'a-x' }, { path: 'B' }, { path: 'a/b' }, { path: 'a' }, { path: 'é' }];
     expect([...entries].sort(compareEntries).map((entry) => entry.path)).toEqual(['B', 'a', 'a-x', 'é', 'a/b', 'b/a']);
+  });
+});
+
+describe('calls that hang', () => {
+  /** A readdir that never answers below the root, counting how many it has out at once. */
+  function hanging(rootsThatAnswer: string[]) {
+    const out = { now: 0, most: 0, calls: 0 };
+    const waiting: Array<() => void> = [];
+    const fn: ReadDirectory = async (dir) => {
+      out.calls += 1;
+      if (rootsThatAnswer.includes(dir)) return readdir(dir, { withFileTypes: true });
+      out.now += 1;
+      out.most = Math.max(out.most, out.now);
+      await new Promise<void>((resolve) => waiting.push(resolve));
+      out.now -= 1;
+      return [];
+    };
+    return { out, fn, settle: () => waiting.splice(0).forEach((resolve) => resolve()) };
+  }
+
+  it(`run at most ${DIRECTORY_READS} at once, for every root together, and keep their slots after the walk gives up`, async () => {
+    expect(DIRECTORY_READS).toBe(2);
+    const { out, fn, settle } = hanging([root, outside]);
+    const gate = new ReadGate(DIRECTORY_READS);
+    const lister = createDirectoryLister({ readdir: fn, gate, timeLimitMs: 50 });
+    const list = await lister.list([root, outside]);
+    expect(list.roots.map((each) => each.truncated)).toEqual([true, true]);
+    expect(out.most).toBe(2);
+    expect(gate.busy).toBe(true);
+    settle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(gate.busy).toBe(false);
+  });
+
+  it('start no new walk while any is still out: the last result, or an empty truncated one, until they settle', async () => {
+    let now = 1_000_000;
+    const { out, fn, settle } = hanging([root]);
+    const lister = createDirectoryLister({ readdir: fn, timeLimitMs: 50, now: () => now });
+    const first = await lister.list([root]);
+    expect(first.roots[0]?.truncated).toBe(true);
+    expect(first.roots[0]?.dirs.map((entry) => entry.path)).toEqual(['alpha', 'repo', 'tools', 'worktree', 'zeta']);
+    const calls = out.calls;
+
+    now += 60_000;
+    expect(await lister.list([root])).toBe(first);
+    expect(await lister.list([outside])).toEqual({ roots: [{ root: outside, dirs: [], truncated: true }] });
+    expect(out.calls).toBe(calls);
+
+    settle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const again = await lister.list([root]);
+    expect(again).not.toBe(first);
+    expect(out.calls).toBeGreaterThan(calls);
+    settle();
+  });
+
+  it('a walk alone also holds its calls to the gate', async () => {
+    const { out, fn, settle } = hanging([root]);
+    const walked = await walkRoot(root, { readdir: fn, timeLimitMs: 50 });
+    expect(walked.truncated).toBe(true);
+    expect(out.most).toBe(DIRECTORY_READS);
+    settle();
   });
 });
 
@@ -262,6 +368,7 @@ function fakeIndexer(snapshot: IndexSnapshot | undefined): Indexer {
     subscribe: () => () => {},
     conversation: async () => undefined,
     pollSoon: () => {},
+    noteRestart: () => {},
     stop: () => {},
   };
 }
