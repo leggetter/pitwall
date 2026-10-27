@@ -2,14 +2,14 @@
 // with pitwall's own security headers and CSP, its Host and Origin checks, its static file rules and
 // the v3 WebSocket challenge, all imported from the server build (dist/server, dist/shared), never
 // copied. Behind them it answers the snapshot, conversation pages, the relay, attach (a made-up
-// terminal stream), spawn, stop and remove from the made-up World in fixtures.ts.
+// terminal stream), spawn, stop, remove and resume from the made-up World in fixtures.ts.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
 // only security.js, static.js and protocol.js from the build, which read nothing but webRoot.
 //
 // What the page did is recorded in `records`, for the parts to check: attaches, keys and resizes sent
-// to an attached session, spawns, relayed messages, stops and removes, and every request.
+// to an attached session, spawns, relayed messages, stops and removes, resumes, and every request.
 
 import { randomBytes } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -18,8 +18,8 @@ import type { Duplex } from 'node:stream';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import type { AttachClientMessage, ConversationPage, IndexSnapshot, RelayResult, SpawnRequest, SpawnResult } from '../../src/shared/protocol.js';
-import { terminalScreen, World, type ResetOptions } from './fixtures.js';
+import type { AttachClientMessage, ConversationPage, IndexSnapshot, RelayResult, ResumeResult, SpawnRequest, SpawnResult } from '../../src/shared/protocol.js';
+import { COPY_SHORT_ID, DEMO_APP, NAMES, terminalScreen, World, type ResetOptions } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -47,11 +47,13 @@ export interface Records {
   spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; promptLength: number }>;
   relays: Array<{ name: string; length: number }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
+  /** Each resume of an ended session the server answered (W67), by the session's name. */
+  resumes: string[];
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], spawns: [], relays: [], actions: [], requests: [] });
+const emptyRecords = (): Records => ({ attaches: [], inputs: [], spawns: [], relays: [], actions: [], resumes: [], requests: [] });
 
 export interface FakeServerOptions {
   port: number;
@@ -143,7 +145,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.SNAPSHOT_PATH) return json(res, 200, world.snapshot() satisfies IndexSnapshot);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -166,7 +168,45 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       records.actions.push({ action: route, name: session.name });
       return json(res, 200, { ok: true });
     }
+    if (route === 'resume' && method === 'POST') return resume(req, res, session.sessionId);
     return end(res, 405);
+  }
+
+  /**
+   * Resume in background (W67): NAMES.ended resumes, and is listed as a running background session a
+   * moment later, as the index lists it on a later poll; each other ended session fails one way, by
+   * its name, as resumePath()'s contract has them.
+   */
+  function resume(req: IncomingMessage, res: ServerResponse, sessionId: string) {
+    const session = world.session(sessionId);
+    if (!session?.ended) return json(res, 409, { ok: false, error: 'Made up: only an ended interactive session can be resumed.' } satisfies ResumeResult);
+    if (session.cwdMissing) return json(res, 409, { ok: false, error: 'Made up: its directory no longer exists.' } satisfies ResumeResult);
+    records.resumes.push(session.name);
+    switch (session.name) {
+      case NAMES.endedAsked:
+        return json(res, 422, { ok: false, error: "Made up: Claude Code hasn't trusted this directory.", hint: `cd ${DEMO_APP} && claude` } satisfies ResumeResult);
+      case NAMES.endedCopy:
+        return json(res, 409, {
+          ok: false,
+          error: `note: made up: the session is open in another Claude Code process, so this started a copy as ${COPY_SHORT_ID}. The original conversation is unchanged.`,
+          copyShortId: COPY_SHORT_ID,
+        } satisfies ResumeResult);
+      case NAMES.endedBusy:
+        res.setHeader('Retry-After', '1');
+        return json(res, 429, { ok: false, error: 'Made up: pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' } satisfies ResumeResult);
+      case NAMES.endedRefused:
+        return json(res, 409, { ok: false, error: 'Made up: claude agents lists it again, so it may be open in a terminal.' } satisfies ResumeResult);
+      case NAMES.endedNoAnswer:
+        // No answer at all: the connection closes, as when pitwall stops in the middle of one.
+        req.socket.destroy();
+        return;
+    }
+    const resumed = world.resume(sessionId);
+    json(res, 200, { ok: true, shortId: resumed.shortId } satisfies ResumeResult);
+    later(options.listDelayMs ?? 800, () => {
+      resumed.list();
+      broadcast();
+    });
   }
 
   /** New session: pitwall's JSON checks, a made-up background session, and its listing a moment later. */

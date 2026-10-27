@@ -62,11 +62,11 @@ const part: Part = {
       await page.type('export');
       await page.waitFor('the filter to apply', `${rowNames}.length === 1`);
       t.expectEqual(await page.evaluate(rowNames), [NAMES.running], 'only the session whose name matches');
-      t.expectEqual(await page.evaluate(SUMMARY), '1 of 10 sessions', 'the summary says what the filter hides');
+      t.expectEqual(await page.evaluate(SUMMARY), '1 of 17 sessions', 'the summary says what the filter hides');
       t.expect(await page.evaluate(`!!document.querySelector('.session-list .filter-clear')`), 'the field has a clear button');
       await page.key('Escape');
       await page.waitFor('the filter to clear', `${FIELD}.value === '' && ${rowNames}.length === 9`);
-      t.expectEqual(await page.evaluate(SUMMARY), '10 sessions', 'the summary is whole again');
+      t.expectEqual(await page.evaluate(SUMMARY), '17 sessions', 'the summary is whole again');
     });
 
     await t.step('the Background chip lists background sessions alone', async () => {

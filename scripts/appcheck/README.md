@@ -16,7 +16,7 @@ npm run appcheck -- --out scratch/appcheck
   - `<dir>/shots/<part>/` holds each part's named screenshots.
   - `<dir>/failures/<part>/` holds a screenshot of the page as each failed step left it.
 - **Exit code:** 0 when every step passed, 1 when any failed, 2 when it couldn't run, such as with no build or no Chrome.
-- **Time:** under 4 minutes for a full run, 10 parts in 100 cases and about 600 steps, on the Mac it was written on. One part at one size takes seconds.
+- **Time:** under 5 minutes for a full run, 11 parts in 110 cases and about 720 steps, on the Mac it was written on. One part at one size takes seconds.
 
 ## Running part of it
 
@@ -94,17 +94,18 @@ Behind those it answers from `fixtures.ts`:
 - the relay, which answers `delivered` after 400 ms;
 - attach, with a made-up terminal screen;
 - spawn, whose session is listed 800 ms later, as the index lists one on a later poll;
-- stop and remove.
+- stop and remove;
+- resume, for the ended sessions (W67), chosen by each one's name in `NAMES`: `ended` resumes, and is listed 800 ms later as a running background session under the same id; `endedAsked` is refused with a command to run (422), `endedCopy` starts a copy instead (409, with `copyShortId`), `endedBusy` gets 429 with `Retry-After`, `endedRefused` gets 409, and `endedNoAnswer` gets no answer at all, the connection closed.
 
-It records what the page sent, such as attaches, keys typed into a terminal, spawns and relayed messages, for parts to check through `t.server.records`.
+It records what the page sent, such as attaches, keys typed into a terminal, spawns, relayed messages and resumes, for parts to check through `t.server.records`.
 
-**A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order.
+**A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session.
 
 **What every step checks,** on top of its own checks:
 
 - no console error or warning, and no exception;
 - no CSP violation;
-- no failed request or HTTP error;
+- no failed request or HTTP error, except one the step said it brings about with `t.allow` (below);
 - no request to anywhere but the fake server, which is blocked;
 - the page doesn't scroll sideways.
 
@@ -142,6 +143,7 @@ export default part;
 ```
 
 - **Steps:** name each one for what a person would see, such as "Escape closes it, with focus back on Preferences". `t.expect(ok, what, detail)` and `t.expectEqual(actual, expected, what)` fail the step without stopping it; anything thrown fails it and skips the rest of the case.
+- **A failure on purpose:** a step that has the fake server refuse a request, such as a resume, calls `t.allow(pattern, why)` first. The page's problems that match `pattern`, as `kind text`, such as the 409's `http` problem and Chrome's "Failed to load resource" for it, are listed in the summary under the step's `allowed`, with `why`, and don't fail it. Keep the pattern to that one request, by its path: `ended` allows `/api/sessions/<id>/resume$` and nothing else.
 - **The case:** `t.layout` (`drawer`, `sidebar` or `three-columns`), `t.compact` (600 px or narrower), `t.viewport` and `t.theme` say where it's running. Branch on them where the app differs by width.
 - **The page:** `t.page` has `click`, `key`, `type`, `waitFor`, `evaluate`, `settle`, `reload`, `navigate` and `records`.
 - **Made-up data:** sessions, conversations and links go in `fixtures.ts`, named in `NAMES` or `LINKS`, so a part never depends on a fixture's details. Keep them made up: names are `pitwall-test-*`, paths are under `/Users/example/`, and links go to `example.com` or `github.com/example/...`.
