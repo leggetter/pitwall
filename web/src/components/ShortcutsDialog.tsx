@@ -116,6 +116,11 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
           what: 'In an open menu: move, jump to either end, choose, close',
           keys: [[UP, DOWN], [HOME, END], [ENTER], [ESCAPE]],
         },
+        {
+          doc: { key: '↓ / ↑, Alt + ↓, Enter, Escape', where: "A combobox, such as New session's directory" },
+          what: 'In a combobox: move through its list, open it, choose, close the list',
+          keys: [[DOWN, UP], [{ keys: ['Alt', '↓'], label: 'Alt Down arrow' }], [ENTER], [ESCAPE]],
+        },
         { doc: { key: '⌘/Ctrl + Enter', where: 'The New session dialog' }, what: 'In the New session dialog: start the session', keys: [[modEnter]] },
         {
           doc: { key: '↑ / ↓, ← / →', where: 'A radio group, in Preferences' },
@@ -129,7 +134,7 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
       rows: [
         {
           doc: { key: 'Escape', where: 'Layered, nearest first' },
-          what: "Close the nearest: a tooltip or menu, a confirmation, a dialog, the filter's text, then the session view. Not with a draft in the message box",
+          what: "Close the nearest: a tooltip, a menu or list, a confirmation, a dialog, the filter's text, then the session view. Not with a draft in the message box",
           keys: [[ESCAPE]],
         },
         {

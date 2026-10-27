@@ -74,7 +74,13 @@ const SECTIONS: Section[] = [
   },
   { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab in each of its bar states, with both notices, attached to a scripted server instead of pitwall. The screen stays dark in both themes.', Content: Terminals },
   { id: 'alerts', title: 'Alerts and the app strip', intro: 'Alert in each tone, as the page alerts use it, and AppStrip, for while the relay is off until restart.', Content: Alerts },
-  { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, on Dialog: empty, filled, with errors, starting, and after a failure.', Content: Dialogs },
+  {
+    id: 'new-session',
+    title: 'New session dialog',
+    intro:
+      'NewSessionDialog, on Dialog: empty, filled, the directory combobox (W70: its list, narrowed, chosen, loading, many, none matching, none to list, cut short and failed), with errors, starting, and after a failure.',
+    Content: Dialogs,
+  },
   {
     id: 'shortcuts',
     title: 'Keyboard shortcuts dialog',
