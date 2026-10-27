@@ -130,6 +130,16 @@ describe('Another directory under a root…', () => {
     expect(optionLabels(dialog)).toHaveLength(5);
   });
 
+  it('stops the request when the dialog closes before the list comes', async () => {
+    const server = fakeServer('never');
+    const { dialog, unmount } = renderDialog(server.fetch);
+    await reveal(dialog);
+    const signal = listGets(server.fetch)[0]?.[1].signal;
+    expect(signal?.aborted).toBe(false);
+    unmount();
+    expect(signal?.aborted).toBe(true);
+  });
+
   it('fetches the list once per opening of the dialog, when it is first chosen', async () => {
     const server = fakeServer();
     const first = renderDialog(server.fetch);
