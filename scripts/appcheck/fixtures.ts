@@ -25,9 +25,9 @@ export const DOCS_SITE = `${CODE}/docs-site`;
 
 /** The sessions parts use, by role. */
 export const NAMES = {
-  /** Interactive, waiting on a permission prompt: needs you. */
+  /** Interactive, waiting on a permission prompt: needs you ('prompt'). */
   waiting: 'pitwall-test-docs',
-  /** Interactive, idle, ended its turn with a question: needs you. */
+  /** Interactive, idle, ended its turn with a question: needs you ('asked'). */
   asked: 'pitwall-test-review',
   /** Interactive and idle, with every kind of conversation entry and links: the message box's session. */
   conversation: 'pitwall-test-api',
@@ -193,7 +193,9 @@ export class World {
 
   /**
    * NAMES.ended, resumed (W67): `list` puts it in the snapshot as the index lists one on a later poll,
-   * under the same id, as a running background session waiting for a prompt (spike 006).
+   * under the same id, as a running background session waiting for a prompt (spike 006). Blocked with
+   * Claude Code's "send a prompt to start", which asks nothing, but you resumed it in this run, so it
+   * needs you until you prompt it (NeedsYou's 'restarted', W69).
    */
   resume(sessionId: string): { shortId: string; list: () => void } {
     const shortId = sessionId.slice(0, 8);
@@ -213,6 +215,7 @@ export class World {
           status: 'idle',
           state: 'blocked',
           finished: false,
+          needsYou: { reason: 'restarted' },
           lastActivityAt: new Date().toISOString(),
         });
       },
@@ -273,21 +276,28 @@ export class World {
       session(name, { kind: 'background', shortId: `pt64${String(n + 1).padStart(2, '0')}`, status: undefined, state: 'working', ...extra });
     const worked = (label: string, changes: number, calls: number) => ({ key: `${CODE}/${label}`, label, root: CODE, calls, changes, lastAt: this.#ago(2) });
     const all = [
-      session(NAMES.waiting, { title: 'Update the getting started guide', status: 'waiting', waitingFor: 'permission prompt', lastUserPrompt: 'Update the made-up getting started guide.' }),
+      session(NAMES.waiting, {
+        title: 'Update the getting started guide',
+        status: 'waiting',
+        waitingFor: 'permission prompt',
+        needsYou: { reason: 'prompt' },
+        lastUserPrompt: 'Update the made-up getting started guide.',
+      }),
       session(NAMES.asked, {
         title: 'Review the retry change',
         askedYou: { reason: 'question', excerpt: 'Should I retry the failed batch now, or wait for tonight?' },
+        needsYou: { reason: 'asked' },
         relay: { sentAt: this.#ago(30), status: 'delivered', reply: { at: this.#ago(29), text: 'Thanks, looking at it now.' } },
       }),
       session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.' }),
       job(NAMES.running),
       job(NAMES.running2),
       job(NAMES.running3),
-      job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt' }),
+      job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } }),
       job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
       session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)] }),
       session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route' }),
-      session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed' }),
+      session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } }),
       ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes' }),
       ended(NAMES.endedAsked, 1, { askedYou: { reason: 'question', excerpt: 'Should the made-up guide keep the old screenshots?' } }),
       ended(NAMES.endedCopy, 3),

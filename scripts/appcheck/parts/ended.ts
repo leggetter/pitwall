@@ -174,6 +174,8 @@ const part: Part = {
       t.expect(!(await page.evaluate(inTerminal)), 'the terminal took no keyboard');
       t.expectEqual(await page.evaluate(shownHint), 'type', 'its bar says how to type to it');
       t.expectEqual(await page.evaluate(`${VIEW}.querySelector('button.star-toggle')?.getAttribute('aria-pressed')`), 'true', 'still starred, by the same id');
+      // W69: you resumed it, so it needs your prompt, though Claude Code's "send a prompt to start" asks nothing.
+      t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.session-view-meta .badge[data-status]')?.textContent`), 'Waiting for your prompt', 'its badge waits for your prompt');
       await t.shot('resumed');
     });
 

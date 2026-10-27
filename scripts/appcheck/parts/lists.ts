@@ -32,12 +32,13 @@ const part: Part = {
       await t.shot('repo-list');
     });
 
-    await t.step('Needs you lists what needs you, most urgent first', async () => {
+    await t.step('Needs you lists what needs you, most recently active first, whatever the reason', async () => {
       await chooseInRepoList(t, 'Needs you');
       t.expectEqual(await page.evaluate('location.search'), '?view=needs-you', 'the URL');
       const names = await page.evaluate<string[]>(rowNames);
       t.expectEqual([...names].sort(), [NAMES.prompting, NAMES.waiting, NAMES.asked].sort(), 'the sessions that need you, and no others');
-      t.expectEqual(names.at(-1), NAMES.asked, 'waiting and blocked before one that asked');
+      // W69: every reason ranks alike, so it's by activity: waiting 3 minutes ago, asked 6, the job 21.
+      t.expectEqual(names, [NAMES.waiting, NAMES.asked, NAMES.prompting], 'by their last activity');
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list li.session')].every((li) => li.dataset.attention === 'true')`), 'each row is marked as needing you');
     });
 
