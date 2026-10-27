@@ -1,8 +1,9 @@
 // The fake pitwall server the app check drives the web UI against. It serves the production build
 // with pitwall's own security headers and CSP, its Host and Origin checks, its static file rules and
 // the v3 WebSocket challenge, all imported from the server build (dist/server, dist/shared), never
-// copied. Behind them it answers the snapshot, conversation pages, the relay, attach (a made-up
-// terminal stream), spawn, stop, remove and resume from the made-up World in fixtures.ts.
+// copied. Behind them it answers the snapshot, the directory list, conversation pages, the relay,
+// attach (a made-up terminal stream), spawn, stop, remove and resume from the made-up World in
+// fixtures.ts.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
@@ -18,7 +19,7 @@ import type { Duplex } from 'node:stream';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import type { AttachClientMessage, ConversationPage, IndexSnapshot, RelayResult, ResumeResult, SpawnRequest, SpawnResult } from '../../src/shared/protocol.js';
+import type { AttachClientMessage, ConversationPage, DirectoryList, IndexSnapshot, RelayResult, ResumeResult, SpawnRequest, SpawnResult } from '../../src/shared/protocol.js';
 import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
@@ -152,6 +153,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
 
     const url = new URL(req.url ?? '/', origin);
     if (method === 'GET' && url.pathname === protocol.SNAPSHOT_PATH) return json(res, 200, world.snapshot() satisfies IndexSnapshot);
+    if (method === 'GET' && url.pathname === protocol.DIRECTORIES_PATH) return json(res, 200, world.directories() satisfies DirectoryList);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
 
     const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume)$/.exec(url.pathname);

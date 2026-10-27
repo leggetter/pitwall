@@ -8,6 +8,7 @@
 import type {
   ConversationEntry,
   ConversationPage,
+  DirectoryList,
   IndexSnapshot,
   RelayExchange,
   SessionGroup,
@@ -22,6 +23,8 @@ export const DEMO_APP = `${CODE}/demo-app`;
 export const BLOG = `${OSS}/blog`;
 /** A directory whose only session ended long ago (W67), so it's in the repo list only with Show older on. */
 export const DOCS_SITE = `${CODE}/docs-site`;
+/** A directory no session has worked in, which New session's autocomplete offers (W70). */
+export const DEMO_APP_WEB = `${DEMO_APP}/web`;
 
 /** The sessions parts use, by role. */
 export const NAMES = {
@@ -136,6 +139,13 @@ export class World {
       else groups.push({ key: summary.cwd, label: summary.cwd.slice(root.length + 1), kind: 'directory', root, sessions: [summary] });
     }
     return { generatedAt: new Date().toISOString(), roots: this.roots, groups: groups.filter((group) => group.sessions.length > 0), source: { ok: true } };
+  }
+
+  /** The directories under each root, as GET DIRECTORIES_PATH lists them (W70): shallower first, then by path. */
+  directories(): DirectoryList {
+    const code = { root: CODE, dirs: [{ path: 'api-server', repo: true as const }, { path: 'demo-app', repo: true as const }, { path: 'docs-site', repo: true as const }, { path: 'notes' }, { path: 'api-server/cmd' }, { path: 'demo-app/docs' }, { path: 'demo-app/web' }, { path: 'api-server/cmd/server' }], truncated: false };
+    const oss = { root: OSS, dirs: [{ path: 'blog', repo: true as const }, { path: 'blog/drafts' }], truncated: false };
+    return { roots: this.#roots === 2 ? [code, oss] : [code] };
   }
 
   /** The session with this id, if the snapshot lists it. */
