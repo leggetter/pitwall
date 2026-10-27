@@ -184,6 +184,29 @@ describe('the ended-session scanner: the rule (spike 006, finding 7)', () => {
     expect(ids(s)).not.toContain(removed.sessionId);
   });
 
+  it('leaves out one whose conversation continued in another session after its last turn, as /bg does, without following the target', async () => {
+    const continued = (extra: Entry = {}) => ({ type: 'continued-in', continuedInSessionId: newId(), sessionId: 'x', timestamp: ago(17), ...extra });
+    await write(app, [typed(app, ago(20), 'Start'), reply(app, ago(19), 'Moving to the background.'), continued()]);
+    // No usable target still counts: it isn't followed or checked.
+    await write(app, [typed(app, ago(20), 'Start'), reply(app, ago(19), 'Moving on.'), continued({ continuedInSessionId: undefined })]);
+    await write(app, [typed(app, ago(20), 'Start'), reply(app, ago(19), 'Moving on.'), continued({ continuedInSessionId: 42 }), { type: 'ai-title', aiTitle: 'Later metadata' }]);
+    const s = scanner();
+    await scan(s);
+    expect(ids(s)).toEqual([]);
+  });
+
+  it('lists one with a turn after its continued-in entry: the conversation came back to it', async () => {
+    const back = await write(app, [
+      typed(app, ago(20), 'Start'),
+      { type: 'continued-in', continuedInSessionId: newId(), sessionId: 'x', timestamp: ago(19) },
+      typed(app, ago(18), 'Back here in a terminal'),
+      reply(app, ago(17), 'Here.'),
+    ]);
+    const s = scanner();
+    await scan(s);
+    expect(ids(s)).toEqual([back.sessionId]);
+  });
+
   it('leaves out one with no typed prompt, and finds a typed prompt anywhere in the file, reading it in full only then', async () => {
     await write(app, [
       typed(app, ago(9), 'From the SDK', { promptSource: 'sdk' }),

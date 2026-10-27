@@ -11,6 +11,11 @@
 //   index filters by the current listing on every poll (sessions()), so none is ever in both;
 // - its newest user or assistant entry has no `sessionKind: "bg"`. One that last ran in the
 //   background was removed on purpose with `claude rm`, which keeps the transcript (finding 6);
+// - it has no `continued-in` entry after its newest user or assistant entry, in file order. Claude
+//   Code writes one when the conversation carries on under another session id, as `/bg` does, and
+//   that session is listed, or ended, under its own id: listing this one too would show the same
+//   conversation twice, and resuming it would bring back a stale branch. The entry's target isn't
+//   followed or checked;
 // - it has a typed prompt: `promptSource: "typed"` on a user entry that isn't meta;
 // - its start directory, the `cwd` of its first entry that has one, not a later entry's (which
 //   follows `cd`), encodes to its folder's name, because `claude --resume` looks the session up
@@ -33,7 +38,8 @@
 //   time, usually in the first KiB. A file that isn't `cli`, or whose folder isn't its start
 //   directory's, is never read again while it keeps its inode and only grows;
 // - its end, as the transcript reader first reads a listed session's (readNewestEntries): the last
-//   256 KiB, or 2 MiB when those lack a field.
+//   256 KiB, or 2 MiB when those lack a field. A `continued-in` entry sits after the last turn, so
+//   it's in that window whenever the last turn is.
 // Only when neither has a typed prompt does the read of its start go on to the end of the file, once
 // per change, and from where it stopped when the file has only grown. One file is read at a time,
 // yielding to the event loop between chunks and between files.
@@ -342,6 +348,8 @@ export function createEndedScanner(options: EndedScannerOptions = {}): EndedScan
     const { newest } = current.tail;
     // It last ran in the background, or no user or assistant entry was read to say.
     if (newest.inBackground !== false) return undefined;
+    // Its conversation carried on under another session id after its last turn.
+    if (newest.continuedElsewhere) return undefined;
 
     // A typed prompt: in what was read of its start or its end, or else in the rest of the file.
     if (!current.typed && !newest.typedPrompt && current.offset < entry.size) {
