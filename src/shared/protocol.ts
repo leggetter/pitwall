@@ -37,6 +37,28 @@ export interface AskedYou {
   excerpt: string;
 }
 
+/**
+ * Why a session needs you, judged from its context rather than from Claude
+ * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
+ * holds, in this order:
+ * - 'prompt': Claude Code is showing a prompt: status 'waiting', and
+ *   waitingFor says which.
+ * - 'claude-code': a background job's own line on what it needs, in `text`,
+ *   from the job's `state.json`. Not its start placeholder, "send a prompt to
+ *   start", which a resumed session shows though it asked nothing.
+ * - 'asked': its last turn ended by asking you something (askedYou).
+ * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
+ *   pitwall, and no prompt has been sent to it since.
+ * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why,
+ *   because the job's `state.json` was missing or unreadable. Kept so that a
+ *   question is never hidden.
+ */
+export interface NeedsYou {
+  reason: 'prompt' | 'claude-code' | 'asked' | 'restarted' | 'blocked';
+  /** For 'claude-code' only: Claude Code's line, as plain text, at most 200 characters. */
+  text?: string;
+}
+
 export interface SessionSummary {
   /** Full session UUID, usable with `claude --resume`. */
   sessionId: string;
@@ -115,9 +137,21 @@ export interface SessionSummary {
   /**
    * Set when the session has finished its turn and its newest assistant message
    * looks like it asked the user something, with no user prompt since. A
-   * heuristic over the transcript, not something Claude Code reports.
+   * heuristic over the transcript, not something Claude Code reports. The
+   * turn's end is read from the transcript (spike 007, finding 4), not from
+   * Claude Code's status, which a plugin's monitor or a restart can keep at
+   * busy. Never while a prompt is on screen, or on a stale session.
    */
   askedYou?: AskedYou;
+  /**
+   * Set when the session needs you, with the reason (NeedsYou). The index sets
+   * it on every snapshot, pitwall's first included, so after a restart Needs
+   * you reflects each session's context: `state: 'blocked'` alone no longer
+   * counts when pitwall could read the job's file. Never set on a stale or
+   * finished session. Needs you, its count and the sort's first rank are
+   * exactly the sessions that have it.
+   */
+  needsYou?: NeedsYou;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
