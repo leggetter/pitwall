@@ -255,13 +255,13 @@ The work after M3, on its own integration branch, `m3.1/integration`, merged int
     1. A prompt on screen.
     2. A background job's `needs` line, shown as the reason, unless it's the start placeholder.
     3. Its last turn asked you something, with the turn's end read from the transcript, since a plugin's monitor keeps Claude Code's status at busy.
-    4. You resumed it, or confirmed a restart, in this run of pitwall, and it's had no prompt since (Phil's words above).
+    4. You resumed it, or confirmed a restart, in this run of pitwall, and it's had no prompt since. Phil confirmed this reading of his words on 2026-10-27; the other reading, that waiting for a prompt never counts, was ruled out.
     5. `blocked` with a job file pitwall couldn't read, so a question is never hidden.
   - **Coordinator's calls:**
     - The index decides, not the web UI, so the count, the list and the sort agree.
     - A blocked session that doesn't need you loses the solid Blocked badge, since solid is for needs you only.
     - Reason 4 is kept in memory, so it ends when pitwall restarts. Pressing Resume or confirming the restart in this run is the click Phil meant.
-  - **Not now:** Claude Code's recap (`away_summary`, spike 007, finding 8) and a model's judgement. Both are M6's refinement of reason 3.
+  - **Not now:** Claude Code's recap (`away_summary`, spike 007, finding 8) and a model's judgement. Both are M6's refinement of reason 3, with the supervisor (Phil, 2026-10-27: as planned).
   - **Built as** W69, after W67, which touches the same web files.
 - **Directory autocomplete in New session** (Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). Today "Another directory under a root…" reveals a text field that takes an absolute path.
   - **Phil's choice:** keep the select of the directories that have sessions, and make "Another directory under a root…" reveal an autocomplete that narrows as you type: "It allow a new session in a previously worked directory or you to choose another dir via autocomplete."
