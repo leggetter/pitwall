@@ -5,7 +5,8 @@
 //
 // - Options: the open root tab's directories (W38), or every root's without tabs, each read as the
 //   root shortened with shortenHome(), then `/` and the path under it: `~/code/outpost`.
-// - Matching: case-insensitive. Every whitespace-separated term must appear in the path under the
+// - Matching: case-insensitive, and on NFC, so a name stored decomposed (NFD), as some file systems
+//   and tools write it, matches the same text typed composed. Every whitespace-separated term must appear in the path under the
 //   root, or, when the text starts with `~` or `/`, in the whole shortened path; one that starts with
 //   `/` may match the absolute path instead, so a pasted path finds its option.
 // - Ranking, on the last term, from its last `/`: the last segment equal to it, then the last segment
@@ -37,7 +38,7 @@ export interface DirectoryOption {
   repo: boolean;
   /** Levels below the root: 1 for its own folders. */
   depth: number;
-  /** For matching: lower-cased. */
+  /** For matching: composed (NFC) and lower-cased. */
   search: { rel: string; label: string; path: string; segments: string[] };
 }
 
@@ -95,7 +96,7 @@ export function directoryOptions(list: DirectoryList, roots: readonly string[], 
       const path = join(root, rel);
       if (rootOf(path, roots) !== root) continue;
       const label = join(short, rel);
-      const lower = rel.toLowerCase();
+      const lower = searchable(rel);
       options.push({
         path,
         label,
@@ -103,7 +104,7 @@ export function directoryOptions(list: DirectoryList, roots: readonly string[], 
         root,
         repo: repo === true,
         depth: rel.split('/').length,
-        search: { rel: lower, label: label.toLowerCase(), path: path.toLowerCase(), segments: lower.split('/') },
+        search: { rel: lower, label: searchable(label), path: searchable(path), segments: lower.split('/') },
       });
     }
   }
@@ -119,7 +120,7 @@ export interface DirectoryMatches {
 
 /** The options that match `text`, ranked, as the module comment says. */
 export function matchDirectories(options: readonly DirectoryOption[], text: string, limit = MAX_SHOWN): DirectoryMatches {
-  const query = text.trim().toLowerCase();
+  const query = searchable(text.trim());
   const terms = query.split(/\s+/).filter((term) => term !== '');
   const pathLike = query.startsWith('~') || query.startsWith('/');
   const last = terms[terms.length - 1] ?? '';
@@ -134,6 +135,11 @@ export function matchDirectories(options: readonly DirectoryOption[], text: stri
   }
   ranked.sort((a, b) => a.rank - b.rank || a.option.depth - b.option.depth || compareLabels(a.option, b.option));
   return { shown: ranked.slice(0, limit).map((each) => each.option), total: ranked.length };
+}
+
+/** Text as matching compares it: composed (NFC), then lower-cased. */
+function searchable(text: string): string {
+  return text.normalize('NFC').toLowerCase();
 }
 
 function rank(segments: readonly string[], key: string): number {

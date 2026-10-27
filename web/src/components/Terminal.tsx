@@ -133,7 +133,7 @@ export const NEW_LINE = '\n';
  * which Safari gives the key that ends a composition after its compositionend, with `isComposing`
  * already false. xterm.js handles both itself.
  */
-function isComposing(event: KeyboardEvent): boolean {
+export function isComposing(event: KeyboardEvent): boolean {
   return event.isComposing || event.keyCode === 229;
 }
 

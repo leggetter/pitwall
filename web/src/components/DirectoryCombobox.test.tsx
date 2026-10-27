@@ -267,6 +267,53 @@ describe('Another directory under a root…', () => {
     expect(isOpen(input)).toBe(false);
   });
 
+  it('leaves every key to an input method while it composes, Safari\'s 229 after compositionend included', async () => {
+    const server = fakeServer();
+    const { dialog, onClose } = renderDialog(server.fetch);
+    const input = await reveal(dialog);
+    fireEvent.change(input, { target: { value: 'demo' } });
+    // Choosing a candidate, then confirming the conversion, while composing.
+    expect(fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })).toBe(true);
+    expect(activeOption(input)).toBeNull();
+    key(input, 'ArrowDown');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    expect(fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })).toBe(true);
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    expect(fireEvent.keyDown(input, { key: 'Enter', isComposing: true })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })).toBe(true);
+    expect(input.value).toBe('demo');
+    expect(isOpen(input)).toBe(true);
+    // Composition over, the keys are the list's again.
+    key(input, 'Enter');
+    expect(input.value).toBe('~/code/demo-api');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(spawns(server.fetch)).toEqual([]);
+  });
+
+  it('sends exactly the path it shows: a chosen name with a space at its end, and then typed text, trimmed as before', async () => {
+    // The server leaves such names out; this one is made up to show the field and the request agree.
+    for (const space of [' ', '\u3000', '\u00a0']) {
+      const server = fakeServer({ status: 200, body: { roots: [{ root: CODE, dirs: [{ path: `notes${space}` }], truncated: false }] } });
+      const { dialog, unmount } = renderDialog(server.fetch);
+      const input = await reveal(dialog);
+      key(input, 'ArrowDown');
+      key(input, 'Enter');
+      expect(input.value).toBe(`~/code/notes${space}`);
+      fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+      await settle();
+      // Edited by a space or none, it's typed text again, trimmed as before.
+      fireEvent.change(input, { target: { value: `~/code/notes${space}${space}` } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+      await settle();
+      expect(spawns(server.fetch)).toEqual([
+        { cwd: `${CODE}/notes${space}`, prompt: 'go' },
+        { cwd: `${CODE}/notes`, prompt: 'go' },
+      ]);
+      unmount();
+    }
+  });
+
   it('closes on a press outside, or when focus moves to another element, but not when the window loses focus', async () => {
     const server = fakeServer();
     const { dialog } = renderDialog(server.fetch);
