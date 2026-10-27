@@ -4,6 +4,7 @@
 
 import type {
   ConversationEntry,
+  DirectoryList,
   IndexSnapshot,
   RelayAlert,
   RelayExchange,
@@ -850,6 +851,37 @@ export const TERMINAL_OUTPUT =
 
 /** The New session dialog's roots and directories. */
 export const DIALOG_SNAPSHOT: Pick<IndexSnapshot, 'roots' | 'groups'> = { roots: [ROOT], groups: [APP_GROUP, JOBS_GROUP, NOTES_GROUP] };
+
+/**
+ * The directories under the dialog's root, for "Another directory under a root…" (W70): the groups'
+ * repos and some folders around them, three levels deep at most, as the server lists them.
+ */
+export const DIALOG_DIRECTORIES: DirectoryList = {
+  roots: [
+    {
+      root: ROOT,
+      dirs: [
+        { path: 'pitwall-test-api', repo: true },
+        { path: 'pitwall-test-app', repo: true },
+        { path: 'pitwall-test-jobs', repo: true },
+        { path: 'pitwall-test-notes', repo: true },
+        { path: 'pitwall-test-scratch' },
+        { path: 'pitwall-test-app/docs' },
+        { path: 'pitwall-test-app/web' },
+        { path: 'pitwall-test-jobs/export' },
+        { path: 'pitwall-test-scratch/pitwall-test-spike' },
+        { path: 'pitwall-test-app/web/src' },
+        { path: 'pitwall-test-scratch/a-much-longer-folder-name-for-the-middle-ellipsis/and-then-some-more' },
+      ],
+      truncated: false,
+    },
+  ],
+};
+
+/** 312 directories, more than the list shows at once. */
+export const MANY_DIRECTORIES: DirectoryList = {
+  roots: [{ root: ROOT, dirs: Array.from({ length: 312 }, (_, i) => ({ path: `pitwall-test-project-${String(i + 1).padStart(3, '0')}` })), truncated: false }],
+};
 
 /** The trust failure's command, as the server would send it. */
 export const TRUST_HINT = `cd ${APP_DIR} && claude`;

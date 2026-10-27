@@ -9,7 +9,7 @@ import { Badge, StatusBadge } from '../components/Badge.js';
 import { ConnectionBadge } from '../components/ConnectionBadge.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
 import { Dashboard } from '../components/Dashboard.js';
-import { NewSessionDialog } from '../components/NewSessionDialog.js';
+import { DIRECTORY_TEXT, NewSessionDialog } from '../components/NewSessionDialog.js';
 import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, type PreferencesProps } from '../components/Preferences.js';
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
@@ -82,10 +82,33 @@ async function fill(root: HTMLElement, values: { directory?: string; path?: stri
 
 const OTHER_DIRECTORY = 'Another directory under a root…';
 
+/**
+ * Chooses "Another directory under a root…", which reveals the combobox with focus in it, waits for
+ * `ready` inside the dialog, then types `typed` and presses `keys` there, as a person would (W70).
+ */
+async function another(root: HTMLElement, ready: string, typed?: string, keys: string[] = []): Promise<HTMLInputElement> {
+  choose(await field<HTMLSelectElement>(root, 'Directory'), OTHER_DIRECTORY);
+  const input = await element<HTMLInputElement>(root, 'input[role="combobox"]');
+  await text(root, ready);
+  // A moment between each, as between a person's keys, so each sees what the last one did.
+  const next = () => new Promise((resolve) => setTimeout(resolve, 16));
+  if (typed !== undefined) {
+    type(input, typed);
+    await next();
+  }
+  for (const key of keys) {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    await next();
+  }
+  return input;
+}
+
 interface DialogCase {
   title: string;
   note?: string;
   options?: StubOptions;
+  /** A waiting state's spinner shows at once. */
+  waited?: 'shown';
   run?: (root: HTMLElement) => Promise<unknown>;
 }
 
@@ -102,6 +125,56 @@ const DIALOG_CASES: DialogCase[] = [
     title: 'A typed directory and model',
     note: 'The two choices that reveal a field.',
     run: (root) => fill(root, { directory: OTHER_DIRECTORY, path: `${ROOT}/pitwall-test-new-dir`, model: 'Other…', alias: 'sonnet', prompt: PROMPT }),
+  },
+  {
+    title: 'Another directory: the list',
+    note: 'Choosing "Another directory under a root…" reveals the combobox, with focus in it and its list open: the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses, Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.',
+    run: (root) => another(root, '~/code/pitwall-test-api'),
+  },
+  {
+    title: 'Another directory: narrowed, one highlighted',
+    note: 'Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it. ↓ highlights an option; the field keeps focus.',
+    run: (root) => another(root, '~/code/pitwall-test-api', 'app', ['ArrowDown', 'ArrowDown']),
+  },
+  {
+    title: 'Another directory: chosen',
+    note: 'Enter or a click puts the option in the field, as the shortened path, and closes the list. The request sends the absolute path.',
+    run: (root) => another(root, '~/code/pitwall-test-api', 'web', ['ArrowDown', 'Enter']),
+  },
+  {
+    title: 'Another directory: loading',
+    note: 'The list is fetched once per opening of the dialog, the first time this is chosen. Typing narrows it in the page, with no requests.',
+    options: { directories: 'loading' },
+    waited: 'shown',
+    run: (root) => another(root, DIRECTORY_TEXT.loading),
+  },
+  {
+    title: 'Another directory: many',
+    note: 'The best 50, then how many there are. A screen reader hears the count a moment after the typing stops.',
+    options: { directories: 'many' },
+    run: (root) => another(root, DIRECTORY_TEXT.narrow),
+  },
+  {
+    title: 'Another directory: none match',
+    note: 'A typed path still works, as before: any directory under the root, deeper than three levels too.',
+    run: (root) => another(root, '~/code/pitwall-test-api', '~/code/pitwall-test-app/web/src/deeper/still'),
+  },
+  {
+    title: 'Another directory: none to list',
+    options: { directories: 'empty' },
+    run: (root) => another(root, DIRECTORY_TEXT.empty),
+  },
+  {
+    title: 'Another directory: not every one listed',
+    note: 'The server stops a root at 5,000 directories or after 2 seconds.',
+    options: { directories: 'truncated' },
+    run: (root) => another(root, DIRECTORY_TEXT.truncated),
+  },
+  {
+    title: "Another directory: couldn't list them",
+    note: 'The field still takes a typed path, with the hint linked to it.',
+    options: { directories: 'failed' },
+    run: (root) => another(root, DIRECTORY_TEXT.failed, '~/code/pitwall-test-new-dir'),
   },
   {
     title: 'Submitted empty',
@@ -154,7 +227,7 @@ export function Dialogs() {
   return (
     <>
       {DIALOG_CASES.map((dialog) => (
-        <Specimen key={dialog.title} title={dialog.title} note={dialog.note} frame="dialog">
+        <Specimen key={dialog.title} title={dialog.title} note={dialog.note} frame="dialog" waited={dialog.waited}>
           <Stubbed options={dialog.options}>
             <Reopenable>
               {(close) => {
