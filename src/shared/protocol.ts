@@ -624,9 +624,10 @@ export interface DirectoryList {
 }
 
 /**
- * Result of stop and remove. Both apply to background sessions only; others
- * get 409, ended interactive sessions included. More than 4 stop, remove or
- * resume commands at once get 429 with `Retry-After`.
+ * Result of stop, remove and open in an editor. Stop and remove apply to
+ * background sessions only; others get 409, ended interactive sessions
+ * included. More than 4 stop, remove, resume or open commands at once get 429
+ * with `Retry-After`.
  */
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -678,6 +679,55 @@ export type ResumeResult =
  */
 export function resumePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/resume`;
+}
+
+/**
+ * An editor pitwall's server can open a session's directory in (Phil,
+ * 2026-10-23: "open in editor such as code or cursor", option A: the server
+ * opens it, since a browser can't tell what's installed).
+ */
+export type EditorId = 'vscode' | 'cursor';
+
+export interface Editor {
+  id: EditorId;
+  /** As shown, such as "VS Code" or "Cursor". */
+  label: string;
+}
+
+/**
+ * The editors found on this machine, answered with an EditorList. GET, no
+ * query. The server looks once, at startup: on macOS for each editor's app
+ * bundle in /Applications or ~/Applications, opened with /usr/bin/open -a;
+ * elsewhere for its command on PATH (`code`, `cursor`), resolved to an
+ * absolute path then. An empty list means none was found, and the web UI
+ * offers nothing.
+ */
+export const EDITORS_PATH = '/api/editors';
+
+export interface EditorList {
+  editors: Editor[];
+}
+
+/** Body of a POST to openInEditorPath(). */
+export interface OpenInEditorRequest {
+  editor: EditorId;
+}
+
+/**
+ * Open a listed session's own `cwd` in an editor from EditorList, answered
+ * with an ActionResult. POST with an OpenInEditorRequest. The directory is
+ * always the snapshot's, never one the request names; the editor runs with no
+ * shell and a scrubbed environment.
+ *
+ * - 400 for a malformed body or an editor that isn't in EditorList.
+ * - 404 when the snapshot doesn't list the session; 409 when its directory
+ *   no longer exists (`cwdMissing`).
+ * - 429 with `Retry-After`, sharing stop, remove and resume's limit.
+ * - 502 when the editor failed to start, and 504 when it didn't return within
+ *   10 seconds.
+ */
+export function openInEditorPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/open`;
 }
 
 // ---------------------------------------------------------------------------
