@@ -11,12 +11,14 @@
 //   Tab from the last group's choice goes round to the first (W59).
 // - Its header and footer are plain elements, not <header> and <footer>, which outside a sectioning
 //   element would be the page's banner and contentinfo landmarks.
-// - Escape closes it, and goes no further, so the session view behind stays open. A click on the
+// - Escape closes it, and goes no further, so the session view behind stays open. An Escape that ends
+//   an input method's composition is the input method's: it closes nothing. A click on the
 //   backdrop closes it only when nothing has been typed. While its action runs (`busy`), neither does,
 //   and Close is aria-disabled.
 
 import { useEffect, useId, useRef, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { Icon } from './Icon.js';
+import { isComposing } from '../composing.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
 import './Dialog.css';
 
@@ -86,6 +88,11 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
 
   const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
+      // The input method's, ending a composition: nothing closes, and nothing behind hears it either.
+      if (isComposing(event.nativeEvent)) {
+        event.stopPropagation();
+        return;
+      }
       // Handled here, so the session view behind doesn't close too.
       event.preventDefault();
       event.stopPropagation();

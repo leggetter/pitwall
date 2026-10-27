@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
-import { isComposing } from './Terminal.js';
+import { isComposing } from '../composing.js';
 import { plainText } from '../format.js';
 
 export interface ComboboxOption {
