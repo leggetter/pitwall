@@ -413,7 +413,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       }
       let result: CommandResult;
       try {
-        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: env(), timeoutMs });
+        // PWD is the directory it runs in, as for resume: a new session records where it started.
+        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...env(), PWD: spawn.cwd }, timeoutMs });
       } finally {
         slot.release();
       }
