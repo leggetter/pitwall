@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type { AttachClientMessage, ConversationPage, IndexSnapshot, RelayResult, ResumeResult, SpawnRequest, SpawnResult } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, DEMO_APP, NAMES, terminalScreen, World, type ResetOptions } from './fixtures.js';
+import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -175,27 +175,35 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   /**
    * Resume in background (W67): NAMES.ended resumes, and is listed as a running background session a
    * moment later, as the index lists it on a later poll; each other ended session fails one way, by
-   * its name, as resumePath()'s contract has them.
+   * its name, with W66's status and words (src/server/actions.ts), the paths made up.
    */
   function resume(req: IncomingMessage, res: ServerResponse, sessionId: string) {
     const session = world.session(sessionId);
-    if (!session?.ended) return json(res, 409, { ok: false, error: 'Made up: only an ended interactive session can be resumed.' } satisfies ResumeResult);
-    if (session.cwdMissing) return json(res, 409, { ok: false, error: 'Made up: its directory no longer exists.' } satisfies ResumeResult);
+    if (!session?.ended) return json(res, 409, { ok: false, error: 'Only an interactive session that has ended can be resumed from pitwall.' } satisfies ResumeResult);
+    if (session.cwdMissing) {
+      return json(res, 409, { ok: false, error: `It started in ${session.cwd}, which no longer exists, and Claude Code resumes a session only from where it started.` } satisfies ResumeResult);
+    }
     records.resumes.push(session.name);
     switch (session.name) {
       case NAMES.endedAsked:
-        return json(res, 422, { ok: false, error: "Made up: Claude Code hasn't trusted this directory.", hint: `cd ${DEMO_APP} && claude` } satisfies ResumeResult);
+        return json(res, 422, {
+          ok: false,
+          error: `Workspace not trusted. Run \`claude\` in ${session.cwd} once and accept the trust prompt, then retry.`,
+          hint: `cd ${session.cwd} && claude`,
+        } satisfies ResumeResult);
       case NAMES.endedCopy:
         return json(res, 409, {
           ok: false,
-          error: `note: made up: the session is open in another Claude Code process, so this started a copy as ${COPY_SHORT_ID}. The original conversation is unchanged.`,
+          error: `It was open in another Claude Code process after all, so Claude Code started a copy as ${COPY_SHORT_ID} instead. The copy is listed as a background session with no name, which you can stop and remove.`,
           copyShortId: COPY_SHORT_ID,
         } satisfies ResumeResult);
       case NAMES.endedBusy:
         res.setHeader('Retry-After', '1');
-        return json(res, 429, { ok: false, error: 'Made up: pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' } satisfies ResumeResult);
+        return json(res, 429, { ok: false, error: 'pitwall is already running 4 stop, remove or resume commands. Try again in a moment.' } satisfies ResumeResult);
       case NAMES.endedRefused:
-        return json(res, 409, { ok: false, error: 'Made up: claude agents lists it again, so it may be open in a terminal.' } satisfies ResumeResult);
+        return json(res, 409, { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." } satisfies ResumeResult);
+      case NAMES.endedSlow:
+        return json(res, 504, { ok: false, error: "claude --resume didn't finish within 30s. The session may still appear in the list." } satisfies ResumeResult);
       case NAMES.endedNoAnswer:
         // No answer at all: the connection closes, as when pitwall stops in the middle of one.
         req.socket.destroy();

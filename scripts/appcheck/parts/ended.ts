@@ -24,32 +24,38 @@ const ALERT = `${VIEW}?.querySelector('.resume-failure')`;
 const NOTE_TEXT = 'It ended when its Claude Code process exited. Resume it here in the background, or copy the command that resumes it in a terminal.';
 const GONE_TEXT = "It ended when its Claude Code process exited, and its directory no longer exists, so it can't be resumed.";
 
-/** The ways a resume fails, by the session the fake server fails it for. */
+/** The ways a resume fails, by the session the fake server fails it for, in W66's words. */
 const FAILURES = [
   {
     name: NAMES.endedAsked,
-    what: 'not trusted: a danger alert with the command to run',
+    what: "422, not trusted: Claude Code's line, and the command to run",
     tone: 'danger',
-    text: "Couldn't resume the session. Made up: Claude Code hasn't trusted this directory.pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then resume it again:",
+    text: `Couldn't resume the session. Workspace not trusted. Run \`claude\` in ${DEMO_APP} once and accept the trust prompt, then retry.pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then resume it again:`,
     command: `cd ${DEMO_APP} && claude`,
   },
   {
     name: NAMES.endedCopy,
-    what: 'a copy started instead: a warning with its short id',
+    what: "409, a copy started instead: a warning in the server's words alone",
     tone: 'warning',
-    text: `Claude Code started a copy insteadIt's open in another Claude Code process, so the copy, ${COPY_SHORT_ID}, is listed as a background session. note: made up: the session is open in another Claude Code process, so this started a copy as ${COPY_SHORT_ID}. The original conversation is unchanged.`,
+    text: `Claude Code started a copy insteadIt was open in another Claude Code process after all, so Claude Code started a copy as ${COPY_SHORT_ID} instead. The copy is listed as a background session with no name, which you can stop and remove.`,
   },
   {
     name: NAMES.endedBusy,
     what: "429: a danger alert with pitwall's reason",
     tone: 'danger',
-    text: "Couldn't resume the session. Made up: pitwall is already running 4 stop, remove or resume commands. Try again in a moment.",
+    text: "Couldn't resume the session. pitwall is already running 4 stop, remove or resume commands. Try again in a moment.",
   },
   {
     name: NAMES.endedRefused,
-    what: "409: a danger alert with pitwall's reason",
+    what: '409, running again: a danger alert with the reason',
     tone: 'danger',
-    text: "Couldn't resume the session. Made up: claude agents lists it again, so it may be open in a terminal.",
+    text: "Couldn't resume the session. It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy.",
+  },
+  {
+    name: NAMES.endedSlow,
+    what: '504, too slow: a danger alert with the reason',
+    tone: 'danger',
+    text: "Couldn't resume the session. claude --resume didn't finish within 30s. The session may still appear in the list.",
   },
   { name: NAMES.endedNoAnswer, what: "no answer: a danger alert, pitwall's sentence alone", tone: 'danger', text: "Couldn't resume the session." },
 ] as const;
@@ -78,12 +84,12 @@ const part: Part = {
 
     await t.step('ended sessions are in their group’s Finished section, labelled Ended, muted, and never in Needs you', async () => {
       await t.fresh({ search: '?view=all' });
-      t.expectEqual(await page.evaluate(SUMMARY), '17 sessions', 'the summary counts the ones from the last 7 days');
-      t.expectEqual(await page.evaluate(TOGGLE), 'Finished (8) · 1 asked you', 'the finished background session and the seven ended ones, one of which asked');
+      t.expectEqual(await page.evaluate(SUMMARY), '18 sessions', 'the summary counts the ones from the last 7 days');
+      t.expectEqual(await page.evaluate(TOGGLE), 'Finished (9) · 1 asked you', 'the finished background session and the eight ended ones, one of which asked');
       await openFinished(t);
       t.expectEqual(
         await page.evaluate(ENDED_ROWS),
-        [NAMES.endedAsked, NAMES.ended, NAMES.endedCopy, NAMES.endedBusy, NAMES.endedRefused, NAMES.endedNoAnswer, NAMES.endedGone],
+        [NAMES.endedAsked, NAMES.ended, NAMES.endedCopy, NAMES.endedBusy, NAMES.endedRefused, NAMES.endedNoAnswer, NAMES.endedSlow, NAMES.endedGone],
         'the ended rows, newest first',
       );
       t.expect(
@@ -108,7 +114,7 @@ const part: Part = {
       const names = await page.evaluate<string[]>(rowNames);
       t.expect(names.includes(NAMES.endedOld) && names.includes(NAMES.endedOldOnly), 'the older ones are listed', names);
       t.expectEqual(names.slice(-2), [NAMES.endedOld, NAMES.endedOldOnly], 'last, oldest last');
-      t.expectEqual(await page.evaluate(SUMMARY), '19 sessions', 'and counted');
+      t.expectEqual(await page.evaluate(SUMMARY), '20 sessions', 'and counted');
       t.expect((await labels()).includes('docs-site'), 'docs-site is in the repo list');
       await t.shot('show-older');
     });
@@ -180,6 +186,7 @@ const part: Part = {
         t.expectEqual(await page.evaluate(`${ALERT}.getAttribute('role')`), 'alert', 'announced');
         const shown = await page.evaluate<string>(`${ALERT}.textContent`);
         t.expect(shown.startsWith(failure.text), 'what it says', shown);
+        if (failure.tone === 'warning') t.expect(!(await page.evaluate(`!!${ALERT}.querySelector('.alert-detail')`)), "the server's sentence alone, as text");
         if ('command' in failure) t.expectEqual(await page.evaluate(`${ALERT}.querySelector('.command-chip')?.textContent`), failure.command, 'the command to run, in a chip');
         t.expectEqual(await page.evaluate(focused), 'Resume in background', 'focus stays on Resume in background');
         t.expect(await page.evaluate(`${footButton('Resume in background')}.getAttribute('aria-busy') === null`), 'which is idle again');
