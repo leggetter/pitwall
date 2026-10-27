@@ -167,6 +167,14 @@ export interface SessionSummary {
    */
   relay?: RelayExchange;
   /**
+   * How many of the session's sub-agents are running (SubagentState
+   * 'running'), when at least one is, for the row's "· 2 sub-agents running"
+   * (W76; coordinator's call, Phil, 2026-10-27: "You'll know"). Only while the
+   * session's process is alive. The session view's Sub-agents tab lists them
+   * through subagentsPath().
+   */
+  subagentsRunning?: number;
+  /**
    * The repos under a configured root that this session worked in, other than
    * the one it started in, newest touch first (W34, spike 004). A repo counts
    * when the session changed it, or when at least 5% of its tool calls,
@@ -458,6 +466,14 @@ export interface ConversationEntry {
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
   /**
+   * The session's sub-agent this entry is about (W76): on a 'cross-session'
+   * entry its report or message came from, and on a 'tool' entry the Agent
+   * call that started it or the SendMessage call sent to it. The UI labels the
+   * entry by its description rather than its id, and links to it in the
+   * Sub-agents tab.
+   */
+  subagent?: { agentId: string; description: string };
+  /**
    * For 'question': the questions asked, in order, at most 8 (W49). Their text
    * counts toward the page's budget, and past it each string is cut to 512 and
    * the entry marked `truncated`.
@@ -496,6 +512,82 @@ export const CONVERSATION_STALE_STATUS = 410;
 // because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
 export function conversationPath(sessionId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
+  return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-agents (W76, W77; Phil, 2026-10-23: "How are sub-agents from a session
+// shown in pitwall?", and 2026-10-27). Read-only, from the session's
+// transcript folder: each sub-agent has a transcript and a meta file beside
+// the session's own, and the session's transcript records when one starts and
+// how it ends. Internal formats, behind the transcript adapter, failing soft.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a sub-agent is.
+ * - 'running': started, with no end recorded, while the session's process is
+ *   alive.
+ * - 'done', 'failed' and 'stopped': how it ended, from its task
+ *   notification's status (completed; failed; killed or stopped), or, for one
+ *   the session waited for, from its tool call's result (an error is
+ *   'failed').
+ * - 'unknown': no end recorded, and the session's process isn't alive, so it
+ *   isn't running either.
+ */
+export type SubagentState = 'running' | 'done' | 'failed' | 'stopped' | 'unknown';
+
+export interface SubagentSummary {
+  /** Claude Code's id for it, such as `a7bfea4102a9f1853`: letters and digits only. */
+  agentId: string;
+  /**
+   * The description it was started with, as plain text with control and bidi
+   * characters removed, at most 200 characters. "Sub-agent" when there's none.
+   */
+  description: string;
+  /** Its type, such as `general-purpose` or `Explore`, when recorded. */
+  agentType?: string;
+  /** True when the session went on while it ran, false when it waited for it. Absent when not recorded. */
+  background?: boolean;
+  state: SubagentState;
+  /** The agentId of the sub-agent that started this one, when the session itself didn't. */
+  startedBy?: string;
+  /** ISO 8601: its first and newest transcript entries, when readable. */
+  startedAt?: string;
+  lastActivityAt?: string;
+  /** How many tool calls its transcript records. */
+  toolCalls: number;
+}
+
+/** The most sub-agents a SubagentList carries. */
+export const SUBAGENTS_MAX = 200;
+
+export interface SubagentList {
+  sessionId: string;
+  /** Running ones first, then the newest started first. At most SUBAGENTS_MAX. */
+  subagents: SubagentSummary[];
+  /** True when the session had more than SUBAGENTS_MAX, and the oldest were left out. */
+  truncated: boolean;
+}
+
+/**
+ * GET: the SubagentList of a session in the current snapshot. An unlisted
+ * session gets 404, and one with no sub-agents an empty list. Shares the
+ * conversation reads' limit: more than 4 reads at once get 429 with
+ * `Retry-After`.
+ */
+export function subagentsPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/subagents`;
+}
+
+/**
+ * GET: a ConversationPage of one sub-agent's transcript, newest page first,
+ * with `before` cursors, exactly as conversationPath() pages a session's. The
+ * page's `sessionId` is the session's. 404 unless the session is listed and
+ * the agent is one of its sub-agents; 410 for a stale cursor; the same limit
+ * as conversationPath().
+ */
+export function subagentConversationPath(sessionId: string, agentId: string, before?: string): string {
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(agentId)}/conversation`;
   return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
 }
 
