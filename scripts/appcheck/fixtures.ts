@@ -46,8 +46,8 @@ export const NAMES = {
   blog: 'pitwall-test-blog-notes',
   /**
    * Ended interactive sessions (W67), in demo-app's Finished section, all from the last 7 days. The
-   * fake server's resume answers each by its name: `ended` resumes, and is listed a moment later as a
-   * running background session under the same id; the rest fail, one way each.
+   * fake server's resume answers each by its name, in W66's words: `ended` resumes, and is listed a
+   * moment later as a running background session under the same id; the rest fail, one way each.
    */
   ended: 'pitwall-test-ended-notes',
   /** Ended, having asked something, so never in Needs you. Resume: refused, with the command that trusts the directory. */
@@ -56,8 +56,10 @@ export const NAMES = {
   endedCopy: 'pitwall-test-ended-copy',
   /** Resume: 429, with Retry-After. */
   endedBusy: 'pitwall-test-ended-busy',
-  /** Resume: 409, with pitwall's reason. */
+  /** Resume: 409, it's running again. */
   endedRefused: 'pitwall-test-ended-refused',
+  /** Resume: 504, `claude --resume` didn't finish in time. */
+  endedSlow: 'pitwall-test-ended-slow',
   /** Resume: no answer at all, the connection closed. */
   endedNoAnswer: 'pitwall-test-ended-no-answer',
   /** Ended, and its directory has gone, so it can't be resumed. */
@@ -281,6 +283,7 @@ export class World {
       ended(NAMES.endedRefused, 4),
       ended(NAMES.endedNoAnswer, 4.5),
       ended(NAMES.endedGone, 5, { cwd: `${DEMO_APP}/.claude/worktrees/pitwall-test-gone`, cwdMissing: true }),
+      ended(NAMES.endedSlow, 4.75),
       ended(NAMES.endedOld, 10),
       ended(NAMES.endedOldOnly, 20, { cwd: DOCS_SITE }),
     ];
