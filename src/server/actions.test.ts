@@ -2,7 +2,7 @@
 // with a fake command runner, so no test ever runs `claude`. Made-up sessions
 // only.
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,6 +49,8 @@ let root: string;
 let repo: string;
 let outside: string;
 let webRoot: string;
+/** A second directory under the root, for a symlink that's swapped to it. */
+let otherDir: string;
 
 beforeAll(async () => {
   tmp = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-test-actions-')));
@@ -64,6 +66,8 @@ beforeAll(async () => {
   await writeFile(join(repo, 'README.md'), 'not a directory');
   await symlink(outside, join(root, 'escape'));
   await symlink(join(repo, 'packages'), join(root, 'alias'));
+  otherDir = join(root, 'other');
+  await mkdir(otherDir, { recursive: true });
 });
 
 afterAll(async () => {
@@ -81,6 +85,8 @@ const ENDED_MISSING_ID = '88888888-8888-4888-8888-888888888888';
 const ENDED_GONE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ENDED_ESCAPE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ENDED_QUOTED_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+/** Ended sessions some W81 tests add to the snapshot. */
+const ENDED_LINK_ID = '12345678-1234-4234-8234-123456789abc';
 
 function session(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sessionId'>): SessionSummary {
   return {
@@ -128,6 +134,13 @@ function snapshot(): IndexSnapshot {
     ],
     source: { ok: true },
   };
+}
+
+/** snapshot(), with `extra` sessions in its group. */
+function snapshotWith(...extra: SessionSummary[]): IndexSnapshot {
+  const base = snapshot();
+  base.groups[0]?.sessions.push(...extra);
+  return base;
 }
 
 /** An index holding `latest`; `null` for one that hasn't finished its first poll. */
@@ -848,19 +861,21 @@ describe('resume (W66)', () => {
     expect(started.run.calls).toEqual([]);
   });
 
-  it('answers 409 when its directory has gone, by the snapshot or found afresh, or now leads outside the roots', async () => {
+  it('answers 409 when its directory has gone, by the snapshot or found afresh after the fresh claude agents, or now leads outside the roots', async () => {
     const agents = fakeAgents();
     const started = await start(fakeRunner(resumedOutput()), { agents });
     const missing = await postAsPage(started, resumePath(ENDED_MISSING_ID));
     expect(missing.status).toBe(409);
     expect(errorOf(missing)).toMatch(/no longer exists/);
+    expect(agents.list).not.toHaveBeenCalled();
     const gone = await postAsPage(started, resumePath(ENDED_GONE_ID));
     expect(gone.status).toBe(409);
     expect(errorOf(gone)).toMatch(/doesn't exist/);
     const escape = await postAsPage(started, resumePath(ENDED_ESCAPE_ID));
     expect(escape.status).toBe(409);
     expect(errorOf(escape)).toMatch(/isn't under the root/);
-    expect(agents.list).not.toHaveBeenCalled();
+    // Checked after the listing, immediately before the run (W81).
+    expect(agents.list).toHaveBeenCalledTimes(2);
     expect(started.run.calls).toEqual([]);
   });
 
@@ -1009,6 +1024,56 @@ describe('resume (W66)', () => {
     expect(agents.list).not.toHaveBeenCalled();
     expect(started.run.calls).toEqual([]);
     expect(early.run.calls).toEqual([]);
+  });
+});
+
+describe('resume, hardened after the W73 security look (W81)', () => {
+  const worker = () => join(repo, 'packages', 'worker');
+  const errorOf = (res: HttpResult) => (res.json as { error: string }).error;
+
+  /** A fresh `claude agents` that, as the security look's probe did, points `link` at `target` while it runs. */
+  function swapping(link: string, target: string) {
+    const agents = fakeAgents();
+    agents.list.mockImplementation(async () => {
+      await unlink(link);
+      await symlink(target, link);
+      return agents.result;
+    });
+    return agents;
+  }
+
+  describe('1: it runs in the realpath checked immediately before it starts', () => {
+    it('runs nothing when a symlink is swapped to outside the roots during the fresh claude agents', async () => {
+      const link = join(root, 'swapped-out');
+      await symlink(worker(), link);
+      const agents = swapping(link, outside);
+      const started = await start(fakeRunner(resumedOutput()), { agents }, fakeIndexer(snapshotWith(ended(ENDED_LINK_ID, link))));
+      const res = await postAsPage(started, resumePath(ENDED_LINK_ID));
+      expect(res.status).toBe(409);
+      expect(errorOf(res)).toBe(`${link} isn't under the root: ${root}.`);
+      expect(agents.list).toHaveBeenCalledTimes(1);
+      expect(started.run.calls).toEqual([]);
+    });
+
+    it('runs in the realpath it checked, never the snapshot path, when the symlink is swapped to another directory under the root', async () => {
+      const link = join(root, 'swapped-in');
+      await symlink(worker(), link);
+      const started = await start(fakeRunner(resumedOutput()), { agents: swapping(link, otherDir) }, fakeIndexer(snapshotWith(ended(ENDED_LINK_ID, link))));
+      expect((await postAsPage(started, resumePath(ENDED_LINK_ID))).status).toBe(200);
+      const [call] = started.run.calls;
+      expect(call?.options.cwd).toBe(otherDir);
+      // PWD names the path it started in, which the check resolved to where it runs.
+      expect(call?.options.env.PWD).toBe(link);
+    });
+
+    it('runs a session that started through a symlink in its realpath, with PWD the path it started in, whose project folder holds it', async () => {
+      const viaAlias = join(root, 'alias', 'worker');
+      const started = await start(fakeRunner(resumedOutput()), { env: { PATH: '/usr/bin', PWD: '/Users/example/pitwall' } }, fakeIndexer(snapshotWith(ended(ENDED_LINK_ID, viaAlias))));
+      expect((await postAsPage(started, resumePath(ENDED_LINK_ID))).status).toBe(200);
+      const [call] = started.run.calls;
+      expect(call?.options.cwd).toBe(worker());
+      expect(call?.options.env).toEqual({ PATH: '/usr/bin', PWD: viaAlias });
+    });
   });
 });
 

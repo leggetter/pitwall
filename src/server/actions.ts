@@ -32,10 +32,11 @@
 //     200  resumed: { ok: true, shortId }, the id `claude attach` takes. It waits for a prompt,
 //          and needs you until you send one (Indexer.noteRestart, NeedsYou's 'restarted', W69)
 //     400, 404, 503  from resolveSession()
-//     409  not an ended session (SessionSummary.ended); its directory has gone, or is no longer a
-//          directory under a root; a resume of it is already running; a fresh `claude agents`
-//          lists it, as when its terminal is open again (spike 006, finding 5); or Claude Code
-//          started a copy instead, with `copyShortId`, which pitwall leaves for the user
+//     409  not an ended session (SessionSummary.ended); a resume of it is already running; a fresh
+//          `claude agents` lists it, as when its terminal is open again (spike 006, finding 5);
+//          then, checked after that listing, immediately before the run, its directory has gone,
+//          or no longer resolves to a directory under a root (W81); or Claude Code started a copy
+//          instead, with `copyShortId`, which pitwall leaves for the user
 //     422  Claude Code says the workspace isn't trusted, with `hint`, as for spawn
 //     429  as for stop and remove, whose limit it shares
 //     502  the fresh `claude agents` failed, so nothing was resumed; or Claude Code failed,
@@ -46,9 +47,9 @@
 // and for stop and remove the `shortId` of the session resolveSession()
 // returned, never the raw route parameter. `claude rm` never gets
 // `--discard-unpushed` or `--force-remove-worktree`. Resume runs in the
-// resolved session's own `cwd`, never a directory the request names, with
-// `PWD` set to it, its `sessionId` and no prompt, so no message text is on the
-// command line.
+// realpath of the resolved session's own `cwd`, checked immediately before it
+// starts, never a directory the request names, with `PWD` set to that `cwd`,
+// its `sessionId` and no prompt, so no message text is on the command line.
 import { realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -189,8 +190,9 @@ export async function validateSpawnRequest(body: unknown, roots: readonly string
 
 /**
  * Whether `cwd` is still a directory under one of `roots`, through its realpath, so a symlink that now
- * points outside them is refused. Resume and open in an editor check a listed session's own directory
- * with it afresh, since it may have gone, or changed, since the poll.
+ * points outside them is refused. Spawn, resume and open in an editor all check with it, and run in
+ * the `path` it returns, never in `cwd` itself; resume and open check a listed session's own directory
+ * afresh, immediately before they run, since it may have gone, or changed, since the poll.
  */
 export async function checkDirectory(cwd: unknown, roots: readonly string[]): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   if (typeof cwd !== 'string' || cwd === '') return invalid('The directory is required.');
@@ -552,10 +554,6 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
     if (!release) return answer(busy(c), 429);
     resuming.add(sessionId);
     try {
-      // Afresh, as spawn checks its directory: it may have gone, or changed, since the poll.
-      const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
-      if (!dir.ok) return answer({ ok: false, error: dir.error }, 409);
-
       // A session that's open in a terminal again gets an unnamed copy, and Claude Code still exits 0
       // (spike 006, finding 5), so it's checked first, and nothing runs when the check can't be made.
       const listing = await agents.list();
@@ -570,10 +568,21 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
         );
       }
 
-      // PWD is the directory it runs in, not pitwall's own, which childEnvironment() passes on. Claude
-      // Code finds the session in that directory's project folder: a CLI that prefers PWD to the real
-      // cwd, to keep a symlinked path, would otherwise look in pitwall's.
-      const result = await run(claudeBin, resumeArgs(sessionId), { cwd, env: { ...env(), PWD: cwd }, timeoutMs });
+      // Afresh, as spawn checks its directory, and only now, after the listing, which can take 10 s:
+      // it may have gone, or been swapped for a symlink that leads elsewhere, since the poll (W73, W81).
+      // Nothing that can wait comes between this check and the run.
+      const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
+      if (!dir.ok) return answer({ ok: false, error: dir.error }, 409);
+
+      // It runs in the realpath just checked, never the snapshot's path, so a symlink swapped after
+      // the check can't move it. PWD is the snapshot's `cwd`, not pitwall's own, which
+      // childEnvironment() passes on: Claude Code finds the session in the project folder of the
+      // directory it started in, and a CLI that prefers PWD to the real cwd, to keep a symlinked path,
+      // would otherwise look in pitwall's, or, given the realpath, in the realpath's, which isn't the
+      // one a session started through a symlink is in. The check just resolved that `cwd` to
+      // `dir.path`, so the two name the same directory; one that no longer resolves to a directory
+      // under a root was refused with 409 above, rather than run with PWD set to the realpath.
+      const result = await run(claudeBin, resumeArgs(sessionId), { cwd: dir.path, env: { ...env(), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
           indexer.pollSoon();
