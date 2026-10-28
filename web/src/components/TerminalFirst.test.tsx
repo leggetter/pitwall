@@ -602,7 +602,9 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
       const rootTab = (root: string) => screen.getAllByRole('tab').find((candidate) => candidate.classList.contains('root-tab') && candidate.querySelector('.root-tab-label')?.textContent === `~/${root.split('/').at(-1)}`)!;
       const { sockets, update } = renderDashboard(twoRoots(), { search: '' });
       await startSession();
-      const newSession = document.activeElement;
+      // The dialog has given focus back to New session by the time it has gone (W83).
+      const newSession = screen.getByRole('button', { name: 'New session' });
+      expect(document.activeElement).toBe(newSession);
       fireEvent.click(rootTab(ROOTS[1]!));
       await settle();
       update(twoRoots([job(58, STARTED.name, { shortId: STARTED.shortId, cwd: `${ROOTS[0]}/app` })]));
