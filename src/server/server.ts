@@ -141,7 +141,10 @@ export interface ServerInternals {
    * depends on this machine's editors and none is ever opened. Its limit is `actions.maxConcurrentCommands`.
    */
   editors?: Omit<EditorOptions, 'slots'>;
-  /** Attachments (W79, attachments.ts): tests pass a clock, a sweep interval and a uid. The folder is ServerOptions.pitwallHome's. */
+  /**
+   * Attachments (W79, attachments.ts): tests pass a clock, a sweep interval, a uid, and the cap, the
+   * clean-up's bounds and its log (W84). The folder is ServerOptions.pitwallHome's.
+   */
   attachments?: Omit<AttachmentStoreOptions, 'home'>;
 }
 

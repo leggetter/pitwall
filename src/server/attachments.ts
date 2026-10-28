@@ -43,19 +43,30 @@
 // The server keeps a map from id to stored path, so no path ever comes from
 // a request. An upload no spawn used goes an hour after it arrived, and a
 // used one 7 days after its spawn, since Claude Code keeps an attachment's
-// content in the transcript (spike 008, finding 5). The sweep runs at startup
-// and every 10 minutes. It goes by the map for this run's uploads, and by
-// each folder's own mtimes for anything else, such as an earlier run's or
-// another pitwall's: then `.used` marks a used one. It removes only `<uuid>`
-// directories directly in the attachments folder, entry by entry, unlinking a
-// symlink rather than following it, and leaves a folder with a directory in
-// it, which pitwall never makes. It and DELETE do nothing on disk while the
-// home or the attachments folder isn't a real directory, the user's own and
-// closed to others, as uploads require: then no one else can swap a folder
-// for a symlink partway through a removal.
+// content in the transcript (spike 008, finding 5), or sooner once the used
+// ones pass USED_MAX_BYTES in all: then the oldest used folders go first
+// (W84). The sweep runs at startup and every 10 minutes; the cap is kept by
+// each sweep and after each spawn that used files. Both go by the map for this
+// run's uploads, and by each folder's own mtimes for anything else, such as an
+// earlier run's or another pitwall's: then `.used` marks a used one. The cap
+// never takes an upload no spawn has used, one still arriving, one a starting
+// spawn has claimed, or the files of the spawn that has just used them.
+//
+// A removal takes only `<uuid>` directories directly in the attachments
+// folder, and everything in one, since a session given `--add-dir=` for it can
+// make directories there (W84): each entry by lstat, a file or a symlink
+// unlinked itself, never followed, and only a real directory gone into, the
+// same at every level. Each pass, a sweep, a cap or a DELETE, lists at most
+// REMOVE_MAX_ENTRIES entries and goes at most REMOVE_MAX_DEPTH directories
+// down, moving a deeper one up into its upload's folder for another round.
+// A folder left partway is logged once, and each sweep carries on with it.
+// Sweeps, caps and DELETEs remove one at a time, and nothing is removed while
+// the home or the attachments folder isn't a real directory, the user's own
+// and closed to others, as uploads require: then no other user can swap a
+// folder for a symlink partway through a removal.
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, realpath, rmdir, unlink, type FileHandle } from 'node:fs/promises';
+import { lstat, mkdir, open, opendir, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import type { Hono } from 'hono';
@@ -86,6 +97,34 @@ export const DEFAULT_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 
 /** The file that marks a folder as used, for a later run's sweep. A stored name never starts with `.`. */
 export const USED_MARKER = '.used';
+
+/**
+ * The most bytes the used uploads kept may have in all (W84): 500 MiB. Past it, the oldest used
+ * folders go before their 7 days are up, since their content is in their sessions' transcripts
+ * (spike 008, finding 5). It holds five spawns at the most each can carry
+ * (ATTACHMENTS_MAX_PER_SESSION × ATTACHMENT_MAX_BYTES, 100 MiB), as many as the spawn rate allows in a
+ * minute, so the newest spawn's files are never what has to go; without it, that rate could keep
+ * terabytes for 7 days.
+ */
+export const USED_MAX_BYTES = 500 * 1024 * 1024;
+
+/**
+ * The most entries one clean-up pass lists, a sweep, a cap or a DELETE (W84), so a folder a session
+ * filled can't stall the sweep. pitwall's own folders have one or two each.
+ */
+export const REMOVE_MAX_ENTRIES = 10_000;
+
+/** How many directories below an upload's folder a removal goes into; a deeper one is moved up into the folder. */
+export const REMOVE_MAX_DEPTH = 16;
+
+/**
+ * The longest path, in bytes, a removal goes into: with an entry's name (at most 255 bytes) it stays
+ * below the 1,024 macOS allows (PATH_MAX). A directory with a longer one is moved up, as a deeper one is.
+ */
+const REMOVE_MAX_PATH = 512;
+
+/** What a directory moved up into an upload's folder is called, then a UUID. Never a stored name, which never starts with `.`. */
+const MOVED_UP = '.removing-';
 
 /**
  * Characters that show as nothing, which hasUnsafeCharacters() lets through: a soft hyphen, the
@@ -291,6 +330,14 @@ export interface AttachmentStoreOptions {
   uploadIdleMs?: number;
   /** An upload that hasn't sent all its bytes this long after it started gets 408. Default 2 minutes. */
   uploadTotalMs?: number;
+  /** The most bytes the used uploads may keep in all before the oldest go. Default USED_MAX_BYTES. */
+  usedMaxBytes?: number;
+  /** The most entries one clean-up pass lists. Default REMOVE_MAX_ENTRIES. */
+  removeMaxEntries?: number;
+  /** How many directories down a removal goes before it moves the rest up. Default REMOVE_MAX_DEPTH, at least 1. */
+  removeMaxDepth?: number;
+  /** Where a folder left partway is reported, once. Default console.error with a `pitwall: attachments:` prefix. */
+  log?: (message: string) => void;
 }
 
 export const DEFAULT_UPLOAD_IDLE_MS = 30_000;
@@ -343,11 +390,22 @@ export class AttachmentStore {
   readonly #uid: number | undefined;
   readonly #idleMs: number;
   readonly #totalMs: number;
+  readonly #usedMaxBytes: number;
+  readonly #maxEntries: number;
+  readonly #maxDepth: number;
+  readonly #log: (message: string) => void;
   readonly #kept = new Map<string, Kept>();
   /** Uploads still arriving, by id: they count as pending, and the sweep leaves their folders alone. */
   readonly #arriving = new Map<string, Arriving>();
+  /**
+   * Folders to remove that aren't gone yet, by id, never one the map holds: each sweep carries on with
+   * them, whatever their age. True once a removal has left one partway and logged it.
+   */
+  readonly #unfinished = new Map<string, boolean>();
   #timer: NodeJS.Timeout | undefined;
   #sweeping: Promise<void> | undefined;
+  /** The clean-up queued last: sweeps, caps and DELETEs' removals run one at a time, in order. */
+  #lane: Promise<void> = Promise.resolve();
 
   constructor(options: AttachmentStoreOptions = {}) {
     this.#home = options.home === undefined ? undefined : path.resolve(options.home);
@@ -357,6 +415,10 @@ export class AttachmentStore {
     this.#uid = 'uid' in options ? options.uid : process.getuid?.();
     this.#idleMs = options.uploadIdleMs ?? DEFAULT_UPLOAD_IDLE_MS;
     this.#totalMs = options.uploadTotalMs ?? DEFAULT_UPLOAD_TOTAL_MS;
+    this.#usedMaxBytes = options.usedMaxBytes ?? USED_MAX_BYTES;
+    this.#maxEntries = options.removeMaxEntries ?? REMOVE_MAX_ENTRIES;
+    this.#maxDepth = Math.max(1, options.removeMaxDepth ?? REMOVE_MAX_DEPTH);
+    this.#log = options.log ?? ((message: string) => console.error(`pitwall: attachments: ${message}`));
   }
 
   /** Sweeps now, then every sweepIntervalMs, until close(). */
@@ -367,11 +429,11 @@ export class AttachmentStore {
     this.#timer.unref();
   }
 
-  /** Stops the timer, and waits for a sweep that's running. */
+  /** Stops the timer, and waits for the clean-up that's running or queued. */
   async close(): Promise<void> {
     clearInterval(this.#timer);
     this.#timer = undefined;
-    await this.#sweeping;
+    await this.#lane;
   }
 
   /** Uploads that count toward ATTACHMENTS_MAX_PENDING: arriving, or kept, unused and unexpired. */
@@ -431,7 +493,8 @@ export class AttachmentStore {
         },
       });
       if (!written.ok) {
-        await removeFolder(root, id);
+        // Its own folder, which nothing else touches while it's arriving, and #ready() has just checked.
+        await this.#remove(root, id, this.#budget());
         return refused(written.status, written.error);
       }
       this.#kept.set(id, { id, name, file: realFile, dir: realDir, size: written.size, uploadedAt: this.#now(), claimed: false });
@@ -485,7 +548,11 @@ export class AttachmentStore {
     this.#kept.delete(id);
     const root = this.#root;
     const home = this.#home;
-    if (root !== undefined && home !== undefined && (await this.#private(home, root))) await removeFolder(root, id);
+    if (root === undefined || home === undefined) return 'removed';
+    this.#unfinished.set(id, false);
+    await this.#serial(async () => {
+      if (await this.#private(home, root)) await this.#remove(root, id, this.#budget());
+    });
     return 'removed';
   }
 
@@ -500,7 +567,8 @@ export class AttachmentStore {
   /**
    * Marks `ids` used by a spawn that started: they can't be used again, and go USED_TTL_MS from now.
    * Each folder gets a `.used` file, so a later run's sweep keeps it as long. A marker that can't be
-   * written only shortens that, to an hour from the upload.
+   * written only shortens that, to an hour from the upload. Then, when the used uploads have more than
+   * usedMaxBytes in all, the oldest used folders go, never these (#cap()).
    */
   async markUsed(ids: readonly string[]): Promise<void> {
     const now = this.#now();
@@ -517,11 +585,18 @@ export class AttachmentStore {
         // Fail soft, as above.
       }
     }
+    const root = this.#root;
+    const home = this.#home;
+    if (root === undefined || home === undefined) return;
+    const spawned = new Set(ids);
+    await this.#serial(async () => {
+      if (await this.#private(home, root)) await this.#cap(root, spawned, this.#budget());
+    });
   }
 
-  /** Removes what has expired. Runs one at a time: a call during a sweep waits for it. */
+  /** Removes what has expired, then keeps the cap. Runs one at a time: a call during a sweep waits for it. */
   sweep(): Promise<void> {
-    this.#sweeping ??= this.#sweepOnce().finally(() => {
+    this.#sweeping ??= this.#serial(() => this.#sweepOnce()).finally(() => {
       this.#sweeping = undefined;
     });
     return this.#sweeping;
@@ -536,11 +611,19 @@ export class AttachmentStore {
     for (const kept of this.#kept.values()) {
       if (!kept.claimed && expired(kept, now)) gone.push(kept.id);
     }
-    // Forgotten whatever the disk says, so spawn can't use them.
-    for (const id of gone) this.#kept.delete(id);
+    // Forgotten whatever the disk says, so spawn can't use them, and removed once that's safe.
+    const earlier = [...this.#unfinished.keys()];
+    for (const id of gone) {
+      this.#kept.delete(id);
+      this.#unfinished.set(id, false);
+    }
     // Nothing is removed unless both are private and the user's own, as uploads require.
     if (!(await this.#private(home, root))) return;
-    for (const id of gone) await removeFolder(root, id);
+    const budget = this.#budget();
+    for (const id of gone) {
+      if (budget.left <= 0) return;
+      await this.#remove(root, id, budget);
+    }
 
     let entries;
     try {
@@ -549,13 +632,91 @@ export class AttachmentStore {
       return;
     }
     for (const entry of entries) {
+      if (budget.left <= 0) return;
       // readdir's types are lstat's: a symlink is never a directory here.
       if (!UPLOAD_ID.test(entry.name) || !entry.isDirectory()) continue;
-      if (this.#kept.has(entry.name) || this.#arriving.has(entry.name)) continue;
-      const age = await folderAge(path.join(root, entry.name));
+      if (this.#kept.has(entry.name) || this.#arriving.has(entry.name) || this.#unfinished.has(entry.name)) continue;
+      const age = await folderAge(path.join(root, entry.name), budget);
       if (age === undefined) continue;
-      if (now - age.at >= (age.used ? USED_TTL_MS : UNUSED_TTL_MS)) await removeFolder(root, entry.name);
+      if (now - age.at >= (age.used ? USED_TTL_MS : UNUSED_TTL_MS)) await this.#remove(root, entry.name, budget);
     }
+    if (budget.left > 0) await this.#cap(root, new Set(), budget);
+    // Last, so a folder that can't be removed, or a huge one, never holds up the rest.
+    for (const id of earlier) {
+      if (budget.left <= 0) return;
+      if (this.#unfinished.has(id)) await this.#remove(root, id, budget);
+    }
+  }
+
+  /**
+   * Keeps the used uploads to usedMaxBytes in all (W84): while they have more, removes the oldest used
+   * folder, this run's by when its spawn used it and any other by its `.used` mtime. A used upload's
+   * bytes are its file's, as uploaded, for this run's, and those of the regular files directly in its
+   * folder for any other. Never one of `spawned`, the files of the spawn that has just used them, and
+   * never an upload no spawn has used, still arriving or claimed by a starting spawn: none is used.
+   * Stops at a folder left partway, for the next sweep.
+   */
+  async #cap(root: string, spawned: ReadonlySet<string>, budget: Budget): Promise<void> {
+    const used: Array<{ id: string; at: number; bytes: number }> = [];
+    for (const kept of this.#kept.values()) {
+      if (kept.usedAt !== undefined) used.push({ id: kept.id, at: kept.usedAt, bytes: kept.size });
+    }
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!UPLOAD_ID.test(entry.name) || !entry.isDirectory()) continue;
+      // Being removed already, or this run's, which the map says more about than the disk.
+      if (this.#kept.has(entry.name) || this.#arriving.has(entry.name) || this.#unfinished.has(entry.name)) continue;
+      const folder = await usedFolder(path.join(root, entry.name), budget);
+      if (folder !== undefined) used.push({ id: entry.name, ...folder });
+    }
+    let total = used.reduce((sum, folder) => sum + folder.bytes, 0);
+    if (total <= this.#usedMaxBytes) return;
+    used.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (const folder of used) {
+      if (total <= this.#usedMaxBytes) return;
+      if (spawned.has(folder.id)) continue;
+      this.#kept.delete(folder.id);
+      this.#unfinished.set(folder.id, false);
+      if (!(await this.#remove(root, folder.id, budget))) return;
+      total -= folder.bytes;
+    }
+  }
+
+  /**
+   * Removes `<root>/<id>` within `budget`: true when it's gone. Otherwise it stays among the
+   * unfinished, which each sweep carries on with, and is logged the first time.
+   */
+  async #remove(root: string, id: string, budget: Budget): Promise<boolean> {
+    const removal = await removeFolder(root, id, this.#maxDepth, budget);
+    if (removal.done) {
+      this.#unfinished.delete(id);
+      return true;
+    }
+    if (this.#unfinished.get(id) !== true) {
+      this.#log(`couldn't remove all of ${path.join(root, id)} yet: ${removal.reason}. Each sweep carries on with it.`);
+    }
+    this.#unfinished.set(id, true);
+    return false;
+  }
+
+  /** What one clean-up pass may list. */
+  #budget(): Budget {
+    return { left: this.#maxEntries, max: this.#maxEntries };
+  }
+
+  /**
+   * Runs `task` after every clean-up queued before it, so two never remove at once. A task that throws
+   * is logged, never left unhandled.
+   */
+  #serial(task: () => Promise<void>): Promise<void> {
+    const run = this.#lane.then(task).catch((error: unknown) => this.#log(`the clean-up failed: ${(error as Error).message}`));
+    this.#lane = run;
+    return run;
   }
 
   #check(ids: readonly string[]): AttachmentLookup {
@@ -645,41 +806,195 @@ async function realDirectory(dir: string, uid?: number): Promise<true | string> 
   return true;
 }
 
+/** What one clean-up pass may still list, of `max`. */
+interface Budget {
+  left: number;
+  max: number;
+}
+
+type Removal = { done: true } | { done: false; reason: string };
+
+/** How emptying a directory ended: it's gone; a deeper directory was moved up, for another round; or something is left. */
+type Walk = { state: 'removed' } | { state: 'moved' } | { state: 'left'; reason: string };
+
+const REMOVED: Walk = { state: 'removed' };
+const MOVED: Walk = { state: 'moved' };
+
+const errorCode = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
+
+function couldNot(verb: string, error: unknown): Walk {
+  return { state: 'left', reason: `an entry couldn't be ${verb} (${errorCode(error) ?? (error as Error).message})` };
+}
+
+/** The worse of two walks: something left, then something moved up, then gone. */
+function worse(a: Walk, b: Walk): Walk {
+  if (a.state === 'left') return a;
+  if (b.state === 'left') return b;
+  return a.state === 'moved' ? a : b;
+}
+
 /**
- * Removes `<root>/<id>` when `id` is an upload's and it's a real directory, entry by entry, by lstat:
- * a file or a symlink is unlinked itself, never followed, and a folder with a directory in it, which
- * pitwall never makes, is left as it is, rather than recursed into. Callers check first that the home
- * and `root` are private and the user's own (#private()), so no one else can swap anything in.
+ * Removes `<root>/<id>` and everything in it, when `id` is an upload's and it's a real directory, since
+ * a session given `--add-dir=` for the folder can make directories there (W84). The same rule at every
+ * level: each entry by lstat, a file, a symlink or anything else unlinked itself, never followed, and
+ * only a real directory gone into. Within `budget`, and at most `maxDepth` directories down: a deeper
+ * directory, or one whose path is past REMOVE_MAX_PATH, is moved up into the upload's folder and
+ * emptied from there in another round, so the walk never goes deeper and no path gets too long to use.
+ * `done: false` when something is left: the budget ran out, or an entry couldn't be removed.
+ *
+ * Callers check first that the home and `root` are private and the user's own (#private()), so no
+ * other user can swap anything in. Node has no unlinkat(), so a process running as this user could
+ * still swap a directory for a symlink between its lstat and its removal; but making a symlink takes
+ * a shell command, which could remove those files itself.
  */
-async function removeFolder(root: string, id: string): Promise<void> {
-  if (!UPLOAD_ID.test(id)) return;
-  const dir = path.join(root, id);
+async function removeFolder(root: string, id: string, maxDepth: number, budget: Budget): Promise<Removal> {
+  if (!UPLOAD_ID.test(id)) return { done: true };
+  const top = path.join(root, id);
   try {
-    if (!(await lstat(dir)).isDirectory()) return;
-    // readdir's types are lstat's: a symlink to a directory isn't a directory here.
-    const entries = await readdir(dir, { withFileTypes: true });
-    if (entries.some((entry) => entry.isDirectory())) return;
-    for (const entry of entries) await unlink(path.join(dir, entry.name));
+    // Never a symlink: one with an upload's name is left alone.
+    if (!(await lstat(top)).isDirectory()) return { done: true };
+  } catch (error) {
+    return errorCode(error) === 'ENOENT' ? { done: true } : { done: false, reason: `it couldn't be read (${errorCode(error)})` };
+  }
+  // Each round lists at least the directories the last one moved up, so the budget ends it.
+  for (;;) {
+    const walk = await emptyTree(top, top, 0, maxDepth, budget);
+    if (walk.state === 'removed') return { done: true };
+    if (walk.state === 'left') return { done: false, reason: walk.reason };
+    if (budget.left <= 0) return { done: false, reason: `a pass lists at most ${budget.max} entries` };
+  }
+}
+
+/**
+ * Empties `dir`, a real directory `depth` levels below the upload's folder `top`, then removes it.
+ * Files and symlinks first, so a folder left partway has lost its upload; then each directory; then,
+ * in `top`, the `.used` marker, so a later run still knows when it was used.
+ */
+async function emptyTree(top: string, dir: string, depth: number, maxDepth: number, budget: Budget): Promise<Walk> {
+  const listed = await listSome(dir, budget);
+  if (!listed.ok) return listed.code === 'ENOENT' ? REMOVED : { state: 'left', reason: `a directory couldn't be read (${listed.code})` };
+  let walk: Walk = listed.more ? { state: 'left', reason: `a pass lists at most ${budget.max} entries` } : REMOVED;
+  const directories: string[] = [];
+  let marker: string | undefined;
+  for (const name of listed.names) {
+    const entry = path.join(dir, name);
+    let stats;
+    try {
+      stats = await lstat(entry);
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT') walk = worse(walk, couldNot('read', error));
+      continue;
+    }
+    if (stats.isDirectory()) directories.push(entry);
+    else if (depth === 0 && name === USED_MARKER) marker = entry;
+    else walk = worse(walk, await unlinkEntry(entry));
+  }
+  for (const sub of directories) {
+    // One directly in `top` is never moved: it's there already.
+    const tooDeep = depth > 0 && (depth + 1 > maxDepth || Buffer.byteLength(sub) > REMOVE_MAX_PATH);
+    walk = worse(walk, tooDeep ? await moveUp(top, sub) : await emptyTree(top, sub, depth + 1, maxDepth, budget));
+  }
+  if (walk.state === 'left') return walk;
+  // What was moved up is in `top` now, for the next round. Below `top`, this directory is empty.
+  if (depth === 0 && walk.state === 'moved') return walk;
+  if (marker !== undefined) {
+    const unmarked = await unlinkEntry(marker);
+    if (unmarked.state !== 'removed') return unmarked;
+  }
+  try {
     await rmdir(dir);
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') return couldNot('removed', error);
+  }
+  return walk;
+}
+
+/** Unlinks `entry` itself, a symlink included, never what it points to. */
+async function unlinkEntry(entry: string): Promise<Walk> {
+  try {
+    await unlink(entry);
+    return REMOVED;
+  } catch (error) {
+    return errorCode(error) === 'ENOENT' ? REMOVED : couldNot('removed', error);
+  }
+}
+
+/** Moves the directory `sub` up into `top`, under a new name, to be emptied from there. rename() moves a symlink itself. */
+async function moveUp(top: string, sub: string): Promise<Walk> {
+  try {
+    await rename(sub, path.join(top, `${MOVED_UP}${randomUUID()}`));
+    return MOVED;
+  } catch (error) {
+    return errorCode(error) === 'ENOENT' ? REMOVED : couldNot('moved', error);
+  }
+}
+
+/**
+ * The names in `dir`, at most what `budget` has left, which they take from it, and whether there
+ * are more. All are read before anything is removed, since a directory read while it changes may
+ * skip entries. opendir() streams them, so a huge directory is never read whole.
+ */
+async function listSome(dir: string, budget: Budget): Promise<{ ok: true; names: string[]; more: boolean } | { ok: false; code: string | undefined }> {
+  let handle;
+  try {
+    handle = await opendir(dir);
+  } catch (error) {
+    return { ok: false, code: errorCode(error) };
+  }
+  const names: string[] = [];
+  try {
+    for (;;) {
+      const entry = await handle.read();
+      if (entry === null) return { ok: true, names, more: false };
+      if (budget.left <= 0) return { ok: true, names, more: true };
+      budget.left -= 1;
+      names.push(entry.name);
+    }
   } catch {
-    // Gone already, or the next sweep tries again.
+    return { ok: true, names, more: true };
+  } finally {
+    await handle.close().catch(() => {});
   }
 }
 
 /**
  * When an upload's folder was last touched, by lstat: `.used`'s mtime for a used one, otherwise
- * the newest of the folder's and its entries'. Undefined when it can't be read.
+ * the newest of the folder's and its entries', as far as `budget` lists them. Undefined when it
+ * can't be read.
  */
-async function folderAge(dir: string): Promise<{ used: boolean; at: number } | undefined> {
+async function folderAge(dir: string, budget: Budget): Promise<{ used: boolean; at: number } | undefined> {
   try {
     try {
       return { used: true, at: (await lstat(path.join(dir, USED_MARKER))).mtimeMs };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (errorCode(error) !== 'ENOENT') throw error;
     }
     let at = (await lstat(dir)).mtimeMs;
-    for (const name of await readdir(dir)) at = Math.max(at, (await lstat(path.join(dir, name))).mtimeMs);
+    const listed = await listSome(dir, budget);
+    if (!listed.ok) return undefined;
+    for (const name of listed.names) at = Math.max(at, (await lstat(path.join(dir, name))).mtimeMs);
     return { used: false, at };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * For a used upload's folder, one with `.used`: when it was used, by the marker's mtime, and the bytes
+ * of the regular files directly in it, as far as `budget` lists them. Undefined for an unused one, or
+ * one that can't be read.
+ */
+async function usedFolder(dir: string, budget: Budget): Promise<{ at: number; bytes: number } | undefined> {
+  try {
+    const at = (await lstat(path.join(dir, USED_MARKER))).mtimeMs;
+    const listed = await listSome(dir, budget);
+    if (!listed.ok) return undefined;
+    let bytes = 0;
+    for (const name of listed.names) {
+      const stats = await lstat(path.join(dir, name));
+      if (stats.isFile()) bytes += stats.size;
+    }
+    return { at, bytes };
   } catch {
     return undefined;
   }
