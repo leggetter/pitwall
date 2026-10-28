@@ -47,18 +47,18 @@ describe('the filter field', () => {
     expect(last()?.text).toBe('export');
   });
 
-  it('shows a clear button once there is text, which clears it and keeps focus in the field', () => {
+  it('shows Clear text once there is text, which clears it and keeps focus in the field', () => {
     renderFilters();
-    expect(screen.queryByRole('button', { name: 'Clear filter' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear text' })).toBeNull();
 
     fireEvent.change(field(), { target: { value: 'export' } });
-    const clear = screen.getByRole('button', { name: 'Clear filter' });
+    const clear = screen.getByRole('button', { name: 'Clear text' });
     expect(clear.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     fireEvent.click(clear);
 
     expect((field() as HTMLInputElement).value).toBe('');
     expect(document.activeElement).toBe(field());
-    expect(screen.queryByRole('button', { name: 'Clear filter' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear text' })).toBeNull();
   });
 
   describe('Escape', () => {
@@ -177,7 +177,7 @@ describe('Clear filters', () => {
     expect(clear()).not.toBeNull();
   });
 
-  it('is a ghost sm icon button at every width, named by its tooltip, with no text and its icon hidden (W91)', () => {
+  it('is a ghost sm icon button, named by its tooltip, with no text and its icon hidden (W91)', () => {
     renderFilters(start('', ['interactive']));
     const button = clear()!;
 
@@ -186,7 +186,7 @@ describe('Clear filters', () => {
     expect([...button.classList].sort()).toEqual(['ghost', 'icon-button', 'sm']);
     expect(button.querySelectorAll('svg')).toHaveLength(1);
     expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
-    // filter_alt_off, not cancel: that's the field's own Clear filter, beside it while there's text.
+    // filter_alt_off, not cancel: that's the field's own Clear text, beside it while there's text.
     expect(button.querySelector('path')?.getAttribute('d')).toBe(ICON_PATHS['clear-filters'][16]);
     expect(ICON_PATHS['clear-filters'][16]).not.toBe(ICON_PATHS.clear[16]);
   });

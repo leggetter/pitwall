@@ -176,6 +176,7 @@ const part: Part = {
       t.expectEqual(await page.evaluate(rowNames), [NAMES.running], 'only the session whose name matches');
       t.expectEqual(await page.evaluate(SUMMARY), '1 of 18 sessions', 'the summary says what the filter hides');
       t.expect(await page.evaluate(`!!document.querySelector('.session-list .filter-clear')`), 'the field has a clear button');
+      t.expectEqual(await page.evaluate(`document.querySelector('.session-list .filter-clear')?.getAttribute('aria-label')`), 'Clear text', "named Clear text, not one letter from Clear filters, which shows beside it (W91's review)");
       await page.key('Escape');
       await page.waitFor('the filter to clear', `${FIELD}.value === '' && ${rowNames}.length === 9`);
       t.expectEqual(await page.evaluate(SUMMARY), '18 sessions', 'the summary is whole again');
