@@ -13,7 +13,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Opens a session's directory** in VS Code or Cursor.
 - **Will have a supervisor session** (M5) you can talk to instead of visiting each session, knowing what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, and M3, a design system and restyle, are merged into `main`; M3 merged on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51). M3.1, the work after M3, is done on the `m3.1/integration` branch ([PR #69](https://github.com/leggetter/pitwall/pull/69) to [PR #85](https://github.com/leggetter/pitwall/pull/85)), except End session for interactive sessions, which waits on a decision. It isn't merged into `main` yet: that's [PR #87](https://github.com/leggetter/pitwall/pull/87). Next: M4, open pull requests next to the sessions working on them. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, M3, a design system and restyle, and M3.1, the work after M3, are merged into `main`: M3 on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51), and M3.1 on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87). End session for interactive sessions waits on a decision. Next: M4, open pull requests next to the sessions working on them. See [`PLAN.md`](PLAN.md).
 
 ## Try it
 
@@ -32,13 +32,11 @@ pitwall runs from a clone of this repo. It isn't published to npm.
 ```
 git clone https://github.com/leggetter/pitwall.git
 cd pitwall
-git checkout m3.1/integration
 npm ci
 npm run build
 node dist/cli.js ~/code
 ```
 
-- **The branch:** `main` has M1 to M3. Check out `m3.1/integration` for M3.1, until [PR #87](https://github.com/leggetter/pitwall/pull/87) merges it into `main`.
 - **The root:** `~/code` stands for the directory that holds your work. pitwall lists every session whose working directory is in it or below it. Give two or more roots, such as `~/work ~/oss`, to get a tab for each, or none for the current directory.
 - **npm's notes:** `npm ci` may say it skipped install scripts for `esbuild`, `fsevents` and `node-pty`, as recent npm 11 releases do by default. On macOS that's fine: `node-pty`, the one native module, loads the macOS build it ships with, and pitwall makes its helper executable the first time it attaches. It may also report advisories in two dev dependencies, Vite and happy-dom. pitwall uses Vite only to build the web UI, never its dev server, and happy-dom only in `npm test`.
 - **On Linux,** which is untried, `node-pty` ships no build and compiles in its install script, which needs Python, `make` and a C++ compiler. npm 10 runs that script, as CI does; npm 11 skips it unless it's approved (`npm help install-scripts`). Without it, attaching to a session fails with a message, and the rest of pitwall works.
