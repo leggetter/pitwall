@@ -100,7 +100,7 @@ Behind those it answers from `fixtures.ts`:
 
 It records what the page sent, such as attaches, keys typed into a terminal, the sizes it gave each attached session, spawns, relayed messages, resumes and opens in an editor, for parts to check through `t.server.records`.
 
-**A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session.
+**A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session. `t.fresh({ forcedColors: true })` emulates forced colours, as a Windows contrast theme sets them, until the next fresh page, and `t.fresh({ labels: { [key]: label } })` gives groups other names, such as a longer one for a heading.
 
 **What every step checks,** on top of its own checks:
 
