@@ -1,10 +1,12 @@
 // The guard in noClaude.ts, which vitest.config.ts loads before every server
-// test file. Every command here names a claude that doesn't exist, so even a
-// broken guard couldn't start Claude Code.
+// test file. Every command here names a claude or a gh that doesn't exist, so
+// even a broken guard couldn't start Claude Code or reach GitHub.
 import { exec, execFile, execFileSync, execSync, spawn, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAgentsSource } from '../index/agents.js';
+import { runFile } from '../index/exec.js';
+import { fetchPullRequests } from '../prs/fetch.js';
 import { spawnPty } from '../server/pty.js';
 
 // Read before this file loads the guard itself, so it shows the setup file did.
@@ -22,6 +24,9 @@ const XDG_OPEN = '/nonexistent/pitwall-test/xdg-open';
 const ENV = '/nonexistent/pitwall-test/env';
 const EDITOR_REFUSED = /would open an editor/;
 const SIGNAL_REFUSED = /would signal a process this test didn't start without PITWALL_LIVE=1/;
+/** GitHub's CLI, which doesn't exist here either (M4, W93). */
+const GH = '/nonexistent/pitwall-test/gh';
+const GH_REFUSED = /would run gh without PITWALL_LIVE=1/;
 
 describe('the no-claude guard', () => {
   let saved: string | undefined;
@@ -138,6 +143,41 @@ describe('the no-claude guard', () => {
     expect(spawnSync(OPEN, ['/nonexistent/pitwall-test/launch.html']).error).toMatchObject({ code: 'ENOENT' });
     expect(spawnSync('/nonexistent/pitwall-test/vscode-cli').error).toMatchObject({ code: 'ENOENT' });
     expect(execSync('echo claude-code pitwall-test-cursor-row', { encoding: 'utf8' })).toContain('cursor-row');
+    expect(takeRefusals()).toEqual([]);
+  });
+
+  // M4, W93: the PR poller runs `gh api graphql` with the user's own login.
+  it('refuses gh by every child_process API, through a shell and through node-pty, before it runs', () => {
+    expect(() => spawn(GH, ['api', 'graphql'])).toThrow(GH_REFUSED);
+    expect(() => spawnSync(GH, ['api', 'graphql'])).toThrow(GH_REFUSED);
+    expect(() => execFile(GH, ['api', 'graphql'], () => {})).toThrow(GH_REFUSED);
+    expect(() => execFileSync(GH)).toThrow(GH_REFUSED);
+    expect(() => promisify(execFile)(GH, ['auth', 'status'])).toThrow(GH_REFUSED);
+    expect(() => exec(`${GH} api graphql`, () => {})).toThrow(GH_REFUSED);
+    expect(() => execSync(`true && ${GH} api graphql`)).toThrow(GH_REFUSED);
+    expect(() => promisify(exec)(`${GH} auth status`)).toThrow(GH_REFUSED);
+    expect(() => spawnSync(GH, ['api'], { shell: true })).toThrow(GH_REFUSED);
+    expect(() => spawnSync('/bin/sh', ['-c', `${GH} api graphql`])).toThrow(GH_REFUSED);
+    expect(() => execFileSync('bash', ['-c', `cd / && ${GH} pr list`])).toThrow(GH_REFUSED);
+    expect(() => spawnPty(GH, [], { cols: 80, rows: 24, cwd: '/', env: {}, name: 'xterm-256color' })).toThrow(GH_REFUSED);
+    expect(takeRefusals()).toHaveLength(12);
+  });
+
+  it("records a refusal of the PR fetch's gh, which fails soft, so the test still fails", async () => {
+    const result = await fetchPullRequests({ runFile, ghBin: GH });
+    expect(result).toMatchObject({ ok: false, reason: 'error' });
+    expect(() => failOnRefusals()).toThrow(GH_REFUSED);
+    expect(takeRefusals()).toEqual([]);
+  });
+
+  it('lets through names that only contain gh, and gh with PITWALL_LIVE=1', () => {
+    expect(spawnSync('/nonexistent/pitwall-test/ghost').error).toMatchObject({ code: 'ENOENT' });
+    expect(spawnSync('/nonexistent/pitwall-test/gh-test').error).toMatchObject({ code: 'ENOENT' });
+    expect(spawnSync('/nonexistent/pitwall-test/github').error).toMatchObject({ code: 'ENOENT' });
+    expect(execSync('echo gh-pages ghq high .gh', { encoding: 'utf8' })).toContain('gh-pages');
+    expect(takeRefusals()).toEqual([]);
+    process.env.PITWALL_LIVE = '1';
+    expect(spawnSync(GH, ['api', 'graphql']).error).toMatchObject({ code: 'ENOENT' });
     expect(takeRefusals()).toEqual([]);
   });
 

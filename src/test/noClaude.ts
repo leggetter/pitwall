@@ -2,16 +2,21 @@
 // `npm test` never starts Claude Code, whatever is on PATH (W31). Loaded
 // before every server test file (vitest.config.ts).
 //
+// It refuses `gh` the same way (M4, W93), so no test reaches GitHub with the
+// user's own login: the PR poller runs `gh api graphql`, and a test that left
+// the real runFile in place would run it.
+//
 // It wraps child_process's spawn, spawnSync, execFile, execFileSync, exec and
 // execSync, and node-pty's spawn, for test code and the code under test alike.
-// A call that would run `claude` throws, and the test that made it fails even
-// when the code under test catches the error. That covers a test file's
-// module level too: the file fails to load. With PITWALL_LIVE=1, as the live
-// checks run, everything goes through as before.
+// A call that would run `claude` or `gh` throws, and the test that made it
+// fails even when the code under test catches the error. That covers a test
+// file's module level too: the file fails to load. With PITWALL_LIVE=1, as the
+// live checks run, everything goes through as before.
 //
 // It can't see a process that a child process starts in turn: a test that
-// runs a script which spawns claude must sit behind PITWALL_LIVE itself, as
-// relay.live.test.ts does.
+// runs a script which spawns claude or gh must sit behind PITWALL_LIVE itself,
+// as relay.live.test.ts does, or put a stand-in first on that script's PATH,
+// as cli.test.ts does for the CLI it runs.
 //
 // It also refuses to open an editor (W72), with or without PITWALL_LIVE: no
 // test, live or not, opens VS Code or Cursor. That's `code`, `cursor` or
@@ -56,8 +61,11 @@ state.spawned ??= new Set();
 state.allowed ??= new Set();
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
-/** `claude` as a command in a shell command line: on its own, or as the last part of a path. */
-const CLAUDE_IN_COMMAND = /(?:^|[\s;&|()`'"/])claude(?=$|[\s;&|()`'"])/;
+/** The programs a test may run only with PITWALL_LIVE=1. */
+type LiveOnly = 'claude' | 'gh';
+const LIVE_ONLY: ReadonlySet<string> = new Set<LiveOnly>(['claude', 'gh']);
+/** `claude` or `gh` as a command in a shell command line: on its own, or as the last part of a path. */
+const LIVE_ONLY_IN_COMMAND = /(?:^|[\s;&|()`'"/])(claude|gh)(?=$|[\s;&|()`'"])/;
 /** The editors' commands (W72). */
 const EDITORS = new Set(['code', 'cursor', 'code-insiders']);
 /** A short-flag group of `open`'s that names an app: `-a`, `-b`, or one with either in it, such as `-na`. Not `--args`. */
@@ -103,8 +111,16 @@ function isLive(): boolean {
   return process.env.PITWALL_LIVE === '1';
 }
 
-function isClaude(file: unknown): boolean {
-  return typeof file === 'string' && path.basename(file) === 'claude';
+/** `claude` or `gh`, by any path, when `file` is one. */
+function liveOnly(file: unknown): LiveOnly | undefined {
+  if (typeof file !== 'string') return undefined;
+  const name = path.basename(file);
+  return LIVE_ONLY.has(name) ? (name as LiveOnly) : undefined;
+}
+
+/** The first live-only program named as a command in a shell command line. */
+function liveOnlyInCommand(command: string): LiveOnly | undefined {
+  return LIVE_ONLY_IN_COMMAND.exec(command)?.[1] as LiveOnly | undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -157,29 +173,41 @@ function commandOpensEditor([command]: unknown[]): boolean {
   return typeof command === 'string' && EDITOR_IN_COMMAND.test(command);
 }
 
-/** For spawn, spawnSync, execFile and execFileSync: `(file, args?, options?)`. */
-function fileRunsClaude([file, second, third]: unknown[]): boolean {
-  if (typeof file !== 'string') return false;
+/** For spawn, spawnSync, execFile and execFileSync: `(file, args?, options?)`. Which live-only program it runs, if one. */
+function fileRunsLiveOnly([file, second, third]: unknown[]): LiveOnly | undefined {
+  if (typeof file !== 'string') return undefined;
   const args = Array.isArray(second) ? second.filter((arg): arg is string => typeof arg === 'string') : [];
   const options = Array.isArray(second) ? third : second;
-  if (isRecord(options) && options.shell) return CLAUDE_IN_COMMAND.test([file, ...args].join(' '));
-  if (isClaude(file)) return true;
-  return SHELLS.has(path.basename(file)) && args.some((arg) => CLAUDE_IN_COMMAND.test(arg));
+  if (isRecord(options) && options.shell) return liveOnlyInCommand([file, ...args].join(' '));
+  const direct = liveOnly(file);
+  if (direct !== undefined) return direct;
+  if (!SHELLS.has(path.basename(file))) return undefined;
+  for (const arg of args) {
+    const found = liveOnlyInCommand(arg);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }
 
 /** For exec and execSync: `(command, options?)`, always through a shell. */
-function commandRunsClaude([command]: unknown[]): boolean {
-  return typeof command === 'string' && CLAUDE_IN_COMMAND.test(command);
+function commandRunsLiveOnly([command]: unknown[]): LiveOnly | undefined {
+  return typeof command === 'string' ? liveOnlyInCommand(command) : undefined;
 }
 
-function refuse(api: string, what: 'claude' | 'editor' | 'signal'): never {
-  const message =
-    what === 'claude'
-      ? `pitwall tests: ${api}() would run claude without PITWALL_LIVE=1. ` +
-        'Pass a fake runner or spawner, or put the test behind PITWALL_LIVE like the live checks.'
-      : what === 'editor'
-        ? `pitwall tests: ${api}() would open an editor. Pass a fake runFile and the editors found (ServerInternals.editors).`
-        : `pitwall tests: ${api}() would signal a process this test didn't start without PITWALL_LIVE=1. Pass a fake signaller (ServerInternals.end), or name a process your child started with allowSignalsTo().`;
+const REFUSALS: Readonly<Record<LiveOnly | 'editor' | 'signal', (api: string) => string>> = {
+  claude: (api) =>
+    `pitwall tests: ${api}() would run claude without PITWALL_LIVE=1. ` +
+    'Pass a fake runner or spawner, or put the test behind PITWALL_LIVE like the live checks.',
+  gh: (api) =>
+    `pitwall tests: ${api}() would run gh without PITWALL_LIVE=1. ` +
+    "Pass a fake fetch or runFile (createPrPoller()'s options), or leave ServerOptions.prs out, which is off.",
+  editor: (api) => `pitwall tests: ${api}() would open an editor. Pass a fake runFile and the editors found (ServerInternals.editors).`,
+  signal: (api) =>
+    `pitwall tests: ${api}() would signal a process this test didn't start without PITWALL_LIVE=1. Pass a fake signaller (ServerInternals.end), or name a process your child started with allowSignalsTo().`,
+};
+
+function refuse(api: string, what: LiveOnly | 'editor' | 'signal'): never {
+  const message = REFUSALS[what](api);
   state.refusals.push(message);
   throw new Error(message);
 }
@@ -187,12 +215,15 @@ function refuse(api: string, what: 'claude' | 'editor' | 'signal'): never {
 function guarded(
   api: string,
   original: AnyFunction,
-  runsClaude: (args: unknown[]) => boolean,
+  runsLiveOnly: (args: unknown[]) => LiveOnly | undefined,
   opensAnEditor: (args: unknown[]) => boolean = () => false,
   remembers = false,
 ): AnyFunction {
   return function (this: unknown, ...args: unknown[]) {
-    if (!isLive() && runsClaude(args)) refuse(api, 'claude');
+    if (!isLive()) {
+      const program = runsLiveOnly(args);
+      if (program !== undefined) refuse(api, program);
+    }
     if (opensAnEditor(args)) refuse(api, 'editor');
     const result = original.apply(this, args);
     // A running child, which a test may signal: not spawnSync's or execSync's, which have exited by now.
@@ -203,21 +234,21 @@ function guarded(
 
 function install(): void {
   const target = childProcess as unknown as Record<string, AnyFunction>;
-  const apis: [string, (args: unknown[]) => boolean, (args: unknown[]) => boolean][] = [
-    ['spawn', fileRunsClaude, fileOpensEditor],
-    ['spawnSync', fileRunsClaude, fileOpensEditor],
-    ['execFile', fileRunsClaude, fileOpensEditor],
-    ['execFileSync', fileRunsClaude, fileOpensEditor],
-    ['exec', commandRunsClaude, commandOpensEditor],
-    ['execSync', commandRunsClaude, commandOpensEditor],
+  const apis: [string, (args: unknown[]) => LiveOnly | undefined, (args: unknown[]) => boolean][] = [
+    ['spawn', fileRunsLiveOnly, fileOpensEditor],
+    ['spawnSync', fileRunsLiveOnly, fileOpensEditor],
+    ['execFile', fileRunsLiveOnly, fileOpensEditor],
+    ['execFileSync', fileRunsLiveOnly, fileOpensEditor],
+    ['exec', commandRunsLiveOnly, commandOpensEditor],
+    ['execSync', commandRunsLiveOnly, commandOpensEditor],
   ];
-  for (const [api, runsClaude, opensAnEditor] of apis) {
+  for (const [api, runsLiveOnly, opensAnEditor] of apis) {
     const original = target[api] as AnyFunction & { [promisify.custom]?: AnyFunction };
     const remembers = api === 'spawn' || api === 'execFile' || api === 'exec';
-    const wrapped = guarded(api, original, runsClaude, opensAnEditor, remembers) as AnyFunction & { [promisify.custom]?: AnyFunction };
+    const wrapped = guarded(api, original, runsLiveOnly, opensAnEditor, remembers) as AnyFunction & { [promisify.custom]?: AnyFunction };
     // exec and execFile resolve to { stdout, stderr } when promisified, through their own custom form.
     const custom = original[promisify.custom];
-    if (custom !== undefined) wrapped[promisify.custom] = guarded(api, custom, runsClaude, opensAnEditor, remembers);
+    if (custom !== undefined) wrapped[promisify.custom] = guarded(api, custom, runsLiveOnly, opensAnEditor, remembers);
     target[api] = wrapped;
   }
   // So `import { spawn } from 'node:child_process'` sees the wrapped functions too.
@@ -232,7 +263,7 @@ function install(): void {
 
   try {
     const pty = createRequire(import.meta.url)('node-pty') as { spawn: AnyFunction };
-    pty.spawn = guarded('node-pty spawn', pty.spawn, ([file]) => isClaude(file), undefined, true);
+    pty.spawn = guarded('node-pty spawn', pty.spawn, ([file]) => liveOnly(file), undefined, true);
   } catch {
     // Without node-pty, nothing can start a PTY through it either.
   }
