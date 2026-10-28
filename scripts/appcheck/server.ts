@@ -346,10 +346,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   }
 
   /**
-   * An upload for New session's first prompt (W82), with the checks the contract gives ATTACHMENTS_PATH
-   * (W79): the type and any Content-Encoding, then the name, an empty file, the size, and that an
-   * image's or a PDF's first bytes are that type's and text is UTF-8 with no NUL, then how many unused
-   * uploads there are. It keeps the name, type and size, never the bytes.
+   * An upload for New session's first prompt (W82), with the checks of W79's route
+   * (src/server/attachments.ts), in its order: the type, a Content-Encoding other than identity, the
+   * name, a Content-Length over the limit; then, as its store has them, no attachments here (503),
+   * too many unused (429, with Retry-After), and, as the bytes arrive, a stall (408), the size, an
+   * empty file, and that an image's or a PDF's first bytes are that type's and text is UTF-8 with no
+   * NUL. It keeps the name, type and size, never the bytes.
    */
   async function upload(req: IncomingMessage, res: ServerResponse) {
     const type = (req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
@@ -367,18 +369,22 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       json(res, status, body);
     };
     if (!(protocol.ATTACHMENT_TYPES as readonly string[]).includes(type)) return answer(415, { ok: false, error: 'Made up: pitwall takes images, PDFs and text files.' });
-    if (req.headers['content-encoding'] !== undefined) return answer(415, { ok: false, error: 'Made up: no Content-Encoding.' });
+    const encoding = req.headers['content-encoding'];
+    if (encoding !== undefined && encoding.trim().toLowerCase() !== 'identity') return answer(415, { ok: false, error: 'Made up: no Content-Encoding.' });
     const known = type as AttachmentType;
-    if (name === '' || name.length > 200 || UNSAFE_NAME.test(name)) return answer(400, { ok: false, error: 'Made up: that name has a character pitwall refuses.' });
-    if (size === 0) return answer(400, { ok: false, error: 'Made up: the file is empty.' });
-    if (size > protocol.ATTACHMENT_MAX_BYTES) return answer(413, { ok: false, error: 'Made up: it is over 10 MiB.' });
-    if (SIGNATURES[known] && !SIGNATURES[known](head)) return answer(415, { ok: false, error: `Made up: its first bytes aren't those of ${known}.` });
-    if (!SIGNATURES[known] && !isText(bytes)) return answer(415, { ok: false, error: "Made up: it isn't UTF-8 text." });
+    const clean = name.normalize('NFC').trim();
+    if (UNSAFE_NAME.test(name) || clean === '' || clean.length > 200) return answer(400, { ok: false, error: 'Made up: that name has a character pitwall refuses.' });
+    if (Number(req.headers['content-length'] ?? 0) > protocol.ATTACHMENT_MAX_BYTES) return answer(413, { ok: false, error: 'Made up: it is over 10 MiB.' });
     if (name.startsWith(UNAVAILABLE_UPLOAD)) return answer(503, { ok: false, error: "Made up: this pitwall doesn't keep attachments." });
-    if (name.startsWith(STALLED_UPLOAD)) return answer(408, { ok: false, error: 'Made up: the upload stalled, so pitwall kept nothing.' });
     if ([...uploaded.values()].filter((each) => !each.used).length >= protocol.ATTACHMENTS_MAX_PENDING) {
+      res.setHeader('Retry-After', '3600');
       return answer(429, { ok: false, error: 'Made up: too many unused uploads.' });
     }
+    if (name.startsWith(STALLED_UPLOAD)) return answer(408, { ok: false, error: 'Made up: the upload stalled, so pitwall kept nothing.' });
+    if (size > protocol.ATTACHMENT_MAX_BYTES) return answer(413, { ok: false, error: 'Made up: it is over 10 MiB.' });
+    if (size === 0) return answer(400, { ok: false, error: 'Made up: the file is empty.' });
+    if (SIGNATURES[known] && !SIGNATURES[known](head)) return answer(415, { ok: false, error: `Made up: its first bytes aren't those of ${known}.` });
+    if (!SIGNATURES[known] && !isText(bytes)) return answer(415, { ok: false, error: "Made up: it isn't UTF-8 text." });
     if (name.startsWith(FAIL_UPLOAD) && !failedOnce.has(name)) {
       failedOnce.add(name);
       return answer(500, { ok: false, error: "Made up: pitwall couldn't write it." });
@@ -386,7 +392,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const keep = () => {
       const id = randomUUID();
       uploaded.set(id, { used: false });
-      answer(201, { ok: true, attachment: { id, name, type: known, size } });
+      answer(201, { ok: true, attachment: { id, name: clean, type: known, size } });
     };
     if (!name.startsWith(SLOW_UPLOAD)) return keep();
     // A slow one: the page may give up first, as Remove does.

@@ -432,7 +432,8 @@ const part: Part = {
       t.expectEqual(await page.evaluate(problemOf(`${STALLED_UPLOAD}.txt`)), "Couldn't upload it. Made up: the upload stalled, so pitwall kept nothing.", 'why');
       t.expect(await page.evaluate(`!!${ROWS}[0].querySelector('button.button')`), 'it has Try again');
       t.expect(await page.evaluate(START_OFF), 'Start session is off');
-      t.expectEqual(server.records.uploads.map((upload) => upload.status), [408], 'the fake server answered 408');
+      // Chrome sends a request again when a reused connection answers 408, a few times, before the page hears it.
+      t.expect(server.records.uploads.length > 0 && server.records.uploads.every((upload) => upload.status === 408 && upload.id === undefined), 'the fake server answered 408 to each send, keeping nothing', server.records.uploads);
     });
 
     await t.step('Cancel closes it, with focus back on New session', async () => {
