@@ -4,6 +4,7 @@
 // the real clipboard.
 
 import {
+  ATTACHMENTS_PATH,
   DIRECTORIES_PATH,
   PROTOCOL_VERSION,
   SPAWN_PATH,
@@ -13,7 +14,7 @@ import {
   type ConversationEntry,
   type RelayResult,
 } from '../../../src/shared/protocol.js';
-import type { ApiClient, ApiResult } from '../api.js';
+import type { ApiClient, ApiResult, ApiUpload } from '../api.js';
 import type { AttachEnv } from '../attach.js';
 import type { ClipboardLike } from '../copy.js';
 import { writeDraft, type DraftStorageSource, type StoredDraft } from '../drafts.js';
@@ -107,6 +108,12 @@ export interface StubOptions {
    * first, then 502s. A sub-agent's transcript has a page behind Load earlier.
    */
   subagents?: 'ok' | 'many' | 'truncated' | 'empty' | 'loading' | 'failed' | 'failed-retrying' | 'refresh-failed';
+  /**
+   * What New session's uploads get (W82). `uploaded` keeps each, as W79's route does; `uploading`
+   * never answers; `failed` is a 503 every time; `failed-retrying` a 503, then no answer, so Try
+   * again stays busy; `refused` is a 415 from bytes that contradict the type.
+   */
+  upload?: 'uploaded' | 'uploading' | 'failed' | 'failed-retrying' | 'refused';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
@@ -151,10 +158,35 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     if (method === 'POST' && route === 'open') return openEditor(options.open ?? 'opened');
     return Promise.resolve(failed(404));
   };
+  let uploads = 0;
   return {
     get: (path) => answer('GET', path),
     post: (path) => answer('POST', path),
+    upload: (path, file) => {
+      if (path !== ATTACHMENTS_PATH) return Promise.resolve(failed(404));
+      uploads += 1;
+      return upload(options.upload ?? 'uploaded', file, uploads - 1);
+    },
   };
+}
+
+/** `times` is how many uploads came before this one. */
+function upload(result: NonNullable<StubOptions['upload']>, file: ApiUpload, times: number): Promise<ApiResult> {
+  switch (result) {
+    case 'uploading':
+      return forever();
+    case 'failed':
+      return Promise.resolve(failed(503, { ok: false, error: "Made up: pitwall couldn't store the file." }));
+    case 'failed-retrying':
+      return times === 0 ? Promise.resolve(failed(503, { ok: false, error: "Made up: pitwall couldn't store the file." })) : forever();
+    case 'refused':
+      return Promise.resolve(failed(415, { ok: false, error: "Made up: its first bytes aren't a PNG's." }));
+    case 'uploaded': {
+      const name = decodeURIComponent(file.headers?.['X-Pitwall-Filename'] ?? '');
+      const id = `00000000-0000-4000-8000-${String(times + 1).padStart(12, '0')}`;
+      return Promise.resolve(ok({ ok: true, attachment: { id, name, type: file.contentType, size: file.body.size } }));
+    }
+  }
 }
 
 /** `older` is a "Load earlier" request; `times` is how often that page, the newest or the older one, was asked for before this. */

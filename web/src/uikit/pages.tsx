@@ -3,6 +3,7 @@
 // address bar of its own, in memory, so its selection never reaches the gallery's URL.
 
 import { useState, type ReactNode } from 'react';
+import { ATTACHMENT_MAX_BYTES } from '../../../src/shared/protocol.js';
 import type { BackgroundTab } from '../backgroundTab.js';
 import type { ConnectionState, ConnectionView } from '../connection.js';
 import { Badge, StatusBadge } from '../components/Badge.js';
@@ -103,9 +104,67 @@ async function another(root: HTMLElement, ready: string, typed?: string, keys: s
   return input;
 }
 
+/** A made-up image, drawn here, so its thumbnail has something to show: two halves, blue and red. */
+async function madeUpImage(name: string): Promise<File> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  // Where there's nothing to draw with, as in the tests' happy-dom, an image with no picture.
+  if (!context) return madeUpFile(name, 'image/png');
+  context.fillStyle = '#0044CC';
+  context.fillRect(0, 0, 48, 64);
+  context.fillStyle = '#E07B72';
+  context.fillRect(48, 0, 48, 64);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return new File([blob ?? new Uint8Array()], name, { type: 'image/png' });
+}
+
+/** A made-up file of `size` bytes, said rather than held, so a too-large one costs nothing. */
+function madeUpFile(name: string, type: string, size = 2_400): File {
+  const file = new File([new Uint8Array(Math.min(size, 64))], name, { type });
+  Object.defineProperty(file, 'size', { value: size });
+  return file;
+}
+
+const ATTACHMENTS = async () => [
+  await madeUpImage('retry-backoff-diagram.png'),
+  madeUpFile('export-job-timeouts.pdf', 'application/pdf', 182_000),
+  madeUpFile('Notes from the export job incident review, second draft.md', 'text/markdown', 6_100),
+];
+
+/**
+ * Pastes `files` into the prompt, as a person would after copying them, then waits, with `settled`,
+ * until none is on its way. A paste, since it's the one way in that happy-dom, where the tests render
+ * the gallery, carries files through as a browser does.
+ */
+async function attach(root: HTMLElement, files: File[] | Promise<File[]>, settled?: string): Promise<void> {
+  const prompt = await field<HTMLTextAreaElement>(root, 'First prompt');
+  const transfer = new DataTransfer();
+  for (const file of await files) transfer.items.add(file);
+  prompt.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  const rows = () => [...root.querySelectorAll<HTMLElement>('.attachment')];
+  if (settled !== undefined) await until(`every file ${settled}`, () => rows().length > 0 && rows().every((row) => row.dataset.state !== 'waiting' && row.dataset.state !== 'uploading'));
+}
+
+/**
+ * Drags files over the prompt and holds them there, as a person would from the Finder. The drag's
+ * data is given as the dialog reads it, since happy-dom's DragEvent leaves out a DataTransfer.
+ */
+async function dragOver(root: HTMLElement): Promise<void> {
+  const prompt = await field<HTMLTextAreaElement>(root, 'First prompt');
+  for (const kind of ['dragenter', 'dragover']) {
+    const event = new Event(kind, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [], dropEffect: 'none' } });
+    prompt.dispatchEvent(event);
+  }
+  await element(root, '.prompt-drop-target.over');
+}
+
 interface DialogCase {
   title: string;
   note?: string;
+  frame?: 'dialog' | 'dialog-tall';
   options?: StubOptions;
   /** A waiting state's spinner shows at once. */
   waited?: 'shown';
@@ -211,13 +270,82 @@ const DIALOG_CASES: DialogCase[] = [
       await text(root, 'Starting…');
     },
   },
+  {
+    title: 'Files: dragged over the prompt',
+    note: 'W82. While files are dragged over the page, the drop target covers the first prompt: dashed, then solid once they are over it, as here. A drop anywhere else does nothing, rather than the browser opening the file. Dragging is for a pointer: Attach files is the way in from the keyboard, and from a screen reader.',
+    run: dragOver,
+  },
+  {
+    title: 'Files: attached',
+    note: 'Dropped on the prompt, pasted into it, or chosen with Attach files. Each uploads as it is added. An image has a thumbnail, any other file its type icon; a name is text, cut in the middle with its extension kept. Remove takes a file off, and focus goes to the next one, or to Attach files. Start session sends their ids.',
+    frame: 'dialog-tall',
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, ATTACHMENTS(), 'uploaded');
+    },
+  },
+  {
+    title: 'Files: uploading',
+    note: 'At most two upload at once, and the rest wait. Start session is off while any is on its way, and its tooltip says why; ⌘ ↵ says it as the field’s problem, with focus on the list. Remove aborts an upload.',
+    frame: 'dialog-tall',
+    options: { upload: 'uploading' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, ATTACHMENTS());
+      await text(root, 'Waiting…');
+    },
+  },
+  {
+    title: "Files: an upload failed",
+    note: "Couldn't upload it, with the server's reason in code style, Try again and Remove. Start session is off until it uploads or is removed.",
+    frame: 'dialog-tall',
+    options: { upload: 'failed' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, [madeUpFile('export-job-timeouts.pdf', 'application/pdf', 182_000)], 'failed');
+      // ⌘ ↵, since Start session is off: the field's problem, with focus on the list.
+      const prompt = await field<HTMLTextAreaElement>(root, 'First prompt');
+      prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }));
+      await element(root, '.field-problem');
+    },
+  },
+  {
+    title: 'Files: refused',
+    note: "A file pitwall can't take is listed with why, and the others go on: a type that isn't an image, a PDF or text, one over 10 MB, the eleventh, a name the server would refuse, and the server's own refusal, such as bytes that contradict the type. A refused file has Remove alone, and doesn't hold up Start session.",
+    frame: 'dialog-tall',
+    options: { upload: 'refused' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(
+        root,
+        [
+          madeUpFile('export-job-timeouts.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+          madeUpFile('screen-recording.png', 'image/png', ATTACHMENT_MAX_BYTES * 3),
+          madeUpFile('not-really-a.png', 'image/png'),
+        ],
+        'refused',
+      );
+    },
+  },
+  {
+    title: 'Files: starting',
+    note: 'While Start session is busy, Remove, Try again and Attach files are aria-disabled, and a drop or a paste attaches nothing.',
+    frame: 'dialog-tall',
+    options: { spawn: 'starting' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, ATTACHMENTS(), 'uploaded');
+      await press(root, 'Start session');
+      await text(root, 'Starting…');
+    },
+  },
 ];
 
 export function Dialogs() {
   return (
     <>
       {DIALOG_CASES.map((dialog) => (
-        <Specimen key={dialog.title} title={dialog.title} note={dialog.note} frame="dialog" waited={dialog.waited}>
+        <Specimen key={dialog.title} title={dialog.title} note={dialog.note} frame={dialog.frame ?? 'dialog'} waited={dialog.waited}>
           <Stubbed options={dialog.options}>
             <Reopenable>
               {(close) => {

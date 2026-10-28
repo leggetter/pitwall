@@ -421,7 +421,8 @@ describe('Another directory under a root…', () => {
     const input = await reveal(dialog);
     expect(optionLabels(dialog)).toHaveLength(50);
     expect(within(popup(dialog)).getByText(`50 of 312. ${DIRECTORY_TEXT.narrow}`)).toBeTruthy();
-    const status = within(dialog).getByRole('status');
+    // The combobox's own, not the files' status in the first prompt's field (W82).
+    const status = within(input.closest<HTMLElement>('.combobox')!).getByRole('status');
     expect(status.getAttribute('aria-live')).toBe('polite');
     act(() => {
       vi.advanceTimersByTime(ANNOUNCE_DELAY_MS);

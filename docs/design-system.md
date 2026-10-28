@@ -602,6 +602,8 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `checked` | check | The chosen option in a menu's radio group (W42). The same glyph as `copied`, for another meaning |
 | `star` / `starred` | star / star at fill 1 | A session's [star toggle](#starred-sessions), off and on (W53): outlined while it isn't starred, filled while it is |
 | `subagents` | account_tree | The session view's [Sub-agents tab](#sub-agents) (W77): a session and the sub-agents it started, some started by another. A hierarchy is what it means here, where it read wrongly for a repo |
+| `attach` | attach_file | New session's Attach files, and its drop target (W82; see [Dialogs](#dialogs)) |
+| `image` / `pdf` / `file` | image / picture_as_pdf / description | The type of a file in New session's list (W82): an image that has no thumbnail yet, a PDF, and text |
 | `theme-system` / `theme-light` / `theme-dark` | computer / light_mode / dark_mode | The theme switch |
 
 ### 2.15 Mapping from the CSS before M3
@@ -1585,10 +1587,10 @@ For a destructive or surprising action in the session view, without a dialog.
     - With [root tabs](#root-tabs), the open tab's root alone: its groups' directories, then its root, and "Under *root*.". A typed directory must be in that tab, under its root and under no other root inside it, where the index would list the session: "Use a directory under ~/work. ~/personal has its own tab." (W38).
   - Name: optional, placeholder "Claude Code names it from the prompt".
   - Model: optional; a select of Default, the aliases, and "Other…", which reveals a mono field.
-  - First prompt: a textarea, 6 rows.
+  - First prompt: a textarea, 6 rows, which takes files too: see [Files for the first prompt](#files-for-the-first-prompt) below (W82).
 - **Problems** show after the first submit, then follow the typing; a submit, or ⌘/Ctrl + Enter, puts focus on the first field with one. Each is linked to its field with `aria-describedby`, and the field is `aria-invalid`.
 - **Intro:** the subtitle: "Starts a background session with `claude --bg`, which you can open from the list."
-- **Footer:** "⌘ ↵ to start" as key caps (Ctrl on other platforms) at the left; "Cancel" and "Start session" ("Starting…" while busy) at the right. ⌘/Ctrl + Enter submits from any field.
+- **Footer:** "⌘ ↵ to start" as key caps (Ctrl on other platforms) at the left; "Cancel" and "Start session" ("Starting…" while busy) at the right. ⌘/Ctrl + Enter submits from any field. Start session is `aria-disabled` while a file is uploading or has failed, saying why in its tooltip (below).
 - **Failure:** "Couldn't start the session." then the server's message in code style; or pitwall's own sentence, such as "Couldn't start the session (HTTP 500)."
 - **Trust failure:** the same alert, then "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:", with the command in a [command chip](#copy) and its copy button, "Copy command".
 - **Started:** the dialog closes, and a toast says "Started *name*. Its view opens when it shows up in the list."
@@ -1596,6 +1598,50 @@ For a destructive or surprising action in the session view, without a dialog.
   - **History:** one entry, pushed, with the selection, `&root=` and `?session=`, as opening a row pushes one, so the back button goes back to where you were: the selection, the tab and the session you had open.
   - **Focus** stays where it is, as when a view opens from the URL, so a started session never takes it from what you're doing: on New session, say, where the dialog gave it back. Its terminal takes none either (W57; [Session view](#session-view-header-tabs-and-footer)). The exception is when the switch takes away or hides what had focus, such as a row the new group doesn't list, or focus was on the page, as after the no-sessions empty state's New session, whose button goes as the session is listed: then the view's heading takes it, which is in sight in every layout (6.1, item 8).
   - **Not over what you're in the middle of.** It doesn't switch while the view open in this tab, or the one open in the session's tab, which it would replace, has a draft, a Stop or Remove running, a Stop or Remove confirmation open, or the terminal's restart prompt; nor while you're typing in the columns, in the filter, the message box or the terminal. A dialog open over the page doesn't stop it, since the switch happens behind it. Then the toast that said it started is replaced by an info toast: "*name* is listed now. It didn't open, so you keep your place.", with Open (see [Toasts](#toasts)). Open selects the session's tab, group and view as the switch would have, in one pushed entry, and focus goes to the view's heading, as from a row; a draft it replaces is kept, as any draft is (W44). The toast goes by itself after 10 s, paused while it's hovered or focused, or when Open is used or it's dismissed, and at once when the session is opened another way, from its row say, which stays the lasting way in.
+
+#### Files for the first prompt
+
+(W82, from spike 008; Phil, 2026-10-27: "It should be possible to drop items/attachments, paste items, into the opening session prompt.") The New session dialog's first prompt takes files: images, PDFs and text, which the server keeps in a private folder of its own (`ATTACHMENTS_PATH`, W79) and names in the prompt as `@` mentions, so Claude Code attaches them to the first turn. `web/src/attachments.ts` checks and uploads them; `web/src/components/Attachments.tsx` draws the list and the drop target.
+
+- **Three ways in:**
+  - **Drop** files on the prompt. While files are dragged over the page, the drop target covers the prompt; a drop anywhere else does nothing, rather than the browser opening the file in pitwall's place, and the pointer says so (`dropEffect: none`).
+  - **Paste** files or an image into the prompt, such as a screenshot. A paste with text in it, other than the files' own names or paths, as a copied file carries, is text: it pastes as text and attaches nothing. That's how a copy from a spreadsheet or a document pastes, which carries a picture of its cells too.
+  - **Attach files:** an outline sm [button](#buttons) with the `attach` icon, under the list, before the hint, with a native `<input type="file" multiple>` behind it, hidden and out of the Tab order. It's the way in from the keyboard and for a screen reader, since dragging is for a pointer. Its `accept` lists the types and their extensions.
+- **What it takes** (the contract's, repeated so a file is refused before it's sent; the server is the authority): `ATTACHMENT_TYPES` (PNG, JPEG, GIF, WebP, PDF, plain text, Markdown, CSV and JSON), from the browser's type or else the file's extension, as for a CSV Windows types as Excel's; at most `ATTACHMENT_MAX_BYTES` (10 MB) each; at most `ATTACHMENTS_MAX_PER_SESSION` (10) in all, refused files not counted; and a name the server takes: at most 200 characters, with no `/`, `\`, control or bidi character. A refused file is listed with why, and the others go on.
+- **Uploading:** each file uploads as it's added, through the app's `ApiClient` (`upload()`, which sends the apiKey), as its bytes with its type and its name, URL-encoded, in `X-Pitwall-Filename`. At most two at once; the rest wait. A 400, 413 or 415 is the server refusing the file itself, so it's refused, with the server's reason; anything else, such as a 429 or a 5xx, or no answer, has failed, and Try again may fix it. There's no upload progress, since `fetch` has none for a request's body: a row says Uploading… with a spinner, which on localhost is a moment.
+- **Layout,** in the first prompt's field, 4 px apart: the prompt; its problem; the list; then the Attach files row, the button and, after it, the hint in help text, wrapping under it where there's no room; then the files' problem.
+- **The drop target:** over the prompt, as big as it, `--pw-selected` with a 2 px dashed `--pw-selected-border` edge inside it, and solid while the files are over the prompt; the `attach` icon and "Drop files to attach them" in m 14/20, 500, `--pw-info-tint-fg`, centred. It's `aria-hidden` and takes no pointer events, so the drop lands on the prompt. Forced colours: a 2 px dashed `Highlight` outline, solid while over it.
+- **The list:** `<ul>` named "Attached files", 4 px between rows. It's focusable from script alone (`tabindex="-1"`), so a submit with a file on its way can put focus there, described by the problem.
+- **A row:** padding 4 px, `--pw-surface`, `--pw-radius-md`, a 1 px `--pw-border` edge, or `--pw-danger-border` for a failed or refused file (decorative: the words say the state; forced colours draw a 1 px `CanvasText` border).
+  - **The tile,** 32 px, `--pw-surface-sunken`, `--pw-radius-sm`: an image's thumbnail, its middle square, cover-fitted, or the type's icon in `--pw-text-muted`: `image`, `pdf` or `file`. Decorative, `aria-hidden`.
+  - **The name,** m 14/20, as text (`plainText()`), the server's cleaned one once it has answered. Cut in the middle when there isn't room, with its extension and the 6 characters before it kept (`fileNameParts()` in `web/src/format.ts`), so screenshots whose names start alike can be told apart; each part keeps its spaces (`white-space: pre`).
+  - **The meta line,** s 13/20, `--pw-text-muted`: its size, in 1,024s ("512 B", "4.2 KB", "244 KB", "1.5 MB"), then " · Uploading…" with a 12 px spinner, or " · Waiting…". A size over the limit is rounded up, so a byte over never reads as the limit.
+  - **Why it isn't attached,** for a failed or refused file, s 13/20 in `--pw-danger-fg`, with the server's reason in code style (`Detail`).
+  - **At the right,** 4 px apart: Try again (outline sm, `retry` icon) on a failed file, then Remove, a ghost sm `close` [icon button](#icon-buttons) named, and tooltipped, "Remove *name*", and described by the row's meta line and problem.
+- **States:**
+
+| State | Meta line | Problem | Actions |
+|---|---|---|---|
+| Waiting | "244 KB · Waiting…" | | Remove |
+| Uploading | "244 KB · Uploading…", with a spinner | | Remove, which aborts the upload |
+| Uploaded | "244 KB" | | Remove |
+| Failed | "244 KB" | "Couldn't upload it." then the server's reason; or "Couldn't upload it (HTTP 503)." | Try again, Remove |
+| Refused | "244 KB" | "Couldn't attach it." then why, below; or the server's reason | Remove |
+
+- **Why a file is refused:**
+  - The type: "Couldn't attach it. Only images, PDFs and text files can be attached."
+  - The size: "Couldn't attach it. It's 12.3 MB, over the 10 MB limit."
+  - The count: "Couldn't attach it. A first prompt takes at most 10 files."
+  - The name: "Couldn't attach it. Its name is over 200 characters. Rename the file, then attach it again." or "Couldn't attach it. Its name has a /, \ or control character in it. Rename the file, then attach it again."
+  - The server's refusal: "Couldn't attach it." then its reason, such as bytes that contradict the type.
+- **The hint:** "Or drop or paste them into the prompt: images, PDFs and text files, up to 10 MB each.", linked to Attach files with `aria-describedby`.
+- **Announced:** a visually hidden `role="status"` in the field, there from the start, says what each file came to: "Attached diagram.png.", "Couldn't attach report.docx. Only images, PDFs and text files can be attached.", "Couldn't upload notes.txt. *reason*". Files refused together are said together.
+- **Focus:** Remove puts focus on the Remove of the row that takes its place, the next one, or, with none after it, on Attach files. Try again takes its own button away, so focus goes to that row's Remove.
+- **Start session** sends the uploaded files' ids, in the list's order, as `SpawnRequest.attachments`. While a file is waiting, uploading or has failed, it's `aria-disabled`, with why as its tooltip and description: "Wait for the file to upload, or remove it." ("Wait for the 3 files to upload, or remove them."), or, first, since an upload finishes by itself, "A file didn't upload. Try it again, or remove it." ("2 files didn't upload. Try them again, or remove them."). ⌘/Ctrl + Enter, which has no tooltip, checks the fields as a submit does: the same sentence shows as the files' problem, under the Attach files row, describing the list, which takes focus when it's the first problem. Focus goes to the list, not a row's Remove, which a second Enter would press. A refused file holds nothing up.
+- **Busy:** while Start session is busy, Attach files, Try again and Remove are `aria-disabled`, and a drop or a paste attaches nothing.
+- **Closing** the dialog aborts the uploads still on their way and drops the list. The server removes an upload no spawn used after an hour.
+- **Thumbnails** are drawn on a canvas, 64 px square from the image's middle, and kept as a `data:` URL, since the CSP's `img-src` allows `data:` and not `blob:`. Nothing is kept once the dialog closes.
+- **Dirty:** with a file added, a click on the backdrop leaves the dialog open, as with something typed.
 
 ### Menus
 
@@ -1874,10 +1920,10 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 
 ### Labels
 
-- **Buttons:** a verb, or a verb and object: "New session", "Start session", "Send", "Stop session", "Remove session", "Restart and attach", "Attach again", "Detach", "Copy", "Dismiss", "Try again", "Clear filters", "Load earlier", "Jump to latest", "Resume in background", "Copy command", "Show 3 older sessions" and "Hide older sessions" (W67), "Back to sub-agents" (W77).
+- **Buttons:** a verb, or a verb and object: "New session", "Start session", "Send", "Stop session", "Remove session", "Restart and attach", "Attach again", "Detach", "Copy", "Dismiss", "Try again", "Clear filters", "Load earlier", "Jump to latest", "Resume in background", "Copy command", "Show 3 older sessions" and "Hide older sessions" (W67), "Back to sub-agents" (W77), "Attach files" (W82).
 - **Cancel** is always "Cancel".
 - **Confirmations:** the confirm button repeats the question's verb and object: "Stop this session?" → "Stop session".
-- **Progress:** the -ing form with an ellipsis: "Starting…", "Sending…", "Stopping…", "Removing…", "Resuming…", "Attaching…", "Loading the conversation…", "Loading the sub-agents…", "Loading earlier…", "Trying again…".
+- **Progress:** the -ing form with an ellipsis: "Starting…", "Sending…", "Stopping…", "Removing…", "Resuming…", "Attaching…", "Uploading…" (W82), "Loading the conversation…", "Loading the sub-agents…", "Loading earlier…", "Trying again…".
 - **Counts:** digits with the noun, singular and plural handled: "1 session", "12 sessions", "1 needs you", "2 need you", "3 tool calls", "No tool calls", "1 sub-agent running", "2 sub-agents running", "2 of 5 sessions".
 - **Paths:** home shortened to `~`, middle ellipsis on screen, the full path in a tooltip.
   - **Middle ellipsis:** the end of the path, from its last `/`, shows whole, and the text before it ends in "…" when there isn't room. A path with no `/` after its first character is cut at its end. Both parts stay in the DOM, so screen readers, find in page and copying get the whole path.
@@ -1946,11 +1992,13 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
    - A star toggle keeps focus as it stars and unstars. Unstarring a row in Starred takes the row away, so focus goes to the star toggle of the row that took its place, so the next can be unstarred too, or the one before it when it was last, or the session list's heading when none is left (see [Starred sessions](#starred-sessions)).
    - In the [Sub-agents](#sub-agents) tab (W77): opening a row, or a link in the conversation, puts focus on the transcript's heading; Back puts it on that sub-agent's row; a refresh that takes away what had focus hands it to the row that took its place, Try again on a new alert, or the list.
    - Opening a [root tab](#root-tabs) leaves focus on it. The back button switching tabs with focus in what that hides moves focus to the open tab.
+   - In New session's [files](#files-for-the-first-prompt) (W82): Remove puts focus on the next file's Remove, or on Attach files; Try again on its row's Remove; and ⌘/Ctrl + Enter with a file on its way on the list.
    - Choosing in [Preferences](#preferences) leaves focus on the choice, whatever a new grouping does to the selection and the lists; closing the dialog puts it back on the Preferences button.
    - Dialogs trap focus and return it on close. Confirmations focus Cancel.
 9. **Announcements:**
    - The connection badge is `role="status"`.
    - Results the user asked for are announced: send results, stop, remove and resume results, copy, and a switch of Group sessions by that replaces the selection. A resume is a toast, and its refusal an inline alert with `role="alert"`; a copy started instead is an error toast and a warning with no role, so it's announced once, by the toast (W67). Stop, remove, copy, open in an editor (W72), a started session, one that's listed but didn't open (W63), and that switch are toasts, announced by the toasts' live region, which is always in the DOM. A star toggle's result is its own pressed state, announced on the toggle; `s`, pressed with focus elsewhere, says it in a toast (W53).
+   - What each file added to New session's first prompt came to, attached, refused or failed, is said by a status region in its field (W82).
    - Snapshot updates, ticking times and the list's re-sorting are never announced. The one exception is the conversation's count of new entries while you're scrolled up ("3 new"), once per batch (see [Conversation](#conversation)).
    - The document title carries the count: "(2) pitwall". With [root tabs](#root-tabs), the open tab's root follows: "(2) pitwall · ~/work"; the count is still every root's.
 10. **Forms:**

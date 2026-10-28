@@ -16,10 +16,27 @@
 //   Escape, Close and the backdrop do nothing.
 // - A failure is an inline danger alert at the end of the body. When Claude Code hasn't trusted the
 //   directory, it has the command to run, in a command chip with its copy button.
+// - Files for the first prompt (W82, spike 008): dropped on the prompt, with a drop target over it
+//   while files are dragged over the page, pasted into it, or chosen with Attach files, a native file
+//   input behind a real button. Each is checked and uploaded as it's added (attachments.ts), and
+//   listed under the prompt (Attachments.tsx). Start session sends the uploaded ones' ids, and is off,
+//   saying why, while one is uploading or has failed. A drop anywhere else in the page does nothing,
+//   rather than the browser opening the file in pitwall's place. Closing the dialog drops them.
 
-import { useContext, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import {
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type KeyboardEvent,
+} from 'react';
 import type { DirectoryList, IndexSnapshot, SpawnRequest } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
+import { ACCEPT, ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
 import {
   directoryCount,
   directoryOptions,
@@ -42,6 +59,7 @@ import {
   type StartedSession,
 } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
+import { AttachmentList, DropTarget } from './Attachments.js';
 import { Button } from './Button.js';
 import { Combobox } from './Combobox.js';
 import { CopyCommand } from './CopyCommand.js';
@@ -49,6 +67,7 @@ import { Dialog } from './Dialog.js';
 import { Icon } from './Icon.js';
 import { KeyCaps, modEnter } from './KeyCaps.js';
 import { Spinner } from './Spinner.js';
+import { Tooltip } from './Tooltip.js';
 import '../actions.css';
 
 /** The picker's "type one" choice. No path can contain a NUL, so it can't collide with one. */
@@ -150,6 +169,18 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
   // Problems show once a submit has been tried, then follow the typing.
   const [checked, setChecked] = useState(false);
   const [failure, setFailure] = useState<Failure>();
+  const attachments = useAttachments(api);
+  // Files dragged over the page, and whether they're over the prompt, where they can be dropped.
+  const [drag, setDrag] = useState<'none' | 'page' | 'target'>('none');
+  const dropTarget = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const attachButton = useRef<HTMLButtonElement>(null);
+  const fileList = useRef<HTMLUListElement>(null);
+  // After Remove or Try again, the row whose Remove takes focus, by its place in the list.
+  const focusRow = useRef<number | undefined>(undefined);
+  const busyNow = useRef(busy);
+  busyNow.current = busy;
+  const { add: addFiles } = attachments;
 
   useEffect(() => {
     alive.current = true;
@@ -187,6 +218,69 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     combobox.current?.focus();
   }, [dirChoice]);
 
+  // Files dragged over the page while the dialog is open: the drop target shows over the prompt, a
+  // drop on it attaches them, and a drop anywhere else does nothing, rather than the browser opening
+  // the file in pitwall's place. Enters and leaves are counted, since each element fires its own,
+  // over the dialog's backdrop, which covers the page (and in the gallery, its own specimen alone).
+  useEffect(() => {
+    let depth = 0;
+    const within = (event: DragEvent, element: Element | null | undefined) => event.target instanceof Node && element?.contains(event.target) === true;
+    const onTarget = (event: DragEvent) => within(event, dropTarget.current);
+    const overDialog = (event: DragEvent) => within(event, dropTarget.current?.closest('.dialog-backdrop'));
+    const enter = (event: DragEvent) => {
+      if (!draggingFiles(event.dataTransfer) || !overDialog(event)) return;
+      depth += 1;
+      setDrag(onTarget(event) && !busyNow.current ? 'target' : 'page');
+    };
+    const leave = (event: DragEvent) => {
+      if (!draggingFiles(event.dataTransfer) || !overDialog(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDrag('none');
+    };
+    const over = (event: DragEvent) => {
+      if (!draggingFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      const here = onTarget(event) && !busyNow.current;
+      if (event.dataTransfer) event.dataTransfer.dropEffect = here ? 'copy' : 'none';
+      if (overDialog(event)) setDrag(here ? 'target' : 'page');
+    };
+    const drop = (event: DragEvent) => {
+      if (!draggingFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      depth = 0;
+      setDrag('none');
+      if (onTarget(event) && !busyNow.current) addFiles([...(event.dataTransfer?.files ?? [])]);
+    };
+    document.addEventListener('dragenter', enter);
+    document.addEventListener('dragleave', leave);
+    document.addEventListener('dragover', over);
+    document.addEventListener('drop', drop);
+    return () => {
+      document.removeEventListener('dragenter', enter);
+      document.removeEventListener('dragleave', leave);
+      document.removeEventListener('dragover', over);
+      document.removeEventListener('drop', drop);
+    };
+  }, [addFiles]);
+
+  // Files added: the last one's row is scrolled into the body's view, the least that shows it.
+  const listed = useRef(0);
+  useEffect(() => {
+    const count = attachments.items.length;
+    if (count > listed.current) fileList.current?.lastElementChild?.scrollIntoView?.({ block: 'nearest' });
+    listed.current = count;
+  }, [attachments.items.length]);
+
+  // Remove takes its row away, and Try again its own button: focus goes to the Remove of the row now
+  // in that place, the next one, or else to Attach files.
+  useEffect(() => {
+    const index = focusRow.current;
+    if (index === undefined) return;
+    focusRow.current = undefined;
+    const next = fileList.current?.querySelectorAll<HTMLElement>('.attachment-remove')[index];
+    (next ?? attachButton.current)?.focus();
+  }, [attachments.items]);
+
   const chooseDirectory = (event: ChangeEvent<HTMLSelectElement>) => {
     if (busy) return;
     const value = event.target.value;
@@ -213,15 +307,23 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     name: nameProblem(name),
     model: modelChoice === OTHER && model === '' ? 'Type a model alias, or choose the default.' : modelProblem(model),
     prompt: promptProblem(prompt),
+    attachments: attachmentsProblem(attachments.pending, attachments.failed),
   };
   const shown: Partial<typeof problems> = checked ? problems : {};
-  // Something typed: a click on the backdrop leaves the dialog open.
-  const dirty = customDir !== '' || name !== '' || customModel !== '' || prompt !== '';
+  // Something typed, or a file added: a click on the backdrop leaves the dialog open.
+  const dirty = customDir !== '' || name !== '' || customModel !== '' || prompt !== '' || attachments.items.length > 0;
+  // Why Start session is off: a file uploading or failed. Busy says so itself, with its label.
+  const startOff = busy ? undefined : problems.attachments;
 
   const submit = async () => {
     if (submitting.current) return;
     setChecked(true);
-    const firstProblem = (['cwd', 'name', 'model', 'prompt'] as const).find((field) => problems[field] !== undefined);
+    const firstProblem = (['cwd', 'name', 'model', 'prompt', 'attachments'] as const).find((field) => problems[field] !== undefined);
+    if (firstProblem === 'attachments') {
+      // The list, described by the problem, rather than a row's Remove, which a second Enter would press.
+      fileList.current?.focus();
+      return;
+    }
     if (firstProblem) {
       const target = { cwd: dirChoice === OTHER ? ids.customDir : ids.dir, name: ids.name, model: ids.customModel, prompt: ids.prompt }[firstProblem];
       document.getElementById(target)?.focus();
@@ -234,6 +336,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     const request: SpawnRequest = { cwd, prompt };
     if (name !== '') request.name = name;
     if (model !== '') request.model = model;
+    if (attachments.ids.length > 0) request.attachments = [...attachments.ids];
     submitting.current = true;
     setBusy(true);
     setFailure(undefined);
@@ -271,6 +374,29 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
   const disabled = { 'aria-disabled': busy || undefined };
   const describedBy = (...parts: (string | false | undefined)[]) => parts.filter(Boolean).join(' ') || undefined;
   const keys = modEnter();
+  const filesProblem = `${ids.prompt}-files-problem`;
+
+  /** Files pasted into the prompt are attached; text, or text that came with files, pastes as text (pastedFiles). */
+  const paste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = pastedFiles(event.clipboardData);
+    if (!files) return;
+    event.preventDefault();
+    if (!busy) attachments.add(files);
+  };
+  const chooseFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = [...(event.target.files ?? [])];
+    // Emptied, so choosing the same file again is a change too.
+    event.target.value = '';
+    if (!busy) attachments.add(files);
+  };
+  const removeFile = (key: string) => {
+    focusRow.current = attachments.items.findIndex((item) => item.key === key);
+    attachments.remove(key);
+  };
+  const retryFile = (key: string) => {
+    focusRow.current = attachments.items.findIndex((item) => item.key === key);
+    attachments.retry(key);
+  };
 
   return (
     <Dialog
@@ -296,9 +422,11 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
           <Button disabled={busy} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" busy={busy} busyLabel="Starting…">
-            Start session
-          </Button>
+          <Tooltip content={startOff} relation="description">
+            <Button type="submit" variant="primary" disabled={startOff !== undefined} busy={busy} busyLabel="Starting…">
+              Start session
+            </Button>
+          </Tooltip>
         </>
       }
     >
@@ -432,23 +560,55 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
         <label className="field-label" htmlFor={ids.prompt}>
           First prompt
         </label>
-        <textarea
-          id={ids.prompt}
-          className="field-input field-prompt"
-          rows={6}
-          maxLength={MAX_PROMPT_LENGTH}
-          value={prompt}
-          onChange={edit(setPrompt)}
-          readOnly={busy}
-          {...disabled}
-          aria-invalid={shown.prompt !== undefined || undefined}
-          aria-describedby={describedBy(shown.prompt && `${ids.prompt}-problem`)}
-        />
+        <div className="prompt-drop" ref={dropTarget}>
+          <textarea
+            id={ids.prompt}
+            className="field-input field-prompt"
+            rows={6}
+            maxLength={MAX_PROMPT_LENGTH}
+            value={prompt}
+            onChange={edit(setPrompt)}
+            onPaste={paste}
+            readOnly={busy}
+            {...disabled}
+            aria-invalid={shown.prompt !== undefined || undefined}
+            aria-describedby={describedBy(shown.prompt && `${ids.prompt}-problem`)}
+          />
+          {drag !== 'none' && !busy && <DropTarget over={drag === 'target'} />}
+        </div>
         {shown.prompt && (
           <p className="field-problem" id={`${ids.prompt}-problem`}>
             {shown.prompt}
           </p>
         )}
+        {attachments.items.length > 0 && (
+          <AttachmentList
+            ref={fileList}
+            items={attachments.items}
+            onRemove={removeFile}
+            onRetry={retryFile}
+            busy={busy}
+            describedBy={describedBy(shown.attachments && filesProblem)}
+          />
+        )}
+        <div className="attach-row">
+          <Button ref={attachButton} size="sm" icon="attach" disabled={busy} aria-describedby={`${ids.prompt}-files`} onClick={() => fileInput.current?.click()}>
+            Attach files
+          </Button>
+          <input ref={fileInput} type="file" multiple accept={ACCEPT} hidden tabIndex={-1} onChange={chooseFiles} />
+          <p className="field-hint" id={`${ids.prompt}-files`}>
+            {ATTACH_TEXT.hint}
+          </p>
+        </div>
+        {shown.attachments && (
+          <p className="field-problem" id={filesProblem}>
+            {shown.attachments}
+          </p>
+        )}
+        {/* There from the start, empty, so what each file comes to is announced. */}
+        <p className="visually-hidden" role="status">
+          {attachments.announcement}
+        </p>
       </div>
 
       {failure && (
