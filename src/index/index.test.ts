@@ -3,7 +3,7 @@ import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile }
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type RelayAlert, type RelayOff } from '../shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type PrLink, type RelayAlert, type RelayOff } from '../shared/protocol.js';
 import { createAgentsSource, type AgentRow, type AgentsResult } from './agents.js';
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { createGroupResolver } from './grouping.js';
@@ -634,20 +634,22 @@ describe('createIndexer with the repos sessions worked in (W34, W39)', () => {
   /** Repos under the root; any other directory is in no repo. */
   const REPOS = ['/work/alpha', '/work/beta', '/work/gamma'];
 
-  /** A fake scanner: `found` is what workedIn() answers, by session id; `tracked` records each track(). */
+  /** A fake scanner: `found` is what workedIn() answers, by session id, and `links` what prLinks() does; `tracked` records each track(). */
   function fakeScanner() {
     const found = new Map<string, RepoWorkedIn[]>();
+    const links = new Map<string, PrLink[]>();
     const tracked: { sessions: TrackedSession[]; roots: string[] }[] = [];
     const scanner: WorkedInScanner = {
       track: (sessions, roots) => {
         tracked.push({ sessions: [...sessions], roots: [...roots] });
       },
       workedIn: (id) => found.get(id),
+      prLinks: (id) => links.get(id),
       settled: async () => undefined,
       stats: () => ({ bytesRead: 0, calls: 0, scans: 0, gitRuns: 0, gitPeak: 0 }),
       stop: () => undefined,
     };
-    return { scanner, found, tracked };
+    return { scanner, found, links, tracked };
   }
 
   const repo = (key: string, minutesAgo = 1): RepoWorkedIn => ({ key, root: ROOT, calls: 12, changes: 1, lastAt: new Date(NOW - minutesAgo * 60_000).toISOString() });
@@ -742,6 +744,30 @@ describe('createIndexer with the repos sessions worked in (W34, W39)', () => {
     ]);
     expect(indexer.latest()?.groups.find((g) => g.key === '/work/alpha')?.label).toBe('alpha');
     expect(sessions.find((s) => s.sessionId === 'in-beta')).not.toHaveProperty('workedIn');
+    indexer.stop();
+  });
+
+  it('adds prLinks to the summary as copies, in the scanner’s order, with or without workedIn, and leaves out none or not yet scanned', async () => {
+    const { deps, found, links } = setup();
+    const at = new Date(NOW - 60_000).toISOString();
+    const scanned: PrLink[] = [
+      { kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: at },
+      { kind: 'pushed', repo: 'example/demo-app', branch: 'feature/made-up', lastAt: at },
+    ];
+    links.set('in-alpha', scanned);
+    links.set('in-root', [{ kind: 'mentioned', repo: 'example/demo-api', number: 3, lastAt: at }]);
+    found.set('in-root', [repo('/work/alpha')]);
+    links.set('in-notes', []);
+    const indexer = createIndexer({ roots: [ROOT] }, deps);
+    await flush();
+    const sessions = indexer.latest()?.groups.flatMap((g) => g.sessions) ?? [];
+    const inAlpha = sessions.find((s) => s.sessionId === 'in-alpha');
+    expect(inAlpha?.prLinks).toEqual(scanned);
+    expect(inAlpha?.prLinks?.[0]).not.toBe(scanned[0]);
+    expect(inAlpha).not.toHaveProperty('workedIn');
+    expect(sessions.find((s) => s.sessionId === 'in-root')?.prLinks).toEqual([{ kind: 'mentioned', repo: 'example/demo-api', number: 3, lastAt: at }]);
+    expect(sessions.find((s) => s.sessionId === 'in-notes')).not.toHaveProperty('prLinks');
+    expect(sessions.find((s) => s.sessionId === 'in-beta')).not.toHaveProperty('prLinks');
     indexer.stop();
   });
 
@@ -1495,6 +1521,7 @@ describe('createIndexer with ended interactive sessions (W66)', () => {
     deps.workedIn = {
       track: (sessions) => tracked.push([...sessions]),
       workedIn: (id) => (id === 'ended' ? [{ key: '/work/api', root: '/work', calls: 3, changes: 1, lastAt: new Date(NOW).toISOString() }] : undefined),
+      prLinks: (id) => (id === 'ended' ? [{ kind: 'opened', repo: 'example/demo-app', number: 7, lastAt: new Date(NOW).toISOString() }] : undefined),
       settled: async () => undefined,
       stats: () => ({ bytesRead: 0, calls: 0, scans: 0, gitRuns: 0, gitPeak: 0 }),
       stop: () => undefined,
@@ -1510,6 +1537,7 @@ describe('createIndexer with ended interactive sessions (W66)', () => {
     ]);
     const endedSummary = indexer.latest()?.groups[0]?.sessions.find((s) => s.sessionId === 'ended');
     expect(endedSummary?.workedIn).toEqual([{ key: '/work/api', label: 'api', root: '/work', calls: 3, changes: 1, lastAt: new Date(NOW).toISOString() }]);
+    expect(endedSummary?.prLinks).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 7, lastAt: new Date(NOW).toISOString() }]);
     indexer.stop();
   });
 
