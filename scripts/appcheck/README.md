@@ -16,7 +16,7 @@ npm run appcheck -- --out scratch/appcheck
   - `<dir>/shots/<part>/` holds each part's named screenshots.
   - `<dir>/failures/<part>/` holds a screenshot of the page as each failed step left it.
 - **Exit code:** 0 when every step passed, 1 when any failed, 2 when it couldn't run, such as with no build or no Chrome.
-- **Time:** about 5 minutes for a full run, 12 parts in 120 cases and about 830 steps, on the Mac it was written on. One part at one size takes seconds.
+- **Time:** about 5 minutes for a full run, 12 parts in 120 cases and about 840 steps, on the Mac it was written on. One part at one size takes seconds.
 
 ## Running part of it
 
