@@ -729,6 +729,25 @@ describe('names', () => {
     expect(ok('%')).toMatch(/^refused/);
   });
 
+  it('attachmentName drops every default-ignorable character, such as tag characters, variation selectors and the Hangul fillers (W87)', () => {
+    const ok = (name: string) => {
+      const result = attachmentName(encodeURIComponent(name));
+      return result.ok ? result.name : `refused: ${result.error}`;
+    };
+    // A zero-width space before the extension shows as `.png`.
+    expect(ok('photo\u200b.png')).toBe('photo.png');
+    // Tag characters (U+E0041 is TAG LATIN CAPITAL LETTER A), as in a hidden instruction.
+    expect(ok('report\u{e0041}\u{e0042}\u{e007f}.pdf')).toBe('report.pdf');
+    // Variation selectors, an emoji's included: a name is only ever shown, so a red heart emoji shows as its text form.
+    expect(ok('heart\u2764\ufe0f\ufe00.txt')).toBe('heart\u2764.txt');
+    // The Hangul fillers, the combining grapheme joiner, Khmer's inherent vowels and the shorthand format controls.
+    expect(ok('a\u3164\u115f\u1160\uffa0\u034f\u17b4\u17b5\u{1bca0}b.md')).toBe('ab.md');
+    // One made only of them is empty, so refused.
+    expect(ok('\u3164\u{e0020}\ufe0f')).toMatch(/^refused: The file's name is empty/);
+    // Characters that show as something stay, the ideographic space and the Braille blank among them.
+    expect(ok('a\u3000b\u2800c.txt')).toBe('a\u3000b\u2800c.txt');
+  });
+
   it('storedName makes a safe slug that keeps the extension', () => {
     const cases: Array<[string, AttachmentType, string]> = [
       ['my file (1).png', 'image/png', 'my-file-1.png'],
