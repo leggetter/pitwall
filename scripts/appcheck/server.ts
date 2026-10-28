@@ -73,6 +73,8 @@ export interface Records {
    * the status it got, and its id when kept. `aborted` is one the page gave up on before its answer.
    */
   uploads: Array<{ name: string; type: string; size: number; status: number | 'aborted'; id?: string }>;
+  /** Each DELETE of attachmentPath() (W82), by the id asked for, and the status it got: 204, 404 or 409. */
+  deletes: Array<{ id: string; status: number }>;
   relays: Array<{ name: string; length: number }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
@@ -83,7 +85,7 @@ export interface Records {
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], uploads: [], requests: [] });
+const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], uploads: [], deletes: [], requests: [] });
 
 /** A name the contract's 400 refuses: a path separator, a control or a bidi control (ATTACHMENTS_PATH). */
 const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
@@ -99,11 +101,22 @@ const SIGNATURES: Partial<Record<AttachmentType, (head: Buffer) => boolean>> = {
 
 /**
  * Names the fake server answers differently, for the steps that check an upload's busy state and a
- * failure: one starting SLOW_UPLOAD is answered after a moment, and one starting FAIL_UPLOAD gets a
- * 503 the first time it's sent.
+ * failure: one starting SLOW_UPLOAD is answered after a moment; one starting FAIL_UPLOAD gets a 500,
+ * a file that couldn't be written, the first time it's sent; and one starting UNAVAILABLE_UPLOAD a
+ * 503, as from a pitwall that keeps no attachments on its machine.
  */
 export const SLOW_UPLOAD = 'pitwall-test-slow';
 export const FAIL_UPLOAD = 'pitwall-test-fail';
+export const UNAVAILABLE_UPLOAD = 'pitwall-test-unavailable';
+
+/** Text that's UTF-8 with no NUL, as W79's route wants of a text or JSON file. */
+function isText(body: Buffer): boolean {
+  try {
+    return !new TextDecoder('utf-8', { fatal: true }).decode(body).includes('\u0000');
+  } catch {
+    return false;
+  }
+}
 
 /** The editors the fake server says it found at startup (W72), as pitwall's would on a Mac with both. */
 export const EDITORS: EditorList = { editors: [{ id: 'vscode', label: 'VS Code' }, { id: 'cursor', label: 'Cursor' }] };
@@ -212,6 +225,9 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.EDITORS_PATH) return json(res, 200, EDITORS);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
     if (method === 'POST' && url.pathname === protocol.ATTACHMENTS_PATH) return upload(req, res);
+    // An unused upload removed (W82): attachmentPath(id).
+    const kept = /^\/api\/attachments\/([^/]+)$/.exec(url.pathname);
+    if (kept && method === 'DELETE') return removeUpload(res, decodeURIComponent(kept[1]!));
 
     // A sub-agent's transcript (W77): 404 unless the session is listed and the agent is one of its sub-agents.
     const agent = /^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/conversation$/.exec(url.pathname);
@@ -329,8 +345,9 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
 
   /**
    * An upload for New session's first prompt (W82), with the checks the contract gives ATTACHMENTS_PATH
-   * (W79): the type, then the name, the size, and that an image's or a PDF's first bytes are that
-   * type's, then how many unused uploads there are. It keeps the name, type and size, never the bytes.
+   * (W79): the type and any Content-Encoding, then the name, an empty file, the size, and that an
+   * image's or a PDF's first bytes are that type's and text is UTF-8 with no NUL, then how many unused
+   * uploads there are. It keeps the name, type and size, never the bytes.
    */
   async function upload(req: IncomingMessage, res: ServerResponse) {
     const type = (req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
@@ -341,22 +358,27 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     } catch {
       // Not URL-encoded: refused below, as an empty name.
     }
-    const { size, head } = await readUpload(req);
+    const { size, body: bytes } = await readUpload(req);
+    const head = bytes.subarray(0, 16);
     const answer = (status: number, body: AttachmentResult) => {
       records.uploads.push({ name, type, size, status, ...(body.ok ? { id: body.attachment.id } : {}) });
       json(res, status, body);
     };
     if (!(protocol.ATTACHMENT_TYPES as readonly string[]).includes(type)) return answer(415, { ok: false, error: 'Made up: pitwall takes images, PDFs and text files.' });
+    if (req.headers['content-encoding'] !== undefined) return answer(415, { ok: false, error: 'Made up: no Content-Encoding.' });
     const known = type as AttachmentType;
     if (name === '' || name.length > 200 || UNSAFE_NAME.test(name)) return answer(400, { ok: false, error: 'Made up: that name has a character pitwall refuses.' });
+    if (size === 0) return answer(400, { ok: false, error: 'Made up: the file is empty.' });
     if (size > protocol.ATTACHMENT_MAX_BYTES) return answer(413, { ok: false, error: 'Made up: it is over 10 MiB.' });
     if (SIGNATURES[known] && !SIGNATURES[known](head)) return answer(415, { ok: false, error: `Made up: its first bytes aren't those of ${known}.` });
+    if (!SIGNATURES[known] && !isText(bytes)) return answer(415, { ok: false, error: "Made up: it isn't UTF-8 text." });
+    if (name.startsWith(UNAVAILABLE_UPLOAD)) return answer(503, { ok: false, error: "Made up: this pitwall doesn't keep attachments." });
     if ([...uploaded.values()].filter((each) => !each.used).length >= protocol.ATTACHMENTS_MAX_PENDING) {
       return answer(429, { ok: false, error: 'Made up: too many unused uploads.' });
     }
     if (name.startsWith(FAIL_UPLOAD) && !failedOnce.has(name)) {
       failedOnce.add(name);
-      return answer(503, { ok: false, error: "Made up: pitwall couldn't store it." });
+      return answer(500, { ok: false, error: "Made up: pitwall couldn't write it." });
     }
     const keep = () => {
       const id = randomUUID();
@@ -371,6 +393,18 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     later(1200, () => {
       if (!res.destroyed) keep();
     });
+  }
+
+  /** DELETE attachmentPath(id) (W82): 204 for an upload no spawn has used, 404 for one it doesn't know, 409 for one a spawn used. */
+  function removeUpload(res: ServerResponse, id: string) {
+    const kept = uploaded.get(id);
+    const status = kept === undefined ? 404 : kept.used ? 409 : 204;
+    records.deletes.push({ id, status });
+    if (status === 204) {
+      uploaded.delete(id);
+      return end(res, 204);
+    }
+    return json(res, status, { ok: false, error: status === 404 ? 'Made up: no upload with that id.' : 'Made up: a session has used it.' } satisfies AttachmentResult);
   }
 
   /** New session: pitwall's JSON checks, a made-up background session, and its listing a moment later. */
@@ -589,16 +623,16 @@ function readJson(req: IncomingMessage): Promise<unknown> {
   });
 }
 
-/** An upload's body: how many bytes it had, and the first 16, all a check of its type needs. */
-function readUpload(req: IncomingMessage): Promise<{ size: number; head: Buffer }> {
+/** An upload's body, for its checks, and how many bytes it had: past the limit, only the count goes on. */
+function readUpload(req: IncomingMessage, limit = 10 * 1024 * 1024): Promise<{ size: number; body: Buffer }> {
   return new Promise((resolve) => {
     const kept: Buffer[] = [];
     let size = 0;
     req.on('data', (chunk: Buffer) => {
-      if (size < 16) kept.push(chunk.subarray(0, 16 - size));
+      if (size <= limit) kept.push(chunk);
       size += chunk.length;
     });
-    const done = () => resolve({ size, head: Buffer.concat(kept) });
+    const done = () => resolve({ size, body: Buffer.concat(kept) });
     req.on('end', done);
     req.on('error', done);
   });
