@@ -91,7 +91,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 From the clone, after `npm run build`:
 
 ```
-node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
+node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
 ```
 
 `npm start -- [root...]`, with the same options, runs the same thing.
@@ -102,6 +102,7 @@ node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
 | `--port <n>` | The port on 127.0.0.1. A busy default falls back to a free port; a port you give fails if it's busy. `0` always picks a free one | 4517 |
 | `--interval <seconds>` | How often to poll `claude agents`, in whole seconds from 1 to 300 | 5 |
 | `--no-open` | Don't open the browser. `PITWALL_NO_OPEN=1` does the same | Opens it |
+| `--no-prs` | Don't list your open pull requests, so pitwall never runs `gh`. Without it, pitwall runs `gh api graphql` at start, every 3 minutes and on Refresh, for your open PRs on github.com; `gh` must be installed and logged in | Lists them |
 | `-h`, `--help` | Show the help, with every option and variable | |
 | `-v`, `--version` | Show the version | |
 

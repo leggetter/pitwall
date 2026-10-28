@@ -44,8 +44,9 @@ npm run dev -- [root...] rebuild the web UI and restart the server on change. Us
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5),
-                         `--port <n>` the port (default 4517, or a free one if it's busy), and
-                         `--no-open` leaves the browser alone
+                         `--port <n>` the port (default 4517, or a free one if it's busy),
+                         `--no-open` leaves the browser alone, and `--no-prs` turns off your open
+                         pull requests, so pitwall never runs gh
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
                          (scripts/appcheck/README.md); --list, --only <part>, --widths, --themes, --ports
 npm run appcheck:install-shell    once on macOS: the pinned chrome-headless-shell it runs in
@@ -65,10 +66,12 @@ docs/spikes/             spike write-ups, one file per spike, with a script besi
 src/shared/protocol.ts   the contract between the index, the server and the web UI
 src/index/               the session index. Entry point index.ts: startIndexer()
 src/server/              the local HTTP and WebSocket server. Entry point index.ts: startServer()
+src/prs/                 your open pull requests (M4): one gh api graphql search, read defensively, on
+                         its own poller. Entry point index.ts: createPrPoller(), prsOff() for --no-prs
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
-src/test/                test helpers shared across test files, such as the v3 proof, and noClaude.ts,
-                         which fails any server test that would run `claude` without PITWALL_LIVE=1, or
-                         open an editor at all; not built
+src/test/                test helpers shared across test files, such as the v3 proof, made-up PRs, and
+                         noClaude.ts, which fails any server test that would run `claude` or `gh` without
+                         PITWALL_LIVE=1, or open an editor at all; not built
 web/                     the React web UI, built by Vite to dist/web
 web/public/theme-init.js sets the theme before first paint (a same-origin script, for the CSP)
 web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out

@@ -34,7 +34,7 @@ import { pitwallOrigin, proofFor } from './test/proof.js';
 
 describe('parseCliArgs', () => {
   it('defaults to no roots, the default port and opening the browser', () => {
-    expect(parseCliArgs([], {})).toEqual({ kind: 'run', roots: [], open: true });
+    expect(parseCliArgs([], {})).toEqual({ kind: 'run', roots: [], open: true, prs: true });
   });
 
   it('takes several roots, --port and --no-open in any order', () => {
@@ -43,12 +43,13 @@ describe('parseCliArgs', () => {
       roots: ['a', 'b'],
       port: 5000,
       open: false,
+      prs: true,
     });
-    expect(parseCliArgs(['--port=0', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], port: 0, open: true });
+    expect(parseCliArgs(['--port=0', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], port: 0, open: true, prs: true });
   });
 
   it('treats everything after -- as a root', () => {
-    expect(parseCliArgs(['--', '--port'], {})).toEqual({ kind: 'run', roots: ['--port'], open: true });
+    expect(parseCliArgs(['--', '--port'], {})).toEqual({ kind: 'run', roots: ['--port'], open: true, prs: true });
   });
 
   it('skips the browser when PITWALL_NO_OPEN=1', () => {
@@ -72,7 +73,7 @@ describe('parseCliArgs', () => {
   });
 
   it('takes --interval in whole seconds from 1 to 300, as milliseconds', () => {
-    expect(parseCliArgs(['--interval', '2', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], intervalMs: 2000, open: true });
+    expect(parseCliArgs(['--interval', '2', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], intervalMs: 2000, open: true, prs: true });
     expect(parseCliArgs(['--interval=1'], {})).toMatchObject({ intervalMs: 1000 });
     expect(parseCliArgs(['--interval', '300'], {})).toMatchObject({ intervalMs: 300_000 });
     expect(parseCliArgs(['--interval', '010'], {})).toMatchObject({ intervalMs: 10_000 });
@@ -106,6 +107,20 @@ describe('parseCliArgs', () => {
 
   it('warns in the help that reusing PITWALL_TOKEN keeps one token alive across runs', () => {
     expect(USAGE.replace(/\s+/g, ' ')).toContain('Reusing it keeps one token alive across runs');
+  });
+
+  it('turns pull requests off with --no-prs (M4, W93), anywhere among the roots', () => {
+    expect(parseCliArgs(['a', '--no-prs', 'b'], {})).toEqual({ kind: 'run', roots: ['a', 'b'], open: true, prs: false });
+    expect(parseCliArgs(['--no-prs', '--no-open'], {})).toMatchObject({ open: false, prs: false });
+    expect(() => parseCliArgs(['--no-prs=1'], {})).toThrow(UsageError);
+    expect(() => parseCliArgs(['--prs'], {})).toThrow(UsageError);
+  });
+
+  it('says in the help what --no-prs does, and that pitwall otherwise runs gh', () => {
+    expect(USAGE).toContain('[--no-open] [--no-prs]');
+    expect(USAGE.replace(/\s+/g, ' ')).toContain(
+      "--no-prs Don't list your open pull requests, and never run gh. Without it, pitwall runs gh api graphql at start, every 3 minutes and on Refresh, for your open PRs on github.com. gh must be installed and logged in.",
+    );
   });
 
   it('rejects unknown options', () => {
@@ -450,6 +465,22 @@ echo '[]'
 `;
 
 /**
+ * A stand-in for `gh` (M4, W93), put first on the CLI's PATH so the PR poller
+ * never runs the real one, which would reach GitHub with the user's login. It
+ * records its arguments, NUL-separated, and what it saw of its environment,
+ * next to itself, then prints one page with one made-up PR.
+ */
+const FAKE_GH = `#!/bin/sh
+printf '%s\\0' "$@" > "$(dirname "$0")/gh-args"
+{
+  echo "GH_PROMPT_DISABLED=\${GH_PROMPT_DISABLED-unset}"
+  echo "GH_NO_UPDATE_NOTIFIER=\${GH_NO_UPDATE_NOTIFIER-unset}"
+  if [ -n "\${PITWALL_TOKEN+set}" ]; then echo "PITWALL_TOKEN=set"; else echo "PITWALL_TOKEN=unset"; fi
+} > "$(dirname "$0")/gh-env"
+echo '{"data":{"search":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/example/demo-app/pull/7","number":7,"title":"Add a demo feature","isDraft":false,"createdAt":"2026-10-01T09:00:00Z","updatedAt":"2026-10-20T09:00:00Z","headRefName":"feature/demo","headRepository":{"nameWithOwner":"example/demo-app"},"repository":{"nameWithOwner":"example/demo-app"},"reviewDecision":null,"mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}]}}}'
+`;
+
+/**
  * Stand-ins for `open` (macOS) and `xdg-open` (Linux), first on the CLI's PATH
  * so no test ever opens a real browser. Each call appends its argument count
  * and then each argument, one per line, to $PITWALL_TEST_OPEN_LOG.
@@ -509,6 +540,7 @@ describe('pitwall (the process)', () => {
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
   });
@@ -521,7 +553,7 @@ describe('pitwall (the process)', () => {
   const fresh = (name: string) => join(tmp, `${name}-${++n}`);
 
   /**
-   * Runs the CLI with the fake claude and the fake openers first on PATH. It
+   * Runs the CLI with the fake claude, the fake gh and the fake openers first on PATH. It
    * doesn't open a browser unless the test sets PITWALL_NO_OPEN to 0, and its
    * PITWALL_HOME is always a temp directory, never the real ~/.pitwall.
    */
@@ -600,6 +632,7 @@ describe('pitwall (the process)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Usage: pitwall [root...]');
     expect(result.stdout).toContain('--interval <seconds>');
+    expect(result.stdout).toContain('--no-prs');
   });
 
   it('exits 1 with a clear message for an --interval out of range', async () => {
@@ -683,6 +716,48 @@ describe('pitwall (the process)', () => {
     while ((await count()) < 3 && Date.now() - started < 6_000) await new Promise((r) => setTimeout(r, 100));
     expect(await count()).toBeGreaterThanOrEqual(3);
     expect(Date.now() - started).toBeLessThan(6_000);
+
+    child.kill('SIGTERM');
+    expect((await result).code).toBe(0);
+  }, 30_000);
+
+  /** GET /api/prs, once `ready` says the list is what the test waits for. */
+  async function prsWhen(url: string, ready: (list: { fetchedAt?: string; source: { ok: boolean } }) => boolean): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const res = await fetch(`${url}/api/prs`, { headers: { authorization: `Bearer ${token}` } });
+      const list = (await res.json()) as { fetchedAt?: string; source: { ok: boolean } };
+      if (ready(list) || Date.now() > deadline) return list;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  it('fetches your open PRs at start with gh api graphql, -f fields only, never prompting, without the token (M4, W93)', async () => {
+    await rm(join(bin, 'gh-args'), { force: true });
+    await rm(join(bin, 'gh-env'), { force: true });
+    const { child, result, url } = await start();
+    const list = await prsWhen(url, (list) => list.fetchedAt !== undefined);
+    expect(list).toMatchObject({ source: { ok: true }, refreshing: false, prs: [{ repo: 'example/demo-app', number: 7, url: 'https://github.com/example/demo-app/pull/7' }] });
+
+    const args = (await readFile(join(bin, 'gh-args'), 'utf8')).split('\0').slice(0, -1);
+    expect(args.slice(0, 4)).toEqual(['api', 'graphql', '--hostname', 'github.com']);
+    expect(args.filter((arg) => arg.startsWith('-'))).toEqual(['--hostname', '-f', '-f']);
+    expect(args).toContain('q=is:pr is:open author:@me archived:false sort:updated-desc');
+    expect((await readFile(join(bin, 'gh-env'), 'utf8')).split('\n')).toEqual(['GH_PROMPT_DISABLED=1', 'GH_NO_UPDATE_NOTIFIER=1', 'PITWALL_TOKEN=unset', '']);
+
+    child.kill('SIGTERM');
+    expect((await result).code).toBe(0);
+  }, 30_000);
+
+  it('with --no-prs, never runs gh, and serves the off list', async () => {
+    await rm(join(bin, 'gh-args'), { force: true });
+    const { child, result, url } = await start(['--no-prs']);
+    expect((await firstSnapshot(url)).status).toBe(200);
+    const list = await prsWhen(url, () => true);
+    expect(list).toEqual({ source: { ok: false, reason: 'off', error: 'Pull requests are off: pitwall was started with --no-prs.' }, refreshing: false, prs: [] });
+    // Long enough for a fetch at start to have run the fake gh, as the test above shows it does.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(existsSync(join(bin, 'gh-args'))).toBe(false);
 
     child.kill('SIGTERM');
     expect((await result).code).toBe(0);
