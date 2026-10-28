@@ -610,13 +610,23 @@ const NOT_A_PROMPT_PREFIXES = [
 ];
 
 /**
- * A user entry's prompt, or undefined when the entry isn't one the user typed:
- * meta entries (including cross-session messages), compact summaries,
- * sidechains, tool results, entries whose `origin.kind` marks them as from
- * another session or a task notification, and Claude Code's own wrappers.
- * `<system-reminder>` blocks are stripped first.
+ * A user entry's prompt, truncated to USER_PROMPT_MAX characters, or undefined
+ * when the entry isn't one the user typed, by promptTextOf()'s rule.
  */
 export function userPromptOf(entry: Record<string, unknown>): string | undefined {
+  const text = promptTextOf(entry);
+  return text === undefined ? undefined : truncate(text, USER_PROMPT_MAX);
+}
+
+/**
+ * A user entry's prompt, whole and trimmed, or undefined when the entry isn't
+ * one the user typed: meta entries (including cross-session messages), compact
+ * summaries, sidechains, tool results, entries whose `origin.kind` marks them
+ * as from another session or a task notification, and Claude Code's own
+ * wrappers. `<system-reminder>` blocks are stripped first. The rule behind
+ * lastUserPrompt, and behind the 'prompted' PR links (prLinks.ts, W94).
+ */
+export function promptTextOf(entry: Record<string, unknown>): string | undefined {
   if (entry.isMeta === true || entry.isCompactSummary === true || entry.isSidechain === true) return undefined;
   const origin = entry.origin;
   if (isRecord(origin) && (origin.kind === 'peer' || origin.kind === 'task-notification')) return undefined;
@@ -631,7 +641,7 @@ export function userPromptOf(entry: Record<string, unknown>): string | undefined
   const text = stripSystemReminders(raw).trim();
   if (text === '' || text.includes('<cross-session-message')) return undefined;
   if (NOT_A_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix))) return undefined;
-  return truncate(text, USER_PROMPT_MAX);
+  return text;
 }
 
 /** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
