@@ -22,7 +22,21 @@ import type { StorageSource } from '../groupState.js';
 import { writeHidden, type HiddenGroup } from '../hidden.js';
 import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
 import { writeStarred } from '../starred.js';
-import { APP_DIR, CONVERSATION, DIALOG_DIRECTORIES, MANY_DIRECTORIES, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
+import {
+  APP_DIR,
+  CONVERSATION,
+  DIALOG_DIRECTORIES,
+  MANY_DIRECTORIES,
+  MANY_SUBAGENTS,
+  NEWER_CONVERSATION,
+  OLDER_CONVERSATION,
+  SUBAGENT_OLDER,
+  SUBAGENT_TRANSCRIPT,
+  SUBAGENTS,
+  TERMINAL_OUTPUT,
+  TRUNCATED_SUBAGENTS,
+  TRUST_HINT,
+} from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
 const forever = () => new Promise<ApiResult>(() => {});
@@ -85,18 +99,40 @@ export interface StubOptions {
    * answers; `refused` is `open -a` exiting non-zero, as when the app has moved since pitwall started.
    */
   open?: 'opened' | 'opening' | 'refused';
+  /**
+   * A session's sub-agents (W77). Left out, the route is a 404, as before W76, so a view shows no
+   * Sub-agents tab. `ok` is one of each state and a nested one; `many` is 72; `truncated` is twelve
+   * the server cut short; `empty` has none; `loading` never answers; `failed` is a 500 every time, and
+   * `failed-retrying` a 500, then no answer, so Try again stays busy; `refresh-failed` answers the
+   * first, then 502s. A sub-agent's transcript has a page behind Load earlier.
+   */
+  subagents?: 'ok' | 'many' | 'truncated' | 'empty' | 'loading' | 'failed' | 'failed-retrying' | 'refresh-failed';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
+/** A session's sub-agents, or one's transcript, with its cursor. */
+const SUBAGENTS_PATH = /^\/api\/sessions\/([^/?]+)\/subagents(?:\/([A-Za-z0-9]+)\/conversation(?:\?before=(.*))?)?$/;
 
 /** An ApiClient that answers from the fixtures, as `options` say, and never calls fetch. */
 export function stubApi(options: StubOptions = {}): ApiClient {
   // How many times each session's newest page, and each one's older page, has been asked for.
   const fetched = new Map<string, number>();
   const fetchedOlder = new Map<string, number>();
+  let listed = 0;
   const answer = (method: 'GET' | 'POST', path: string): Promise<ApiResult> => {
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
     if (method === 'GET' && path === DIRECTORIES_PATH) return directories(options.directories ?? 'ok');
+    const agents = method === 'GET' ? SUBAGENTS_PATH.exec(path) : null;
+    if (agents) {
+      if (options.subagents === undefined) return Promise.resolve(failed(404));
+      const sessionId = decodeURIComponent(agents[1] ?? '');
+      if (agents[2] !== undefined) {
+        const older = agents[3] !== undefined;
+        return Promise.resolve(ok(older ? { sessionId, entries: SUBAGENT_OLDER } : { sessionId, entries: SUBAGENT_TRANSCRIPT, before: 'pitwall-test-agent-cursor' }));
+      }
+      listed += 1;
+      return subagents(sessionId, options.subagents, listed - 1);
+    }
     const match = SESSION_PATH.exec(path);
     if (!match) return Promise.resolve(failed(404));
     const sessionId = decodeURIComponent(match[1] ?? '');
@@ -155,6 +191,29 @@ function conversation(sessionId: string, kind: NonNullable<StubOptions['conversa
       return Promise.resolve(ok({ sessionId, entries: times === 0 ? CONVERSATION : [...CONVERSATION, ...NEWER_CONVERSATION] }));
     case 'ok':
       return Promise.resolve(ok({ sessionId, entries: CONVERSATION }));
+  }
+}
+
+/** `times` is how often the list was asked for before this. */
+function subagents(sessionId: string, kind: NonNullable<StubOptions['subagents']>, times: number): Promise<ApiResult> {
+  const list = (entries: typeof SUBAGENTS, truncated = false) => Promise.resolve(ok({ sessionId, subagents: entries, truncated }));
+  switch (kind) {
+    case 'loading':
+      return forever();
+    case 'failed':
+      return Promise.resolve(failed(500));
+    case 'failed-retrying':
+      return times === 0 ? Promise.resolve(failed(500)) : forever();
+    case 'refresh-failed':
+      return times === 0 ? list(SUBAGENTS) : Promise.resolve(failed(502));
+    case 'empty':
+      return list([]);
+    case 'many':
+      return list(MANY_SUBAGENTS);
+    case 'truncated':
+      return list(TRUNCATED_SUBAGENTS, true);
+    case 'ok':
+      return list(SUBAGENTS);
   }
 }
 

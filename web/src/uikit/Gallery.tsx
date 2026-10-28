@@ -21,6 +21,7 @@ import { CopyButtons, Timestamps, Toasts, Tooltips } from './overlays.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
 import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
 import { Confirmations, Conversations, EndedViews, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
+import { SubagentViews } from './subagents.js';
 import './gallery.css';
 
 interface Section {
@@ -63,6 +64,13 @@ const SECTIONS: Section[] = [
     intro:
       "The session view's Conversation tab: every kind of entry, markdown in messages (every element, cut short in a code block, what shows as text, narrow, links in code, and Copy), messages to pitwall, questions asked in a dialog (answered, multi-select, typed, with notes, and dismissed), folded tool calls closed and open, Load earlier idle and busy, Jump to latest, and its errors and notices: Load earlier failed, the transcript changed, a refresh failed, each Try again idle and busy, and the transcript gone.",
     Content: Conversations,
+  },
+  {
+    id: 'sub-agents',
+    title: 'Sub-agents',
+    intro:
+      "The session view's Sub-agents tab (W77): the list with each state and nested ones, a sub-agent's transcript, the conversation naming them with links to the tab, many, cut short, none, loading, failed (Try again idle and busy), a refresh that failed, and at 375 px. The session row's running count is under Session rows.",
+    Content: SubagentViews,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },

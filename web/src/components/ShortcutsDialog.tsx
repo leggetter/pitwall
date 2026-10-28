@@ -95,8 +95,13 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
         },
         {
           doc: { key: '← / →, Home / End', where: "The session view's tabs" },
-          what: 'In the tabs: move between Conversation and Terminal. Enter or Space opens one',
+          what: 'In the tabs: move between Conversation, Terminal and Sub-agents. Enter or Space opens one',
           keys: [[LEFT, RIGHT], [HOME, END]],
+        },
+        {
+          doc: { key: '↓ / ↑, Home / End, Enter', where: 'The Sub-agents list' },
+          what: "In the Sub-agents list: move, jump to either end, open one's transcript",
+          keys: [[DOWN, UP], [HOME, END], [ENTER]],
         },
         {
           doc: { key: '← / →, Home / End', where: 'The divider' },

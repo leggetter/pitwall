@@ -37,6 +37,13 @@
 // W54 has it, but leaves focus where it is, and the terminal's bar says how to type to it. A setting
 // (terminalFocus.ts) can make it never take focus at all.
 //
+// The Sub-agents tab (W77, Subagents.tsx) lists the sub-agents the session started, and opens one's
+// transcript, read-only. It shows once there's at least one: the view asks for the list once, after
+// its conversation's first page, and the snapshot's running count, or an entry in the conversation
+// about one, show it too. Once shown, it stays, so the tab row never loses a tab under you. A link on
+// such an entry opens that sub-agent's transcript there. The footer goes while the tab is open: there's
+// no message box for a sub-agent.
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
@@ -61,7 +68,7 @@ import { moveTabFocus } from '../tabs.js';
 import { Alert } from './Alert.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Button } from './Button.js';
-import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
+import { ConversationPanel, SubagentLinkContext, useConversation, type PageLoader, type SubagentRef } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
 import { COPY_RESUME_COMMAND, EndedFooter, RESUME_LABEL, useResume } from './EndedSession.js';
 import { EmptyState } from './EmptyState.js';
@@ -73,6 +80,7 @@ import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { finishedAskedHint, SESSION_VIEW_ID, STALE_HINT } from './SessionRow.js';
 import { StarButton } from './StarButton.js';
+import { SubagentsPanel, subagentsCount, useSubagents } from './Subagents.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
 import { Timestamp } from './Timestamp.js';
 import { useToast } from './Toast.js';
@@ -343,9 +351,15 @@ export interface SessionViewProps {
    * its Terminal tab in this page, the default, or never. Read each time the terminal attaches.
    */
   terminalFocus?: TerminalFocus | undefined;
+  /**
+   * The newest poll's time, a snapshot's or a heartbeat's generatedAt: while its Sub-agents tab is open
+   * and any of them run, the tab asks for the list again at this pace (W77). Left out, as in the
+   * gallery and the tests of a view alone, it follows the session's activity instead.
+   */
+  polledAt?: string | undefined;
 }
 
-type Tab = 'conversation' | 'terminal';
+type Tab = 'conversation' | 'terminal' | 'subagents';
 
 /** A copy from the actions menu that the clipboard refused: the text isn't on screen, so the header shows it. */
 type Refused = { label: string; text: string };
@@ -370,15 +384,26 @@ export function SessionView({
   stepped = false,
   openedBy,
   terminalFocus = DEFAULT_TERMINAL_FOCUS,
+  polledAt,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
-  const ids = { title: useId(), conversationTab: useId(), conversationPanel: useId(), terminalTab: useId(), terminalPanel: useId(), typeHint: useId() };
+  const ids = {
+    title: useId(),
+    conversationTab: useId(),
+    conversationPanel: useId(),
+    terminalTab: useId(),
+    terminalPanel: useId(),
+    subagentsTab: useId(),
+    subagentsPanel: useId(),
+    typeHint: useId(),
+  };
   const ownHeading = useRef<HTMLHeadingElement>(null);
   const heading = headingRef ?? ownHeading;
   const menuButton = useRef<HTMLButtonElement>(null);
   const conversationTab = useRef<HTMLButtonElement>(null);
   const terminalTab = useRef<HTMLButtonElement>(null);
+  const subagentsTab = useRef<HTMLButtonElement>(null);
   const pathRef = useRef<HTMLSpanElement>(null);
   const fallbackRef = useRef<HTMLElement>(null);
   const alive = useRef(true);
@@ -399,6 +424,8 @@ export function SessionView({
     [api, sessionId],
   );
   const conversation = useConversation(session.lastActivityAt, loader);
+  const signal = useCallback(() => requests.current?.signal, []);
+  const subagents = useSubagents(api, sessionId, signal);
   const actions = useSessionActions(session, onClose);
   // Resumed from this view (W67): it opens its Terminal tab once the snapshot lists it as running.
   const resume = useResume(session);
@@ -506,9 +533,32 @@ export function SessionView({
       setQuiet(false);
       asked.current = next === 'terminal' ? focusGesture(terminalTab.current) : undefined;
       if (next === 'terminal') focusQuietly(terminalTab.current);
+      // Safari doesn't give a clicked button focus, and the footer, which may have had it, goes with this tab.
+      if (next === 'subagents') focusQuietly(subagentsTab.current);
     }
-    // Switching to Conversation unmounts the terminal, which detaches.
-    if (next === 'conversation') setAttachStatus(undefined);
+    // Switching to Conversation or Sub-agents unmounts the terminal, which detaches.
+    if (next !== 'terminal') setAttachStatus(undefined);
+  };
+
+  // The Sub-agents tab (W77): the sub-agent whose transcript is open there, and the one whose row takes
+  // focus when Back returns to the list.
+  const [openAgent, setOpenAgent] = useState<SubagentRef>();
+  const [returnTo, setReturnTo] = useState<string>();
+  // Bumped each time one is opened, so its heading takes focus even when it's the one already open there.
+  const [opened, setOpened] = useState(0);
+  /** A row, or a link on an entry about a sub-agent: its transcript, in the Sub-agents tab, with focus on its heading. */
+  const openSubagent = useCallback((subagent: SubagentRef) => {
+    setChosen('subagents');
+    setQuiet(false);
+    setAttachStatus(undefined);
+    asked.current = undefined;
+    setOpenAgent(subagent);
+    setOpened((count) => count + 1);
+  }, []);
+  /** Back: the list, with focus on that sub-agent's row. */
+  const backToSubagents = () => {
+    setReturnTo(openAgent?.agentId);
+    setOpenAgent(undefined);
   };
 
   /** Detach, Cancel on the restart, or Back to the conversation: the conversation, with focus on the Terminal tab. */
@@ -583,7 +633,7 @@ export function SessionView({
   };
 
   // ← and → (and Home and End) move focus between the tabs; Enter or Space opens one, never focus alone (4: Tabs).
-  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => moveTabFocus(event, [conversationTab.current, terminalTab.current]);
+  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => moveTabFocus(event, [conversationTab.current, terminalTab.current, subagentsTab.current]);
 
   const onHeaderKey = (event: KeyboardEvent<HTMLElement>) => {
     if (!onStep || event.defaultPrevented || !plainKey(event)) return;
@@ -712,6 +762,39 @@ export function SessionView({
   // Shown once: the footer leaves out a reply the conversation already has.
   const replyShown = useMemo(() => (session.relay ? replyInConversation(session.relay, shownEntries) : false), [session.relay, shownEntries]);
   const attached = tab === 'terminal' && attachStatus?.kind === 'attached';
+
+  // The Sub-agents tab shows once the session is known to have any (W77): the list says so, the
+  // snapshot counts some running, or an entry in the conversation is about one. Then it stays.
+  const subagentsOpen = tab === 'subagents' && !hidden;
+  const running = session.subagentsRunning ?? 0;
+  const mentioned = useMemo(() => shownEntries.flatMap((entry) => (entry.subagent ? [entry.subagent.agentId] : [])), [shownEntries]);
+  const listedIds = subagents.state.list?.subagents;
+  const [revealed, setRevealed] = useState(false);
+  const hasSubagents = (listedIds !== undefined && listedIds.length > 0) || running > 0 || mentioned.length > 0;
+  if (hasSubagents && !revealed) setRevealed(true);
+  const subagentsShown = revealed || hasSubagents;
+  // Sub-agents an entry names that the list doesn't have yet, as for one that started since: asked for again, once each.
+  const unlisted = useMemo(() => {
+    if (!listedIds || subagents.state.list?.truncated) return '';
+    const known = new Set(listedIds.map((each) => each.agentId));
+    return [...new Set(mentioned.filter((agentId) => !known.has(agentId)))].sort().join(' ');
+  }, [listedIds, mentioned, subagents.state.list?.truncated]);
+  // While the tab is open and any run, at the index's pace; or else the session's activity's.
+  const pace = subagentsOpen && running > 0 ? (polledAt ?? session.lastActivityAt ?? '') : '';
+  const { ensure: ensureSubagents, refresh: refreshSubagents } = subagents;
+  // Again when the tab opens, at that pace while it's open, when the running count changes, and for a
+  // sub-agent the conversation names that the list hasn't got: never the first time, which is below.
+  useEffect(() => {
+    if (listed) refreshSubagents();
+  }, [subagentsOpen, pace, running, unlisted, listed, refreshSubagents]);
+  // Once when the view opens, after its conversation's first page, so the two never wait on each other
+  // for the server's four reads at once, and a view only passed through with j or k asks nothing more.
+  // Or first when the tab is opened, as from a link.
+  const firstPage = conversation.state.status !== 'loading';
+  useEffect(() => {
+    if (firstPage || subagentsOpen) ensureSubagents();
+  }, [firstPage, subagentsOpen, ensureSubagents]);
+  const subagentCount = subagentsCount(subagents.state);
 
   return (
     <Frame layout={layout} hidden={hidden} animate={animate} titleId={ids.title} onEscape={onEscape}>
@@ -872,10 +955,46 @@ export function SessionView({
             </button>
           </Tooltip>
         )}
+        {/* Once the session is known to have sub-agents, for every kind of session, finished and ended ones included (W77). */}
+        {subagentsShown && (
+          <button
+            ref={subagentsTab}
+            type="button"
+            role="tab"
+            id={ids.subagentsTab}
+            className="session-tab"
+            aria-selected={tab === 'subagents'}
+            aria-controls={ids.subagentsPanel}
+            tabIndex={tab === 'subagents' ? 0 : -1}
+            onClick={() => openTab('subagents')}
+          >
+            <Icon name="subagents" />
+            Sub-agents
+            {subagentCount !== undefined && <span className="session-tab-count"> ({subagentCount})</span>}
+          </button>
+        )}
       </div>
 
-      {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
-      <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation' || hidden} />
+      <SubagentLinkContext.Provider value={subagentsShown ? openSubagent : undefined}>
+        {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
+        <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation' || hidden} />
+        {subagentsShown && (
+          <SubagentsPanel
+            api={api}
+            sessionId={sessionId}
+            controller={subagents}
+            id={ids.subagentsPanel}
+            labelledBy={ids.subagentsTab}
+            hidden={tab !== 'subagents' || hidden}
+            open={openAgent}
+            opened={opened}
+            onOpen={openSubagent}
+            onBack={backToSubagents}
+            returnTo={returnTo}
+            signal={signal}
+          />
+        )}
+      </SubagentLinkContext.Provider>
 
       {!ended && (
         <div
@@ -903,7 +1022,9 @@ export function SessionView({
       )}
 
       {session.kind === 'interactive' && (listed || drafting) && (
-        <footer className="session-view-foot">
+        // Kept while the Sub-agents tab is open, but hidden, so a draft or a send in flight carries on:
+        // there's no message box for a sub-agent, and this one's for the session.
+        <footer className="session-view-foot" hidden={tab === 'subagents'}>
           {/* An ended session has no message box, except to keep a draft, which is never lost to the session going (W31). */}
           {(!ended || drafting) && (
             <RelayBox

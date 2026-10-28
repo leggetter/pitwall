@@ -5,12 +5,13 @@
 import {
   CONVERSATION_STALE_STATUS,
   conversationPath,
+  subagentConversationPath,
   type AskedQuestion,
   type ConversationEntry,
   type ConversationEntryKind,
   type ConversationPage,
 } from '../../src/shared/protocol.js';
-import type { ApiClient } from './api.js';
+import type { ApiClient, ApiResult } from './api.js';
 
 /** The status the server answers for a cursor made for another version of the transcript. */
 export const STALE_CURSOR_STATUS = CONVERSATION_STALE_STATUS;
@@ -59,17 +60,10 @@ export type ConversationResult =
   | { kind: 'failed'; status?: number; error?: string };
 
 /**
- * One page of a session's conversation, through the app's ApiClient: the
- * newest, or the one before the `before` cursor. Waits while the page has no
- * apiKey yet, as the client does. Never rejects.
+ * GETs `path` through the app's ApiClient, and asks once more after the wait the server asked for
+ * when it answers 429 (BUSY_STATUS), before that counts as a failure. Never rejects.
  */
-export async function getConversation(
-  api: ApiClient,
-  sessionId: string,
-  before?: string,
-  signal?: AbortSignal,
-): Promise<ConversationResult> {
-  const path = conversationPath(sessionId, before);
+export async function getRetryingBusy(api: ApiClient, path: string, signal?: AbortSignal): Promise<ApiResult> {
   const options = signal ? { signal } : {};
   let result = await api.get(path, options);
   // Too many reads at once: once more, after the wait the server asked for, before it counts as a failure.
@@ -77,16 +71,46 @@ export async function getConversation(
     const wait = Math.min(BUSY_WAIT_MAX_MS, result.retryAfter === undefined ? BUSY_WAIT_DEFAULT_MS : result.retryAfter * 1000);
     if (await pause(wait, signal)) result = await api.get(path, options);
   }
+  return result;
+}
+
+/**
+ * A failed read as the page shows it (5: Errors): the HTTP status, when the server answered with
+ * something other than a success, and the reason its body gave, when it gave one.
+ */
+export function failedResult(result: Extract<ApiResult, { kind: 'failed' }>): { kind: 'failed'; status?: number; error?: string } {
+  const failed: { kind: 'failed'; status?: number; error?: string } = { kind: 'failed' };
+  // A 2xx whose body isn't JSON is a failure too, but its status says nothing about why.
+  if (result.status !== undefined && (result.status < 200 || result.status >= 300)) failed.status = result.status;
+  const error = reasonIn(result.body);
+  if (error !== undefined) failed.error = error;
+  return failed;
+}
+
+/**
+ * One page of a session's conversation, through the app's ApiClient: the
+ * newest, or the one before the `before` cursor. Waits while the page has no
+ * apiKey yet, as the client does. Never rejects.
+ */
+export function getConversation(api: ApiClient, sessionId: string, before?: string, signal?: AbortSignal): Promise<ConversationResult> {
+  return getPage(api, conversationPath(sessionId, before), sessionId, signal);
+}
+
+/**
+ * One page of a sub-agent's transcript (W77), as getConversation() pages the session's: the newest, or
+ * the one before `before`. Its page names the session, not the sub-agent.
+ */
+export function getSubagentConversation(api: ApiClient, sessionId: string, agentId: string, before?: string, signal?: AbortSignal): Promise<ConversationResult> {
+  return getPage(api, subagentConversationPath(sessionId, agentId, before), sessionId, signal);
+}
+
+async function getPage(api: ApiClient, path: string, sessionId: string, signal: AbortSignal | undefined): Promise<ConversationResult> {
+  const result = await getRetryingBusy(api, path, signal);
   if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
   if (result.kind === 'failed') {
     if (result.status === 404) return { kind: 'not-found' };
     if (result.status === STALE_CURSOR_STATUS) return { kind: 'stale' };
-    const failed: Extract<ConversationResult, { kind: 'failed' }> = { kind: 'failed' };
-    // A 2xx whose body isn't JSON is a failure too, but its status says nothing about why.
-    if (result.status !== undefined && (result.status < 200 || result.status >= 300)) failed.status = result.status;
-    const error = reasonIn(result.body);
-    if (error !== undefined) failed.error = error;
-    return failed;
+    return failedResult(result);
   }
   const page = asConversationPage(result.body, sessionId);
   return page ? { kind: 'ok', page } : { kind: 'failed' };
@@ -97,6 +121,11 @@ function reasonIn(body: unknown): string | undefined {
   if (typeof body !== 'object' || body === null) return undefined;
   const { error } = body as Record<string, unknown>;
   return typeof error === 'string' && error.trim() !== '' ? error.trim().slice(0, 500) : undefined;
+}
+
+/** Claude Code's id for a sub-agent: letters and digits only (SubagentSummary.agentId), at most 64 of them. */
+export function isAgentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9]{1,64}$/.test(value);
 }
 
 const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 'tool', 'cross-session', 'to-pitwall', 'question', 'notice']);
@@ -117,7 +146,7 @@ export function asConversationPage(body: unknown, sessionId: string): Conversati
 
 function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const { kind, at, text, markdown, toolName, toolError, from, questions, truncated } = value as Record<string, unknown>;
+  const { kind, at, text, markdown, toolName, toolError, from, subagent, questions, truncated } = value as Record<string, unknown>;
   if (typeof kind !== 'string' || !KINDS.has(kind as ConversationEntryKind) || typeof text !== 'string') return undefined;
   const entry: ConversationEntry = { kind: kind as ConversationEntryKind, text };
   if (typeof at === 'string') entry.at = at;
@@ -125,6 +154,11 @@ function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof toolName === 'string') entry.toolName = toolName;
   if (typeof toolError === 'boolean') entry.toolError = toolError;
   if (typeof from === 'string') entry.from = from;
+  // The sub-agent a report, an Agent call or a SendMessage call is about (W76, W77), on the kinds that have one.
+  if ((kind === 'cross-session' || kind === 'tool') && typeof subagent === 'object' && subagent !== null) {
+    const { agentId, description } = subagent as Record<string, unknown>;
+    if (isAgentId(agentId) && typeof description === 'string') entry.subagent = { agentId, description };
+  }
   if (kind === 'question' && Array.isArray(questions)) entry.questions = questions.slice(0, QUESTIONS_SHOWN).flatMap((question) => asQuestion(question) ?? []);
   if (truncated === true) entry.truncated = true;
   return entry;

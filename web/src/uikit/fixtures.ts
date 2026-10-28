@@ -11,6 +11,7 @@ import type {
   RelayOff,
   SessionGroup,
   SessionSummary,
+  SubagentSummary,
 } from '../../../src/shared/protocol.js';
 
 /** The gallery's clock. Fixture times are set back from it, so "4m ago" reads as written. */
@@ -885,3 +886,103 @@ export const MANY_DIRECTORIES: DirectoryList = {
 
 /** The trust failure's command, as the server would send it. */
 export const TRUST_HINT = `cd ${APP_DIR} && claude`;
+
+// Sub-agents (W77): a session's sub-agents for the Sub-agents tab, each state, nested ones, many and a
+// list cut short, a sub-agent's own transcript, and a conversation whose entries name them.
+
+let agents = 0;
+
+/** A made-up sub-agent: done, a general-purpose one, unless `overrides` say otherwise. Ids are letters and digits, as Claude Code's are. */
+export function subagent(description: string, overrides: Partial<SubagentSummary> = {}): SubagentSummary {
+  agents += 1;
+  const merged: SubagentSummary = {
+    agentId: `pt77${String(agents).padStart(4, '0')}`,
+    description,
+    agentType: 'general-purpose',
+    state: 'done',
+    startedAt: ago(40),
+    lastActivityAt: ago(30),
+    toolCalls: 8,
+    ...overrides,
+  };
+  for (const key of Object.keys(merged) as (keyof SubagentSummary)[]) {
+    if (merged[key] === undefined) delete merged[key];
+  }
+  return merged;
+}
+
+const REVIEW = subagent('Review the made-up export job for retries', { agentType: 'Explore', state: 'running', startedAt: ago(9), lastActivityAt: ago(0.1), toolCalls: 23 });
+
+/** One of each state, and one another started, out of order: the tab sorts them. */
+export const SUBAGENTS: SubagentSummary[] = [
+  subagent('Draft the made-up changelog entry', { startedAt: ago(50), lastActivityAt: ago(44), toolCalls: 6 }),
+  REVIEW,
+  subagent('Run the made-up export tests', { state: 'failed', startedAt: ago(30), lastActivityAt: ago(27), toolCalls: 4 }),
+  subagent('Search the made-up docs for the timeout', { state: 'running', agentType: 'Explore', startedBy: REVIEW.agentId, startedAt: ago(3), lastActivityAt: ago(0.3), toolCalls: 2 }),
+  subagent('Look for a made-up flaky test', { state: 'stopped', startedAt: ago(35), lastActivityAt: ago(33), toolCalls: 0 }),
+  subagent('Summarise the made-up logs', { state: 'unknown', agentType: undefined, startedAt: ago(70), lastActivityAt: ago(66), toolCalls: 11 }),
+];
+
+const TASKS = ['Read', 'Check', 'Review', 'Search', 'Summarise', 'Draft', 'Test', 'Trace'];
+const THINGS = ['the made-up export job', 'the retry tests', 'the made-up routes', 'the batch writer', 'the made-up docs', 'the queue worker', 'the made-up changelog', 'the timeout handling', 'the CSV export'];
+
+/** 72 sub-agents, the most one of Phil's sessions started in a week (PLAN.md): three running, and every eighth started by another. */
+export const MANY_SUBAGENTS: SubagentSummary[] = (() => {
+  const made: SubagentSummary[] = [];
+  for (let i = 0; i < 72; i++) {
+    const parent = i % 8 === 7 ? made[i - 3] : undefined;
+    made.push(
+      subagent(`${TASKS[i % TASKS.length]} ${THINGS[i % THINGS.length]}, part ${i + 1}`, {
+        state: i < 3 ? 'running' : i % 11 === 5 ? 'failed' : i % 13 === 6 ? 'stopped' : 'done',
+        agentType: i % 3 === 0 ? 'Explore' : 'general-purpose',
+        startedAt: ago(5 + i * 9),
+        lastActivityAt: ago(i < 3 ? 0.2 : 1 + i * 9),
+        toolCalls: (i * 7) % 40,
+        ...(parent ? { startedBy: parent.agentId } : {}),
+      }),
+    );
+  }
+  return made;
+})();
+
+/** A list the server cut short: here twelve stand in for its SUBAGENTS_MAX, 200. */
+export const TRUNCATED_SUBAGENTS: SubagentSummary[] = MANY_SUBAGENTS.slice(0, 12);
+
+/** A sub-agent's own transcript: the task it was given, its steps and its report. */
+export const SUBAGENT_TRANSCRIPT: ConversationEntry[] = [
+  { kind: 'user', at: ago(9), text: 'Review the made-up export job for retries. Report what retries, what doesn’t, and any test that is missing.' },
+  { kind: 'assistant', at: ago(8.8), text: "I'll start with the job and its tests.", markdown: true },
+  { kind: 'tool', at: ago(8.6), toolName: 'Read', text: 'Read: src/export/job.ts' },
+  { kind: 'tool', at: ago(8.5), toolName: 'Grep', text: 'Grep: retry in src/export' },
+  {
+    kind: 'tool',
+    at: ago(3),
+    toolName: 'Agent',
+    text: 'Agent: Search the made-up docs for the timeout',
+    subagent: { agentId: SUBAGENTS[3]!.agentId, description: SUBAGENTS[3]!.description },
+  },
+  { kind: 'assistant', at: ago(0.2), text: 'The batch writer retries **three times**; the CSV export doesn’t retry at all.', markdown: true },
+];
+
+/** What's behind its Load earlier. */
+export const SUBAGENT_OLDER: ConversationEntry[] = [{ kind: 'notice', at: ago(9.2), text: 'A made-up earlier notice.' }];
+
+/** A session's conversation whose entries name its sub-agents: the call that started one, its report, and a message sent to another. */
+export const SUBAGENT_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(52), text: 'Draft the changelog entry, then check the export job retries.' },
+  { kind: 'tool', at: ago(50), toolName: 'Agent', text: 'Agent: Draft the made-up changelog entry', subagent: { agentId: SUBAGENTS[0]!.agentId, description: SUBAGENTS[0]!.description } },
+  {
+    kind: 'cross-session',
+    at: ago(44),
+    from: SUBAGENTS[0]!.agentId,
+    markdown: true,
+    text: 'The changelog entry is drafted under **Unreleased**.',
+    subagent: { agentId: SUBAGENTS[0]!.agentId, description: SUBAGENTS[0]!.description },
+  },
+  { kind: 'assistant', at: ago(43), markdown: true, text: 'The entry is in. Now the retries.' },
+  { kind: 'tool', at: ago(9), toolName: 'Agent', text: `Agent: ${REVIEW.description}`, subagent: { agentId: REVIEW.agentId, description: REVIEW.description } },
+  { kind: 'tool', at: ago(2), toolName: 'SendMessage', text: 'SendMessage', subagent: { agentId: REVIEW.agentId, description: REVIEW.description } },
+];
+
+/** An interactive session with sub-agents, two of them running. */
+export const VIEW_SUBAGENTS = session('view-subagents', { title: 'Export retries', subagentsRunning: 2, lastActivityAt: ago(0.1) });

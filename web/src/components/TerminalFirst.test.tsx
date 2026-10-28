@@ -29,7 +29,7 @@ import { browserStorage, type StorageSource } from '../groupState.js';
 import { GESTURE_MS } from '../focusGesture.js';
 import { computeProof } from '../proof.js';
 import { TERMINAL_FOCUS_KEY } from '../terminalFocus.js';
-import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
+import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { choosePreference, openPreferences, preferenceGroup, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
 import { toastMessages } from '../test/toasts.js';
@@ -143,7 +143,7 @@ interface Options {
 function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const fetch = fakeServer();
-  const api = createApiClient({ apiKey: API_KEY, fetch });
+  const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fetch) });
   const sockets = fakeSockets();
   const env: AttachEnv = { token: TOKEN, createSocket: sockets.factory, host: '127.0.0.1:4517' };
   const storage = options.storage ?? memory();
@@ -351,7 +351,7 @@ describe('the tab a view opens on', () => {
     window.history.replaceState(null, '', `/?view=all&session=${J1}`);
     const fake = fakeSockets();
     const fetch = fakeServer();
-    render(<App createSocket={fake.factory} fetch={fetch} />);
+    render(<App createSocket={fake.factory} fetch={withoutSubagents(fetch)} />);
     const index = fake.last;
     expect(index.url).toContain(WS_PATH);
     act(() => {
@@ -445,7 +445,7 @@ describe('a tab you chose', () => {
   it('is decided as a view is first shown: one that opens hidden, as in a root tab that isn’t open (W38), attaches only once it shows', async () => {
     const sockets = fakeSockets();
     const env: AttachEnv = { token: TOKEN, createSocket: sockets.factory, host: '127.0.0.1:4517' };
-    const api = createApiClient({ apiKey: API_KEY, fetch: fakeServer() });
+    const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fakeServer()) });
     const running = job(9, 'job-unseen');
     const ui = (hidden: boolean) => (
       <ApiContext.Provider value={api}>
@@ -516,7 +516,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
       window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
       window.history.replaceState(null, '', `/?view=all&session=${J1}`);
       const fake = fakeSockets();
-      render(<App createSocket={fake.factory} fetch={fakeServer()} />);
+      render(<App createSocket={fake.factory} fetch={withoutSubagents(fakeServer())} />);
       const index = fake.last;
       act(() => {
         index.open();

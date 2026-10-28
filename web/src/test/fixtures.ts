@@ -1,6 +1,6 @@
 // Made-up fixtures for the web UI tests. Nothing here comes from a real session.
 
-import { EDITORS_PATH, type IndexSnapshot, type NeedsYou, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
+import { EDITORS_PATH, type IndexSnapshot, type NeedsYou, type SessionGroup, type SessionSummary, type SubagentList } from '../../../src/shared/protocol.js';
 import type { FetchLike } from '../api.js';
 import type { SocketFactory, SocketLike } from '../connection.js';
 
@@ -199,4 +199,21 @@ export function withEditorList(fetch: FetchLike, body: unknown = { editors: [] }
     return new Response(JSON.stringify(body), { status: 200 });
   };
   return Object.assign(answer, { editorCalls });
+}
+
+/** A session's sub-agents route (W77): `/api/sessions/<id>/subagents`, with the id. */
+const SUBAGENTS_ROUTE = /^\/api\/sessions\/([^/?]+)\/subagents$/;
+
+/**
+ * `fetch` with a session's sub-agents answered before it as a list of none, so a test of something
+ * else, such as the conversation, sees only its own requests: the session view asks for the list once
+ * as it opens (W77), and the tab stays hidden for a session that has none.
+ */
+export function withoutSubagents(fetch: FetchLike): FetchLike {
+  return (url, init) => {
+    const match = SUBAGENTS_ROUTE.exec(url);
+    if (!match) return fetch(url, init);
+    const list: SubagentList = { sessionId: decodeURIComponent(match[1] ?? ''), subagents: [], truncated: false };
+    return Promise.resolve(new Response(JSON.stringify(list), { status: 200 }));
+  };
 }

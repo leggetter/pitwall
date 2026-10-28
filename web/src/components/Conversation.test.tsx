@@ -9,7 +9,7 @@ import type { AskedQuestion, ConversationEntry, ConversationPage, SessionSummary
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { absoluteTime, clockTime } from '../format.js';
-import { NOW, fakeSockets, minutesAgo, session } from '../test/fixtures.js';
+import { NOW, fakeSockets, minutesAgo, session, withoutSubagents } from '../test/fixtures.js';
 import { hover, pass, shownTooltip, tooltipText, unhover } from '../test/tooltips.js';
 import { SessionView } from './SessionView.js';
 
@@ -80,7 +80,7 @@ function target(overrides: Partial<SessionSummary> = {}): SessionSummary {
 
 /** The session view alone, over the app's API client and `server`. `refresh` moves the session's activity, which fetches the newest page again. */
 async function renderView(server: ReturnType<typeof fakeServer>, overrides: Partial<SessionSummary> = {}) {
-  const api = createApiClient({ apiKey: API_KEY, fetch: server.fetch });
+  const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(server.fetch) });
   let current = target(overrides);
   let activity = Date.parse(current.lastActivityAt ?? minutesAgo(5));
   const ui = () => (
@@ -350,7 +350,7 @@ describe("Conversation: links that ask first (W55, W48's F6)", () => {
       ]),
     );
     const result = render(
-      <ApiContext.Provider value={createApiClient({ apiKey: API_KEY, fetch: server.fetch })}>
+      <ApiContext.Provider value={createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(server.fetch) })}>
         <SessionView session={target()} listed onClose={onClose} />
       </ApiContext.Provider>,
     );
@@ -1040,7 +1040,7 @@ describe('Conversation: across the Terminal tab (W29)', () => {
 
   /** A background session's view, which can attach, so its Terminal tab opens. */
   async function renderBackground(server: ReturnType<typeof fakeServer>) {
-    const api = createApiClient({ apiKey: API_KEY, fetch: server.fetch });
+    const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(server.fetch) });
     const env = { token: 'pitwall-test-token', host: '127.0.0.1:4517', createSocket: fakeSockets().factory };
     let current = target({ kind: 'background', shortId: 'bg00c7', state: 'working' });
     let activity = Date.parse(current.lastActivityAt ?? minutesAgo(5));
