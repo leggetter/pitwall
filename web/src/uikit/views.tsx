@@ -568,6 +568,11 @@ const ENDED_VIEWS: EndedCase[] = [
     session: endedSession('view-ended-gone', { ...ENDED_TITLE, cwd: GONE_DIR, cwdMissing: true }),
   },
   {
+    title: "Ended, a ' in its directory's path",
+    note: "No Copy command, in the footer or the actions menu (W87): zsh and bash read a ' or \\ inside single quotes one way and fish another, so no quoting pastes as one word in all of them. The note says why, and Resume in background stands alone.",
+    session: endedSession('view-ended-quoted', { ...ENDED_TITLE, cwd: `${APP_DIR}/.claude/worktrees/pitwall-test-it's-fixed` }),
+  },
+  {
     title: 'Actions menu, ended',
     note: 'Copy session ID, Copy resume command, then Resume in background. No Stop or Remove: there is no process.',
     session: endedSession('view-ended-menu', ENDED_TITLE),

@@ -328,6 +328,15 @@ export class World {
     this.#sessions.set(sessionId, { ...open, pid: 42_001, alive: true, status: 'idle', finished: false, lastActivityAt: new Date().toISOString() });
   }
 
+  /**
+   * Until the next reset, the session's directory is `cwd`, as for one whose path has a `'` (W87). A
+   * path under its group's `.claude/` keeps it in that group, as a worktree's does.
+   */
+  move(sessionId: string, cwd: string): void {
+    const session = this.#sessions.get(sessionId);
+    if (session) this.#sessions.set(sessionId, { ...session, cwd });
+  }
+
   /** What the index shows on a session's row after a relayed message: its latest exchange. */
   relayed(sessionId: string, exchange: RelayExchange): void {
     const session = this.#sessions.get(sessionId);

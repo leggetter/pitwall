@@ -16,7 +16,8 @@
 //     413  the body is over 128 KiB
 //     415  the body isn't `Content-Type: application/json`
 //     422  Claude Code says the workspace isn't trusted. `hint` is the command that trusts it,
-//          for the user to run. pitwall never grants trust itself
+//          for the user to run. pitwall never grants trust itself. A directory whose path has a
+//          `'` or `\` gets no `hint`, and `error` says why after Claude Code's line (W87, shellQuote())
 //     429  another spawn is still running, or too many sessions started in the last minute, new and
 //          resumed together (SpawnLimiter). Retry-After is set
 //     502  Claude Code failed or refused, with its first error line, or wasn't found
@@ -333,18 +334,41 @@ export function resumeArgs(sessionId: string): string[] {
 }
 
 /**
- * A POSIX shell word for `value`: as it is when it has only characters no
- * shell treats specially, otherwise in single quotes, with each `'` closed,
- * escaped and reopened.
+ * `value` as one shell word that POSIX shells, such as zsh and bash, and fish read as written, or
+ * undefined when there's none: as it is when it has only characters no shell treats specially,
+ * otherwise in single quotes. A value with a `'` or `\` has none (W87). Inside single quotes POSIX
+ * shells take every character as it is, but fish reads `\'` as a quote and `\\` as one backslash, so
+ * POSIX's `'\''` for a `'` would end fish's word early and run the rest of the path as a command
+ * there. Nor does one with a control or bidi character (hasUnsafeCharacters()), which checkDirectory()
+ * already refuses. The web UI's resume command follows the same rule (shellWord() in web/src/sessions.ts).
  */
-export function shellQuote(value: string): string {
+export function shellQuote(value: string): string | undefined {
+  if (hasUnsafeCharacters(value)) return undefined;
   if (value !== '' && /^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  if (/['\\]/.test(value)) return undefined;
+  return `'${value}'`;
 }
 
-/** The command that trusts a workspace, for the user to run themselves: `cd <dir> && claude`. */
-export function trustHint(dir: string): string {
-  return `cd ${shellQuote(dir)} && claude`;
+/**
+ * The command that trusts a workspace, for the user to run themselves: `cd <dir> && claude`, or
+ * undefined when shellQuote() has no word for `dir`.
+ */
+export function trustHint(dir: string): string | undefined {
+  const word = shellQuote(dir);
+  return word === undefined ? undefined : `cd ${word} && claude`;
+}
+
+/** What spawn and resume's 422 says, after Claude Code's line, when there's no trust hint for the directory. */
+export const NO_TRUST_COMMAND = "There's no command to copy: the directory's path has a ' or \\, which shells don't all read the same way.";
+
+/**
+ * Spawn and resume's 422 for a workspace Claude Code doesn't trust: its line, with the command that
+ * trusts `dir` as `hint`, or, when trustHint() has none, NO_TRUST_COMMAND after the line, so the page
+ * says why there's no command to run.
+ */
+export function untrustedResult(line: string, dir: string): { ok: false; error: string; hint?: string } {
+  const hint = trustHint(dir);
+  return hint === undefined ? { ok: false, error: `${line} ${NO_TRUST_COMMAND}` } : { ok: false, error: line, hint };
 }
 
 /** Claude Code's output as text: terminal escapes and controls other than tab and newline removed, trimmed. */
@@ -572,7 +596,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
           settled = 'released';
           const message = said(result);
           const untrusted = untrustedLine(message);
-          if (untrusted !== undefined) return spawnResult(c, { ok: false, error: untrusted, hint: trustHint(spawn.cwd) }, 422);
+          if (untrusted !== undefined) return spawnResult(c, untrustedResult(untrusted, spawn.cwd), 422);
           return spawnResult(c, { ok: false, error: firstLine(message) ?? `claude --bg exited with code ${result.code}.` }, 502);
         }
         const started = parseBackgrounded(result.stdout);
@@ -708,7 +732,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
         const message = said(result);
         const untrusted = untrustedLine(message);
         // The path PWD named, which checkDirectory() found free of control and bidi characters.
-        if (untrusted !== undefined) return answer({ ok: false, error: untrusted, hint: trustHint(cwd) }, 422);
+        if (untrusted !== undefined) return answer(untrustedResult(untrusted, cwd), 422);
         return answer({ ok: false, error: firstLine(message) ?? `claude --resume exited with code ${result.code}.` }, 502);
       }
 
