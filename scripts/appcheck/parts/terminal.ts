@@ -23,6 +23,8 @@ interface Fit {
   cell: { height: number; width: number };
   /** The screen's content box, inside its 6 px padding, less the scrollbar's track at its right. */
   visible: { top: number; right: number; bottom: number; left: number };
+  /** The scrollbar track's width, 0 when xterm.js draws none where FIT looks for it. */
+  track: number;
   /** The last row's bottom and the last column's right edge. */
   last: { bottom: number; right: number };
   /** The last row's text, and the right edge of FOOTER_END in it, when it's there. */
@@ -52,7 +54,8 @@ const FIT = `(() => {
     left: box.left + parseFloat(style.paddingLeft),
   };
   const track = outer.querySelector('.xterm .scrollbar.vertical')?.getBoundingClientRect();
-  if (track && track.width > 0) visible.right = Math.min(visible.right, track.left);
+  const trackWidth = track?.width ?? 0;
+  if (track && trackWidth > 0) visible.right = Math.min(visible.right, track.left);
   const drawn = screen.getBoundingClientRect();
   const last = rows[rows.length - 1];
   const end = [...last.querySelectorAll('span')].find((span) => span.textContent === ${q(FOOTER_END)});
@@ -61,6 +64,7 @@ const FIT = `(() => {
     rows: rows.length,
     cell: { height: drawn.height / rows.length, width },
     visible,
+    track: trackWidth,
     last: { bottom: last.getBoundingClientRect().bottom, right: drawn.right },
     lastRow: last.textContent,
     footerEnd: end ? end.getBoundingClientRect().right : undefined,
@@ -101,6 +105,9 @@ async function expectFits(t: Case, name: string, where: string): Promise<Fit | n
   }
   const { visible, last } = fit;
   const px = (value: number) => `${Math.round(value * 10) / 10} px`;
+  // Without the track, the column check would measure against the content box alone, which the
+  // last column never ran past: it would pass on the code it was written to fail (W74).
+  t.expect(fit.track > 0, `${where}: xterm.js's scrollbar track is there, for the last column to be clear of`, 'no .xterm .scrollbar.vertical with a width: has xterm.js changed how it draws its scrollbar?');
   t.expect(last.bottom <= visible.bottom + SUBPIXEL, `${where}: the last row is inside the visible box`, `its bottom is ${px(last.bottom - visible.bottom)} below the box's, at ${fit.rows} rows of ${px(fit.cell.height)}`);
   t.expect(last.right <= visible.right + SUBPIXEL, `${where}: the last column is inside the visible box, clear of the scrollbar's track`, `its right edge is ${px(last.right - visible.right)} past the box's`);
   t.expect(fit.lastRow.trimEnd().endsWith(FOOTER_END), `${where}: the last row has the made-up footer`, fit.lastRow.trimEnd().slice(-40));
