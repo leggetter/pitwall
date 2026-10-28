@@ -7,6 +7,8 @@
 //                               the apiKey, not the token, and an Origin, else 403
 //   GET /api/directories        then directories.ts: the directories under the snapshot's roots
 //   GET /api/editors            then editors.ts: the editors found at startup
+//   POST /api/attachments       then attachments.ts: the one body that isn't JSON, the file's bytes
+//                               with its own Content-Type, at most 10 MiB, its type checked
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
 //                               snapshot, else 503; the session in it, else 404. Every route that
 //                               takes a session id, and every M2 input path, goes through it.
@@ -50,6 +52,7 @@ import {
 } from '../shared/protocol.js';
 import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
+import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
 import type { RunningServer, ServerOptions } from './index.js';
@@ -137,6 +140,8 @@ export interface ServerInternals {
    * depends on this machine's editors and none is ever opened. Its limit is `actions.maxConcurrentCommands`.
    */
   editors?: Omit<EditorOptions, 'slots'>;
+  /** Attachments (W79, attachments.ts): tests pass a clock, a sweep interval and a uid. The folder is ServerOptions.pitwallHome's. */
+  attachments?: Omit<AttachmentStoreOptions, 'home'>;
 }
 
 export async function startServerWithInternals(
@@ -167,11 +172,15 @@ export async function startServerWithInternals(
   const resumed = new RecentSpawns();
   // Stop, remove, resume and open in an editor, running now: one limit for all four.
   const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
-  // The directory list (W70), then the input routes: spawn, stop and remove (W12), resume (W66), the
-  // editors and open in an editor (W72), whose detection starts here, the relay (W11), then any a test adds.
+  // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
+  const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
+  // The directory list (W70), then the input routes: attachments (W79), spawn, stop and remove (W12),
+  // resume (W66), the editors and open in an editor (W72), whose detection starts here, the relay
+  // (W11), then any a test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
-    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots });
+    registerAttachments(app, attachments);
+    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
@@ -238,6 +247,8 @@ export async function startServerWithInternals(
     port = await listen(server, 0);
   }
   headers = Object.entries(securityHeaders(port));
+  // At startup, for anything an earlier run left, then on a timer.
+  attachments.start();
 
   let closed: Promise<void> | undefined;
   return {
@@ -250,6 +261,7 @@ export async function startServerWithInternals(
         }),
         attach.close(),
         relay.close(),
+        attachments.close(),
       ]).then(() => undefined);
       return closed;
     },
