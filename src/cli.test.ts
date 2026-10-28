@@ -465,8 +465,10 @@ echo '[]'
 `;
 
 /**
- * A stand-in for `gh` (M4, W93), put first on the CLI's PATH so the PR poller
- * never runs the real one, which would reach GitHub with the user's login. It
+ * A stand-in for `gh` (M4, W93), put first on the PATH of every CLI these tests
+ * start, directly or through npm run dev, beside the fake claude, so the PR
+ * poller never runs the real one, which would reach GitHub with the user's
+ * login: noClaude.ts can't see a process the CLI starts. It
  * records its arguments, NUL-separated, and what it saw of its environment,
  * next to itself, then prints one page with one made-up PR.
  */
@@ -1097,6 +1099,7 @@ describe('npm run dev (scripts/dev.ts)', () => {
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'vite'), FAKE_VITE, { mode: 0o755 });
@@ -1476,6 +1479,7 @@ describe('npm run dev: what the CLI prints on every restart (W51)', () => {
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'vite'), FAKE_VITE, { mode: 0o755 });
@@ -1567,6 +1571,7 @@ describe('pitwall (the process): PITWALL_TOKEN comes from the environment only (
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     // A .env where the CLI runs, as someone else's repo might have.
     await writeFile(join(tmp, '.env'), `PITWALL_TOKEN=${FROM_FILE}\n`);
   });
