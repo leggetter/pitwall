@@ -115,13 +115,14 @@ try {
   page = await Page.open(chrome.cdp, server, token, { keys: chrome.silent });
   const storage = { 'pitwall.starred.v1': JSON.stringify({ v: 1, ids: starred.map((s) => s.sessionId) }), 'pitwall.theme.v1': theme };
   page.step = 'open starred';
-  await page.fresh({ width: 1440, height: 900 } as never, theme, { search: `?view=starred&session=${docs.sessionId}`, storage } as never);
+  await page.fresh({ name: 'readme', width: 1440, height: 900 }, theme, { search: `?view=starred&session=${docs.sessionId}`, storage });
   await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false });
   await page.settle(2500);
   console.log('open view:', await page.evaluate(`document.querySelector('[aria-current="true"]')?.textContent ?? null`));
   await page.shot(`${out}/hero-${theme}.png`);
 } catch (error) {
   console.log('FAILED:', (error as Error).message);
+  process.exitCode = 1;
 } finally {
   console.log('problems:', JSON.stringify(page?.problems ?? []));
   await page?.close().catch(() => {});

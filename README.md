@@ -13,7 +13,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Opens a session's directory** in VS Code or Cursor.
 - **Will have a supervisor session** (M5) you can talk to instead of visiting each session, knowing what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, M3, a design system and restyle, and M3.1, the work after M3, are merged into `main`: M3 on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51), and M3.1 on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87). End session for interactive sessions is approved and next (W90). Next: M4, open pull requests next to the sessions working on them. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, M3, a design system and restyle, and M3.1, the work after M3, are merged into `main`: M3 on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51), and M3.1 on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87). End session for interactive sessions is approved (W90), after W88. Then M4: open pull requests next to the sessions working on them. See [`PLAN.md`](PLAN.md).
 
 ## Try it
 
@@ -268,6 +268,6 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D21 - Apache-2.0
 
 - **Why** (Phil, 2026-10-28): pitwall is meant to be used, so it has a permissive licence that people and companies can adopt without asking. Apache-2.0 rather than MIT for its explicit patent grant.
-- **A commercial side isn't ruled out:** a licence decides what others may do. As the copyright holder, Phil can still license later versions differently or offer a commercial edition; versions already released stay Apache-2.0.
-- **Considered:** FSL-1.1-Apache-2.0, which keeps competing commercial use to the author for two years per version but isn't open source, and AGPL-3.0, which many companies won't use.
+- **A commercial side isn't ruled out:** a licence decides what others may do. While Phil holds the copyright in pitwall, he can license later versions differently or offer a commercial edition. Versions already released stay Apache-2.0, and so do others' contributions (section 5), unless a contributor licence agreement says otherwise. Who holds the copyright in AI-written code is unsettled law, and none of this is legal advice.
+- **Considered:** the Functional Source License (`FSL-1.1-ALv2`), which keeps competing commercial use to the author for two years per version but isn't open source, and AGPL-3.0, which many companies won't use.
 - **Bundled assets:** Inter and JetBrains Mono (OFL 1.1) and Material Symbols (Apache-2.0) keep their own licences (D10).

@@ -72,8 +72,9 @@ web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves i
 web/src/test/            test helpers and fixtures shared across the web UI's tests; not built
 scripts/dev.ts           runs the two watchers behind `npm run dev`
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
-scripts/readme-screenshot.ts  makes docs/images/pitwall-light.png from made-up sessions on the app check's
-                         fake server; run it after a UI change the screenshot shows
+scripts/readme-screenshot.ts
+                         writes <outDir>/hero-<theme>.png from made-up sessions on the app check's fake
+                         server; after a UI change it shows, copy it to docs/images/pitwall-light.png
 scripts/appcheck/        the app check: a fake server using pitwall's own security code, a Chrome driver,
                          and one part per area in parts/; typechecked, not built, not in npm test
 LICENSE                  Apache-2.0 (README's D21)
