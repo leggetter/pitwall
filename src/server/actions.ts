@@ -66,8 +66,12 @@
 // prompt's 16,384-character limit is the user's own text: the `@` lines are
 // pitwall's, at most ATTACHMENTS_MAX_PER_SESSION of them, each at most
 // STORED_PATH_MAX characters, so a prompt the dialog accepted is never
-// refused for them. The ids are claimed before `claude --bg` runs, marked
-// used only when it reports the new session, and given back otherwise.
+// refused for them. The ids are claimed before `claude --bg` runs, and marked
+// used when it reports the new session, and also when the outcome is unknown:
+// it timed out, was killed by a signal, or exited 0 without a session id, so a
+// session may have started and may refer to the files. They're given back only
+// when nothing started: claude wasn't found or couldn't be run, or it exited
+// with an error.
 import { realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -545,7 +549,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
         c.header('Retry-After', String(slot.retryAfterSeconds));
         return spawnResult(c, { ok: false, error: slot.error }, 429);
       }
-      let started: { shortId: string; name?: string } | undefined;
+      // Whether a session may have the files: used unless nothing started for certain.
+      let settled: 'used' | 'released' = 'used';
       try {
         let result: CommandResult;
         try {
@@ -559,15 +564,18 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
           if (result.reason === 'timeout') {
             return spawnResult(c, { ok: false, error: `claude --bg ${result.message}. The session may still appear in the list.` }, 504);
           }
+          // Killed by a signal, it may have started a session first.
+          if (result.reason !== 'signal') settled = 'released';
           return spawnResult(c, { ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
         }
         if (result.code !== 0) {
+          settled = 'released';
           const message = said(result);
           const untrusted = untrustedLine(message);
           if (untrusted !== undefined) return spawnResult(c, { ok: false, error: untrusted, hint: trustHint(spawn.cwd) }, 422);
           return spawnResult(c, { ok: false, error: firstLine(message) ?? `claude --bg exited with code ${result.code}.` }, 502);
         }
-        started = parseBackgrounded(result.stdout);
+        const started = parseBackgrounded(result.stdout);
         if (!started) {
           const line = firstLine(result.stdout);
           return spawnResult(
@@ -579,9 +587,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
         options.spawned?.add(started.shortId);
         return spawnResult(c, { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId }, 201);
       } finally {
-        // Used only by a session that started; given back for any other answer.
         if (ids.length > 0) {
-          if (started) await attachments?.markUsed(ids);
+          if (settled === 'used') await attachments?.markUsed(ids);
           else attachments?.release(ids);
         }
       }
