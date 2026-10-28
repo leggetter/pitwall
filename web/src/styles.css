@@ -3822,4 +3822,18 @@ ol.md-list {
   .inline-confirm {
     border: 1px solid ButtonText;
   }
+
+  /* New session's attachments (W82): each file's box, its edge a shadow elsewhere, and the drop target's edge. */
+  .attachment {
+    padding: calc(var(--pw-space-1) - 1px);
+    border: 1px solid CanvasText;
+  }
+
+  .prompt-drop-target {
+    outline: 2px dashed Highlight;
+  }
+
+  .prompt-drop-target.over {
+    outline: 2px solid Highlight;
+  }
 }

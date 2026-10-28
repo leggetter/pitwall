@@ -9,13 +9,15 @@ export interface MiddleEllipsisProps {
   /** Plain text (plainText()). */
   text: string;
   className?: string;
+  /** Where to cut it: a path's last segment stays by default; fileNameParts keeps a file's extension (W82). */
+  parts?: (text: string) => { start: string; end: string };
 }
 
 /** How much of the start always shows, in characters, before the end starts giving way too. */
 const START_MIN_CH = 4;
 
-export function MiddleEllipsis({ text, className }: MiddleEllipsisProps) {
-  const { start, end } = middleEllipsisParts(text);
+export function MiddleEllipsis({ text, className, parts = middleEllipsisParts }: MiddleEllipsisProps) {
+  const { start, end } = parts(text);
   return (
     <span className={className ? `middle-ellipsis ${className}` : 'middle-ellipsis'}>
       <span className="middle-ellipsis-start" style={end ? { minWidth: `${Math.min(start.length, START_MIN_CH)}ch` } : undefined}>
