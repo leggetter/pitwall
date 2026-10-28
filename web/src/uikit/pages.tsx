@@ -131,6 +131,8 @@ const ATTACHMENTS = async () => [
   await madeUpImage('retry-backoff-diagram.png'),
   madeUpFile('export-job-timeouts.pdf', 'application/pdf', 182_000),
   madeUpFile('Notes from the export job incident review, second draft.md', 'text/markdown', 6_100),
+  // Code goes as text/plain, whatever type the browser gives it.
+  madeUpFile('export_retry.py', 'text/x-python', 3_200),
 ];
 
 /**
@@ -311,7 +313,7 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'Files: refused',
-    note: "A file pitwall can't take is listed with why, and the others go on: a type that isn't an image, a PDF or text, an empty one, one over 10 MB, the eleventh, a name the server would refuse, and the server's own refusal, such as bytes that contradict the type. A refused file has Remove alone, and doesn't hold up Start session.",
+    note: "A file pitwall can't take is listed with why, and the others go on: an image of a type it doesn't take, such as HEIC or SVG, audio, video or another binary format, an empty one, one over 10 MB, the eleventh, a name the server would refuse, and the server's own refusal, such as bytes that contradict the type. A refused file has Remove alone, and doesn't hold up Start session.",
     frame: 'dialog-tall',
     options: { upload: 'refused' },
     run: async (root) => {
@@ -320,6 +322,7 @@ const DIALOG_CASES: DialogCase[] = [
         root,
         [
           madeUpFile('export-job-timeouts.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+          madeUpFile('dashboard.heic', 'image/heic'),
           madeUpFile('screen-recording.png', 'image/png', ATTACHMENT_MAX_BYTES * 3),
           madeUpFile('not-really-a.png', 'image/png'),
         ],
