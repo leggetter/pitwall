@@ -71,8 +71,8 @@ describe('plainText', () => {
 });
 
 describe('plainText and the bidi marks (W87)', () => {
-  it('drops the marks the server refuses too, U+061C, U+200E and U+200F, as it drops embeddings, overrides and isolates', () => {
-    expect(plainText('a\u061cb\u200ec\u200fd')).toBe('abcd');
+  it('keeps the marks U+061C, U+200E and U+200F, which right-to-left text uses to place punctuation, and drops embeddings, overrides and isolates', () => {
+    expect(plainText('a\u061cb\u200ec\u200fd')).toBe('a\u061cb\u200ec\u200fd');
     expect(plainText('\u202ax\u202c\u2066y\u2069')).toBe('xy');
   });
 

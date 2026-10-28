@@ -4,18 +4,18 @@
 // hyperlinks) and the remaining two-character escapes.
 const TERMINAL_ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-_]/g;
 // C0 and C1 control characters other than tab and newline, and the bidi
-// marks (U+061C, U+200E, U+200F), embedding and override controls (U+202A to
-// U+202E) and isolates (U+2066 to U+2069), which can make text read
-// differently from what it contains. But for tab and newline, it's the
-// server's set (hasUnsafeCharacters() in src/index/guards.ts), which it
-// refuses in a directory and in an attachment's name (W87).
+// embedding, override and isolate controls, which can make text read
+// differently from what it contains.
 //
-// Not the rest of Unicode's default-ignorable characters, which the server
-// drops from an attachment's name (web/src/attachments.ts does too): session
-// text is full of emoji, whose zero-width joiner and variation selector
-// (U+200D, U+FE0F) are among them, and dropping those would draw a family as
-// its people, one by one, and some emoji in their plain text style.
-const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+// Not the bidi marks (U+061C, U+200E, U+200F), which the server refuses in a
+// directory: right-to-left text in messages, titles and paths uses them to
+// place punctuation, and they move only the neutral characters beside them,
+// where an override reorders whole runs. Nor the rest of Unicode's
+// default-ignorable characters, which emoji need, such as the zero-width
+// joiner and variation selectors. An attachment's name is cleaned of all of
+// those, the marks included, by cleanName() (web/src/attachments.ts), as the
+// server cleans it (W87).
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 
 /**
  * Session text is untrusted. React already renders it as text, never markup;

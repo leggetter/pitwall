@@ -33,8 +33,12 @@ export interface StartedSession {
 
 export type SpawnOutcome =
   | ({ kind: 'started' } & StartedSession)
-  /** The server or Claude Code refused. `hint` is a command for the user to run, such as the one that trusts a workspace. */
-  | { kind: 'refused'; error: string; hint?: string }
+  /**
+   * The server or Claude Code refused. `hint` is a command for the user to run, such as the one that
+   * trusts a workspace. `status` is the HTTP status: a 422 with no `hint` is a workspace Claude Code
+   * doesn't trust whose path has a `'` or `\`, for which there's no command to copy (W87).
+   */
+  | { kind: 'refused'; error: string; hint?: string; status?: number }
   /** The connection was refused (WebSocket 4401). The app is already showing that the token was rejected. */
   | { kind: 'unauthorized' }
   /** No answer pitwall understands: a network error, or a response that isn't a SpawnResult. */
@@ -52,9 +56,8 @@ export async function spawnSession(api: ApiClient, request: SpawnRequest): Promi
     return { kind: 'failed', error: "pitwall's answer didn't say which session started." };
   }
   if (body?.ok === false && typeof body.error === 'string') {
-    return typeof body.hint === 'string' && body.hint !== ''
-      ? { kind: 'refused', error: body.error, hint: body.hint }
-      : { kind: 'refused', error: body.error };
+    const refused: SpawnOutcome = typeof body.hint === 'string' && body.hint !== '' ? { kind: 'refused', error: body.error, hint: body.hint } : { kind: 'refused', error: body.error };
+    return result.status === undefined ? refused : { ...refused, status: result.status };
   }
   return { kind: 'failed', error: couldNot('start the session', result.status) };
 }
