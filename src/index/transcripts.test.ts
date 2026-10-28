@@ -12,6 +12,9 @@ import {
   defaultConfigDir,
   encodeProjectDir,
   isSafeSessionId,
+  isTypedPrompt,
+  readNewestEntries,
+  setNameOf,
   stripSystemReminders,
   TITLE_MAX,
   userPromptOf,
@@ -274,6 +277,134 @@ describe('applyEntry', () => {
   });
 });
 
+describe('applyEntry: what the ended-session scanner needs (W66)', () => {
+  const named = (type: 'custom-title' | 'agent-name', name: unknown) =>
+    type === 'custom-title' ? { type, customTitle: name, sessionId: 'pitwall-test-session' } : { type, agentName: name, sessionId: 'pitwall-test-session' };
+
+  it('keeps whether the newest user or assistant entry, in file order, ran in the background', () => {
+    expect(fieldsOf(user('go'), assistant([text('done')], 'm1', { sessionKind: 'bg' })).inBackground).toBe(true);
+    expect(fieldsOf(user('go', { sessionKind: 'bg' }), assistant([text('done')])).inBackground).toBe(false);
+    // A tool call or thinking with no text still counts: it's the newest entry.
+    expect(fieldsOf(assistant([text('done')]), assistant([toolUse('Bash')], 'm2', { sessionKind: 'bg' })).inBackground).toBe(true);
+    expect(fieldsOf(aiTitle('only a title')).inBackground).toBeUndefined();
+  });
+
+  it('keeps the newest name set with --name, from either entry, which is not activity', () => {
+    const prompt = user('go');
+    const fields = fieldsOf(named('custom-title', 'first'), named('agent-name', 'first'), prompt, named('custom-title', '  second\n name '));
+    expect(fields.setName).toBe('second name');
+    expect(fields.lastActivityMs).toBe(Date.parse(prompt.timestamp as string));
+    expect(fieldsOf(named('custom-title', 'a'), named('agent-name', 'b')).setName).toBe('b');
+    for (const value of [undefined, 42, '', '   ', { name: 'x' }]) {
+      expect(fieldsOf(named('agent-name', 'kept'), named('agent-name', value)).setName, String(value)).toBe('kept');
+    }
+    const fromLines: Fields = {};
+    applyLine(fromLines, JSON.stringify(named('agent-name', 'from a line')));
+    expect(fromLines.setName).toBe('from a line');
+  });
+
+  it('notes a continued-in entry after the newest turn, and forgets it once a turn follows, whatever its target', () => {
+    const continued = (target: unknown) => ({ type: 'continued-in', continuedInSessionId: target, sessionId: 'pitwall-test-session', timestamp: nextTimestamp() });
+    const prompt = user('go');
+    const turn = assistant([text('moving on')]);
+    const fields = fieldsOf(prompt, turn, continued('a-new-session'));
+    expect(fields.continuedElsewhere).toBe(true);
+    // Not activity, though it has a timestamp.
+    expect(fields.lastActivityMs).toBe(Date.parse(turn.timestamp as string));
+    for (const target of [undefined, 42, '']) expect(fieldsOf(user('go'), continued(target)).continuedElsewhere, String(target)).toBe(true);
+    expect(fieldsOf(user('go'), continued('a-new-session'), aiTitle('a title')).continuedElsewhere).toBe(true);
+    expect(fieldsOf(user('go'), continued('a-new-session'), user('back again')).continuedElsewhere).toBe(false);
+    expect(fieldsOf(user('go')).continuedElsewhere).toBe(false);
+    const fromLines: Fields = {};
+    applyLine(fromLines, JSON.stringify(continued('a-new-session')));
+    expect(fromLines.continuedElsewhere).toBe(true);
+  });
+
+  it('notes a typed prompt: promptSource typed, on a user entry that is not meta', () => {
+    expect(fieldsOf(user('typed', { promptSource: 'typed' })).typedPrompt).toBe(true);
+    for (const extra of [{ promptSource: 'sdk' }, { promptSource: 'queued' }, { promptSource: 'typed', isMeta: true }, {}]) {
+      expect(fieldsOf(user('x', extra)).typedPrompt, JSON.stringify(extra)).toBeUndefined();
+    }
+    expect(isTypedPrompt({ type: 'assistant', promptSource: 'typed' })).toBe(false);
+    expect(setNameOf({ type: 'ai-title', aiTitle: 'not a name' })).toBeUndefined();
+  });
+});
+
+/** Claude Code's entry at the end of a turn (spike 007, finding 4). */
+function turnDuration(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { type: 'system', subtype: 'turn_duration', durationMs: 1234, timestamp: nextTimestamp(), ...extra };
+}
+
+describe("applyEntry: the turn's end and the newest prompt (W69)", () => {
+  it('says the turn has ended when a turn_duration entry follows the newest user or assistant entry', () => {
+    const asked = assistant([text('Tea or coffee?')]);
+    expect(fieldsOf(user('go'), asked, { type: 'system', subtype: 'stop_hook_summary' }, turnDuration()).turnEnded).toBe(true);
+    // A tool call, a tool result or a new prompt after it means a turn is running again.
+    expect(fieldsOf(user('go'), asked, turnDuration(), user('next')).turnEnded).toBe(false);
+    expect(fieldsOf(user('go'), asked, turnDuration(), assistant([toolUse('Bash')], 'm2')).turnEnded).toBe(false);
+    expect(fieldsOf(user('go'), asked, turnDuration(), user([toolResult('r')])).turnEnded).toBe(false);
+  });
+
+  it('keeps the turn ended through user entries that start no turn: a meta entry, a local command and its output, a manual /compact', () => {
+    const asked = () => [user('go'), assistant([text('Tea or coffee?')]), turnDuration()];
+    const meta = user('<local-command-caveat>Caveat: made up.</local-command-caveat>', { isMeta: true });
+    const command = user('<command-name>/model</command-name>\n<command-message>model</command-message>', { promptSource: 'typed' });
+    const output = user('<local-command-stdout>Set model to a made-up one</local-command-stdout>');
+    const compact = user('This session is being continued from a previous conversation…', { isCompactSummary: true });
+    for (const [what, entries] of [
+      ['meta', [meta]],
+      ['/model', [command, output]],
+      ['/compact', [user('<command-name>/compact</command-name>', { promptSource: 'typed' }), compact]],
+    ] as const) {
+      const fields = fieldsOf(...asked(), ...entries);
+      expect(fields.turnEnded, what).toBe(true);
+      expect(fields.promptAfterText, what).not.toBe(true);
+    }
+  });
+
+  it('runs a turn again only for an assistant entry, a prompt or a tool result', () => {
+    const asked = () => [user('go'), assistant([text('Tea or coffee?')]), turnDuration()];
+    expect(fieldsOf(...asked(), assistant([toolUse('Bash')], 'm2')).turnEnded).toBe(false);
+    expect(fieldsOf(...asked(), user('tea, please')).turnEnded).toBe(false);
+    expect(fieldsOf(...asked(), user([toolResult('ok')])).turnEnded).toBe(false);
+    // A sub-agent's tool result doesn't.
+    expect(fieldsOf(...asked(), user([toolResult('ok')], { isSidechain: true })).turnEnded).toBe(true);
+  });
+
+  it("is undefined until a turn_duration entry is read, as in an older Claude Code's transcript", () => {
+    expect(fieldsOf(user('go'), assistant([text('Tea or coffee?')])).turnEnded).toBeUndefined();
+    expect(fieldsOf().turnEnded).toBeUndefined();
+  });
+
+  it("ignores a sidechain's entries, which a sub-agent can write after the main turn ended", () => {
+    expect(fieldsOf(user('go'), assistant([text('Asked?')]), turnDuration(), assistant([text('sub-agent')], 's1', { isSidechain: true })).turnEnded).toBe(true);
+    expect(fieldsOf(user('go'), assistant([text('Asked?')]), turnDuration({ isSidechain: true })).turnEnded).toBeUndefined();
+  });
+
+  it('ignores other system entries and the away recap', () => {
+    const fields = fieldsOf(user('go'), assistant([text('Asked?')]), { type: 'system', subtype: 'away_summary', content: 'recap', timestamp: nextTimestamp() });
+    expect(fields.turnEnded).toBeUndefined();
+    expect(fields.lastActivityMs).toBeDefined();
+  });
+
+  it("keeps the newest prompt's time, a typed one included, and not a tool result's or a cross-session message's", () => {
+    const prompt = user('first');
+    const typedCommand = user('<command-name>/compact</command-name>', { promptSource: 'typed' });
+    expect(fieldsOf(prompt).lastPromptMs).toBe(Date.parse(prompt.timestamp as string));
+    expect(fieldsOf(prompt, typedCommand).lastPromptMs).toBe(Date.parse(typedCommand.timestamp as string));
+    const later = fieldsOf(prompt, user([toolResult('r')]), user('<cross-session-message from="x">hi</cross-session-message>', { isMeta: true, origin: { kind: 'peer' } }));
+    expect(later.lastPromptMs).toBe(Date.parse(prompt.timestamp as string));
+    expect(fieldsOf(user('no time', { timestamp: undefined })).lastPromptMs).toBeUndefined();
+  });
+
+  it('reads turn_duration lines through the pre-filter', () => {
+    const fields: Fields = {};
+    applyLine(fields, JSON.stringify(assistant([text('Done?')])));
+    applyLine(fields, JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 9 }));
+    expect(fields.turnEnded).toBe(true);
+  });
+});
+
 describe('aiTitleOf', () => {
   it('collapses whitespace and truncates to 120 characters', () => {
     expect(aiTitleOf(aiTitle('Review\tthe\n\nauth   flow'))).toBe('Review the auth flow');
@@ -384,6 +515,7 @@ describe('createTranscriptReader', () => {
       transcript: 'ok',
       lastActivityAt: reply.timestamp,
       lastUserPrompt: 'add a test',
+      lastPromptMs: Date.parse(prompt.timestamp as string),
     });
   });
 
@@ -608,6 +740,22 @@ describe('createTranscriptReader', () => {
     }
   });
 
+  describe("the turn's end (W69)", () => {
+    it('reports the turn ended, and running again, as new lines arrive', async () => {
+      const r = reader();
+      await writeFile(file, jsonl(user('go'), assistant([text('Should I push it?')], 'm1')));
+      expect(await r.read(SID, [CWD])).not.toHaveProperty('turnEnded');
+      await appendFile(file, jsonl({ type: 'system', subtype: 'stop_hook_summary' }, turnDuration()));
+      const ended = await r.read(SID, [CWD]);
+      expect(ended.turnEnded).toBe(true);
+      expect(ended.askedYou).toEqual({ reason: 'question', excerpt: 'Should I push it?' });
+      await appendFile(file, jsonl(user('yes, push it')));
+      const running = await r.read(SID, [CWD]);
+      expect(running.turnEnded).toBe(false);
+      expect(running).not.toHaveProperty('askedYou');
+    });
+  });
+
   describe('incremental reads', () => {
     it('reads only the bytes added since the last read', async () => {
       const r = reader();
@@ -708,6 +856,7 @@ describe('createTranscriptReader', () => {
         transcript: 'ok',
         lastActivityAt: expect.any(String),
         lastUserPrompt: 'fresh start',
+        lastPromptMs: expect.any(Number),
       });
     });
 
@@ -813,6 +962,47 @@ describe('createTranscriptReader', () => {
       expect(missing.lastUserPrompt).toBeUndefined();
       expect(missing.lastActivityAt).toBe(newest.timestamp);
     });
+  });
+});
+
+describe('readNewestEntries', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-newest-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('reads the newest entries once, as the reader does, with what the ended-session scanner needs', async () => {
+    const file = path.join(dir, 'made-up.jsonl');
+    const prompt = user('the last prompt', { promptSource: 'typed' });
+    const latest = assistant([text('Shall I go on?')]);
+    await writeFile(file, jsonl(user('an early prompt', { promptSource: 'typed' }), filler(5000), prompt, latest, { type: 'agent-name', agentName: 'pitwall-test-a' }, aiTitle('A title')));
+    expect(await readNewestEntries(file, { initialWindowBytes: 1024, maxWindowBytes: 2048 })).toEqual({
+      info: {
+        transcript: 'ok',
+        lastActivityAt: latest.timestamp,
+        lastUserPrompt: 'the last prompt',
+        lastPromptMs: Date.parse(prompt.timestamp as string),
+        askedYou: { reason: 'question', excerpt: 'Shall I go on?' },
+        aiTitle: 'A title',
+      },
+      inBackground: false,
+      setName: 'pitwall-test-a',
+      typedPrompt: true,
+      continuedElsewhere: false,
+    });
+  });
+
+  it('says nothing of the background or a typed prompt it did not read, and is undefined for a file that has gone', async () => {
+    const file = path.join(dir, 'made-up.jsonl');
+    await writeFile(file, jsonl(filler(200)));
+    expect(await readNewestEntries(file)).toEqual({ info: { transcript: 'ok' }, typedPrompt: false, continuedElsewhere: false });
+    expect(await readNewestEntries(path.join(dir, 'gone.jsonl'))).toBeUndefined();
+    await expect(readNewestEntries(dir)).rejects.toThrow();
   });
 });
 

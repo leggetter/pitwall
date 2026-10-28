@@ -1,25 +1,30 @@
 // The session view and what's in it (W19, W22, W24, W27, W28): the real SessionView, its conversation,
-// its actions menu and their inline confirmations, RelayBox in every send state, and the terminal,
+// its actions menu and their inline confirmations, RelayBox in every send state, an ended session's
+// footer with each result of Resume in background (W67), and the terminal,
 // each given a stub API (stubs.ts) and put into its state by a scenario (kit.tsx), as a person
 // would: opening the menu, choosing an item, opening a tab, opening a fold, scrolling up.
 // Every fixture is made once, when the gallery loads, so a re-render never changes a session's id.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { SessionSummary } from '../../../src/shared/protocol.js';
+import type { ConversationEntry, Editor, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { slowFirstSnapshot } from '../components/Dashboard.js';
+import { EndedFooter, useResume } from '../components/EndedSession.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
-import { ToastProvider } from '../components/Toast.js';
+import { ToastProvider, useToast } from '../components/Toast.js';
+import { COPIED, COPY_FAILED, useCopy } from '../copy.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
+import { EditorsContext } from '../editors.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
-import { startLabel, workedInLabels } from '../sessions.js';
+import { resumeCommand, startLabel, workedInLabels } from '../sessions.js';
 import {
   ago,
   APP_DIR,
   background,
+  endedSession,
   exchange,
   LINKS_IN_CODE,
   LINKS_THAT_ASK,
@@ -81,15 +86,23 @@ const MISSING_INTERACTIVE = session('view-missing-dir', {
   cwdMissing: true,
   lastActivityAt: ago(10 * 24 * 60),
   askedYou: { reason: 'question', excerpt: 'Should the made-up export keep archived projects?' },
+  needsYou: { reason: 'asked' },
 });
 const MISSING_BACKGROUND = background('view-missing-dir-job', { state: 'working', cwd: GONE_DIR, cwdMissing: true });
 const MISSING_FINISHED = background('view-missing-dir-done', { state: 'done', alive: false, pid: undefined, finished: true, cwd: GONE_DIR, cwdMissing: true });
 const MISSING_QUIET = session('view-missing-dir-quiet', { alive: false, pid: undefined, status: undefined, cwd: GONE_DIR, cwdMissing: true });
 const MISSING_GONE = background('view-missing-dir-gone', { state: 'working', cwd: GONE_DIR, cwdMissing: true });
 // W47: a running session waiting on you, and where to answer.
-const WAITING_INTERACTIVE = session('view-waiting', { title: 'Export retries', status: 'waiting', waitingFor: 'input needed' });
-const WAITING_BACKGROUND = background('view-waiting-job', { state: 'working', status: 'waiting', waitingFor: 'permission prompt' });
-const WAITING_BLOCKED = background('view-waiting-blocked', { state: 'blocked', status: 'idle', waitingFor: 'a made-up question' });
+const WAITING_INTERACTIVE = session('view-waiting', { title: 'Export retries', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } });
+const WAITING_BACKGROUND = background('view-waiting-job', { state: 'working', status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } });
+const WAITING_BLOCKED = background('view-waiting-blocked', {
+  state: 'blocked',
+  status: 'idle',
+  needsYou: { reason: 'claude-code', text: 'Should the made-up export keep archived projects?' },
+});
+// W69: needs you from its context, or not.
+const RESTARTED_VIEW = background('view-restarted', { state: 'blocked', status: 'idle', needsYou: { reason: 'restarted' } });
+const BLOCKED_IDLE_VIEW = background('view-blocked-idle', { state: 'blocked', status: 'idle' });
 const LONG_TITLE = session('view-with-a-long-name-for-the-header', {
   title: 'Retry each failed export batch three times with backoff, keeping the 30 second timeout',
   cwd: `${APP_DIR}/packages/exports/src/jobs/retry`,
@@ -101,6 +114,31 @@ const STEPPED_ONTO = background('view-stepped-onto', { state: 'working' });
 const MENU_BACKGROUND = background('view-menu', { state: 'working' });
 const MENU_DONE = background('view-menu-done', { state: 'done', alive: false, pid: undefined, finished: true });
 const MENU_INTERACTIVE = session('view-menu-interactive');
+// W72: the editors pitwall's server found, as the app has them from EDITORS_PATH.
+const VSCODE: Editor = { id: 'vscode', label: 'VS Code' };
+const CURSOR: Editor = { id: 'cursor', label: 'Cursor' };
+const EDITOR_MENUS = [
+  {
+    title: 'Actions menu, two editors found',
+    note: "Open in VS Code and Open in Cursor, after the copies, one for each editor pitwall's server found at startup (W72). Each opens the session's own directory, through the server: the page never sends a path. Not while the directory has gone, or once it's no longer listed.",
+    editors: [VSCODE, CURSOR],
+    session: background('view-menu-two-editors', { state: 'working' }),
+  },
+  {
+    title: 'Actions menu, one editor found',
+    note: 'Only Cursor is installed, so only Open in Cursor.',
+    editors: [CURSOR],
+    session: background('view-menu-one-editor', { state: 'working' }),
+  },
+  {
+    title: 'Actions menu, no editor found',
+    note: 'Neither is installed, so neither is offered, and there is no separator for them: the menu is as it was before W72.',
+    editors: [],
+    session: background('view-menu-no-editor', { state: 'working' }),
+  },
+];
+const OPENED = background('view-opened-in-editor', { state: 'working' });
+const NOT_OPENED = background('view-not-opened-in-editor', { state: 'working' });
 const COMPACT = session('view-compact', { title: 'Export retries' });
 const STARRED_VIEW = session('view-starred', { title: 'Export retries' });
 const STARRED_COMPACT = session('view-starred-compact', { title: 'Export retries' });
@@ -240,8 +278,7 @@ export function SessionViews() {
       >
         <Attachable script="attached">
           <Stubbed>
-            {/* Longer than a scenario's usual 3 s: under the whole test suite's load, the gallery's first attaches took 3.4 to 4.4 s (W54). */}
-            <Scenario run={async (root) => until('the terminal to attach', () => root.querySelector('.session-tab-dot'), 10_000)}>
+            <Scenario run={async (root) => until('the terminal to attach', () => root.querySelector('.session-tab-dot'))}>
               <SessionView session={OPENS_ON_TERMINAL} listed onClose={noop} backgroundTab="terminal" />
             </Scenario>
           </Stubbed>
@@ -292,9 +329,31 @@ export function SessionViews() {
           <SessionView session={WAITING_BACKGROUND} listed onClose={noop} />
         </Stubbed>
       </Specimen>
-      <Specimen title="Blocked, background" note="A blocked job, which Claude Code reports with status idle, is waiting on you too: the same line. A stale one has none." frame="short">
+      <Specimen
+        title="Blocked, background"
+        note="A blocked job whose own line says what it needs, or whose job file pitwall couldn't read, is waiting on you too: the same line. A stale one has none (W69)."
+        frame="short"
+      >
         <Stubbed>
           <SessionView session={WAITING_BLOCKED} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Waiting for your prompt"
+        note="Resumed, or restarted after you confirmed it, in this run of pitwall: solid until you send it a prompt. Nothing to answer, so no line under line 2 (W69)."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={RESTARTED_VIEW} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Blocked, but nothing needs you"
+        note="Claude Code says blocked, but its context asks nothing, as a resumed session's &quot;send a prompt to start&quot; after pitwall restarted: Idle, as its process is, and no line (W69)."
+        frame="short"
+      >
+        <Stubbed>
+          <SessionView session={BLOCKED_IDLE_VIEW} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen
@@ -400,6 +459,49 @@ export function SessionViews() {
           </Scenario>
         </Stubbed>
       </Specimen>
+      {EDITOR_MENUS.map((menu) => (
+        <Specimen key={menu.title} title={menu.title} note={menu.note} frame="short">
+          <EditorsContext.Provider value={menu.editors}>
+            <Stubbed>
+              <Scenario run={openMenu}>
+                <SessionView session={menu.session} listed onClose={noop} />
+              </Scenario>
+            </Stubbed>
+          </EditorsContext.Provider>
+        </Specimen>
+      ))}
+      <Specimen title="Opened in an editor" note="A success toast, naming the session and the editor. The menu closes, and focus goes back to its button." frame="short" lasting>
+        <ToastProvider>
+          <EditorsContext.Provider value={[VSCODE, CURSOR]}>
+            <Stubbed options={{ open: 'opened' }}>
+              <Scenario
+                run={async (root) => {
+                  await chooseFromMenu(root, 'Open in Cursor');
+                  await text(specimenOf(root), `Opened ${OPENED.name}'s directory in Cursor.`);
+                }}
+              >
+                <SessionView session={OPENED} listed onClose={noop} />
+              </Scenario>
+            </Stubbed>
+          </EditorsContext.Provider>
+        </ToastProvider>
+      </Specimen>
+      <Specimen title="Didn't open in an editor" note="An error toast, which stays until it's dismissed: pitwall's sentence, then the server's reason." frame="short" lasting>
+        <ToastProvider>
+          <EditorsContext.Provider value={[VSCODE, CURSOR]}>
+            <Stubbed options={{ open: 'refused' }}>
+              <Scenario
+                run={async (root) => {
+                  await chooseFromMenu(root, 'Open in Cursor');
+                  await text(specimenOf(root), "Cursor didn't open");
+                }}
+              >
+                <SessionView session={NOT_OPENED} listed onClose={noop} />
+              </Scenario>
+            </Stubbed>
+          </EditorsContext.Provider>
+        </ToastProvider>
+      </Specimen>
       {CONVERSATION_STATES.map((state) => (
         <Specimen key={state.title} title={state.title} note={state.note} frame="short" {...(state.waited ? { waited: state.waited } : {})}>
           <Stubbed options={state.options}>
@@ -424,6 +526,158 @@ export function SessionViews() {
           <SessionView session={NO_API} listed onClose={noop} />
         </ApiContext.Provider>
       </Specimen>
+    </>
+  );
+}
+
+// W67: an ended interactive session's view, and its footer in each state of Resume in background.
+// A few whole views, then the footer alone for each state of a resume: a whole view for each would
+// make the gallery slow enough, under the test suite's load, that other specimens' scenarios time out.
+interface EndedCase {
+  title: string;
+  note?: string;
+  session: SessionSummary;
+  options?: StubOptions;
+  run?: (root: HTMLElement) => Promise<unknown>;
+  /** A window this wide, compact at 600 px and narrower. */
+  width?: number;
+}
+
+/** Presses Resume in background, then waits for `then`. */
+const resumeThen = (then: (root: HTMLElement) => Promise<unknown>) => async (root: HTMLElement) => {
+  await press(root, 'Resume in background');
+  await then(root);
+};
+const ENDED_TITLE = { title: 'Update the getting started guide', titleSource: 'claude-code' } as const;
+const failureShown = (root: HTMLElement) => element(root, '.resume-failure');
+/** A short conversation for the whole views here, which are about the header, the tabs and the footer. */
+const ENDED_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(2 * 24 * 60 + 2), text: 'Update the made-up getting started guide for the new export flags.' },
+  { kind: 'assistant', at: ago(2 * 24 * 60), markdown: true, text: 'Done: the guide covers `--retries` and `--backoff`, with an example of each.' },
+];
+
+const ENDED_VIEWS: EndedCase[] = [
+  {
+    title: 'Ended',
+    note: "Its Claude Code process exited, as when its terminal closed: Ended where a session's status goes, the Conversation tab alone, and, where an interactive session has its message box, the note, then Copy command and Resume in background, secondary then primary. Interactive, with no /bg note: there's no terminal to type it in.",
+    session: endedSession('view-ended', ENDED_TITLE),
+  },
+  {
+    title: 'Ended, directory gone',
+    note: "Its worktree was removed, so it can't be resumed: line 2 says the directory no longer exists, and the footer's note says why, with nothing to press. The actions menu has Copy session ID alone.",
+    session: endedSession('view-ended-gone', { ...ENDED_TITLE, cwd: GONE_DIR, cwdMissing: true }),
+  },
+  {
+    title: 'Actions menu, ended',
+    note: 'Copy session ID, Copy resume command, then Resume in background. No Stop or Remove: there is no process.',
+    session: endedSession('view-ended-menu', ENDED_TITLE),
+    run: openMenu,
+  },
+  {
+    title: 'Ended, 600 px and narrower',
+    note: 'The note wraps; the buttons stay at the right, and wrap onto a line each when there isn’t room for both.',
+    session: endedSession('view-ended-compact', ENDED_TITLE),
+    width: 375,
+  },
+];
+
+const ENDED_FOOTERS: EndedCase[] = [
+  {
+    title: 'Footer: resuming',
+    note: 'Resume in background is busy while its request is out, and stays busy once it has resumed until pitwall lists it as running.',
+    session: endedSession('foot-resuming', ENDED_TITLE),
+    options: { resume: 'resuming' },
+    run: resumeThen((root) => text(root, 'Resuming…')),
+  },
+  {
+    title: 'Footer: resumed',
+    note: "A toast says so. In the app, within a poll the snapshot lists it as a running background session, and the view opens its Terminal tab, taking no focus. Here nothing lists it, so after 15 s it's Resume in background again.",
+    session: endedSession('foot-resumed', ENDED_TITLE),
+    options: { resume: 'resumed' },
+    run: resumeThen((root) => text(specimenOf(root), 'Resumed pitwall-test-foot-resumed in the background.')),
+  },
+  {
+    title: "Footer: couldn't resume, running again",
+    note: "It's running again, so pitwall didn't resume it, which would start a copy: pitwall's sentence, then the server's reason in code style, in a danger alert above the buttons, which keep their place.",
+    session: endedSession('foot-refused', ENDED_TITLE),
+    options: { resume: 'refused' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: couldn't resume, not trusted",
+    note: "Claude Code's Workspace not trusted line, then the command the server sent to run: in a command chip, with its own copy button, as New session's trust failure has it.",
+    session: endedSession('foot-hint', ENDED_TITLE),
+    options: { resume: 'hint' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: 'Footer: a copy started instead',
+    note: "It was open in another Claude Code process after all, so Claude Code started a copy: a warning, whose body is the server's sentence alone, which names the copy and says what to do, and an error toast that says the same, which outlives the footer and is what announces it.",
+    session: endedSession('foot-copied', ENDED_TITLE),
+    options: { resume: 'copied' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: 'Footer: too many at once',
+    note: 'A 429: pitwall is already running four stop, remove, resume or open commands.',
+    session: endedSession('foot-busy', ENDED_TITLE),
+    options: { resume: 'busy' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: couldn't resume, it took too long",
+    note: "A 504: claude --resume didn't finish in time. Its reason, as for any status.",
+    session: endedSession('foot-timeout', ENDED_TITLE),
+    options: { resume: 'timeout' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: pitwall didn't answer",
+    note: "No answer at all: pitwall's sentence alone.",
+    session: endedSession('foot-failed', ENDED_TITLE),
+    options: { resume: 'failed' },
+    run: resumeThen(failureShown),
+  },
+  {
+    title: "Footer: couldn't resume, not trusted, 375 px",
+    session: endedSession('foot-hint-compact', ENDED_TITLE),
+    options: { resume: 'hint' },
+    run: resumeThen(failureShown),
+    width: 375,
+  },
+];
+
+/** An ended session's footer alone, as its view has it: Resume in background against the stub API, and Copy command against the stub clipboard. */
+function EndedFoot({ session }: { session: SessionSummary }) {
+  const resume = useResume(session);
+  const copy = useCopy();
+  const toast = useToast();
+  const command = resumeCommand(session);
+  const onCopy = command === undefined ? undefined : () => void copy(command).then((ok) => toast(ok ? { tone: 'success', message: COPIED } : { tone: 'error', message: COPY_FAILED }));
+  return (
+    <footer className="session-view-foot">
+      <EndedFooter session={session} resume={resume} onCopy={onCopy} />
+    </footer>
+  );
+}
+
+export function EndedViews() {
+  // With a toasts' stack of its own, as the app has, whose toasts stay here.
+  const specimen = (each: EndedCase, footer: boolean) => (
+    <Specimen key={each.title} title={each.title} note={each.note} frame={footer ? undefined : 'view'} lasting {...(each.width === undefined ? {} : { width: each.width })}>
+      <ToastProvider>
+        <Stubbed options={{ entries: ENDED_CONVERSATION, ...each.options }}>
+          <MaybeScenario run={each.run}>
+            {footer ? <EndedFoot session={each.session} /> : <SessionView session={each.session} listed onClose={noop} compact={each.width !== undefined && each.width <= 600} />}
+          </MaybeScenario>
+        </Stubbed>
+      </ToastProvider>
+    </Specimen>
+  );
+  return (
+    <>
+      {ENDED_VIEWS.map((each) => specimen(each, false))}
+      {ENDED_FOOTERS.map((each) => specimen(each, true))}
     </>
   );
 }

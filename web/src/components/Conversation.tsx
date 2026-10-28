@@ -31,9 +31,16 @@
 //   follow pitwall's sentence.
 // - A transcript that changed under Load earlier starts again from its newest page, at the top,
 //   under a neutral notice; one that's gone keeps what was shown, with a neutral notice at the end.
+//
+// A sub-agent's transcript (W77) is the same panel, read-only, in the Sub-agents tab (Subagents.tsx).
+// An entry about one of the session's sub-agents (`subagent`, W76) names it by its description: a
+// report reads "From sub-agent: *description*", and an Agent or SendMessage call names it on its line,
+// each with a link that opens its transcript in the Sub-agents tab (SubagentLinkContext).
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -65,6 +72,7 @@ import { Markdown } from './Markdown.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 import { useWaiting } from './Waiting.js';
+import { subagentName } from '../subagents.js';
 
 /**
  * - `loading`: the first page hasn't arrived.
@@ -493,8 +501,67 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
 /** "n tool calls", "1 error", "n errors". */
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
+/** The sub-agent an entry is about (ConversationEntry.subagent). */
+export type SubagentRef = NonNullable<ConversationEntry['subagent']>;
+
+/**
+ * Opens a sub-agent's transcript in the session view's Sub-agents tab (W77), for the links on the
+ * entries about one. Without it, as in the gallery's conversations and the tests of a panel alone,
+ * the entries name the sub-agent as text.
+ */
+export const SubagentLinkContext = createContext<((subagent: SubagentRef) => void) | undefined>(undefined);
+
+/** What a link to a sub-agent's transcript says it does: in its tooltip, which describes it. */
+export const SUBAGENT_LINK_HINT = 'Open its transcript in the Sub-agents tab';
+
+/**
+ * A sub-agent named by its description: a link-styled button that opens its transcript in the
+ * Sub-agents tab, named by the description it shows, or the description as text where there's no
+ * tab to open (W77).
+ */
+export function SubagentName({ subagent }: { subagent: SubagentRef }) {
+  const open = useContext(SubagentLinkContext);
+  const name = subagentName(subagent.description);
+  if (!open) return <span className="subagent-name">{name}</span>;
+  return (
+    <Tooltip content={SUBAGENT_LINK_HINT}>
+      <button type="button" className="link-button subagent-link" data-agent-link={subagent.agentId} onClick={() => open(subagent)}>
+        {name}
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * What an Agent or SendMessage call about a sub-agent says before its name: "Agent: " for the call that
+ * started it, "SendMessage to " for one sent to it, and the tool's name otherwise.
+ */
+function subagentCallLead(entry: ConversationEntry): string {
+  const tool = plainText(entry.toolName ?? 'Agent');
+  return tool === 'SendMessage' ? 'SendMessage to ' : `${tool}: `;
+}
+
 /** A tool call's one line, cut with an ellipsis, the whole of it in a tooltip when it's cut, and its error badge. */
 function ToolCall({ entry }: { entry: ConversationEntry }) {
+  const { subagent } = entry;
+  const error = entry.toolError && (
+    <Badge look="subtle-danger" className="tool-call-error">
+      error
+    </Badge>
+  );
+  if (subagent) {
+    // A call about one of the session's sub-agents names it by its description, with its link (W77).
+    // No tooltip of the line's own, cut or not: the link has one, and two would open at once.
+    return (
+      <>
+        <span className="tool-call-text">
+          {subagentCallLead(entry)}
+          <SubagentName subagent={subagent} />
+        </span>
+        {error}
+      </>
+    );
+  }
   const text = plainText(entry.text);
   return (
     <>
@@ -502,11 +569,7 @@ function ToolCall({ entry }: { entry: ConversationEntry }) {
       <Tooltip content={text} relation="none" onlyIfCut>
         <span className="tool-call-text">{text}</span>
       </Tooltip>
-      {entry.toolError && (
-        <Badge look="subtle-danger" className="tool-call-error">
-          error
-        </Badge>
-      )}
+      {error}
     </>
   );
 }
@@ -563,6 +626,9 @@ const SPEAKERS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'Yo
 function isMarkdown(entry: ConversationEntry): boolean {
   return entry.markdown === true && (entry.kind === 'assistant' || entry.kind === 'cross-session' || entry.kind === 'to-pitwall');
 }
+
+/** What a report from one of the session's sub-agents says before its name (W77). */
+export const SUBAGENT_SPEAKER = 'From sub-agent: ';
 
 /** The speaker line of a question Claude Code asked in its dialog (W49). */
 export const QUESTION_SPEAKER = 'Claude asked';
@@ -671,7 +737,7 @@ function QuestionEntry({ entry }: { entry: ConversationEntry }) {
  * One entry that isn't folded. Markdown as pitwall's own elements, and anything else as text, its line
  * breaks and spaces kept by CSS. Never HTML.
  */
-function Entry({ entry }: { entry: ConversationEntry }) {
+function Entry({ entry, userSpeaker }: { entry: ConversationEntry; userSpeaker: ReactNode | undefined }) {
   if (entry.kind === 'tool') {
     return (
       <li className={entry.toolError ? 'entry entry-tool has-error' : 'entry entry-tool'}>
@@ -690,7 +756,21 @@ function Entry({ entry }: { entry: ConversationEntry }) {
       </li>
     );
   }
-  const speaker = entry.kind === 'cross-session' ? `From ${plainText(entry.from ?? 'another session')}` : SPEAKERS[entry.kind];
+  // A report from one of the session's sub-agents names it by its description, with its link (W77).
+  const speaker =
+    entry.kind === 'cross-session' && entry.subagent ? (
+      <>
+        {SUBAGENT_SPEAKER}
+        <SubagentName subagent={entry.subagent} />
+      </>
+    ) : entry.kind === 'cross-session' ? (
+      `From ${plainText(entry.from ?? 'another session')}`
+    ) : entry.kind === 'user' && userSpeaker !== undefined ? (
+      // In a sub-agent's transcript, what started or messaged it: never the user's own prompt (W77).
+      userSpeaker
+    ) : (
+      SPEAKERS[entry.kind]
+    );
   const body = isMarkdown(entry) ? (
     <div className="entry-text entry-markdown">
       <Markdown text={text} />
@@ -711,7 +791,7 @@ function Entry({ entry }: { entry: ConversationEntry }) {
  * pitwall's sentence for a failed load, then the server's reason as text when it gave one, or else
  * the HTTP status before the full stop, as the session actions do (5: Errors).
  */
-function failedText(what: string, failure: LoadFailure | undefined, after = ''): ReactNode {
+export function failedText(what: string, failure: LoadFailure | undefined, after = ''): ReactNode {
   const sentence = couldNot(what, failure?.error === undefined ? failure?.status : undefined);
   return (
     <>
@@ -727,7 +807,7 @@ function failedText(what: string, failure: LoadFailure | undefined, after = ''):
 }
 
 /** Try again, on an alert: outline sm with the `retry` icon, busy while it's out. */
-function TryAgain({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+export function TryAgain({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <Button size="sm" icon="retry" busy={busy} busyLabel="Trying again…" onClick={onClick}>
       Try again
@@ -736,17 +816,17 @@ function TryAgain({ busy, onClick }: { busy: boolean; onClick: () => void }) {
 }
 
 /** The conversation's status line, a role="status" that's always there: what's loading, or why there's nothing. */
-function statusLine(state: ConversationState, shown: boolean): string | undefined {
+function statusLine(state: ConversationState, shown: boolean, lines: { empty?: string | undefined; missing?: string | undefined }): string | undefined {
   const empty = state.entries.length === 0;
   switch (state.status) {
     case 'loading':
       return shown ? 'Loading the conversation…' : undefined;
     case 'missing':
-      return empty ? 'No transcript for this session.' : undefined;
+      return empty ? (lines.missing ?? 'No transcript for this session.') : undefined;
     case 'unavailable':
       return "The conversation can't be loaded here.";
     case 'ready':
-      return empty && state.before === undefined ? 'Nothing to show yet.' : undefined;
+      return empty && state.before === undefined ? (lines.empty ?? 'Nothing to show yet.') : undefined;
     case 'failed':
       return undefined;
   }
@@ -756,13 +836,27 @@ export interface ConversationPanelProps {
   conversation: ConversationController;
   /** The tab panel's id, which the Conversation tab controls. */
   id: string;
-  /** The Conversation tab's id, which names the panel. */
+  /** The Conversation tab's id, which names the panel; or, for a sub-agent's transcript, its heading's. */
   labelledBy: string;
   hidden: boolean;
+  /**
+   * 'tabpanel', the Conversation tab's panel, by default; 'region' for a sub-agent's transcript inside
+   * the Sub-agents tab's panel (W77), named by its heading.
+   */
+  role?: 'tabpanel' | 'region';
+  /** Nothing yet, in its status line: "Nothing to show yet." by default. */
+  emptyLine?: string;
+  /** No transcript, in its status line: "No transcript for this session." by default. */
+  missingLine?: string;
+  /**
+   * Who a 'user' entry is from, in place of "You": in a sub-agent's transcript, what started or
+   * messaged it, the session or the sub-agent that started it (W77).
+   */
+  userSpeaker?: ReactNode;
 }
 
 /** The Conversation tab's panel: the body that scrolls, which is also a Tab stop so the keyboard can scroll it. */
-export function ConversationPanel({ conversation, id, labelledBy, hidden }: ConversationPanelProps) {
+export function ConversationPanel({ conversation, id, labelledBy, hidden, role = 'tabpanel', emptyLine, missingLine, userSpeaker }: ConversationPanelProps) {
   const { state, loadEarlier, retry, scroller, onScroll, onInput, sync, jumpToLatest, restorePlace } = conversation;
   const rows = useMemo(() => conversationRows(state.entries), [state.entries]);
   // The calls of the folds that are open (conversation.ts: foldOpen). Every fold starts closed.
@@ -788,11 +882,11 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
   const { entries } = state;
   // The first page: "Loading the conversation…" after --pw-delay-spinner, and what's slow after --pw-delay-long.
   const waiting = useWaiting(scroller, state.status === 'loading');
-  const line = statusLine(state, waiting.shown);
+  const line = statusLine(state, waiting.shown, { empty: emptyLine, missing: missingLine });
   return (
     <div
       className="session-view-body"
-      role="tabpanel"
+      role={role}
       id={id}
       aria-labelledby={labelledBy}
       // A Tab stop, so the conversation can be scrolled from the keyboard.
@@ -845,7 +939,7 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden }: Conv
             row.kind === 'fold' ? (
               <Fold key={row.key} calls={row.calls} open={foldOpen(open, row.calls)} onToggle={toggle} />
             ) : (
-              <Entry key={row.key} entry={row.entry} />
+              <Entry key={row.key} entry={row.entry} userSpeaker={userSpeaker} />
             ),
           )}
         </ol>

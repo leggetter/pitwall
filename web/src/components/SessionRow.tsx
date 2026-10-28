@@ -1,7 +1,10 @@
 // A session row (docs/design-system.md, 4: Session rows), two lines at most: which session it is,
-// its badges, when it was last active and its star toggle (W53); then what it asked, or what it was
-// last asked, after its group's label in Needs you, All sessions and Starred. The rest, such as its replies, its relay exchange, its
-// directory, the repos it worked in and the message box, is in the session view, one click away.
+// its badges, when it was last active and its star toggle (W53); then what it needs or asked, or what
+// it was last asked, after its group's label in Needs you, All sessions and Starred, and, quietly at
+// its end, how many of its sub-agents are running while any are (W77). A finished session's row
+// is muted, an ended interactive session's too (W67), with Ended as its status. The rest, such as its
+// replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
+// session view, one click away.
 //
 // Tooltips, on hover only, since none of them is on the name's button: the session's id and start
 // time on its name; the whole title and where it came from; Stale's and a finished Asked you's
@@ -13,7 +16,8 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
-import { groupLabel, needsAttention, rowStatusBadge } from '../sessions.js';
+import { groupLabel, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
+import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
 import { StarButton } from './StarButton.js';
@@ -23,6 +27,13 @@ import { Tooltip } from './Tooltip.js';
 export const STALE_HINT =
   'Blocked with no activity for more than 7 days, whether or not its process is running. Usually waiting on a question that no longer matters.';
 export const FINISHED_ASKED_HINT = "Its last message asked you something. It has finished, so it isn't counted as needing you.";
+/** The same, for an ended interactive session (W67), whose badge says Ended rather than finished. */
+export const ENDED_ASKED_HINT = "Its last message asked you something. It has ended, so it isn't counted as needing you.";
+
+/** The hint for a finished session's Asked you: an ended one's, or a finished background session's. */
+export function finishedAskedHint(session: SessionSummary): string {
+  return session.ended ? ENDED_ASKED_HINT : FINISHED_ASKED_HINT;
+}
 const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = {
   'claude-code': "Claude Code's title, from the session's first prompt",
   pitwall: "pitwall's title, from the session's recent turns",
@@ -40,8 +51,24 @@ function titleHint(title: string, source: SessionSummary['titleSource']): string
 /** Clicks on these inside a row do their own thing, rather than opening the session. */
 const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="button"]';
 
-/** Line 2: what the session asked you, or else what you last asked it, or why the transcript can't say. */
+/**
+ * Line 2: what a background job's own line says it needs (W69), or what the session asked you, or
+ * else what you last asked it, or why the transcript can't say.
+ */
 function whatItWants(session: SessionSummary): { content: ReactNode; hint?: string } | undefined {
+  // Claude Code's line, from the job's file, not the transcript: shown whatever the transcript's state.
+  const needs = needsText(session);
+  if (needs !== undefined) {
+    const text = plainText(needs);
+    return {
+      content: (
+        <span className="asked">
+          <span className="asked-label">Needs:</span> {text}
+        </span>
+      ),
+      hint: text,
+    };
+  }
   if (session.transcript !== 'ok') {
     return { content: <span className="transcript-note">Transcript {session.transcript === 'missing' ? 'not found' : 'unreadable'}</span> };
   }
@@ -100,6 +127,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const wants = whatItWants(session);
   // Line 2's label: the group's, in Needs you and All sessions.
   const label = showGroup ? plainText(groupLabel(group)) : undefined;
+  // How many of its sub-agents are running, at the end of line 2, while any are (W77).
+  const running = session.subagentsRunning !== undefined && session.subagentsRunning > 0 ? runningText(session.subagentsRunning) : undefined;
 
   const openFromRow = (event: MouseEvent<HTMLLIElement>) => {
     if (!onOpen) return;
@@ -121,7 +150,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const badges = [
     badge && <StatusBadge key="status" badge={badge} />,
     finished && session.askedYou && (
-      <Badge key="asked" look="outline" hint={FINISHED_ASKED_HINT}>
+      <Badge key="asked" look="outline" hint={finishedAskedHint(session)}>
         Asked you
       </Badge>
     ),
@@ -169,22 +198,36 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {/* Always shown while it's starred; otherwise on hover and focus, so the list stays calm. */}
         {onStar && <StarButton sessionId={session.sessionId} name={session.name} starred={starred} onStar={onStar} size="sm" className="session-star" />}
       </div>
-      {(label !== undefined || wants) && (
+      {(label !== undefined || wants || running) && (
         <Tooltip content={wants?.hint} relation="none" onlyIfCut>
           <p className="session-what">
-            {label !== undefined && (
-              <>
-                <span className="session-group">
-                  <Highlight text={label} />
-                </span>
-                {wants && (
+            {/* What gives way, with an ellipsis, before the running count does. */}
+            <span className="session-what-text">
+              {label !== undefined && (
+                <>
+                  <span className="session-group">
+                    <Highlight text={label} />
+                  </span>
+                  {wants && (
+                    <span className="session-what-sep" aria-hidden="true">
+                      {' · '}
+                    </span>
+                  )}
+                </>
+              )}
+              {wants?.content}
+            </span>
+            {running !== undefined && (
+              // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
+              <span className="session-running">
+                {(label !== undefined || wants) && (
                   <span className="session-what-sep" aria-hidden="true">
                     {' · '}
                   </span>
                 )}
-              </>
+                {running}
+              </span>
             )}
-            {wants?.content}
           </p>
         </Tooltip>
       )}

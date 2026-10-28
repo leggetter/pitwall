@@ -5,10 +5,20 @@
 //                               then Authorization: Bearer <apiKey> or Bearer <token>, else 401.
 //                               A state-changing method (anything but GET and HEAD) also needs
 //                               the apiKey, not the token, and an Origin, else 403
+//   GET /api/directories        then directories.ts: the directories under the snapshot's roots
+//   GET /api/editors            then editors.ts: the editors found at startup
+//   POST /api/attachments       then attachments.ts: the one body that isn't JSON, the file's bytes
+//                               with its own Content-Type, at most 10 MiB, its type checked; DELETE
+//                               /api/attachments/:id removes one no spawn has used
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
 //                               snapshot, else 503; the session in it, else 404. Every route that
 //                               takes a session id, and every M2 input path, goes through it.
-//                               At most 4 conversation pages are read at once, else 429
+//                               At most 4 conversation reads at once, else 429: a session's
+//                               conversation pages, its sub-agent list and its sub-agents' pages
+//                               (W76) share the limit. A sub-agent's id is letters and digits
+//                               and one of the session's, by a fresh listing of its folder, else
+//                               404. Stop, remove, resume and open in an editor share one limit
+//                               of 4, else 429
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
 //                               at most 32 connections in the handshake at once, on /ws and
 //                               /attach together, else close 1013 with no challenge; then the
@@ -28,12 +38,24 @@ import { createServer, STATUS_CODES, type IncomingMessage, type Server } from 'n
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { getRequestListener } from '@hono/node-server';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ConversationCursorError, isWellFormedCursor, type Indexer } from '../index/index.js';
-import { ATTACH_PATH, CONVERSATION_STALE_STATUS, conversationPath, SNAPSHOT_PATH, WS_PATH } from '../shared/protocol.js';
-import { registerActions, type ActionOptions } from './actions.js';
+import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
+import {
+  ATTACH_PATH,
+  CONVERSATION_STALE_STATUS,
+  conversationPath,
+  SNAPSHOT_PATH,
+  subagentConversationPath,
+  subagentsPath,
+  WS_PATH,
+  type ConversationPage,
+} from '../shared/protocol.js';
+import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
+import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
+import { registerDirectories, type DirectoryOptions } from './directories.js';
+import { registerEditors, type EditorOptions } from './editors.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
@@ -64,6 +86,9 @@ export const DEFAULT_PORT = 4517;
  * pattern is decoded back.
  */
 const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
+/** The sub-agent routes (W76), decoded the same way. */
+const SUBAGENTS_ROUTE = decodeURIComponent(subagentsPath(':sessionId'));
+const SUBAGENT_CONVERSATION_ROUTE = decodeURIComponent(subagentConversationPath(':sessionId', ':agentId'));
 
 /**
  * The status for a `before` cursor made for another version of the
@@ -102,13 +127,25 @@ export interface ServerInternals {
    * W10-W12's input routes will be. Tests use it for a state-changing route.
    */
   routes?: (app: Hono) => void;
-  /** Spawn, stop and remove (W12, actions.ts): tests pass a fake command runner and limits. */
+  /** Spawn, stop, remove and resume (W12, W66, actions.ts): tests pass a fake command runner, agents source and limits. */
   actions?: ActionOptions;
   /**
    * For the attach socket. Tests pass a fake PTY spawner and agents source,
    * so they never run `claude`.
    */
-  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'processAlive' | 'now'>>;
+  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
+  /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
+  directories?: DirectoryOptions;
+  /**
+   * Open in an editor (W72, editors.ts): tests pass the editors found and a fake runFile, so nothing
+   * depends on this machine's editors and none is ever opened. Its limit is `actions.maxConcurrentCommands`.
+   */
+  editors?: Omit<EditorOptions, 'slots'>;
+  /**
+   * Attachments (W79, attachments.ts): tests pass a clock, a sweep interval, a uid, and the cap, the
+   * clean-up's bounds and its log (W84). The folder is ServerOptions.pitwallHome's.
+   */
+  attachments?: Omit<AttachmentStoreOptions, 'home'>;
 }
 
 export async function startServerWithInternals(
@@ -133,11 +170,22 @@ export async function startServerWithInternals(
 
   // Messages to interactive sessions (W11, D8). Started on the first one, stopped on close().
   const relay = options.relay ?? createRelayManager();
-  // What spawn started lately, so attach can tell a session that's starting from one that crashed.
+  // What spawn and resume started lately, so attach can tell a session that's starting from one that crashed.
   const spawned = new RecentSpawns();
-  // The input routes: spawn, stop and remove (W12), the relay (W11), then any a test adds.
+  // The ended sessions resume brought back lately, by session id, which the snapshot shows as ended until its next poll.
+  const resumed = new RecentSpawns();
+  // Stop, remove, resume and open in an editor, running now: one limit for all four.
+  const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
+  // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
+  const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
+  // The directory list (W70), then the input routes: attachments (W79), spawn, stop and remove (W12),
+  // resume (W66), the editors and open in an editor (W72), whose detection starts here, the relay
+  // (W11), then any a test adds.
   const routes = (app: Hono) => {
-    registerActions(app, indexer, { token, spawned, ...internals.actions });
+    registerDirectories(app, indexer, internals.directories);
+    registerAttachments(app, attachments);
+    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
+    registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };
@@ -174,6 +222,7 @@ export async function startServerWithInternals(
     spawnPty,
     onAuthenticated,
     spawned,
+    resumed,
     slots,
     ...internals.attach,
   });
@@ -202,6 +251,8 @@ export async function startServerWithInternals(
     port = await listen(server, 0);
   }
   headers = Object.entries(securityHeaders(port));
+  // At startup, for anything an earlier run left, then on a timer.
+  attachments.start();
 
   let closed: Promise<void> | undefined;
   return {
@@ -214,6 +265,7 @@ export async function startServerWithInternals(
         }),
         attach.close(),
         relay.close(),
+        attachments.close(),
       ]).then(() => undefined);
       return closed;
     },
@@ -265,13 +317,12 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     return c.json(snapshot);
   });
 
-  // Read from the transcript, a page at a time and at most about 8 MiB per
-  // page, only for sessions in the latest snapshot. The guard checks the id
-  // first, and the cursor is checked before the index sees it.
-  app.get(CONVERSATION_ROUTE, async (c) => {
-    c.header('Cache-Control', 'no-store');
-    const lookup = resolveSession(indexer, c.req.param('sessionId'));
-    if (!lookup.ok) return c.body(null, lookup.status);
+  /**
+   * A page of a transcript, for the session's conversation and a sub-agent's (W76) alike: the
+   * cursor is checked before the index sees it, the shared limit applies, and a cursor the index
+   * can't use is 400, or 410 when it's stale.
+   */
+  async function pageOf(c: Context, read: (before: string | undefined) => Promise<ConversationPage | undefined>): Promise<Response> {
     const cursors = c.req.queries('before');
     if (cursors !== undefined && cursors.length !== 1) return c.body(null, 400);
     const before = cursors?.[0];
@@ -283,7 +334,7 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     conversationReads += 1;
     let page;
     try {
-      page = await indexer.conversation(lookup.session.sessionId, before);
+      page = await read(before);
     } catch (error) {
       if (error instanceof ConversationCursorError) {
         return c.body(null, error.reason === 'stale' ? STALE_CURSOR_STATUS : 400);
@@ -294,6 +345,47 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
     }
     if (!page) return c.body(null, 404);
     return c.json(page);
+  }
+
+  // Read from the transcript, a page at a time and at most about 8 MiB per
+  // page, only for sessions in the latest snapshot. The guard checks the id
+  // first, and the cursor is checked before the index sees it.
+  app.get(CONVERSATION_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    return pageOf(c, (before) => indexer.conversation(lookup.session.sessionId, before));
+  });
+
+  // A listed session's sub-agents (W76), from its folder and its transcripts. Under the same limit
+  // as the pages, since it can read what's new in every sub-agent's transcript.
+  app.get(SUBAGENTS_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    if (conversationReads >= MAX_CONVERSATION_READS) {
+      c.header('Retry-After', '1');
+      return c.body(null, 429);
+    }
+    conversationReads += 1;
+    try {
+      const list = await indexer.subagents(lookup.session.sessionId);
+      return list === undefined ? c.body(null, 404) : c.json(list);
+    } finally {
+      conversationReads -= 1;
+    }
+  });
+
+  // One of a listed session's sub-agents' own transcript, paged as the session's is (W76). The
+  // agent id is checked before the index sees it, and the index finds its file only by listing
+  // the session's folder, never by building a path from the id.
+  app.get(SUBAGENT_CONVERSATION_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    if (!lookup.ok) return c.body(null, lookup.status);
+    const agentId = c.req.param('agentId');
+    if (agentId === undefined || !isSafeAgentId(agentId)) return c.body(null, 404);
+    return pageOf(c, (before) => indexer.subagentConversation(lookup.session.sessionId, agentId, before));
   });
 
   routes?.(app);

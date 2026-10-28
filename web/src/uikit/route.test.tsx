@@ -61,7 +61,12 @@ describe('the #uikit route', () => {
     await settled();
     // The app's own page isn't there: every notice on screen is a specimen inside the gallery.
     expect([...document.querySelectorAll('main.notice')].every((notice) => notice.closest('.uikit'))).toBe(true);
-    expect(document.querySelectorAll('.uikit-problem')).toHaveLength(0);
+    // Each specimen that didn't reach its state, by section and title, with what it was waiting for (W71).
+    const problems = [...document.querySelectorAll('.uikit-problem')].map(
+      (problem) =>
+        `${problem.closest('.uikit-section')?.querySelector('h2')?.textContent} > ${problem.closest('.uikit-specimen')?.querySelector('h3')?.textContent}: ${problem.textContent}`,
+    );
+    expect(problems).toEqual([]);
     expect(fake.sockets).toHaveLength(0);
     // Every component in every state, and no browser hover text in place of a tooltip anywhere (W25, W27).
     const titled = [...document.querySelectorAll('[title]')];

@@ -29,12 +29,13 @@ import { browserStorage, type StorageSource } from '../groupState.js';
 import { GESTURE_MS } from '../focusGesture.js';
 import { computeProof } from '../proof.js';
 import { TERMINAL_FOCUS_KEY } from '../terminalFocus.js';
-import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
+import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { choosePreference, openPreferences, preferenceGroup, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
+import { toastMessages } from '../test/toasts.js';
 import { ATTACH_DELAY_MS } from '../timing.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
-import { Dashboard } from './Dashboard.js';
+import { Dashboard, listedText } from './Dashboard.js';
 import { SessionView } from './SessionView.js';
 import { TYPE_HINT, type TerminalHandle } from './Terminal.js';
 
@@ -142,7 +143,7 @@ interface Options {
 function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const fetch = fakeServer();
-  const api = createApiClient({ apiKey: API_KEY, fetch });
+  const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fetch) });
   const sockets = fakeSockets();
   const env: AttachEnv = { token: TOKEN, createSocket: sockets.factory, host: '127.0.0.1:4517' };
   const storage = options.storage ?? memory();
@@ -350,7 +351,7 @@ describe('the tab a view opens on', () => {
     window.history.replaceState(null, '', `/?view=all&session=${J1}`);
     const fake = fakeSockets();
     const fetch = fakeServer();
-    render(<App createSocket={fake.factory} fetch={fetch} />);
+    render(<App createSocket={fake.factory} fetch={withoutSubagents(fetch)} />);
     const index = fake.last;
     expect(index.url).toContain(WS_PATH);
     act(() => {
@@ -444,7 +445,7 @@ describe('a tab you chose', () => {
   it('is decided as a view is first shown: one that opens hidden, as in a root tab that isn’t open (W38), attaches only once it shows', async () => {
     const sockets = fakeSockets();
     const env: AttachEnv = { token: TOKEN, createSocket: sockets.factory, host: '127.0.0.1:4517' };
-    const api = createApiClient({ apiKey: API_KEY, fetch: fakeServer() });
+    const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fakeServer()) });
     const running = job(9, 'job-unseen');
     const ui = (hidden: boolean) => (
       <ApiContext.Provider value={api}>
@@ -515,7 +516,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
       window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
       window.history.replaceState(null, '', `/?view=all&session=${J1}`);
       const fake = fakeSockets();
-      render(<App createSocket={fake.factory} fetch={fakeServer()} />);
+      render(<App createSocket={fake.factory} fetch={withoutSubagents(fakeServer())} />);
       const index = fake.last;
       act(() => {
         index.open();
@@ -591,7 +592,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
       expect(shownHint()).toBe(TYPE_HINT);
     });
 
-    it('in a view a root tab’s switch shows for the first time, as one for a session started there before you left it', async () => {
+    it('in the view of a session started in a root tab you have since left, which switches back to it once it’s listed (W63)', async () => {
       const ROOTS = ['/Users/example/alpha', '/Users/example/bravo'];
       const twoRoots = (extra: SessionSummary[] = []) =>
         snapshot(
@@ -601,21 +602,23 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
       const rootTab = (root: string) => screen.getAllByRole('tab').find((candidate) => candidate.classList.contains('root-tab') && candidate.querySelector('.root-tab-label')?.textContent === `~/${root.split('/').at(-1)}`)!;
       const { sockets, update } = renderDashboard(twoRoots(), { search: '' });
       await startSession();
+      // The dialog has given focus back to New session by the time it has gone (W83).
+      const newSession = screen.getByRole('button', { name: 'New session' });
+      expect(document.activeElement).toBe(newSession);
       fireEvent.click(rootTab(ROOTS[1]!));
       await settle();
       update(twoRoots([job(58, STARTED.name, { shortId: STARTED.shortId, cwd: `${ROOTS[0]}/app` })]));
       await settle();
-      expect(sockets.sockets).toHaveLength(0);
 
-      fireEvent.click(rootTab(ROOTS[0]!));
-      rootTab(ROOTS[0]!).focus();
-      await settle();
+      expect(rootTab(ROOTS[0]!).getAttribute('aria-selected')).toBe('true');
       expect(viewName()).toBe(STARTED.name);
       expect(shownTab()).toBe('Terminal');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       await attachIt(sockets.last);
       expect(terminalHasFocus()).toBe(false);
-      expect(document.activeElement).toBe(rootTab(ROOTS[0]!));
+      // Focus stays on New session, where the dialog gave it back, which the switch neither took away nor hid.
+      expect(document.activeElement).toBe(newSession);
+      expect(shownHint()).toBe(TYPE_HINT);
       press('Enter');
       expect(inputs(sockets.last)).toEqual([]);
     });
@@ -649,6 +652,25 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
       expect(shownHint()).toBe('F6F6 to leave the terminal');
       press('Enter');
       expect(inputs(sockets.last)).toEqual(['\r']);
+    });
+
+    it('and keeps it, attached, when a session started from New session is listed while you type in it (W63)', async () => {
+      const { sockets, update } = renderDashboard();
+      await startSession();
+      await open('job-one');
+      await waitFor(() => expect(sockets.sockets).toHaveLength(1));
+      await attachIt(sockets.last);
+      expect(terminalHasFocus()).toBe(true);
+
+      update(snap([...sessions(), job(57, STARTED.name, { shortId: STARTED.shortId })]));
+      await settle();
+      expect(viewName()).toBe('job-one');
+      expect(terminalHasFocus()).toBe(true);
+      expect(sockets.sockets).toHaveLength(1);
+      expect(sockets.last.closedByClient).toBe(false);
+      expect(toastMessages()).toEqual([listedText(STARTED.name)]);
+      press('y');
+      expect(inputs(sockets.last)).toEqual(['y']);
     });
 
     it('after a click on its Terminal tab, in a view the URL opened without focus', async () => {

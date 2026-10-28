@@ -11,7 +11,7 @@ import type { ConversationEntry, ConversationPage, SessionSummary } from '../../
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { memoryNavigation, type NavigationEnv } from '../selection.js';
-import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
+import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot, withoutSubagents } from '../test/fixtures.js';
 import { withoutComments, block, declarations } from '../test/css.js';
 import stylesCss from '../styles.css?raw';
 import { ConnectionBadge } from './ConnectionBadge.js';
@@ -446,7 +446,7 @@ function gate(answer: Answer) {
 const settle = () => act(async () => {});
 
 async function renderView(fetch: FetchLike, overrides: Partial<SessionSummary> = {}) {
-  const api = createApiClient({ apiKey: API_KEY, fetch });
+  const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fetch) });
   let current = session({ sessionId: SID, name: 'demo-states', lastActivityAt: minutesAgo(5), ...overrides });
   let activity = Date.parse(current.lastActivityAt ?? minutesAgo(5));
   const ui = () => (

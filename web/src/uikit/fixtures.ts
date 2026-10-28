@@ -4,12 +4,14 @@
 
 import type {
   ConversationEntry,
+  DirectoryList,
   IndexSnapshot,
   RelayAlert,
   RelayExchange,
   RelayOff,
   SessionGroup,
   SessionSummary,
+  SubagentSummary,
 } from '../../../src/shared/protocol.js';
 
 /** The gallery's clock. Fixture times are set back from it, so "4m ago" reads as written. */
@@ -68,6 +70,15 @@ export function finished(name: string, state: 'done' | 'stopped' | 'failed', ove
   return background(name, { state, alive: false, pid: undefined, finished: true, lastActivityAt: ago(95), ...overrides });
 }
 
+/**
+ * An interactive session that has ended (W67): its process exited, as when its terminal closed, so it's
+ * finished, with no process, status or state, and listed from its transcript. Ended two days ago unless
+ * `overrides` say otherwise.
+ */
+export function endedSession(name: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
+  return session(name, { ended: true, finished: true, alive: false, pid: undefined, status: undefined, lastActivityAt: ago(2 * 24 * 60), ...overrides });
+}
+
 export function group(label: string, sessions: SessionSummary[], overrides: Partial<SessionGroup> = {}): SessionGroup {
   return { key: `${ROOT}/${label}`, label, kind: 'git', root: ROOT, sessions, ...overrides };
 }
@@ -82,18 +93,23 @@ const LONG_REPLY =
   'replaced rather than duplicated. I added tests for a batch that fails once, one that fails every time, and ' +
   'one that times out, and the full suite passes. I left the timeout at 30 seconds, as you asked.';
 
-/** Every status a row can show, one row each, named after it. */
+/**
+ * Every status a row can show, one row each, named after it. The index sets needsYou from each
+ * session's context (W69); a blocked job whose own line asks nothing, as a resumed one's "send a
+ * prompt to start", has none, and shows as idle.
+ */
 export const STATUS_ROWS: SessionSummary[] = [
   session('waiting', {
     status: 'waiting',
     waitingFor: 'permission prompt',
+    needsYou: { reason: 'prompt' },
     lastUserPrompt: 'Add a retry with backoff to the export job.',
     lastActivityAt: ago(1),
   }),
   background('blocked', {
     state: 'blocked',
     status: 'idle',
-    waitingFor: 'input needed',
+    needsYou: { reason: 'claude-code', text: 'Should failed exports go to a quarantine folder, or back on the queue?' },
     lastUserPrompt: 'Move failed exports somewhere we can inspect them.',
     lastActivityAt: ago(2),
   }),
@@ -101,6 +117,7 @@ export const STATUS_ROWS: SessionSummary[] = [
     title: 'CSV export for projects',
     titleSource: 'claude-code',
     askedYou: { reason: 'open-questions', excerpt: 'Should the CSV export include archived projects?' },
+    needsYou: { reason: 'asked' },
     lastUserPrompt: 'Add a CSV export to the projects page.',
     lastActivityAt: ago(3),
   }),
@@ -126,6 +143,13 @@ export const STATUS_ROWS: SessionSummary[] = [
     startedAt: ago(60 * 24 * 30),
     lastActivityAt: ago(60 * 24 * 12),
   }),
+  endedSession('ended', { lastActivityAt: ago(60 * 20) }),
+  // W69: resumed from pitwall in this run, waiting for your first prompt.
+  background('restarted', { state: 'blocked', status: 'idle', needsYou: { reason: 'restarted' }, lastUserPrompt: 'Tidy the export docs.', lastActivityAt: ago(60 * 3) }),
+  // W69: blocked, and pitwall couldn't read the job's file, so it still needs you.
+  background('blocked-unread', { state: 'blocked', status: 'idle', needsYou: { reason: 'blocked' }, lastUserPrompt: 'Rotate the export bucket keys.', lastActivityAt: ago(5) }),
+  // W69: blocked with Claude Code's "send a prompt to start", after pitwall restarted: nothing needs you, so no badge.
+  background('blocked-idle', { state: 'blocked', status: 'idle', lastUserPrompt: 'Check the export queue depth.', lastActivityAt: ago(60 * 4) }),
 ];
 
 /** Finished rows, which sit in a group's "Finished" list. */
@@ -142,6 +166,29 @@ export const FINISHED_ROWS: SessionSummary[] = [
 export function exchange(status: RelayExchange['status'], reply?: string): RelayExchange {
   return reply === undefined ? { sentAt: ago(7), status } : { sentAt: ago(7), status, reply: { at: ago(5), text: reply } };
 }
+
+/** A directory that has gone, as a removed worktree's has. */
+const GONE_WORKTREE = `${APP_DIR}/.claude/worktrees/pitwall-test-export-fix`;
+
+/**
+ * A Finished section's rows with ended sessions in it (W67), all from the last ENDED_SHOWN_DAYS: one
+ * that asked something, a finished background session among them, and one whose directory has gone.
+ */
+export const ENDED_ROWS: SessionSummary[] = [
+  endedSession('ended-docs', { title: 'Update the getting started guide', titleSource: 'claude-code', lastActivityAt: ago(60 * 20), lastUserPrompt: 'Update the made-up getting started guide.' }),
+  finished('done-beside-ended', 'done', { lastActivityAt: ago(60 * 30) }),
+  endedSession('ended-asked', {
+    lastActivityAt: ago(60 * 24 * 2),
+    askedYou: { reason: 'question', excerpt: 'Should the made-up export keep archived projects?' },
+  }),
+  endedSession('ended-gone', { cwd: GONE_WORKTREE, cwdMissing: true, lastActivityAt: ago(60 * 24 * 5) }),
+];
+
+/** Ended sessions older than ENDED_SHOWN_DAYS, behind Show older (W67). */
+export const OLDER_ENDED_ROWS: SessionSummary[] = [
+  endedSession('ended-last-week', { lastActivityAt: ago(60 * 24 * 9) }),
+  endedSession('ended-last-month', { lastActivityAt: ago(60 * 24 * 26) }),
+];
 
 /** Rows with long or awkward text, and the transcript notes. */
 export const AWKWARD_ROWS: SessionSummary[] = [
@@ -163,12 +210,23 @@ export const AWKWARD_ROWS: SessionSummary[] = [
       excerpt:
         'Should exported files older than 30 days be deleted by the nightly job, moved to the archive bucket first, or kept until someone removes them by hand?',
     },
+    needsYou: { reason: 'asked' },
     lastActivityAt: ago(2),
   }),
   session('long-reason', {
     status: 'waiting',
     waitingFor: 'permission prompt for a command that writes outside the working directory',
+    needsYou: { reason: 'prompt' },
     lastActivityAt: ago(1),
+  }),
+  background('long-needs', {
+    state: 'blocked',
+    status: 'idle',
+    needsYou: {
+      reason: 'claude-code',
+      text: 'Which of the three made-up retention rules should the nightly export follow: delete after 30 days, archive after 30 days, or keep until someone removes the files by hand?',
+    },
+    lastActivityAt: ago(2),
   }),
   background('unbroken', {
     state: 'working',
@@ -184,18 +242,27 @@ export const STATE_ROWS = {
   default: session('default', { status: 'busy', lastActivityAt: ago(0.2) }),
   hover: session('hover', { status: 'busy', lastActivityAt: ago(0.3) }),
   open: session('open', { status: 'busy', lastActivityAt: ago(2) }),
-  needsYou: session('needs-you', { status: 'waiting', waitingFor: 'dialog open', lastUserPrompt: 'Pick the export format for the archive.' }),
+  needsYou: session('needs-you', { status: 'waiting', waitingFor: 'dialog open', needsYou: { reason: 'prompt' }, lastUserPrompt: 'Pick the export format for the archive.' }),
   needsYouOpen: session('needs-you-open', {
     status: 'waiting',
     waitingFor: 'permission prompt',
+    needsYou: { reason: 'prompt' },
     lastUserPrompt: 'Delete the old export files.',
   }),
   finished: finished('finished', 'done', { cwd: JOBS_DIR }),
+  ended: endedSession('state-ended', { lastActivityAt: ago(60 * 26) }),
 };
 
 // Groups, for the group sections and the dashboards.
 
-const appSessions = [STATUS_ROWS[0]!, STATUS_ROWS[1]!, STATUS_ROWS[3]!, STATUS_ROWS[5]!];
+/** A status row by its name, after pitwall-test-. */
+export function statusRow(name: string): SessionSummary {
+  const row = STATUS_ROWS.find((candidate) => candidate.name === `pitwall-test-${name}`);
+  if (!row) throw new Error(`no status row ${name}`);
+  return row;
+}
+
+const appSessions = [statusRow('waiting'), statusRow('blocked'), statusRow('busy'), statusRow('idle')];
 export const APP_GROUP = group('pitwall-test-app', appSessions);
 export const NOTES_GROUP = group('pitwall-test-notes', [session('notes', { cwd: NOTES_DIR, lastActivityAt: ago(30) })], {
   key: NOTES_DIR,
@@ -280,6 +347,7 @@ export const WORKED_MULTI = session('across-repos', {
   titleSource: 'claude-code',
   status: 'waiting',
   waitingFor: 'permission prompt',
+  needsYou: { reason: 'prompt' },
   lastUserPrompt: 'Make the API retry the export too, and update the docs.',
   lastActivityAt: ago(1),
   workedIn: touched(API_DIR, DOCS_DIR),
@@ -288,6 +356,7 @@ export const WORKED_MULTI = session('across-repos', {
 export const WORKED_FROM_ROOT = session('from-root', {
   cwd: ROOT,
   askedYou: { reason: 'question', excerpt: 'Should the API return 429 or 503 while an export retries?' },
+  needsYou: { reason: 'asked' },
   lastUserPrompt: 'Look at how the API reports a retrying export.',
   lastActivityAt: ago(6),
   workedIn: touched(API_DIR, DOCS_DIR),
@@ -324,6 +393,7 @@ export const PREFS_DELIVERY = session('delivery-plan', {
   cwd: ROOT,
   status: 'waiting',
   waitingFor: 'permission prompt',
+  needsYou: { reason: 'prompt' },
   lastUserPrompt: 'Draft the delivery plan in the docs, and check the service for the dates.',
   lastActivityAt: ago(1),
   workedIn: [
@@ -783,5 +853,141 @@ export const TERMINAL_OUTPUT =
 /** The New session dialog's roots and directories. */
 export const DIALOG_SNAPSHOT: Pick<IndexSnapshot, 'roots' | 'groups'> = { roots: [ROOT], groups: [APP_GROUP, JOBS_GROUP, NOTES_GROUP] };
 
+/**
+ * The directories under the dialog's root, for "Another directory under a root…" (W70): the groups'
+ * repos and some folders around them, three levels deep at most, as the server lists them.
+ */
+export const DIALOG_DIRECTORIES: DirectoryList = {
+  roots: [
+    {
+      root: ROOT,
+      dirs: [
+        { path: 'pitwall-test-api', repo: true },
+        { path: 'pitwall-test-app', repo: true },
+        { path: 'pitwall-test-jobs', repo: true },
+        { path: 'pitwall-test-notes', repo: true },
+        { path: 'pitwall-test-scratch' },
+        { path: 'pitwall-test-app/docs' },
+        { path: 'pitwall-test-app/web' },
+        { path: 'pitwall-test-jobs/export' },
+        { path: 'pitwall-test-scratch/pitwall-test-spike' },
+        { path: 'pitwall-test-app/web/src' },
+        { path: 'pitwall-test-scratch/a-much-longer-folder-name-for-the-middle-ellipsis/and-then-some-more' },
+      ],
+      truncated: false,
+    },
+  ],
+};
+
+/** 312 directories, more than the list shows at once. */
+export const MANY_DIRECTORIES: DirectoryList = {
+  roots: [{ root: ROOT, dirs: Array.from({ length: 312 }, (_, i) => ({ path: `pitwall-test-project-${String(i + 1).padStart(3, '0')}` })), truncated: false }],
+};
+
 /** The trust failure's command, as the server would send it. */
 export const TRUST_HINT = `cd ${APP_DIR} && claude`;
+
+// Sub-agents (W77): a session's sub-agents for the Sub-agents tab, each state, nested ones, many and a
+// list cut short, a sub-agent's own transcript, and a conversation whose entries name them.
+
+let agents = 0;
+
+/** A made-up sub-agent: done, a general-purpose one, unless `overrides` say otherwise. Ids are letters and digits, as Claude Code's are. */
+export function subagent(description: string, overrides: Partial<SubagentSummary> = {}): SubagentSummary {
+  agents += 1;
+  const merged: SubagentSummary = {
+    agentId: `pt77${String(agents).padStart(4, '0')}`,
+    description,
+    agentType: 'general-purpose',
+    state: 'done',
+    startedAt: ago(40),
+    lastActivityAt: ago(30),
+    toolCalls: 8,
+    ...overrides,
+  };
+  for (const key of Object.keys(merged) as (keyof SubagentSummary)[]) {
+    if (merged[key] === undefined) delete merged[key];
+  }
+  return merged;
+}
+
+/** Running, started by the session: the transcript specimen opens it. */
+export const REVIEW = subagent('Review the made-up export job for retries', { agentType: 'Explore', state: 'running', startedAt: ago(9), lastActivityAt: ago(0.1), toolCalls: 23 });
+/** Done: the conversation has its Agent call and its report. */
+const DRAFT = subagent('Draft the made-up changelog entry', { startedAt: ago(50), lastActivityAt: ago(44), toolCalls: 6 });
+/** Running, started by REVIEW. */
+const SEARCH_DOCS = subagent('Search the made-up docs for the timeout', { state: 'running', agentType: 'Explore', startedBy: REVIEW.agentId, startedAt: ago(3), lastActivityAt: ago(0.3), toolCalls: 2 });
+
+/** One of each state, and one another started, in the server's order: running ones first, then the newest started first. */
+export const SUBAGENTS: SubagentSummary[] = [
+  SEARCH_DOCS,
+  REVIEW,
+  subagent('Run the made-up export tests', { state: 'failed', startedAt: ago(30), lastActivityAt: ago(27), toolCalls: 4 }),
+  subagent('Look for a made-up flaky test', { state: 'stopped', startedAt: ago(35), lastActivityAt: ago(33), toolCalls: 0 }),
+  DRAFT,
+  subagent('Summarise the made-up logs', { state: 'unknown', agentType: undefined, startedAt: ago(70), lastActivityAt: ago(66), toolCalls: 11 }),
+];
+
+const TASKS = ['Read', 'Check', 'Review', 'Search', 'Summarise', 'Draft', 'Test', 'Trace'];
+const THINGS = ['the made-up export job', 'the retry tests', 'the made-up routes', 'the batch writer', 'the made-up docs', 'the queue worker', 'the made-up changelog', 'the timeout handling', 'the CSV export'];
+
+/** 72 sub-agents, the most one of Phil's sessions started in a week (PLAN.md): three running, and every eighth started by another. */
+export const MANY_SUBAGENTS: SubagentSummary[] = (() => {
+  const made: SubagentSummary[] = [];
+  for (let i = 0; i < 72; i++) {
+    const parent = i % 8 === 7 ? made[i - 3] : undefined;
+    made.push(
+      subagent(`${TASKS[i % TASKS.length]} ${THINGS[i % THINGS.length]}, part ${i + 1}`, {
+        state: i < 3 ? 'running' : i % 11 === 5 ? 'failed' : i % 13 === 6 ? 'stopped' : 'done',
+        agentType: i % 3 === 0 ? 'Explore' : 'general-purpose',
+        startedAt: ago(5 + i * 9),
+        lastActivityAt: ago(i < 3 ? 0.2 : 1 + i * 9),
+        toolCalls: (i * 7) % 40,
+        ...(parent ? { startedBy: parent.agentId } : {}),
+      }),
+    );
+  }
+  return made;
+})();
+
+/** A list the server cut short: here twelve stand in for its SUBAGENTS_MAX, 200. */
+export const TRUNCATED_SUBAGENTS: SubagentSummary[] = MANY_SUBAGENTS.slice(0, 12);
+
+/** A sub-agent's own transcript: the task it was given, its steps and its report. */
+export const SUBAGENT_TRANSCRIPT: ConversationEntry[] = [
+  { kind: 'user', at: ago(9), text: 'Review the made-up export job for retries. Report what retries, what doesn’t, and any test that is missing.' },
+  { kind: 'assistant', at: ago(8.8), text: "I'll start with the job and its tests.", markdown: true },
+  { kind: 'tool', at: ago(8.6), toolName: 'Read', text: 'Read: src/export/job.ts' },
+  { kind: 'tool', at: ago(8.5), toolName: 'Grep', text: 'Grep: retry in src/export' },
+  {
+    kind: 'tool',
+    at: ago(3),
+    toolName: 'Agent',
+    text: 'Agent: Search the made-up docs for the timeout',
+    subagent: { agentId: SEARCH_DOCS.agentId, description: SEARCH_DOCS.description },
+  },
+  { kind: 'assistant', at: ago(0.2), text: 'The batch writer retries **three times**; the CSV export doesn’t retry at all.', markdown: true },
+];
+
+/** What's behind its Load earlier. */
+export const SUBAGENT_OLDER: ConversationEntry[] = [{ kind: 'notice', at: ago(9.2), text: 'A made-up earlier notice.' }];
+
+/** A session's conversation whose entries name its sub-agents: the call that started one, its report, and a message sent to another. */
+export const SUBAGENT_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(52), text: 'Draft the changelog entry, then check the export job retries.' },
+  { kind: 'tool', at: ago(50), toolName: 'Agent', text: 'Agent: Draft the made-up changelog entry', subagent: { agentId: DRAFT.agentId, description: DRAFT.description } },
+  {
+    kind: 'cross-session',
+    at: ago(44),
+    from: DRAFT.agentId,
+    markdown: true,
+    text: 'The changelog entry is drafted under **Unreleased**.',
+    subagent: { agentId: DRAFT.agentId, description: DRAFT.description },
+  },
+  { kind: 'assistant', at: ago(43), markdown: true, text: 'The entry is in. Now the retries.' },
+  { kind: 'tool', at: ago(9), toolName: 'Agent', text: `Agent: ${REVIEW.description}`, subagent: { agentId: REVIEW.agentId, description: REVIEW.description } },
+  { kind: 'tool', at: ago(2), toolName: 'SendMessage', text: 'SendMessage', subagent: { agentId: REVIEW.agentId, description: REVIEW.description } },
+];
+
+/** An interactive session with sub-agents, two of them running. */
+export const VIEW_SUBAGENTS = session('view-subagents', { title: 'Export retries', subagentsRunning: 2, lastActivityAt: ago(0.1) });

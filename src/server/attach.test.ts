@@ -46,6 +46,8 @@ const DONE_ID = '33333333-3333-4333-8333-333333333333';
 const INTERACTIVE_ID = '44444444-4444-4444-8444-444444444444';
 const NO_SHORT_ID = '55555555-5555-4555-8555-555555555555';
 const FLAG_SHORT_ID = '66666666-6666-4666-8666-666666666666';
+/** An interactive session that has ended (W66): no process, no short id. */
+const ENDED_ID = '77777777-7777-4777-8777-777777777777';
 const UNLISTED_ID = '99999999-9999-4999-8999-999999999999';
 
 // ---------------------------------------------------------------- fixtures
@@ -80,6 +82,18 @@ const SESSIONS: SessionSummary[] = [
   summary({ sessionId: INTERACTIVE_ID, kind: 'interactive', shortId: undefined, state: undefined }),
   summary({ sessionId: NO_SHORT_ID, shortId: undefined }),
   summary({ sessionId: FLAG_SHORT_ID, shortId: '--help' }),
+  summary({
+    sessionId: ENDED_ID,
+    kind: 'interactive',
+    shortId: undefined,
+    pid: undefined,
+    alive: false,
+    status: undefined,
+    state: undefined,
+    finished: true,
+    ended: true,
+    transcript: 'ok',
+  }),
 ];
 
 function snapshot(sessions: SessionSummary[] = SESSIONS): IndexSnapshot {
@@ -97,6 +111,10 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     latest: () => latest ?? undefined,
     subscribe: () => () => {},
     conversation: async () => undefined,
+    subagents: async () => undefined,
+    subagentConversation: async () => undefined,
+    pollSoon: () => {},
+    noteRestart: () => {},
     stop: () => {},
   };
 }
@@ -485,6 +503,15 @@ describe('the attach socket', () => {
       expect(spawner.spawn).not.toHaveBeenCalled();
     });
 
+    it('refuses an ended interactive session, saying to resume it first, without re-reading or spawning', async () => {
+      const { server, spawner, agents } = await start();
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: ENDED_ID, cols: 80, rows: 24, restart: true });
+      expect(await expectRefused(client)).toBe('This session has ended. Resume it in the background first, then attach.');
+      expect(agents.reads).toBe(0);
+      expect(spawner.spawn).not.toHaveBeenCalled();
+    });
+
     it('refuses a background session without a usable short id, including one that looks like an option', async () => {
       const { server, spawner } = await start();
       for (const sessionId of [NO_SHORT_ID, FLAG_SHORT_ID]) {
@@ -552,6 +579,42 @@ describe('the attach socket', () => {
       const client = await ready(server.port);
       send(client, { type: 'open', sessionId: DONE_ID, cols: 80, rows: 24 });
       expect(await client.next()).toEqual({ type: 'needs-restart' });
+    });
+
+    it('notes a restart you confirmed, by session id, for Needs you (W69)', async () => {
+      const at = Date.parse('2026-10-27T12:00:00.000Z');
+      const indexer = { ...fakeIndexer(), noteRestart: vi.fn() };
+      const { server } = await start({ indexer, now: () => at });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
+      expect(await client.next()).toEqual({ type: 'needs-restart' });
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24, restart: true });
+      expect(await client.next()).toEqual({ type: 'attached' });
+      expect(indexer.noteRestart.mock.calls).toEqual([[IDLE_ID, at]]);
+    });
+
+    it('notes no restart for an attach that restarts nothing, even when told restart: true', async () => {
+      const indexer = { ...fakeIndexer(), noteRestart: vi.fn() };
+      const { server } = await start({ indexer });
+      await attached(server.port);
+      const told = await ready(server.port);
+      send(told, { type: 'open', sessionId: BG_ID, cols: 80, rows: 24, restart: true });
+      expect(await told.next()).toEqual({ type: 'attached' });
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
+    });
+
+    it('notes no restart when the PTY fails to start', async () => {
+      const indexer = { ...fakeIndexer(), noteRestart: vi.fn() };
+      const spawner = fakeSpawner();
+      spawner.spawn.mockImplementation(() => {
+        throw new Error('made-up failure');
+      });
+      const { server } = await start({ indexer, spawner });
+      const client = await ready(server.port);
+      send(client, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24, restart: true });
+      expect(await client.next()).toMatchObject({ type: 'error' });
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
     });
   });
 
@@ -719,6 +782,30 @@ describe('the attach socket', () => {
       const after = await ready(server.port);
       send(after, { type: 'open', sessionId: IDLE_ID, cols: 80, rows: 24 });
       expect(await expectRefused(after, WS_CLOSE_TRY_AGAIN)).toBe(STILL_STARTING);
+    });
+
+    it('says an ended session this pitwall just resumed is starting, through the resume route, while the snapshot still shows it ended', async () => {
+      const root = await realpath(webRoot);
+      const endedRow = summary({ ...(SESSIONS.find((s) => s.sessionId === ENDED_ID) as SessionSummary), cwd: root });
+      const indexer = fakeIndexer({ ...snapshot([endedRow]), roots: [root], groups: [{ key: root, label: 'root', kind: 'directory', root, sessions: [endedRow] }] });
+      const run = vi.fn(async (): Promise<CommandResult> => ({ kind: 'exited', code: 0, stdout: 'backgrounded · 77777777 (idle — send a prompt to start)\n', stderr: '' }));
+      const { server, spawner } = await start({ indexer, now, actions: { run, env: {}, agents: fakeAgents() } });
+
+      const before = await ready(server.port);
+      send(before, { type: 'open', sessionId: ENDED_ID, cols: 80, rows: 24 });
+      expect(await expectRefused(before)).toMatch(/has ended/);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/sessions/${ENDED_ID}/resume`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${await apiKeyOf(server.port)}`, origin: pitwallOrigin(server.port) },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, shortId: '77777777' });
+
+      const after = await ready(server.port);
+      send(after, { type: 'open', sessionId: ENDED_ID, cols: 80, rows: 24 });
+      expect(await expectRefused(after, WS_CLOSE_TRY_AGAIN)).toBe(STILL_STARTING);
+      expect(spawner.spawn).not.toHaveBeenCalled();
     });
   });
 

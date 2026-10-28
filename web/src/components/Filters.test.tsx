@@ -176,6 +176,22 @@ describe('Clear filters', () => {
     expect(clear()).not.toBeNull();
   });
 
+  it('keeps its room while no filter is on: an unseen copy, aria-hidden, that is no button and takes no focus', () => {
+    renderFilters();
+    const chips = () => screen.getByRole('group', { name: 'Filters' });
+    const room = () => chips().querySelector('.filter-clear-room');
+
+    expect(room()?.tagName).toBe('SPAN');
+    expect(room()?.getAttribute('aria-hidden')).toBe('true');
+    expect(room()?.textContent).toBe('Clear filters');
+    expect(room()?.hasAttribute('tabindex')).toBe(false);
+    expect(chips().lastElementChild).toBe(room());
+
+    fireEvent.click(chip('Background'));
+    expect(room()).toBeNull();
+    expect(chips().lastElementChild).toBe(clear());
+  });
+
   it('clears the text and every chip, and puts focus in the field', () => {
     const { last } = renderFilters(start('export', ['interactive', 'background']));
 

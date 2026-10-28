@@ -11,7 +11,8 @@
 //   server  needs-restart             the session has finished or crashed (attachDecision), and
 //                                     restart wasn't true: the socket waits for another open
 //   server  error                     the session is still starting: try again in a moment,
-//                                     then close 1013
+//                                     then close 1013. Or it isn't a background session, an
+//                                     ended one (SessionSummary.ended) included, then close 1008
 //   server  attached                  then the PTY's output as binary frames
 //   client  input / resize            any number
 //   server  exit                      `claude attach` ended on its own; then close 1000
@@ -93,7 +94,8 @@ export { WS_CLOSE_TRY_AGAIN };
 export const STILL_STARTING = 'This session is still starting. Try again in a moment.';
 
 export interface AttachOptions {
-  indexer: Pick<Indexer, 'latest'>;
+  /** noteRestart records a restart you confirmed, for NeedsYou's 'restarted' (W69). */
+  indexer: Pick<Indexer, 'latest' | 'noteRestart'>;
   token: string;
   /** The server's one allowed origin, which the proof is bound to. Read at each handshake, because the port is known only once listening. */
   origin: () => string;
@@ -109,8 +111,10 @@ export interface AttachOptions {
   slots?: HandshakeSlots;
   /** Re-read on `open` when the snapshot shows no live process. Default createAgentsSource(), the index's own source. */
   agents?: Pick<AgentsSource, 'list'>;
-  /** The short ids this pitwall spawned recently (actions.ts). */
+  /** The short ids this pitwall spawned or resumed recently (actions.ts). */
   spawned?: Pick<RecentSpawns, 'has'>;
+  /** The session ids this pitwall resumed recently (actions.ts): one the snapshot still shows as ended is starting. */
+  resumed?: Pick<RecentSpawns, 'has'>;
   /** Whether a pid is still running. Default: process.kill(pid, 0). */
   processAlive?: (pid: number) => boolean;
   /** Milliseconds since the epoch. Default Date.now. */
@@ -234,6 +238,11 @@ export function createAttachServer(options: AttachOptions): AttachServer {
       const lookup = resolveSession(indexer, message.sessionId);
       if (!lookup.ok) return fail(LOOKUP_ERRORS[lookup.status]);
       const session = lookup.session;
+      if (session.ended === true) {
+        // Resumed moments ago, and listed as a background session from the next poll on.
+        if (options.resumed?.has(session.sessionId)) return fail(STILL_STARTING, WS_CLOSE_TRY_AGAIN);
+        return fail('This session has ended. Resume it in the background first, then attach.');
+      }
       if (session.kind !== 'background') {
         return fail('Only background sessions can be attached. Type /bg in its terminal to move it to the background.');
       }
@@ -269,6 +278,8 @@ export function createAttachServer(options: AttachOptions): AttachServer {
       pty = started;
       state = 'attached';
       send({ type: 'attached' });
+      // A restart you confirmed (D9): it needs your prompt until you send one (NeedsYou's 'restarted', W69).
+      if (decision === 'confirm') safely(() => indexer.noteRestart(session.sessionId, now()));
 
       let paused = false;
       const resumeWhenDrained = () => {

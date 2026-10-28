@@ -4,7 +4,7 @@ import { conversationPath, PROTOCOL_VERSION, WS_CLOSE_UNAUTHORIZED, type Session
 import type { FetchLike } from './api.js';
 import { App } from './App.js';
 import { computeProof } from './connection.js';
-import { fakeSockets, group, minutesAgo, mixedSnapshot, session, snapshot, type FakeSocket } from './test/fixtures.js';
+import { fakeSockets, group, minutesAgo, mixedSnapshot, session, snapshot, withEditorList, withoutSubagents, type FakeSocket } from './test/fixtures.js';
 import { TOKEN_STORAGE_KEY } from './token.js';
 
 const SESSION_ID = '00000000-0000-4000-8000-0000000000b1';
@@ -46,7 +46,8 @@ function showSession(socket: FakeSocket, minutes = 5) {
  */
 async function appWithSession(fetch: FetchLike, { authenticate = true } = {}) {
   const fake = fakeSockets();
-  render(<App createSocket={fake.factory} fetch={fetch} />);
+  // The editor list is answered apart (W72), so `fetch` sees the conversation's requests alone.
+  render(<App createSocket={fake.factory} fetch={withEditorList(withoutSubagents(fetch))} />);
   await handshake(fake.last);
   showSession(fake.last);
   if (!authenticate) act(() => fake.last.serverClose(1001));
@@ -198,8 +199,9 @@ describe('App', () => {
     const fetch = vi.fn<FetchLike>(async (_url, init) =>
       authorization(init) === `Bearer ${KEY_B}` ? new Response(null, { status: 401 }) : pageBody(),
     );
+    const served = withEditorList(withoutSubagents(fetch));
     const fake = fakeSockets();
-    render(<App createSocket={fake.factory} fetch={fetch} />);
+    render(<App createSocket={fake.factory} fetch={served} />);
 
     // First connection, and an opened session's conversation.
     await handshake(fake.last, KEY_A, nonce(1));
@@ -226,7 +228,9 @@ describe('App', () => {
       expect(Object.keys(JSON.parse(frame) as object)).toEqual(['type', 'proof']);
     }
     for (const socket of fake.sockets) expect(socket.url).not.toContain(TOKEN);
-    for (const [url, init] of fetch.mock.calls) {
+    // The editor list's GET too (W72), with the first apiKey.
+    expect(served.editorCalls.map(([, init]) => authorization(init))).toEqual([`Bearer ${KEY_A}`]);
+    for (const [url, init] of [...fetch.mock.calls, ...served.editorCalls]) {
       expect(url).not.toContain(TOKEN);
       expect(JSON.stringify(init)).not.toContain(TOKEN);
       expect(Object.values(init.headers as Record<string, string>).join('\n')).not.toContain(TOKEN);

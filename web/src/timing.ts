@@ -1,6 +1,6 @@
 // The motion and timing tokens that JavaScript reads (docs/design-system.md, 2.13): --pw-delay-tooltip,
-// --pw-delay-spinner, --pw-delay-long, --pw-delay-attach, --pw-toast-timeout, --pw-copied-timeout and
-// --pw-duration-base.
+// --pw-delay-spinner, --pw-delay-long, --pw-delay-attach, --pw-toast-timeout, --pw-toast-action-timeout,
+// --pw-copied-timeout and --pw-duration-base.
 // Each is read from the element it applies to, so a part of the page can set its own, as the #uikit
 // gallery does to keep a toast or a copied icon on screen for its screenshots, or to show a waiting
 // state's skeletons and long-wait line at once. Where there's no stylesheet, as in the tests, the
@@ -31,4 +31,9 @@ export const LONG_DELAY_MS = 10_000;
  */
 export const ATTACH_DELAY_MS = 500;
 export const TOAST_TIMEOUT_MS = 4_000;
+/**
+ * A toast with an action (W63): long enough to read it, look up from what you were doing and reach
+ * its button, which a plain toast's 4 s isn't. Its time stops while it's hovered or focused, as any toast's.
+ */
+export const TOAST_ACTION_TIMEOUT_MS = 10_000;
 export const COPIED_TIMEOUT_MS = 2_000;

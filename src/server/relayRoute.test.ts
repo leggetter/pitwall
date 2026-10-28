@@ -18,6 +18,7 @@ const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const INTERACTIVE_ID = '22222222-2222-4222-8222-222222222222';
 const BG_ID = '11111111-1111-4111-8111-111111111111';
 const NOT_RUNNING_ID = '33333333-3333-4333-8333-333333333333';
+const ENDED_ID = '44444444-4444-4444-8444-444444444444';
 const UNLISTED_ID = '99999999-9999-4999-8999-999999999999';
 
 let webRoot: string;
@@ -63,6 +64,7 @@ function snapshot(): IndexSnapshot {
           session({ sessionId: INTERACTIVE_ID }),
           session({ sessionId: BG_ID, kind: 'background', shortId: 'b3899da0', name: 'pitwall-test-bg' }),
           session({ sessionId: NOT_RUNNING_ID, name: 'pitwall-test-gone', alive: false, pid: undefined }),
+          session({ sessionId: ENDED_ID, name: 'repo-44444444', alive: false, pid: undefined, finished: true, ended: true, transcript: 'ok' }),
         ],
       },
     ],
@@ -75,6 +77,10 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     latest: () => latest ?? undefined,
     subscribe: () => () => {},
     conversation: async () => undefined,
+    subagents: async () => undefined,
+    subagentConversation: async () => undefined,
+    pollSoon: () => {},
+    noteRestart: () => {},
     stop: () => {},
   };
 }
@@ -259,6 +265,14 @@ describe('the relay route: which session', () => {
     const gone = await postAsPage(started, relayPath(NOT_RUNNING_ID), { text: 'hi' });
     expect(gone.status).toBe(409);
     expect(failedWith(gone.json)).toMatch(/isn't running/);
+    expect(started.relay.sends).toEqual([]);
+  });
+
+  it('answers 409 for an interactive session that has ended (W66), before asking the relay anything', async () => {
+    const started = await start();
+    const res = await postAsPage(started, relayPath(ENDED_ID), { text: 'hi' });
+    expect(res.status).toBe(409);
+    expect(failedWith(res.json)).toMatch(/has ended, so there's no process to deliver to/);
     expect(started.relay.sends).toEqual([]);
   });
 

@@ -498,7 +498,7 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-/* Line 2: the filters, growing, with room at the right for W23's Sort select. */
+/* Line 2 on: the filters and the Sort select, which lay themselves out (.filter-controls). */
 .session-list-filters {
   display: flex;
   flex-wrap: wrap;
@@ -748,11 +748,17 @@ textarea {
   flex: none;
 }
 
+/*
+ * A fixed slot, right-aligned (section 4: Timestamps), sized for "updated 59m ago", so New session
+ * and the connection badge stay put as it ticks from 9s to 10s. A longer one grows it, never cut.
+ */
 .updated {
+  min-width: 13.5ch;
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -772,6 +778,27 @@ textarea {
 }
 
 /*
+ * The count, right-aligned in the room its widest filtered form takes (W75): data-room, "18 of 18
+ * sessions", drawn unseen in the same grid cell. Its alternative text is empty, so a screen reader
+ * reads the count alone; a browser without that syntax keeps the first `content`, still unseen.
+ */
+.summary-count {
+  display: inline-grid;
+  justify-items: end;
+}
+
+.summary-count > span,
+.summary-count::before {
+  grid-area: 1 / 1;
+}
+
+.summary-count::before {
+  content: attr(data-room);
+  content: attr(data-room) / '';
+  visibility: hidden;
+}
+
+/*
  * The summary and a group's Hide from repo list, or Show in repo list (W35), together at the right of
  * the heading's line, and wrapping together. The button is sm, 24 px, the line's height, so the header
  * is as tall for a group as for a view.
@@ -784,7 +811,12 @@ textarea {
   margin-left: auto;
 }
 
-/* The filters: the field, the chips and Clear filters. */
+/*
+ * The filters: the field on a line of its own, then the chips and Clear filters, and whatever comes
+ * after them, such as Sort. Turning a filter on or off moves none of it, at any width (W75): the
+ * field never shares its line, a chip is as wide off as on, and Clear filters keeps its room while
+ * it's away. So where the line wraps depends on the width alone.
+ */
 
 .filter-controls {
   display: flex;
@@ -795,14 +827,14 @@ textarea {
   min-width: 0;
 }
 
-/* The filter field (Search, in section 4) */
+/* The filter field (Search, in section 4): its line's whole width, so its placeholder shows whole. */
 
 .filter-field {
   position: relative;
   display: flex;
-  flex: 1 1 200px;
+  flex: 1 1 100%;
   align-items: center;
-  min-width: min(200px, 100%);
+  min-width: 0;
 }
 
 .filter-field-icon {
@@ -882,12 +914,17 @@ textarea {
   gap: var(--pw-space-2);
 }
 
+/*
+ * A chip is as wide off as on (W75). On, the 16 px check and the 4 px gap after it come before the
+ * label; off, that 20 px is shared between the sides, so the label is centred and nothing after the
+ * chip moves when it's pressed.
+ */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--pw-space-1);
   height: var(--pw-control-sm);
-  padding: 0 var(--pw-space-2);
+  padding: 0 calc(var(--pw-space-2) + (16px + var(--pw-space-1)) / 2);
   border: 0;
   border-radius: var(--pw-radius-sm);
   background: var(--pw-surface);
@@ -914,7 +951,12 @@ textarea {
   box-shadow: var(--pw-shadow-control), var(--pw-ring-focus);
 }
 
+.chip > svg {
+  flex: none;
+}
+
 .chip[aria-pressed='true'] {
+  padding: 0 var(--pw-space-2);
   background: var(--pw-selected);
   box-shadow: var(--pw-ring-selected);
   color: var(--pw-info-tint-fg);
@@ -922,6 +964,15 @@ textarea {
 
 .chip[aria-pressed='true']:focus-visible {
   box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+/*
+ * Clear filters' room while no filter is on: a copy of the button, unseen, so the chips' line keeps
+ * its width and Sort keeps its place as the button comes and goes (W75). It's aria-hidden and can't
+ * take focus, so it's nothing to a screen reader or the keyboard.
+ */
+.filter-clear-room {
+  visibility: hidden;
 }
 
 /* At 600 px and narrower, the header's right side wraps under the wordmark. */
@@ -1090,7 +1141,8 @@ h2.empty-state-title:focus {
 .badge-attention,
 .badge-solid-warning,
 .badge.state-waiting,
-.badge.state-blocked {
+.badge.state-blocked,
+.badge.state-restarted {
   background: var(--pw-state-attention-bg);
   color: var(--pw-state-attention-fg);
 }
@@ -1147,6 +1199,7 @@ h2.empty-state-title:focus {
 
 .badge.state-idle,
 .badge.state-stopped,
+.badge.state-ended,
 .badge.state-unknown {
   background: var(--pw-state-idle-bg);
   box-shadow: inset 0 0 0 1px var(--pw-state-idle-border);
@@ -1720,12 +1773,19 @@ mark.match {
   min-width: 0;
 }
 
+/*
+ * A fixed slot, right-aligned (section 4: Timestamps), sized for the widest short form, "59m ago"
+ * (about 6.7ch in Inter), so the badges before it line up down the list and stay put as it ticks
+ * (Phil, 2026-10-27). A rare longer one, such as "120d ago", grows it rather than being cut.
+ */
 .activity {
   flex: none;
+  min-width: 7ch;
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
   font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -1759,13 +1819,32 @@ mark.match {
 }
 
 .session-what {
+  display: flex;
   min-width: 0;
   overflow: hidden;
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* What it wants or did last gives way, with an ellipsis, before the running count does. */
+.session-what-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * "· 2 sub-agents running" (W77), quietly, at the end of line 2 while any run: in --pw-text-subtle, as
+ * the group's label is, and never cut, so the count is always whole.
+ */
+.session-running {
+  flex: none;
+  color: var(--pw-text-subtle);
+  /* Its own flex item, which would drop the space before its " · ". */
+  white-space: pre;
 }
 
 .session-group {
@@ -1855,6 +1934,26 @@ mark.match {
 
 .finished-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
+}
+
+/*
+ * Show older (W67), after the Finished section's rows while the selection has ended sessions older
+ * than ENDED_SHOWN_DAYS: an outline sm button, as Load earlier is, then the meta line that describes
+ * it, wrapping under it when the list is narrow. A row's padding and line, so it lines up with them.
+ */
+.finished-older {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+}
+
+.finished-older-note {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
 }
 
 /* The Sort setting, at the right of the filters' line (section 3: Session list). */
@@ -2395,6 +2494,7 @@ mark.match {
  * underline on the row's bottom edge, over its border.
  */
 .session-tabs {
+  container: session-tabs / inline-size;
   display: flex;
   flex: none;
   align-items: flex-end;
@@ -2451,6 +2551,42 @@ mark.match {
   background: none;
   color: var(--pw-text-disabled);
   cursor: not-allowed;
+}
+
+/*
+ * A narrow row (W77): from 440 px down the tabs drop their icons, so Conversation, Terminal and
+ * Sub-agents (n) fit at 375 px; the labels name them. From 360 px down their padding narrows too, and,
+ * as a last resort at 320 px with a long count, the row scrolls sideways rather than the page.
+ */
+@container session-tabs (max-width: 440px) {
+  .session-tab > svg {
+    display: none;
+  }
+}
+
+@container session-tabs (max-width: 360px) {
+  .session-tab {
+    padding-inline: var(--pw-space-1);
+  }
+}
+
+@media (max-width: 360px) {
+  .session-tabs {
+    overflow-x: auto;
+    padding-inline: var(--pw-space-3);
+    scrollbar-width: none;
+  }
+
+  /* Inside the row's box, which now clips: on the tab's 5 px margin, just above the row's border. */
+  .session-tab[aria-selected='true']::after {
+    bottom: -5px;
+  }
+
+  /* The row clips what's drawn past a tab, so its focus ring is inset (2.10). */
+  .session-tab:focus-visible {
+    outline-offset: -2px;
+    box-shadow: var(--pw-ring-focus-inset);
+  }
 }
 
 /* While attached: an 8 px success dot after the label. */
@@ -2527,6 +2663,226 @@ mark.match {
 
 .conversation-alert.end {
   margin: var(--pw-space-3) 0 0;
+}
+
+/* The Sub-agents tab's count, "(6)": a space's width after the label, in tabular numbers. */
+.session-tab-count {
+  margin-inline-start: calc(-1 * var(--pw-space-0-5));
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The Sub-agents tab (W77, section 4: Sub-agents): its panel holds the list, which scrolls, or one
+ * sub-agent's transcript, whose bar stays while its conversation scrolls below it.
+ */
+.session-view-subagents,
+.subagent-transcript {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The list's body, which is the Tab stop only while it has no rows: then it centres the empty state. */
+.subagents-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.subagents-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.subagents-alert {
+  flex: none;
+  margin-bottom: var(--pw-space-3);
+}
+
+.subagents-truncated {
+  flex: none;
+  margin-top: var(--pw-space-3);
+}
+
+/* The rows run to the body's edges, as the session list's do, with a 1 px line between them, from the tabs' edge down. */
+.subagent-list {
+  flex: none;
+  margin: 0 calc(-1 * var(--pw-space-4));
+  padding: 0;
+  list-style: none;
+}
+
+.subagent-list:first-child {
+  margin-top: calc(-1 * var(--pw-space-3));
+}
+
+/*
+ * A row: its description, state and last activity on line 1, then its type, tool calls and start, and
+ * for a nested one, what started it. A click anywhere on it opens its transcript, as a session row's does.
+ */
+.subagent {
+  padding: var(--pw-space-2) var(--pw-space-4);
+  background: var(--pw-surface);
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.subagent + .subagent {
+  border-top: 1px solid var(--pw-border);
+}
+
+.subagent:last-child {
+  border-bottom: 1px solid var(--pw-border);
+}
+
+@media (hover: hover) {
+  .subagent:hover {
+    background: var(--pw-surface-hover);
+  }
+
+  .subagent-open:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+/* The description cuts off with an ellipsis, which would clip its button's ring, so the row shows it, inset (2.10). */
+.subagent:has(.subagent-open:focus-visible) {
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.subagent-open:focus-visible {
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.subagent-line {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+}
+
+.subagent-open {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-inline-end: auto;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  border: 0;
+  color: var(--pw-text);
+  font: inherit;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* The badge just before the time, whose slot is fixed (.activity), so they line up down the list. */
+.subagent-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-2);
+}
+
+.subagent-meta {
+  margin-top: var(--pw-space-0-5);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.subagent-meta time {
+  color: var(--pw-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.subagent-sep {
+  color: var(--pw-text-subtle);
+}
+
+/* "Started by *description*": one line, the whole of it in a tooltip when it's cut. */
+.subagent-parent {
+  margin-top: var(--pw-space-0-5);
+  overflow: hidden;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-parent-name {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-medium);
+}
+
+/* A sub-agent's transcript: Back, its state and last activity, its description as the heading, and the rest. */
+.subagent-bar {
+  flex: none;
+  padding: var(--pw-space-2) var(--pw-space-4) var(--pw-space-3);
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+}
+
+.subagent-bar-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-2);
+}
+
+/* A ghost button's padding, given back, so its icon lines up with the heading below it. */
+.subagent-back {
+  margin-inline-start: calc(-1 * var(--pw-space-2));
+}
+
+.subagent-bar-status {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  margin-inline-start: auto;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+}
+
+.subagent-title {
+  margin-top: var(--pw-space-1);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+/* Focused as the transcript opens, with no ring of its own: it isn't a control (6.1, item 8). */
+.subagent-title:focus,
+.subagent-title:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/*
+ * A sub-agent named on an entry about it (W77): a link-styled button in the line's own type, the
+ * speaker line's or the tool call's, that opens its transcript in the Sub-agents tab. A tool call's
+ * line clips what's drawn past it, so the ring is inset there.
+ */
+.link-button.subagent-link {
+  font: inherit;
+}
+
+.tool-call-text .subagent-link:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
 }
 
 /*
@@ -2646,6 +3002,100 @@ mark.match {
   height: 1px;
   margin: var(--pw-space-1) 0;
   background: var(--pw-border);
+}
+
+/*
+ * The combobox (docs/design-system.md, 4: Combobox; W70): a field and, 4 px under it, a popup with a
+ * menu panel's look, over what follows: the listbox, which scrolls past about seven options, then
+ * status lines in meta type. The highlighted option has the menu items' keyboard highlight, since
+ * focus stays in the field. Paths are in the field's mono type, cut in the middle when there isn't
+ * room, with a quiet "repo" after a repo's.
+ */
+.combobox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.combobox-popup {
+  position: absolute;
+  top: calc(100% + var(--pw-space-1));
+  right: 0;
+  left: 0;
+  z-index: var(--pw-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  padding: var(--pw-space-1);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface-overlay);
+  box-shadow: var(--pw-shadow-2);
+}
+
+.combobox-list {
+  max-height: calc(7.5 * var(--pw-control-lg));
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.combobox-option {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-lg);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  border-radius: var(--pw-radius-sm);
+  color: var(--pw-text);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
+  line-height: var(--pw-leading-s);
+  cursor: pointer;
+}
+
+.combobox-option-marker {
+  flex: none;
+  margin-left: auto;
+  color: var(--pw-text-subtle);
+  font-family: var(--pw-font-sans);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-xs);
+}
+
+@media (hover: hover) {
+  .combobox-option:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.combobox-option[aria-selected='true'] {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  background: var(--pw-surface-hover);
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.combobox-status {
+  display: flex;
+  flex-direction: column;
+  padding: var(--pw-space-1) var(--pw-space-2);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.combobox-list:not([hidden]) + .combobox-status {
+  margin-top: var(--pw-space-1);
+  border-top: 1px solid var(--pw-border);
+}
+
+.combobox-status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
 }
 
 /*
@@ -3280,10 +3730,14 @@ ol.md-list {
     outline-offset: -2px;
   }
 
-  /* Chips: an edge, and a thicker one in Highlight while pressed, the padding giving back what the border takes. */
+  /*
+   * Chips: an edge, and a thicker one in Highlight while pressed, the padding giving back what the
+   * border takes. Off, it still shares the check's 20 px between the sides, so a chip is as wide off
+   * as on here too (W75).
+   */
   .chip {
     border: 1px solid ButtonText;
-    padding: 0 calc(var(--pw-space-2) - 1px);
+    padding: 0 calc(var(--pw-space-2) + (16px + var(--pw-space-1)) / 2 - 1px);
   }
 
   .chip[aria-pressed='true'] {
@@ -3345,9 +3799,16 @@ ol.md-list {
   .repo-drawer,
   .dialog,
   .menu,
+  .combobox-popup,
   .toast,
   .tooltip {
     outline: 1px solid CanvasText;
+  }
+
+  /* The combobox's highlighted option: its fill and inset ring are gone. */
+  .combobox-option[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 
   /* Fields, buttons with an edge, and the boxes whose edge is a ring: an inline alert, a confirmation, the Jump to latest bar. */
@@ -3360,5 +3821,19 @@ ol.md-list {
   .inline-alert,
   .inline-confirm {
     border: 1px solid ButtonText;
+  }
+
+  /* New session's attachments (W82): each file's box, its edge a shadow elsewhere, and the drop target's edge. */
+  .attachment {
+    padding: calc(var(--pw-space-1) - 1px);
+    border: 1px solid CanvasText;
+  }
+
+  .prompt-drop-target {
+    outline: 2px dashed Highlight;
+  }
+
+  .prompt-drop-target.over {
+    outline: 2px solid Highlight;
   }
 }

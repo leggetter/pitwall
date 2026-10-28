@@ -417,7 +417,7 @@ export function SessionListHeads() {
           />
         </Specimen>
       ))}
-      <Specimen title="At 360 px" note="The session list's width at 1,200 px: the chips and Sort share the line under the field." width={360}>
+      <Specimen title="At 360 px" note="The session list's width at 1,200 px: the field on its line, the chips and Clear filters' room on the next, and Sort on a line of its own, since the three don't fit on one (W75). Press a chip or type: nothing moves." width={360}>
         <SessionList
           heading={{ label: 'All sessions' }}
           summary={{ total: 10, shown: 10, attention: 2 }}
@@ -428,7 +428,7 @@ export function SessionListHeads() {
           onToggleFinished={noop}
         />
       </Specimen>
-      <Specimen title="In a narrow window" note="The summary and the filters wrap; Hide from repo list goes with the summary." width={320}>
+      <Specimen title="In a narrow window" note="The summary and the filters wrap; Hide from repo list goes with the summary. Clear filters has no room beside the chips, so it's under them, and Sort after it." width={320}>
         <SessionList
           heading={{ label: 'pitwall-test-app/packages/a-package-directory-with-a-long-name', kind: 'git' }}
           summary={{ total: 4, shown: 4, attention: 2 }}
@@ -447,7 +447,7 @@ export function SessionListHeads() {
 export function FilterSpecimens() {
   return (
     <>
-      <Specimen title="Empty" note="Type to filter; the chips toggle. The / key cap says how to get here; it goes while the field has focus or text.">
+      <Specimen title="Empty" note="Type to filter; the chips toggle, and nothing moves (W75): a chip is as wide off as on, and Clear filters' room is kept, unseen, after the chips. The / key cap says how to get here; it goes while the field has focus or text.">
         <LiveFilters />
       </Specimen>
       <Specimen title="Empty, with the single-key shortcuts off" note="No / key cap, since / does nothing.">
@@ -464,7 +464,7 @@ export function FilterSpecimens() {
       <Specimen title="Both chips on" note="Interactive or Background: every session, as with neither on.">
         <LiveFilters start={filters('', 'interactive', 'background')} />
       </Specimen>
-      <Specimen title="In a narrow window" note="The chips and Clear filters wrap under the field, and Sort after them." width={320}>
+      <Specimen title="In a narrow window" note="The field on its line, the chips and Clear filters on the next, and Sort on its own after them, since the three don't fit on one line. Press a chip or clear the text: nothing moves." width={320}>
         <LiveFilters start={filters('export', 'interactive')} />
       </Specimen>
       <Specimen title="The Sort setting" note="Urgency, the default, then Recent and Name. Each one keeps its own choice here; in the app it's one setting, kept in pitwall.sort.v1.">

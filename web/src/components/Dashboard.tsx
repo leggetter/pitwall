@@ -60,6 +60,21 @@
 // drops a draft, or stops a send or an action in flight. The header, the page alerts, the app strip,
 // the toasts, the Sort setting and the document title's count are the whole page's. Switching tabs
 // pushes one history entry, with the tab's selection and open session; the back button switches back.
+//
+// A session started from New session is selected once it's listed (W63): its root tab, the group the
+// repo list lists it under in the viewer's Group sessions by, and its view, in one pushed history
+// entry, as opening a row pushes one. Its terminal takes no focus (W57), and focus stays where it was
+// unless the switch took it away. Not over what you're in the middle of, though: a draft, a running
+// Stop or Remove, an open confirmation or restart prompt, in the view open here or in the session's
+// tab, or typing in the columns. Then a toast says it's listed, with Open, in place of the one that
+// said it started.
+//
+// Ended interactive sessions (W67) are listed in their groups' Finished sections. Those last active
+// more than ENDED_SHOWN_DAYS before the snapshot's time are left out of the snapshot's groups here,
+// before anything groups or counts them, so every list, count, badge and the repo list leave them out,
+// and a group with nothing else goes from the repo list, until Show older is on: one switch for the
+// page, in the selection's Finished section and its empty states, never stored. The session view finds
+// a session among all of them, so one that's hidden still shows in a view that's open, or a URL's.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
@@ -80,6 +95,7 @@ import {
   browserNavigation,
   findGroup,
   finishedStateId,
+  groupSelection,
   sameSelection,
   scopeFor,
   selectionHref,
@@ -96,16 +112,18 @@ import {
   filterListed,
   filterNeedle,
   groupLabel,
+  isOlderEnded,
   listScope,
   NO_FILTERS,
   noMatchText,
   sessionsIn,
   startLabel,
+  withoutOlderEnded,
   workedInLabels,
   type Filters,
 } from '../sessions.js';
 import { useSort } from '../sort.js';
-import { shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
+import { isTyping, shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
 import { useStarred } from '../starred.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
@@ -122,7 +140,7 @@ import { NewSessionDialog } from './NewSessionDialog.js';
 import { PreferencesDialog } from './Preferences.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
-import { SessionList, type SessionListHeading } from './SessionList.js';
+import { olderText, SessionList, type SessionListHeading } from './SessionList.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from './SessionView.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { SortSelect } from './SortSelect.js';
@@ -148,6 +166,18 @@ export const groupMovedText = (mode: GroupBy) =>
 
 /** The toast once the server has started a session (5: Success). */
 export const startedText = (name: string) => `Started ${plainText(name)}. Its view opens when it shows up in the list.`;
+
+/**
+ * The toast once a started session is listed, when showing it would have taken over what you're in
+ * the middle of (W63). It replaces the one that said it started, and has OPEN_LISTED.
+ */
+export const listedText = (name: string) => `${plainText(name)} is listed now. It didn't open, so you keep your place.`;
+
+/** That toast's action: it selects and opens the session, as it would have been. */
+export const OPEN_LISTED = 'Open';
+
+/** What a started session's toasts are about, so the one that says it's listed replaces the one that said it started. */
+const startedKey = (shortId: string) => `started:${shortId}`;
 
 /** The toast for `s`, which stars or unstars the open session while focus is elsewhere (W53). */
 export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'Unstarred'} ${plainText(name)}.`;
@@ -222,7 +252,24 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // too. One hook, so the setting the dialog changes is the one the views read at each attach.
   const [terminalFocus, setTerminalFocus] = useTerminalFocus(storage);
   const startGroups = snapshot?.groups;
-  const grouped = useMemo(() => groupSessions(startGroups ?? [], groupBy), [startGroups, groupBy]);
+  // Show older (W67): off at each load, and never stored (coordinator, W67).
+  const [showOlder, setShowOlder] = useState(false);
+  // "Now" for the ended sessions' window: the snapshot's own time, so what's hidden changes only with a snapshot.
+  const endedNow = snapshot ? Date.parse(snapshot.generatedAt) : Number.NaN;
+  // The snapshot's groups without the older ended sessions, unless Show older is on: what everything below lists and counts.
+  const windowedGroups = useMemo(
+    () => (startGroups === undefined || showOlder ? startGroups : withoutOlderEnded(startGroups, endedNow)),
+    [startGroups, showOlder, endedNow],
+  );
+  const grouped = useMemo(() => groupSessions(windowedGroups ?? [], groupBy), [windowedGroups, groupBy]);
+  // Every session, the older ended ones too: for the session view, and for Show older's counts.
+  const groupedAll = useMemo(
+    () => (windowedGroups === startGroups ? grouped : groupSessions(startGroups ?? [], groupBy)),
+    [windowedGroups, startGroups, grouped, groupBy],
+  );
+  const anyOlder = useMemo(() => (startGroups ?? []).some((group) => group.sessions.some((session) => isOlderEnded(session, endedNow))), [startGroups, endedNow]);
+  // The New session dialog's directories are the repo list's groups', so not a group of older ended sessions alone.
+  const dialogSnapshot = useMemo(() => (snapshot && windowedGroups ? { roots: snapshot.roots, groups: windowedGroups } : undefined), [snapshot, windowedGroups]);
   const viewSnapshot = useMemo(() => (snapshot ? { roots: snapshot.roots, groups: grouped.groups } : undefined), [snapshot, grouped]);
   // With two or more roots, `tab` is the open root tab: the selection's root (W38).
   const [selection, choose, { tab, follow: followSelection }] = useSelection(viewSnapshot, { navigation, storage, home: grouped.home });
@@ -286,13 +333,26 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   );
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
   const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
+  // The selection's ended sessions older than ENDED_SHOWN_DAYS (W67), as the filters show them, with
+  // Show older on or off: how many its button says, and whether the selection has one at all.
+  const olderCount = useMemo(() => {
+    if (!anyOlder) return 0;
+    const every = tabGroups(groupedAll.groups, tab);
+    const everyScope = scopeFor(every, selection, starred.set);
+    if (!everyScope) return 0;
+    const older = listScope(every, everyScope, sort, groupedAll.home).finished.filter(({ session }) => isOlderEnded(session, endedNow));
+    return filterListed(older, filters).length;
+  }, [anyOlder, groupedAll, tab, selection, starred.set, sort, endedNow, filters]);
+  // Every session pitwall lists, the older ended ones too, each once: the session view shows one
+  // wherever it's listed, so Hide older never says an open one is no longer listed.
+  const everyListed = useMemo(() => (groupedAll === grouped ? everySession : sessionsIn(groupedAll.groups)), [groupedAll, grouped, everySession]);
   // What pitwall last knew of each session, for one that leaves the snapshot while it's open, or that
   // the back button returns to: the view keeps showing it, and says it's no longer listed.
   const known = useRef(new Map<string, SessionSummary>());
   useEffect(() => {
-    for (const session of everySession) known.current.set(session.sessionId, session);
-  }, [everySession]);
-  const listedSession = (sessionId: string) => everySession.find((session) => session.sessionId === sessionId);
+    for (const session of everyListed) known.current.set(session.sessionId, session);
+  }, [everyListed]);
+  const listedSession = (sessionId: string) => everyListed.find((session) => session.sessionId === sessionId);
   const listedOpen = openId === undefined ? undefined : listedSession(openId);
   const shownOpen = listedOpen ?? (openId === undefined ? undefined : known.current.get(openId));
 
@@ -320,39 +380,95 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
   const overlaid = layout !== 'three-columns' && openId !== undefined;
   const reposCovered = overlaid && overlayCoversRepos;
-  // The New session dialog, and the session it started, opened once it's listed.
+  // The New session dialog, and the session it started, selected once it's listed (W63).
   const [newSession, setNewSession] = useState(false);
-  // Its view takes no focus, unless focus has nowhere to be: started from the no-sessions empty state,
-  // whose New session button goes as the session is listed, focus would otherwise be left on the page.
-  // Started in a root tab that has since been left, it opens there instead, for when that tab is back,
-  // unless the view open there has a draft or a running action, which it would replace (W38).
-  const openStarted = useCallback(
-    (session: SessionSummary) => {
-      // The root of the group it's listed under: a session just started has worked in no repo yet, so where it started.
-      const root = grouped.home.get(session.sessionId)?.root;
-      if (tab !== undefined && root !== undefined && root !== tab) {
-        const there = places.get(root)?.session;
-        if (there !== undefined && holding(there)) return;
-        setPlaces((current) => new Map(current).set(root, { selection: current.get(root)?.selection ?? viewIn('all', root), session: session.sessionId }));
-        return;
-      }
-      const active = document.activeElement;
-      if (active === null || active === document.body) focusView.current = { id: session.sessionId, on: 'heading' };
-      opened.open(session.sessionId);
-    },
-    [opened.open, grouped.home, tab, places],
-  );
+  // Which open session views have a question open, a Stop or Remove confirmation or the terminal's
+  // restart prompt: a started session doesn't replace them (W63). By session, as drafts are.
+  const prompts = useRef(new Map<string, boolean>());
+  /**
+   * Whether showing a started session in this session's place would take over what you're in the
+   * middle of (W63): what holding() keeps, a draft or a running Stop or Remove, or a question open in
+   * its view.
+   */
+  const keepsPlace = (sessionId: string | undefined) => sessionId !== undefined && (holding(sessionId) || (prompts.current.get(sessionId) ?? false));
+  /** Typing in the columns, where single-key shortcuts are off: the filter, the message box, the terminal. Not in a dialog, which a switch leaves alone. */
+  const typingHere = () => {
+    const active = document.activeElement;
+    return active instanceof Element && isTyping(active) && active.closest('.columns') !== null && app.current?.contains(active) === true;
+  };
+  /**
+   * Shows a session New session started (W63): its root tab; its group, the one the repo list lists
+   * it under in the viewer's Group sessions by, which is its home group (groupBy.ts), as a ?session=
+   * link selects it too; and its view, which its row marks as open. One history entry, pushed, as
+   * opening a row pushes one, so the back button goes back to where you were. Its terminal takes no
+   * focus (W57): nothing in the page asked for it.
+   *
+   * Focus, with `kept`: it stays where it is, as when a view opens from the URL, unless the switch took
+   * away or hid what had it, as a row that's no longer listed, or it was on the page, as after the
+   * no-sessions empty state's New session: then the view's heading takes it. With `heading`, from the
+   * toast's Open, which goes with its toast, the heading takes it, as from a row (6.1, item 8).
+   */
+  const showStarted = (session: SessionSummary, focus: 'kept' | 'heading') => {
+    const home = grouped.home.get(session.sessionId);
+    const next = home ? groupSelection(home, roots) : selection;
+    const active = document.activeElement;
+    const unless = focus === 'kept' && active instanceof Element && active !== document.body && active !== document.documentElement ? active : undefined;
+    focusView.current = unless === undefined ? { id: session.sessionId, on: 'heading' } : { id: session.sessionId, on: 'heading', unless };
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, next), session.sessionId)}${hash}`);
+    writeStoredSelection(next, storage);
+    followSelection();
+    opened.follow();
+  };
+  // The toast's Open, whenever it's used: the session as it's listed then, or its view alone once it isn't.
+  const listedToast = useRef<{ sessionId: string; key: string } | undefined>(undefined);
+  const openListed = useRef<(sessionId: string) => void>(() => {});
+  openListed.current = (sessionId) => {
+    listedToast.current = undefined;
+    const listed = listedSession(sessionId);
+    if (listed) {
+      showStarted(listed, 'heading');
+      return;
+    }
+    focusView.current = { id: sessionId, on: 'heading' };
+    opened.open(sessionId);
+  };
+  // Once it's listed: shown, unless that would take over the view open here, typing in the columns,
+  // or the view open in its root tab, which it would replace. Then the toast that said it started
+  // says it's listed, with Open.
+  const openStarted = (session: SessionSummary) => {
+    // The root of the group it's listed under: a session just started has worked in no repo yet, so where it started.
+    const root = grouped.home.get(session.sessionId)?.root;
+    const there = tab !== undefined && root !== undefined && root !== tab ? places.get(root)?.session : undefined;
+    if (!keepsPlace(openId) && !typingHere() && !keepsPlace(there)) {
+      showStarted(session, 'kept');
+      return;
+    }
+    const key = startedKey(session.shortId ?? session.sessionId);
+    listedToast.current = { sessionId: session.sessionId, key };
+    toasts.show({ tone: 'info', key, message: listedText(session.name), action: { label: OPEN_LISTED, onAction: () => openListed.current(session.sessionId) } });
+  };
   const started = useOpenWhenListed(everySession, openStarted);
+  // Opened some other way, from its row say, the toast's Open has nothing left to do, so it goes.
+  useEffect(() => {
+    const shown = listedToast.current;
+    if (shown === undefined || shown.sessionId !== openId) return;
+    listedToast.current = undefined;
+    toasts.dismiss(shown.key);
+  }, [openId]);
 
   // The view's heading, which takes focus when a session is opened from a row or the view's header;
   // or its conversation, when `j` or `k` was pressed there, so ↑ and ↓ go on scrolling it. A view that
   // opened on its Terminal tab (W54) has its conversation hidden, so its heading takes focus instead.
   const viewHeading = useRef<HTMLHeadingElement>(null);
-  const focusView = useRef<{ id: string; on: 'heading' | 'conversation' } | undefined>(undefined);
+  // `unless`: what had focus as a started session was shown (W63), which keeps it while it's still in sight.
+  const focusView = useRef<{ id: string; on: 'heading' | 'conversation'; unless?: Element } | undefined>(undefined);
   useEffect(() => {
     const target = focusView.current;
     if (target === undefined || target.id !== openId) return;
     focusView.current = undefined;
+    const { unless } = target;
+    if (unless !== undefined && unless.isConnected && unless.closest('[hidden], [inert]') === null) return;
     // The shown view's, not one kept hidden for another root tab (W38).
     const conversation =
       target.on === 'conversation' ? app.current?.querySelector<HTMLElement>('section.session-view:not([hidden]) .session-view-body[role="tabpanel"]:not([hidden])') : undefined;
@@ -684,7 +800,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (next === groupBy) return;
     setGroupBy(next);
     if (!snapshot) return;
-    const after = groupSessions(snapshot.groups, next).groups;
+    const after = groupSessions(windowedGroups ?? snapshot.groups, next).groups;
     const instead = (current: Selection, root: string | undefined): Selection | undefined =>
       'view' in current || findGroup(groups, current) === undefined || findGroup(after, current) !== undefined ? undefined : viewIn('all', root);
     if (tab !== undefined) {
@@ -711,14 +827,40 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   };
 
   const finishedId = finishedStateId(selection, selectedGroup);
-  const toggleFinished = () => {
-    if (finishedId === undefined) return;
+  const setFinished = (id: string, open: boolean) => {
     const next = new Map(finishedOpen);
-    next.set(finishedId, !(finishedOpen.get(finishedId) ?? false));
+    next.set(id, open);
     setFinishedOpen(next);
     // Every group of every mode, so a switch of Group sessions by doesn't forget one's state.
     writeGroupState(next, new Set([...everyGroupId(startGroups ?? []), 'view:all', 'view:starred']), storage, FINISHED_STATE_KEY);
   };
+  const toggleFinished = () => {
+    if (finishedId !== undefined) setFinished(finishedId, !(finishedOpen.get(finishedId) ?? false));
+  };
+
+  // Show older and Hide older (W67): one switch for the page. Turning it on opens the selection's
+  // Finished section, where they're listed, a group's whose only sessions were older included. The
+  // button there keeps focus, as the same button with its other name. From an empty state, whose
+  // button goes with it, focus goes to that one, Hide older now; and when Hide older takes the whole
+  // selection away, as a group of older sessions alone, to the session list's heading.
+  const focusOlder = useRef(false);
+  const toggleOlder = () => {
+    const next = !showOlder;
+    setShowOlder(next);
+    const id = finishedStateId(selection, selectedGroup ?? findGroup(groupedAll.groups, selection));
+    if (next && id !== undefined && !(finishedOpen.get(id) ?? false)) setFinished(id, true);
+    focusOlder.current = true;
+  };
+  useEffect(() => {
+    if (!focusOlder.current) return;
+    focusOlder.current = false;
+    (app.current?.querySelector<HTMLElement>('.session-list [data-older-toggle]') ?? listHeading.current)?.focus();
+  });
+  /** An empty state's Show older, while the selection has older ended sessions it would list. */
+  const showOlderAction =
+    olderCount > 0 && !showOlder ? (
+      <Button onClick={() => toggleOlder()}>{olderText(olderCount, false)}</Button>
+    ) : undefined;
 
   const showError = serverError !== undefined && serverError !== dismissedError;
   const relayAlert = snapshot?.relayAlert;
@@ -864,9 +1006,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         title={`No Claude Code sessions under ${plainText(formatRoots(tab === undefined ? snapshot.roots : [tab]))}`}
         sentence="Start one here, or start Claude Code in any terminal under these directories and it appears here."
         actions={
-          <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
-            New session
-          </Button>
+          <>
+            <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
+              New session
+            </Button>
+            {/* Every session under the roots is an older ended one (W67). */}
+            {showOlderAction}
+          </>
         }
       />
     );
@@ -879,7 +1025,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         icon="directory"
         title={`No sessions in ${plainText(name)} now`}
         sentence={'view' in selection || mode === undefined || findGroup(startGroups ?? [], selection) === undefined ? GROUP_GONE : groupMovedText(mode)}
-        actions={showAll}
+        actions={
+          <>
+            {showAll}
+            {/* A group whose only sessions are older ended ones (W67). */}
+            {showOlderAction}
+          </>
+        }
       />
     );
   } else if (scope.kind === 'needs-you' && total === 0) {
@@ -892,7 +1044,19 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   } else if (scope.kind === 'starred' && total === 0) {
-    empty = <EmptyState icon="star" title={NO_STARRED.title} sentence={NO_STARRED.sentence} actions={showAll} />;
+    empty = (
+      <EmptyState
+        icon="star"
+        title={NO_STARRED.title}
+        sentence={NO_STARRED.sentence}
+        actions={
+          <>
+            {showAll}
+            {showOlderAction}
+          </>
+        }
+      />
+    );
   } else if (shown === 0 && total > 0) {
     const { title, sentence } = noMatchText(filters, plainText(name));
     empty = (
@@ -921,6 +1085,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
                 Search all sessions
               </Button>
             )}
+            {/* What the filter finds is all older ended sessions (W67). */}
+            {showOlderAction}
           </>
         }
       />
@@ -971,11 +1137,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       onRunningChange={(busy) => {
         running.current.set(session.sessionId, busy);
       }}
+      onPromptChange={(open) => {
+        prompts.current.set(session.sessionId, open);
+      }}
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
       terminalFocus={terminalFocus}
+      polledAt={updatedAt}
     />
   );
   let sessionView: ReactNode;
@@ -1088,6 +1258,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             starred={starred.set}
             onStar={starred.star}
             inert={overlaid}
+            older={olderCount > 0 ? { count: olderCount, shown: showOlder, onToggle: toggleOlder } : undefined}
           />
         </HighlightContext.Provider>
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
@@ -1101,13 +1272,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
       {newSession && snapshot && (
         <NewSessionDialog
-          snapshot={snapshot}
+          snapshot={dialogSnapshot ?? snapshot}
           tab={tab}
           onClose={() => setNewSession(false)}
           onStarted={(session) => {
             setNewSession(false);
             started.wait(session);
-            toasts.show({ tone: 'success', message: startedText(session.name) });
+            toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}
         />
       )}

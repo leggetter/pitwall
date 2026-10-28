@@ -91,7 +91,7 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
 export interface FilterChipsProps {
   chips: ReadonlySet<FilterChip>;
   onChange: (chips: ReadonlySet<FilterChip>) => void;
-  /** Shown after the chips, in their group, so it wraps with them: Clear filters. */
+  /** Shown after the chips, in their group, so it wraps with them: Clear filters, or its room. */
   children?: ReactNode;
 }
 
@@ -128,7 +128,11 @@ export interface FilterControlsProps {
   fieldRef?: RefObject<HTMLInputElement | null>;
 }
 
-/** The field, the chips and Clear filters, in role="search". */
+/**
+ * The field, the chips and Clear filters, in role="search". The field has a line of its own, and the
+ * chips, Clear filters and `children` share the next, wrapping when they must. Turning a filter on or
+ * off moves none of them (W75): while no filter is on, an unseen copy of Clear filters keeps its room.
+ */
 export function FilterControls({ filters, onChange, children, fieldRef }: FilterControlsProps) {
   const own = useRef<HTMLInputElement>(null);
   const field = fieldRef ?? own;
@@ -136,7 +140,7 @@ export function FilterControls({ filters, onChange, children, fieldRef }: Filter
     <form className="filter-controls" role="search" onSubmit={(event) => event.preventDefault()}>
       <FilterField value={filters.text} onChange={(text) => onChange({ ...filters, text })} inputRef={field} />
       <FilterChips chips={filters.chips} onChange={(chips) => onChange({ ...filters, chips })}>
-        {filtering(filters) && (
+        {filtering(filters) ? (
           <button
             type="button"
             className="button ghost sm"
@@ -148,6 +152,11 @@ export function FilterControls({ filters, onChange, children, fieldRef }: Filter
           >
             Clear filters
           </button>
+        ) : (
+          // Its room, the same size and unseen: not a button, and hidden from assistive technology.
+          <span className="button ghost sm filter-clear-room" aria-hidden="true">
+            Clear filters
+          </span>
         )}
       </FilterChips>
       {children}

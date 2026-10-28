@@ -12,7 +12,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { App } from '../App.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
 import type { ConnectionView } from '../connection.js';
-import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
+import { fakeSockets, group, minutesAgo, NOW, session, snapshot, withEditorList, withoutSubagents } from '../test/fixtures.js';
 import { tooltipText } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
@@ -72,7 +72,7 @@ function cursorsOf(fetch: ReturnType<typeof fakeServer>): (string | undefined)[]
 
 /** Renders the dashboard with the app's API client over `fetch`, already holding an apiKey. Without `fetch`, there's no client. */
 function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = snap()) {
-  const api = fetch ? createApiClient({ apiKey: API_KEY, fetch }) : undefined;
+  const api = fetch ? createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fetch) }) : undefined;
   const ui = (s: IndexSnapshot) => {
     const view: ConnectionView = { state: 'live', snapshot: s };
     return (
@@ -177,7 +177,7 @@ describe('SessionView: opening and closing', () => {
 
   it('waits for an apiKey while connecting, and abandons the request when closed', async () => {
     const fetch = fakeServer(ok([prompt(1)]));
-    const api = createApiClient({ fetch });
+    const api = createApiClient({ fetch: withoutSubagents(fetch) });
     render(
       <ApiContext.Provider value={api}>
         <Dashboard view={{ state: 'connecting', snapshot: snap() }} />
@@ -702,6 +702,23 @@ describe('SessionView: notes that say what to do (W47)', () => {
       expect(waitNote(stale.view)).toBeNull();
     });
 
+    it("says the same for a job whose own line says what it needs (W69), but nothing for one whose context needs nothing", () => {
+      const { env } = attachEnv();
+      const asks = renderView(waitingJob({ state: 'blocked', status: 'idle', waitingFor: undefined, needsYou: { reason: 'claude-code', text: 'Tea or coffee?' } }), { env });
+      expect(badgeText(asks.view)).toBe('Blocked');
+      expect(waitNote(asks.view)?.textContent).toBe(WAITING_NOTES.background);
+      asks.unmount();
+      // Resumed, with Claude Code's "send a prompt to start": Idle, as its process is, and no note.
+      const placeholder = renderView(waitingJob({ state: 'blocked', status: 'idle', waitingFor: undefined, needsYou: undefined }), { env });
+      expect(badgeText(placeholder.view)).toBe('Idle');
+      expect(waitNote(placeholder.view)).toBeNull();
+      placeholder.unmount();
+      // Restarted from pitwall: it waits for your prompt, with nothing to answer.
+      const restarted = renderView(waitingJob({ state: 'working', status: 'busy', waitingFor: undefined, needsYou: { reason: 'restarted' } }), { env });
+      expect(badgeText(restarted.view)).toBe('Waiting for your prompt');
+      expect(waitNote(restarted.view)).toBeNull();
+    });
+
     it("shows what it's waiting on as Claude Code gives it, as text, in the badge alone", () => {
       const odd = '<b>made-up</b> dialog: "Pick one" & more';
       const { view } = renderView(waitingTty({ waitingFor: odd }));
@@ -879,7 +896,8 @@ describe('SessionView in the app', () => {
   async function appWithSession(fetch: FetchLike) {
     window.sessionStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
     const fake = fakeSockets();
-    render(<App createSocket={fake.factory} fetch={fetch} />);
+    // The editor list is answered apart (W72), so `fetch` sees the conversation's requests alone.
+    render(<App createSocket={fake.factory} fetch={withEditorList(withoutSubagents(fetch))} />);
     await handshake(fake.last, KEY_A, `${'n'.repeat(41)}01`);
     act(() => fake.last.receive({ type: 'snapshot', snapshot: snap() }));
     return fake;

@@ -25,6 +25,22 @@ export function tail(text: string, max: number): string {
   return text.slice(isLowSurrogate(text.charCodeAt(start)) ? start + 1 : start);
 }
 
+// Terminal escapes (CSI, OSC and two-character ones), then any control character left: C0, DEL and
+// C1, and the bidi marks (U+061C, U+200E, U+200F), embeddings and overrides (U+202A to U+202E) and
+// isolates (U+2066 to U+2069), which would make the line read differently from what it says.
+const ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-_]/g;
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * Text from an internal file as one line of plain text: terminal escapes, control characters and
+ * bidi controls removed, line breaks and tabs as spaces, whitespace collapsed, trimmed, and at most
+ * `max` characters (truncate()). Bounded first, so a huge value isn't scanned in full.
+ */
+export function plainLine(raw: string, max: number): string {
+  const plain = cap(raw, 8 * max).replace(ESCAPES, '').replace(/[\t\n\v\f\r]+/g, ' ').replace(CONTROLS, '');
+  return truncate(plain.replace(/\s+/g, ' ').trim(), max);
+}
+
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }

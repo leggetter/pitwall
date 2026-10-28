@@ -3,13 +3,14 @@
 // address bar of its own, in memory, so its selection never reaches the gallery's URL.
 
 import { useState, type ReactNode } from 'react';
+import { ATTACHMENT_MAX_BYTES } from '../../../src/shared/protocol.js';
 import type { BackgroundTab } from '../backgroundTab.js';
 import type { ConnectionState, ConnectionView } from '../connection.js';
 import { Badge, StatusBadge } from '../components/Badge.js';
 import { ConnectionBadge } from '../components/ConnectionBadge.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
 import { Dashboard } from '../components/Dashboard.js';
-import { NewSessionDialog } from '../components/NewSessionDialog.js';
+import { DIRECTORY_TEXT, NewSessionDialog } from '../components/NewSessionDialog.js';
 import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, type PreferencesProps } from '../components/Preferences.js';
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
@@ -82,10 +83,93 @@ async function fill(root: HTMLElement, values: { directory?: string; path?: stri
 
 const OTHER_DIRECTORY = 'Another directory under a root…';
 
+/**
+ * Chooses "Another directory under a root…", which reveals the combobox with focus in it, waits for
+ * `ready` inside the dialog, then types `typed` and presses `keys` there, as a person would (W70).
+ */
+async function another(root: HTMLElement, ready: string, typed?: string, keys: string[] = []): Promise<HTMLInputElement> {
+  choose(await field<HTMLSelectElement>(root, 'Directory'), OTHER_DIRECTORY);
+  const input = await element<HTMLInputElement>(root, 'input[role="combobox"]');
+  await text(root, ready);
+  // A moment between each, as between a person's keys, so each sees what the last one did.
+  const next = () => new Promise((resolve) => setTimeout(resolve, 16));
+  if (typed !== undefined) {
+    type(input, typed);
+    await next();
+  }
+  for (const key of keys) {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    await next();
+  }
+  return input;
+}
+
+/** A made-up image, drawn here, so its thumbnail has something to show: two halves, blue and red. */
+async function madeUpImage(name: string): Promise<File> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  // Where there's nothing to draw with, as in the tests' happy-dom, an image with no picture.
+  if (!context) return madeUpFile(name, 'image/png');
+  context.fillStyle = '#0044CC';
+  context.fillRect(0, 0, 48, 64);
+  context.fillStyle = '#E07B72';
+  context.fillRect(48, 0, 48, 64);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return new File([blob ?? new Uint8Array()], name, { type: 'image/png' });
+}
+
+/** A made-up file of `size` bytes, said rather than held, so a too-large one costs nothing. */
+function madeUpFile(name: string, type: string, size = 2_400): File {
+  const file = new File([new Uint8Array(Math.min(size, 64))], name, { type });
+  Object.defineProperty(file, 'size', { value: size });
+  return file;
+}
+
+const ATTACHMENTS = async () => [
+  await madeUpImage('retry-backoff-diagram.png'),
+  madeUpFile('export-job-timeouts.pdf', 'application/pdf', 182_000),
+  madeUpFile('Notes from the export job incident review, second draft.md', 'text/markdown', 6_100),
+  // Code goes as text/plain, whatever type the browser gives it.
+  madeUpFile('export_retry.py', 'text/x-python', 3_200),
+];
+
+/**
+ * Pastes `files` into the prompt, as a person would after copying them, then waits, with `settled`,
+ * until none is on its way. A paste, since it's the one way in that happy-dom, where the tests render
+ * the gallery, carries files through as a browser does.
+ */
+async function attach(root: HTMLElement, files: File[] | Promise<File[]>, settled?: string): Promise<void> {
+  const prompt = await field<HTMLTextAreaElement>(root, 'First prompt');
+  const transfer = new DataTransfer();
+  for (const file of await files) transfer.items.add(file);
+  prompt.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  const rows = () => [...root.querySelectorAll<HTMLElement>('.attachment')];
+  if (settled !== undefined) await until(`every file ${settled}`, () => rows().length > 0 && rows().every((row) => row.dataset.state !== 'waiting' && row.dataset.state !== 'uploading'));
+}
+
+/**
+ * Drags files over the prompt and holds them there, as a person would from the Finder. The drag's
+ * data is given as the dialog reads it, since happy-dom's DragEvent leaves out a DataTransfer.
+ */
+async function dragOver(root: HTMLElement): Promise<void> {
+  const prompt = await field<HTMLTextAreaElement>(root, 'First prompt');
+  for (const kind of ['dragenter', 'dragover']) {
+    const event = new Event(kind, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [], dropEffect: 'none' } });
+    prompt.dispatchEvent(event);
+  }
+  await element(root, '.prompt-drop-target.over');
+}
+
 interface DialogCase {
   title: string;
   note?: string;
+  frame?: 'dialog' | 'dialog-tall';
   options?: StubOptions;
+  /** A waiting state's spinner shows at once. */
+  waited?: 'shown';
   run?: (root: HTMLElement) => Promise<unknown>;
 }
 
@@ -102,6 +186,46 @@ const DIALOG_CASES: DialogCase[] = [
     title: 'A typed directory and model',
     note: 'The two choices that reveal a field.',
     run: (root) => fill(root, { directory: OTHER_DIRECTORY, path: `${ROOT}/pitwall-test-new-dir`, model: 'Other…', alias: 'sonnet', prompt: PROMPT }),
+  },
+  {
+    title: 'Another directory: the list',
+    note: 'Choosing "Another directory under a root…" reveals the combobox, with focus in it and its list open: the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses, Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.',
+    run: (root) => another(root, '~/code/pitwall-test-api'),
+  },
+  {
+    title: 'Another directory: narrowed, one highlighted',
+    note: 'Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it. ↓ highlights an option; the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, a typed path still works, as before.',
+    run: (root) => another(root, '~/code/pitwall-test-api', 'app', ['ArrowDown', 'ArrowDown']),
+  },
+  {
+    title: 'Another directory: loading',
+    note: 'The list is fetched once per opening of the dialog, the first time this is chosen. Typing narrows it in the page, with no requests.',
+    options: { directories: 'loading' },
+    waited: 'shown',
+    run: (root) => another(root, DIRECTORY_TEXT.loading),
+  },
+  {
+    title: 'Another directory: many',
+    note: 'The best 50, then how many there are. A screen reader hears the count a moment after the typing stops.',
+    options: { directories: 'many' },
+    run: (root) => another(root, DIRECTORY_TEXT.narrow),
+  },
+  {
+    title: 'Another directory: none to list',
+    options: { directories: 'empty' },
+    run: (root) => another(root, DIRECTORY_TEXT.empty),
+  },
+  {
+    title: 'Another directory: not every one listed',
+    note: 'The server stops a root at 5,000 directories or after 2 seconds.',
+    options: { directories: 'truncated' },
+    run: (root) => another(root, DIRECTORY_TEXT.truncated),
+  },
+  {
+    title: "Another directory: couldn't list them",
+    note: 'The field still takes a typed path, with the hint linked to it.',
+    options: { directories: 'failed' },
+    run: (root) => another(root, DIRECTORY_TEXT.failed, '~/code/pitwall-test-new-dir'),
   },
   {
     title: 'Submitted empty',
@@ -148,13 +272,93 @@ const DIALOG_CASES: DialogCase[] = [
       await text(root, 'Starting…');
     },
   },
+  {
+    title: 'Files: dragged over the prompt',
+    note: 'W82. While files are dragged over the page, the drop target covers the first prompt: dashed, then solid once they are over it, as here. A drop anywhere else does nothing, rather than the browser opening the file. Dragging is for a pointer: Attach files is the way in from the keyboard, and from a screen reader.',
+    run: dragOver,
+  },
+  {
+    title: 'Files: attached',
+    note: 'Dropped on the prompt, pasted into it, or chosen with Attach files. Each uploads as it is added. An image has a thumbnail, any other file its type icon; a name is text, cut in the middle with its extension kept. Remove takes a file off, asking the server to remove it once uploaded, and focus goes to the next one, or to Attach files. Start session sends their ids; closing without starting asks the server to remove them.',
+    frame: 'dialog-tall',
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, ATTACHMENTS(), 'uploaded');
+    },
+  },
+  {
+    title: 'Files: uploading',
+    note: 'At most two upload at once, and the rest wait. Start session is off while any is on its way, and its tooltip says why; ⌘ ↵ says it as the field’s problem, with focus on the list. Remove aborts an upload.',
+    frame: 'dialog-tall',
+    options: { upload: 'uploading' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, ATTACHMENTS());
+      await text(root, 'Waiting…');
+    },
+  },
+  {
+    title: "Files: an upload failed",
+    note: "Couldn't upload it, with the server's reason in code style, Try again and Remove. Start session is off until it uploads or is removed.",
+    frame: 'dialog-tall',
+    options: { upload: 'failed' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, [madeUpFile('export-job-timeouts.pdf', 'application/pdf', 182_000)], 'failed');
+      // ⌘ ↵, since Start session is off: the field's problem, with focus on the list.
+      const prompt = await field<HTMLTextAreaElement>(root, 'First prompt');
+      prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }));
+      await element(root, '.field-problem');
+    },
+  },
+  {
+    title: 'Files: refused',
+    note: "A file pitwall can't take is listed with why, and the others go on: an image of a type it doesn't take, such as HEIC or SVG, audio, video or another binary format, an empty one, one over 10 MB, the eleventh, a name the server would refuse, and the server's own refusal, such as bytes that contradict the type. A refused file has Remove alone, and doesn't hold up Start session.",
+    frame: 'dialog-tall',
+    options: { upload: 'refused' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(
+        root,
+        [
+          madeUpFile('export-job-timeouts.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+          madeUpFile('dashboard.heic', 'image/heic'),
+          madeUpFile('screen-recording.png', 'image/png', ATTACHMENT_MAX_BYTES * 3),
+          madeUpFile('not-really-a.png', 'image/png'),
+        ],
+        'refused',
+      );
+    },
+  },
+  {
+    title: 'Files: not on this machine',
+    note: "A 503: this pitwall keeps no attachments here, such as when its home folder's path has characters an @ mention can't carry. Each file says so, and that the session can still start without them, with the server's reason. Nothing is held up.",
+    frame: 'dialog-tall',
+    options: { upload: 'unavailable' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, [madeUpFile('export-job-timeouts.pdf', 'application/pdf', 182_000)], 'refused');
+    },
+  },
+  {
+    title: 'Files: starting',
+    note: 'While Start session is busy, Remove, Try again and Attach files are aria-disabled, and a drop or a paste attaches nothing.',
+    frame: 'dialog-tall',
+    options: { spawn: 'starting' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, ATTACHMENTS(), 'uploaded');
+      await press(root, 'Start session');
+      await text(root, 'Starting…');
+    },
+  },
 ];
 
 export function Dialogs() {
   return (
     <>
       {DIALOG_CASES.map((dialog) => (
-        <Specimen key={dialog.title} title={dialog.title} note={dialog.note} frame="dialog">
+        <Specimen key={dialog.title} title={dialog.title} note={dialog.note} frame={dialog.frame ?? 'dialog'} waited={dialog.waited}>
           <Stubbed options={dialog.options}>
             <Reopenable>
               {(close) => {
@@ -722,7 +926,10 @@ const STATES: ConnectionState[] = ['connecting', 'live', 'reconnecting', 'unauth
 export function Notices() {
   return (
     <>
-      <Specimen title="Status badges" note="Each session status, as statusBadge() gives it. Solid is for needing you only. The list leaves Idle out; the session view shows it.">
+      <Specimen
+        title="Status badges"
+        note="Each session status, as statusBadge() gives it. Solid is for needing you only: Waiting, Blocked and Waiting for your prompt, by the session's needsYou (W69). A blocked job that needs nothing shows Idle. The list leaves Idle out; the session view shows it."
+      >
         <p className="uikit-row">
           {STATUS_ROWS.map((row) => (
             <StatusBadge key={row.sessionId} badge={statusBadge(row)} />

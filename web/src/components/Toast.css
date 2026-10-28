@@ -98,6 +98,8 @@
   overflow-wrap: anywhere;
 }
 
+/* An action, such as Open for a started session that didn't open (W63): an outline sm button, before Dismiss. */
+.toast-action,
 .toast-dismiss {
   flex: none;
 }

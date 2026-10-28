@@ -2,16 +2,18 @@
 // with a fake command runner, so no test ever runs `claude`. Made-up sessions
 // only.
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
+import { createAgentsSource, type AgentRow, type AgentsResult } from '../index/agents.js';
 import type { Indexer } from '../index/index.js';
 import {
   removePath,
+  resumePath,
   SPAWN_PATH,
   stopPath,
   WS_PATH,
@@ -24,6 +26,8 @@ import {
   firstLine,
   MAX_PROMPT_LENGTH,
   parseBackgrounded,
+  parseCopyNote,
+  resumeArgs,
   shellQuote,
   spawnArgs,
   SpawnLimiter,
@@ -45,6 +49,11 @@ let root: string;
 let repo: string;
 let outside: string;
 let webRoot: string;
+/** Directories under the root whose names have a bidi override and a C1 control (W81). */
+let bidiDir: string;
+let c1Dir: string;
+/** A second directory under the root, for a symlink that's swapped to it. */
+let otherDir: string;
 
 beforeAll(async () => {
   tmp = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-test-actions-')));
@@ -60,6 +69,12 @@ beforeAll(async () => {
   await writeFile(join(repo, 'README.md'), 'not a directory');
   await symlink(outside, join(root, 'escape'));
   await symlink(join(repo, 'packages'), join(root, 'alias'));
+  bidiDir = join(root, 'safe\u202eexe.txt');
+  c1Dir = join(root, 'csi\u009b2J');
+  otherDir = join(root, 'other');
+  for (const dir of [bidiDir, c1Dir, otherDir]) await mkdir(dir, { recursive: true });
+  // A plain name that leads to one with a bidi override.
+  await symlink(bidiDir, join(root, 'bidi-link'));
 });
 
 afterAll(async () => {
@@ -70,6 +85,17 @@ const BG_ID = '11111111-1111-4111-8111-111111111111';
 const INTERACTIVE_ID = '22222222-2222-4222-8222-222222222222';
 const NO_SHORT_ID = '33333333-3333-4333-8333-333333333333';
 const BAD_SHORT_ID = '44444444-4444-4444-8444-444444444444';
+/** Ended interactive sessions (W66): one that can be resumed, and ones whose directory has gone or moved. */
+const ENDED_ID = '66666666-6666-4666-8666-666666666666';
+const ENDED_OTHER_ID = '77777777-7777-4777-8777-777777777777';
+const ENDED_MISSING_ID = '88888888-8888-4888-8888-888888888888';
+const ENDED_GONE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const ENDED_ESCAPE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const ENDED_QUOTED_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+/** Ended sessions some W81 tests add to the snapshot. */
+const ENDED_LINK_ID = '12345678-1234-4234-8234-123456789abc';
+const ENDED_BIDI_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const ENDED_C1_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
 function session(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sessionId'>): SessionSummary {
   return {
@@ -83,6 +109,11 @@ function session(overrides: Partial<SessionSummary> & Pick<SessionSummary, 'sess
     transcript: 'missing',
     ...overrides,
   };
+}
+
+/** An ended interactive session, as the index lists one (SessionSummary.ended). */
+function ended(sessionId: string, cwd: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
+  return session({ sessionId, kind: 'interactive', name: `worker-${sessionId.slice(0, 8)}`, cwd, alive: false, finished: true, ended: true, transcript: 'ok', ...overrides });
 }
 
 function snapshot(): IndexSnapshot {
@@ -100,11 +131,25 @@ function snapshot(): IndexSnapshot {
           session({ sessionId: INTERACTIVE_ID, kind: 'interactive', name: 'pitwall-test-interactive', pid: 4242 }),
           session({ sessionId: NO_SHORT_ID, name: 'pitwall-test-no-short-id' }),
           session({ sessionId: BAD_SHORT_ID, shortId: '-h', name: 'pitwall-test-bad-short-id' }),
+          ended(ENDED_ID, join(repo, 'packages', 'worker')),
+          ended(ENDED_OTHER_ID, repo),
+          ended(ENDED_MISSING_ID, join(repo, 'removed-worktree'), { cwdMissing: true }),
+          // Gone since the poll, so the snapshot doesn't say so yet.
+          ended(ENDED_GONE_ID, join(repo, 'gone-since')),
+          ended(ENDED_ESCAPE_ID, join(root, 'escape')),
+          ended(ENDED_QUOTED_ID, join(root, "it's a dir")),
         ],
       },
     ],
     source: { ok: true },
   };
+}
+
+/** snapshot(), with `extra` sessions in its group. */
+function snapshotWith(...extra: SessionSummary[]): IndexSnapshot {
+  const base = snapshot();
+  base.groups[0]?.sessions.push(...extra);
+  return base;
 }
 
 /** An index holding `latest`; `null` for one that hasn't finished its first poll. */
@@ -113,9 +158,32 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     latest: () => latest ?? undefined,
     subscribe: () => () => {},
     conversation: async () => undefined,
+    subagents: async () => undefined,
+    subagentConversation: async () => undefined,
+    pollSoon: vi.fn(),
+    noteRestart: vi.fn(),
     stop: () => {},
   };
 }
+
+/** A stand-in for the fresh `claude agents --json --all` a resume reads first. It answers `result`, which a test can change. */
+function fakeAgents(result: AgentsResult = { ok: true, rows: [] }) {
+  const agents = {
+    result,
+    list: vi.fn(async () => agents.result),
+  };
+  return agents;
+}
+
+const agentRow = (sessionId: string, overrides: Partial<AgentRow> = {}): AgentRow => ({
+  sessionId,
+  name: 'pitwall-test-open-again',
+  kind: 'interactive',
+  cwd: repo,
+  pid: 5151,
+  startedAt: '2026-10-16T00:00:00.000Z',
+  ...overrides,
+});
 
 interface Call {
   file: string;
@@ -139,6 +207,16 @@ function fakeRunner(...answers: CommandResult[]): RunCommand & { calls: Call[] }
 
 const exited = (code: number, stdout = '', stderr = ''): CommandResult => ({ kind: 'exited', code, stdout, stderr });
 const backgrounded = (id = 'c0ffee12', name = 'pitwall-test-spawn') => exited(0, `backgrounded · ${id} · ${name}\n`);
+/** What `claude --resume <id> --bg` prints (spike 006, finding 2). */
+const resumedOutput = (id = '66666666') =>
+  exited(0, `backgrounded · ${id} (idle — send a prompt to start)\n  claude attach ${id}\n  claude logs ${id}\n  claude stop ${id}\n`);
+/** What it prints when the session is open in another Claude Code process (finding 5). */
+const copyOutput = (copy = 'ee8a7a26', original = '66666666') =>
+  exited(
+    0,
+    `backgrounded · ${copy} (idle — send a prompt to start)\n`,
+    `note: session ${original} is open in another Claude Code process, so this started a copy as ${copy}. The original conversation is unchanged.\n`,
+  );
 
 // ---------------------------------------------------------------- clients
 
@@ -155,7 +233,8 @@ interface Started {
 }
 
 async function start(run = fakeRunner(backgrounded()), actions: ActionOptions = {}, indexer: Indexer = fakeIndexer()): Promise<Started> {
-  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { actions: { run, env: {}, ...actions } });
+  // A fake agents source by default, so no test can reach the real `claude agents`.
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { actions: { run, env: {}, agents: fakeAgents(), ...actions } });
   running.push(server);
   return { server, apiKey: await apiKeyOf(server.port), run };
 }
@@ -231,7 +310,7 @@ const valid = () => ({ cwd: repo, prompt: 'Reply with: ready', name: 'pitwall-te
 // ---------------------------------------------------------------- tests
 
 describe('the action routes: credentials', () => {
-  const paths = () => [SPAWN_PATH, stopPath(BG_ID), removePath(BG_ID)];
+  const paths = () => [SPAWN_PATH, stopPath(BG_ID), removePath(BG_ID), resumePath(ENDED_ID)];
 
   it('refuse the raw token, even from this Origin, without running anything', async () => {
     const started = await start();
@@ -271,11 +350,12 @@ describe('the action routes: credentials', () => {
   });
 
   it('let the apiKey with this Origin through', async () => {
-    const started = await start(fakeRunner(backgrounded(), exited(0), exited(0)));
+    const started = await start(fakeRunner(backgrounded(), exited(0), exited(0), resumedOutput()));
     expect((await spawnAsPage(started, valid())).status).toBe(201);
     expect((await postAsPage(started, stopPath(BG_ID))).status).toBe(200);
     expect((await postAsPage(started, removePath(BG_ID))).status).toBe(200);
-    expect(started.run.calls).toHaveLength(3);
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    expect(started.run.calls).toHaveLength(4);
   });
 });
 
@@ -369,6 +449,16 @@ describe('spawn: validation', () => {
     await expect400({ ...valid(), cwd: `/${'a'.repeat(5000)}` }, /too long/);
   });
 
+  it('refuses a cwd with a C1 control or a bidi character, or one that leads to such a path, without running anything (W81)', async () => {
+    // Directories that exist under the root, which ran before W81.
+    await expect400({ ...valid(), cwd: bidiDir }, /contains control characters or bidi controls/);
+    await expect400({ ...valid(), cwd: c1Dir }, /contains control characters or bidi controls/);
+    for (const character of ['\u0085', '\u009b', '\u061c', '\u200e', '\u200f', '\u202a', '\u202e', '\u2066', '\u2069']) {
+      await expect400({ ...valid(), cwd: join(repo, `a${character}b`) }, /contains control characters or bidi controls/);
+    }
+    await expect400({ ...valid(), cwd: join(root, 'bidi-link') }, /bidi-link leads to a path with control characters or bidi controls/);
+  });
+
   it("refuses a cwd that doesn't exist, or isn't a directory", async () => {
     await expect400({ ...valid(), cwd: join(repo, 'missing') }, /doesn't exist/);
     await expect400({ ...valid(), cwd: join(repo, 'README.md', 'below') }, /doesn't exist/);
@@ -459,11 +549,24 @@ describe('spawn: running claude --bg', () => {
       CLAUDE_CODE_CHILD_SESSION: '1',
       COPIED: `Bearer ${TOKEN}`,
     };
-    const started = await start(fakeRunner(backgrounded(), exited(0), exited(0)), { env });
+    const started = await start(fakeRunner(backgrounded(), exited(0), exited(0), resumedOutput()), { env });
     await spawnAsPage(started, valid());
     await postAsPage(started, stopPath(BG_ID));
     await postAsPage(started, removePath(BG_ID));
-    for (const call of started.run.calls) expect(call.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example' });
+    await postAsPage(started, resumePath(ENDED_ID));
+    expect(started.run.calls).toHaveLength(4);
+    for (const call of started.run.calls) {
+      // Spawn and resume also set PWD to where they run; stop and remove run in the temp directory.
+      const pwd = call.args[0] === '--resume' || call.args[0] === '--bg' ? { PWD: call.options.cwd } : {};
+      expect(call.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', ...pwd });
+    }
+  });
+
+  it("sets PWD to the directory it runs in, the realpath, not pitwall's own", async () => {
+    const started = await start(fakeRunner(backgrounded()), { env: { PATH: '/usr/bin', PWD: '/Users/example/pitwall' } });
+    expect((await spawnAsPage(started, { ...valid(), cwd: join(root, 'alias', 'worker') })).status).toBe(201);
+    expect(started.run.calls[0]?.options.env).toEqual({ PATH: '/usr/bin', PWD: join(repo, 'packages', 'worker') });
+    expect(started.run.calls[0]?.options.env.PWD).toBe(started.run.calls[0]?.options.cwd);
   });
 
   it("answers 422 with Claude Code's message and a hint for an untrusted workspace, and never trusts it", async () => {
@@ -597,7 +700,7 @@ describe('stop and remove', () => {
       const refused = await postAsPage(started, path);
       expect(refused.status).toBe(429);
       expect(refused.headers['retry-after']).toBe('1');
-      expect((refused.json as { error: string }).error).toMatch(/already running 4 stop or remove commands/);
+      expect((refused.json as { error: string }).error).toMatch(/already running 4 stop, remove, resume or open commands/);
     }
     expect(run.calls).toHaveLength(4);
 
@@ -642,9 +745,9 @@ describe('stop and remove', () => {
     expect((await postAsPage(started, stopPath(BG_ID))).json).toEqual({ ok: false, error: 'claude stop exited with code 1.' });
   });
 
-  it("answers 409 for an interactive session, and for a background one without a safe short id, without running anything", async () => {
+  it("answers 409 for an interactive session, an ended one included, and for a background one without a safe short id, without running anything", async () => {
     const started = await start();
-    for (const id of [INTERACTIVE_ID, NO_SHORT_ID, BAD_SHORT_ID]) {
+    for (const id of [INTERACTIVE_ID, ENDED_ID, NO_SHORT_ID, BAD_SHORT_ID]) {
       for (const path of [stopPath(id), removePath(id)]) {
         const res = await postAsPage(started, path);
         expect(res.status, path).toBe(409);
@@ -694,6 +797,421 @@ describe('stop and remove', () => {
   });
 });
 
+describe('resume (W66)', () => {
+  const worker = () => join(repo, 'packages', 'worker');
+  const errorOf = (res: HttpResult) => (res.json as { error: string }).error;
+
+  it('runs claude --resume <id> --bg, with no prompt, in the directory the session started in, after a fresh claude agents', async () => {
+    const order: string[] = [];
+    const agents = fakeAgents();
+    agents.list.mockImplementation(async () => {
+      order.push('agents');
+      return agents.result;
+    });
+    const calls: Call[] = [];
+    const run = Object.assign(
+      vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+        order.push('run');
+        calls.push({ file, args, options });
+        return resumedOutput();
+      }),
+      { calls },
+    );
+    const started = await start(run, { agents });
+    const res = await postAsPage(started, resumePath(ENDED_ID));
+    expect([res.status, res.json]).toEqual([200, { ok: true, shortId: '66666666' }]);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(order).toEqual(['agents', 'run']);
+    expect(started.run.calls).toHaveLength(1);
+    const [call] = started.run.calls;
+    expect(call?.file).toBe('claude');
+    expect(call?.args).toEqual(['--resume', ENDED_ID, '--bg']);
+    expect(call?.options.cwd).toBe(worker());
+    expect(call?.options.timeoutMs).toBe(30_000);
+  });
+
+  it("sets PWD to the directory it runs in, not pitwall's own, and scrubs the rest", async () => {
+    const env = { PATH: '/usr/bin', PWD: '/Users/example/pitwall', PITWALL_TOKEN: TOKEN, CLAUDE_CODE_SESSION_ID: '99999999-9999-4999-8999-999999999999' };
+    const started = await start(fakeRunner(resumedOutput()), { env });
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    const [call] = started.run.calls;
+    expect(call?.options.env).toEqual({ PATH: '/usr/bin', PWD: worker() });
+    expect(call?.options.env.PWD).toBe(call?.options.cwd);
+  });
+
+  it('takes nothing from the request: a body naming another directory or session changes nothing', async () => {
+    const started = await start(fakeRunner(resumedOutput()));
+    const res = await postAsPage(started, resumePath(ENDED_ID), { cwd: outside, sessionId: ENDED_OTHER_ID, prompt: 'hello' });
+    expect(res.status).toBe(200);
+    expect(started.run.calls[0]?.args).toEqual(['--resume', ENDED_ID, '--bg']);
+    expect(started.run.calls[0]?.options.cwd).toBe(worker());
+  });
+
+  it('records the short id for attach, the session id as resumed, and the restart for Needs you, which polls soon (W69)', async () => {
+    const spawned = { add: vi.fn() };
+    const resumed = { add: vi.fn() };
+    const indexer = fakeIndexer();
+    const at = Date.parse('2026-10-27T12:00:00.000Z');
+    const started = await start(fakeRunner(resumedOutput('66666666')), { spawned, resumed, now: () => at }, indexer);
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    expect(spawned.add.mock.calls).toEqual([['66666666']]);
+    expect(resumed.add.mock.calls).toEqual([[ENDED_ID]]);
+    // By the session id, from the resolved summary, at the resume's time. noteRestart polls soon itself.
+    expect(indexer.noteRestart).toHaveBeenCalledTimes(1);
+    expect(indexer.noteRestart).toHaveBeenCalledWith(ENDED_ID, at);
+  });
+
+  it('notes no restart for a resume that failed, or started a copy instead (W69)', async () => {
+    for (const answer of [copyOutput('ee8a7a26'), exited(1, '', 'something broke\n'), exited(0, 'nothing useful\n')]) {
+      const indexer = fakeIndexer();
+      const started = await start(fakeRunner(answer), {}, indexer);
+      expect((await postAsPage(started, resumePath(ENDED_ID))).status).not.toBe(200);
+      expect(indexer.noteRestart).not.toHaveBeenCalled();
+    }
+  });
+
+  it("answers 409 for a session that hasn't ended, without checking or running anything", async () => {
+    const agents = fakeAgents();
+    const started = await start(fakeRunner(resumedOutput()), { agents });
+    for (const id of [BG_ID, INTERACTIVE_ID, NO_SHORT_ID]) {
+      const res = await postAsPage(started, resumePath(id));
+      expect(res.status, id).toBe(409);
+      expect(errorOf(res)).toMatch(/Only an interactive session that has ended can be resumed/);
+    }
+    expect(agents.list).not.toHaveBeenCalled();
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('answers 409 when its directory has gone, by the snapshot or found afresh after the fresh claude agents, or now leads outside the roots', async () => {
+    const agents = fakeAgents();
+    const started = await start(fakeRunner(resumedOutput()), { agents });
+    const missing = await postAsPage(started, resumePath(ENDED_MISSING_ID));
+    expect(missing.status).toBe(409);
+    expect(errorOf(missing)).toMatch(/no longer exists/);
+    expect(agents.list).not.toHaveBeenCalled();
+    const gone = await postAsPage(started, resumePath(ENDED_GONE_ID));
+    expect(gone.status).toBe(409);
+    expect(errorOf(gone)).toMatch(/doesn't exist/);
+    const escape = await postAsPage(started, resumePath(ENDED_ESCAPE_ID));
+    expect(escape.status).toBe(409);
+    expect(errorOf(escape)).toMatch(/isn't under the root/);
+    // Checked after the listing, immediately before the run (W81).
+    expect(agents.list).toHaveBeenCalledTimes(2);
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('answers 409 and resumes nothing when a fresh claude agents lists it, as when its terminal is open again', async () => {
+    for (const listed of [agentRow(ENDED_ID), agentRow(ENDED_ID, { kind: 'background', shortId: '66666666', pid: undefined, state: 'done' })]) {
+      const agents = fakeAgents({ ok: true, rows: [agentRow(ENDED_OTHER_ID), listed] });
+      const indexer = fakeIndexer();
+      const started = await start(fakeRunner(resumedOutput()), { agents }, indexer);
+      const res = await postAsPage(started, resumePath(ENDED_ID));
+      expect(res.status).toBe(409);
+      expect(errorOf(res)).toMatch(/running again.*would start a copy/);
+      expect(started.run.calls).toEqual([]);
+      expect(indexer.pollSoon).toHaveBeenCalled();
+    }
+  });
+
+  it("fails closed with 502 when the fresh claude agents fails, and resumes nothing", async () => {
+    const agents = fakeAgents({ ok: false, error: 'claude agents --json --all timed out after 10s' });
+    const started = await start(fakeRunner(resumedOutput()), { agents });
+    const res = await postAsPage(started, resumePath(ENDED_ID));
+    expect(res.status).toBe(502);
+    expect(errorOf(res)).toMatch(/couldn't check that the session isn't running again, so it didn't resume it: claude agents --json --all timed out after 10s/);
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('answers 409 to a second resume of the same session while the first runs, but not to another session', async () => {
+    let release: (result: CommandResult) => void = () => {};
+    const calls: Call[] = [];
+    const run = Object.assign(
+      vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+        calls.push({ file, args, options });
+        if (calls.length === 1) return new Promise<CommandResult>((resolve) => (release = resolve));
+        return resumedOutput(String(args[1]).slice(0, 8));
+      }),
+      { calls },
+    );
+    const started = await start(run);
+    const first = postAsPage(started, resumePath(ENDED_ID));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const again = await postAsPage(started, resumePath(ENDED_ID));
+    expect([again.status, errorOf(again)]).toEqual([409, 'pitwall is already resuming this session.']);
+    expect((await postAsPage(started, resumePath(ENDED_OTHER_ID))).status).toBe(200);
+    release(resumedOutput());
+    expect((await first).status).toBe(200);
+    // Free again once the first has answered.
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('shares the limit of 4 with stop and remove, and answers 429 with Retry-After past it', async () => {
+    const waiting: (() => void)[] = [];
+    let hold = true;
+    const calls: Call[] = [];
+    const run = Object.assign(
+      vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+        calls.push({ file, args, options });
+        if (hold) await new Promise<void>((resolve) => waiting.push(resolve));
+        return args[0] === '--resume' ? resumedOutput() : exited(0);
+      }),
+      { calls },
+    );
+    const started = await start(run);
+    const slow = [stopPath(BG_ID), removePath(BG_ID), stopPath(BG_ID), resumePath(ENDED_ID)].map((path) => postAsPage(started, path));
+    await vi.waitFor(() => expect(waiting).toHaveLength(4));
+    for (const path of [resumePath(ENDED_OTHER_ID), stopPath(BG_ID)]) {
+      const refused = await postAsPage(started, path);
+      expect(refused.status, path).toBe(429);
+      expect(refused.headers['retry-after']).toBe('1');
+      expect(errorOf(refused)).toMatch(/already running 4 stop, remove, resume or open commands/);
+    }
+    hold = false;
+    for (const finish of waiting.splice(0)) finish();
+    for (const res of await Promise.all(slow)) expect(res.status).toBe(200);
+    expect((await postAsPage(started, resumePath(ENDED_OTHER_ID))).status).toBe(200);
+    expect(calls).toHaveLength(5);
+  });
+
+  it("reports the copy Claude Code started instead, with its short id, and leaves it alone", async () => {
+    const spawned = { add: vi.fn() };
+    const resumed = { add: vi.fn() };
+    const indexer = fakeIndexer();
+    const started = await start(fakeRunner(copyOutput('ee8a7a26')), { spawned, resumed }, indexer);
+    const res = await postAsPage(started, resumePath(ENDED_ID));
+    expect(res.status).toBe(409);
+    expect(res.json).toEqual({
+      ok: false,
+      error:
+        'It was open in another Claude Code process after all, so Claude Code started a copy as ee8a7a26 instead. The copy is listed as a background session with no name, which you can stop and remove.',
+      copyShortId: 'ee8a7a26',
+    });
+    // Nothing stopped or removed the copy: the one command was the resume.
+    expect(started.run.calls.map((call) => call.args[0])).toEqual(['--resume']);
+    expect(spawned.add.mock.calls).toEqual([['ee8a7a26']]);
+    expect(resumed.add).not.toHaveBeenCalled();
+    expect(indexer.pollSoon).toHaveBeenCalled();
+  });
+
+  it("still reports a copy whose short id isn't safe to act on, without the id", async () => {
+    const started = await start(fakeRunner(exited(0, 'backgrounded · -rf\n', 'note: session 66666666 is open in another Claude Code process, so this started a copy as -rf. The original conversation is unchanged.\n')));
+    const res = await postAsPage(started, resumePath(ENDED_ID));
+    expect(res.status).toBe(409);
+    expect(res.json).not.toHaveProperty('copyShortId');
+    expect(errorOf(res)).toMatch(/started a copy instead/);
+  });
+
+  it("answers 422 with Claude Code's message and a hint, quoted, for an untrusted workspace, and never trusts it", async () => {
+    const dir = join(root, "it's a dir");
+    const message = `Workspace not trusted. Run \`claude\` in ${dir} once and accept the trust prompt, then retry.\n`;
+    const started = await start(fakeRunner(exited(1, '', message)));
+    const res = await postAsPage(started, resumePath(ENDED_QUOTED_ID));
+    expect(res.status).toBe(422);
+    expect(res.json).toEqual({ ok: false, error: message.trim(), hint: trustHint(dir) });
+    expect(started.run.calls.map((call) => call.args[0])).toEqual(['--resume']);
+  });
+
+  it("answers 502 with Claude Code's first error line, or how it exited, or when it reported no id", async () => {
+    const started = await start(
+      fakeRunner(exited(1, '', `No conversation found with session ID: ${ENDED_ID}\n    at somewhere\n`), exited(2), exited(0, 'Resumed something\n')),
+    );
+    const first = await postAsPage(started, resumePath(ENDED_ID));
+    expect([first.status, first.json]).toEqual([502, { ok: false, error: `No conversation found with session ID: ${ENDED_ID}` }]);
+    const second = await postAsPage(started, resumePath(ENDED_ID));
+    expect(second.json).toEqual({ ok: false, error: 'claude --resume exited with code 2.' });
+    const third = await postAsPage(started, resumePath(ENDED_ID));
+    expect(third.status).toBe(502);
+    expect(errorOf(third)).toMatch(/didn't report the resumed session's id: Resumed something/);
+  });
+
+  it("answers 502 when claude can't be run, and 504 when it times out", async () => {
+    const started = await start(
+      fakeRunner({ kind: 'failed', reason: 'not-found', message: 'claude was not found' }, { kind: 'failed', reason: 'timeout', message: "didn't finish within 30s" }),
+    );
+    expect((await postAsPage(started, resumePath(ENDED_ID))).json).toEqual({ ok: false, error: "Couldn't run claude: claude was not found." });
+    const slow = await postAsPage(started, resumePath(ENDED_ID));
+    expect(slow.status).toBe(504);
+    expect(errorOf(slow)).toMatch(/claude --resume didn't finish within 30s\. The session may still appear/);
+  });
+
+  it("answers 404 for a session that isn't listed, 400 for an unsafe id and 503 before the first snapshot, without running anything", async () => {
+    const agents = fakeAgents();
+    const started = await start(fakeRunner(resumedOutput()), { agents });
+    expect((await postAsPage(started, resumePath('dddddddd-dddd-4ddd-8ddd-dddddddddddd'))).status).toBe(404);
+    expect((await postAsPage(started, resumePath('../../etc'))).status).toBe(400);
+    const early = await start(fakeRunner(resumedOutput()), { agents }, fakeIndexer(null));
+    expect((await postAsPage(early, resumePath(ENDED_ID))).status).toBe(503);
+    expect(agents.list).not.toHaveBeenCalled();
+    expect(started.run.calls).toEqual([]);
+    expect(early.run.calls).toEqual([]);
+  });
+});
+
+describe('resume, hardened after the W73 security look (W81)', () => {
+  const worker = () => join(repo, 'packages', 'worker');
+  const errorOf = (res: HttpResult) => (res.json as { error: string }).error;
+
+  /** A runner for spawn and resume both, answering each as Claude Code would. */
+  function either(): RunCommand & { calls: Call[] } {
+    const calls: Call[] = [];
+    const run = vi.fn(async (file: string, args: readonly string[], options: CommandOptions) => {
+      calls.push({ file, args, options });
+      return args[0] === '--resume' ? resumedOutput(String(args[1]).slice(0, 8)) : backgrounded();
+    });
+    return Object.assign(run, { calls });
+  }
+
+  /** A fresh `claude agents` that, as the security look's probe did, points `link` at `target` while it runs. */
+  function swapping(link: string, target: string) {
+    const agents = fakeAgents();
+    agents.list.mockImplementation(async () => {
+      await unlink(link);
+      await symlink(target, link);
+      return agents.result;
+    });
+    return agents;
+  }
+
+  describe('1: it runs in the realpath checked immediately before it starts', () => {
+    it('runs nothing when a symlink is swapped to outside the roots during the fresh claude agents', async () => {
+      const link = join(root, 'swapped-out');
+      await symlink(worker(), link);
+      const agents = swapping(link, outside);
+      const started = await start(fakeRunner(resumedOutput()), { agents }, fakeIndexer(snapshotWith(ended(ENDED_LINK_ID, link))));
+      const res = await postAsPage(started, resumePath(ENDED_LINK_ID));
+      expect(res.status).toBe(409);
+      expect(errorOf(res)).toBe(`${link} isn't under the root: ${root}.`);
+      expect(agents.list).toHaveBeenCalledTimes(1);
+      expect(started.run.calls).toEqual([]);
+    });
+
+    it('runs in the realpath it checked, never the snapshot path, when the symlink is swapped to another directory under the root', async () => {
+      const link = join(root, 'swapped-in');
+      await symlink(worker(), link);
+      const started = await start(fakeRunner(resumedOutput()), { agents: swapping(link, otherDir) }, fakeIndexer(snapshotWith(ended(ENDED_LINK_ID, link))));
+      expect((await postAsPage(started, resumePath(ENDED_LINK_ID))).status).toBe(200);
+      const [call] = started.run.calls;
+      expect(call?.options.cwd).toBe(otherDir);
+      // PWD names the path it started in, which the check resolved to where it runs.
+      expect(call?.options.env.PWD).toBe(link);
+    });
+
+    it('runs a session that started through a symlink in its realpath, with PWD the path it started in, whose project folder holds it', async () => {
+      const viaAlias = join(root, 'alias', 'worker');
+      const started = await start(fakeRunner(resumedOutput()), { env: { PATH: '/usr/bin', PWD: '/Users/example/pitwall' } }, fakeIndexer(snapshotWith(ended(ENDED_LINK_ID, viaAlias))));
+      expect((await postAsPage(started, resumePath(ENDED_LINK_ID))).status).toBe(200);
+      const [call] = started.run.calls;
+      expect(call?.options.cwd).toBe(worker());
+      expect(call?.options.env).toEqual({ PATH: '/usr/bin', PWD: viaAlias });
+    });
+  });
+
+  describe('2: the fresh claude agents counts its session id in any row', () => {
+    it('answers 409 and resumes nothing when the session is in a row parseAgentRows skips: an unknown kind, no startedAt, a relative cwd', async () => {
+      const rows = [
+        { sessionId: ENDED_ID, kind: 'remote', cwd: repo, startedAt: Date.parse('2026-10-27T00:00:00.000Z'), pid: 5151 },
+        { sessionId: ENDED_ID, kind: 'interactive', cwd: repo, pid: 5151 },
+        { sessionId: ENDED_ID, kind: 'interactive', cwd: 'repo', startedAt: Date.parse('2026-10-27T00:00:00.000Z'), pid: 5151 },
+      ];
+      for (const row of rows) {
+        // The real source and parser, over made-up output: no `claude` runs.
+        const agents = createAgentsSource({ run: async () => JSON.stringify([row]) });
+        const indexer = fakeIndexer();
+        const started = await start(fakeRunner(resumedOutput()), { agents }, indexer);
+        const res = await postAsPage(started, resumePath(ENDED_ID));
+        expect(res.status, JSON.stringify(row)).toBe(409);
+        expect(errorOf(res)).toMatch(/running again.*would start a copy/);
+        expect(started.run.calls).toEqual([]);
+        expect(indexer.pollSoon).toHaveBeenCalled();
+      }
+    });
+  });
+
+  describe('3: only a session id that is a UUID', () => {
+    it("answers 409 for an ended session whose id isn't a canonical UUID, as a crafted deploy.jsonl gives, without checking or running anything", async () => {
+      for (const id of ['deploy', 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD', '66666666666646668666666666666666', '66666666-6666-4666-8666-66666666666']) {
+        const agents = fakeAgents();
+        const started = await start(fakeRunner(resumedOutput()), { agents }, fakeIndexer(snapshotWith(ended(id, repo))));
+        const res = await postAsPage(started, resumePath(id));
+        expect(res.status, id).toBe(409);
+        expect(errorOf(res)).toMatch(/Only an interactive session that has ended can be resumed/);
+        expect(agents.list).not.toHaveBeenCalled();
+        expect(started.run.calls).toEqual([]);
+      }
+    });
+  });
+
+  describe("4: spawn's per-minute start limit is shared", () => {
+    const limited = (res: HttpResult, retryAfter: string) => {
+      expect(res.status).toBe(429);
+      expect(res.headers['retry-after']).toBe(retryAfter);
+      expect(errorOf(res)).toMatch(/at most 5 sessions every 60 seconds, new and resumed together/);
+    };
+
+    it('answers the sixth start in a minute with 429 and Retry-After when it is a resume after 5 spawns, running nothing', async () => {
+      let now = 1_000_000;
+      const started = await start(either(), { now: () => now });
+      for (let i = 0; i < 5; i++) expect((await spawnAsPage(started, valid())).status, `spawn ${i}`).toBe(201);
+      now += 20_000;
+      limited(await postAsPage(started, resumePath(ENDED_ID)), '40');
+      expect(started.run.calls).toHaveLength(5);
+      now += 40_000;
+      expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    });
+
+    it('answers the sixth start in a minute with 429 and Retry-After when it is a spawn or a resume after 5 resumes', async () => {
+      let now = 1_000_000;
+      const started = await start(either(), { now: () => now });
+      for (let i = 0; i < 5; i++) expect((await postAsPage(started, resumePath(i % 2 === 0 ? ENDED_ID : ENDED_OTHER_ID))).status, `resume ${i}`).toBe(200);
+      now += 30_000;
+      limited(await spawnAsPage(started, valid()), '30');
+      limited(await postAsPage(started, resumePath(ENDED_QUOTED_ID)), '30');
+      expect(started.run.calls).toHaveLength(5);
+    });
+
+    it('counts spawns and resumes together, and not a resume that was refused before it ran', async () => {
+      const agents = fakeAgents();
+      const started = await start(either(), { now: () => 1_000_000, agents });
+      for (let i = 0; i < 2; i++) expect((await spawnAsPage(started, valid())).status).toBe(201);
+      for (let i = 0; i < 2; i++) expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+      // Refused before it ran: open again, and a directory outside the roots.
+      agents.result = { ok: true, rows: [agentRow(ENDED_OTHER_ID)] };
+      expect((await postAsPage(started, resumePath(ENDED_OTHER_ID))).status).toBe(409);
+      agents.result = { ok: true, rows: [] };
+      expect((await postAsPage(started, resumePath(ENDED_ESCAPE_ID))).status).toBe(409);
+      expect((await spawnAsPage(started, valid())).status).toBe(201);
+      limited(await postAsPage(started, resumePath(ENDED_ID)), '60');
+      limited(await spawnAsPage(started, valid()), '60');
+      expect(started.run.calls).toHaveLength(5);
+    });
+  });
+
+  describe('5: no control or bidi character in its directory', () => {
+    it('answers 409 for a directory with a bidi override or a C1 control, running nothing, so no hint carries one', async () => {
+      for (const [id, dir] of [
+        [ENDED_BIDI_ID, bidiDir],
+        [ENDED_C1_ID, c1Dir],
+      ] as const) {
+        const untrusted = exited(1, '', `Workspace not trusted. Run \`claude\` in ${dir} once and accept the trust prompt, then retry.\n`);
+        const started = await start(fakeRunner(untrusted), {}, fakeIndexer(snapshotWith(ended(id, dir))));
+        const res = await postAsPage(started, resumePath(id));
+        expect(res.status, dir).toBe(409);
+        expect(res.json).toEqual({ ok: false, error: 'The directory path contains control characters or bidi controls.' });
+        expect(started.run.calls).toEqual([]);
+      }
+    });
+
+    it('answers 409 for a directory that leads to such a path', async () => {
+      const link = join(root, 'bidi-link');
+      const started = await start(fakeRunner(resumedOutput()), {}, fakeIndexer(snapshotWith(ended(ENDED_BIDI_ID, link))));
+      const res = await postAsPage(started, resumePath(ENDED_BIDI_ID));
+      expect([res.status, errorOf(res)]).toEqual([409, `${link} leads to a path with control characters or bidi controls.`]);
+      expect(started.run.calls).toEqual([]);
+    });
+  });
+});
+
 describe('helpers', () => {
   it('parseBackgrounded reads the id and name, ignoring other lines and terminal escapes', () => {
     expect(parseBackgrounded('backgrounded · b3899da0 · pitwall-test-a\n')).toEqual({ shortId: 'b3899da0', name: 'pitwall-test-a' });
@@ -702,6 +1220,9 @@ describe('helpers', () => {
       name: 'Fix the docs 2.0',
     });
     expect(parseBackgrounded('backgrounded · b3899da0\n')).toEqual({ shortId: 'b3899da0' });
+    // claude --resume <id> --bg prints a state in brackets, and no name (spike 006).
+    expect(parseBackgrounded('backgrounded · 5e66fcb3 (idle — send a prompt to start)\n  claude attach 5e66fcb3\n')).toEqual({ shortId: '5e66fcb3' });
+    expect(parseBackgrounded('backgrounded · b3899da0 · Fix (the docs)\n')).toEqual({ shortId: 'b3899da0', name: 'Fix (the docs)' });
     expect(parseBackgrounded('started b3899da0\n')).toBeUndefined();
     expect(parseBackgrounded('backgrounded · -h · x')).toBeUndefined();
     expect(parseBackgrounded('')).toBeUndefined();
@@ -720,6 +1241,18 @@ describe('helpers', () => {
   it('firstLine skips blank lines and strips escapes', () => {
     expect(firstLine('\n\n  \u001b[31mError: x\u001b[0m  \nmore')).toBe('Error: x');
     expect(firstLine('  \n ')).toBeUndefined();
+  });
+
+  it('parseCopyNote reads the copy from the note, wherever it is, and leaves out an id that is not safe', () => {
+    const note = 'note: session bea3e368 is open in another Claude Code process, so this started a copy as ee8a7a26. The original conversation is unchanged.';
+    expect(parseCopyNote(`backgrounded · ee8a7a26 (idle)\n${note}\n`)).toEqual({ found: true, shortId: 'ee8a7a26' });
+    expect(parseCopyNote(`\u001b[33m${note}\u001b[0m`)).toEqual({ found: true, shortId: 'ee8a7a26' });
+    expect(parseCopyNote('note: … so this started a copy as --help. …')).toEqual({ found: true });
+    expect(parseCopyNote('backgrounded · 5e66fcb3 (idle — send a prompt to start)')).toBeUndefined();
+  });
+
+  it('resumeArgs passes the session id and --bg, and no prompt', () => {
+    expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg']);
   });
 
   it('spawnArgs always ends the options before the prompt', () => {

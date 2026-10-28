@@ -1,6 +1,7 @@
 // Made-up fixtures for the web UI tests. Nothing here comes from a real session.
 
-import type { IndexSnapshot, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
+import { EDITORS_PATH, type IndexSnapshot, type NeedsYou, type SessionGroup, type SessionSummary, type SubagentList } from '../../../src/shared/protocol.js';
+import type { FetchLike } from '../api.js';
 import type { SocketFactory, SocketLike } from '../connection.js';
 
 export const NOW = Date.parse('2026-03-02T12:00:00.000Z');
@@ -11,7 +12,24 @@ export function minutesAgo(minutes: number): string {
 
 let counter = 0;
 
-/** A session. Overrides set to `undefined` remove the field, as JSON would. */
+/**
+ * The needsYou the index would set from these fields alone (src/index/summaries.ts, W69), as for a
+ * job whose file it couldn't read and a session with no restart: 'prompt' while waiting, 'asked' for
+ * askedYou, 'blocked' for a blocked job; never on a stale or finished one.
+ */
+export function indexNeedsYou(session: Pick<SessionSummary, 'stale' | 'finished' | 'status' | 'state' | 'askedYou'>): NeedsYou | undefined {
+  if (session.stale || session.finished) return undefined;
+  if (session.status === 'waiting') return { reason: 'prompt' };
+  if (session.askedYou !== undefined) return { reason: 'asked' };
+  if (session.state === 'blocked') return { reason: 'blocked' };
+  return undefined;
+}
+
+/**
+ * A session. Overrides set to `undefined` remove the field, as JSON would. Without a needsYou of its
+ * own, it gets the one the index would set from its other fields (indexNeedsYou); `needsYou:
+ * undefined` gives none, as for a blocked job whose file asks nothing.
+ */
 export function session(overrides: Partial<SessionSummary> = {}): SessionSummary {
   counter += 1;
   const merged: SessionSummary = {
@@ -30,6 +48,10 @@ export function session(overrides: Partial<SessionSummary> = {}): SessionSummary
     transcript: 'ok',
     ...overrides,
   };
+  if (!('needsYou' in overrides)) {
+    const needsYou = indexNeedsYou(merged);
+    if (needsYou !== undefined) merged.needsYou = needsYou;
+  }
   for (const key of Object.keys(merged) as (keyof SessionSummary)[]) {
     if (merged[key] === undefined) delete merged[key];
   }
@@ -161,5 +183,37 @@ export function fakeSockets() {
       if (!socket) throw new Error('no socket opened yet');
       return socket;
     },
+  };
+}
+
+/**
+ * `fetch` behind a server that also answers the editor list (W72), which the app GETs once, as soon
+ * as it has an apiKey. That request is answered here, with `body`, none by default, and recorded in
+ * `editorCalls`, so a test of the app's other requests counts and checks only its own in `fetch`.
+ */
+export function withEditorList(fetch: FetchLike, body: unknown = { editors: [] }): FetchLike & { editorCalls: Array<[string, RequestInit]> } {
+  const editorCalls: Array<[string, RequestInit]> = [];
+  const answer: FetchLike = async (url, init) => {
+    if (url !== EDITORS_PATH) return fetch(url, init);
+    editorCalls.push([url, init]);
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  return Object.assign(answer, { editorCalls });
+}
+
+/** A session's sub-agents route (W77): `/api/sessions/<id>/subagents`, with the id. */
+const SUBAGENTS_ROUTE = /^\/api\/sessions\/([^/?]+)\/subagents$/;
+
+/**
+ * `fetch` with a session's sub-agents answered before it as a list of none, so a test of something
+ * else, such as the conversation, sees only its own requests: the session view asks for the list once
+ * as it opens (W77), and the tab stays hidden for a session that has none.
+ */
+export function withoutSubagents(fetch: FetchLike): FetchLike {
+  return (url, init) => {
+    const match = SUBAGENTS_ROUTE.exec(url);
+    if (!match) return fetch(url, init);
+    const list: SubagentList = { sessionId: decodeURIComponent(match[1] ?? ''), subagents: [], truncated: false };
+    return Promise.resolve(new Response(JSON.stringify(list), { status: 200 }));
   };
 }

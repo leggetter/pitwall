@@ -363,7 +363,8 @@ describe('New session: starting one', () => {
     await submit(dialog);
     expect(within(dialog).getByText('Choose a directory.')).toBeTruthy();
     for (const [path, problem] of [
-      ['code/demo-app', 'Use an absolute path, starting with /.'],
+      ['code/demo-app', 'Use an absolute path, or one that starts with ~/.'],
+      ['~/elsewhere/demo-app', 'Use a directory under ~/code.'],
       ['/Users/example/codex', 'Use a directory under ~/code.'],
       ['/etc', 'Use a directory under ~/code.'],
     ]) {

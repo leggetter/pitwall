@@ -6,17 +6,20 @@
 // - role="dialog", aria-modal, named by its title and described by its subtitle.
 // - Focus moves to the first field on open, Tab and Shift+Tab stay inside, and focus goes back to
 //   whatever had it, normally the button that opened it, when it closes, without opening that
-//   button's tooltip (focusQuietly), which would take the next Escape. A radio group is one field,
-//   its chosen radio, as Tab has it, so the Preferences dialog opens on its first group's choice and
-//   Tab from the last group's choice goes round to the first (W59).
+//   button's tooltip (focusQuietly), which would take the next Escape. Both happen in the commit
+//   that shows or removes the dialog, so nothing after it sees focus on the page (W83). A radio
+//   group is one field, its chosen radio, as Tab has it, so the Preferences dialog opens on its
+//   first group's choice and Tab from the last group's choice goes round to the first (W59).
 // - Its header and footer are plain elements, not <header> and <footer>, which outside a sectioning
 //   element would be the page's banner and contentinfo landmarks.
-// - Escape closes it, and goes no further, so the session view behind stays open. A click on the
+// - Escape closes it, and goes no further, so the session view behind stays open. An Escape that ends
+//   an input method's composition is the input method's: it closes nothing. A click on the
 //   backdrop closes it only when nothing has been typed. While its action runs (`busy`), neither does,
 //   and Close is aria-disabled.
 
-import { useEffect, useId, useRef, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { Icon } from './Icon.js';
+import { isComposing } from '../composing.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
 import './Dialog.css';
 
@@ -70,8 +73,12 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
   // A press that started on the backdrop, so a drag that ends there doesn't count as a click on it.
   const pressedBackdrop = useRef(false);
 
-  // The first field takes focus; whatever had it before gets it back when the dialog goes.
-  useEffect(() => {
+  // The first field takes focus; whatever had it before gets it back when the dialog goes. A layout
+  // effect, so focus goes back before the dialog leaves the page, in the same commit (W83). When the
+  // dialog closes from something other than a click or a key, as New session does once its request
+  // answers, React runs a passive effect's clean-up in a later task, leaving focus on the page in
+  // between. The web tests, in happy-dom, saw that gap; Chrome 155 had focus back already.
+  useLayoutEffect(() => {
     const returnTo = document.activeElement;
     (tabStops(body.current)[0] ?? tabStops(card.current)[0])?.focus();
     return () => {
@@ -86,6 +93,11 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
 
   const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
+      // The input method's, ending a composition: nothing closes, and nothing behind hears it either.
+      if (isComposing(event.nativeEvent)) {
+        event.stopPropagation();
+        return;
+      }
       // Handled here, so the session view behind doesn't close too.
       event.preventDefault();
       event.stopPropagation();

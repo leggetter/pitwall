@@ -4,6 +4,8 @@
 // the real clipboard.
 
 import {
+  ATTACHMENTS_PATH,
+  DIRECTORIES_PATH,
   PROTOCOL_VERSION,
   SPAWN_PATH,
   WS_CLOSE_TOO_MANY,
@@ -12,7 +14,7 @@ import {
   type ConversationEntry,
   type RelayResult,
 } from '../../../src/shared/protocol.js';
-import type { ApiClient, ApiResult } from '../api.js';
+import type { ApiClient, ApiResult, ApiUpload } from '../api.js';
 import type { AttachEnv } from '../attach.js';
 import type { ClipboardLike } from '../copy.js';
 import { writeDraft, type DraftStorageSource, type StoredDraft } from '../drafts.js';
@@ -21,7 +23,21 @@ import type { StorageSource } from '../groupState.js';
 import { writeHidden, type HiddenGroup } from '../hidden.js';
 import { createShortcutsStore, SHORTCUTS_KEY, type ShortcutsStore } from '../shortcuts.js';
 import { writeStarred } from '../starred.js';
-import { CONVERSATION, NEWER_CONVERSATION, OLDER_CONVERSATION, TERMINAL_OUTPUT, TRUST_HINT } from './fixtures.js';
+import {
+  APP_DIR,
+  CONVERSATION,
+  DIALOG_DIRECTORIES,
+  MANY_DIRECTORIES,
+  MANY_SUBAGENTS,
+  NEWER_CONVERSATION,
+  OLDER_CONVERSATION,
+  SUBAGENT_OLDER,
+  SUBAGENT_TRANSCRIPT,
+  SUBAGENTS,
+  TERMINAL_OUTPUT,
+  TRUNCATED_SUBAGENTS,
+  TRUST_HINT,
+} from './fixtures.js';
 
 /** Never settles: the component stays in its busy state. */
 const forever = () => new Promise<ApiResult>(() => {});
@@ -63,20 +79,68 @@ export interface StubOptions {
   relay?: RelayResult | 'sending' | 'unreachable' | 'refused-request';
   /** What starting a session gets. `trust` is Claude Code refusing an untrusted directory. */
   spawn?: 'started' | 'trust' | 'failed' | 'starting';
+  /**
+   * The directory list for New session's "Another directory under a root…" (W70). `loading` never
+   * answers; `empty` has none under the root; `many` has 312; `truncated` says the walk stopped early;
+   * `failed` is a 500.
+   */
+  directories?: 'ok' | 'loading' | 'empty' | 'many' | 'truncated' | 'failed';
   /** What Stop and Remove get. `busy` never answers. */
   stop?: 'done' | 'refused' | 'busy';
   remove?: 'done' | 'refused' | 'busy';
+  /**
+   * What Resume in background gets (W67), in W66's words. `resuming` never answers; `refused` is a
+   * session that's running again; `hint` is Claude Code refusing an untrusted directory, with the
+   * command that trusts it; `copied` is Claude Code starting a copy instead; `busy` is pitwall already
+   * running four commands; `timeout` is `claude --resume` not finishing; `failed` is no answer at all.
+   */
+  resume?: 'resumed' | 'resuming' | 'refused' | 'hint' | 'copied' | 'busy' | 'timeout' | 'failed';
+  /**
+   * What Open in an editor gets (W72), in the server's words (src/server/editors.ts). `opening` never
+   * answers; `refused` is `open -a` exiting non-zero, as when the app has moved since pitwall started.
+   */
+  open?: 'opened' | 'opening' | 'refused';
+  /**
+   * A session's sub-agents (W77). Left out, the route is a 404, as before W76, so a view shows no
+   * Sub-agents tab. `ok` is one of each state and a nested one; `many` is 72; `truncated` is twelve
+   * the server cut short; `empty` has none; `loading` never answers; `failed` is a 500 every time, and
+   * `failed-retrying` a 500, then no answer, so Try again stays busy; `refresh-failed` answers the
+   * first, then 502s. A sub-agent's transcript has a page behind Load earlier.
+   */
+  subagents?: 'ok' | 'many' | 'truncated' | 'empty' | 'loading' | 'failed' | 'failed-retrying' | 'refresh-failed';
+  /**
+   * What New session's uploads get (W82). `uploaded` keeps each, as W79's route does; `uploading`
+   * never answers; `failed` is a 500 every time; `failed-retrying` a 500, then no answer, so Try
+   * again stays busy; `refused` is a 415 from bytes that contradict the type; `unavailable` is a
+   * 503, a pitwall that keeps no attachments on this machine.
+   */
+  upload?: 'uploaded' | 'uploading' | 'failed' | 'failed-retrying' | 'refused' | 'unavailable';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
+/** A session's sub-agents, or one's transcript, with its cursor. */
+const SUBAGENTS_PATH = /^\/api\/sessions\/([^/?]+)\/subagents(?:\/([A-Za-z0-9]+)\/conversation(?:\?before=(.*))?)?$/;
 
 /** An ApiClient that answers from the fixtures, as `options` say, and never calls fetch. */
 export function stubApi(options: StubOptions = {}): ApiClient {
   // How many times each session's newest page, and each one's older page, has been asked for.
   const fetched = new Map<string, number>();
   const fetchedOlder = new Map<string, number>();
+  let listed = 0;
   const answer = (method: 'GET' | 'POST', path: string): Promise<ApiResult> => {
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
+    if (method === 'GET' && path === DIRECTORIES_PATH) return directories(options.directories ?? 'ok');
+    const agents = method === 'GET' ? SUBAGENTS_PATH.exec(path) : null;
+    if (agents) {
+      if (options.subagents === undefined) return Promise.resolve(failed(404));
+      const sessionId = decodeURIComponent(agents[1] ?? '');
+      if (agents[2] !== undefined) {
+        const older = agents[3] !== undefined;
+        return Promise.resolve(ok(older ? { sessionId, entries: SUBAGENT_OLDER } : { sessionId, entries: SUBAGENT_TRANSCRIPT, before: 'pitwall-test-agent-cursor' }));
+      }
+      listed += 1;
+      return subagents(sessionId, options.subagents, listed - 1);
+    }
     const match = SESSION_PATH.exec(path);
     if (!match) return Promise.resolve(failed(404));
     const sessionId = decodeURIComponent(match[1] ?? '');
@@ -91,12 +155,43 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
+    if (method === 'POST' && route === 'resume') return resume(options.resume ?? 'resumed');
+    if (method === 'POST' && route === 'open') return openEditor(options.open ?? 'opened');
     return Promise.resolve(failed(404));
   };
+  let uploads = 0;
   return {
     get: (path) => answer('GET', path),
     post: (path) => answer('POST', path),
+    upload: (path, file) => {
+      if (path !== ATTACHMENTS_PATH) return Promise.resolve(failed(404));
+      uploads += 1;
+      return upload(options.upload ?? 'uploaded', file, uploads - 1);
+    },
+    // An unused upload removed (W82): done, as the server's 204.
+    delete: (path) => Promise.resolve(path.startsWith(`${ATTACHMENTS_PATH}/`) ? { kind: 'ok', status: 204, body: undefined } : failed(404)),
   };
+}
+
+/** `times` is how many uploads came before this one. */
+function upload(result: NonNullable<StubOptions['upload']>, file: ApiUpload, times: number): Promise<ApiResult> {
+  switch (result) {
+    case 'uploading':
+      return forever();
+    case 'failed':
+      return Promise.resolve(failed(500, { ok: false, error: "Made up: pitwall couldn't write the file." }));
+    case 'failed-retrying':
+      return times === 0 ? Promise.resolve(failed(500, { ok: false, error: "Made up: pitwall couldn't write the file." })) : forever();
+    case 'refused':
+      return Promise.resolve(failed(415, { ok: false, error: "Made up: its first bytes aren't a PNG's." }));
+    case 'unavailable':
+      return Promise.resolve(failed(503, { ok: false, error: "Made up: this pitwall doesn't keep attachments." }));
+    case 'uploaded': {
+      const name = decodeURIComponent(file.headers?.['X-Pitwall-Filename'] ?? '');
+      const id = `00000000-0000-4000-8000-${String(times + 1).padStart(12, '0')}`;
+      return Promise.resolve(ok({ ok: true, attachment: { id, name, type: file.contentType, size: file.body.size } }));
+    }
+  }
 }
 
 /** `older` is a "Load earlier" request; `times` is how often that page, the newest or the older one, was asked for before this. */
@@ -136,11 +231,52 @@ function conversation(sessionId: string, kind: NonNullable<StubOptions['conversa
   }
 }
 
+/** `times` is how often the list was asked for before this. */
+function subagents(sessionId: string, kind: NonNullable<StubOptions['subagents']>, times: number): Promise<ApiResult> {
+  const list = (entries: typeof SUBAGENTS, truncated = false) => Promise.resolve(ok({ sessionId, subagents: entries, truncated }));
+  switch (kind) {
+    case 'loading':
+      return forever();
+    case 'failed':
+      return Promise.resolve(failed(500));
+    case 'failed-retrying':
+      return times === 0 ? Promise.resolve(failed(500)) : forever();
+    case 'refresh-failed':
+      return times === 0 ? list(SUBAGENTS) : Promise.resolve(failed(502));
+    case 'empty':
+      return list([]);
+    case 'many':
+      return list(MANY_SUBAGENTS);
+    case 'truncated':
+      return list(TRUNCATED_SUBAGENTS, true);
+    case 'ok':
+      return list(SUBAGENTS);
+  }
+}
+
 function relay(result: NonNullable<StubOptions['relay']>): Promise<ApiResult> {
   if (result === 'sending') return forever();
   if (result === 'unreachable') return Promise.resolve(failed());
   if (result === 'refused-request') return Promise.resolve(failed(403));
   return Promise.resolve(ok(result));
+}
+
+function directories(result: NonNullable<StubOptions['directories']>): Promise<ApiResult> {
+  const [listed] = DIALOG_DIRECTORIES.roots;
+  switch (result) {
+    case 'loading':
+      return forever();
+    case 'failed':
+      return Promise.resolve(failed(500));
+    case 'empty':
+      return Promise.resolve(ok({ roots: DIALOG_DIRECTORIES.roots.map((root) => ({ ...root, dirs: [] })) }));
+    case 'many':
+      return Promise.resolve(ok(MANY_DIRECTORIES));
+    case 'truncated':
+      return Promise.resolve(ok({ roots: listed ? [{ ...listed, truncated: true }] : [] }));
+    case 'ok':
+      return Promise.resolve(ok(DIALOG_DIRECTORIES));
+  }
 }
 
 function spawn(result: NonNullable<StubOptions['spawn']>): Promise<ApiResult> {
@@ -166,6 +302,47 @@ function action(route: 'stop' | 'remove', result: 'done' | 'refused' | 'busy'): 
       ? 'claude rm kept the worktree ~/code/pitwall-test-app/.claude/worktrees/pitwall-test-export-fix, because it has unpushed commits.'
       : 'claude stop failed: the session had already exited.';
   return Promise.resolve(failed(409, { ok: false, error }));
+}
+
+function resume(result: NonNullable<StubOptions['resume']>): Promise<ApiResult> {
+  switch (result) {
+    case 'resuming':
+      return forever();
+    case 'resumed':
+      return Promise.resolve(ok({ ok: true, shortId: 'pt000000' }));
+    case 'refused':
+      return Promise.resolve(failed(409, { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." }));
+    case 'hint':
+      return Promise.resolve(
+        failed(422, { ok: false, error: `Workspace not trusted. Run \`claude\` in ${APP_DIR} once and accept the trust prompt, then retry.`, hint: TRUST_HINT }),
+      );
+    case 'copied':
+      return Promise.resolve(
+        failed(409, {
+          ok: false,
+          error:
+            'It was open in another Claude Code process after all, so Claude Code started a copy as pt0copy1 instead. The copy is listed as a background session with no name, which you can stop and remove.',
+          copyShortId: 'pt0copy1',
+        }),
+      );
+    case 'busy':
+      return Promise.resolve(failed(429, { ok: false, error: 'pitwall is already running 4 stop, remove, resume or open commands. Try again in a moment.' }));
+    case 'timeout':
+      return Promise.resolve(failed(504, { ok: false, error: "claude --resume didn't finish within 30s. The session may still appear in the list." }));
+    case 'failed':
+      return Promise.resolve(failed());
+  }
+}
+
+function openEditor(result: NonNullable<StubOptions['open']>): Promise<ApiResult> {
+  switch (result) {
+    case 'opening':
+      return forever();
+    case 'refused':
+      return Promise.resolve(failed(502, { ok: false, error: "Cursor didn't open. If it has moved, restart pitwall so it looks again." }));
+    case 'opened':
+      return Promise.resolve(ok({ ok: true }));
+  }
 }
 
 /**

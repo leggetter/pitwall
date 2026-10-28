@@ -28,6 +28,7 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ATTACH_COMMAND, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachEnv, type AttachSession, type AttachStatus, type EndNotice } from '../attach.js';
+import { isComposing } from '../composing.js';
 import { plainText } from '../format.js';
 import type { BadgeLook } from '../sessions.js';
 import { ATTACH_DELAY_MS, cssTime } from '../timing.js';
@@ -129,15 +130,6 @@ function isLeaveKey(event: KeyboardEvent): boolean {
 export const NEW_LINE = '\n';
 
 /**
- * Whether an input method is composing, so the key is the IME's: `isComposing`, or keyCode 229,
- * which Safari gives the key that ends a composition after its compositionend, with `isComposing`
- * already false. xterm.js handles both itself.
- */
-function isComposing(event: KeyboardEvent): boolean {
-  return event.isComposing || event.keyCode === 229;
-}
-
-/**
  * Shift+Enter with no other modifier, and not while an input method composes. With Ctrl, Alt or ⌘
  * too, or while composing, it goes to xterm.js like any other key.
  */
@@ -175,6 +167,8 @@ export interface SessionTerminalProps {
 }
 
 export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, onRestartChange, wait = false, canFocus, onAsk, typeHintId }: SessionTerminalProps) {
+  // The box xterm.js opens in, inside the screen's padding: what the fit addon measures, and what a
+  // resize is watched on (W74).
   const container = useRef<HTMLDivElement>(null);
   // The F6 hint, which describes xterm.js's textarea, so a screen reader in the terminal hears how to leave.
   const hintId = useId();
@@ -423,12 +417,21 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
           <NoticeText notice={notice} />
         </Alert>
       )}
+      {/*
+        The screen: its padding, edge and fill on the outer box, and xterm.js in a box of its own that
+        fills the outer one's content box, with no padding (W74). The fit addon sizes the terminal to
+        its parent's computed height and width, less only the terminal element's own padding: given
+        the outer box, whose padding the page's border-box sizing counts in, it took up to 12 px more
+        than there's room for, so the last row ran into the padding and was cut off, and the last
+        column ran under the scrollbar's track.
+      */}
       <div
         className="attach-terminal"
-        ref={container}
         onFocus={() => setFocused(true)}
         onBlur={(event) => setFocused(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))}
-      />
+      >
+        <div className="attach-terminal-fit" ref={container} />
+      </div>
     </div>
   );
 }

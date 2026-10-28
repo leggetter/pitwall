@@ -2,17 +2,88 @@
 
 A local CLI and web UI for supervising the Claude Code sessions running on your machine.
 
-- **Lists every live session under a directory,** wherever it was started (Warp, Cursor, any terminal), grouped by git repo.
-- **Lets you act on a session:** read it, reply, answer its prompts.
-- **Spawns new sessions** in any directory under the root.
+![pitwall in the light theme: Needs you, All sessions, Starred and the repos on the left; the starred sessions in the middle, each with its repo, its status and what it needs from you; and on the right, an open session's conversation, ending with the question it asked you, above the message box](docs/images/pitwall-light.png)
+
+*The sessions and the conversation in the screenshot are made up.*
+
+- **Lists every live Claude Code session under a directory,** wherever it was started (Warp, Cursor, any terminal), grouped by git repo. Finished background sessions, and interactive sessions that ended recently, are listed too.
+- **Shows which sessions need you,** judged from each session's context: a prompt on screen, a question it asked, or what Claude Code says a background session needs.
+- **Lets you act on a session:** read its conversation and its sub-agents', message it, or drive a background session in a terminal in the page, permission prompts included.
+- **Starts new sessions** in any directory under a root, with files attached to the first prompt, and resumes an ended interactive session in the background.
+- **Opens a session's directory** in VS Code or Cursor.
 - **Will have a supervisor session** (M5) you can talk to instead of visiting each session, knowing what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, and M3, a design system and restyle, are done; M3 merged into `main` on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51). Next: the "After M3" list in the plan. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, M3, a design system and restyle, and M3.1, the work after M3, are merged into `main`: M3 on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51), and M3.1 on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87). End session for interactive sessions waits on a decision. Next: M4, open pull requests next to the sessions working on them. See [`PLAN.md`](PLAN.md).
+
+## Try it
+
+pitwall runs from a clone of this repo. It isn't published to npm.
+
+### What you need
+
+- **macOS.** It's only been used on macOS. CI builds and tests it on Ubuntu, but nobody has run it on Linux or Windows.
+- **Node 22 or later,** with npm. CI uses Node 22.
+- **Claude Code,** logged in, with `claude` on your `PATH`. pitwall has been used with Claude Code 2.1.312. The one version it checks is for messaging an interactive session: its relay needs 2.1.295 or later, and pitwall won't start it on an older one.
+- **git,** to clone the repo, and for grouping sessions by repo.
+- **Access to the repo:** it's private, so cloning needs your GitHub credentials, such as `gh auth login` or an SSH key.
+
+### Run it
+
+```
+git clone https://github.com/leggetter/pitwall.git
+cd pitwall
+npm ci
+npm run build
+node dist/cli.js ~/code
+```
+
+- **The root:** `~/code` stands for the directory that holds your work. pitwall lists every session whose working directory is in it or below it. Give two or more roots, such as `~/work ~/oss`, to get a tab for each, or none for the current directory.
+- **npm's notes:** `npm ci` may say it skipped install scripts for `esbuild`, `fsevents` and `node-pty`, as recent npm 11 releases do by default. On macOS that's fine: `node-pty`, the one native module, loads the macOS build it ships with, and pitwall makes its helper executable the first time it attaches. It may also report advisories in two dev dependencies, Vite and happy-dom. pitwall uses Vite only to build the web UI, never its dev server, and happy-dom only in `npm test`.
+- **On Linux,** which is untried, `node-pty` ships no build and compiles in its install script, which needs Python, `make` and a C++ compiler. npm 10 runs that script, as CI does; npm 11 skips it unless it's approved (`npm help install-scripts`). Without it, attaching to a session fails with a message, and the rest of pitwall works.
+
+### What happens
+
+- **Your browser opens pitwall** at `http://127.0.0.1:4517/`. pitwall opens it through a launch file in `~/.pitwall/`, so the token is never in a command line that other users can see with `ps` (D7). The page moves the token out of the address bar.
+- **If it doesn't open,** use the link pitwall prints: `pitwall is running at http://127.0.0.1:4517/#token=…`.
+- **A new token every run.** A tab from an earlier run can't reconnect, so use the new link. `PITWALL_TOKEN` fixes the token, for a pinned tab on a single-user machine (D7).
+- **If port 4517 is busy,** pitwall uses a free port and says so. `--port <n>` picks one, and fails if it's busy.
+- **To stop pitwall,** press Ctrl+C in its terminal. Your sessions keep running: a terminal open in the page detaches without stopping its session, and pitwall's relay session, if it started one, stops with it.
+
+### What pitwall reads, and what it does only when you ask
+
+- **It reads, and changes nothing:**
+  - `claude agents --json --all`, every 5 seconds, for the list of sessions.
+  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing and whether it needs you.
+  - To find ended sessions, the start of every transcript in `~/.claude/projects/` changed in the last 30 days, whatever its directory, kept in memory. Only those under your roots are listed.
+  - `ps` for when a session's process started, `claude --version` before its relay starts, and `/Applications` and `~/Applications` for VS Code and Cursor.
+  - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
+- **It acts only when you ask:**
+  - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked (D8). The session sees it as a message from another session, so a message can't approve a permission prompt.
+  - **Attach** to a background session, in a terminal in the page. Opening a running one's view attaches to it by default, since that's where it takes input; one that has finished asks first, because attaching restarts it (D9).
+  - **Start** a session with `claude --bg`, and **stop** or **remove** a background one with `claude stop` or `claude rm`, after a confirmation.
+  - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg` (D17).
+  - **Open** a session's directory in VS Code or Cursor (D19).
+- **Its own files are all in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt, which it deletes after an hour if they're unused, or 7 days after the session started (D20). `PITWALL_HOME` moves it.
+
+### Security, in brief
+
+A page that can type into your sessions can run code as you, so pitwall guards it (see "Security" in [`PLAN.md`](PLAN.md)):
+
+- **Localhost only:** the server listens on 127.0.0.1 alone, and trusts no other host name, not even `localhost`.
+- **A token:** every API request and the WebSocket need it. The page proves it holds the token over the WebSocket instead of sending it, and anything that changes state also needs a key that only that page gets.
+- **`Host` and `Origin` checks:** `Host` must be `127.0.0.1:<port>` on every request, against DNS rebinding. A WebSocket must come from pitwall's own page, an API request from another origin is refused, and there's no CORS.
+
+### Caveats
+
+- **Undocumented rows:** pitwall finds the interactive sessions running in your terminals through their rows in `claude agents --json`, which Claude Code's docs don't describe: they describe background sessions only. If a release drops those rows, pitwall loses most of its value (D1).
+- **Internal files:** transcripts, sub-agents' folders and job state are Claude Code's internal formats, which change between versions. pitwall reads them read-only, behind adapters that fail soft: a file it can't read shows as unavailable, or as less detail, never as a crash.
+- **A running interactive session can only be messaged, not driven.** For anything more, such as answering a prompt, type `/bg` in the session's terminal to move it to the background, and pitwall can then attach to it (D2).
+- **Untrusted directories:** Claude Code won't start a session from a script in a directory you haven't trusted. New session then shows Claude Code's error and the command to run; pitwall never grants trust for you.
+- **Cost:** each message you send starts a turn on the target session's own model, plus a Haiku turn in the relay.
 
 ## Use
 
 ```
-npm ci && npm run build
 node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 ```
 
@@ -20,12 +91,12 @@ node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 - **Opening it:** the CLI opens your browser through a launch file in `~/.pitwall/` (D7), which sends it to `http://127.0.0.1:<port>/#token=...`. The token is per run unless `PITWALL_TOKEN` fixes it, and never appears in a process's arguments. A per-run token is printed with the URL, since every copy dies with the run; a fixed one never is (W51). The page moves it out of the address bar, and never sends it to the server: it proves it with an HMAC over the WebSocket. `PITWALL_HOME` overrides `~/.pitwall`.
 - **Port:** the default is 4517, falling back to a free port if it's busy. An explicit `--port` fails instead.
 - **Interval:** `--interval` sets the poll, in seconds (default 5).
-- **Acting on sessions:** open a session to read its conversation; attach to a background session in a terminal in the page; message an interactive session through the relay (D8); start, stop and remove background sessions. Finished background sessions stay listed, in a Finished section at the end of the list.
+- **Acting on sessions:** open a session to read its conversation, and its sub-agents in their own tab; attach to a background session in a terminal in the page; message an interactive session through the relay (D8); start a session, with attachments (D20), and stop and remove background sessions; resume an ended interactive session (D17); open a session's directory in an editor (D19). Finished background sessions and ended interactive ones stay listed, in a Finished section at the end of the list.
 - **Layout:** repos, then the selected repo's sessions, then the open session (D11). `/` filters, `n` starts a session, `?` lists the shortcuts, `j`/`k` move through the list and `s` stars the open session; a setting turns them off (D13).
 
 ## Decisions
 
-Settled decisions move here from `PLAN.md`, with their reasoning. The evidence is in [`docs/spikes/001-session-control.md`](docs/spikes/001-session-control.md).
+Settled decisions move here from `PLAN.md`, with their reasoning. The evidence is in the spike write-ups in [`docs/spikes/`](docs/spikes/), starting with [`001-session-control.md`](docs/spikes/001-session-control.md).
 
 ### D1 - The session list comes from `claude agents --json --all`
 
@@ -33,6 +104,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Caveat:** interactive rows aren't in the agent view docs, which describe background sessions only. If they disappear in a later Claude Code release, pitwall loses most of its value, so watch the changelog.
 - **How:** poll every 5 s by default (`pitwall --interval <seconds>`). The full snapshot is pushed only when it changed, with a heartbeat after other polls. Each `claude agents --json` call costs about 0.18 s of CPU, so a 2 s interval used about 9% of a core; that was the M1 behavior until W7a. Interactive rows give `status` (busy/idle) only; background rows add `state` and, when waiting, `waitingFor`.
 - **`--all`, from M2:** background sessions that have finished or been stopped stay listed, muted, so they can still be opened, attached to (which restarts them) or removed. Plain `--json` drops them once their process has gone. It costs nothing measurable.
+- **Ended interactive sessions,** which `--all` doesn't list once their process has gone, come from their transcripts instead, from M3.1 (D17).
 
 ### D2 - Interactive sessions: relay messages, or `/bg` for full control
 
@@ -60,8 +132,8 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
   - **Server:** Hono is small and runs on Node's HTTP server, and `ws` carries the PTY streams and live index updates.
   - **UI:** React and Vite, for a UI that's mostly lists and panels.
   - **Terminal:** `node-pty` and xterm.js are the usual pair for a terminal in the browser. VS Code's integrated terminal is built on both, and `node-pty@1.0.0` worked on Node 25.1.0 in spike 001.
-- **Packaging:** `@leggetter/pitwall` on npm, because the unscoped `pitwall` is taken. The binary is `pitwall`.
-- **Watch:** `node-pty` is a native module. npm warned in spike 001 that its install script isn't covered by `allowScripts`, so a clean install may need that script approved.
+- **Packaging:** the package is named `@leggetter/pitwall`, for npm, because the unscoped `pitwall` is taken. The binary is `pitwall`. It isn't published: `package.json` is marked private, so pitwall runs from a clone.
+- **Watch:** `node-pty` is a native module. npm warned in spike 001 that its install script isn't covered by `allowScripts`, and npm 11 skips such scripts by default. On macOS that doesn't matter, since `node-pty` 1.1.0 loads the macOS build it ships with; on Linux it has none, so its script must run to compile it.
 
 ### D7 - The browser is opened through a launch file, not a URL with the token in it
 
@@ -86,7 +158,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D9 - At most four attached sessions, and a confirmation before restarting one
 
 - **Why:** each attach is a PTY and a `claude attach` process. Closing the view or the tab detaches, and the session keeps running. `claude attach` restarts a background session that isn't running, which is an action, so the UI asks first.
-- **Opening a view attaches** (W54): a running background session's view opens on its Terminal tab, so opening one takes one of the four. In a root tab only the open view's terminal is attached; views kept for other root tabs keep theirs (D16). A fifth gets "4 sessions are already attached; detach one first.", with Attach again, as before. Stepping with `j`, `k`, ↑ or ↓ waits 500 ms before attaching, so passing through takes none. The terminal takes the keyboard only right after you opened the view or its Terminal tab with a click or Enter in the page, within 5 s, and while focus is still in the view (W57, after W48's second pass found H1). A URL, a reload, back or forward, a root tab's switch or a step attaches but leaves focus where it is, and the terminal's bar says "Click the terminal, or Tab to it, to type to the session", so the next Enter after a reload can't approve a permission prompt. `pitwall.terminal-focus.v1` can make it never (Phil, 2026-10-23); Its control is "The terminal takes the keyboard", in Preferences' Session view section (W59).
+- **Opening a view attaches** (W54): a running background session's view opens on its Terminal tab, so opening one takes one of the four. In a root tab only the open view's terminal is attached; views kept for other root tabs keep theirs (D16). A fifth gets "4 sessions are already attached; detach one first.", with Attach again, as before. Stepping with `j`, `k`, ↑ or ↓ waits 500 ms before attaching, so passing through takes none. The terminal takes the keyboard only right after you opened the view or its Terminal tab with a click or Enter in the page, within 5 s, and while focus is still in the view (W57, after W48's second pass found H1). A URL, a reload, back or forward, a root tab's switch or a step attaches but leaves focus where it is, and the terminal's bar says "Click the terminal, or Tab to it, to type to the session", so the next Enter after a reload can't approve a permission prompt. `pitwall.terminal-focus.v1` can make it never (Phil, 2026-10-23); its control is "The terminal takes the keyboard", in Preferences' Session view section (W59).
 
 ### D6 - Group sessions by repo, as the viewer chooses: by main repo, where they started, or every repo they worked in
 
@@ -113,6 +185,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Why:** asked for after trying M2: pick a repo, then one of its sessions, then work with that session. It replaces M2's single list of grouped cards.
 - **Repo list:** Needs you, All sessions and Starred first (Starred shows whether or not anything is starred, so the list never jumps; W53), then the root's own directory, labelled with its path, then the repos in alphanumeric order, so the list never jumps.
+- **A started session is selected** (Phil, 2026-10-23: "when creating a new session, it should be automatically selected - the repo/directory and the session"): once a session started from New session is listed, its root tab, its repo or directory under Group sessions by, and its view are selected, in one history entry, and its terminal takes no keyboard focus (W57). When that would take over a draft, a running Stop or Remove, an open confirmation or restart prompt, or typing, a toast says it's listed, with Open, for 10 s; its row is the lasting way in (W63).
 - **Widths:** three columns from 1,200 px. Below that, the session view lies over the session list, starting below the header, and what it covers is inert (it can't be clicked or tabbed to). Below 900 px the repo list is a drawer, and at 600 px and narrower the session view is full width, with Back to sessions.
 - **Resizing:** the session view is 760 px by default and at least 560 px, about 80 terminal columns. The divider resizes it, and so do the actions menu's Make view wider and Make view narrower, for anyone who can't drag (WCAG 2.5.7). The width is remembered.
 
@@ -120,7 +193,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **Rows:** name, title, badge and time, then what the session asked or was last asked. The last reply, the relay exchange, the working directory, the attach command and the message box are in the session view.
 - **No tint:** rows that need you keep their bar and badge, without a yellow background. Nine of fifteen sessions needed attention on 2026-10-20, and the tint turned most of the list yellow.
-- **No idle badge in the list:** "Idle" shows only in the session view. Needs you is still inferred: `needsAttention()` comes from waiting, blocked and asked-you, never from the badge.
+- **No idle badge in the list:** "Idle" shows only in the session view. Needs you is still inferred, never from the badge: `needsAttention()` is true when the index has set the session's `needsYou`, judged from its context since W69 (D18), and never for a stale, finished or ended session.
 - **Sort:** Urgency by default, or Recent or Name. The order holds while the pointer or focus is in the list, so rows don't move under you.
 
 ### D13 - ⌘↵ sends, and the single-key shortcuts can be turned off
@@ -134,7 +207,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 ### D14 - The live snapshot carries only what the list shows
 
 - **Why:** until M3, every snapshot sent to the browser held each session's latest reply, though the UI showed none of it. That's gone.
-- **What it still carries:** what the list and the session view's header show: each session's title, its newest prompt (up to 300 characters), what it asked you, and the reply to a message you relayed. The conversation itself leaves the server only when you open it, through the token-gated conversation route.
+- **What it still carries:** what the list and the session view's header show: each session's title, its newest prompt (up to 300 characters), what it asked you, a background job's own line on what it needs (up to 200 characters, D18), how many of its sub-agents are running, and the reply to a message you relayed. The conversation itself leaves the server only when you open it, through the token-gated conversation route, and a sub-agent's list and transcript only through their own (W76).
 - **Browser storage:** no token in `localStorage`, and no session content, with one exception. The token is in `sessionStorage`. So is each conversation's unsent draft, under `pitwall.draft.v1:<sessionId>`, with whether a send of it was out or uncertain, and when (W44). Phil chose `sessionStorage` over `localStorage` (2026-10-22): a draft lasts as long as the tab, as the token does, through reloads and pitwall restarts, and two tabs never overwrite each other's. The browser keeps `sessionStorage` in its profile on disk while the tab exists, and for a closed tab it can reopen (W48's F10). A process that takes pitwall's port while pitwall is down serves the tab's next reload on pitwall's origin, and can read the token and the drafts: D7's single-user caveat covers it (W48). Browsers do copy a tab's `sessionStorage` into a duplicated tab, and bring it back with a reopened one. The draft's text goes nowhere else. `localStorage` holds UI state under `pitwall.*.v1` keys: preferences, plus the filesystem paths of roots and repos in `pitwall.view.v1`, `pitwall.finished.v1`, `pitwall.root-tab.v1` and `pitwall.hidden.v1:<root>`. The last is one key per root, holding each hidden group's path, label and kind, so pitwalls watching different roots keep separate lists. `pitwall.starred.v1` holds the starred sessions' ids alone, no names, titles or prompts: one key for every root and tab on the origin, at most 100 with the oldest star dropped, never pruned for a session missing from a snapshot (W53). It's the first `localStorage` key to hold session ids. Storage is also per origin, so a pitwall on a fallback port starts with none.
 
 ### D15 - The session view renders markdown as pitwall's own elements, never HTML
@@ -150,6 +223,41 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 
 - **What:** with two or more roots (`pitwall ~/work ~/oss`), the header shows a tab per root, and each tab narrows the repo list, Needs you, All sessions, Starred, the session list, the filter and New session to its root. With one root, the header is as before.
 - **Nothing out of sight:** a tab that isn't open shows its root's needs-you badge, and the page title's count covers every root.
-- **Each tab keeps its place:** its selection, open session and filter. Switching never detaches a terminal (D9's four count across tabs), drops a draft or stops a send. The open tab is in the URL (`&root=`) and in `pitwall.root-tab.v1`.
+- **Each tab keeps its place:** its selection, open session and filter. Switching never detaches a terminal (D9's four count across tabs), drops a draft or stops a send. The open tab is in the URL (`&root=`) and in `pitwall.root-tab.v1`. A session started from New session in a tab you've since left switches back to that tab once it's listed (W63).
 - **Nested roots:** a session belongs to the longest root that holds it, as the index decides, so the tabs always agree with the server.
 - **Why:** Phil asked for one pitwall over two roots, as tabs (2026-10-21). Rejected: two pitwalls in two browser tabs, which double the polling, scanning and relays, and one page showing other pitwalls, which would need each one's token and a looser CSP.
+
+### D17 - Ended interactive sessions are listed from their transcripts, and resumed in the background
+
+- **Why:** an interactive session belongs to its terminal's process. Once that's gone, as when the terminal closes or the machine restarts, Claude Code drops it from `claude agents --all`, though its transcript stays (Phil, 2026-10-23, after a laptop restart: "Why aren't some sessions being picked up so I can restart them in pitwall?"). Spike 006 found that `claude --resume <id> --bg`, with no prompt, brings one back as a background session under its own id, name and model, which pitwall can attach to (D3).
+- **What's listed** (Phil, 2026-10-27): sessions that ended in the last 7 days, with Show older for up to 30, at most 100. They sit in their group's Finished section, muted and labelled Ended, and never in Needs you. An unnamed one is named by its directory and the start of its id, since Claude Code's default name isn't recorded.
+- **Which transcripts count:** a session started in a terminal (not `claude -p`, so never pitwall's relay), with a prompt you typed, and a UUID session id that no `claude agents --all` row has. Not one that last ran in the background, since `claude rm` leaves its transcript, nor one whose conversation went on under another id, as after `/bg`.
+- **The view** offers Resume in background, after which it opens on the Terminal tab, as any running background session does (D9), and Copy command, `cd <dir> && claude --resume <id>`, to carry on in a terminal.
+- **Safety:** the server checks a fresh `claude agents --json --all` first, since a session still open in a terminal would get a copy, then the directory, and runs in the real path it just checked, under spawn's limit of 5 starts a minute (W73's security look, fixed in W81). If a copy starts anyway, it says so with Claude Code's note.
+
+### D18 - Needs you is judged from each session's context
+
+- **Why** (Phil, 2026-10-27: "the context of the session should really determine if anything is needed of the user"): a session pitwall resumed came back `blocked` with Claude Code's "send a prompt to start", and counted in Needs you though it had asked nothing. Spike 007 found what Claude Code records: a background job's own `needs` line, which a stop clears and a restart doesn't bring back, while the transcript keeps the question and marks each turn's end.
+- **The rule:** a session needs you for one of five reasons, checked on every snapshot, pitwall's first included, so Needs you after a restart is this assessment, not Claude Code's bare state.
+  1. A prompt on screen.
+  2. A background job's `needs` line, shown as the reason, unless it's the start placeholder. It's read from `~/.claude/jobs/<id>/state.json`, an internal file, behind one adapter that fails soft.
+  3. Its last turn asked you something, with the turn's end read from the transcript, since a plugin's monitor keeps Claude Code's status at busy.
+  4. You resumed it, or confirmed a restart, in this run of pitwall, and it's had no prompt since. Phil confirmed this reading of his words; the other, that waiting for a prompt never counts, was ruled out.
+  5. `blocked` with a job file pitwall couldn't read, so a question is never hidden.
+- **The index decides,** not the web UI, so the count, the list and the sort agree. Reason 4 is kept in memory, so it ends when pitwall restarts. A blocked session that doesn't need you loses the solid Blocked badge, since solid is for needs you only.
+- **Not now:** Claude Code's recap (`away_summary`) and a model's judgement. Both are M6's refinement of reason 3, with the supervisor.
+
+### D19 - pitwall's server opens a session's directory in an editor
+
+- **Why** (Phil, 2026-10-23, option A): a browser can't tell which apps are installed, so pitwall's server finds the editors, tells the page which exist, and opens the one you choose.
+- **How:** at startup it looks for VS Code and Cursor: on macOS their apps in `/Applications` or `~/Applications`, opened with `open -a`; on other Unixes `code` and `cursor` on the `PATH`; on Windows, none. It opens a listed session's own directory, its real path checked to be under a root, never a path the page sends, with no shell and the scrubbed environment.
+- **Rejected:** `vscode://` and `cursor://` links, which can't tell what's installed and may ask each time.
+- **Security:** it's a state-changing route that starts a process, so it had a security look, shared with resume's (W73).
+
+### D20 - Files for a new session reach it as `@` mentions of private copies
+
+- **Why:** `claude --bg` takes the first prompt as one argument, so a file has to reach the session another way. Spike 008 found that an `@<absolute path>` mention in a `--bg` prompt makes Claude Code attach the file, an image as an image, before the first turn and with no tool call, in `default` permission mode too. A plain path needs the Read tool, which asks permission there. There's no flag that attaches a local file: `--file` downloads from Anthropic's Files API.
+- **How:** New session's first prompt takes dropped, pasted or chosen files. Each upload goes in its own `~/.pitwall/attachments/<id>/` (0700, the file 0600) under a safe name, never in the session's directory. Starting the session appends one `@<path>` line per file and passes `--add-dir=<folder>` for each, written with `=`, since `--add-dir <folder>` would take the prompt as another folder.
+- **Limits:** images, PDF and text only, 10 MiB each, 10 per session, and 30 unused at once.
+- **Retention:** the transcript keeps an attachment's content, so pitwall's copy is needed only until the session starts. An unused upload goes after an hour, a used one 7 days after its session started, and used ones past 500 MiB in all sooner, oldest first.
+- **Not yet:** the session view's message box takes no files, because a running session isn't started with a prompt.

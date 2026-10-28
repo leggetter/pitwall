@@ -1,0 +1,148 @@
+/*
+ * New session's attachments (docs/design-system.md, 4: Dialogs, Attachments; W82): the drop target
+ * over the first prompt while files are dragged over the page, the list of files under it, and the
+ * Attach files row. Forced colours are in styles.css, with the rest.
+ */
+
+/* The prompt and, while files are dragged over the page, the drop target over it. */
+.prompt-drop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * The drop target covers the prompt: --pw-selected with a 2 px dashed --pw-selected-border edge
+ * (6.53:1 and 4.68:1 on neutral surfaces, 2.5), solid while the files are over it, and its words in
+ * --pw-info-tint-fg (6.56:1 and 7.89:1 on --pw-selected). The drop lands on the prompt under it.
+ */
+.prompt-drop-target {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pw-space-1-5);
+  padding: var(--pw-space-3);
+  background: var(--pw-selected);
+  color: var(--pw-info-tint-fg);
+  border-radius: var(--pw-radius-md);
+  outline: 2px dashed var(--pw-selected-border);
+  outline-offset: -2px;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  text-align: center;
+  pointer-events: none;
+}
+
+.prompt-drop-target.over {
+  outline-style: solid;
+}
+
+/* The files, 4 px apart, under the prompt. */
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--pw-radius-md);
+}
+
+/*
+ * One file: its 32 px tile, its name over its size (and why it isn't attached), then Try again and
+ * Remove. A 1 px --pw-border edge, decorative: the words say a file's state, never the edge alone.
+ */
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+  padding: var(--pw-space-1);
+  background: var(--pw-surface);
+  border-radius: var(--pw-radius-md);
+  box-shadow: inset 0 0 0 1px var(--pw-border);
+}
+
+.attachment[data-state='failed'],
+.attachment[data-state='refused'] {
+  box-shadow: inset 0 0 0 1px var(--pw-danger-border);
+}
+
+.attachment-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--pw-control-lg);
+  height: var(--pw-control-lg);
+  overflow: hidden;
+  background: var(--pw-surface-sunken);
+  color: var(--pw-text-muted);
+  border-radius: var(--pw-radius-sm);
+}
+
+.attachment-thumbnail {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.attachment-name {
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+/* A name can be cut next to a space, which each part would otherwise drop at its edge. */
+.attachment-name .middle-ellipsis-start,
+.attachment-name .middle-ellipsis-end {
+  white-space: pre;
+}
+
+.attachment-meta {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.attachment-meta .spinner {
+  margin-right: var(--pw-space-1);
+  vertical-align: -1px;
+}
+
+.attachment-problem {
+  color: var(--pw-danger-fg);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.attachment-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-1);
+}
+
+/* Attach files, then the hint after it, wrapping under it where there's no room. */
+.attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+}
+
+.attach-row .field-hint {
+  flex: 1 1 16em;
+  min-width: 0;
+}

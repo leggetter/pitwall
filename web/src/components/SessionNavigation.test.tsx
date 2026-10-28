@@ -13,7 +13,7 @@ import type { ConnectionView } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
 import { PANEL_WIDTH_KEY, readPanelWidth } from '../panelWidth.js';
 import type { NavigationEnv } from '../selection.js';
-import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
+import { fakeSockets, group, minutesAgo, NOW, session, snapshot, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import stylesCss from '../styles.css?raw';
 import { block, declarations, withoutComments } from '../test/css.js';
@@ -90,7 +90,7 @@ function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const navigation = options.navigation ?? history.navigation;
   const fetch = fakeServer();
-  const api = createApiClient({ apiKey: API_KEY, fetch });
+  const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fetch) });
   const sockets = fakeSockets();
   const attach: AttachEnv = { token: TOKEN, createSocket: sockets.factory, host: '127.0.0.1:4517' };
   const storage = options.storage ?? memory();
@@ -254,7 +254,7 @@ describe('the open session in the URL', () => {
   it('never puts the token in the query string: the app takes it from the fragment first', async () => {
     window.history.replaceState(null, '', `/?view=all&session=${A}#token=${TOKEN}`);
     const fake = fakeSockets();
-    render(<App createSocket={fake.factory} fetch={fakeServer()} />);
+    render(<App createSocket={fake.factory} fetch={withoutSubagents(fakeServer())} />);
     expect(window.location.hash).toBe('');
     expect(window.location.search).toBe(`?view=all&session=${A}`);
     expect(window.sessionStorage.getItem(TOKEN_STORAGE_KEY)).toBe(TOKEN);

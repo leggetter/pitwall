@@ -315,4 +315,33 @@ describe("the terminal's code", () => {
       expect(code(source).match(/font-family|fontFamily:\s*['"`]|JetBrains|Menlo|Consolas|Courier|SFMono|ui-monospace|\bmonospace\b|\bInter\b|sans-serif/g), name).toBeNull();
     }
   });
+
+  /** A rule's declarations in Terminal.css, by its whole selector, as property and value. */
+  function declarations(selector: string): Record<string, string> {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const body = new RegExp(`(?:^|})\\s*${escaped}\\s*\\{([^}]*)\\}`).exec(code(terminalCss))?.[1];
+    if (body === undefined) throw new Error(`${selector} isn't in Terminal.css`);
+    return Object.fromEntries(
+      body
+        .split(';')
+        .map((declaration) => declaration.trim())
+        .filter((declaration) => declaration !== '')
+        .map((declaration) => [declaration.slice(0, declaration.indexOf(':')).trim(), declaration.slice(declaration.indexOf(':') + 1).trim()]),
+    );
+  }
+
+  it("keeps the screen's padding, edge and fill outside the box xterm.js opens in, which fills the screen's content box with none of its own (W74)", () => {
+    // The fit addon takes the box's computed height and width, which border-box sizing would count any padding in.
+    expect(declarations('.attach-terminal')).toMatchObject({
+      display: 'flex',
+      'flex-direction': 'column',
+      padding: 'var(--pw-space-1-5)',
+      'border-radius': 'var(--pw-radius-md)',
+      background: 'var(--pw-term-bg)',
+      'box-shadow': '0 0 0 1px var(--pw-border-strong)',
+    });
+    const box = declarations('.attach-terminal-fit');
+    expect(box).toMatchObject({ flex: '1 1 0', 'min-width': '0', 'min-height': '0' });
+    expect(Object.keys(box).filter((property) => /^(padding|border|margin)/.test(property))).toEqual([]);
+  });
 });

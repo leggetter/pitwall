@@ -22,7 +22,7 @@ export interface SpecimenProps {
    */
   width?: number;
   /**
-   * Toasts and copied icons stay: --pw-toast-timeout and --pw-copied-timeout are an hour inside, so
+   * Toasts and copied icons stay: --pw-toast-timeout, --pw-toast-action-timeout and --pw-copied-timeout are an hour inside, so
    * a result a scenario brought about is still there to see, and for the screenshots.
    */
   lasting?: boolean;
@@ -36,7 +36,7 @@ export interface SpecimenProps {
 }
 
 /** The timing tokens a lasting specimen sets on its stage. Components read them where they are (timing.ts). */
-const LASTING = { '--pw-toast-timeout': '3600s', '--pw-copied-timeout': '3600s' } as CSSProperties;
+const LASTING = { '--pw-toast-timeout': '3600s', '--pw-toast-action-timeout': '3600s', '--pw-copied-timeout': '3600s' } as CSSProperties;
 
 /** The waiting delays a waited specimen sets on its stage. */
 const WAITED = {
@@ -108,13 +108,28 @@ function FitWindow({ width, className, style, children }: FitWindowProps) {
   );
 }
 
-/** Polls until `find` returns something, every frame or so. performance.now(), since a screenshot run may freeze Date.now(). */
+/**
+ * The most that one wait between two looks counts towards until()'s limit: a long task's 50 ms. A
+ * longer wait means the page was busy elsewhere, such as rendering every other specimen, or the
+ * machine was, so nothing could look. Counting all of it timed specimens out on a loaded CI runner
+ * after a single look (W71). With the page free, looks are a frame apart, and every one counts.
+ */
+const MOST_COUNTED_MS = 50;
+
+/**
+ * Polls until `find` returns something, every frame or so, for `timeoutMs` of looking (MOST_COUNTED_MS).
+ * performance.now(), since a screenshot run may freeze Date.now().
+ */
 export async function until<T>(what: string, find: () => T | null | undefined | false, timeoutMs = 3000): Promise<T> {
-  const end = performance.now() + timeoutMs;
+  let looked = 0;
+  let last = performance.now();
   for (;;) {
     const found = find();
     if (found) return found;
-    if (performance.now() > end) throw new Error(`timed out waiting for ${what}`);
+    const now = performance.now();
+    looked += Math.min(now - last, MOST_COUNTED_MS);
+    last = now;
+    if (looked > timeoutMs) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 16));
   }
 }

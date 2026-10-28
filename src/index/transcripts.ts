@@ -17,8 +17,9 @@ export interface TranscriptInfo {
   lastUserPrompt?: string;
   /**
    * Set when the newest assistant text asks the user something and no prompt
-   * has come since. The session's status isn't known here: `toSessionSummary`
-   * drops this for a session that is still working.
+   * has come since. Whether the turn is over isn't decided here:
+   * `toSessionSummary` drops this while it runs, by `turnEnded`, or by the
+   * session's status when the transcript marks no turn's end.
    */
   askedYou?: AskedYou;
   /**
@@ -26,6 +27,21 @@ export interface TranscriptInfo {
    * entry), on one line, at most 120 characters. Internal and undocumented.
    */
   aiTitle?: string;
+  /**
+   * Whether the session's last turn has ended, read from the transcript (spike 007, finding 4):
+   * true when a `system` entry with `subtype: 'turn_duration'` follows the newest entry that runs a
+   * turn (an assistant entry, a prompt or a tool's result, sidechains' aside), and false when one of
+   * those came after it. A meta entry, a local command or a manual /compact doesn't count. Undefined when the entries
+   * read have no `turn_duration` at all, as from an older Claude Code: `toSessionSummary` then goes
+   * by Claude Code's status, as before W69.
+   */
+  turnEnded?: boolean;
+  /**
+   * Milliseconds since the epoch: the newest prompt's time, a prompt being a user entry that
+   * lastUserPrompt would show or that the user typed (isTypedPrompt). For NeedsYou's 'restarted',
+   * which holds until a prompt newer than the restart.
+   */
+  lastPromptMs?: number;
 }
 
 export interface TranscriptReaderOptions {
@@ -83,6 +99,19 @@ const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  */
 export function isSafeSessionId(sessionId: string): boolean {
   return SAFE_SESSION_ID.test(sessionId);
+}
+
+/** A UUID in its canonical form: 32 lowercase hex digits in groups of 8, 4, 4, 4 and 12, as Claude Code writes session ids. */
+const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * True for a session id that is a canonical UUID. Stricter than isSafeSessionId(), for the ids
+ * pitwall finds itself and hands to `claude --resume`: an ended session's transcript file name
+ * (ended.ts), and the resume route's id. `claude --resume` takes a session name too, so an id such as
+ * `deploy`, from a crafted `deploy.jsonl`, could resume some other session (W73, W81).
+ */
+export function isSessionUuid(sessionId: string): boolean {
+  return SESSION_UUID.test(sessionId);
 }
 
 export function defaultConfigDir(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string {
@@ -166,7 +195,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
         info.size < state.offset ||
         info.size - state.offset > maxWindow;
       if (reset || state === undefined) {
-        state = await firstRead(handle, file, info.size, info.ino, info.dev);
+        state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow);
         files.set(sessionId, state);
       } else if (info.size > state.offset) {
         const chunk = await readRange(handle, state.offset, info.size);
@@ -177,14 +206,6 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
     } finally {
       await handle.close().catch(() => undefined);
     }
-  }
-
-  async function firstRead(handle: FileHandle, file: string, size: number, ino: number, dev: number): Promise<FileState> {
-    let state = await readWindow(handle, file, size, ino, dev, Math.min(size, initialWindow));
-    if (size > initialWindow && !isComplete(state.fields)) {
-      state = await readWindow(handle, file, size, ino, dev, Math.min(size, maxWindow));
-    }
-    return state;
   }
 
   return {
@@ -217,7 +238,75 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
   };
 }
 
+/** What readNewestEntries() finds: the fields `read` gives a listed session, and four that ended.ts needs. */
+export interface NewestEntries {
+  info: TranscriptInfo;
+  /** Fields.inBackground. Undefined when no user or assistant entry was read. */
+  inBackground?: boolean;
+  /** Fields.setName. */
+  setName?: string;
+  /** Fields.typedPrompt: a typed prompt among the entries read, not necessarily the whole file's. */
+  typedPrompt: boolean;
+  /** Fields.continuedElsewhere. */
+  continuedElsewhere: boolean;
+}
+
+/**
+ * Reads a transcript's newest entries once, as `read` does the first time it sees a file: the last
+ * 256 KiB, or 2 MiB when those lack a field `read` looks for. For the ended-session scanner
+ * (ended.ts), whose transcripts belong to sessions that have stopped writing, so there's nothing
+ * to read incrementally, and a file is read again only when it changes. Undefined when the file
+ * has gone; rejects on any other failure.
+ */
+export async function readNewestEntries(
+  file: string,
+  options: Pick<TranscriptReaderOptions, 'initialWindowBytes' | 'maxWindowBytes'> = {},
+): Promise<NewestEntries | undefined> {
+  const initialWindow = options.initialWindowBytes ?? 256 * KIB;
+  const maxWindow = Math.max(options.maxWindowBytes ?? 2 * MIB, initialWindow);
+  let handle: FileHandle;
+  try {
+    handle = await open(file, 'r');
+  } catch (err) {
+    if (isGone(err)) return undefined;
+    throw err;
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error('not a file');
+    const state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow);
+    const { fields } = state;
+    const newest: NewestEntries = {
+      info: toInfo(state),
+      typedPrompt: fields.typedPrompt === true,
+      continuedElsewhere: fields.continuedElsewhere === true,
+    };
+    if (fields.inBackground !== undefined) newest.inBackground = fields.inBackground;
+    if (fields.setName !== undefined) newest.setName = fields.setName;
+    return newest;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
 // --- Reading -----------------------------------------------------------------
+
+/** The last `initialWindow` bytes, or `maxWindow` when those lack a field. */
+async function firstRead(
+  handle: FileHandle,
+  file: string,
+  size: number,
+  ino: number,
+  dev: number,
+  initialWindow: number,
+  maxWindow: number,
+): Promise<FileState> {
+  let state = await readWindow(handle, file, size, ino, dev, Math.min(size, initialWindow));
+  if (size > initialWindow && !isComplete(state.fields)) {
+    state = await readWindow(handle, file, size, ino, dev, Math.min(size, maxWindow));
+  }
+  return state;
+}
 
 interface FileState {
   file: string;
@@ -329,12 +418,46 @@ export interface Fields {
   promptAfterText?: boolean;
   /** The newest `ai-title` entry's title, in file order. */
   aiTitle?: string;
+  /**
+   * Whether the newest user or assistant entry, in file order, has `sessionKind: "bg"`: Claude Code
+   * marks every entry a session writes while it runs in the background (spike 006, finding 7).
+   * Only the ended-session scanner uses it (ended.ts).
+   */
+  inBackground?: boolean;
+  /** The newest name set with `--name`: a `custom-title` entry's title or an `agent-name` entry's name, in file order (ended.ts). */
+  setName?: string;
+  /** True once a prompt the user typed has been read: `promptSource: "typed"` on a user entry that isn't meta (ended.ts). */
+  typedPrompt?: boolean;
+  /**
+   * True when the newest `continued-in` entry comes after the newest user or assistant entry, in
+   * file order: the conversation carried on under another session id, as `/bg` does (ended.ts).
+   * The entry's `continuedInSessionId` isn't read.
+   */
+  continuedElsewhere?: boolean;
+  /**
+   * True when a `turn_duration` entry comes after the newest entry that runs a turn, in file order:
+   * an assistant entry, a prompt or a tool's result, not a sidechain's; false when one of those came
+   * after it. Undefined until the first `turn_duration` entry is read (TranscriptInfo.turnEnded).
+   */
+  turnEnded?: boolean;
+  /** The newest prompt's timestamp, in file order (TranscriptInfo.lastPromptMs). */
+  lastPromptMs?: number;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
 export function applyLine(fields: Fields, line: string): void {
   // Cheap pre-filter: every entry the index uses names one of these types.
-  if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"ai-title"')) return;
+  if (
+    !line.includes('"user"') &&
+    !line.includes('"assistant"') &&
+    !line.includes('"ai-title"') &&
+    !line.includes('"custom-title"') &&
+    !line.includes('"agent-name"') &&
+    !line.includes('"continued-in"') &&
+    !line.includes('"turn_duration"')
+  ) {
+    return;
+  }
   let entry: unknown;
   try {
     entry = JSON.parse(line);
@@ -353,6 +476,22 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     if (title !== undefined) fields.aiTitle = title;
     return;
   }
+  if (type === 'continued-in') {
+    // Not activity: Claude Code writes it after the last turn, when the conversation moves on.
+    fields.continuedElsewhere = true;
+    return;
+  }
+  if (type === 'custom-title' || type === 'agent-name') {
+    // No timestamp either, and not activity.
+    const name = setNameOf(entry);
+    if (name !== undefined) fields.setName = name;
+    return;
+  }
+  if (type === 'system') {
+    // Claude Code writes it when a turn ends, after the turn's last entry (spike 007, finding 4). Not activity.
+    if (entry.subtype === 'turn_duration' && entry.isSidechain !== true) fields.turnEnded = true;
+    return;
+  }
   if (type !== 'user' && type !== 'assistant') return;
 
   const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
@@ -360,8 +499,16 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if (at !== undefined && (fields.lastActivityMs === undefined || at > fields.lastActivityMs)) {
     fields.lastActivityMs = at;
   }
+  fields.inBackground = entry.sessionKind === 'bg';
+  // A turn after a `continued-in` means the conversation came back here.
+  fields.continuedElsewhere = false;
+  const typed = isTypedPrompt(entry);
+  if (typed) fields.typedPrompt = true;
 
   if (type === 'assistant') {
+    // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
+    // sub-agent's, which can run on after the main turn has ended.
+    if (fields.turnEnded !== undefined && entry.isSidechain !== true) fields.turnEnded = false;
     const text = assistantTextOf(entry);
     if (text === undefined) return;
     const sameMessage =
@@ -377,6 +524,13 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if (prompt !== undefined) {
     fields.userPrompt = prompt;
     fields.promptAfterText = true;
+  }
+  // Only a prompt or a tool's result means a turn is running again. A meta entry, a local command such
+  // as /model and its output, or a manual /compact's summary come with no turn and no turn_duration
+  // after them, so they leave the last turn's end, and the question it asked, as they were.
+  if (fields.turnEnded !== undefined && (prompt !== undefined || isToolResult(entry))) fields.turnEnded = false;
+  if ((prompt !== undefined || typed) && at !== undefined && (fields.lastPromptMs === undefined || at > fields.lastPromptMs)) {
+    fields.lastPromptMs = at;
   }
 }
 
@@ -405,6 +559,28 @@ export function aiTitleOf(entry: Record<string, unknown>): string | undefined {
   if (typeof entry.aiTitle !== 'string') return undefined;
   const title = titleText(entry.aiTitle);
   return title === '' ? undefined : title;
+}
+
+/**
+ * The name a `custom-title` entry's `customTitle` or an `agent-name` entry's `agentName` sets, as
+ * `--name` writes them, on one line and at most 120 characters. Claude Code writes the two as a
+ * pair and writes them again as the session goes on, so the newest is near the end of the file.
+ * Internal and undocumented, so anything but a non-empty string is ignored.
+ */
+export function setNameOf(entry: Record<string, unknown>): string | undefined {
+  const raw = entry.type === 'custom-title' ? entry.customTitle : entry.type === 'agent-name' ? entry.agentName : undefined;
+  if (typeof raw !== 'string') return undefined;
+  const name = titleText(raw);
+  return name === '' ? undefined : name;
+}
+
+/**
+ * True for a user entry the user typed, by Claude Code's own marker, `promptSource: "typed"`, and
+ * not meta. Other sources include `sdk` (`claude -p` and the Agent SDK), `system`, `queued` and
+ * `suggestion_accepted`. Internal and undocumented (spike 006, finding 7).
+ */
+export function isTypedPrompt(entry: Record<string, unknown>): boolean {
+  return entry.type === 'user' && entry.promptSource === 'typed' && entry.isMeta !== true;
 }
 
 /** A title as the index shows it: on one line, trimmed, at most 120 characters. */
@@ -456,6 +632,14 @@ export function userPromptOf(entry: Record<string, unknown>): string | undefined
   if (text === '' || text.includes('<cross-session-message')) return undefined;
   if (NOT_A_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix))) return undefined;
   return truncate(text, USER_PROMPT_MAX);
+}
+
+/** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
+function isToolResult(entry: Record<string, unknown>): boolean {
+  if (entry.type !== 'user' || entry.isSidechain === true) return false;
+  const message = entry.message;
+  const content = isRecord(message) ? message.content : undefined;
+  return Array.isArray(content) && content.some((block) => isRecord(block) && block.type === 'tool_result');
 }
 
 /** A string content, or the text blocks of an array content joined with newlines. */
@@ -512,6 +696,8 @@ function toInfo(state: FileState): TranscriptInfo {
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
   if (fields.aiTitle !== undefined) info.aiTitle = fields.aiTitle;
+  if (fields.turnEnded !== undefined) info.turnEnded = fields.turnEnded;
+  if (fields.lastPromptMs !== undefined) info.lastPromptMs = fields.lastPromptMs;
   return info;
 }
 

@@ -20,7 +20,8 @@ import { Dialogs, Layouts, Notices, Pages, PreferencesDialogs, ShortcutsDialogs 
 import { CopyButtons, Timestamps, Toasts, Tooltips } from './overlays.js';
 import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } from './shell.js';
 import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
-import { Confirmations, Conversations, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
+import { Confirmations, Conversations, EndedViews, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
+import { SubagentViews } from './subagents.js';
 import './gallery.css';
 
 interface Section {
@@ -42,13 +43,20 @@ const SECTIONS: Section[] = [
   { id: 'session-list', title: 'Session list header', intro: "SessionList's header for each selection: its name, its summary, the filters and the Sort setting.", Content: SessionListHeads },
   { id: 'filters', title: 'Filters and Sort', intro: 'FilterControls: the filter field, the filter chips and Clear filters, then the Sort setting. Each one keeps its own state.', Content: FilterSpecimens },
   { id: 'session-rows', title: 'Session rows', intro: 'SessionRow, two lines, in the session list it always sits in: in a group, and in Needs you and All sessions.', Content: SessionRows },
-  { id: 'finished', title: 'Finished section', intro: 'FinishedSection, at the foot of the session list.', Content: FinishedSections },
+  { id: 'finished', title: 'Finished section', intro: 'FinishedSection, at the foot of the session list, with ended sessions and Show older (W67).', Content: FinishedSections },
   {
     id: 'session-view',
     title: 'Session view',
     intro:
-      'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state, including waiting for the first snapshot, unlisted, and the conversation loading, failed (Try again idle and busy), missing and empty. The Layouts section shows it as the third column.',
+      'SessionView, framed as the window it overlays: its header, actions menu, tabs, body and footer, in each state, including waiting for the first snapshot, unlisted, and the conversation loading, failed (Try again idle and busy), missing and empty; and the actions menu with no, one and two editors found, and the toasts after Open in an editor (W72). The Layouts section shows it as the third column.',
     Content: SessionViews,
+  },
+  {
+    id: 'ended-view',
+    title: 'Ended session view',
+    intro:
+      "SessionView for an ended interactive session (W67): the Conversation tab alone, Ended, and the footer's note with Copy command and Resume in background, with its directory gone, its actions menu and at 375 px; then the footer alone, as the view has it, busy, resumed and after each failure, and at 375 px.",
+    Content: EndedViews,
   },
   {
     id: 'conversation',
@@ -56,6 +64,13 @@ const SECTIONS: Section[] = [
     intro:
       "The session view's Conversation tab: every kind of entry, markdown in messages (every element, cut short in a code block, what shows as text, narrow, links in code, and Copy), messages to pitwall, questions asked in a dialog (answered, multi-select, typed, with notes, and dismissed), folded tool calls closed and open, Load earlier idle and busy, Jump to latest, and its errors and notices: Load earlier failed, the transcript changed, a refresh failed, each Try again idle and busy, and the transcript gone.",
     Content: Conversations,
+  },
+  {
+    id: 'sub-agents',
+    title: 'Sub-agents',
+    intro:
+      "The session view's Sub-agents tab (W77): the list with each state and nested ones, a sub-agent's transcript, the conversation naming them with links to the tab, many, cut short, none, loading, failed (Try again idle and busy), a refresh that failed, and at 375 px. The session row's running count is under Session rows.",
+    Content: SubagentViews,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },
@@ -67,7 +82,13 @@ const SECTIONS: Section[] = [
   },
   { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab in each of its bar states, with both notices, attached to a scripted server instead of pitwall. The screen stays dark in both themes.', Content: Terminals },
   { id: 'alerts', title: 'Alerts and the app strip', intro: 'Alert in each tone, as the page alerts use it, and AppStrip, for while the relay is off until restart.', Content: Alerts },
-  { id: 'new-session', title: 'New session dialog', intro: 'NewSessionDialog, on Dialog: empty, filled, with errors, starting, and after a failure.', Content: Dialogs },
+  {
+    id: 'new-session',
+    title: 'New session dialog',
+    intro:
+      'NewSessionDialog, on Dialog: empty, filled, the directory combobox (W70: its list, narrowed, loading, many, none to list, cut short and failed), with errors, starting, and after a failure; and files for the first prompt (W82): dragged over it, attached, uploading, failed, refused, not on this machine, and starting with them.',
+    Content: Dialogs,
+  },
   {
     id: 'shortcuts',
     title: 'Keyboard shortcuts dialog',
@@ -82,7 +103,7 @@ const SECTIONS: Section[] = [
     Content: PreferencesDialogs,
   },
   { id: 'tooltips', title: 'Tooltips', intro: 'Tooltip on each kind of control it is on in the app, each opened by hovering it.', Content: Tooltips },
-  { id: 'toasts', title: 'Toasts', intro: 'ToastProvider and its stack: a success, an error, three at most, and full width at 600 px and narrower.', Content: Toasts },
+  { id: 'toasts', title: 'Toasts', intro: 'ToastProvider and its stack: a success, an error, three at most, full width at 600 px and narrower, and one with an action.', Content: Toasts },
   { id: 'copy', title: 'Copy buttons', intro: 'CopyButton idle, copied and refused, against a stub clipboard, and CopyCommand, the command chip.', Content: CopyButtons },
   { id: 'timestamps', title: 'Timestamps', intro: 'Timestamp, on the one shared clock, with the absolute time in its tooltip.', Content: Timestamps },
   {

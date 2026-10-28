@@ -28,9 +28,11 @@
 // page reads that one line again once it meets the call.
 
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
 import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shared/protocol.js';
 import { isRecord } from './guards.js';
+import type { SubagentLabels } from './subagents.js';
 import { cap, truncate } from './text.js';
 import { stripSystemReminders } from './transcripts.js';
 
@@ -116,7 +118,21 @@ export interface ConversationReadOptions {
    * entry.
    */
   relay?: RelayAddressBook;
+  /**
+   * Reads sidechain entries, which are otherwise left out as a sub-agent's: for a sub-agent's own
+   * transcript, every entry of which is one (W76).
+   */
+  sidechain?: boolean;
+  /** Opens the file without following a symlink at it, and without waiting on a FIFO's writer: for a sub-agent's transcript (W76). */
+  noFollow?: boolean;
+  /**
+   * The session's sub-agents (W76): an Agent call that started one, a SendMessage call to one and a
+   * message from one get its id and description as ConversationEntry.subagent.
+   */
+  subagents?: SubagentLabels;
 }
+
+const NO_FOLLOW_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 /** What one page cost, for tests and calibration. */
 export interface ConversationReadStats {
@@ -171,9 +187,9 @@ export async function readConversationPage(
 
   let handle: FileHandle;
   try {
-    handle = await open(file, 'r');
+    handle = await open(file, options.noFollow === true ? NO_FOLLOW_FLAGS : 'r');
   } catch (err) {
-    if (isGone(err)) return undefined;
+    if (isGone(err) || (options.noFollow === true && isRecord(err) && err.code === 'ELOOP')) return undefined;
     throw err;
   }
   try {
@@ -249,7 +265,7 @@ async function readBackwards(
 ): Promise<{ builder: PageBuilder; stop?: Stop; bytesRead: number }> {
   const chunkBytes = Math.max(1, options.chunkBytes ?? CHUNK_BYTES);
   const budget = Math.max(chunkBytes, options.readBudget ?? PAGE_READ_BUDGET);
-  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES, options.relay?.name);
+  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES, options.relay?.name, options.sidechain === true, options.subagents);
   let lo = end;
   let hi = end;
   let buf: Buffer = EMPTY;
@@ -657,9 +673,11 @@ interface Sender {
 /** What one transcript line contributes, in file order. */
 type Item =
   | { kind: 'text'; messageId: string | undefined; text: string; at: string | undefined }
-  | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined; send?: SendCall; ask?: AskCall }
+  /** `to`: a SendMessage call's recipient, trimmed, with or without a message, to find a sub-agent by (W76). */
+  | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined; send?: SendCall; ask?: AskCall; to?: string }
   | { kind: 'result'; id: string; state: ResultState; answers?: DialogAnswers }
-  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender };
+  /** `peer`: who a message from a peer came from, as its `origin.from` says: a sub-agent's id for its report (W76). */
+  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string };
 
 /** A SendMessage call on the page whose result, if it has one yet, didn't fail, and where its line starts. */
 interface SendDraft extends SendCall {
@@ -709,6 +727,8 @@ class PageBuilder {
     readonly pending: Map<string, Pending>,
     private readonly maxEntries: number,
     private readonly relayName?: string,
+    private readonly sidechain = false,
+    private readonly subagents?: SubagentLabels,
   ) {}
 
   /**
@@ -716,7 +736,7 @@ class PageBuilder {
    * the page is full and the line belongs to the older page.
    */
   offer(line: string, offset: number, end: number): 'taken' | 'full' {
-    const items = itemsOfLine(line);
+    const items = itemsOfLine(line, this.sidechain);
     if (items.length === 0) return 'taken';
     const added = this.newEntries(items);
     if (this.drafts.length > 0 && this.drafts.length + added > this.maxEntries) return 'full';
@@ -790,6 +810,8 @@ class PageBuilder {
         const entry: ConversationEntry = { kind: 'tool', text: item.summary, toolName: item.name };
         if (item.at !== undefined) entry.at = item.at;
         if (state !== undefined) entry.toolError = state === 'error';
+        const subagent = this.subagentOfCall(item);
+        if (subagent !== undefined) entry.subagent = subagent;
         const draft: Draft = { kind: 'tool', id: item.id, entry };
         // A call whose result was an error, or said it didn't send, stays a tool call. One with no result yet doesn't.
         if (item.send !== undefined && this.relayName !== undefined && state !== 'error' && state !== 'failed') draft.send = { ...item.send, offset };
@@ -801,10 +823,24 @@ class PageBuilder {
         const address = this.relayName === undefined ? undefined : relayAddress(item.sender, this.relayName);
         if (address !== undefined) this.relayFrom.set(address, Math.min(offset, this.relayFrom.get(address) ?? offset));
         if (this.full()) return;
-        this.drafts.push({ kind: 'entry', entry: item.entry });
+        const subagent = item.entry.kind === 'cross-session' ? this.subagentOf(item.peer) ?? this.subagentOf(item.entry.from) : undefined;
+        this.drafts.push({ kind: 'entry', entry: subagent === undefined ? item.entry : { ...item.entry, subagent } });
         return;
       }
     }
+  }
+
+  /** The sub-agent with this id, when it's one of the session's (W76). */
+  private subagentOf(agentId: string | undefined): { agentId: string; description: string } | undefined {
+    const description = agentId === undefined ? undefined : this.subagents?.descriptions.get(agentId);
+    return agentId === undefined || description === undefined ? undefined : { agentId, description };
+  }
+
+  /** The sub-agent an Agent call started, or a SendMessage call was sent to (W76). */
+  private subagentOfCall(item: Extract<Item, { kind: 'tool' }>): { agentId: string; description: string } | undefined {
+    if ((item.name === 'Agent' || item.name === 'Task') && item.id !== undefined) return this.subagentOf(this.subagents?.started.get(item.id));
+    if (item.name === SEND_MESSAGE) return this.subagentOf(item.to);
+    return undefined;
   }
 
   /** Only a single line with more entries than a page can hold gets here: the rest of it is dropped. */
@@ -828,7 +864,7 @@ class PageBuilder {
       const bytes = await readRange(handle, offset, offset + length);
       bytesRead += bytes.length;
       if (bytes.length !== length) continue;
-      const result = itemsOfLine(bytes.toString('utf8')).find((item) => item.kind === 'result' && item.id === id);
+      const result = itemsOfLine(bytes.toString('utf8'), this.sidechain).find((item) => item.kind === 'result' && item.id === id);
       if (result?.kind === 'result' && result.state !== 'error' && result.answers !== undefined) answerQuestions(draft, result.answers);
     }
     return bytesRead;
@@ -986,8 +1022,11 @@ function questionWithinBudget(entry: ConversationEntry, questions: AskedQuestion
 
 // --- Reading lines ---------------------------------------------------------------
 
-/** What a transcript line contributes. Lines that don't parse, sidechains and other entry types give nothing. */
-export function itemsOfLine(line: string): Item[] {
+/**
+ * What a transcript line contributes. Lines that don't parse, sidechains (unless `sidechain`, for a
+ * sub-agent's own transcript) and other entry types give nothing.
+ */
+export function itemsOfLine(line: string, sidechain = false): Item[] {
   // Cheap pre-filter: every line this reads names one of these. Not "system":
   // Claude Code's internal api-request lines carry a system prompt, and they
   // can be most of a transcript's bytes.
@@ -998,7 +1037,7 @@ export function itemsOfLine(line: string): Item[] {
   } catch {
     return [];
   }
-  if (!isRecord(entry) || entry.isSidechain === true) return [];
+  if (!isRecord(entry) || (entry.isSidechain === true && !sidechain)) return [];
   const at = timestampOf(entry);
   switch (entry.type) {
     case 'assistant':
@@ -1045,6 +1084,8 @@ function assistantItems(entry: Record<string, unknown>, at: string | undefined):
       const item: Extract<Item, { kind: 'tool' }> = { kind: 'tool', id, name, summary: toolSummary(name, block.input), at };
       const send = name === SEND_MESSAGE ? sendCall(block.input) : undefined;
       if (send !== undefined) item.send = send;
+      const to = name === SEND_MESSAGE ? recipientOf(block.input) : undefined;
+      if (to !== undefined) item.to = to;
       const ask = name === ASK_USER_QUESTION ? askCall(block.input) : undefined;
       if (ask !== undefined) item.ask = ask;
       items.push(item);
@@ -1065,6 +1106,13 @@ function sendCall(input: unknown): SendCall | undefined {
   const address = to.trim();
   if (address === '' || address.length > ADDRESS_MAX) return undefined;
   return { to: address, message: cap(message, ENTRY_TEXT_MAX + 1) };
+}
+
+/** A SendMessage call's `to`, trimmed, whatever else it has. Undefined when it's not a string, blank or too long. */
+function recipientOf(input: unknown): string | undefined {
+  if (!isRecord(input) || typeof input.to !== 'string') return undefined;
+  const to = input.to.trim();
+  return to === '' || to.length > ADDRESS_MAX ? undefined : to;
 }
 
 /**
@@ -1187,7 +1235,14 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   const unreminded = stripSystemReminders(raw ?? '');
   const text = unreminded.trim();
   const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
-  if (text.startsWith(CROSS_SESSION_PREFIX) || origin === 'peer') return text === '' ? [] : [crossSession(text, at)];
+  if (text.startsWith(CROSS_SESSION_PREFIX) || origin === 'peer') {
+    if (text === '') return [];
+    const item = crossSession(text, at);
+    // Who it came from, as Claude Code recorded it: a sub-agent's id for its report (W76).
+    const from = origin === 'peer' && isRecord(entry.origin) ? entry.origin.from : undefined;
+    if (item.kind === 'entry' && typeof from === 'string' && from.length <= ADDRESS_MAX) item.peer = from;
+    return [item];
+  }
   if (entry.isMeta === true) return [];
   if (origin === 'task-notification' || text.startsWith('<task-notification>')) return [taskNotice(text, at)];
   const local = localCommandNotice(text, at);

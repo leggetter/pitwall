@@ -37,16 +37,39 @@ export interface AskedYou {
   excerpt: string;
 }
 
+/**
+ * Why a session needs you, judged from its context rather than from Claude
+ * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
+ * holds, in this order:
+ * - 'prompt': Claude Code is showing a prompt: status 'waiting', and
+ *   waitingFor says which.
+ * - 'claude-code': a background job's own line on what it needs, in `text`,
+ *   from the job's `state.json`. Not its start placeholder, "send a prompt to
+ *   start", which a resumed session shows though it asked nothing.
+ * - 'asked': its last turn ended by asking you something (askedYou).
+ * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
+ *   pitwall, and no prompt has been sent to it since.
+ * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why:
+ *   the job's `state.json` was missing, unreadable, malformed or another
+ *   session's, or the row has no short id to find it by. Kept so that a
+ *   question is never hidden.
+ */
+export interface NeedsYou {
+  reason: 'prompt' | 'claude-code' | 'asked' | 'restarted' | 'blocked';
+  /** For 'claude-code' only: Claude Code's line, as plain text, at most 200 characters. */
+  text?: string;
+}
+
 export interface SessionSummary {
   /** Full session UUID, usable with `claude --resume`. */
   sessionId: string;
   /** Short id for `claude attach` / `claude logs`. Background sessions only. */
   shortId?: string;
-  /** Display name: the set name, or Claude Code's default such as `website-98`. */
+  /** Display name: the set name, or Claude Code's default such as `demo-app-3f`. */
   name: string;
   /**
    * A short description of what the session is about, shown after the name, as
-   * in `website-98 · Standard Webhooks destination auth review`. Omitted when
+   * in `demo-app-3f · Fix the flaky export test`. Omitted when
    * there's none, or when it equals `name`, as with background sessions, whose
    * name is already the generated title.
    */
@@ -86,15 +109,50 @@ export interface SessionSummary {
    * state 'done', 'stopped' or 'failed'. Plain `claude agents --json` leaves
    * these out; pitwall lists with `--all` and shows them muted, last in their
    * group. A 'done' session whose process is still alive is idle, not
-   * finished. Never true together with `stale`.
+   * finished. Also true for an interactive session that has ended (`ended`).
+   * Never true together with `stale`.
    */
   finished: boolean;
   /**
+   * True for an interactive session that has ended (W66, spike 006): its
+   * process has exited, as when its terminal closed or the machine restarted,
+   * so `claude agents --all` no longer lists it, and pitwall found it from its
+   * transcript. Always with kind 'interactive', alive false and finished true,
+   * and never with shortId, pid, status, state or waitingFor.
+   *
+   * - `cwd` is the directory it started in, whose project folder holds its
+   *   transcript, not where a later `cd` left it.
+   * - `name` is the newest name set with `--name`; otherwise the directory's
+   *   basename and the session id's first 8 characters, such as
+   *   `pitwall-5e66fcb3`, because Claude Code's default name for an unnamed
+   *   session isn't recorded anywhere pitwall can read.
+   * - `startedAt` and `lastActivityAt` are its first and newest entries' times.
+   *
+   * Listed while lastActivityAt is at most ENDED_LISTED_DAYS old, at most
+   * ENDED_LISTED_MAX of them, newest first. The web UI shows those from the
+   * last ENDED_SHOWN_DAYS, and the rest behind Show older (Phil, 2026-10-27).
+   * Resume one with resumePath(): it keeps its sessionId, and is listed again
+   * as a background session.
+   */
+  ended?: true;
+  /**
    * Set when the session has finished its turn and its newest assistant message
    * looks like it asked the user something, with no user prompt since. A
-   * heuristic over the transcript, not something Claude Code reports.
+   * heuristic over the transcript, not something Claude Code reports. The
+   * turn's end is read from the transcript (spike 007, finding 4), not from
+   * Claude Code's status, which a plugin's monitor or a restart can keep at
+   * busy. Never while a prompt is on screen, or on a stale session.
    */
   askedYou?: AskedYou;
+  /**
+   * Set when the session needs you, with the reason (NeedsYou). The index sets
+   * it on every snapshot, pitwall's first included, so after a restart Needs
+   * you reflects each session's context: `state: 'blocked'` alone no longer
+   * counts when pitwall could read the job's file. Never set on a stale or
+   * finished session. Needs you, its count and the sort's first rank are
+   * exactly the sessions that have it.
+   */
+  needsYou?: NeedsYou;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
@@ -108,6 +166,14 @@ export interface SessionSummary {
    * session's reply when one came back through the relay.
    */
   relay?: RelayExchange;
+  /**
+   * How many of the session's sub-agents are running (SubagentState
+   * 'running'), when at least one is, for the row's "· 2 sub-agents running"
+   * (W76; coordinator's call, Phil, 2026-10-27: "You'll know"). Only while the
+   * session's process is alive. The session view's Sub-agents tab lists them
+   * through subagentsPath().
+   */
+  subagentsRunning?: number;
   /**
    * The repos under a configured root that this session worked in, other than
    * the one it started in, newest touch first (W34, spike 004). A repo counts
@@ -175,11 +241,11 @@ export interface SessionGroup {
    * duplication"). A group with no sessions is left out, the root's own group
    * included.
    *
-   * Sorted: sessions that need the user first (status 'waiting', or a background
-   * job that is blocked and not stale), then askedYou, then busy, then by
-   * lastActivityAt descending (startedAt when there's none). Stale sessions
-   * next, and finished sessions (`finished`) last. Finished sessions are
-   * sorted by activity alone, so an askedYou doesn't lift one.
+   * Sorted: sessions that need the user first (`needsYou`, whatever the
+   * reason), then busy, then the rest, each by lastActivityAt descending
+   * (startedAt when there's none). Stale sessions next, and finished sessions
+   * (`finished`) last. Finished sessions are sorted by activity alone, so an
+   * askedYou doesn't lift one.
    */
   sessions: SessionSummary[];
 }
@@ -400,6 +466,14 @@ export interface ConversationEntry {
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
   /**
+   * The session's sub-agent this entry is about (W76): on a 'cross-session'
+   * entry its report or message came from, and on a 'tool' entry the Agent
+   * call that started it or the SendMessage call sent to it. The UI labels the
+   * entry by its description rather than its id, and links to it in the
+   * Sub-agents tab.
+   */
+  subagent?: { agentId: string; description: string };
+  /**
    * For 'question': the questions asked, in order, at most 8 (W49). Their text
    * counts toward the page's budget, and past it each string is cut to 512 and
    * the entry marked `truncated`.
@@ -438,6 +512,86 @@ export const CONVERSATION_STALE_STATUS = 410;
 // because the id is URL-encoded (`:sessionId` becomes `%3AsessionId`).
 export function conversationPath(sessionId: string, before?: string): string {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/conversation`;
+  return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-agents (W76, W77; Phil, 2026-10-23: "How are sub-agents from a session
+// shown in pitwall?", and 2026-10-27). Read-only, from the session's
+// transcript folder: each sub-agent has a transcript and a meta file beside
+// the session's own, and the session's transcript records when one starts and
+// how it ends. Internal formats, behind the transcript adapter, failing soft.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a sub-agent is.
+ * - 'running': started, with no end recorded, while the session's process is
+ *   alive.
+ * - 'done', 'failed' and 'stopped': how it ended, from its task
+ *   notification's status (completed; failed; killed or stopped), or, for one
+ *   the session waited for, from its tool call's result (an error is
+ *   'failed').
+ * - 'unknown': no end recorded, and the session's process isn't alive, so it
+ *   isn't running either.
+ */
+export type SubagentState = 'running' | 'done' | 'failed' | 'stopped' | 'unknown';
+
+export interface SubagentSummary {
+  /** Claude Code's id for it, such as `a7bfea4102a9f1853`: letters and digits only. */
+  agentId: string;
+  /**
+   * The description it was started with, as plain text with control and bidi
+   * characters removed, at most 200 characters. "Sub-agent" when there's none.
+   */
+  description: string;
+  /** Its type, such as `general-purpose` or `Explore`, when recorded. */
+  agentType?: string;
+  /** True when the session went on while it ran, false when it waited for it. Absent when not recorded. */
+  background?: boolean;
+  state: SubagentState;
+  /** The agentId of the sub-agent that started this one, when the session itself didn't. */
+  startedBy?: string;
+  /** ISO 8601: its first and newest transcript entries, when readable. */
+  startedAt?: string;
+  lastActivityAt?: string;
+  /** How many tool calls its transcript records. */
+  toolCalls: number;
+}
+
+/** The most sub-agents a SubagentList carries. */
+export const SUBAGENTS_MAX = 200;
+
+export interface SubagentList {
+  sessionId: string;
+  /** Running ones first, then the newest started first. At most SUBAGENTS_MAX. */
+  subagents: SubagentSummary[];
+  /** True when the session had more than SUBAGENTS_MAX, and the oldest were left out. */
+  truncated: boolean;
+}
+
+/**
+ * GET: the SubagentList of a session in the current snapshot. An unlisted
+ * session gets 404, and one with no sub-agents an empty list. Shares the
+ * conversation reads' limit: more than 4 reads at once get 429 with
+ * `Retry-After`.
+ */
+export function subagentsPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/subagents`;
+}
+
+/**
+ * GET: a ConversationPage of one sub-agent's transcript, newest page first,
+ * with `before` cursors, exactly as conversationPath() pages a session's. The
+ * page's `sessionId` is the session's. 404 unless the session is listed and
+ * the agent is one of its sub-agents; 410 for a stale cursor; the same limit
+ * as conversationPath().
+ *
+ * In a sub-agent's page, a 'user' entry is what started or messaged it: the
+ * session, or the sub-agent named by `startedBy`, never the user's own
+ * prompt. The UI labels it so, for example "From the session".
+ */
+export function subagentConversationPath(sessionId: string, agentId: string, before?: string): string {
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(agentId)}/conversation`;
   return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
 }
 
@@ -515,6 +669,16 @@ export interface SpawnRequest {
   name?: string;
   /** Optional model alias, such as `sonnet` or `haiku`. */
   model?: string;
+  /**
+   * Optional files for the first prompt (W79, spike 008): ids from
+   * AttachmentResult, at most ATTACHMENTS_MAX_PER_SESSION, each used once.
+   * The server appends one `@<absolute path>` line per file to the prompt,
+   * after a blank line, which Claude Code turns into attachments, and passes
+   * `--add-dir=<its folder>` for each, always in the `=` form, since
+   * `--add-dir` takes several values and would swallow the prompt. An
+   * unknown, expired or already-used id gets 400, and nothing starts.
+   */
+  attachments?: string[];
 }
 
 export type SpawnResult =
@@ -526,9 +690,133 @@ export type SpawnResult =
 export const SPAWN_PATH = '/api/sessions';
 
 /**
- * Result of stop and remove. Both apply to background sessions only; others
- * get 409. More than 4 stop or remove commands at once get 429 with
- * `Retry-After`.
+ * Upload one file for New session's first prompt (W79, spike 008), answered
+ * with an AttachmentResult. POST, the file's bytes as the body, its media type
+ * as `Content-Type` (one of ATTACHMENT_TYPES), and its name, URL-encoded, in
+ * `X-Pitwall-Filename`. The same apiKey, `Host` and `Origin` checks as every
+ * other POST.
+ *
+ * The server keeps it in a folder of its own, `~/.pitwall/attachments/<id>/`
+ * (folders 0700, files 0600), under a safe stored name (letters, digits, `.`,
+ * `-` and `_`, since an `@` mention ends at a space), never inside a
+ * session's directory. An upload never used is removed after an hour; a used
+ * one 7 days after its session started, or sooner, oldest first, once used
+ * uploads pass 500 MiB in all, because Claude Code keeps an attachment's
+ * content in the transcript.
+ *
+ * - 201 with the Attachment.
+ * - 400 for an empty file, or a name that's empty, longer than 200
+ *   characters, or has a path separator, control or bidi character; 413 past
+ *   ATTACHMENT_MAX_BYTES, from `Content-Length` or while streaming; 415 for a
+ *   type not in ATTACHMENT_TYPES, one its first bytes contradict, or any
+ *   `Content-Encoding`; 429 past ATTACHMENTS_MAX_PENDING unused uploads,
+ *   counting those still arriving. 408 when an upload sends nothing for 30
+ *   seconds, or takes more than 2 minutes in all, and nothing is kept.
+ * - 503 when attachments are unavailable: no pitwall home folder, a home path
+ *   with characters an `@` mention can't carry (anything but letters, digits,
+ *   `.`, `_`, `/` and `-`), or Windows. 500 when the file couldn't be written.
+ */
+export const ATTACHMENTS_PATH = '/api/attachments';
+
+/**
+ * DELETE: remove an upload no spawn has used yet, as when it's removed from
+ * the dialog or the dialog closes, freeing its place among
+ * ATTACHMENTS_MAX_PENDING. 204 when removed; 404 for an unknown id; 409 for
+ * one a spawn has used, which the server removes on its own schedule. The
+ * same apiKey, `Host` and `Origin` checks as every other state-changing
+ * request.
+ */
+export function attachmentPath(id: string): string {
+  return `${ATTACHMENTS_PATH}/${encodeURIComponent(id)}`;
+}
+
+/**
+ * The media types an attachment can have: images, PDF and plain text. Any
+ * text file, such as source code, configuration or a log, goes as
+ * `text/plain` whatever type the browser gives it (`text/x-python`, none, or
+ * `video/mp2t` for a `.ts` file), and the server keeps its extension and
+ * checks that it's UTF-8 with no NUL.
+ */
+export const ATTACHMENT_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+] as const;
+
+export type AttachmentType = (typeof ATTACHMENT_TYPES)[number];
+
+/** The largest file an attachment can be: 10 MiB. */
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+/** The most attachments one new session's first prompt can carry. */
+export const ATTACHMENTS_MAX_PER_SESSION = 10;
+
+/** The most uploads the server holds that no spawn has used yet. */
+export const ATTACHMENTS_MAX_PENDING = 30;
+
+export interface Attachment {
+  /** The server's id for it, a UUID. */
+  id: string;
+  /** The name as uploaded, cleaned, for display. */
+  name: string;
+  type: AttachmentType;
+  /** In bytes. */
+  size: number;
+}
+
+export type AttachmentResult = { ok: true; attachment: Attachment } | { ok: false; error: string };
+
+/**
+ * The directories under the roots, for the New session dialog's "Another
+ * directory under a root…" field, which narrows them as you type (Phil,
+ * 2026-10-27). GET, no query, answered with a DirectoryList. The same token,
+ * Host and Origin checks as every other route.
+ *
+ * The server walks each root to DIRECTORY_DEPTH levels below it, and lists
+ * directories only: never a file or a symlink, and never a folder whose name
+ * starts with `.`, is `node_modules`, or has a control or bidi control
+ * character, nor anything inside one. It stops a root at DIRECTORY_MAX entries
+ * or after 2 seconds, and says so with `truncated`. A result is reused for 30
+ * seconds, and requests during a walk share it. A root it can't read lists
+ * none. A spawn still checks its `cwd` as before: the list only helps to type it.
+ */
+export const DIRECTORIES_PATH = '/api/directories';
+
+/** How many levels below a root the directory list goes. */
+export const DIRECTORY_DEPTH = 3;
+
+/** The most directories listed under one root. */
+export const DIRECTORY_MAX = 5000;
+
+export interface DirectoryEntry {
+  /** Relative to its root, `/`-separated, with no leading or trailing slash. */
+  path: string;
+  /** Set when the directory has a `.git` entry: a repo's top level or a worktree. */
+  repo?: true;
+}
+
+export interface DirectoryList {
+  roots: Array<{
+    /** The root, as IndexSnapshot.roots lists it. */
+    root: string;
+    /** Shallower first, then by path, compared by UTF-16 code unit. */
+    dirs: DirectoryEntry[];
+    /** True when the walk stopped early, at DIRECTORY_MAX entries or the time limit. */
+    truncated: boolean;
+  }>;
+}
+
+/**
+ * Result of stop, remove and open in an editor. Stop and remove apply to
+ * background sessions only; others get 409, ended interactive sessions
+ * included. More than 4 stop, remove, resume or open commands at once get 429
+ * with `Retry-After`.
  */
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -540,6 +828,101 @@ export function stopPath(sessionId: string): string {
 /** Remove a background session with `claude rm`. Claude Code keeps a worktree that has unpushed commits. */
 export function removePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/remove`;
+}
+
+/** How long an ended interactive session stays listed, by its newest entry (SessionSummary.ended). */
+export const ENDED_LISTED_DAYS = 30;
+
+/** The most ended interactive sessions a snapshot lists, newest first. */
+export const ENDED_LISTED_MAX = 100;
+
+/** How far back the web UI shows ended sessions before Show older (Phil, 2026-10-27). */
+export const ENDED_SHOWN_DAYS = 7;
+
+/**
+ * The result of resuming an ended interactive session.
+ *
+ * - ok: Claude Code resumed it in the background under its own session id,
+ *   with no prompt, so it waits for one. `shortId` is the id `claude attach`
+ *   takes.
+ * - not ok: `hint` is a command for the user to run, such as the one that
+ *   trusts a workspace. `copyShortId` is set when Claude Code started a copy
+ *   under a new id instead, because the session was open in another Claude
+ *   Code process after all (spike 006, finding 5); the copy is a background
+ *   session with no name.
+ */
+export type ResumeResult =
+  | { ok: true; shortId: string }
+  | { ok: false; error: string; hint?: string; copyShortId?: string };
+
+/**
+ * Resume an ended interactive session (SessionSummary.ended) in the
+ * background: `claude --resume <sessionId> --bg`, with no prompt, in the
+ * session's own `cwd`, never a directory the request names. POST, no body.
+ * It runs in the directory's real path as checked just before it starts, and
+ * only for a session id that is a UUID (W73, W81).
+ *
+ * - 404 when the snapshot doesn't list the session, and 409 when it isn't
+ *   ended or its id isn't a UUID, when its directory no longer exists or
+ *   now resolves elsewhere,
+ *   when a resume of it is already running, or when a fresh
+ *   `claude agents --json` lists its session id in any row, as when its
+ *   terminal is open again.
+ * - 429 with `Retry-After` past 4 stop, remove, resume or open commands at
+ *   once, and, since it starts a long-lived session, past spawn's limit of
+ *   sessions started in the last minute, which it shares (W81).
+ */
+export function resumePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/resume`;
+}
+
+/**
+ * An editor pitwall's server can open a session's directory in (Phil,
+ * 2026-10-23: "open in editor such as code or cursor", option A: the server
+ * opens it, since a browser can't tell what's installed).
+ */
+export type EditorId = 'vscode' | 'cursor';
+
+export interface Editor {
+  id: EditorId;
+  /** As shown, such as "VS Code" or "Cursor". */
+  label: string;
+}
+
+/**
+ * The editors found on this machine, answered with an EditorList. GET, no
+ * query. The server looks once, at startup: on macOS for each editor's app
+ * bundle in /Applications or ~/Applications, opened with /usr/bin/open -a;
+ * elsewhere for its command on PATH (`code`, `cursor`), resolved to an
+ * absolute path then. An empty list means none was found, and the web UI
+ * offers nothing.
+ */
+export const EDITORS_PATH = '/api/editors';
+
+export interface EditorList {
+  editors: Editor[];
+}
+
+/** Body of a POST to openInEditorPath(). */
+export interface OpenInEditorRequest {
+  editor: EditorId;
+}
+
+/**
+ * Open a listed session's own `cwd` in an editor from EditorList, answered
+ * with an ActionResult. POST with an OpenInEditorRequest. The directory is
+ * always the snapshot's, never one the request names; the editor runs with no
+ * shell and a scrubbed environment.
+ *
+ * - 400 for a malformed body or an editor that isn't in EditorList.
+ * - 404 when the snapshot doesn't list the session; 409 when its directory
+ *   no longer exists (`cwdMissing`).
+ * - 429 with `Retry-After`, sharing stop, remove and resume's limit.
+ * - 502 when the editor failed to start, and 504 when it didn't return within
+ *   10 seconds.
+ */
+export function openInEditorPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/open`;
 }
 
 // ---------------------------------------------------------------------------

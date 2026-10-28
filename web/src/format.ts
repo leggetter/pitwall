@@ -94,3 +94,20 @@ export function middleEllipsisParts(text: string): { start: string; end: string 
   const slash = text.lastIndexOf('/');
   return slash > 0 ? { start: text.slice(0, slash), end: text.slice(slash) } : { start: text, end: '' };
 }
+
+/** How many characters before a file name's extension stay with it when the name is cut (W82). */
+const FILE_NAME_TAIL = 6;
+
+/**
+ * A file's name cut in two for a middle ellipsis (W82): the end is its extension, up to 10
+ * characters from the last `.`, and the 6 characters before it, which tell names that start alike
+ * apart, as screenshots' do; the start is the rest. A name too short to need it has no end. It cuts
+ * between characters, never inside one.
+ */
+export function fileNameParts(name: string): { start: string; end: string } {
+  const chars = Array.from(name);
+  const dot = chars.lastIndexOf('.');
+  const extension = dot > 0 && chars.length - dot <= 10 ? dot : chars.length;
+  const cut = extension - FILE_NAME_TAIL;
+  return cut > 0 ? { start: chars.slice(0, cut).join(''), end: chars.slice(cut).join('') } : { start: name, end: '' };
+}
