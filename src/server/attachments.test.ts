@@ -3,7 +3,7 @@
 // command runner, so no test ever runs `claude`. Every pitwall home is a
 // fresh temporary folder, never the real ~/.pitwall.
 import { existsSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, lutimes, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -604,6 +604,102 @@ describe('TypeCheck', () => {
   });
 });
 
+// ---------------------------------------------------------------- upload time limits
+
+describe('the upload route: time limits', () => {
+  /** A chunked upload that sends `first`, then whatever `drip` sends, and resolves with the answer. */
+  function slowUpload(started: Started, first: string, drip?: (req: ReturnType<typeof httpRequest>) => void) {
+    let req: ReturnType<typeof httpRequest> | undefined;
+    // Set by destroy(): what the socket does after that is the test's doing, not an answer.
+    let abandoned = false;
+    const answer = new Promise<{ status: number; error: string; at: number }>((resolve, reject) => {
+      const begun = Date.now();
+      req = httpRequest(
+        {
+          host: '127.0.0.1',
+          port: started.server.port,
+          path: ATTACHMENTS_PATH,
+          method: 'POST',
+          agent: false,
+          headers: { ...asPage(started), 'content-type': 'text/plain', 'x-pitwall-filename': 'slow.txt', 'transfer-encoding': 'chunked' },
+        },
+        (res) => {
+          let text = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk: string) => (text += chunk));
+          res.on('end', () => {
+            req?.destroy();
+            resolve({ status: res.statusCode ?? 0, error: (JSON.parse(text) as { error: string }).error, at: Date.now() - begun });
+          });
+        },
+      );
+      req.on('error', (error) => {
+        if (!abandoned) reject(error);
+      });
+      req.write(first);
+      drip?.(req);
+    });
+    return {
+      answer,
+      destroy: () => {
+        abandoned = true;
+        req?.destroy();
+      },
+    };
+  }
+
+  it('answers 408 for an upload that stalls, removes its folder, and frees its place', async () => {
+    const started = await start({ attachments: { uploadIdleMs: 300, uploadTotalMs: 10_000 } });
+    const { answer } = slowUpload(started, 'a');
+    await vi.waitFor(async () => expect(await folders(started.home as string)).toHaveLength(1));
+    const res = await answer;
+    expect(res.status).toBe(408);
+    expect(res.error).toMatch(/sent nothing for 0.3 seconds/);
+    expect(await folders(started.home as string)).toEqual([]);
+    expect((await upload(started, SAMPLES['text/plain'])).status).toBe(201);
+  });
+
+  it('answers 408 for an upload that keeps sending but takes too long in all', async () => {
+    const started = await start({ attachments: { uploadIdleMs: 300, uploadTotalMs: 800 } });
+    let timer: NodeJS.Timeout | undefined;
+    const { answer } = slowUpload(started, 'a', (req) => {
+      timer = setInterval(() => req.write('a'), 50);
+    });
+    try {
+      const res = await answer;
+      expect(res.status).toBe(408);
+      expect(res.error).toMatch(/took more than 0.8 seconds/);
+      expect(res.at).toBeGreaterThanOrEqual(700);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(await folders(started.home as string)).toEqual([]);
+  });
+
+  it('removes what arrived of a chunked upload the client abandons partway', async () => {
+    const started = await start();
+    const { destroy } = slowUpload(started, 'a'.repeat(256 * 1024));
+    await vi.waitFor(async () => expect(await folders(started.home as string)).toHaveLength(1));
+    destroy();
+    await vi.waitFor(async () => expect(await folders(started.home as string)).toEqual([]), { timeout: 5000 });
+  });
+
+  it("counts uploads still arriving in Retry-After: the soonest one's idle or total limit", async () => {
+    const clock = Date.parse('2026-10-28T09:00:00.000Z');
+    const started = await start({ attachments: { now: () => clock, uploadIdleMs: 20_000, uploadTotalMs: 60_000 } });
+    const slow = Array.from({ length: ATTACHMENTS_MAX_PENDING }, () => slowUpload(started, 'a'));
+    try {
+      await vi.waitFor(async () => expect(await folders(started.home as string)).toHaveLength(ATTACHMENTS_MAX_PENDING));
+      const refused = await upload(started, SAMPLES['text/plain']);
+      expect(refused.status).toBe(429);
+      expect(refused.headers['retry-after']).toBe('20');
+    } finally {
+      for (const upload of slow) upload.destroy();
+    }
+    await vi.waitFor(async () => expect(await folders(started.home as string)).toEqual([]), { timeout: 5000 });
+  });
+});
+
 // ---------------------------------------------------------------- names
 
 describe('names', () => {
@@ -618,6 +714,11 @@ describe('names', () => {
     // NFD, as macOS names files, shown as NFC.
     expect(ok(encodeURIComponent('café.txt'))).toBe('café.txt');
     expect(ok(encodeURIComponent('..'))).toBe('..');
+    // Invisible characters are dropped, so one name can't pass for another.
+    expect(ok(encodeURIComponent('re\u200bport.pdf'))).toBe('report.pdf');
+    expect(ok(encodeURIComponent('\ufeffnotes\u200c\u200d\u2060.txt'))).toBe('notes.txt');
+    expect(ok(encodeURIComponent('soft\u00adhyphen\u2062.md'))).toBe('softhyphen.md');
+    expect(ok(encodeURIComponent('\u200b\u2060 \ufeff'))).toMatch(/^refused: The file's name is empty/);
     expect(ok(encodeURIComponent('a'.repeat(ATTACHMENT_NAME_MAX)))).toBe('a'.repeat(ATTACHMENT_NAME_MAX));
     for (const bad of ['a/b', '/etc/passwd', '..\\x', 'a\u0000b', 'a\rb', 'a\u007fb', 'a\u0085b', '‏abc', 'a؜b', 'a‪b', 'a⁩b', ' ', 'a'.repeat(ATTACHMENT_NAME_MAX + 1)]) {
       expect(ok(encodeURIComponent(bad)), JSON.stringify(bad)).toMatch(/^refused/);
@@ -895,6 +996,73 @@ describe('clean-up', () => {
     expect(await readFile(join(outside, 'precious.txt'), 'utf8')).toBe('keep me');
   });
 
+  it.skipIf(process.platform === 'win32')('removes nothing, by sweep or delete, while the attachments folder is open to others', async () => {
+    const home = freshHome();
+    const t0 = Date.now();
+    const { store } = storeAt(home, t0);
+    const id = await keep(store);
+    const old = await leftover(home, '00000001-0000-4000-8000-000000000000', t0, USED_TTL_MS * 2);
+    await chmod(join(home, 'attachments'), 0o777);
+    try {
+      await store.sweep();
+      expect(existsSync(old)).toBe(true);
+      // Forgotten, so its place is free and no spawn can use it, but its folder stays for a sweep once it's safe.
+      expect(await store.discard(id)).toBe('removed');
+      expect(existsSync(join(home, 'attachments', id))).toBe(true);
+      expect(store.pending()).toBe(0);
+      expect((await store.upload(body(SAMPLES['text/plain']), 'notes.txt', 'text/plain')).status).toBe(503);
+    } finally {
+      await chmod(join(home, 'attachments'), 0o700);
+    }
+    await store.sweep();
+    expect(existsSync(old)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')("removes nothing, by sweep or delete, from another user's folder", async () => {
+    const home = freshHome();
+    const t0 = Date.now();
+    const { store } = storeAt(home, t0);
+    const id = await keep(store);
+    const old = await leftover(home, '00000001-0000-4000-8000-000000000000', t0, USED_TTL_MS * 2);
+    // The same folders, seen by a store that runs as someone else.
+    const other = new AttachmentStore({ home, now: () => t0, uid: (process.getuid?.() ?? 0) + 1 });
+    stores.push(other);
+    await other.sweep();
+    expect(existsSync(old)).toBe(true);
+    expect((await other.upload(body(SAMPLES['text/plain']), 'notes.txt', 'text/plain')).status).toBe(503);
+    expect(await store.discard(id)).toBe('removed');
+    expect(existsSync(join(home, 'attachments', id))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('unlinks symlinks planted in an expired folder without following them, and leaves a folder with a directory in it', async () => {
+    const home = freshHome();
+    const now = Date.now();
+    const outside = join(tmp, `outside-${++n}`);
+    await mkdir(join(outside, 'deep'), { recursive: true });
+    await writeFile(join(outside, 'precious.txt'), 'keep me');
+    await writeFile(join(outside, 'deep', 'also.txt'), 'keep me too');
+    const planted = await leftover(home, '00000001-0000-4000-8000-000000000000', now, USED_TTL_MS * 2);
+    await symlink(outside, join(planted, 'to-a-folder'));
+    await symlink(join(outside, 'precious.txt'), join(planted, 'to-a-file'));
+    const nested = await leftover(home, '00000002-0000-4000-8000-000000000000', now, USED_TTL_MS * 2);
+    await mkdir(join(nested, 'sub'));
+    await writeFile(join(nested, 'sub', 'x.txt'), 'x');
+    const old = new Date(now - USED_TTL_MS * 2);
+    // The links' own times, by lutimes: the sweep reads every entry by lstat.
+    for (const link of [join(planted, 'to-a-folder'), join(planted, 'to-a-file')]) await lutimes(link, old, old);
+    for (const target of [join(nested, 'sub'), nested, planted]) await utimes(target, old, old);
+    await chmod(home, 0o700);
+
+    const { store } = storeAt(home, now);
+    await store.sweep();
+    expect(existsSync(planted)).toBe(false);
+    expect(await readFile(join(outside, 'precious.txt'), 'utf8')).toBe('keep me');
+    expect(await readFile(join(outside, 'deep', 'also.txt'), 'utf8')).toBe('keep me too');
+    expect((await readdir(outside)).sort()).toEqual(['deep', 'precious.txt']);
+    // pitwall never makes a directory in an upload's folder, so it doesn't go into one.
+    expect(await readFile(join(nested, 'sub', 'x.txt'), 'utf8')).toBe('x');
+  });
+
   it('removes nothing through a symlinked attachments folder', async () => {
     const home = freshHome();
     const elsewhere = join(tmp, `elsewhere-${++n}`);
@@ -1162,16 +1330,41 @@ describe('spawn with attachments', () => {
     expect(started.run.calls).toEqual([]);
   });
 
-  it('marks ids used only when the session started: a failed spawn gives them back', async () => {
-    const run = fakeRunner(exited(1, '', 'Error: something went wrong\n'), { kind: 'failed', reason: 'timeout', message: "didn't finish within 30s" }, backgrounded());
-    const started = await start({ run });
+  it('gives ids back only when nothing started: claude refused, or never ran', async () => {
+    const run = fakeRunner(
+      exited(1, '', 'Error: something went wrong\n'),
+      exited(1, '', 'Workspace not trusted. Run claude in it first.\n'),
+      { kind: 'failed', reason: 'not-found', message: 'claude was not found' },
+      { kind: 'failed', reason: 'spawn', message: 'spawn EACCES' },
+      backgrounded(),
+    );
+    const started = await start({ run, actions: { spawnRate: { max: 10, windowMs: 60_000 } } });
     const id = await uploaded(started);
-    expect((await spawn(started, spawnBody([id]))).status).toBe(502);
-    expect((await spawn(started, spawnBody([id]))).status).toBe(504);
+    for (const status of [502, 422, 502, 502]) expect((await spawn(started, spawnBody([id]))).status).toBe(status);
     expect(existsSync(join(started.home as string, 'attachments', id, USED_MARKER))).toBe(false);
     expect((await spawn(started, spawnBody([id]))).status).toBe(201);
-    expect(run.calls).toHaveLength(3);
+    expect(run.calls).toHaveLength(5);
     expect(existsSync(join(started.home as string, 'attachments', id, USED_MARKER))).toBe(true);
+  });
+
+  it('marks ids used when a session may have started: a timeout, a signal, or no session id', async () => {
+    const outcomes: Array<[CommandResult, number]> = [
+      [{ kind: 'failed', reason: 'timeout', message: "didn't finish within 30s" }, 504],
+      [{ kind: 'failed', reason: 'signal', message: 'was killed by SIGKILL' }, 502],
+      [exited(0, 'something unexpected\n'), 502],
+    ];
+    for (const [result, status] of outcomes) {
+      const started = await start({ run: fakeRunner(result, backgrounded()) });
+      const id = await uploaded(started);
+      expect((await spawn(started, spawnBody([id]))).status, result.kind).toBe(status);
+      // It may be in a session now, so it's neither started again nor removed.
+      const again = await spawn(started, spawnBody([id]));
+      expect(again.status, result.kind).toBe(400);
+      expect(errorOf(again)).toMatch(/already used/);
+      expect((await discard(started, id)).status, result.kind).toBe(409);
+      expect(existsSync(join(started.home as string, 'attachments', id, USED_MARKER)), result.kind).toBe(true);
+      expect(started.run.calls, result.kind).toHaveLength(1);
+    }
   });
 
   it('lets only one of two spawns that run at once use an attachment', async () => {

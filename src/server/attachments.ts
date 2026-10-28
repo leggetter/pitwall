@@ -13,13 +13,15 @@
 //     400  X-Pitwall-Filename is missing, isn't URL-encoded UTF-8, or the name is empty, over 200
 //          characters, or has a path separator, control or bidi character; the file is empty; or
 //          the upload stopped before the whole file arrived
+//     408  no bytes for 30 seconds, or not all of them within 2 minutes. Nothing is left behind
 //     413  over ATTACHMENT_MAX_BYTES: at once by Content-Length, or as soon as the streamed bytes
 //          pass it, without reading the rest. Nothing is left behind
 //     415  Content-Type isn't one of ATTACHMENT_TYPES, a Content-Encoding is set, or the bytes
 //          contradict the type: an image's or a PDF's signature, or, for text and JSON, UTF-8
 //          with no NUL
 //     429  ATTACHMENTS_MAX_PENDING uploads, those still arriving included, that no spawn has used
-//          and that haven't expired. Retry-After is when the oldest expires
+//          and that haven't expired. Retry-After is the soonest one could free a place: an unused
+//          one expiring, or one still arriving reaching its time limit
 //     500  the folder or the file couldn't be written
 //     503  this server keeps no attachments (no `pitwallHome`, as in tests), or its folder can't be
 //          used safely: a symlink, not a directory, another user's or open to others, or a path an
@@ -45,12 +47,15 @@
 // and every 10 minutes. It goes by the map for this run's uploads, and by
 // each folder's own mtimes for anything else, such as an earlier run's or
 // another pitwall's: then `.used` marks a used one. It removes only `<uuid>`
-// directories directly in the attachments folder, never follows a symlink,
-// and does nothing while the folder, or the pitwall home, isn't a real
-// directory.
+// directories directly in the attachments folder, entry by entry, unlinking a
+// symlink rather than following it, and leaves a folder with a directory in
+// it, which pitwall never makes. It and DELETE do nothing on disk while the
+// home or the attachments folder isn't a real directory, the user's own and
+// closed to others, as uploads require: then no one else can swap a folder
+// for a symlink partway through a removal.
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, realpath, rm, type FileHandle } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, realpath, rmdir, unlink, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import type { Hono } from 'hono';
@@ -81,6 +86,15 @@ export const DEFAULT_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 
 /** The file that marks a folder as used, for a later run's sweep. A stored name never starts with `.`. */
 export const USED_MARKER = '.used';
+
+/**
+ * Characters that show as nothing, which hasUnsafeCharacters() lets through: a soft hyphen, the
+ * Mongolian vowel separator, zero-width space, non-joiner and joiner, the word joiner and the
+ * invisible operators, and the zero-width no-break space (BOM). attachmentName() drops them, so one
+ * name can't pass for another. Not added to guards.ts's rule, which spawn, resume, open in an
+ * editor and the directory list share for real directories.
+ */
+const INVISIBLE = /[\u00ad\u180e\u200b-\u200d\u2060-\u2064\ufeff]/g;
 
 /** The longest stored name before its extension. */
 const STORED_STEM_MAX = 100;
@@ -148,8 +162,8 @@ export function attachmentType(header: string | undefined): AttachmentType | und
 
 /**
  * The display name from X-Pitwall-Filename: URL-decoded, refused for a control or bidi character
- * (hasUnsafeCharacters()) or a path separator, then NFC-normalized and trimmed, and refused when that
- * leaves it empty or over ATTACHMENT_NAME_MAX. It's only ever shown, never used as a path.
+ * (hasUnsafeCharacters()) or a path separator, then without INVISIBLE characters, NFC-normalized and
+ * trimmed, and refused when that leaves it empty or over ATTACHMENT_NAME_MAX. It's only ever shown, never used as a path.
  */
 export function attachmentName(header: string | undefined): { ok: true; name: string } | { ok: false; error: string } {
   if (header === undefined || header === '') return { ok: false, error: "Send the file's name, URL-encoded, in X-Pitwall-Filename." };
@@ -164,7 +178,7 @@ export function attachmentName(header: string | undefined): { ok: true; name: st
   // Before trimming, which would drop a line feed or tab at either end rather than refuse it.
   if (hasUnsafeCharacters(name)) return { ok: false, error: "The file's name has a control character or a bidi control." };
   if (/[/\\]/.test(name)) return { ok: false, error: "The file's name can't have a / or a \\." };
-  name = name.normalize('NFC').trim();
+  name = name.replace(INVISIBLE, '').normalize('NFC').trim();
   if (name === '') return { ok: false, error: "The file's name is empty." };
   if (name.length > ATTACHMENT_NAME_MAX) return { ok: false, error: `The file's name can be at most ${ATTACHMENT_NAME_MAX} characters.` };
   return { ok: true, name };
@@ -273,6 +287,19 @@ export interface AttachmentStoreOptions {
   sweepIntervalMs?: number;
   /** The current user's uid, for the owner check. Default process.getuid(); undefined skips it. */
   uid?: number;
+  /** An upload that sends no bytes for this long gets 408. Default 30 seconds. */
+  uploadIdleMs?: number;
+  /** An upload that hasn't sent all its bytes this long after it started gets 408. Default 2 minutes. */
+  uploadTotalMs?: number;
+}
+
+export const DEFAULT_UPLOAD_IDLE_MS = 30_000;
+export const DEFAULT_UPLOAD_TOTAL_MS = 120_000;
+
+/** When an upload still arriving started, and when its latest bytes came, by the store's clock. */
+interface Arriving {
+  startedAt: number;
+  lastByteAt: number;
 }
 
 /** A kept attachment, as spawn passes it on: its stored file and folder, both absolute realpaths. */
@@ -288,7 +315,7 @@ export type AttachmentLookup = { ok: true; files: AttachmentFile[] } | { ok: fal
 
 /** What an upload came to, for the route. */
 export interface UploadOutcome {
-  status: 201 | 400 | 413 | 415 | 429 | 500 | 503;
+  status: 201 | 400 | 408 | 413 | 415 | 429 | 500 | 503;
   result: AttachmentResult;
   retryAfterSeconds?: number;
 }
@@ -314,9 +341,11 @@ export class AttachmentStore {
   readonly #now: () => number;
   readonly #sweepIntervalMs: number;
   readonly #uid: number | undefined;
+  readonly #idleMs: number;
+  readonly #totalMs: number;
   readonly #kept = new Map<string, Kept>();
-  /** Ids of uploads still arriving: they count as pending, and the sweep leaves their folders alone. */
-  readonly #arriving = new Set<string>();
+  /** Uploads still arriving, by id: they count as pending, and the sweep leaves their folders alone. */
+  readonly #arriving = new Map<string, Arriving>();
   #timer: NodeJS.Timeout | undefined;
   #sweeping: Promise<void> | undefined;
 
@@ -326,6 +355,8 @@ export class AttachmentStore {
     this.#now = options.now ?? Date.now;
     this.#sweepIntervalMs = options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
     this.#uid = 'uid' in options ? options.uid : process.getuid?.();
+    this.#idleMs = options.uploadIdleMs ?? DEFAULT_UPLOAD_IDLE_MS;
+    this.#totalMs = options.uploadTotalMs ?? DEFAULT_UPLOAD_TOTAL_MS;
   }
 
   /** Sweeps now, then every sweepIntervalMs, until close(). */
@@ -370,7 +401,9 @@ export class AttachmentStore {
       };
     }
     const id = randomUUID();
-    this.#arriving.add(id);
+    const started = this.#now();
+    const arriving: Arriving = { startedAt: started, lastByteAt: started };
+    this.#arriving.set(id, arriving);
     try {
       const ready = await this.#ready();
       if (!ready.ok) return refused(503, ready.error);
@@ -390,7 +423,13 @@ export class AttachmentStore {
       } catch (error) {
         return refused(500, `pitwall couldn't make a folder for the attachment: ${(error as Error).message}`);
       }
-      const written = await writeBody(body, path.join(dir, stored), type);
+      const written = await writeBody(body, path.join(dir, stored), type, {
+        idleMs: this.#idleMs,
+        totalMs: this.#totalMs,
+        onBytes: () => {
+          arriving.lastByteAt = this.#now();
+        },
+      });
       if (!written.ok) {
         await removeFolder(root, id);
         return refused(written.status, written.error);
@@ -436,7 +475,8 @@ export class AttachmentStore {
    * finished with: it stays, for the sweep. 'unknown' for an id this run doesn't hold, one still
    * arriving included. The map is changed before anything waits, so a claim() after this sees
    * the id as unknown, and one before it makes this 'used'. The folder is removed only while the
-   * home and the attachments folder are real directories, as the sweep's are.
+   * home and the attachments folder are private and the user's own, as uploads require; otherwise
+   * the id is forgotten and the folder left for a sweep once they are.
    */
   async discard(id: string): Promise<'removed' | 'unknown' | 'used'> {
     const kept = this.#kept.get(id);
@@ -445,9 +485,7 @@ export class AttachmentStore {
     this.#kept.delete(id);
     const root = this.#root;
     const home = this.#home;
-    if (root !== undefined && home !== undefined && (await realDirectory(home)) === true && (await realDirectory(root)) === true) {
-      await removeFolder(root, id);
-    }
+    if (root !== undefined && home !== undefined && (await this.#private(home, root))) await removeFolder(root, id);
     return 'removed';
   }
 
@@ -500,8 +538,8 @@ export class AttachmentStore {
     }
     // Forgotten whatever the disk says, so spawn can't use them.
     for (const id of gone) this.#kept.delete(id);
-    // Nothing is removed through a symlink, or from anything but a real directory.
-    if ((await realDirectory(home)) !== true || (await realDirectory(root)) !== true) return;
+    // Nothing is removed unless both are private and the user's own, as uploads require.
+    if (!(await this.#private(home, root))) return;
     for (const id of gone) await removeFolder(root, id);
 
     let entries;
@@ -534,14 +572,25 @@ export class AttachmentStore {
     return { ok: true, files };
   }
 
-  /** Seconds until the oldest unused upload expires, at least 1. */
+  /**
+   * Seconds until the soonest a pending place could free, at least 1: an unused upload expiring, or
+   * one still arriving reaching its idle or total limit, whichever comes first for it.
+   */
   #retryAfterSeconds(): number {
     const now = this.#now();
-    let oldest: number | undefined;
+    let soonest = Infinity;
     for (const kept of this.#kept.values()) {
-      if (kept.usedAt === undefined && !expired(kept, now)) oldest = Math.min(oldest ?? kept.uploadedAt, kept.uploadedAt);
+      if (kept.usedAt === undefined && !expired(kept, now)) soonest = Math.min(soonest, kept.uploadedAt + UNUSED_TTL_MS);
     }
-    return oldest === undefined ? 1 : Math.max(1, Math.ceil((oldest + UNUSED_TTL_MS - now) / 1000));
+    for (const arriving of this.#arriving.values()) {
+      soonest = Math.min(soonest, arriving.lastByteAt + this.#idleMs, arriving.startedAt + this.#totalMs);
+    }
+    return soonest === Infinity ? 1 : Math.max(1, Math.ceil((soonest - now) / 1000));
+  }
+
+  /** True when the home and the attachments folder are both real directories, the user's own and closed to others. */
+  async #private(home: string, root: string): Promise<boolean> {
+    return (await realDirectory(home, this.#uid)) === true && (await realDirectory(root, this.#uid)) === true;
   }
 
   /**
@@ -596,13 +645,22 @@ async function realDirectory(dir: string, uid?: number): Promise<true | string> 
   return true;
 }
 
-/** Removes `<root>/<id>` when `id` is an upload's and it's a real directory. rm() unlinks a symlink inside without following it. */
+/**
+ * Removes `<root>/<id>` when `id` is an upload's and it's a real directory, entry by entry, by lstat:
+ * a file or a symlink is unlinked itself, never followed, and a folder with a directory in it, which
+ * pitwall never makes, is left as it is, rather than recursed into. Callers check first that the home
+ * and `root` are private and the user's own (#private()), so no one else can swap anything in.
+ */
 async function removeFolder(root: string, id: string): Promise<void> {
   if (!UPLOAD_ID.test(id)) return;
   const dir = path.join(root, id);
   try {
     if (!(await lstat(dir)).isDirectory()) return;
-    await rm(dir, { recursive: true, force: true });
+    // readdir's types are lstat's: a symlink to a directory isn't a directory here.
+    const entries = await readdir(dir, { withFileTypes: true });
+    if (entries.some((entry) => entry.isDirectory())) return;
+    for (const entry of entries) await unlink(path.join(dir, entry.name));
+    await rmdir(dir);
   } catch {
     // Gone already, or the next sweep tries again.
   }
@@ -627,11 +685,39 @@ async function folderAge(dir: string): Promise<{ used: boolean; at: number } | u
   }
 }
 
-type Written = { ok: true; size: number } | { ok: false; status: 400 | 413 | 415 | 500; error: string };
+type Written = { ok: true; size: number } | { ok: false; status: 400 | 408 | 413 | 415 | 500; error: string };
 
-/** Streams `body` into a new file at `file`, at most ATTACHMENT_MAX_BYTES, checking it against `type`. */
-async function writeBody(body: ReadableStream<Uint8Array> | null, file: string, type: AttachmentType): Promise<Written> {
-  const fail = (status: 400 | 413 | 415 | 500, error: string): Written => ({ ok: false, status, error });
+interface WriteLimits {
+  idleMs: number;
+  totalMs: number;
+  /** Called as each chunk arrives. */
+  onBytes: () => void;
+}
+
+/**
+ * The next chunk, or 'stalled' when none comes within `ms`, or undefined when the body failed, as
+ * when the client went away. A read still waiting is settled by the reader's cancel() in writeBody().
+ */
+async function readWithin(reader: ReadableStreamDefaultReader<Uint8Array>, ms: number) {
+  let timer: NodeJS.Timeout | undefined;
+  const stalled = new Promise<'stalled'>((resolve) => {
+    timer = setTimeout(() => resolve('stalled'), Math.max(0, ms));
+  });
+  try {
+    return await Promise.race([reader.read().catch(() => undefined), stalled]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Streams `body` into a new file at `file`, at most ATTACHMENT_MAX_BYTES, checking it against `type`,
+ * and gives up with 408 when no bytes come for `idleMs`, or not all of them within `totalMs`, so a
+ * stalled upload can't hold a pending place, or its folder, for as long as its socket stays open.
+ */
+async function writeBody(body: ReadableStream<Uint8Array> | null, file: string, type: AttachmentType, limits: WriteLimits): Promise<Written> {
+  const fail = (status: 400 | 408 | 413 | 415 | 500, error: string): Written => ({ ok: false, status, error });
+  const deadline = Date.now() + limits.totalMs;
   let handle: FileHandle;
   try {
     handle = await open(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, 0o600);
@@ -644,9 +730,19 @@ async function writeBody(body: ReadableStream<Uint8Array> | null, file: string, 
   try {
     for (;;) {
       if (!reader) break;
-      const next = await reader.read().catch(() => undefined);
+      const left = deadline - Date.now();
+      const next = await readWithin(reader, Math.min(limits.idleMs, left));
+      if (next === 'stalled') {
+        return fail(
+          408,
+          left <= limits.idleMs
+            ? `The upload took more than ${limits.totalMs / 1000} seconds, so pitwall stopped it. Try again.`
+            : `The upload sent nothing for ${limits.idleMs / 1000} seconds, so pitwall stopped it. Try again.`,
+        );
+      }
       if (next === undefined) return fail(400, 'The upload stopped before the whole file arrived.');
       if (next.done) break;
+      limits.onBytes();
       const chunk = next.value;
       size += chunk.byteLength;
       // Before writing it: the rest is never read, and the folder goes.
