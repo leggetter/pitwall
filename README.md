@@ -156,7 +156,7 @@ flowchart TB
 
 ### Messaging an interactive session
 
-The relay starts on your first message and stops with pitwall. Before each message, pitwall writes down what it expects the relay to send: the session's name and a hash of your text. The gate allows a `SendMessage` only when it matches, once, and blocks anything else, such as a send that another session talked the relay into.
+The relay starts on your first message and stops with pitwall. For each message, pitwall checks in `claude agents` that exactly one live session has the name, then writes down what it expects the relay to send: that name and a hash of your text. The gate allows a `SendMessage` only when it matches, once, and blocks anything else, such as a send that another session talked the relay into. The session gets your message as one from another session, and acts on it within its own permissions.
 
 ```mermaid
 sequenceDiagram
@@ -167,15 +167,15 @@ sequenceDiagram
   participant session as Interactive session
 
   page->>server: Send, with the page's key
-  server->>server: Check the session's name in claude agents
-  server->>gate: Expect this name and this text's hash
-  server->>relay: Your message, on its stdin
-  relay->>gate: SendMessage to the session
-  gate-->>relay: Allowed, for this message only
-  relay->>session: Your message, from another session
-  relay-->>server: The call's result, on its stdout
+  server->>server: Check claude agents
+  server->>gate: Expect this name and hash
+  server->>relay: Your message, on stdin
+  relay->>gate: SendMessage
+  gate-->>relay: Allowed, once
+  relay->>session: Your message, from a session
+  relay-->>server: Its result, on stdout
   server-->>page: Delivered, held or refused
-  session->>session: A turn, within its own permissions
+  session->>session: A turn
   session-->>relay: Its reply, with SendMessage
   Note over page,session: The reply shows in the session's conversation, read from its transcript
 ```
