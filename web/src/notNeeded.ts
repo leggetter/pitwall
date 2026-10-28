@@ -7,10 +7,16 @@
 // tabs' badges, the page title's count and the urgency sort. Once what it needs changes, it's back by
 // itself.
 //
-// "What it needs" is `needsYou`'s reason and text, `askedYou`'s excerpt, `state`, `status` and
-// `waitingFor`. A mark keeps a hash of them, never the text: needHash(). A session is not needed now
-// while its id is marked and its hash is still the one marked, so a new question, a new line from
-// Claude Code, or a change of state brings it back at once, before anything is written.
+// "What it needs" is `needsYou`'s reason and text, `askedYou`'s excerpt and `waitingFor`. A mark keeps
+// a hash of them, never the text: needHash(). A session is not needed now while its id is marked and
+// its hash is still the one marked, so a new question, a new line from Claude Code, a prompt on screen
+// or a new reason brings it back at once, before anything is written.
+//
+// Not `status` or `state` (the review of #90). The index reads `status` only as `waiting`, which is
+// reason 'prompt', and `waitingFor` says which prompt; a plugin's monitor keeps it at `busy` anyway
+// (spikes 005 and 007). And a job waiting on someone else that checks again on a loop cycles blocked,
+// working, blocked, which would take its mark away each time; reason 'blocked' needs `state` anyway,
+// so a real change still shows as a new reason.
 //
 // Kept in the browser, as stars are (starred.ts): a viewer's preference, with no server change. One
 // localStorage key, pitwall.not-needed.v1, shared across roots and tabs on the origin, holding a small
@@ -67,13 +73,14 @@ export function fnv1a64(text: string): string {
 const hashes = new WeakMap<SessionSummary, string>();
 
 /**
- * The hash of what a session needs: `needsYou`'s reason and text, `askedYou`'s excerpt, `state`,
- * `status` and `waitingFor`, each or null, in that order. Any change to one of them changes it.
+ * The hash of what a session needs: `needsYou`'s reason and text, `askedYou`'s excerpt and
+ * `waitingFor`, each or null, in that order. Any change to one of them changes it; `status` and
+ * `state` don't (see the top of this file).
  */
 export function needHash(session: SessionSummary): string {
   const known = hashes.get(session);
   if (known !== undefined) return known;
-  const need = [session.needsYou?.reason, session.needsYou?.text, session.askedYou?.excerpt, session.state, session.status, session.waitingFor].map((part) => part ?? null);
+  const need = [session.needsYou?.reason, session.needsYou?.text, session.askedYou?.excerpt, session.waitingFor].map((part) => part ?? null);
   const hash = fnv1a64(JSON.stringify(need));
   hashes.set(session, hash);
   return hash;

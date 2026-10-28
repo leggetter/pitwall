@@ -367,7 +367,7 @@ describe("the toast's Undo", () => {
 });
 
 describe('back in Needs you by itself', () => {
-  it('once what it needs changes, and the mark goes from storage', async () => {
+  it('when what it needs changes, and the mark goes from storage', async () => {
     const { items, again } = renderDashboard();
     fireEvent.click(toggle('review'));
     expect(rowNames()).toEqual(['docs', 'asks']);
@@ -394,7 +394,6 @@ describe('back in Needs you by itself', () => {
       { askedYou: { reason: 'question', excerpt: 'A made-up question?' } },
       { status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } },
       { waitingFor: 'input needed' },
-      { state: 'working', needsYou: { reason: 'claude-code', text: REVIEW_LINE } },
     ];
     for (const change of changes) {
       const { items, again, unmount } = renderDashboard();
@@ -406,6 +405,18 @@ describe('back in Needs you by itself', () => {
       expect(marksIn(items), JSON.stringify(change)).toEqual([]);
       unmount();
     }
+  });
+
+  it('but not as a job that checks again on a loop goes from blocked to working and back, its line the same (the review of #90)', async () => {
+    const { items, again } = renderDashboard();
+    fireEvent.click(toggle('review'));
+    const mark = marksIn(items);
+    again(snap(sessions({ review: { state: 'working', status: 'busy' } })));
+    await settle();
+    again(snap(sessions({ review: { state: 'blocked', status: 'idle' } })));
+    await settle();
+    expect(rowNames()).toEqual(['docs', 'asks']);
+    expect(marksIn(items)).toEqual(mark);
   });
 
   it('but not because it is missing from a snapshot: back unchanged, it is still out', async () => {
