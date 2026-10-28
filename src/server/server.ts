@@ -8,7 +8,8 @@
 //   GET /api/directories        then directories.ts: the directories under the snapshot's roots
 //   GET /api/editors            then editors.ts: the editors found at startup
 //   POST /api/attachments       then attachments.ts: the one body that isn't JSON, the file's bytes
-//                               with its own Content-Type, at most 10 MiB, its type checked
+//                               with its own Content-Type, at most 10 MiB, its type checked; DELETE
+//                               /api/attachments/:id removes one no spawn has used
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
 //                               snapshot, else 503; the session in it, else 404. Every route that
 //                               takes a session id, and every M2 input path, goes through it.
