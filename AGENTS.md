@@ -4,7 +4,7 @@ Instructions for agents working in this repo.
 
 ## What this is
 
-pitwall is a local CLI and web UI for supervising the Claude Code sessions on this machine. It lists and groups them, lets you act on them, spawns new ones, and will have a supervisor session (M5) you can talk to instead of visiting each session.
+pitwall is the pit wall for the Claude Code sessions on this machine: it watches every one, lets you steer it, and starts new ones, from a local web UI. It lists them grouped by repo, and will have a supervisor session (M5) you can talk to instead of visiting each session.
 
 Read `PLAN.md` first. It says what exists, what's next and which decisions are still open.
 
@@ -55,7 +55,7 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 
 ```
 PLAN.md                  the living plan: status, decisions, milestones
-README.md                what pitwall is, how to run it, and how to use it
+README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
 docs/decisions.md        settled decisions, D1 to D21, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md

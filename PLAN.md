@@ -94,7 +94,7 @@ Observed while building M1 (Claude Code v2.1.301):
 
 ## Decisions
 
-Each open one carries a lean. Settled decisions keep a one-line status here; their reasoning is in [`docs/decisions.md`](docs/decisions.md), which took them over from the README on 2026-10-28.
+Each open one carries a lean. Settled decisions keep a one-line status here; their reasoning is in [`docs/decisions.md`](docs/decisions.md), which took them over from the README on 2026-10-28, when the README was rewritten for newcomers.
 
 - **D1 - Session list comes from `claude agents --json`.** Decided (S1).
 - **D2 - Acting on an interactive session pitwall didn't start:** relay messages through pitwall's relay (D8), which the M5 supervisor takes over, and ask me to `/bg` the session for anything that needs full control. Decided (S4).
@@ -728,6 +728,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] W85's findings: fish-safe copied commands, invisible characters in attachment names, a per-minute limit on Open in an editor (W87, merged in #89)
 - [x] Not needed now, for a session in Needs you that's really waiting on someone else (W88, merged in #90)
 - [x] A licence for going public: Apache-2.0 (D21)
+- [x] The README rewritten for newcomers, with diagrams and a roadmap, and the decisions moved to `docs/decisions.md` (2026-10-28)
 - [ ] M4: my open pull requests
 - [ ] M5: supervisor
 - [ ] M6: triage
