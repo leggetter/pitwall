@@ -708,7 +708,9 @@ export const SPAWN_PATH = '/api/sessions';
  *   characters, or has a path separator, control or bidi character; 413 past
  *   ATTACHMENT_MAX_BYTES, from `Content-Length` or while streaming; 415 for a
  *   type not in ATTACHMENT_TYPES, one its first bytes contradict, or any
- *   `Content-Encoding`; 429 past ATTACHMENTS_MAX_PENDING unused uploads.
+ *   `Content-Encoding`; 429 past ATTACHMENTS_MAX_PENDING unused uploads,
+ *   counting those still arriving. 408 when an upload sends nothing for 30
+ *   seconds, or takes more than 2 minutes in all, and nothing is kept.
  * - 503 when attachments are unavailable: no pitwall home folder, a home path
  *   with characters an `@` mention can't carry (anything but letters, digits,
  *   `.`, `_`, `/` and `-`), or Windows. 500 when the file couldn't be written.
