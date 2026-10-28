@@ -3,9 +3,9 @@
 // them up by id, appends an `@<path>` line for each to the first prompt and
 // passes `--add-dir=<folder>` for each.
 //
-// It's a POST, so the /api/* middleware in server.ts has already required the
-// apiKey (never the raw token) and this server's Origin, and the server the
-// Host. It's the one route whose body isn't JSON: the file's own bytes, with
+// Both routes change state, so the /api/* middleware in server.ts has already
+// required the apiKey (never the raw token) and this server's Origin, and the
+// server the Host. It's the one route whose body isn't JSON: the file's own bytes, with
 // the file's own type, checked here, explicitly, against ATTACHMENT_TYPES.
 //
 //   POST ATTACHMENTS_PATH          body: the file's bytes               answers: AttachmentResult
@@ -24,6 +24,11 @@
 //     503  this server keeps no attachments (no `pitwallHome`, as in tests), or its folder can't be
 //          used safely: a symlink, not a directory, another user's or open to others, or a path an
 //          `@` mention can't carry
+//
+//   DELETE attachmentPath(id)      no body                              answers: nothing, or AttachmentResult
+//     204  removed: an upload no spawn has used, whose pending place is free at once
+//     404  an id this run doesn't hold: never one, gone, or still arriving
+//     409  one a spawn has used, or has claimed and not yet finished with. The sweep removes it
 //
 // Where they're kept:
 //
@@ -55,6 +60,7 @@ import {
   ATTACHMENT_TYPES,
   ATTACHMENTS_MAX_PENDING,
   ATTACHMENTS_PATH,
+  attachmentPath,
   type AttachmentResult,
   type AttachmentType,
 } from '../shared/protocol.js';
@@ -424,6 +430,27 @@ export class AttachmentStore {
     return found;
   }
 
+  /**
+   * Removes an upload no spawn has used, as when it's removed from the dialog, and frees its place
+   * among the pending at once. 'used' for one a spawn has used, or has claimed and not yet
+   * finished with: it stays, for the sweep. 'unknown' for an id this run doesn't hold, one still
+   * arriving included. The map is changed before anything waits, so a claim() after this sees
+   * the id as unknown, and one before it makes this 'used'. The folder is removed only while the
+   * home and the attachments folder are real directories, as the sweep's are.
+   */
+  async discard(id: string): Promise<'removed' | 'unknown' | 'used'> {
+    const kept = this.#kept.get(id);
+    if (!kept) return 'unknown';
+    if (kept.usedAt !== undefined || kept.claimed) return 'used';
+    this.#kept.delete(id);
+    const root = this.#root;
+    const home = this.#home;
+    if (root !== undefined && home !== undefined && (await realDirectory(home)) === true && (await realDirectory(root)) === true) {
+      await removeFolder(root, id);
+    }
+    return 'removed';
+  }
+
   /** Gives back what claim() took, when the spawn didn't start. */
   release(ids: readonly string[]): void {
     for (const id of ids) {
@@ -644,7 +671,10 @@ async function writeBody(body: ReadableStream<Uint8Array> | null, file: string, 
   }
 }
 
-/** Adds ATTACHMENTS_PATH. Call it after the /api/* checks and before the /api/* catch-all, as server.ts does. */
+/** attachmentPath() as a Hono pattern. It encodes its argument, so the pattern is decoded back. */
+const ATTACHMENT_ROUTE = decodeURIComponent(attachmentPath(':id'));
+
+/** Adds ATTACHMENTS_PATH, and DELETE attachmentPath(). Call it after the /api/* checks and before the /api/* catch-all, as server.ts does. */
 export function registerAttachments(app: Hono, store: AttachmentStore): void {
   app.post(ATTACHMENTS_PATH, async (c) => {
     c.header('Cache-Control', 'no-store');
@@ -666,4 +696,15 @@ export function registerAttachments(app: Hono, store: AttachmentStore): void {
     if (length !== undefined && Number(length) > ATTACHMENT_MAX_BYTES) return answer(refused(413, TOO_LARGE_ERROR));
     return answer(await store.upload(c.req.raw.body, name.name, type));
   });
+
+  app.delete(ATTACHMENT_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    // Looked up in the map only: the id never becomes a path unless it's one the map holds.
+    const outcome = await store.discard(c.req.param('id') ?? '');
+    if (outcome === 'removed') return c.body(null, 204);
+    const result = (error: string): AttachmentResult => ({ ok: false, error });
+    if (outcome === 'unknown') return c.json(result("That attachment isn't one pitwall holds."), 404);
+    return c.json(result('A session has used that attachment, so pitwall keeps it for a while and removes it on its own.'), 409);
+  });
 }
+

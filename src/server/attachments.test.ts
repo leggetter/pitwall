@@ -3,7 +3,7 @@
 // command runner, so no test ever runs `claude`. Every pitwall home is a
 // fresh temporary folder, never the real ~/.pitwall.
 import { existsSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ import {
   ATTACHMENTS_MAX_PENDING,
   ATTACHMENTS_MAX_PER_SESSION,
   ATTACHMENTS_PATH,
+  attachmentPath,
   SPAWN_PATH,
   WS_PATH,
   type AttachmentResult,
@@ -184,9 +185,9 @@ interface HttpResult {
   json: unknown;
 }
 
-function send(port: number, path: string, body: Buffer | string | undefined, headers: Record<string, string>): Promise<HttpResult> {
+function send(port: number, path: string, body: Buffer | string | undefined, headers: Record<string, string>, method = 'POST'): Promise<HttpResult> {
   return new Promise((resolve, reject) => {
-    const req = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers, agent: false }, (res) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, method, headers, agent: false }, (res) => {
       let text = '';
       res.setEncoding('utf8');
       res.on('data', (chunk: string) => (text += chunk));
@@ -226,6 +227,11 @@ async function uploaded(started: Started, type: AttachmentType = 'text/plain', n
   const res = await upload(started, SAMPLES[type], type, name);
   expect(res.status, JSON.stringify(res.json)).toBe(201);
   return (res.json as Extract<AttachmentResult, { ok: true }>).attachment.id;
+}
+
+/** DELETE attachmentPath(id), as the web UI sends it unless `headers` say otherwise. */
+function discard(started: Started, id: string, headers: Record<string, string> = asPage(started)) {
+  return send(started.server.port, attachmentPath(id), undefined, headers, 'DELETE');
 }
 
 function spawn(started: Started, body: unknown) {
@@ -922,6 +928,138 @@ describe('clean-up', () => {
     expect(await folders(started.home as string)).toEqual([id]);
     clock += UNUSED_TTL_MS;
     await vi.waitFor(async () => expect(await folders(started.home as string)).toEqual([]), { timeout: 5000 });
+  });
+});
+
+// ---------------------------------------------------------------- DELETE attachmentPath(id)
+
+describe('DELETE attachmentPath(id)', () => {
+  it('removes an unused upload with 204, and frees its pending place at once', async () => {
+    const started = await start();
+    const ids: string[] = [];
+    for (let i = 0; i < ATTACHMENTS_MAX_PENDING; i += 1) ids.push(await uploaded(started));
+    expect((await upload(started, SAMPLES['text/plain'])).status).toBe(429);
+    const gone = ids[0] as string;
+    const res = await discard(started, gone);
+    expect(res.status).toBe(204);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(existsSync(join(started.home as string, 'attachments', gone))).toBe(false);
+    expect(await folders(started.home as string)).toHaveLength(ATTACHMENTS_MAX_PENDING - 1);
+    expect((await upload(started, SAMPLES['text/plain'])).status).toBe(201);
+    // And a spawn can't use it any more.
+    const spawned = await spawn(started, spawnBody([gone]));
+    expect(spawned.status).toBe(400);
+    expect(errorOf(spawned)).toMatch(/isn't one pitwall knows/);
+    expect(started.run.calls).toEqual([]);
+  });
+
+  it('answers 404 for an id it does not hold, a second delete included, and removes nothing', async () => {
+    const started = await start();
+    const kept = await uploaded(started);
+    const gone = await uploaded(started);
+    expect((await discard(started, gone)).status).toBe(204);
+    for (const id of [gone, '00000000-0000-4000-8000-000000000000', 'nope', '..', '../' + kept, `${kept}/sample.txt`, kept.toUpperCase()]) {
+      const res = await discard(started, id);
+      expect(res.status, id).toBe(404);
+      // `/api/attachments/..` is normalized to `/api/` before routing, so the catch-all answers it, with no body.
+      if (id !== '..') expect(errorOf(res), id).toMatch(/isn't one pitwall holds/);
+    }
+    expect(await folders(started.home as string)).toEqual([kept]);
+  });
+
+  it('answers 409 for one a spawn has used, and keeps it for the sweep', async () => {
+    const started = await start();
+    const id = await uploaded(started);
+    expect((await spawn(started, spawnBody([id]))).status).toBe(201);
+    const res = await discard(started, id);
+    expect(res.status).toBe(409);
+    expect(errorOf(res)).toMatch(/A session has used/);
+    expect(existsSync(join(started.home as string, 'attachments', id, 'sample.txt'))).toBe(true);
+    expect(existsSync(join(started.home as string, 'attachments', id, USED_MARKER))).toBe(true);
+  });
+
+  it('answers 409 while a starting spawn has claimed it, and the spawn still gets it', async () => {
+    let finish: (result: CommandResult) => void = () => {};
+    const slow = () => new Promise<CommandResult>((resolve) => (finish = resolve));
+    const started = await start({ run: fakeRunner(slow) });
+    const id = await uploaded(started);
+    const first = spawn(started, spawnBody([id]));
+    await vi.waitFor(() => expect(started.run.calls).toHaveLength(1));
+    expect((await discard(started, id)).status).toBe(409);
+    finish(backgrounded());
+    expect((await first).status).toBe(201);
+    const file = join(started.home as string, 'attachments', id, 'sample.txt');
+    expect(existsSync(file)).toBe(true);
+    expect((started.run.calls[0] as Call).args.at(-1)).toMatch(/\n\n@\/.*\/sample\.txt$/);
+    expect((await discard(started, id)).status).toBe(409);
+  });
+
+  it('removes one a failed spawn gave back, and a delete before a spawn leaves the spawn nothing to start', async () => {
+    let finish: (result: CommandResult) => void = () => {};
+    const slow = () => new Promise<CommandResult>((resolve) => (finish = resolve));
+    const started = await start({ run: fakeRunner(slow) });
+    const id = await uploaded(started);
+    const failing = spawn(started, spawnBody([id]));
+    await vi.waitFor(() => expect(started.run.calls).toHaveLength(1));
+    expect((await discard(started, id)).status).toBe(409);
+    finish(exited(1, '', 'Error: something went wrong\n'));
+    expect((await failing).status).toBe(502);
+    expect((await discard(started, id)).status).toBe(204);
+
+    const other = await uploaded(started);
+    // Sent together: whichever the server takes first, never both a session with it and a removed folder.
+    const spawning = spawn(started, spawnBody([other]));
+    const removed = await discard(started, other);
+    if (removed.status === 204) {
+      expect((await spawning).status).toBe(400);
+      expect(started.run.calls).toHaveLength(1);
+      expect(existsSync(join(started.home as string, 'attachments', other))).toBe(false);
+    } else {
+      expect(removed.status).toBe(409);
+      await vi.waitFor(() => expect(started.run.calls).toHaveLength(2));
+      finish(backgrounded());
+      expect((await spawning).status).toBe(201);
+      expect(existsSync(join(started.home as string, 'attachments', other, 'sample.txt'))).toBe(true);
+    }
+  });
+
+  it('refuses no credentials with 401, and the raw token, no Origin, another Origin or another Host with 403, removing nothing', async () => {
+    const started = await start();
+    const id = await uploaded(started);
+    const port = started.server.port;
+    expect((await discard(started, id, { origin: origin(port) })).status).toBe(401);
+    expect((await discard(started, id, { authorization: `Bearer ${TOKEN}`, origin: origin(port) })).status).toBe(403);
+    expect((await discard(started, id, { authorization: `Bearer ${started.apiKey}` })).status).toBe(403);
+    expect((await discard(started, id, { authorization: `Bearer ${started.apiKey}`, origin: 'http://evil.example' })).status).toBe(403);
+    expect((await discard(started, id, { ...asPage(started), host: `localhost:${port}` })).status).toBe(403);
+    expect(await folders(started.home as string)).toEqual([id]);
+    expect((await spawn(started, spawnBody([id]))).status).toBe(201);
+  });
+
+  it('forgets an upload without touching the disk through a symlinked attachments folder', async () => {
+    const t0 = Date.now();
+    const home = freshHome();
+    const store = new AttachmentStore({ home, now: () => t0 });
+    stores.push(store);
+    const outcome = await store.upload(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(SAMPLES['text/plain']));
+          controller.close();
+        },
+      }),
+      'notes.txt',
+      'text/plain',
+    );
+    if (!outcome.result.ok) throw new Error(outcome.result.error);
+    const { id } = outcome.result.attachment;
+    // The real folder moves away, and a symlink to it takes its place.
+    const moved = join(tmp, `moved-${++n}`);
+    await rename(join(home, 'attachments'), moved);
+    await symlink(moved, join(home, 'attachments'));
+    expect(await store.discard(id)).toBe('removed');
+    expect(await readdir(moved)).toEqual([id]);
+    expect(await store.discard(id)).toBe('unknown');
   });
 });
 
