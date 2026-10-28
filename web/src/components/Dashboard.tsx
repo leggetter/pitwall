@@ -195,7 +195,7 @@ export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'U
  * The toast once a session is marked not needed now (W88), with UNDO_NOT_NEEDED: it has left Needs you,
  * and says when it comes back.
  */
-export const notNeededText = (name: string) => `Marked ${plainText(name)} not needed now. It's back in Needs you once what it needs changes.`;
+export const notNeededText = (name: string) => `Marked ${plainText(name)} not needed now. It comes back to Needs you when what it needs changes.`;
 
 /** That toast's action: it takes the mark away, so the session is back in Needs you. */
 export const UNDO_NOT_NEEDED = 'Undo';

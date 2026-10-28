@@ -109,18 +109,23 @@ describe('needHash', () => {
     expect(needHash(after)).toBe(needHash(before));
   });
 
-  it("changes with each part of what it needs: needsYou's reason and text, askedYou's excerpt, state, status and waitingFor", () => {
+  it("changes with each part of what it needs: needsYou's reason and text, askedYou's excerpt and waitingFor", () => {
     const base = waitingOnAuthor();
     const changed = [
       waitingOnAuthor({ needsYou: { reason: 'blocked' } }),
       waitingOnAuthor({ needsYou: { reason: 'claude-code', text: 'The made-up author pushed a fix' } }),
       waitingOnAuthor({ askedYou: { reason: 'question', excerpt: 'Shall I re-run the made-up check?' } }),
-      waitingOnAuthor({ state: 'working' }),
-      waitingOnAuthor({ status: 'busy' }),
       waitingOnAuthor({ waitingFor: 'input needed' }),
     ];
     const hashes = new Set([base, ...changed].map(needHash));
     expect(hashes.size).toBe(changed.length + 1);
+  });
+
+  it("is the same whatever its status and state: a job that checks again on a loop cycles blocked, working, blocked (the review of #90)", () => {
+    const base = needHash(waitingOnAuthor());
+    for (const change of [{ state: 'working' }, { state: 'done' }, { status: 'busy' }, { status: 'waiting' }, { status: undefined, state: undefined }] as Partial<SessionSummary>[]) {
+      expect(needHash(waitingOnAuthor(change)), JSON.stringify(change)).toBe(base);
+    }
   });
 });
 
@@ -246,8 +251,10 @@ describe('withMark, withoutMark and pruned', () => {
     // The author pushed a fix: the job's line changed.
     const next = pruned(marks, [waitingOnAuthor({ needsYou: { reason: 'claude-code', text: 'The made-up author pushed a fix' } })]);
     expect([...next.keys()]).toEqual([gone.sessionId]);
-    // Done, needing nothing: its state changed.
+    // Done, needing nothing: its needsYou went.
     expect([...pruned(marks, [waitingOnAuthor({ state: 'done', needsYou: undefined, finished: true, alive: false })]).keys()]).toEqual([gone.sessionId]);
+    // Working for a moment, as a job that checks again on a loop does, and needing the same: it stays.
+    expect(pruned(marks, [waitingOnAuthor({ state: 'working', status: 'busy' })])).toBe(marks);
   });
 });
 
@@ -292,7 +299,9 @@ describe('useNotNeeded', () => {
     const before = writes.length;
     act(() => result.current.prune([]));
     expect(writes.length).toBe(before);
-    act(() => result.current.prune([waitingOnAuthor({ status: 'busy' })]));
+    act(() => result.current.prune([waitingOnAuthor({ state: 'working', status: 'busy' })]));
+    expect(writes.length).toBe(before);
+    act(() => result.current.prune([waitingOnAuthor({ needsYou: { reason: 'blocked' } })]));
     expect(writes.length).toBe(before + 1);
     expect(entriesIn(items).map((entry) => entry.id)).toEqual([id(2)]);
   });
@@ -343,7 +352,7 @@ describe('useNotNeeded', () => {
       expect(result.current.entries.size).toBe(0);
       act(() => result.current.mark(job));
       expect(markedNow(job, result.current.entries)).toBe(true);
-      act(() => result.current.prune([waitingOnAuthor({ status: 'busy' })]));
+      act(() => result.current.prune([waitingOnAuthor({ needsYou: { reason: 'blocked' } })]));
       expect(result.current.entries.size).toBe(0);
     }
   });

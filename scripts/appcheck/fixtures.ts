@@ -339,8 +339,8 @@ export class World {
 
   /**
    * Until the next reset, what the session needs changes (W88): a new question, a new line from Claude
-   * Code, a prompt on screen or a change of state, any of which brings a session marked not needed now
-   * back to Needs you.
+   * Code, a prompt on screen or a new reason, any of which brings a session marked not needed now back
+   * to Needs you.
    */
   need(sessionId: string, change: Partial<Pick<SessionSummary, 'needsYou' | 'askedYou' | 'state' | 'status' | 'waitingFor'>>): void {
     const session = this.#sessions.get(sessionId);

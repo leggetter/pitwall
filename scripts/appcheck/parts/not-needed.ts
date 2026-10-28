@@ -1,8 +1,8 @@
 // Not needed now (W88; docs/design-system.md, 4: Not needed now): the toggle on the row of a session
 // that needs you, at the end of line 2, under the star; marking a row in Needs you takes it out at once, with a toast and
 // Undo, the badges and the title counting one fewer, and focus on the next row's toggle; Undo puts it
-// back, with focus on its toggle; marked, it's quiet in All sessions; once what it needs changes it's
-// back in Needs you by itself, and the mark goes from storage; the session view's actions menu marks
+// back, with focus on its toggle; marked, it's quiet in All sessions; when what it needs changes it
+// comes back to Needs you by itself, and the mark goes from storage; the session view's actions menu marks
 // it and puts it back; and a mark lasts through a reload. pitwall.not-needed.v1 holds ids and hashes,
 // never what a session needed.
 
@@ -14,7 +14,7 @@ const q = JSON.stringify;
 const KEY = 'pitwall.not-needed.v1';
 const toggle = (name: string) => `document.querySelector(${q(`.session-list button.not-needed-toggle[aria-label="Mark ${name} not needed now"]`)})`;
 const rowOf = (name: string) => `${row(name)}?.closest('li.session')`;
-const marked = (name: string) => `Marked ${name} not needed now. It's back in Needs you once what it needs changes.`;
+const marked = (name: string) => `Marked ${name} not needed now. It comes back to Needs you when what it needs changes.`;
 const undoButton = (name: string) => `[...document.querySelectorAll('.toasts .toast:not(.leaving)')].find((toast) => toast.querySelector('.toast-message')?.textContent === ${q(marked(name))})?.querySelector('.toast-action')`;
 const badgeOf = (label: string) => `${repoItem(label)}?.querySelector('.badge-attention')?.textContent ?? null`;
 const entries = `JSON.parse(localStorage.getItem(${q(KEY)}) ?? '{"v":1,"entries":[]}').entries`;
@@ -107,7 +107,7 @@ const part: Part = {
       await t.shot('quiet');
     });
 
-    await t.step("once what it needs changes, it's back in Needs you by itself, and the mark goes", async () => {
+    await t.step('when what it needs changes, it comes back to Needs you by itself, and the mark goes', async () => {
       server.world.need(id(NAMES.asked), { askedYou: { reason: 'question', excerpt: 'The made-up batch failed again: retry it now?' } });
       server.broadcast();
       await page.waitFor('the row to need you again', `${rowOf(NAMES.asked)}?.dataset.attention === 'true'`);
