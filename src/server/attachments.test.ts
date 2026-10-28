@@ -32,11 +32,13 @@ import {
   AttachmentStore,
   attachmentName,
   attachmentType,
+  REMOVE_MAX_DEPTH,
   storedName,
   TypeCheck,
   UNUSED_TTL_MS,
   USED_MARKER,
   USED_TTL_MS,
+  type AttachmentStoreOptions,
 } from './attachments.js';
 import type { CommandOptions, CommandResult, RunCommand } from './command.js';
 import type { RunningServer } from './index.js';
@@ -885,9 +887,9 @@ describe('the pending cap', () => {
 
 describe('clean-up', () => {
   /** A store on `home` with a clock the test moves, not started, so only sweep() removes anything. */
-  function storeAt(home: string, at: number) {
+  function storeAt(home: string, at: number, options: Omit<AttachmentStoreOptions, 'home' | 'now'> = {}) {
     const clock = { now: at };
-    const store = new AttachmentStore({ home, now: () => clock.now });
+    const store = new AttachmentStore({ ...options, home, now: () => clock.now });
     stores.push(store);
     return { store, clock };
   }
@@ -900,17 +902,17 @@ describe('clean-up', () => {
       },
     });
 
-  async function keep(store: AttachmentStore): Promise<string> {
-    const outcome = await store.upload(body(SAMPLES['text/plain']), 'notes.txt', 'text/plain');
+  async function keep(store: AttachmentStore, bytes: Buffer = SAMPLES['text/plain']): Promise<string> {
+    const outcome = await store.upload(body(bytes), 'notes.txt', 'text/plain');
     if (!outcome.result.ok) throw new Error(outcome.result.error);
     return outcome.result.attachment.id;
   }
 
   /** A folder as an earlier run left it, its mtimes `ageMs` before `now`, with `.used` when used. */
-  async function leftover(home: string, id: string, now: number, ageMs: number, used = false): Promise<string> {
+  async function leftover(home: string, id: string, now: number, ageMs: number, used = false, content = 'left behind'): Promise<string> {
     const dir = join(home, 'attachments', id);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(join(dir, 'left.txt'), 'left behind', { mode: 0o600 });
+    await writeFile(join(dir, 'left.txt'), content, { mode: 0o600 });
     const at = new Date(now - ageMs);
     await utimes(join(dir, 'left.txt'), at, at);
     if (used) {
@@ -1001,11 +1003,14 @@ describe('clean-up', () => {
     const t0 = Date.now();
     const { store } = storeAt(home, t0);
     const id = await keep(store);
-    const old = await leftover(home, '00000001-0000-4000-8000-000000000000', t0, USED_TTL_MS * 2);
+    const old = await leftover(home, '00000001-0000-4000-8000-000000000000', t0, USED_TTL_MS * 2, true);
+    await mkdir(join(old, 'sub'));
+    await writeFile(join(old, 'sub', 'x.txt'), 'x');
     await chmod(join(home, 'attachments'), 0o777);
     try {
       await store.sweep();
-      expect(existsSync(old)).toBe(true);
+      expect(await readFile(join(old, 'sub', 'x.txt'), 'utf8')).toBe('x');
+      expect(existsSync(join(old, 'left.txt'))).toBe(true);
       // Forgotten, so its place is free and no spawn can use it, but its folder stays for a sweep once it's safe.
       expect(await store.discard(id)).toBe('removed');
       expect(existsSync(join(home, 'attachments', id))).toBe(true);
@@ -1034,7 +1039,7 @@ describe('clean-up', () => {
     expect(existsSync(join(home, 'attachments', id))).toBe(false);
   });
 
-  it.skipIf(process.platform === 'win32')('unlinks symlinks planted in an expired folder without following them, and leaves a folder with a directory in it', async () => {
+  it.skipIf(process.platform === 'win32')('unlinks symlinks planted in an expired folder without following them, and removes a folder with a directory in it', async () => {
     const home = freshHome();
     const now = Date.now();
     const outside = join(tmp, `outside-${++n}`);
@@ -1059,8 +1064,9 @@ describe('clean-up', () => {
     expect(await readFile(join(outside, 'precious.txt'), 'utf8')).toBe('keep me');
     expect(await readFile(join(outside, 'deep', 'also.txt'), 'utf8')).toBe('keep me too');
     expect((await readdir(outside)).sort()).toEqual(['deep', 'precious.txt']);
-    // pitwall never makes a directory in an upload's folder, so it doesn't go into one.
-    expect(await readFile(join(nested, 'sub', 'x.txt'), 'utf8')).toBe('x');
+    // A session given --add-dir= for the folder can make one, so the sweep goes into it (W84).
+    expect(existsSync(nested)).toBe(false);
+    expect(await folders(home)).toEqual([]);
   });
 
   it('removes nothing through a symlinked attachments folder', async () => {
@@ -1096,6 +1102,296 @@ describe('clean-up', () => {
     expect(await folders(started.home as string)).toEqual([id]);
     clock += UNUSED_TTL_MS;
     await vi.waitFor(async () => expect(await folders(started.home as string)).toEqual([]), { timeout: 5000 });
+  });
+
+  // ---------------------------------------------------------------- a folder a session filled (W84)
+
+  const leftoverId = (i: number) => `0000000${i}-0000-4000-8000-000000000000`;
+
+  /** A folder outside the attachments folder, with a file and a directory, which no removal may touch. */
+  async function outsideFolder(): Promise<string> {
+    const outside = join(tmp, `outside-${++n}`);
+    await mkdir(join(outside, 'inner'), { recursive: true });
+    await writeFile(join(outside, 'precious.txt'), 'keep me');
+    await writeFile(join(outside, 'inner', 'also.txt'), 'keep me too');
+    return outside;
+  }
+
+  async function expectUntouched(outside: string): Promise<void> {
+    expect((await readdir(outside)).sort()).toEqual(['inner', 'precious.txt']);
+    expect(await readFile(join(outside, 'precious.txt'), 'utf8')).toBe('keep me');
+    expect(await readFile(join(outside, 'inner', 'also.txt'), 'utf8')).toBe('keep me too');
+  }
+
+  it.skipIf(process.platform === 'win32')('removes an expired folder holding nested directories, symlinks in them and symlink loops, following none', async () => {
+    const home = freshHome();
+    const now = Date.now();
+    const outside = await outsideFolder();
+    const dir = await leftover(home, leftoverId(1), now, USED_TTL_MS * 2, true);
+    await mkdir(join(dir, 'sub', 'deeper', 'deepest'), { recursive: true });
+    await mkdir(join(dir, 'empty'));
+    await writeFile(join(dir, 'sub', 'a.txt'), 'a');
+    await writeFile(join(dir, 'sub', 'deeper', 'deepest', 'b.txt'), 'b');
+    // Symlinks to a directory and a file outside, below the top.
+    await symlink(outside, join(dir, 'sub', 'deeper', 'to-outside'));
+    await symlink(join(outside, 'precious.txt'), join(dir, 'sub', 'to-precious'));
+    // Loops: to its own parent, to itself, and two to each other.
+    await symlink('..', join(dir, 'sub', 'deeper', 'up'));
+    await symlink('.', join(dir, 'sub', 'here'));
+    await symlink('loop-b', join(dir, 'loop-a'));
+    await symlink('loop-a', join(dir, 'loop-b'));
+    await chmod(home, 0o700);
+
+    const log = vi.fn();
+    const { store } = storeAt(home, now, { log });
+    await store.sweep();
+    expect(existsSync(dir)).toBe(false);
+    expect(await folders(home)).toEqual([]);
+    await expectUntouched(outside);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')(`goes at most REMOVE_MAX_DEPTH (${REMOVE_MAX_DEPTH}) directories down, and still removes a tree three times as deep in one sweep`, async () => {
+    const home = freshHome();
+    const now = Date.now();
+    const outside = await outsideFolder();
+    const dir = await leftover(home, leftoverId(1), now, USED_TTL_MS * 2, true);
+    let deepest = dir;
+    for (let level = 0; level < REMOVE_MAX_DEPTH * 3; level += 1) deepest = join(deepest, 'd');
+    await mkdir(deepest, { recursive: true });
+    await writeFile(join(deepest, 'bottom.txt'), 'x');
+    await symlink(outside, join(deepest, 'to-outside'));
+    await chmod(home, 0o700);
+
+    const log = vi.fn();
+    const { store } = storeAt(home, now, { log });
+    await store.sweep();
+    expect(existsSync(dir)).toBe(false);
+    await expectUntouched(outside);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('moves a directory past the depth bound up into the upload folder, and the next sweeps carry on with it', async () => {
+    const home = freshHome();
+    const now = Date.now();
+    const dir = await leftover(home, leftoverId(1), now, USED_TTL_MS * 2, true);
+    await mkdir(join(dir, 'd', 'd', 'd', 'd', 'd', 'd'), { recursive: true });
+    await writeFile(join(dir, 'd', 'd', 'd', 'd', 'd', 'd', 'bottom.txt'), 'x');
+    await chmod(home, 0o700);
+
+    const log = vi.fn();
+    // Two levels a round, and five entries a pass: the upload, the marker and three directories.
+    const { store } = storeAt(home, now, { log, removeMaxDepth: 2, removeMaxEntries: 5 });
+    await store.sweep();
+    // The first two levels went, and the third, with the rest under it, was moved up; the marker stays till last.
+    const top = (await readdir(dir)).sort();
+    expect(top).toHaveLength(2);
+    expect(top[0]).toMatch(/^\.removing-[0-9a-f-]{36}$/);
+    expect(top[1]).toBe(USED_MARKER);
+    expect(await readdir(join(dir, top[0] as string))).toEqual(['d']);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]?.[0]).toMatch(new RegExp(`couldn't remove all of .*${leftoverId(1)} yet: a pass lists at most 5 entries`));
+
+    let sweeps = 1;
+    while (existsSync(dir) && sweeps < 10) {
+      await store.sweep();
+      sweeps += 1;
+    }
+    expect(existsSync(dir)).toBe(false);
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('removes a tree whose paths are longer than the system allows, without following its symlinks', async () => {
+    const home = freshHome();
+    const now = Date.now();
+    const outside = await outsideFolder();
+    const dir = await leftover(home, leftoverId(1), now, USED_TTL_MS * 2, true);
+    // 24 levels of 200-byte names: some 4,800 bytes, past PATH_MAX on macOS (1,024) and Linux (4,096).
+    // Built from the bottom up, each level moved into a new one, so no call here takes a long path.
+    const name = 'n'.repeat(200);
+    let chain = await mkdtemp(join(tmp, 'chain-'));
+    await mkdir(join(chain, name));
+    await writeFile(join(chain, name, 'bottom.txt'), 'x');
+    await symlink(outside, join(chain, name, 'to-outside'));
+    for (let level = 1; level < 24; level += 1) {
+      const wrapper = await mkdtemp(join(tmp, 'chain-'));
+      await mkdir(join(wrapper, name));
+      await rename(join(chain, name), join(wrapper, name, name));
+      await rm(chain, { recursive: true });
+      chain = wrapper;
+    }
+    await rename(join(chain, name), join(dir, name));
+    await rm(chain, { recursive: true });
+    await chmod(home, 0o700);
+
+    const log = vi.fn();
+    const { store } = storeAt(home, now, { log });
+    await store.sweep();
+    expect(existsSync(dir)).toBe(false);
+    await expectUntouched(outside);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('lists at most REMOVE_MAX_ENTRIES a pass, removes the upload first and the marker last, logs a folder left partway once, and the next sweeps carry on', async () => {
+    const home = freshHome();
+    const now = Date.now();
+    const dir = await leftover(home, leftoverId(1), now, USED_TTL_MS * 2, true);
+    await mkdir(join(dir, 'sub'));
+    for (let i = 0; i < 12; i += 1) await writeFile(join(dir, 'sub', `f${i}.txt`), 'x');
+    await chmod(home, 0o700);
+
+    const log = vi.fn();
+    const { store } = storeAt(home, now, { log, removeMaxEntries: 5 });
+    await store.sweep();
+    expect(existsSync(join(dir, 'left.txt'))).toBe(false);
+    expect(existsSync(join(dir, USED_MARKER))).toBe(true);
+    // Three entries at the top, then two of the twelve.
+    expect(await readdir(join(dir, 'sub'))).toHaveLength(10);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]?.[0]).toMatch(new RegExp(`couldn't remove all of .*${leftoverId(1)} yet: a pass lists at most 5 entries`));
+
+    let sweeps = 1;
+    while (existsSync(dir) && sweeps < 20) {
+      await store.sweep();
+      sweeps += 1;
+    }
+    expect(existsSync(dir)).toBe(false);
+    expect(sweeps).toBe(5);
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('leaves what it cannot remove, logs it once, removes the rest, and finishes once it can', async () => {
+    const home = freshHome();
+    const now = Date.now();
+    const stuck = await leftover(home, leftoverId(1), now, USED_TTL_MS * 2, true);
+    await mkdir(join(stuck, 'locked'));
+    await writeFile(join(stuck, 'locked', 'x.txt'), 'x');
+    const other = await leftover(home, leftoverId(2), now, USED_TTL_MS * 2, true);
+    await chmod(home, 0o700);
+    // A directory a session made read-only: nothing in it can be unlinked.
+    await chmod(join(stuck, 'locked'), 0o500);
+    const log = vi.fn();
+    const { store } = storeAt(home, now, { log });
+    try {
+      await store.sweep();
+      await store.sweep();
+      expect(existsSync(join(stuck, 'locked', 'x.txt'))).toBe(true);
+      expect(existsSync(join(stuck, 'left.txt'))).toBe(false);
+      expect(existsSync(other)).toBe(false);
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log.mock.calls[0]?.[0]).toMatch(/an entry couldn't be removed \(EACCES\)/);
+    } finally {
+      await chmod(join(stuck, 'locked'), 0o700);
+    }
+    await store.sweep();
+    expect(await folders(home)).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------- the cap on used uploads (W84)
+
+  describe('the cap on used uploads', () => {
+    const hundred = Buffer.alloc(100, 'a');
+    const minute = 60 * 1000;
+
+    /** As a spawn that started uses them: claimed, then marked used, at `at`. */
+    async function use(store: AttachmentStore, clock: { now: number }, ids: string[], at: number) {
+      clock.now = at;
+      expect(store.claim(ids).ok).toBe(true);
+      await store.markUsed(ids);
+    }
+
+    const folderOf = (home: string, id: string) => join(home, 'attachments', id);
+
+    it("removes the oldest used folders first once used ones pass the cap, never an unused one, this run's or an earlier one's", async () => {
+      const home = freshHome();
+      const t0 = Date.now();
+      const { store, clock } = storeAt(home, t0, { usedMaxBytes: 250 });
+      const [a, b, c, pending] = [await keep(store, hundred), await keep(store, hundred), await keep(store, hundred), await keep(store, hundred)];
+      // An earlier run's: a used one older than any of this run's, and an unused one far bigger than the cap.
+      const earlierUsed = await leftover(home, leftoverId(1), t0, 3 * 24 * 60 * minute, true, 'x'.repeat(100));
+      const earlierUnused = await leftover(home, leftoverId(2), t0, minute, false, 'x'.repeat(1000));
+
+      await use(store, clock, [a as string], t0 + minute);
+      // 200 bytes used: under the cap.
+      expect(existsSync(earlierUsed)).toBe(true);
+      await use(store, clock, [b as string], t0 + 2 * minute);
+      // 300: the oldest goes, the earlier run's.
+      expect(existsSync(earlierUsed)).toBe(false);
+      expect(existsSync(folderOf(home, a as string))).toBe(true);
+      await use(store, clock, [c as string], t0 + 3 * minute);
+      // 300 again: then this run's oldest.
+      expect(existsSync(folderOf(home, a as string))).toBe(false);
+      for (const id of [b, c, pending]) expect(existsSync(join(folderOf(home, id as string), 'notes.txt')), id).toBe(true);
+      expect(existsSync(join(earlierUnused, 'left.txt'))).toBe(true);
+      expect((await store.lookup([pending as string])).ok).toBe(true);
+      expect(store.pending()).toBe(1);
+    });
+
+    it('never removes the files of the spawn that has just used them, even past the cap', async () => {
+      const home = freshHome();
+      const t0 = Date.now();
+      const { store, clock } = storeAt(home, t0, { usedMaxBytes: 150 });
+      const ids = [await keep(store, hundred), await keep(store, hundred)];
+      const pending = await keep(store, hundred);
+      await use(store, clock, ids, t0 + minute);
+      for (const id of [...ids, pending]) expect(existsSync(join(folderOf(home, id), 'notes.txt')), id).toBe(true);
+    });
+
+    it("leaves the files a starting spawn has claimed, and counts them once they're used", async () => {
+      const home = freshHome();
+      const t0 = Date.now();
+      const { store, clock } = storeAt(home, t0, { usedMaxBytes: 250 });
+      const [first, second, claimed, next] = [await keep(store, hundred), await keep(store, hundred), await keep(store, hundred), await keep(store, hundred)];
+      await use(store, clock, [first as string], t0 + minute);
+      await use(store, clock, [second as string], t0 + 2 * minute);
+      clock.now = t0 + 3 * minute;
+      expect(store.claim([claimed as string]).ok).toBe(true);
+
+      // Another spawn's files push the used ones to 300: the oldest goes, never the claimed one.
+      await use(store, clock, [next as string], t0 + 4 * minute);
+      expect(existsSync(folderOf(home, first as string))).toBe(false);
+      expect(existsSync(join(folderOf(home, claimed as string), 'notes.txt'))).toBe(true);
+      expect(existsSync(folderOf(home, second as string))).toBe(true);
+
+      // The starting spawn starts: its file is used now, and counts, so the next oldest goes.
+      clock.now = t0 + 5 * minute;
+      await store.markUsed([claimed as string]);
+      expect(existsSync(join(folderOf(home, claimed as string), USED_MARKER))).toBe(true);
+      expect(existsSync(folderOf(home, second as string))).toBe(false);
+      expect(existsSync(folderOf(home, next as string))).toBe(true);
+    });
+
+    it('keeps the cap in each sweep, for what earlier runs left, oldest first', async () => {
+      const home = freshHome();
+      const now = Date.now();
+      const day = 24 * 60 * minute;
+      const content = 'x'.repeat(100);
+      const newest = await leftover(home, leftoverId(1), now, day, true, content);
+      const middle = await leftover(home, leftoverId(2), now, 2 * day, true, content);
+      const oldest = await leftover(home, leftoverId(3), now, 3 * day, true, content);
+      const unused = await leftover(home, leftoverId(4), now, minute, false, 'x'.repeat(1000));
+      await chmod(home, 0o700);
+      const { store } = storeAt(home, now, { usedMaxBytes: 150 });
+      await store.sweep();
+      expect(existsSync(oldest)).toBe(false);
+      expect(existsSync(middle)).toBe(false);
+      expect(existsSync(newest)).toBe(true);
+      expect(existsSync(unused)).toBe(true);
+    });
+
+    it("keeps the cap through spawn: the oldest session's files go once a new one's push the total over", async () => {
+      let clock = Date.now();
+      // Three 13-byte files, one a session.
+      const started = await start({ attachments: { now: () => clock, usedMaxBytes: 30 } });
+      const ids = [await uploaded(started), await uploaded(started), await uploaded(started)];
+      for (const id of ids) {
+        expect((await spawn(started, spawnBody([id]))).status).toBe(201);
+        clock += 1000;
+      }
+      expect(await folders(started.home as string)).toEqual(ids.slice(1).sort());
+      expect((await discard(started, ids[0] as string)).status).toBe(404);
+      expect((await discard(started, ids[1] as string)).status).toBe(409);
+    });
   });
 });
 
