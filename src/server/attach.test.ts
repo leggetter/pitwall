@@ -115,6 +115,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     subagentConversation: async () => undefined,
     pollSoon: () => {},
     noteRestart: () => {},
+    turnState: async () => 'unknown',
     stop: () => {},
   };
 }

@@ -197,6 +197,45 @@ describe('createIndexer', () => {
     }
   });
 
+  it("reads a listed session's turn afresh from its transcript, for End session (W90), and 'unknown' whenever it can't say", async () => {
+    vi.useRealTimers();
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-turn-'));
+    try {
+      const { state, deps } = harness();
+      const at = new Date(NOW).toISOString();
+      const lines = (...entries: object[]) => entries.map((entry) => `${JSON.stringify(entry)}\n`).join('');
+      const prompt = { type: 'user', timestamp: at, message: { content: 'a prompt' } };
+      const reply = { type: 'assistant', timestamp: at, message: { id: 'm1', content: [{ type: 'text', text: 'Done.' }] } };
+      const turnEnd = { type: 'system', subtype: 'turn_duration', durationMs: 1234, timestamp: at };
+      const file = path.join(dir, 'turn.jsonl');
+      await writeFile(file, lines(prompt, reply, turnEnd));
+      state.files.set('turn', file);
+      state.files.set('out', file);
+      state.result = { ok: true, rows: [row('turn', '/work/repo/a'), row('no-file', '/work/repo/b'), row('out', '/elsewhere/c')] };
+      const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+      // Before the first snapshot, nothing is listed.
+      expect(await indexer.turnState('turn')).toBe('unknown');
+      await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+
+      expect(await indexer.turnState('turn')).toBe('ended');
+      // A new prompt since, written after the poll: read afresh, not from the poll's fields.
+      await appendFile(file, lines(prompt));
+      expect(await indexer.turnState('turn')).toBe('running');
+      // No turn's end in its entries, as from an older Claude Code.
+      await writeFile(file, lines(prompt, reply));
+      expect(await indexer.turnState('turn')).toBe('unknown');
+      // No transcript, outside the roots, never listed, and a file that has gone.
+      expect(await indexer.turnState('no-file')).toBe('unknown');
+      expect(await indexer.turnState('out')).toBe('unknown');
+      expect(await indexer.turnState('never-listed')).toBe('unknown');
+      await rm(file);
+      expect(await indexer.turnState('turn')).toBe('unknown');
+      indexer.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("shows a session's SendMessage calls to the relay as to-pitwall entries when given the relay's name (W46), and as tool calls without it", async () => {
     vi.useRealTimers();
     const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-relay-'));

@@ -17,8 +17,8 @@
 //                               conversation pages, its sub-agent list and its sub-agents' pages
 //                               (W76) share the limit. A sub-agent's id is letters and digits
 //                               and one of the session's, by a fresh listing of its folder, else
-//                               404. Stop, remove, resume and open in an editor share one limit
-//                               of 4, else 429
+//                               404. Stop, remove, resume, open in an editor and end session
+//                               share one limit of 4, else 429
 //   WebSocket upgrade at /ws    Origin is required and must be this server's origin, else 403;
 //                               at most 32 connections in the handshake at once, on /ws and
 //                               /attach together, else close 1013 with no challenge; then the
@@ -56,6 +56,7 @@ import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
+import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
@@ -142,6 +143,11 @@ export interface ServerInternals {
    */
   editors?: Omit<EditorOptions, 'slots'>;
   /**
+   * End session (W90, end.ts): tests pass a fake agents source, process lookups and signaller, so no
+   * test signals a process. Its limit of 4 at once is `actions.maxConcurrentCommands`.
+   */
+  end?: Omit<EndOptions, 'slots'>;
+  /**
    * Attachments (W79, attachments.ts): tests pass a clock, a sweep interval, a uid, and the cap, the
    * clean-up's bounds and its log (W84). The folder is ServerOptions.pitwallHome's.
    */
@@ -174,18 +180,19 @@ export async function startServerWithInternals(
   const spawned = new RecentSpawns();
   // The ended sessions resume brought back lately, by session id, which the snapshot shows as ended until its next poll.
   const resumed = new RecentSpawns();
-  // Stop, remove, resume and open in an editor, running now: one limit for all four.
+  // Stop, remove, resume, open in an editor and end session, running now: one limit for all five.
   const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
   // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
   // The directory list (W70), then the input routes: attachments (W79), spawn, stop and remove (W12),
-  // resume (W66), the editors and open in an editor (W72), whose detection starts here, the relay
-  // (W11), then any a test adds.
+  // resume (W66), the editors and open in an editor (W72), whose detection starts here, end session
+  // (W90), which never ends the relay, the relay (W11), then any a test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerAttachments(app, attachments);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
+    registerEndSession(app, indexer, { isRelay: (row) => relay.isRelay(row), ...internals.end, slots: commandSlots });
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };

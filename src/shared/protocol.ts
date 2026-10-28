@@ -820,8 +820,8 @@ export interface DirectoryList {
 /**
  * Result of stop, remove and open in an editor. Stop and remove apply to
  * background sessions only; others get 409, ended interactive sessions
- * included. More than 4 stop, remove, resume or open commands at once get 429
- * with `Retry-After`, and so do opens in an editor past 10 a minute (W87).
+ * included. More than 4 stop, remove, resume, open or end commands at once get
+ * 429 with `Retry-After`, and so do opens in an editor past 10 a minute (W87).
  */
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -880,6 +880,63 @@ export type ResumeResult =
  */
 export function resumePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/resume`;
+}
+
+/**
+ * Body of a POST to endSessionPath() (W90). `whileWorking` is true only after
+ * the user confirmed the stronger warning, which names what's running from a
+ * 409's `working`; otherwise the body is `{}`.
+ */
+export interface EndSessionRequest {
+  whileWorking?: true;
+}
+
+/** What ending a session would stop, as the server found it just before (spike 005). */
+export interface EndSessionWorking {
+  /**
+   * 'running': its transcript says a turn hasn't ended (W69's rule), as while
+   * a reply is written or a tool runs, or Claude Code shows a prompt; the
+   * reply is lost and the tool is killed. 'unknown': its transcript can't
+   * say. Absent when its turn has ended.
+   */
+  turn?: 'running' | 'unknown';
+  /** How many of its sub-agents are running, when any are. They're killed with it. */
+  subagents?: number;
+}
+
+export type EndSessionResult =
+  /**
+   * Signalled. `ended` is whether its process had exited within
+   * END_SESSION_WAIT_MS; when not, it may still be finishing.
+   */
+  | { ok: true; ended: boolean }
+  /** Nothing was signalled. `working` comes with a 409 for a working session sent without `whileWorking`. */
+  | { ok: false; error: string; working?: EndSessionWorking };
+
+/** How long the server waits for an ended session's process to exit before it answers. */
+export const END_SESSION_WAIT_MS = 5000;
+
+/**
+ * End a running interactive session (W90, spike 005): pitwall sends its
+ * Claude Code process SIGTERM, never SIGKILL, so its terminal returns to the
+ * shell, its SessionEnd hooks run, and its transcript is kept; it's then
+ * listed as ended, and can be resumed. POST an EndSessionRequest. The pid is
+ * always the one a fresh `claude agents --json --all` gives, checked again
+ * just before the signal, never one the request names.
+ *
+ * - 400 for a malformed body. 404 when the snapshot doesn't list the session.
+ * - 409, and nothing signalled, when: it isn't interactive, running, and
+ *   listed afresh with the snapshot's pid; its id isn't a UUID; its process
+ *   isn't `claude`, or started after the session did, or isn't the same
+ *   process just before the signal; pitwall runs under it or started it, as
+ *   with pitwall's own relay; an end of it is already running; or, without
+ *   `whileWorking`, it's working, with `working`.
+ * - 429 with `Retry-After`, sharing stop, remove, resume and open's 4 at once,
+ *   and past 5 ends a minute.
+ * - 502 when pitwall couldn't check it: `claude agents` or `ps` failed.
+ */
+export function endSessionPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/end`;
 }
 
 /**

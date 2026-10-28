@@ -115,6 +115,7 @@ function fakeIndexer(): Indexer {
     subagentConversation: async () => undefined,
     pollSoon: vi.fn(),
     noteRestart: vi.fn(),
+    turnState: async () => 'unknown',
     stop: () => {},
   };
 }
