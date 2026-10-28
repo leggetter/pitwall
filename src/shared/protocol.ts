@@ -703,12 +703,29 @@ export const SPAWN_PATH = '/api/sessions';
  * one 7 days after its session started, because Claude Code keeps an
  * attachment's content in the transcript.
  *
- * - 400 for a name that's empty, longer than 200 characters, or has a path
- *   separator, control or bidi character; 413 past ATTACHMENT_MAX_BYTES; 415
- *   for a type not in ATTACHMENT_TYPES, or one its first bytes contradict;
- *   429 past ATTACHMENTS_MAX_PENDING unused uploads.
+ * - 201 with the Attachment.
+ * - 400 for an empty file, or a name that's empty, longer than 200
+ *   characters, or has a path separator, control or bidi character; 413 past
+ *   ATTACHMENT_MAX_BYTES, from `Content-Length` or while streaming; 415 for a
+ *   type not in ATTACHMENT_TYPES, one its first bytes contradict, or any
+ *   `Content-Encoding`; 429 past ATTACHMENTS_MAX_PENDING unused uploads.
+ * - 503 when attachments are unavailable: no pitwall home folder, a home path
+ *   with characters an `@` mention can't carry (anything but letters, digits,
+ *   `.`, `_`, `/` and `-`), or Windows. 500 when the file couldn't be written.
  */
 export const ATTACHMENTS_PATH = '/api/attachments';
+
+/**
+ * DELETE: remove an upload no spawn has used yet, as when it's removed from
+ * the dialog or the dialog closes, freeing its place among
+ * ATTACHMENTS_MAX_PENDING. 204 when removed; 404 for an unknown id; 409 for
+ * one a spawn has used, which the server removes on its own schedule. The
+ * same apiKey, `Host` and `Origin` checks as every other state-changing
+ * request.
+ */
+export function attachmentPath(id: string): string {
+  return `${ATTACHMENTS_PATH}/${encodeURIComponent(id)}`;
+}
 
 /** The media types an attachment can have: images, PDF and plain text. */
 export const ATTACHMENT_TYPES = [
