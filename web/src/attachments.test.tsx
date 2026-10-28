@@ -7,6 +7,7 @@ import {
   ATTACH_TEXT,
   attachmentsProblem,
   attachmentType,
+  cleanName,
   fileProblem,
   formatSize,
   pastedFiles,
@@ -107,6 +108,18 @@ describe('which files it takes', () => {
     expect(fileProblem(ok, ATTACHMENTS_MAX_PER_SESSION - 1)).toBeUndefined();
     expect(fileProblem(ok, ATTACHMENTS_MAX_PER_SESSION)).toBe('A first prompt takes at most 10 files.');
     expect(fileProblem({ name: 'big.docx', type: '', size: ATTACHMENT_MAX_BYTES * 2 }, ATTACHMENTS_MAX_PER_SESSION)).toBe(ATTACH_TEXT.type);
+  });
+});
+
+describe('the characters that show as nothing (W87)', () => {
+  it('are dropped as the server drops them, before a name is counted or found blank', () => {
+    expect(cleanName(' photo\u200b.png ')).toBe('photo.png');
+    expect(cleanName('report\u{e0041}\u{e007f}\u3164\ufe0f.pdf')).toBe('report.pdf');
+    expect(cleanName('cafe\u0301\u00ad.txt')).toBe('caf\u00e9.txt');
+    const ok = { name: 'shot.png', type: 'image/png', size: 1024 };
+    expect(fileProblem({ ...ok, name: '\u200b\u3164\u{e0020}' }, 0)).toBe(ATTACH_TEXT.blank);
+    // 196 letters, the extension and ten zero-width spaces: 200 once they're dropped, as the server counts it.
+    expect(fileProblem({ ...ok, name: `${'a'.repeat(196)}${'\u200b'.repeat(10)}.png` }, 0)).toBeUndefined();
   });
 });
 

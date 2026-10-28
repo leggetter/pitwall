@@ -4,7 +4,8 @@
 //
 // - A file is checked as it's added: its type (attachmentType(): an image, a PDF, or any text file,
 //   code and configuration included, as text/plain), its size (ATTACHMENT_MAX_BYTES), its name (what
-//   the server's 400 refuses, after NFC normalisation, as the server counts it) and the count
+//   the server's 400 refuses, then without the characters that show as nothing and NFC-normalised,
+//   as the server keeps and counts it, cleanName()) and the count
 //   (ATTACHMENTS_MAX_PER_SESSION, refused ones not counted). A refused file is listed with why, and
 //   the others go on. A name already listed is numbered, "image (2).png", so each Remove is told apart.
 // - What each file comes to, and each Remove, is announced: by two status regions taking turns, so
@@ -93,6 +94,19 @@ const MISTYPED_TEXT_EXTENSIONS = new Set(['ts', 'mts', 'cts']);
 /** A path separator, a C0 or C1 control, or a bidi control: what the server's 400 refuses in a name. */
 const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
+/**
+ * What the server drops from a name it takes (INVISIBLE in src/server/attachments.ts, W87): Unicode's
+ * Default_Ignorable_Code_Point, the characters that show as nothing, such as a zero-width space, a
+ * variation selector, a tag character or the Hangul filler. Dropped here too, so the list shows, and
+ * sends, the name the server keeps, and two names that look the same are numbered apart.
+ */
+const INVISIBLE_NAME = /\p{Default_Ignorable_Code_Point}/gu;
+
+/** A name as the server keeps it, once it has passed UNSAFE_NAME: without INVISIBLE_NAME, NFC-normalised and trimmed. */
+export function cleanName(name: string): string {
+  return name.replace(INVISIBLE_NAME, '').normalize('NFC').trim();
+}
+
 function isAttachmentType(type: string): type is AttachmentType {
   return (ATTACHMENT_TYPES as readonly string[]).includes(type);
 }
@@ -176,9 +190,9 @@ export function fileProblem(file: { name: string; type: string; size: number }, 
   if (attachmentType(file) === undefined) return ATTACH_TEXT.type;
   if (file.size === 0) return ATTACH_TEXT.empty;
   if (file.size > ATTACHMENT_MAX_BYTES) return ATTACH_TEXT.size(file.size);
-  // As the server checks it: unsafe characters first, then the name normalised and trimmed.
+  // As the server checks it: unsafe characters first, then the name without invisible characters, normalised and trimmed.
   if (UNSAFE_NAME.test(file.name)) return ATTACH_TEXT.name;
-  const name = file.name.normalize('NFC').trim();
+  const name = cleanName(file.name);
   if (name === '') return ATTACH_TEXT.blank;
   if (name.length > ATTACHMENT_NAME_MAX) return ATTACH_TEXT.long;
   if (count >= ATTACHMENTS_MAX_PER_SESSION) return ATTACH_TEXT.count;
@@ -501,8 +515,8 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
     for (const file of files) {
       const key = `attachment-${(counter.current += 1)}`;
       const raw = nameOf(file);
-      // As the server keeps it, NFC and trimmed, and numbered when the list has it already.
-      const name = uniqueName(plainText(raw.normalize('NFC').trim()) || UNNAMED, taken);
+      // As the server keeps it, without invisible characters, NFC and trimmed, and numbered when the list has it already.
+      const name = uniqueName(plainText(cleanName(raw)) || UNNAMED, taken);
       taken.add(name);
       const type = attachmentType(file);
       const reason = fileProblem({ name: raw, type: file.type, size: file.size }, count) ?? (name.length > ATTACHMENT_NAME_MAX ? ATTACH_TEXT.long : undefined);

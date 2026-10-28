@@ -268,6 +268,21 @@ describe('New session: names and what is said', () => {
     expect(server.uploads.map((upload) => upload.name)).toEqual(['caf\u00e9.txt']);
   });
 
+  it('shows and sends a name without the characters that show as nothing, as the server keeps it, so two that look alike are numbered apart (W87)', async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    // A zero-width space before the extension, a tag character, a variation selector, and one made only of a Hangul filler.
+    await choose(dialog, [file('photo\u200b.png', 'image/png'), file('photo.png', 'image/png'), file('notes\u{e0041}\ufe0f.txt', 'text/plain'), file('\u3164\u200b', 'text/plain')]);
+    expect(states(dialog)).toEqual([
+      ['photo.png', 'uploading'],
+      ['photo (2).png', 'uploading'],
+      ['notes.txt', 'waiting'],
+      ['Unnamed file', 'refused'],
+    ]);
+    expect(rows(dialog)[3]!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't attach it. Its name is blank. Rename the file, then attach it again.");
+    expect(server.uploads.map((upload) => upload.name)).toEqual(['photo.png', 'photo (2).png']);
+  });
+
   it('says the same refusal twice in the other region, so it is read again', async () => {
     const { dialog } = renderDialog();
     await drop(dialog, [file('a.zip', 'application/zip')]);

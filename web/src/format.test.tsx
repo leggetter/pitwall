@@ -70,6 +70,19 @@ describe('plainText', () => {
   });
 });
 
+describe('plainText and the bidi marks (W87)', () => {
+  it('drops the marks the server refuses too, U+061C, U+200E and U+200F, as it drops embeddings, overrides and isolates', () => {
+    expect(plainText('a\u061cb\u200ec\u200fd')).toBe('abcd');
+    expect(plainText('\u202ax\u202c\u2066y\u2069')).toBe('xy');
+  });
+
+  it("keeps an emoji's joiner and variation selector, which are default-ignorable but drawn as part of the emoji", () => {
+    const family = '\u{1f469}\u200d\u{1f467}';
+    const heart = '\u2764\ufe0f';
+    expect(plainText(`${family} ${heart}`)).toBe(`${family} ${heart}`);
+  });
+});
+
 describe('session helpers', () => {
   it("needsAttention is exactly the sessions with the index's needsYou (W69), never stale, finished or ended", () => {
     for (const reason of ['prompt', 'claude-code', 'asked', 'restarted', 'blocked'] as const) {

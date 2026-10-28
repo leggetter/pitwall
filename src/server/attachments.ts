@@ -127,13 +127,17 @@ const REMOVE_MAX_PATH = 512;
 const MOVED_UP = '.removing-';
 
 /**
- * Characters that show as nothing, which hasUnsafeCharacters() lets through: a soft hyphen, the
- * Mongolian vowel separator, zero-width space, non-joiner and joiner, the word joiner and the
- * invisible operators, and the zero-width no-break space (BOM). attachmentName() drops them, so one
- * name can't pass for another. Not added to guards.ts's rule, which spawn, resume, open in an
- * editor and the directory list share for real directories.
+ * Characters that show as nothing, which hasUnsafeCharacters() lets through: Unicode's
+ * Default_Ignorable_Code_Point, which is the soft hyphen, the Mongolian vowel separator, zero-width
+ * space, non-joiner and joiner, the word joiner and the invisible operators, and the zero-width
+ * no-break space (BOM) that this rule had before W87, and also variation selectors (U+FE0F), tag
+ * characters (U+E0000 to U+E0FFF), the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) and the rest.
+ * attachmentName() drops them, so one name can't pass for another, as `a<U+200B>.png` for `a.png`.
+ * An emoji's joiner and variation selector go too, so it may show as its parts: a name is only ever
+ * shown. Not added to guards.ts's rule, which spawn, resume, open in an editor and the directory list
+ * share for real directories. The web UI drops the same before it sends a name (web/src/attachments.ts).
  */
-const INVISIBLE = /[\u00ad\u180e\u200b-\u200d\u2060-\u2064\ufeff]/g;
+const INVISIBLE = /\p{Default_Ignorable_Code_Point}/gu;
 
 /** The longest stored name before its extension. */
 const STORED_STEM_MAX = 100;
