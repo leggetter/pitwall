@@ -347,7 +347,10 @@ describe('End session, for a running interactive session (W90)', () => {
     const view = await openView('pitwall-test-interactive');
     const menuButton = within(view).getByRole('button', { name: 'Session actions' });
     choose(view, 'End session');
-    const confirm = within(view).getByRole('group', { name: END_TEXT, description: END_CONSEQUENCE });
+    // Described by the consequence. Checked by its text: happy-dom gives the name's <bdi> no display, so
+    // its computed description has spaces around the name, unlike a browser's (the app check's end-session part).
+    const confirm = within(view).getByRole('group', { name: END_TEXT });
+    expect(document.getElementById(confirm.getAttribute('aria-describedby') ?? '')?.textContent).toBe(END_CONSEQUENCE);
     expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
     expect(within(confirm).getAllByRole('button').map((button) => button.textContent)).toEqual(['Cancel', 'End session']);
     fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
@@ -436,6 +439,38 @@ describe('End session, for a running interactive session (W90)', () => {
     await settle();
     expect(postedBodies(server)).toEqual([{}, { whileWorking: true }]);
     expect(toastMessages()).toEqual(['Ended pitwall-test-interactive. Its terminal is back at the shell.']);
+  });
+
+  it('keeps the session’s name in its own bdi in the question, so a right-to-left name or its marks can’t reorder the sentence', async () => {
+    // Hebrew, then a right-to-left mark, which plainText() keeps (W87).
+    const name = 'pitwall-test-\u05e9\u05dc\u05d5\u05dd\u200f';
+    renderDashboard(
+      fakeServer({ status: 200, body: { ok: true, ended: true } }),
+      snapshot([group({ sessions: [background(), session({ sessionId: INTERACTIVE, name })] })]),
+    );
+    const view = await openView(name);
+    choose(view, 'End session');
+    const consequence = within(view).getByRole('group', { name: END_TEXT }).querySelector('.inline-confirm-consequence')!;
+    const bdi = consequence.querySelector('bdi');
+    expect(bdi?.textContent).toBe(name);
+    expect(consequence.firstChild).toBe(bdi);
+    expect(consequence.textContent?.startsWith(`${name}'s Claude Code process ends`)).toBe(true);
+  });
+
+  it("says it can't tell whether sub-agents are running when the server couldn't read them", async () => {
+    const server = fakeServer({ status: 409, body: { ok: false, error: 'x', working: { subagents: 'unknown' } } }, { status: 200, body: { ok: true, ended: true } });
+    renderDashboard(server);
+    const view = await openView('pitwall-test-interactive');
+    choose(view, 'End session');
+    fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
+    await settle();
+    const warning = within(view).getByRole('alertdialog', { name: WORKING_TEXT });
+    expect(warning.querySelector('.inline-confirm-consequence')?.textContent).toBe(
+      "pitwall can't tell whether its sub-agents are running; any that are end with it. You can still resume it afterwards.",
+    );
+    fireEvent.click(within(warning).getByRole('button', { name: 'End session anyway' }));
+    await settle();
+    expect(postedBodies(server)).toEqual([{}, { whileWorking: true }]);
   });
 
   it("says it can't tell when the transcript can't, and Cancel on the warning ends nothing", async () => {

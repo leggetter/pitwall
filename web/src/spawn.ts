@@ -137,7 +137,8 @@ function workingOf(value: unknown): EndSessionWorking | undefined {
   if (!body) return undefined;
   const working: EndSessionWorking = {};
   if (body.turn === 'running' || body.turn === 'unknown') working.turn = body.turn;
-  if (typeof body.subagents === 'number' && Number.isSafeInteger(body.subagents) && body.subagents > 0) working.subagents = body.subagents;
+  if (body.subagents === 'unknown') working.subagents = 'unknown';
+  else if (typeof body.subagents === 'number' && Number.isSafeInteger(body.subagents) && body.subagents > 0) working.subagents = body.subagents;
   return working.turn === undefined && working.subagents === undefined ? undefined : working;
 }
 

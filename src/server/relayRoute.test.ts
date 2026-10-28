@@ -82,6 +82,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     pollSoon: () => {},
     noteRestart: () => {},
     turnState: async () => 'unknown',
+    runningSubagents: async () => undefined,
     stop: () => {},
   };
 }

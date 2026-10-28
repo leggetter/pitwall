@@ -669,6 +669,41 @@ describe('createSubagentTracker', () => {
     expect(tracker.running(SID)).toBe(0);
   });
 
+  describe('runningFresh, for End session (W90)', () => {
+    it('counts the running ones after a scan that starts now, and 0 with none, or with no subagents folder', async () => {
+      await writeFile(main, (await background('r1', 'Still going', 10)) + (await background('r2', 'Finished fine', 20)) + notice('r2', 'completed', 100));
+      tracker.track([live()]);
+      expect(await tracker.runningFresh(SID)).toBe(1);
+      // Written after the poll: the scan that starts now sees it.
+      await appendFile(main, notice('r1', 'completed', 200));
+      expect(await tracker.runningFresh(SID)).toBe(0);
+      await rm(folder, { recursive: true, force: true });
+      await writeFile(main, line({ type: 'user', sessionId: SID, timestamp: at(300), message: { content: 'A made-up prompt.' } }));
+      expect(await tracker.runningFresh(SID)).toBe(0);
+    });
+
+    it("can't say, and says undefined, for a session it doesn't track, a transcript it can't read, or a folder it can't read", async () => {
+      expect(await tracker.runningFresh(SID)).toBeUndefined();
+      // Tracked, but its own transcript isn't there: where sub-agents start and end can't be read.
+      tracker.track([live()]);
+      expect(await tracker.runningFresh(SID)).toBeUndefined();
+      // Readable: it can say.
+      await writeFile(main, await background('u1', 'Still going', 10));
+      expect(await tracker.runningFresh(SID)).toBe(1);
+      // A folder that's there but can't be read, unlike one that isn't there, which list() shows as none.
+      await import('node:fs/promises').then(({ chmod }) => chmod(folder, 0o000));
+      try {
+        expect(await tracker.runningFresh(SID)).toBeUndefined();
+      } finally {
+        await import('node:fs/promises').then(({ chmod }) => chmod(folder, 0o755));
+      }
+      expect(await tracker.runningFresh(SID)).toBe(1);
+      // No longer tracked.
+      tracker.track([]);
+      expect(await tracker.runningFresh(SID)).toBeUndefined();
+    });
+  });
+
   it('reads a transcript afresh when it’s replaced or shrinks, without counting it twice', async () => {
     await writeFile(main, await background('h1', 'Job', 10, 3));
     tracker.track([live()]);

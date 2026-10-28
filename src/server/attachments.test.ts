@@ -116,6 +116,7 @@ function fakeIndexer(): Indexer {
     pollSoon: vi.fn(),
     noteRestart: vi.fn(),
     turnState: async () => 'unknown',
+    runningSubagents: async () => undefined,
     stop: () => {},
   };
 }

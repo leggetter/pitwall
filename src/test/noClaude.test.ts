@@ -10,7 +10,7 @@ import { spawnPty } from '../server/pty.js';
 // Read before this file loads the guard itself, so it shows the setup file did.
 const installedBySetup =
   (globalThis as Record<symbol, { installed?: boolean } | undefined>)[Symbol.for('pitwall.noClaude')]?.installed === true;
-const { failOnRefusals, takeRefusals } = await import('./noClaude.js');
+const { allowSignalsTo, failOnRefusals, takeRefusals } = await import('./noClaude.js');
 
 const CLAUDE = '/nonexistent/pitwall-test/claude';
 const REFUSED = /would run claude without PITWALL_LIVE=1/;
@@ -21,7 +21,7 @@ const OPEN = '/nonexistent/pitwall-test/open';
 const XDG_OPEN = '/nonexistent/pitwall-test/xdg-open';
 const ENV = '/nonexistent/pitwall-test/env';
 const EDITOR_REFUSED = /would open an editor/;
-const SIGNAL_REFUSED = /would signal another process to end without PITWALL_LIVE=1/;
+const SIGNAL_REFUSED = /would signal a process this test didn't start without PITWALL_LIVE=1/;
 
 describe('the no-claude guard', () => {
   let saved: string | undefined;
@@ -147,27 +147,51 @@ describe('the no-claude guard', () => {
     expect(takeRefusals()).toEqual([]);
   });
 
-  // W90: End session's default signaller is process.kill. Only a child this test starts is ever signalled.
-  it('refuses process.kill with SIGTERM, SIGINT, SIGHUP or no signal to another process, and lets 0, SIGKILL and PITWALL_LIVE=1 through', async () => {
+  // W90 and its review: End session's default signaller is process.kill. Only processes this test starts are signalled.
+  it("refuses process.kill with any signal but 0 to a pid it didn't see started, '', null, false, NaN, SIGQUIT and SIGUSR1 included", async () => {
+    // A shell that starts a sleep in the background and says its pid: the wrapper sees the shell, never the sleep.
+    const shell = spawn('/bin/sh', ['-c', 'sleep 30 >/dev/null 2>&1 & echo $!'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const grandchild = await new Promise<number>((resolve) => shell.stdout.once('data', (data: Buffer) => resolve(Number(String(data).trim()))));
+    expect(grandchild).toBeGreaterThan(0);
+    try {
+      for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'SIGUSR1', 'SIGKILL', 9, 15, '', null, false, Number.NaN, undefined] as unknown[]) {
+        expect(() => process.kill(grandchild, signal as NodeJS.Signals), String(signal)).toThrow(SIGNAL_REFUSED);
+      }
+      expect(takeRefusals()).toHaveLength(13);
+      // Refused before it was sent: still running. Signal 0 only asks.
+      expect(process.kill(grandchild, 0)).toBe(true);
+      expect(takeRefusals()).toEqual([]);
+      // Named by the test that cleans it up, it goes through.
+      allowSignalsTo(grandchild);
+      expect(process.kill(grandchild, 'SIGKILL')).toBe(true);
+      expect(takeRefusals()).toEqual([]);
+    } finally {
+      try {
+        allowSignalsTo(grandchild);
+        process.kill(grandchild, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }
+  });
+
+  it('lets a test signal a child it started, while it runs, forgets it once it has exited, and lets anything through with PITWALL_LIVE=1', async () => {
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
     const exited = new Promise<NodeJS.Signals | null>((resolve) => child.once('exit', (_code, signal) => resolve(signal)));
     const pid = child.pid as number;
     try {
-      expect(() => process.kill(pid, 'SIGTERM')).toThrow(SIGNAL_REFUSED);
-      expect(() => process.kill(pid, 'SIGINT')).toThrow(SIGNAL_REFUSED);
-      expect(() => process.kill(pid, 'SIGHUP')).toThrow(SIGNAL_REFUSED);
-      expect(() => process.kill(pid, 15)).toThrow(SIGNAL_REFUSED);
-      expect(() => process.kill(pid)).toThrow(SIGNAL_REFUSED);
-      expect(takeRefusals()).toHaveLength(5);
-      // Refused before it was sent: the child is still running.
-      expect(process.kill(pid, 0)).toBe(true);
-      expect(child.exitCode).toBeNull();
-      process.env.PITWALL_LIVE = '1';
       expect(process.kill(pid, 'SIGTERM')).toBe(true);
       expect(await exited).toBe('SIGTERM');
-      expect(takeRefusals()).toEqual([]);
+      // Exited: its pid may belong to another process now.
+      expect(() => process.kill(pid, 'SIGTERM')).toThrow(SIGNAL_REFUSED);
+      expect(takeRefusals()).toHaveLength(1);
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     }
+    const live = spawn('/bin/sh', ['-c', 'sleep 30 >/dev/null 2>&1 & echo $!'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const grandchild = await new Promise<number>((resolve) => live.stdout.once('data', (data: Buffer) => resolve(Number(String(data).trim()))));
+    process.env.PITWALL_LIVE = '1';
+    expect(process.kill(grandchild, 'SIGKILL')).toBe(true);
+    expect(takeRefusals()).toEqual([]);
   });
 });

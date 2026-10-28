@@ -73,6 +73,13 @@ const part: Part = {
     await t.step('End session asks first, naming the session and what it costs, with Cancel focused', async () => {
       await ask(NAMES.asked);
       t.expectEqual(await page.evaluate(CONSEQUENCE), consequence(NAMES.asked), 'the consequence');
+      // The name in its own <bdi>, inline, so the sentence around it reads as one, and a right-to-left name can't reorder it.
+      t.expectEqual(
+        await page.evaluate(`(() => { const b = ${CONFIRM}.querySelector('.inline-confirm-consequence > bdi'); return b ? [b.textContent, getComputedStyle(b).display, getComputedStyle(b).unicodeBidi] : null; })()`),
+        [NAMES.asked, 'inline', 'isolate'],
+        'the name is an inline, isolated <bdi>',
+      );
+      t.expectEqual(await page.evaluate(`document.getElementById(${CONFIRM}.getAttribute('aria-describedby')).innerText`), consequence(NAMES.asked), 'its description reads as one sentence');
       t.expectEqual(await page.evaluate(`${CONFIRM}.getAttribute('role')`), 'group', 'a group');
       t.expectEqual(await page.evaluate(`[...${CONFIRM}.querySelectorAll('button')].map((b) => b.textContent.trim())`), ['Cancel', 'End session'], 'Cancel, then End session');
       t.expectEqual(await page.evaluate(focused), 'Cancel', 'Cancel has focus');

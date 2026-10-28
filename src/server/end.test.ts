@@ -20,7 +20,7 @@ import {
 } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { CommandSlots } from './actions.js';
-import { DEFAULT_END_RATE, END_SIGNAL, parseEndRequest, START_SLACK_MS, workingError, type EndOptions, type Signaller } from './end.js';
+import { DEFAULT_END_RATE, END_SIGNAL, isRelayName, parseEndRequest, workingError, type EndOptions, type Signaller } from './end.js';
 import type { RunningServer } from './index.js';
 import type { ProcessInfo, ProcessLookup, ProcessParents, Processes } from './processes.js';
 import type { RelayManager } from './relay.js';
@@ -107,7 +107,8 @@ function snapshot(...extra: SessionSummary[]): IndexSnapshot {
 interface FakeIndexer extends Indexer {
   pollSoon: ReturnType<typeof vi.fn<() => void>>;
   turn: TurnState;
-  running: number;
+  /** Its running sub-agents, by a scan just then; undefined when the scan couldn't read them. */
+  running: number | undefined;
 }
 
 function fakeIndexer(latest: IndexSnapshot | null = snapshot()): FakeIndexer {
@@ -120,7 +121,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): FakeIndexer {
     subagents: async (sessionId): Promise<SubagentList> => ({
       sessionId,
       subagents: [
-        ...Array.from({ length: indexer.running }, (_, i) => subagent(`a${i}`, 'running')),
+        ...Array.from({ length: indexer.running ?? 0 }, (_, i) => subagent(`a${i}`, 'running')),
         subagent('done1', 'done'),
       ],
       truncated: false,
@@ -129,6 +130,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): FakeIndexer {
     pollSoon: vi.fn(),
     noteRestart: vi.fn(),
     turnState: vi.fn(async () => indexer.turn),
+    runningSubagents: vi.fn(async () => indexer.running),
     stop: () => {},
   };
   return indexer;
@@ -164,9 +166,15 @@ function fakeProcesses() {
     answers: [] as ProcessLookup[],
     parents: { ok: true, parents: new Map([[1, 0], [500, 1], [PID, 500], [SELF, 600], [600, 500]]) } as ProcessParents,
     lookups: [] as number[],
+    /** The time limit each lookup was given, in order: undefined for none. */
+    limits: [] as Array<number | undefined>,
     gate: undefined as Promise<void> | undefined,
-    async lookup(pid: number): Promise<ProcessLookup> {
+    /** Once set, every lookup from then on never answers, as a ps that hangs. */
+    hang: false,
+    async lookup(pid: number, timeoutMs?: number): Promise<ProcessLookup> {
       fake.lookups.push(pid);
+      fake.limits.push(timeoutMs);
+      if (fake.hang) return new Promise<ProcessLookup>(() => {});
       if (fake.gate) await fake.gate;
       const next = fake.answers.shift();
       if (next) return next;
@@ -177,12 +185,12 @@ function fakeProcesses() {
       return fake.parents;
     },
   };
-  const processes: Processes = { lookup: (pid) => fake.lookup(pid), parents: () => fake.parentsOf() };
+  const processes: Processes = { lookup: (pid, timeoutMs) => fake.lookup(pid, timeoutMs), parents: () => fake.parentsOf() };
   return Object.assign(fake, { api: processes });
 }
 
 /** A signaller that records each signal and, by default, ends the process, as SIGTERM does (spike 005). */
-function fakeSignal(processes: ReturnType<typeof fakeProcesses>, behaviour: 'exit' | 'linger' | 'reused' | 'ESRCH' | 'EPERM' = 'exit') {
+function fakeSignal(processes: ReturnType<typeof fakeProcesses>, behaviour: 'exit' | 'linger' | 'reused' | 'hang' | 'ESRCH' | 'EPERM' = 'exit') {
   const calls: Array<{ pid: number; signal: string }> = [];
   const signal: Signaller = (pid, sig) => {
     calls.push({ pid, signal: sig });
@@ -190,6 +198,8 @@ function fakeSignal(processes: ReturnType<typeof fakeProcesses>, behaviour: 'exi
     if (behaviour === 'exit') processes.processes.delete(pid);
     // It exits, and a newer process takes its pid at once.
     if (behaviour === 'reused') processes.processes.set(pid, { startedAtMs: CLAUDE_PROCESS.startedAtMs + 60_000, command: 'claude' });
+    // It lingers, and every ps from now on hangs.
+    if (behaviour === 'hang') processes.hang = true;
   };
   return Object.assign(signal, { calls });
 }
@@ -229,7 +239,7 @@ async function start(options: StartOptions = {}): Promise<Started> {
   const server = await startServerWithInternals(
     { indexer, token: TOKEN, webRoot, port: 0, ...(options.relay ? { relay: options.relay } : {}) },
     {
-      end: { agents, processes: processes.api, signal, selfPid: SELF, sleep: async () => {}, ...options.end },
+      end: { agents, processes: processes.api, signal, selfPid: SELF, pollMs: 10, ...options.end },
       ...options.internals,
     },
   );
@@ -367,15 +377,37 @@ describe('end session: success', () => {
   });
 
   it('says when it hadn’t exited in time, and never sends another signal (spike 005: no SIGKILL)', async () => {
-    const started = await start({ behaviour: 'linger', end: { waitMs: 500, pollMs: 100 } });
+    const started = await start({ behaviour: 'linger', end: { waitMs: 200, pollMs: 50 } });
     const res = await end(started);
     expect(res.status).toBe(200);
     expect(res.json).toEqual({ ok: true, ended: false });
     expect(started.signal.calls).toEqual([{ pid: PID, signal: 'SIGTERM' }]);
   });
 
+  it('waits by the clock, not by lookups: a ps that hangs after the signal still answers within the wait, each lookup capped to the time left', async () => {
+    const processes = fakeProcesses();
+    const started = await start({ processes, behaviour: 'hang', end: { waitMs: 300, pollMs: 50 } });
+    const begun = Date.now();
+    const res = await end(started);
+    const took = Date.now() - begun;
+    expect(res.json).toEqual({ ok: true, ended: false });
+    // The wait is 300 ms; with one ps that never answers, a count of lookups would have waited forever.
+    expect(took).toBeLessThan(2000);
+    // The lookups before the signal have ps's own limit; the one after it, only the time left.
+    const afterSignal = processes.limits.slice(2);
+    expect(afterSignal.length).toBeGreaterThan(0);
+    for (const limit of afterSignal) {
+      expect(limit).toBeGreaterThan(0);
+      expect(limit).toBeLessThanOrEqual(300);
+    }
+    // The slot and the session's lock are free again.
+    processes.hang = false;
+    processes.processes.set(PID, CLAUDE_PROCESS);
+    expect((await end(started)).status).toBe(200);
+  });
+
   it('counts the pid taken by another process meanwhile as ended, without signalling that one', async () => {
-    const started = await start({ behaviour: 'reused', end: { waitMs: 500, pollMs: 100 } });
+    const started = await start({ behaviour: 'reused', end: { waitMs: 200, pollMs: 50 } });
     expect((await end(started)).json).toEqual({ ok: true, ended: true });
     expect(started.signal.calls).toHaveLength(1);
   });
@@ -443,15 +475,60 @@ describe('end session: the fresh listing’s guards', () => {
   });
 
   it('refuses a pid other than the snapshot’s, and a pid another row has too', async () => {
-    for (const rows of [[row({ pid: PID + 1 })], [row(), row({ sessionId: BG_ID, kind: 'background', shortId: 'b3899da0' })]]) {
+    const cases = [
+      { rows: [row({ pid: PID + 1 })], error: /different process/ },
+      { rows: [row(), row({ sessionId: BG_ID, kind: 'background' as const, shortId: 'b3899da0' })], error: /can't tell which is the session's/ },
+    ];
+    for (const { rows, error } of cases) {
       const processes = fakeProcesses();
       processes.processes.set(PID + 1, CLAUDE_PROCESS);
       const started = await start({ agents: fakeAgents({ ok: true, rows }), processes });
       const res = await end(started);
       expect(res.status).toBe(409);
-      expect(res.json).toMatchObject({ error: expect.stringMatching(/different process/) });
+      expect(res.json).toMatchObject({ error: expect.stringMatching(error) });
       expectNothingSignalled(started);
     }
+  });
+
+  it('refuses a pid any row names besides the session’s own, rows parseAgentRows() dropped included, and another pid for the session', async () => {
+    const cases: Array<{ what: string; pids: Array<{ pid: number; sessionId?: string }> }> = [
+      // A row with an unknown kind, a relative cwd or no startedAt: dropped from `rows`, but its pid is printed.
+      { what: 'a dropped row of another session', pids: [{ pid: PID, sessionId: INTERACTIVE_ID }, { pid: PID, sessionId: '99999999-9999-4999-8999-999999999999' }] },
+      { what: 'a row with no session id', pids: [{ pid: PID, sessionId: INTERACTIVE_ID }, { pid: PID }] },
+      // parseAgentRows() keeps one row per session id: a second process for it is printed, not parsed.
+      { what: 'another pid for the session', pids: [{ pid: PID, sessionId: INTERACTIVE_ID }, { pid: PID + 7, sessionId: INTERACTIVE_ID }] },
+    ];
+    for (const { what, pids } of cases) {
+      const started = await start({ agents: fakeAgents({ ok: true, rows: [row()], pids }) });
+      const res = await end(started);
+      expect(res.status, what).toBe(409);
+      expect(res.json).toMatchObject({ error: expect.stringMatching(/can't tell which is the session's/) });
+      expectNothingSignalled(started);
+    }
+    // The session's own row printed twice, with the same pid, names no other process.
+    const twice = await start({ agents: fakeAgents({ ok: true, rows: [row()], pids: [{ pid: PID, sessionId: INTERACTIVE_ID }, { pid: PID, sessionId: INTERACTIVE_ID }] }) });
+    expect((await end(twice)).status).toBe(200);
+  });
+
+  it('never ends a session named as a pitwall relay is, another pitwall’s included, in the snapshot or the listing', async () => {
+    expect(isRelayName('pitwall-relay')).toBe(true);
+    expect(isRelayName(' Pitwall-Relay ')).toBe(true);
+    expect(isRelayName('pitwall-relay-2')).toBe(false);
+    const RELAY_ID = '77777777-7777-4777-8777-777777777777';
+    const listed = await start({
+      indexer: fakeIndexer(snapshot(session(RELAY_ID, { name: 'pitwall-relay', pid: PID + 20 }))),
+      agents: fakeAgents({ ok: true, rows: [row({ sessionId: RELAY_ID, name: 'pitwall-relay', pid: PID + 20 })] }),
+    });
+    const fromSnapshot = await end(listed, RELAY_ID);
+    expect(fromSnapshot.status).toBe(409);
+    expect(fromSnapshot.json).toMatchObject({ error: expect.stringMatching(/pitwall relay/) });
+    expectNothingSignalled(listed);
+    // Named so only by the fresh listing, as when it was renamed since the poll.
+    const renamed = await start({ agents: fakeAgents({ ok: true, rows: [row({ name: 'Pitwall-Relay' })] }) });
+    const fromListing = await end(renamed);
+    expect(fromListing.status).toBe(409);
+    expect(fromListing.json).toMatchObject({ error: expect.stringMatching(/pitwall relay/) });
+    expectNothingSignalled(renamed);
   });
 
   it('never ends pitwall’s own relay, by the server’s relay', async () => {
@@ -517,18 +594,28 @@ describe('end session: the process’s guards', () => {
     expect((await end(started)).status).toBe(200);
   });
 
-  it('refuses a process that started after the session did: a reused pid', async () => {
-    const processes = fakeProcesses();
-    processes.processes.set(PID, { ...CLAUDE_PROCESS, startedAtMs: Date.parse(STARTED) + START_SLACK_MS + 1000 });
-    const started = await start({ processes });
-    const res = await end(started);
+  it('refuses a process that started after the session did, a reused pid, with no slack: 1 s later refuses, the same second ends', async () => {
+    // The session's startedAt on a whole second, so ps's whole seconds can meet it exactly.
+    const onTheSecond = '2026-10-28T10:00:01.000Z';
+    const agents = () => fakeAgents({ ok: true, rows: [row({ startedAt: onTheSecond })] });
+    const later = fakeProcesses();
+    later.processes.set(PID, { ...CLAUDE_PROCESS, startedAtMs: Date.parse(onTheSecond) + 1000 });
+    const refused = await start({ processes: later, agents: agents() });
+    const res = await end(refused);
     expect(res.status).toBe(409);
-    expect(res.json).toMatchObject({ error: expect.stringMatching(/started after the session did/) });
-    expectNothingSignalled(started);
+    expect(res.json).toMatchObject({ error: expect.stringMatching(/started after the time claude agents gives for the session's start/) });
+    expectNothingSignalled(refused);
+
+    // ps's lstart is rounded down and startedAt is written after the start, so the same second is the session's own.
+    const same = fakeProcesses();
+    same.processes.set(PID, { ...CLAUDE_PROCESS, startedAtMs: Date.parse(onTheSecond) });
+    const ended = await start({ processes: same, agents: agents() });
+    expect((await end(ended)).status).toBe(200);
   });
 
   it('refuses when the process changed between the first check and the last, by start time or command', async () => {
-    for (const changed of [{ ...CLAUDE_PROCESS, startedAtMs: CLAUDE_PROCESS.startedAtMs + 1000 }, { ...CLAUDE_PROCESS, command: 'node' }, undefined]) {
+    // `/x/claude` is still claude by name, but not the command the first check saw.
+    for (const changed of [{ ...CLAUDE_PROCESS, startedAtMs: CLAUDE_PROCESS.startedAtMs + 1000 }, { ...CLAUDE_PROCESS, command: 'node' }, { ...CLAUDE_PROCESS, command: '/x/claude' }, undefined]) {
       const processes = fakeProcesses();
       processes.answers.push({ ok: true, process: CLAUDE_PROCESS }, changed === undefined ? { ok: true } : { ok: true, process: changed });
       const started = await start({ processes });
@@ -602,6 +689,19 @@ describe('end session: idle only, unless you confirm the stronger warning', () =
     expect(res.status).toBe(409);
     expect(res.json).toMatchObject({ working: { subagents: 2 } });
     expectNothingSignalled(started);
+  });
+
+  it("counts sub-agents it couldn't read as working, as a transcript that can't say", async () => {
+    const indexer = fakeIndexer();
+    indexer.running = undefined;
+    const started = await start({ indexer });
+    const res = await end(started);
+    expect(res.status).toBe(409);
+    expect(res.json).toEqual({ ok: false, error: workingError({ subagents: 'unknown' }), working: { subagents: 'unknown' } });
+    expect(indexer.runningSubagents).toHaveBeenCalledWith(INTERACTIVE_ID);
+    expectNothingSignalled(started);
+    // Confirmed, it ends.
+    expect((await end(started, INTERACTIVE_ID, { whileWorking: true })).status).toBe(200);
   });
 
   it('still runs every other guard with whileWorking', async () => {

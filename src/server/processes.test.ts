@@ -2,7 +2,7 @@
 // so nothing here depends on this machine's processes. Made-up pids only.
 import { describe, expect, it } from 'vitest';
 import { RunError, type RunFile, type RunOptions } from '../index/exec.js';
-import { ancestry, createProcesses, isClaudeCommand, parseLookupLine, parseParents, PS } from './processes.js';
+import { ancestry, createProcesses, isClaudeCommand, parseLookupLine, parseParents, PS, PS_TIMEOUT_MS } from './processes.js';
 
 interface Call {
   file: string;
@@ -97,6 +97,16 @@ describe('createProcesses', () => {
     // Never `args` or `command`, which would read a command line.
     expect(call?.args).toEqual(['-o', 'lstart=', '-o', 'comm=', '-p', '4242']);
     expect(call?.options.env).toMatchObject({ TZ: 'UTC0', LC_ALL: 'C' });
+  });
+
+  it('gives one ps the time it’s given, at most its own limit, as End session’s wait does with the time left (W90)', async () => {
+    const run = fakeRun(async () => 'Mon Oct 26 10:20:56 2026     claude\n');
+    const processes = createProcesses({ run });
+    await processes.lookup(4242);
+    await processes.lookup(4242, 300);
+    await processes.lookup(4242, 60_000);
+    await processes.lookup(4242, 0);
+    expect(run.calls.map((call) => call.options.timeoutMs)).toEqual([PS_TIMEOUT_MS, 300, PS_TIMEOUT_MS, 1]);
   });
 
   it('says there is no process when ps exits 1, and asks nothing for a pid that isn’t one', async () => {

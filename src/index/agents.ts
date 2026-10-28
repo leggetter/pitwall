@@ -36,8 +36,21 @@ export type AgentsResult =
        * listedSessionIds(), which adds `rows`' ids, for a source that leaves it out, as tests' fakes do.
        */
       sessionIds?: string[];
+      /**
+       * Every row's pid, with its session id when it has a string one, those parseAgentRows() skipped
+       * or merged included, so End session can tell a pid that more than one row names (W90's review).
+       * createAgentsSource() always sets it. Read it with pidOwners(), which falls back to `rows` for a
+       * source that leaves it out, as tests' fakes do.
+       */
+      pids?: AgentPid[];
     }
   | { ok: false; error: string };
+
+/** One row's pid as `claude agents` printed it, valid row or not. */
+export interface AgentPid {
+  pid: number;
+  sessionId?: string;
+}
 
 export interface AgentsSourceOptions {
   /** Default 'claude'. */
@@ -93,7 +106,7 @@ export function createAgentsSource(options: AgentsSourceOptions = {}): AgentsSou
       if (!Array.isArray(parsed)) {
         return { ok: false, error: `${COMMAND} didn't print a JSON array` };
       }
-      return { ok: true, rows: parseAgentRows(parsed), sessionIds: rawSessionIds(parsed) };
+      return { ok: true, rows: parseAgentRows(parsed), sessionIds: rawSessionIds(parsed), pids: rawPids(parsed) };
     },
   };
 }
@@ -107,6 +120,40 @@ export function listedSessionIds(result: Extract<AgentsResult, { ok: true }>): S
   const ids = new Set(result.sessionIds);
   for (const row of result.rows) ids.add(row.sessionId);
   return ids;
+}
+
+/**
+ * The session ids of every row that names `pid`, valid row or not, undefined for one with no string
+ * session id: from `pids`, or from `rows` when a source leaves it out. End session refuses a pid that
+ * any row but the session's own names (W90).
+ */
+export function pidOwners(result: Extract<AgentsResult, { ok: true }>, pid: number): Array<string | undefined> {
+  const pids = result.pids ?? result.rows.flatMap((row) => (row.pid === undefined ? [] : [{ pid: row.pid, sessionId: row.sessionId }]));
+  return pids.filter((each) => each.pid === pid).map((each) => each.sessionId);
+}
+
+/**
+ * Every pid the rows give for `sessionId`, valid row or not: from `pids`, or from `rows` when a source
+ * leaves it out. More than one means the listing names more than one process for the session.
+ */
+export function sessionPids(result: Extract<AgentsResult, { ok: true }>, sessionId: string): Set<number> {
+  const pids = result.pids ?? result.rows.flatMap((row) => (row.pid === undefined ? [] : [{ pid: row.pid, sessionId: row.sessionId }]));
+  return new Set(pids.filter((each) => each.sessionId === sessionId).map((each) => each.pid));
+}
+
+/**
+ * The pid of every row that is an object with one, valid row or not: a positive integer, or a string
+ * of digits, which parseAgentRow() wouldn't take, but which still names a process.
+ */
+function rawPids(input: readonly unknown[]): AgentPid[] {
+  const pids: AgentPid[] = [];
+  for (const item of input) {
+    if (!isRecord(item)) continue;
+    const pid = typeof item.pid === 'number' ? item.pid : typeof item.pid === 'string' && /^\d{1,10}$/.test(item.pid) ? Number(item.pid) : NaN;
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    pids.push(typeof item.sessionId === 'string' ? { pid, sessionId: item.sessionId } : { pid });
+  }
+  return pids;
 }
 
 /** The `sessionId` of every row that is an object with a string one, valid row or not. */

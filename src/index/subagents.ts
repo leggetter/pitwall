@@ -181,6 +181,15 @@ export interface SubagentTracker {
   running(sessionId: string): number;
   /** The session's SubagentList, after scanning what's new. Undefined for a session not tracked with a transcript. Never rejects. */
   list(sessionId: string): Promise<SubagentList | undefined>;
+  /**
+   * How many of the session's sub-agents are running, after a scan that starts now, for End
+   * session's idle check (W90). Undefined when it can't say: the session isn't tracked with a
+   * transcript, or the scan failed, couldn't read the session's transcript, couldn't read a
+   * sub-agent's transcript or the `subagents` folder for any reason but its not being there, or the
+   * session changed meanwhile. Unlike list(), which shows what it could read, this fails safe: End
+   * counts an undefined as working. Never rejects.
+   */
+  runningFresh(sessionId: string): Promise<number | undefined>;
   /** The labels for the session's conversation: its folder listed and its meta files read afresh, its transcripts as last scanned. Never rejects. */
   labels(sessionId: string): Promise<SubagentLabels | undefined>;
   /**
@@ -327,8 +336,25 @@ interface SessionState {
   rows: Row[];
   scanning: Promise<void> | undefined;
   scanned: boolean;
+  /**
+   * Whether the latest scan couldn't read something it needed (runningFresh()): false after one that
+   * read everything, true after one that failed or couldn't read a file, undefined before the first
+   * and while one runs.
+   */
+  scanFailed: boolean | undefined;
   /** The running count the index last read. */
   told: number;
+}
+
+/** What a scan couldn't read, for runningFresh(). */
+interface ScanProblems {
+  failed: boolean;
+}
+
+/** True for an error that says the file or folder isn't there. */
+function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -351,7 +377,7 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
 
   // --- The folder and its meta files -------------------------------------------------------------
 
-  async function listFolder(state: SessionState): Promise<Map<string, Listed>> {
+  async function listFolder(state: SessionState, problems?: ScanProblems): Promise<Map<string, Listed>> {
     const listing = new Map<string, Listed>();
     try {
       // lstat: a symlink at either is no folder, so nothing outside is read through it.
@@ -370,8 +396,9 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
         if (match[2] === 'jsonl') listed.transcript = entry.name;
         else listed.meta = entry.name;
       }
-    } catch {
-      // No folder, or it can't be read: no sub-agents.
+    } catch (error) {
+      // No folder, or it can't be read: no sub-agents. One that's there but can't be read is a problem for runningFresh().
+      if (problems !== undefined && !isMissing(error)) problems.failed = true;
     }
     return listing;
   }
@@ -406,7 +433,7 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
   // --- Reading transcripts -----------------------------------------------------------------------
 
   /** Reads what's new in one transcript: from 0 the first time, or when it shrank or was replaced. A file that can't be read is forgotten, to be read afresh. */
-  async function scanFile(state: SessionState, file: string, owner: string | undefined, current: () => boolean): Promise<void> {
+  async function scanFile(state: SessionState, file: string, owner: string | undefined, current: () => boolean, problems?: ScanProblems): Promise<void> {
     let handle: FileHandle | undefined;
     // The session's own transcript is where the transcript reader found it; a sub-agent's is never followed out of the folder.
     const follow = owner === undefined;
@@ -415,6 +442,8 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
       const known = state.files.get(file);
       if (!info.isFile()) {
         state.files.delete(file);
+        // The session's own transcript, where sub-agents start and end, isn't a file to read.
+        if (problems !== undefined && owner === undefined) problems.failed = true;
         return;
       }
       if (known !== undefined && known.dev === info.dev && known.ino === info.ino && known.offset === info.size) {
@@ -445,8 +474,10 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
         await yieldToLoop();
         if (!current()) return;
       }
-    } catch {
+    } catch (error) {
       state.files.delete(file);
+      // The session's own transcript can't be read, for any reason; a sub-agent's for any but having gone since the folder was listed.
+      if (problems !== undefined && (owner === undefined || !isMissing(error))) problems.failed = true;
     } finally {
       await handle?.close().catch(() => undefined);
     }
@@ -585,8 +616,10 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
   async function doScan(sessionId: string, state: SessionState, full: boolean): Promise<void> {
     const current = () => !stopped && sessions.get(sessionId) === state;
     const startedMs = now();
+    const problems: ScanProblems = { failed: false };
+    state.scanFailed = undefined;
     const ended = new Set(full ? [] : state.rows.flatMap((row) => (row.end === undefined ? [] : [row.summary.agentId])));
-    const listing = await listFolder(state);
+    const listing = await listFolder(state, problems);
     if (!current()) return;
     state.listing = listing;
     for (const agentId of state.metas.keys()) if (listing.get(agentId)?.meta === undefined) state.metas.delete(agentId);
@@ -597,13 +630,14 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
     for (const [file, owner] of transcripts) {
       if (!current()) return;
       if (owner !== undefined && ended.has(owner) && state.files.has(file)) continue;
-      await scanFile(state, file, owner, current);
+      await scanFile(state, file, owner, current, problems);
     }
     if (listing.size > 0) lookUpStart(state, state.alive ? state.pid : undefined);
     if (state.startLookup !== undefined) await state.startLookup;
     if (!current()) return;
     state.rows = rowsOf(state);
     state.scanned = true;
+    state.scanFailed = problems.failed;
     if (full) state.checkedMs = startedMs;
     counters.scans++;
   }
@@ -615,6 +649,7 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
         // Only a bug gets here: read everything afresh next time.
         state.files.clear();
         state.metas.clear();
+        state.scanFailed = true;
       })
       .finally(() => {
         state.scanning = undefined;
@@ -721,6 +756,19 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
         return undefined;
       }
     },
+    async runningFresh(sessionId) {
+      try {
+        const state = sessions.get(sessionId);
+        if (state === undefined) return undefined;
+        await scanFresh(sessionId, state);
+        // A session that changed meanwhile, or a scan that stopped early or couldn't read something, can't say.
+        if (sessions.get(sessionId) !== state || state.scanFailed !== false) return undefined;
+        report(state);
+        return runningOf(state);
+      } catch {
+        return undefined;
+      }
+    },
     async labels(sessionId) {
       try {
         const state = sessions.get(sessionId);
@@ -806,6 +854,7 @@ function newSession(main: string): SessionState {
     rows: [],
     scanning: undefined,
     scanned: false,
+    scanFailed: undefined,
     told: 0,
   };
 }
