@@ -21,7 +21,8 @@
 //   input behind a real button. Each is checked and uploaded as it's added (attachments.ts), and
 //   listed under the prompt (Attachments.tsx). Start session sends the uploaded ones' ids, and is off,
 //   saying why, while one is uploading or has failed. A drop anywhere else in the page does nothing,
-//   rather than the browser opening the file in pitwall's place. Closing the dialog drops them.
+//   rather than the browser opening the file in pitwall's place. Closing the dialog without starting
+//   drops them, and asks the server to remove the uploaded ones.
 
 import {
   useContext,
@@ -346,6 +347,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     setBusy(false);
     switch (outcome.kind) {
       case 'started':
+        // Its files are the session's now: closing mustn't ask the server to remove them.
+        attachments.started();
         onStarted({ shortId: outcome.shortId, name: outcome.name });
         return;
       case 'refused':

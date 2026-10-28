@@ -277,7 +277,7 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'Files: attached',
-    note: 'Dropped on the prompt, pasted into it, or chosen with Attach files. Each uploads as it is added. An image has a thumbnail, any other file its type icon; a name is text, cut in the middle with its extension kept. Remove takes a file off, and focus goes to the next one, or to Attach files. Start session sends their ids.',
+    note: 'Dropped on the prompt, pasted into it, or chosen with Attach files. Each uploads as it is added. An image has a thumbnail, any other file its type icon; a name is text, cut in the middle with its extension kept. Remove takes a file off, asking the server to remove it once uploaded, and focus goes to the next one, or to Attach files. Start session sends their ids; closing without starting asks the server to remove them.',
     frame: 'dialog-tall',
     run: async (root) => {
       await fill(root, { prompt: PROMPT });
@@ -311,7 +311,7 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'Files: refused',
-    note: "A file pitwall can't take is listed with why, and the others go on: a type that isn't an image, a PDF or text, one over 10 MB, the eleventh, a name the server would refuse, and the server's own refusal, such as bytes that contradict the type. A refused file has Remove alone, and doesn't hold up Start session.",
+    note: "A file pitwall can't take is listed with why, and the others go on: a type that isn't an image, a PDF or text, an empty one, one over 10 MB, the eleventh, a name the server would refuse, and the server's own refusal, such as bytes that contradict the type. A refused file has Remove alone, and doesn't hold up Start session.",
     frame: 'dialog-tall',
     options: { upload: 'refused' },
     run: async (root) => {
@@ -325,6 +325,16 @@ const DIALOG_CASES: DialogCase[] = [
         ],
         'refused',
       );
+    },
+  },
+  {
+    title: 'Files: not on this machine',
+    note: "A 503: this pitwall keeps no attachments here, such as when its home folder's path has characters an @ mention can't carry. Each file says so, and that the session can still start without them, with the server's reason. Nothing is held up.",
+    frame: 'dialog-tall',
+    options: { upload: 'unavailable' },
+    run: async (root) => {
+      await fill(root, { prompt: PROMPT });
+      await attach(root, [madeUpFile('export-job-timeouts.pdf', 'application/pdf', 182_000)], 'refused');
     },
   },
   {

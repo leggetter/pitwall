@@ -7,8 +7,10 @@
 //   count (ATTACHMENTS_MAX_PER_SESSION, refused ones not counted). A refused file is listed with why,
 //   and the others go on.
 // - Each accepted file uploads as it's added, at most MAX_AT_ONCE at a time, through the app's
-//   ApiClient, which sends the apiKey. Remove aborts an upload; closing the dialog aborts them all,
-//   and the server removes what was never used after an hour.
+//   ApiClient, which sends the apiKey. Remove aborts an upload, or, once it has uploaded, asks the
+//   server to remove it (attachmentPath(), DELETE), freeing its place among the pending ones.
+//   Closing the dialog without starting aborts the rest and asks the same for every uploaded file.
+//   Both are best effort: the server removes what was never used after an hour anyway.
 // - An image gets a small thumbnail, drawn on a canvas and kept as a data: URL, since the CSP's
 //   img-src allows `data:` and not `blob:`. Nothing is kept once the dialog closes.
 
@@ -18,6 +20,7 @@ import {
   ATTACHMENT_TYPES,
   ATTACHMENTS_MAX_PER_SESSION,
   ATTACHMENTS_PATH,
+  attachmentPath,
   type Attachment,
   type AttachmentType,
 } from '../../src/shared/protocol.js';
@@ -109,11 +112,13 @@ export const ATTACH_TEXT = {
   uploading: 'Uploading…',
   waiting: 'Waiting…',
   type: 'Only images, PDFs and text files can be attached.',
+  empty: "It's empty.",
   size: (size: number) => `It's ${formatSize(size, { up: true })}, over the ${formatSize(ATTACHMENT_MAX_BYTES)} limit.`,
   count: `A first prompt takes at most ${ATTACHMENTS_MAX_PER_SESSION} files.`,
   long: `Its name is over ${ATTACHMENT_NAME_MAX} characters. Rename the file, then attach it again.`,
   name: 'Its name has a /, \\ or control character in it. Rename the file, then attach it again.',
   noServer: "Files can't be uploaded from here.",
+  unavailable: "Files can't be attached on this machine. You can still start the session without them.",
   unclear: "pitwall's answer didn't say which file it kept.",
   attached: (name: string) => `Attached ${name}.`,
 } as const;
@@ -121,6 +126,7 @@ export const ATTACH_TEXT = {
 /** What's wrong with a file, before it's sent: why it's refused, or undefined. `count` is how many are already listed and not refused. */
 export function fileProblem(file: { name: string; type: string; size: number }, count: number): string | undefined {
   if (attachmentType(file) === undefined) return ATTACH_TEXT.type;
+  if (file.size === 0) return ATTACH_TEXT.empty;
   if (file.size > ATTACHMENT_MAX_BYTES) return ATTACH_TEXT.size(file.size);
   if (file.name.length > ATTACHMENT_NAME_MAX) return ATTACH_TEXT.long;
   if (UNSAFE_NAME.test(file.name)) return ATTACH_TEXT.name;
@@ -138,9 +144,11 @@ function nameOf(file: File): string {
 
 export type UploadOutcome =
   | { kind: 'uploaded'; attachment: Attachment }
-  /** The server refused the file itself: 400 (its name), 413 (its size) or 415 (its type, or bytes that contradict it). Trying again won't help. */
+  /** The server refused the file itself: 400 (its name, or an empty file), 413 (its size) or 415 (its type, or bytes that contradict it). Trying again won't help. */
   | { kind: 'refused'; error?: string; status?: number }
-  /** Anything else, such as 429 with too many unused uploads, a 5xx or no answer: trying again may. */
+  /** 503: this pitwall keeps no attachments on this machine. The session can still start without them. */
+  | { kind: 'unavailable'; error?: string }
+  /** Anything else, such as 429 with too many unused uploads, a 500 or no answer: trying again may. */
   | { kind: 'failed'; error?: string; status?: number }
   | { kind: 'unauthorized' }
   | { kind: 'aborted' };
@@ -174,6 +182,7 @@ export async function uploadAttachment(api: ApiClient, file: Blob, name: string,
     return attachment ? { kind: 'uploaded', attachment } : { kind: 'failed', error: ATTACH_TEXT.unclear };
   }
   const error = body?.ok === false && typeof body.error === 'string' && body.error !== '' ? body.error : undefined;
+  if (result.status === 503) return error === undefined ? { kind: 'unavailable' } : { kind: 'unavailable', error };
   const kind = result.status !== undefined && REFUSALS.has(result.status) ? 'refused' : 'failed';
   if (error !== undefined) return { kind, error };
   return result.status === undefined ? { kind } : { kind, status: result.status };
@@ -264,12 +273,19 @@ async function thumbnailOf(file: Blob): Promise<string | undefined> {
   }
 }
 
+/** Asks the server to remove an upload no spawn has used. Best effort: whatever it answers, it removes it after an hour anyway. */
+function release(api: ApiClient | undefined, id: string): void {
+  void api?.delete(attachmentPath(id)).catch(() => undefined);
+}
+
 export interface AttachmentsController {
   items: readonly AttachmentItem[];
   /** Adds files from the picker, a drop or a paste: each is checked, then uploaded or listed as refused. */
   add(files: readonly File[]): void;
-  /** Takes a file off the list, aborting its upload if it's running. */
+  /** Takes a file off the list, aborting its upload if it's running, or asking the server to remove it once uploaded. */
   remove(key: string): void;
+  /** The session started with the uploaded files: closing now leaves them, since a spawn has used them. */
+  started(): void;
   /** Uploads a failed file again. */
   retry(key: string): void;
   /** The uploaded files' ids, in the list's order, for SpawnRequest.attachments. */
@@ -282,7 +298,10 @@ export interface AttachmentsController {
   announcement: string;
 }
 
-/** Holds the files for one opening of the New session dialog. Unmounting aborts every upload. */
+/**
+ * Holds the files for one opening of the New session dialog. Unmounting aborts every upload, and,
+ * unless the session started with them, asks the server to remove each uploaded file.
+ */
 export function useAttachments(api: ApiClient | undefined): AttachmentsController {
   const [items, setItems] = useState<readonly AttachmentItem[]>([]);
   const [announcement, setAnnouncement] = useState('');
@@ -294,6 +313,8 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
   const counter = useRef(0);
   const apiRef = useRef(api);
   apiRef.current = api;
+  // Set once the session started with the files, so closing doesn't remove what it used.
+  const used = useRef(false);
 
   useEffect(() => {
     alive.current = true;
@@ -302,6 +323,8 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
       alive.current = false;
       for (const each of files.values()) each.controller?.abort();
       files.clear();
+      if (!used.current) for (const item of list.current) if (item.state === 'uploaded' && item.id !== undefined) release(apiRef.current, item.id);
+      list.current = [];
     };
   }, []);
 
@@ -352,17 +375,21 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
           break;
         }
         case 'refused':
+        case 'unavailable':
         case 'failed':
         case 'unauthorized': {
-          const problem: AttachmentProblem = { verb: outcome.kind === 'refused' ? 'attach' : 'upload' };
+          const refused = outcome.kind === 'refused' || outcome.kind === 'unavailable';
+          const problem: AttachmentProblem = { verb: refused ? 'attach' : 'upload' };
+          // No attachments on this machine: say the session can still start, then the server's why.
+          if (outcome.kind === 'unavailable') problem.reason = ATTACH_TEXT.unavailable;
           if (outcome.kind !== 'unauthorized') {
             if (outcome.error === ATTACH_TEXT.unclear) problem.reason = outcome.error;
             else if (outcome.error !== undefined) problem.detail = plainText(outcome.error);
-            if (outcome.status !== undefined) problem.status = outcome.status;
+            if (outcome.kind !== 'unavailable' && outcome.status !== undefined) problem.status = outcome.status;
           }
           // A refused file no longer counts towards the limit, and isn't uploaded again.
-          if (outcome.kind === 'refused') held.current.delete(key);
-          change(key, { state: outcome.kind === 'refused' ? 'refused' : 'failed', problem });
+          if (refused) held.current.delete(key);
+          change(key, { state: refused ? 'refused' : 'failed', problem });
           announce(problemSentence(problem, name));
           break;
         }
@@ -409,8 +436,15 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
   const remove = useCallback((key: string) => {
     held.current.get(key)?.controller?.abort();
     held.current.delete(key);
-    commit(list.current.filter((item) => item.key !== key));
+    const item = list.current.find((each) => each.key === key);
+    // Uploaded, and so held by the server as one of its pending: it can go now, not in an hour.
+    if (item?.state === 'uploaded' && item.id !== undefined) release(apiRef.current, item.id);
+    commit(list.current.filter((each) => each.key !== key));
     pump();
+  }, []);
+
+  const started = useCallback(() => {
+    used.current = true;
   }, []);
 
   const retry = useCallback((key: string) => {
@@ -423,7 +457,7 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
   const ids = items.flatMap((item) => (item.state === 'uploaded' && item.id !== undefined ? [item.id] : []));
   const pending = items.filter((item) => item.state === 'waiting' || item.state === 'uploading').length;
   const failed = items.filter((item) => item.state === 'failed').length;
-  return { items, add, remove, retry, ids, pending, failed, announcement };
+  return { items, add, remove, retry, started, ids, pending, failed, announcement };
 }
 
 /** Fields to change, an undefined one taking the field away. */

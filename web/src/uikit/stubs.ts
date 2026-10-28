@@ -110,10 +110,11 @@ export interface StubOptions {
   subagents?: 'ok' | 'many' | 'truncated' | 'empty' | 'loading' | 'failed' | 'failed-retrying' | 'refresh-failed';
   /**
    * What New session's uploads get (W82). `uploaded` keeps each, as W79's route does; `uploading`
-   * never answers; `failed` is a 503 every time; `failed-retrying` a 503, then no answer, so Try
-   * again stays busy; `refused` is a 415 from bytes that contradict the type.
+   * never answers; `failed` is a 500 every time; `failed-retrying` a 500, then no answer, so Try
+   * again stays busy; `refused` is a 415 from bytes that contradict the type; `unavailable` is a
+   * 503, a pitwall that keeps no attachments on this machine.
    */
-  upload?: 'uploaded' | 'uploading' | 'failed' | 'failed-retrying' | 'refused';
+  upload?: 'uploaded' | 'uploading' | 'failed' | 'failed-retrying' | 'refused' | 'unavailable';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
@@ -167,6 +168,8 @@ export function stubApi(options: StubOptions = {}): ApiClient {
       uploads += 1;
       return upload(options.upload ?? 'uploaded', file, uploads - 1);
     },
+    // An unused upload removed (W82): done, as the server's 204.
+    delete: (path) => Promise.resolve(path.startsWith(`${ATTACHMENTS_PATH}/`) ? { kind: 'ok', status: 204, body: undefined } : failed(404)),
   };
 }
 
@@ -176,11 +179,13 @@ function upload(result: NonNullable<StubOptions['upload']>, file: ApiUpload, tim
     case 'uploading':
       return forever();
     case 'failed':
-      return Promise.resolve(failed(503, { ok: false, error: "Made up: pitwall couldn't store the file." }));
+      return Promise.resolve(failed(500, { ok: false, error: "Made up: pitwall couldn't write the file." }));
     case 'failed-retrying':
-      return times === 0 ? Promise.resolve(failed(503, { ok: false, error: "Made up: pitwall couldn't store the file." })) : forever();
+      return times === 0 ? Promise.resolve(failed(500, { ok: false, error: "Made up: pitwall couldn't write the file." })) : forever();
     case 'refused':
       return Promise.resolve(failed(415, { ok: false, error: "Made up: its first bytes aren't a PNG's." }));
+    case 'unavailable':
+      return Promise.resolve(failed(503, { ok: false, error: "Made up: this pitwall doesn't keep attachments." }));
     case 'uploaded': {
       const name = decodeURIComponent(file.headers?.['X-Pitwall-Filename'] ?? '');
       const id = `00000000-0000-4000-8000-${String(times + 1).padStart(12, '0')}`;
