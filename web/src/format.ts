@@ -36,6 +36,14 @@ export function couldNot(what: string, status: number | undefined): string {
 }
 
 /**
+ * When to try again, after couldNot()'s sentence, from a 429's Retry-After: " Try again in 2 seconds.",
+ * or nothing without one. For an answer with no reason of its own, as resume's and open in an editor's are.
+ */
+export function tryAgainIn(seconds: number | undefined): string {
+  return seconds === undefined ? '' : ` Try again in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`;
+}
+
+/**
  * Shortens a home directory to `~` when the path makes it obvious: macOS
  * `/Users/<name>` and Linux `/home/<name>`. The browser can't ask for the real
  * home directory, and the contract doesn't send it.

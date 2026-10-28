@@ -14,7 +14,7 @@ import { EDITORS_PATH, openInEditorPath, removePath, stopPath, WS_PATH, type Ind
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { takeRefusals } from '../test/noClaude.js';
 import type { CommandOptions, CommandResult } from './command.js';
-import { detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type FoundEditor } from './editors.js';
+import { DEFAULT_OPEN_RATE, detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type EditorOptions, type FoundEditor } from './editors.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
@@ -274,12 +274,18 @@ interface Started {
 }
 
 async function start(
-  { runFile = fakeRunFile(), found = MAC_EDITORS, indexer = fakeIndexer(), internals = {} }: { runFile?: ReturnType<typeof fakeRunFile>; found?: FoundEditor[]; indexer?: Indexer; internals?: ServerInternals } = {},
+  {
+    runFile = fakeRunFile(),
+    found = MAC_EDITORS,
+    indexer = fakeIndexer(),
+    internals = {},
+    editors = {},
+  }: { runFile?: ReturnType<typeof fakeRunFile>; found?: FoundEditor[]; indexer?: Indexer; internals?: ServerInternals; editors?: Pick<EditorOptions, 'openRate' | 'now'> } = {},
 ): Promise<Started> {
   const server = await startServerWithInternals(
     { indexer, token: TOKEN, webRoot, port: 0 },
     {
-      editors: { found, runFile, env: { HOME: '/Users/pitwall-test', PITWALL_TOKEN: TOKEN, PITWALL_LAUNCH: 'x', KEEP_ME: 'yes', LEAKED: `a${TOKEN}b`, npm_config_x: 'y' } },
+      editors: { found, runFile, env: { HOME: '/Users/pitwall-test', PITWALL_TOKEN: TOKEN, PITWALL_LAUNCH: 'x', KEEP_ME: 'yes', LEAKED: `a${TOKEN}b`, npm_config_x: 'y' }, ...editors },
       ...internals,
     },
   );
@@ -632,6 +638,57 @@ describe('POST openInEditorPath: the limit it shares with stop, remove and resum
     expect((await open(started, MISSING_ID)).status).toBe(409);
     expect((await open(started, GONE_ID)).status).toBe(409);
     expect((await open(started, BG_ID)).status).toBe(502);
+  });
+});
+
+describe('POST openInEditorPath: opens a minute (W87)', () => {
+  it(`is ${DEFAULT_OPEN_RATE.max} a minute by default: the next answers 429 with Retry-After, and opens nothing`, async () => {
+    let now = 1_000_000;
+    const started = await start({ editors: { now: () => now } });
+    // Any session, either editor: one limit for all of them.
+    for (let i = 0; i < DEFAULT_OPEN_RATE.max; i += 1) {
+      const res = await open(started, i % 2 === 0 ? BG_ID : ENDED_ID, { editor: i % 3 === 0 ? 'vscode' : 'cursor' });
+      expect(res.status, `open ${i + 1}`).toBe(200);
+      now += 1000;
+    }
+    const refused = await open(started, INTERACTIVE_ID);
+    expect(refused.status).toBe(429);
+    // The first was 10 s ago, so a place frees in 50 s.
+    expect(refused.headers['retry-after']).toBe('50');
+    expect(refused.headers['cache-control']).toBe('no-store');
+    expect(refused.json).toEqual({ ok: false, error: `pitwall opens at most ${DEFAULT_OPEN_RATE.max} directories in an editor every 60 seconds. Try again in 50s.` });
+    expect(started.runFile.calls).toHaveLength(DEFAULT_OPEN_RATE.max);
+  });
+
+  it('opens again once the oldest open is a window old, and says at least 1 second until then', async () => {
+    let now = 0;
+    const started = await start({ editors: { openRate: { max: 2, windowMs: 60_000 }, now: () => now } });
+    expect((await open(started, BG_ID)).status).toBe(200);
+    expect((await open(started, BG_ID)).status).toBe(200);
+    now = 59_999;
+    const last = await open(started, BG_ID);
+    expect([last.status, last.headers['retry-after']]).toEqual([429, '1']);
+    now = 60_000;
+    expect((await open(started, BG_ID)).status).toBe(200);
+    expect(started.runFile.calls).toHaveLength(3);
+  });
+
+  it("doesn't count an open refused before it runs, and counts one whose editor failed, which did run", async () => {
+    const runFile = fakeRunFile(async () => Promise.reject(new RunError('exit', 'exited with code 1', 1)));
+    const started = await start({ runFile, editors: { openRate: { max: 2, windowMs: 60_000 }, now: () => 0 } });
+    expect((await open(started, MISSING_ID)).status).toBe(409);
+    expect((await open(started, GONE_ID)).status).toBe(409);
+    expect((await open(started, BG_ID, { editor: 'zed' })).status).toBe(400);
+    expect((await open(started, 'nope')).status).toBe(404);
+    expect((await open(started, BG_ID)).status).toBe(502);
+    expect((await open(started, BG_ID)).status).toBe(502);
+    expect((await open(started, BG_ID)).status).toBe(429);
+    expect(runFile.calls).toHaveLength(2);
+  });
+
+  it("doesn't count toward spawn and resume's limit of sessions started a minute, or consult it", async () => {
+    const started = await start({ internals: { actions: { spawnRate: { max: 1, windowMs: 60_000 }, now: () => 0 } }, editors: { now: () => 0 } });
+    for (let i = 0; i < 3; i += 1) expect((await open(started, BG_ID)).status).toBe(200);
   });
 });
 

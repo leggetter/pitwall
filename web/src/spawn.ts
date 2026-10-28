@@ -15,7 +15,7 @@ import {
   type SpawnRequest,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
-import { couldNot, shortenHome } from './format.js';
+import { couldNot, shortenHome, tryAgainIn } from './format.js';
 
 // The server's rules, repeated so the dialog can say what's wrong before sending.
 
@@ -109,9 +109,7 @@ export async function resumeSession(api: ApiClient, sessionId: string): Promise<
     return typeof body.hint === 'string' && body.hint !== '' ? { kind: 'refused', error: body.error, hint: body.hint } : { kind: 'refused', error: body.error };
   }
   // A 429 with no reason of its own still says when to try again.
-  const retryAfter = result.kind === 'failed' ? result.retryAfter : undefined;
-  const wait = retryAfter === undefined ? '' : ` Try again in ${retryAfter} ${retryAfter === 1 ? 'second' : 'seconds'}.`;
-  const failed: ResumeOutcome = { kind: 'failed', error: `${couldNot('resume the session', result.status)}${wait}` };
+  const failed: ResumeOutcome = { kind: 'failed', error: `${couldNot('resume the session', result.status)}${tryAgainIn(result.kind === 'failed' ? result.retryAfter : undefined)}` };
   return result.status === undefined ? failed : { ...failed, status: result.status };
 }
 
