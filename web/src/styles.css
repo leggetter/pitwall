@@ -969,7 +969,8 @@ textarea {
 /*
  * Clear filters' room while no filter is on: a copy of the button, unseen, so the chips' line keeps
  * its width and Sort keeps its place as the button comes and goes (W75). It's aria-hidden and can't
- * take focus, so it's nothing to a screen reader or the keyboard.
+ * take focus, so it's nothing to a screen reader or the keyboard. Both are a 24 px sm icon button
+ * (W91), so a 1,440 px window has Sort on the chips' line.
  */
 .filter-clear-room {
   visibility: hidden;

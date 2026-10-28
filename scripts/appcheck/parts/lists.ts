@@ -1,7 +1,8 @@
 // The lists (docs/design-system.md, 3: Repo list, Root tabs, Session list; 4: Session rows): the repo
 // list's Needs you, All sessions and Starred, then its groups; two-line rows; the session list's
-// filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75); and,
-// with two roots, a tab per root.
+// filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75), with
+// Clear filters as an icon button and the bar's lines at each window (W91); and, with two roots, a
+// tab per root.
 
 import { API_SERVER, CODE, DEMO_APP, NAMES, OSS } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -26,7 +27,30 @@ const EDGE_LABELS: Readonly<Record<string, string>> = {
   '1200': 'demo-apps',
   '1440': 'demo-app-storefront',
 };
-const CLEAR_FILTERS = `[...document.querySelectorAll('.session-list .filter-chips button')].find((b) => b.textContent.trim() === 'Clear filters')`;
+/** Clear filters, an icon button named by its tooltip (W91), so found by its name. */
+const CLEAR_FILTERS = `document.querySelector('.session-list .filter-chips button[aria-label="Clear filters"]')`;
+/**
+ * How many lines the filter bar takes at each window, filtered or not (W75, W91): the field's, the
+ * chips' with Clear filters, and Sort's where it doesn't fit beside them. The bar is 408 px wide at
+ * 1,440 px, where the chips, Clear filters and Sort fit on one line now that Clear filters is a 24 px
+ * icon. While it was the 88 px text button, its room left Sort a line of its own there: 3 lines.
+ */
+const BAR_LINES: Readonly<Record<string, number>> = { '375': 3, '375x540': 3, '900': 2, '1200': 3, '1440': 2 };
+/**
+ * The filter bar's lines, from the boxes of what's in it: the field, each chip, Clear filters or its
+ * room, and Sort. A box that starts below the bottom of the line before starts a new one; Sort is
+ * 28 px tall and the chips 24 px, centred on the same line.
+ */
+const barLines = `(() => {
+  const bar = document.querySelector('.session-list form[role="search"]');
+  if (!bar) return 0;
+  const boxes = [bar.querySelector('.filter-field'), ...bar.querySelectorAll('.filter-chips > *'), bar.querySelector('.sort')].filter(Boolean).map((el) => el.getBoundingClientRect()).sort((a, b) => a.top - b.top);
+  let lines = 0, bottom = -Infinity;
+  for (const box of boxes) {
+    if (box.top >= bottom - 0.5) { lines += 1; bottom = box.bottom; } else bottom = Math.max(bottom, box.bottom);
+  }
+  return lines;
+})()`;
 
 interface Box {
   left: number;
@@ -212,6 +236,39 @@ const part: Part = {
       await t.shot('filter-bar');
     });
 
+    await t.step("the bar's lines at this window, and Clear filters a 24 px icon button named by its tooltip, its room the same size", async () => {
+      const lines = BAR_LINES[t.viewport.name];
+      t.expectEqual(await page.evaluate(barLines), lines, 'the filter bar\'s lines, with no filter on');
+      const room = unfiltered['Clear filters'];
+      t.expect(room && Math.abs(room.width - 24) <= 0.5 && Math.abs(room.height - 24) <= 0.5, "Clear filters' room is 24 px square", room);
+
+      await page.click('Interactive', chip('Interactive'));
+      await page.waitFor('Interactive on, and Clear filters', `!!${CLEAR_FILTERS}`);
+      const button = await page.evaluate<{ text: string; icon: string | null; width: number; height: number } | null>(`(() => {
+        const el = ${CLEAR_FILTERS};
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { text: el.textContent, icon: el.querySelector('svg')?.getAttribute('aria-hidden') ?? null, width: r.width, height: r.height };
+      })()`);
+      t.expectEqual(button?.text, '', 'no text in it: its name is its aria-label');
+      t.expectEqual(button?.icon, 'true', 'its icon is hidden from assistive technology');
+      t.expect(button && button.width >= 24 && button.height >= 24, 'at least 24 by 24 px, the target size (WCAG 2.5.8)', button);
+      t.expectEqual(await page.evaluate(barLines), lines, "the filter bar's lines, with a filter on");
+
+      // By keyboard: Tab from the chips reaches it, its tooltip opens on that focus, and Enter clears
+      // the filters and puts focus in the field, since the button goes.
+      await page.evaluate(`${chip('Background')}.focus()`);
+      await page.key('Tab');
+      t.expect(await page.evaluate(`document.activeElement === ${CLEAR_FILTERS}`), 'Tab from the last chip reaches Clear filters', await page.evaluate(`document.activeElement?.outerHTML.slice(0, 80)`));
+      const tip = await page.waitFor<{ text: string; hidden: string | null }>('its tooltip', `(() => { const tip = [...document.querySelectorAll('.tooltip')].find((el) => !el.hidden); return tip && { text: tip.textContent, hidden: tip.getAttribute('aria-hidden') }; })()`);
+      t.expectEqual(tip, { text: 'Clear filters', hidden: 'true' }, 'its tooltip says its name, hidden from assistive technology, which has the name');
+      await page.key('Enter');
+      await page.waitFor('the filters to clear', `${chip('Interactive')}.getAttribute('aria-pressed') === 'false' && !${CLEAR_FILTERS}`);
+      t.expect(await page.evaluate(`document.activeElement === ${FIELD}`), 'focus is in the field');
+      t.expect(await page.evaluate(`[...document.querySelectorAll('.tooltip')].every((el) => el.hidden)`), 'no tooltip is left open');
+      t.expectEqual(moved(unfiltered, await page.evaluate<Boxes>(headBoxes)), [], 'with the filters cleared, everything is where it started');
+    });
+
     await t.step('turning a chip on, then text, then Clear filters moves nothing in the header or the rows', async () => {
       await filterThenClear(unfiltered, 'filter-bar-chip-on');
     });
@@ -298,6 +355,7 @@ const part: Part = {
       await t.fresh({ search: '?view=all', forcedColors: true });
       t.expect(await page.evaluate(`matchMedia('(forced-colors: active)').matches`), 'forced colours are on');
       const before = await page.evaluate<Boxes>(headBoxes);
+      t.expectEqual(await page.evaluate(barLines), BAR_LINES[t.viewport.name], "the filter bar's lines, as without forced colours");
       await filterThenClear(before, 'filter-bar-forced-colors');
       await page.click('Interactive', chip('Interactive'));
       await page.click('Background', chip('Background'));

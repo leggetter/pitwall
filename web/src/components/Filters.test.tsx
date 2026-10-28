@@ -1,8 +1,9 @@
 // The filters (docs/design-system.md, section 4: Search and Filter chips): the filter field, the
 // chips and Clear filters, rendered on their own with filters the test holds.
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { ICON_PATHS } from '../icons/paths.js';
 import { NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
 import { FilterControls, FilterField } from './Filters.js';
 
@@ -176,6 +177,29 @@ describe('Clear filters', () => {
     expect(clear()).not.toBeNull();
   });
 
+  it('is a ghost sm icon button at every width, named by its tooltip, with no text and its icon hidden (W91)', () => {
+    renderFilters(start('', ['interactive']));
+    const button = clear()!;
+
+    expect(button.getAttribute('aria-label')).toBe('Clear filters');
+    expect(button.textContent).toBe('');
+    expect([...button.classList].sort()).toEqual(['ghost', 'icon-button', 'sm']);
+    expect(button.querySelectorAll('svg')).toHaveLength(1);
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    // filter_alt_off, not cancel: that's the field's own Clear filter, beside it while there's text.
+    expect(button.querySelector('path')?.getAttribute('d')).toBe(ICON_PATHS['clear-filters'][16]);
+    expect(ICON_PATHS['clear-filters'][16]).not.toBe(ICON_PATHS.clear[16]);
+  });
+
+  it('opens its tooltip on keyboard focus: the same text as its name, hidden from assistive technology', () => {
+    renderFilters(start('', ['background']));
+
+    act(() => clear()!.focus());
+    const tip = [...document.querySelectorAll<HTMLElement>('[role="tooltip"]')].find((each) => !each.hidden);
+    expect(tip?.textContent).toBe('Clear filters');
+    expect(tip?.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('keeps its room while no filter is on: an unseen copy, aria-hidden, that is no button and takes no focus', () => {
     renderFilters();
     const chips = () => screen.getByRole('group', { name: 'Filters' });
@@ -183,13 +207,17 @@ describe('Clear filters', () => {
 
     expect(room()?.tagName).toBe('SPAN');
     expect(room()?.getAttribute('aria-hidden')).toBe('true');
-    expect(room()?.textContent).toBe('Clear filters');
     expect(room()?.hasAttribute('tabindex')).toBe(false);
+    expect(room()?.hasAttribute('aria-label')).toBe(false);
     expect(chips().lastElementChild).toBe(room());
+    // A copy of the button: the same classes, so the same 24 px square, and the same icon.
+    expect([...room()!.classList].sort()).toEqual(['filter-clear-room', 'ghost', 'icon-button', 'sm']);
+    const roomIcon = room()!.querySelector('path')?.getAttribute('d');
 
     fireEvent.click(chip('Background'));
     expect(room()).toBeNull();
     expect(chips().lastElementChild).toBe(clear());
+    expect(clear()!.querySelector('path')?.getAttribute('d')).toBe(roomIcon);
   });
 
   it('clears the text and every chip, and puts focus in the field', () => {
