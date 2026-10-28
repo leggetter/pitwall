@@ -16,9 +16,12 @@ import {
 } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { asConversationPage } from '../conversation.js';
-import { asSubagentList, runningText, sortSubagents, subagentBadge, toolCallsText } from '../subagents.js';
-import { NOW, group, minutesAgo, session } from '../test/fixtures.js';
+import { asSubagentList, getSubagents, runningText, sortSubagents, subagentBadge, toolCallsText } from '../subagents.js';
+import type { ConnectionView } from '../connection.js';
+import { NOW, group, minutesAgo, session, snapshot } from '../test/fixtures.js';
+import { cutShort, hover, pass, shownTooltips, unhover } from '../test/tooltips.js';
 import { SUBAGENT_LINK_HINT } from './Conversation.js';
+import { Dashboard } from './Dashboard.js';
 import { SessionRow } from './SessionRow.js';
 import { SessionView } from './SessionView.js';
 import { NO_SUBAGENTS } from './Subagents.js';
@@ -35,21 +38,38 @@ function sub(agentId: string, overrides: Partial<SubagentSummary> = {}): Subagen
   return { agentId, description: `Made-up task ${agentId}`, agentType: 'general-purpose', state: 'done', startedAt: at(30), lastActivityAt: at(20), toolCalls: 4, ...overrides };
 }
 
-/** Running, done long ago, failed, stopped, unknown and one another started, out of order, as a server might send them. */
+/** Running ones, then stopped, failed, unknown and done, one another started, in the server's order: running first, then the newest started first. */
 const SUBAGENTS: SubagentSummary[] = [
-  sub('a1', { description: 'Read the export job', state: 'done', startedAt: at(50), toolCalls: 12 }),
-  sub('a2', { description: 'Check the retry tests', state: 'running', startedAt: at(10), lastActivityAt: at(0.2), toolCalls: 1 }),
-  sub('a3', { description: 'Review the made-up auth module', state: 'failed', startedAt: at(40), agentType: 'Explore' }),
-  sub('a4', { description: 'Look for flaky tests', state: 'stopped', startedAt: at(35), toolCalls: 0 }),
-  sub('a5', { description: 'Summarise the logs', state: 'unknown', startedAt: at(45), agentType: undefined }),
   sub('a6', { description: 'Search the made-up docs', state: 'running', startedAt: at(5), lastActivityAt: at(1), startedBy: 'a3' }),
+  sub('a2', { description: 'Check the retry tests', state: 'running', startedAt: at(10), lastActivityAt: at(0.2), toolCalls: 1 }),
+  sub('a4', { description: 'Look for flaky tests', state: 'stopped', startedAt: at(35), toolCalls: 0 }),
+  sub('a3', { description: 'Review the made-up auth module', state: 'failed', startedAt: at(40), agentType: 'Explore' }),
+  sub('a5', { description: 'Summarise the logs', state: 'unknown', startedAt: at(45), agentType: undefined }),
+  sub('a1', { description: 'Read the export job', state: 'done', startedAt: at(50), toolCalls: 12 }),
 ];
 
 const listOf = (subagents: SubagentSummary[], truncated = false): SubagentList => ({ sessionId: SID, subagents, truncated });
 const page = (entries: ConversationEntry[]): ConversationPage => ({ sessionId: SID, entries });
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
-type ListAnswer = SubagentList | number | 'pending';
+/** The list, a status, never, or a function for an answer the test lets go of itself. */
+type ListAnswer = SubagentList | number | 'pending' | (() => Promise<Response>);
+
+/** Answers that wait until the test lets them go, oldest first, with a body or a status. */
+function gate() {
+  const waiting: Array<() => void> = [];
+  return {
+    answer: (body: unknown) => () => new Promise<Response>((resolve) => waiting.push(() => resolve(typeof body === 'number' ? new Response(null, { status: body }) : json(body)))),
+    get count() {
+      return waiting.length;
+    },
+    async release() {
+      waiting.shift()?.();
+      await settle();
+      await settle();
+    },
+  };
+}
 
 /** A server for one session: its conversation, its sub-agents, as the test sets them, and each sub-agent's transcript. */
 function fakeServer(options: { list?: ListAnswer; entries?: ConversationEntry[]; transcripts?: Record<string, ConversationEntry[]> } = {}) {
@@ -59,6 +79,7 @@ function fakeServer(options: { list?: ListAnswer; entries?: ConversationEntry[];
     const path = url.split('?')[0];
     if (path === subagentsPath(SID)) {
       if (list === 'pending') return new Promise<Response>(() => {});
+      if (typeof list === 'function') return list();
       return typeof list === 'number' ? new Response(null, { status: list }) : json(list);
     }
     const agent = /\/subagents\/([^/]+)\/conversation$/.exec(path ?? '')?.[1];
@@ -75,6 +96,8 @@ function fakeServer(options: { list?: ListAnswer; entries?: ConversationEntry[];
     },
     /** How many times the sub-agents were asked for. */
     listed: () => fetch.mock.calls.filter(([url]) => url === subagentsPath(SID)).length,
+    /** How many times a sub-agent's transcript was asked for. */
+    transcripts: (agentId: string) => fetch.mock.calls.filter(([url]) => url.split('?')[0] === subagentConversationPath(SID, agentId)).length,
   };
 }
 
@@ -171,16 +194,17 @@ describe('the Sub-agents tab: when it shows', () => {
     expect(server.listed()).toBe(2);
   });
 
-  it("isn't asked for, and doesn't show, where the server has no such route", async () => {
+  it('is asked for once, and shows nothing at all, where the server has no such route', async () => {
     const server = fakeServer({ list: 404 });
     await renderView(server);
+    expect(server.listed()).toBe(1);
     expect(tabs()).toEqual(['Conversation', 'Terminal']);
     expect(document.querySelector('.subagents-alert')).toBeNull();
   });
 });
 
 describe('the Sub-agents tab: its list', () => {
-  it('lists running ones first, then the newest started first, as one flat list', async () => {
+  it("lists them as one flat list, in the server's order: running ones first, then the newest started first", async () => {
     await renderView(fakeServer({ list: listOf(SUBAGENTS) }));
     await openTab();
     expect(rowNames()).toEqual([
@@ -296,6 +320,49 @@ describe('the Sub-agents tab: its list', () => {
     expect(server.listed()).toBe(5);
   });
 
+  it('keeps one request out at a time: a list slower than the polls still lands, with one more asked for after it', async () => {
+    const slow = gate();
+    let first = true;
+    const server = fakeServer({
+      list: () => {
+        if (!first) return slow.answer(listOf(SUBAGENTS))();
+        first = false;
+        return Promise.resolve(json(listOf(SUBAGENTS.slice(0, 2))));
+      },
+    });
+    const view = await renderView(server, { subagentsRunning: 2 });
+    await openTab();
+    expect(server.listed()).toBe(2);
+    // Three polls while that one is out: nothing more is asked for yet.
+    await view.poll();
+    await view.poll();
+    await view.poll();
+    expect(server.listed()).toBe(2);
+    expect(slow.count).toBe(1);
+    // It lands, and one more goes out for the polls it missed.
+    await slow.release();
+    expect(rowNames()).toHaveLength(6);
+    expect(subagentsTab().textContent).toBe('Sub-agents (6)');
+    expect(server.listed()).toBe(3);
+    await slow.release();
+    expect(server.listed()).toBe(3);
+    expect(slow.count).toBe(0);
+  });
+
+  it('commits nothing once the view has closed, and aborts its request', async () => {
+    const slow = gate();
+    const server = fakeServer({ list: slow.answer(listOf(SUBAGENTS)) });
+    const errors = vi.spyOn(console, 'error');
+    const view = await renderView(server, { subagentsRunning: 1 });
+    const call = server.fetch.mock.calls.find(([url]) => url === subagentsPath(SID));
+    expect(call?.[1].signal?.aborted).toBe(false);
+    view.unmount();
+    expect(call?.[1].signal?.aborted).toBe(true);
+    await slow.release();
+    expect(errors).not.toHaveBeenCalled();
+    expect(document.querySelector('.session-view-subagents')).toBeNull();
+  });
+
   it('hides the message box while the tab is open: there is none for a sub-agent', async () => {
     await renderView(fakeServer({ list: listOf(SUBAGENTS) }));
     const footer = document.querySelector<HTMLElement>('.session-view-foot')!;
@@ -304,6 +371,43 @@ describe('the Sub-agents tab: its list', () => {
     expect(footer.hidden).toBe(true);
     fireEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
     expect(footer.hidden).toBe(false);
+  });
+});
+
+describe('stepping through sessions', () => {
+  it('asks for the list only for the view stepping stops at: one passed through with j asks nothing', async () => {
+    const ids = ['00000000-0000-4000-8000-0000000000f1', '00000000-0000-4000-8000-0000000000f2', '00000000-0000-4000-8000-0000000000f3'];
+    const sessions = ids.map((sessionId, i) => session({ sessionId, name: `pitwall-test-step-${i + 1}`, lastActivityAt: at(i + 1) }));
+    // Each conversation's first page waits until the test lets it go, as a slow transcript's does.
+    const pages: Array<() => void> = [];
+    const fetch = vi.fn<FetchLike>(async (url) => {
+      const sessionId = decodeURIComponent(url.split('/')[3] ?? '');
+      if (url.endsWith('/subagents')) return json({ sessionId, subagents: [], truncated: false });
+      return new Promise<Response>((resolve) => pages.push(() => resolve(json({ sessionId, entries: [] }))));
+    });
+    const api = createApiClient({ apiKey: API_KEY, fetch });
+    const view: ConnectionView = { state: 'live', snapshot: snapshot([group({ sessions })]) };
+    render(
+      <ApiContext.Provider value={api}>
+        <Dashboard view={view} />
+      </ApiContext.Provider>,
+    );
+    fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'pitwall-test-step-1' }));
+    await settle();
+    const heading = () => document.querySelector<HTMLElement>('#session-view h2')!;
+    fireEvent.keyDown(heading(), { key: 'j' });
+    await settle();
+    fireEvent.keyDown(heading(), { key: 'j' });
+    await settle();
+    expect(heading().textContent).toContain('pitwall-test-step-3');
+    while (pages.length > 0) {
+      pages.shift()?.();
+      await settle();
+    }
+    await settle();
+    const asked = (path: string) => fetch.mock.calls.filter(([url]) => url.endsWith(path)).map(([url]) => decodeURIComponent(url.split('/')[3] ?? ''));
+    expect(asked('/conversation')).toEqual(ids);
+    expect(asked('/subagents')).toEqual([ids[2]]);
   });
 });
 
@@ -402,6 +506,31 @@ describe('the conversation names sub-agents by their description', () => {
     expect(document.activeElement?.closest('li.subagent')).not.toBeNull();
   });
 
+  it('asks for a transcript once when a link opens it before the list arrives, though the list then brings its activity time', async () => {
+    const later = gate();
+    const server = fakeServer({ list: later.answer(listOf(SUBAGENTS)), entries: ENTRIES });
+    await renderView(server);
+    fireEvent.click(document.querySelector<HTMLElement>('.entry-cross-session .subagent-link')!);
+    await settle();
+    await settle();
+    expect(server.transcripts('a3')).toBe(1);
+    await later.release();
+    expect(panel().querySelector('.subagent-transcript .badge')?.textContent).toBe('Failed');
+    expect(server.transcripts('a3')).toBe(1);
+  });
+
+  it("gives a cut Agent line no tooltip of its own: only its link's opens", async () => {
+    await renderView(fakeServer({ list: listOf(SUBAGENTS), entries: ENTRIES }));
+    const line = document.querySelector<HTMLElement>('li.entry-tool .tool-call-text')!;
+    cutShort(line);
+    expect(await hover(line)).toBeNull();
+    unhover(line);
+    await pass(0);
+    const tip = await hover(line.querySelector('.subagent-link')!);
+    expect(tip?.querySelector('.tooltip-text')?.textContent).toBe(SUBAGENT_LINK_HINT);
+    expect(shownTooltips()).toHaveLength(1);
+  });
+
   it("reads the sub-agent a report or a call is about, and drops one that isn't well formed", () => {
     const odd = [...ENTRIES, { kind: 'cross-session', at: at(2), text: 'x', subagent: { agentId: 'not an id', description: 'x' } }, { kind: 'user', at: at(1), text: 'y', subagent: { agentId: 'a3', description: 'y' } }];
     const parsed = asConversationPage(page(odd as ConversationEntry[]), SID);
@@ -457,7 +586,7 @@ describe("the session row's running count", () => {
 });
 
 describe('subagents.ts', () => {
-  it('reads a list, dropping entries that are not well formed and sorting it as the tab shows it', () => {
+  it('reads a list, dropping entries that are not well formed, in the order the tab shows it', () => {
     const list = asSubagentList(
       {
         sessionId: SID,
@@ -474,14 +603,27 @@ describe('subagents.ts', () => {
       SID,
     );
     expect(list?.truncated).toBe(true);
-    expect(list?.subagents.map((each) => `${each.agentId}:${each.state}`)).toEqual(['run:running', 'odd:unknown', 'ok1:done', 'nostart:done']);
+    // The server's order, with a running one moved first, and a state it doesn't know read as unknown.
+    expect(list?.subagents.map((each) => `${each.agentId}:${each.state}`)).toEqual(['run:running', 'ok1:done', 'odd:unknown', 'nostart:done']);
     expect(asSubagentList({ sessionId: 'another', subagents: [] }, SID)).toBeUndefined();
     expect(asSubagentList({ sessionId: SID }, SID)).toBeUndefined();
   });
 
-  it('keeps the order among equals', () => {
-    const same = [sub('x', { startedAt: at(5) }), sub('y', { startedAt: at(5) })];
-    expect(sortSubagents(same).map((each) => each.agentId)).toEqual(['x', 'y']);
+  it("keeps the server's order, only moving running ones first", () => {
+    const sent = [sub('old', { startedAt: at(90) }), sub('run1', { state: 'running', startedAt: at(80) }), sub('new', { startedAt: at(1) }), sub('run2', { state: 'running', startedAt: at(2) })];
+    expect(sortSubagents(sent).map((each) => each.agentId)).toEqual(['run1', 'run2', 'old', 'new']);
+  });
+
+  it('asks once more after a 429, after its Retry-After, and fails on a second', async () => {
+    const busy = () => new Response(null, { status: 429, headers: { 'Retry-After': '0' } });
+    const answers = [busy, () => json(listOf([sub('b1')]))];
+    const fetch = vi.fn<FetchLike>(async () => (answers.shift() ?? busy)());
+    const result = await getSubagents(createApiClient({ apiKey: API_KEY, fetch }), SID);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result.kind === 'ok' ? result.list.subagents.map((each) => each.agentId) : result).toEqual(['b1']);
+    const twice = vi.fn<FetchLike>(async () => busy());
+    expect(await getSubagents(createApiClient({ apiKey: API_KEY, fetch: twice }), SID)).toEqual({ kind: 'failed', status: 429 });
+    expect(twice).toHaveBeenCalledTimes(2);
   });
 
   it('words its counts and badges', () => {

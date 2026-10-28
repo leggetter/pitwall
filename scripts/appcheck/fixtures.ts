@@ -133,6 +133,8 @@ export class World {
   #sessions = new Map<string, SessionSummary>();
   #spawned: Spawned[] = [];
   #nextSpawn = 0;
+  /** NAMES.inApi has the most sub-agents a list carries, and more (manySubagents()). */
+  #manySubagents = false;
 
   constructor() {
     this.reset();
@@ -143,7 +145,16 @@ export class World {
     this.#roots = options.roots ?? 1;
     this.#labels = options.labels ?? {};
     this.#spawned = [];
+    this.#manySubagents = false;
     this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
+  }
+
+  /**
+   * Until the next reset, NAMES.inApi has more sub-agents than a list carries (W77): its five, then
+   * done ones up to SUBAGENTS_MAX, 200, with `truncated` set, so its tab reads "Sub-agents (200+)".
+   */
+  manySubagents(): void {
+    this.#manySubagents = true;
   }
 
   get roots(): string[] {
@@ -199,7 +210,17 @@ export class World {
   subagents(sessionId: string): SubagentList | undefined {
     const session = this.#sessions.get(sessionId);
     if (!session) return undefined;
-    return { sessionId, subagents: session.name === NAMES.inApi ? this.#subagents() : [], truncated: false };
+    if (session.name !== NAMES.inApi) return { sessionId, subagents: [], truncated: false };
+    if (!this.#manySubagents) return { sessionId, subagents: this.#subagents(), truncated: false };
+    const more = Array.from({ length: 195 }, (_, i): SubagentSummary => ({
+      agentId: `pt77more${i}`,
+      description: `A made-up older task, number ${i + 1}`,
+      state: 'done',
+      startedAt: this.#ago(31 + i),
+      lastActivityAt: this.#ago(30.5 + i),
+      toolCalls: i % 9,
+    }));
+    return { sessionId, subagents: [...this.#subagents(), ...more], truncated: true };
   }
 
   /**

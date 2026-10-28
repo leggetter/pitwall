@@ -911,15 +911,20 @@ export function subagent(description: string, overrides: Partial<SubagentSummary
   return merged;
 }
 
-const REVIEW = subagent('Review the made-up export job for retries', { agentType: 'Explore', state: 'running', startedAt: ago(9), lastActivityAt: ago(0.1), toolCalls: 23 });
+/** Running, started by the session: the transcript specimen opens it. */
+export const REVIEW = subagent('Review the made-up export job for retries', { agentType: 'Explore', state: 'running', startedAt: ago(9), lastActivityAt: ago(0.1), toolCalls: 23 });
+/** Done: the conversation has its Agent call and its report. */
+const DRAFT = subagent('Draft the made-up changelog entry', { startedAt: ago(50), lastActivityAt: ago(44), toolCalls: 6 });
+/** Running, started by REVIEW. */
+const SEARCH_DOCS = subagent('Search the made-up docs for the timeout', { state: 'running', agentType: 'Explore', startedBy: REVIEW.agentId, startedAt: ago(3), lastActivityAt: ago(0.3), toolCalls: 2 });
 
-/** One of each state, and one another started, out of order: the tab sorts them. */
+/** One of each state, and one another started, in the server's order: running ones first, then the newest started first. */
 export const SUBAGENTS: SubagentSummary[] = [
-  subagent('Draft the made-up changelog entry', { startedAt: ago(50), lastActivityAt: ago(44), toolCalls: 6 }),
+  SEARCH_DOCS,
   REVIEW,
   subagent('Run the made-up export tests', { state: 'failed', startedAt: ago(30), lastActivityAt: ago(27), toolCalls: 4 }),
-  subagent('Search the made-up docs for the timeout', { state: 'running', agentType: 'Explore', startedBy: REVIEW.agentId, startedAt: ago(3), lastActivityAt: ago(0.3), toolCalls: 2 }),
   subagent('Look for a made-up flaky test', { state: 'stopped', startedAt: ago(35), lastActivityAt: ago(33), toolCalls: 0 }),
+  DRAFT,
   subagent('Summarise the made-up logs', { state: 'unknown', agentType: undefined, startedAt: ago(70), lastActivityAt: ago(66), toolCalls: 11 }),
 ];
 
@@ -959,7 +964,7 @@ export const SUBAGENT_TRANSCRIPT: ConversationEntry[] = [
     at: ago(3),
     toolName: 'Agent',
     text: 'Agent: Search the made-up docs for the timeout',
-    subagent: { agentId: SUBAGENTS[3]!.agentId, description: SUBAGENTS[3]!.description },
+    subagent: { agentId: SEARCH_DOCS.agentId, description: SEARCH_DOCS.description },
   },
   { kind: 'assistant', at: ago(0.2), text: 'The batch writer retries **three times**; the CSV export doesn’t retry at all.', markdown: true },
 ];
@@ -970,14 +975,14 @@ export const SUBAGENT_OLDER: ConversationEntry[] = [{ kind: 'notice', at: ago(9.
 /** A session's conversation whose entries name its sub-agents: the call that started one, its report, and a message sent to another. */
 export const SUBAGENT_CONVERSATION: ConversationEntry[] = [
   { kind: 'user', at: ago(52), text: 'Draft the changelog entry, then check the export job retries.' },
-  { kind: 'tool', at: ago(50), toolName: 'Agent', text: 'Agent: Draft the made-up changelog entry', subagent: { agentId: SUBAGENTS[0]!.agentId, description: SUBAGENTS[0]!.description } },
+  { kind: 'tool', at: ago(50), toolName: 'Agent', text: 'Agent: Draft the made-up changelog entry', subagent: { agentId: DRAFT.agentId, description: DRAFT.description } },
   {
     kind: 'cross-session',
     at: ago(44),
-    from: SUBAGENTS[0]!.agentId,
+    from: DRAFT.agentId,
     markdown: true,
     text: 'The changelog entry is drafted under **Unreleased**.',
-    subagent: { agentId: SUBAGENTS[0]!.agentId, description: SUBAGENTS[0]!.description },
+    subagent: { agentId: DRAFT.agentId, description: DRAFT.description },
   },
   { kind: 'assistant', at: ago(43), markdown: true, text: 'The entry is in. Now the retries.' },
   { kind: 'tool', at: ago(9), toolName: 'Agent', text: `Agent: ${REVIEW.description}`, subagent: { agentId: REVIEW.agentId, description: REVIEW.description } },
