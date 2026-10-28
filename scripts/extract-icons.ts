@@ -86,6 +86,11 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   starred: ['star', FILLED],
   // The session view's Sub-agents tab (W77): a session and the sub-agents it started, some of them by another.
   subagents: 'account_tree',
+  // New session's Attach files (W82), and the type of each file in its list: an image, a PDF, or text.
+  attach: 'attach_file',
+  image: 'image',
+  pdf: 'picture_as_pdf',
+  file: 'description',
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',
