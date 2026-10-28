@@ -4,9 +4,9 @@ pitwall's settled decisions, each with its reasoning. A decision record here say
 
 - **Where they come from:** a decision starts in [`PLAN.md`](../PLAN.md) while it's open, with a lean. Once it's settled, its reasoning moves here, and `PLAN.md` keeps a one-line status. What's still open is in `PLAN.md`, under Decisions and Open questions.
 - **IDs are stable:** D1 to D21 are cited across the repo, in the docs and in code comments. A decision that's revised, as D8 was after spike 003, keeps its ID and is updated in place.
-- **By milestone:** D1 to D6 come from the first spikes, D7 to D9 from M2, D10 to D16 from M3, D17 to D20 from M3.1, and D21 is the licence. Many have gained detail since.
+- **How to read them:** M numbers are milestones and W numbers are work items, both in `PLAN.md`. A name and a date, such as "(Phil, 2026-10-23)", say who decided and when. Phil is Phil Leggetter, pitwall's author, and "I" and "me" are him too. "The coordinator" is the Claude Code session that coordinates the work.
+- **By milestone:** D1 to D4 and D6 were settled from the first spikes, and D5, the stack, is Phil's choice. D6 took its current shape in M3 (W39, W42 and W59). D7 to D9 come from M2, D10 to D16 from M3, D17 to D20 from M3.1, and D21 is the licence. Many have gained detail since.
 - **Evidence:** the spike write-ups in [`spikes/`](spikes/), starting with [`001-session-control.md`](spikes/001-session-control.md).
-- **How to read them:** M numbers are milestones and W numbers are work items, both in `PLAN.md`. A name and a date, such as "(Phil, 2026-10-23)", say who decided and when, and "I" and "me" are Phil.
 
 ## D1 - The session list comes from `claude agents --json --all`
 
