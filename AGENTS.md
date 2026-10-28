@@ -12,7 +12,9 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 M1, the read-only index, M2, interacting with sessions from the web UI, M3, the design system and restyle, and M3.1, the work after M3, are merged into `main` ([PR #6](https://github.com/leggetter/pitwall/pull/6), [PR #19](https://github.com/leggetter/pitwall/pull/19), [PR #51](https://github.com/leggetter/pitwall/pull/51), [PR #87](https://github.com/leggetter/pitwall/pull/87)).
 
-M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitwall/pull/69) to [PR #86](https://github.com/leggetter/pitwall/pull/86)) and merged on 2026-10-28, after W85's security review approved it. End session for interactive sessions (spike 005) is built as W90, in review in [PR #93](https://github.com/leggetter/pitwall/pull/93), and W85's non-blocking findings were W87. Next is M4, Phil's open pull requests. See "M3.1 work breakdown" in `PLAN.md` and `docs/design-system.md`.
+M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitwall/pull/69) to [PR #86](https://github.com/leggetter/pitwall/pull/86)) and merged on 2026-10-28, after W85's security review approved it. End session for interactive sessions (spike 005) merged into `main` as W90 in [PR #93](https://github.com/leggetter/pitwall/pull/93), and W85's non-blocking findings were W87.
+
+M4, Phil's open pull requests, is being built on `m4/integration`, which merges into `main` with Phil's approval. See "M4 - My open pull requests" and "M4 work breakdown" in `PLAN.md`, and `docs/design-system.md`.
 
 ## Rules
 

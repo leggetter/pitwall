@@ -7,9 +7,9 @@ The living plan for pitwall. Read it before picking up work, and update it in th
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 to M3.1 done and merged into `main`. End session for interactive sessions, which Phil approved on 2026-10-28, is built as W90 and in review in [#93](https://github.com/leggetter/pitwall/pull/93). M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, plus what Phil's try-out and daily use asked for, merged into `main` on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51) as 626a121, a merge commit that keeps each work item's history, approved by Phil. W48's security review asked for changes twice; W50 to W52, W55, W57 and W58 fixed every finding, and its re-check approved M3 for main. M3.1, the work after M3, built on `m3.1/integration` ([#69](https://github.com/leggetter/pitwall/pull/69) to [#86](https://github.com/leggetter/pitwall/pull/86)), merged into `main` on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87), a merge commit, approved by Phil, after W85's security review approved it. |
+| **Status** | M0 to M3.1 done and merged into `main`. End session for interactive sessions, which Phil approved on 2026-10-28, merged into `main` as W90 in [#93](https://github.com/leggetter/pitwall/pull/93). M4, my open pull requests, started on 2026-10-28, on `m4/integration`. M1, a read-only index, merged into `main` on 2026-10-16 in [PR #6](https://github.com/leggetter/pitwall/pull/6). M2, interacting with sessions from the web UI, merged on 2026-10-20 in [PR #19](https://github.com/leggetter/pitwall/pull/19), approved by Phil after his try-out. M3, a design system and restyle, plus what Phil's try-out and daily use asked for, merged into `main` on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51) as 626a121, a merge commit that keeps each work item's history, approved by Phil. W48's security review asked for changes twice; W50 to W52, W55, W57 and W58 fixed every finding, and its re-check approved M3 for main. M3.1, the work after M3, built on `m3.1/integration` ([#69](https://github.com/leggetter/pitwall/pull/69) to [#86](https://github.com/leggetter/pitwall/pull/86)), merged into `main` on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87), a merge commit, approved by Phil, after W85's security review approved it. |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | - M3.1 merged into `main` on 2026-10-28 in [#87](https://github.com/leggetter/pitwall/pull/87), W63 to W85, except End session for interactive sessions, which spike 005 (W80) measured: ended interactive sessions can be resumed, Needs you comes from each session's context, New session's directory autocompletes and takes attachments, sessions open in an editor, sub-agents have their own tab, and the terminal and filter bar fit; spikes 005 to 008 and W73's security look are done, and W81, W83 and W84 finished the follow-ups. W85's security review approved it for main<br>- Merged: W88, Not needed now ([#90](https://github.com/leggetter/pitwall/pull/90)), W91, Clear filters as an icon ([#91](https://github.com/leggetter/pitwall/pull/91)), and W90, End session for interactive sessions ([#93](https://github.com/leggetter/pitwall/pull/93)), after a security-led review. Next: W86, Vite and happy-dom's fixes, on or after 2026-11-04. The repo goes public with an Apache-2.0 licence (D21)<br>- W89, a first paste lost in New session, is being investigated: Phil retries on M3.1's build<br>- Then M4, my open pull requests |
+| **Next steps** | - M3.1 merged into `main` on 2026-10-28 in [#87](https://github.com/leggetter/pitwall/pull/87), W63 to W85, except End session for interactive sessions, which spike 005 (W80) measured: ended interactive sessions can be resumed, Needs you comes from each session's context, New session's directory autocompletes and takes attachments, sessions open in an editor, sub-agents have their own tab, and the terminal and filter bar fit; spikes 005 to 008 and W73's security look are done, and W81, W83 and W84 finished the follow-ups. W85's security review approved it for main<br>- Merged: W88, Not needed now ([#90](https://github.com/leggetter/pitwall/pull/90)), W91, Clear filters as an icon ([#91](https://github.com/leggetter/pitwall/pull/91)), and W90, End session for interactive sessions ([#93](https://github.com/leggetter/pitwall/pull/93)), after a security-led review. Next: W86, Vite and happy-dom's fixes, on or after 2026-11-04. The repo is public, under Apache-2.0 (D21)<br>- W89, a first paste lost in New session, is being investigated: Phil retries on M3.1's build<br>- M4, my open pull requests, started on 2026-10-28 on `m4/integration`: W92's contract and design are done, and W93 to W95 are built in parallel against it ("M4 work breakdown") |
 
 ## Who is this for
 
@@ -238,7 +238,7 @@ A design system for pitwall, inspired by Hookdeck's UX, and the web UI restyled 
 - **Open in an editor** (Phil, 2026-10-23: "open in editor such as code or cursor. Not sure how we can detect which are available and how to trigger the launch from a browser. Or maybe it could ping the pitwall process to do that?"). A browser can't tell which apps are installed, so Phil chose option A, the coordinator's lean: pitwall's server opens the editor. It finds the editors on the PATH (`code`, `cursor`), or an installed app for `open -a`, tells the page which exist, and on request runs the chosen one on a listed session's own directory, through `runFile` with no shell and a scrubbed environment, never on a path the page sends. Rejected: `vscode://` and `cursor://` links, which can't detect what's installed and may ask each time. It's a new state-changing route that starts a process, so it gets a security look. After M3 (the coordinator's lean, which Phil didn't change). See "After M3".
 - **Settled decisions** are in `docs/decisions.md` as D10 to D16 (2026-10-21): the design system, fonts and icons; the three columns and their widths; two-line rows, no tint, no idle badge and the urgency sort; ⌘↵, the shortcuts and F6; and a snapshot that carries only what the list shows, without each session's latest reply; markdown in the session view as pitwall's own elements; and several roots as tabs. Since then, D2, D3, D6, D7, D8, D11, D13, D14, D15 and D16 have gained W39 to W53's decisions.
 
-### M3.1 - After M3 (done except End session; merged into `main` in #87)
+### M3.1 - After M3 (done; merged into `main` in #87, and End session in #93)
 
 The work after M3, on its own integration branch, `m3.1/integration`, which merges into main with Phil's approval, as the other milestones did (coordinator, 2026-10-23). It started with what Phil's daily use kept finding, then the list below. Everything here is built and merged into `m3.1/integration` ([#69](https://github.com/leggetter/pitwall/pull/69) to [#85](https://github.com/leggetter/pitwall/pull/85)) except End session for interactive sessions, which Phil approved on 2026-10-28 as W90 (spike 005, below). It merged into `main` on 2026-10-28 in [#87](https://github.com/leggetter/pitwall/pull/87), approved by Phil, after W85's security review.
 
@@ -302,7 +302,7 @@ In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
 
 1. **A durable home for the headless app-check tools.** The integrated check every M3 review ran, and each work item's part of it, lived in the session scratchpad and went with the 2026-10-23 reboot. Every later review needs them, so they come first, committed to the repo or kept in a gitignored folder. Done: `scripts/appcheck/` (W64).
 2. **Resuming ended interactive sessions** (Phil, 2026-10-23: after M3). After his laptop restarted, every interactive session left the list. It starts with a live check of `claude --resume <id> --bg` on a throwaway session. See "Sessions gone after a restart" in M3. The live check is spike 006 (W65). Done: W66 and W67 built it, merged in #71 and #72, and W81 hardened it after W73's security look, merged in #80.
-3. **Spike 005, ending an interactive session** (below). It's about the same session lifecycle as 2, so it follows it. Done 2026-10-27 (W80); built as W90, approved by Phil on 2026-10-28, and in review in #93.
+3. **Spike 005, ending an interactive session** (below). It's about the same session lifecycle as 2, so it follows it. Done 2026-10-27 (W80); built as W90, approved by Phil on 2026-10-28, and merged in #93.
 4. **Sub-agents in the session view** (Phil, 2026-10-23: after M3). See "Sub-agents in the session view" in M3.
    - **What the data says** (coordinator, 2026-10-27, from transcript structure and the coordinator's own session):
      - Each sub-agent has a transcript and a `.meta.json` (description, type, the tool call that started it, its depth) in a `subagents` folder beside the session's transcript.
@@ -318,7 +318,7 @@ In this order (coordinator's proposal, 2026-10-23; Phil can reorder it):
    - **Contract** (coordinator): `SubagentState`, `SubagentSummary`, `SubagentList`, `SUBAGENTS_MAX`, `subagentsPath()`, `subagentConversationPath()`, `SessionSummary.subagentsRunning` and `ConversationEntry.subagent`.
    - **Built as** W76 (index and server) and W77 (web UI), in parallel against the contract. Both merged ([#79](https://github.com/leggetter/pitwall/pull/79), [#81](https://github.com/leggetter/pitwall/pull/81)).
 5. **Open in an editor** (Phil, 2026-10-23: option A). See "Open in an editor" in M3. It's small, and its security look can share one pass with 2's new spawn path. Started ahead of 3 and 4 on 2026-10-27, since spike 005 was waiting on a folder Phil trusts and 4 wasn't designed yet. Done: W72 built it, merged in #76, and W73 was the shared security look, whose findings in resume W81 fixed (#80).
-6. **M4, my open pull requests.** It moves behind these because Phil's daily use of pitwall during M3 found gaps in the session lifecycle that stop it being his main tool, and those come first.
+6. **M4, my open pull requests.** It moves behind these because Phil's daily use of pitwall during M3 found gaps in the session lifecycle that stop it being his main tool, and those come first. Started on 2026-10-28 (Phil: "yes, start M4").
 
 ### Spike 005 - Ending an interactive session (after M3)
 
@@ -332,28 +332,44 @@ Phil, 2026-10-21: run it after M3. Whether pitwall can end a session running in 
   - **What it costs:** a reply being written is lost; running work is killed, not moved to the background; a commit in progress doesn't happen, though the repo is left consistent, with no lock.
   - **The idle guard needs the transcript:** a plugin's monitor keeps every session `busy`, so "idle" has to come from W69's turn end.
   - **Decision for Phil:** build "End session" for interactive sessions, with the guards below? The coordinator's recommendation is yes. Phil, 2026-10-28: yes (W90).
-  - **Built as W90** (in review in [#93](https://github.com/leggetter/pitwall/pull/93)): SIGTERM, once, never SIGKILL, with every guard below and the plan's, each on the server: a fresh `claude agents` with the snapshot's pid, `ps`'s start time and command checked before that listing and again just before the signal, never a process pitwall runs under or started, and idle by the transcript unless you confirm the stronger warning. Its reasoning is D22.
+  - **Built as W90** (merged in [#93](https://github.com/leggetter/pitwall/pull/93)): SIGTERM, once, never SIGKILL, with every guard below and the plan's, each on the server: a fresh `claude agents` with the snapshot's pid, `ps`'s start time and command checked before that listing and again just before the signal, never a process pitwall runs under or started, and idle by the transcript unless you confirm the stronger warning. Its reasoning is D22.
 
 - **Run by:** the coordinator, never a sub-agent, on about six throwaway `pitwall-test-*` sessions on Haiku, in a scratch folder Phil creates and trusts himself.
 - **Measure:** SIGTERM, SIGINT and SIGHUP; the exit code; whether the transcript is whole and `claude --resume` reopens it; what happens to a background command, a sub-agent and a stdio MCP server; whether SessionEnd hooks run; whether the row leaves `claude agents`; and what a kill during a commit leaves behind, such as `.git/index.lock`.
 - **Guards, if it's built:** idle sessions only, unless Phil confirms a stronger warning; the confirmation names the session and what runs under it; pitwall refuses a process it runs under itself (on 2026-10-21, Phil's dev pitwall ran under the coordinator's session); the server looks up the PID from a fresh `claude agents` call and checks it again just before signalling; SIGTERM, never SIGKILL; and the view says how to resume.
 
-### M4 - My open pull requests
+### M4 - My open pull requests (in progress, on `m4/integration`)
 
-Read-only, and separate from the session index. Requested by Phil on 2026-10-16, and scheduled after M2 at his request. M3, the design system, went in ahead of it on 2026-10-20; Phil didn't mind the order.
+Read-only, and separate from the session index. Requested by Phil on 2026-10-16, and scheduled after M2 at his request. M3, the design system, went in ahead of it on 2026-10-20; Phil didn't mind the order. Started on 2026-10-28 (Phil: "yes, start M4"), on its own integration branch, `m4/integration`, which merges into `main` with Phil's approval, as M3.1 did. The coordinator's design below replaces the first sketch, which was written before M3's layout.
 
-- **Source:** one GraphQL search through `gh api graphql` (`is:pr is:open author:@me archived:false`), run with `execFile` and no shell, so the GitHub token stays inside `gh`.
-  - One query returns the repo, number, title, draft, `reviewDecision`, `mergeable`, the latest commit's `statusCheckRollup` and `updatedAt`.
-  - Measured on 2026-10-16: 44 PRs, 1 rate-limit point of 5,000 an hour, about 8 s.
-  - `gh search prs` takes 2.6 s but has no CI or review state.
-- **Cadence:** its own poller, every 3 minutes by default, plus a refresh button. Never tied to the 5 s session poll.
-- **Grouping:** org, then repo, then PR, with the same collapsed-by-default groups and saved state as sessions.
-  - Highlight failing CI, merge conflicts and changes requested.
-  - Show draft and approved as quieter states.
-- **Noise:** 45 open PRs across 12 orgs on 2026-10-16, many of them years-old PRs to other people's repos. Default to PRs updated in the last 90 days, with a count of the hidden ones and a toggle to show them. Consider an org allowlist flag later.
-- **Linking to sessions:** a PR whose URL appears in a session's recent turns shows that session's name on the PR row, and the session row gets a PR badge.
-- **Contract:** a separate `prs` message type and `GET /api/prs`, behind the same token and `Origin` checks. PR titles from private repos are as sensitive as session data.
-- **Fails soft:** if `gh` is missing or not logged in, the panel says so, and the sessions view is unaffected.
+- **Source:** one GraphQL search through `gh api graphql --hostname github.com` (`is:pr is:open author:@me archived:false`), run with the index's `runFile`: no shell and a scrubbed environment, so the GitHub token stays inside `gh`.
+  - One query returns each PR's repo, number, title, draft, created and updated times, head branch and repo, `reviewDecision`, `mergeable`, and the latest commit's `statusCheckRollup` with each check's name and result.
+  - Measured on 2026-10-16: 44 PRs, 1 rate-limit point of 5,000 an hour, about 8 s. `gh search prs` takes 2.6 s but has no CI or review state.
+  - Measured again on 2026-10-28, with the head branch and the checks added: 50 PRs in one page, 2 points, 8.5 s and 38 KB. 33 were updated in the last 90 days, in 12 repos; the most checks on one PR was 14.
+  - GitHub reported `mergeable` as UNKNOWN for 13 of the 50. It works it out lazily, so the next fetch usually knows.
+- **Cadence:** its own poller, every 3 minutes (`PRS_POLL_INTERVAL_MS`), plus Refresh (`PRS_REFRESH_PATH`), at most once every 15 s. Never tied to the 5 s session poll. `--no-prs` turns it off, and pitwall then never runs `gh`.
+- **Linking to sessions** (coordinator's call, 2026-10-28, replacing "a PR whose URL appears in a session's recent turns"):
+  - **Why not any URL:** in Phil's transcripts from the 30 days to 2026-10-28, 22 sessions named at least one of his 50 open PRs, and one named 13, mostly in tool output such as `gh pr list`. Any URL would link the wrong sessions.
+  - **Four kinds** (`PrLinkKind`): opened, when the URL is in a `gh pr create`'s result; pushed, when `git push`'s output names the PR's head branch in its repo; prompted, when the URL is in a prompt you typed; and mentioned, when it's in Claude's own reply.
+  - **Strong links:** the first three. They put the PR's badge on the session's row and the session on the PR's row. Mentioned ones are listed apart in the PR view.
+  - **Who matches:** the index finds each session's links (`SessionSummary.prLinks`) without knowing which PRs are open. The web UI matches them against the PR list (`prLinkMatches()`), so the index never waits on GitHub.
+- **Where it shows** (coordinator's call, 2026-10-28; M3's layout replaced the collapsed groups the first sketch had in mind):
+  - **The repo list:** a Pull requests item under Starred, with a count of the PRs that need attention: failing checks, merge conflicts or changes requested (`prNeedsAttention()`).
+  - **The list:** selecting it lists the PRs in the session list's column, under one heading per repo (`owner/name`). Each heading collapses, and pitwall remembers it. Within a repo, the PRs needing attention come first, then the rest by updated time.
+  - **States:** failing checks, conflicts and changes requested are highlighted. Draft, approved and pending are quieter.
+  - **The header:** a filter box that matches title, repo, number and branch; "Updated 2m ago"; and Refresh.
+  - **Noise:** the PRs updated in the last 90 days (`PRS_SHOWN_DAYS`), with Show older for the rest, as ended sessions have. An org allowlist can come later.
+  - **A PR's row:** its title, number, states, updated time, and the sessions strongly linked to it.
+  - **The PR view,** in the session view's column: title, repo and number, Open on GitHub and Copy link; the checks, with the failing ones' names; review, mergeable and draft; created and updated; then Sessions, the strong links, and Mentioned in, each opening that session.
+  - **Sessions:** a session's row gets a badge for its most urgent strongly linked open PR, such as "#123", with "+2" for more. The session view's header links to each one's PR view.
+- **Contract** (coordinator, W92, in `src/shared/protocol.ts`): `PullRequestSummary`, `PullRequestList`, `PullRequestSource`, `prNeedsAttention()`, `PrLink`, `PrLinkKind`, `prLinkIsStrong()`, `prLinkMatches()`, `SessionSummary.prLinks`, the `prs` WebSocket message, `PRS_PATH`, `PRS_REFRESH_PATH`, and the `PRS_*` and `PR_*` constants.
+- **Security:**
+  - **Routes:** `GET /api/prs` has the snapshot's token check. Refresh has the apiKey, Origin and Host checks of every state-changing request.
+  - **Text:** PR titles from private repos are as sensitive as session data. Titles and check names are plain text without control or bidi control characters, shown in `<bdi>`.
+  - **URLs:** only an exact `https://github.com/<owner>/<name>/pull/<n>`, for the PR's own repo and number, is kept and linked.
+  - **gh:** string variables go with `-f`, never `-F`, which reads `@file` arguments as files. `GH_PROMPT_DISABLED` is set, and tests can't run `gh` without `PITWALL_LIVE=1`, as with `claude`.
+- **Fails soft:** if `gh` is missing or isn't logged in, the PR list says so and how to fix it, and the sessions are unaffected. A failed fetch keeps the last list, marked with its time.
+- **Not in M4:** PRs where your review is requested, and the PRs that sessions wait on but aren't yours (M6's "blocked on someone else"); starting a session for a PR; GitHub Enterprise hosts.
 
 ### M5 - Supervisor
 
@@ -377,6 +393,18 @@ Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeepin
 - **Age is a signal.** In the W5a calibration, five flagged sessions had been quiet for 2 to 14 days, and at least one question was moot.
 - **PRs and sessions together,** for example: "CI is failing on your PR, and the session that opened it is idle."
 - **Blocked on someone else, not me** (Phil, 2026-10-28). Claude Code's own `blocked` state and needs line can mean waiting on another person or an event. My example: a background session that had posted a request-changes review and was waiting for the author's fix before it re-ran a check and tore down what it had started. I read it as done; W69 lists it in Needs you, since Claude Code says it's blocked. Triage tells waiting on someone else from waiting on me, and lists it under its own heading rather than Needs you. With M4's PR state, it notices the event, such as a new push to that PR, and tells me or the session. Until then, W88's Not needed now is the manual way.
+
+## M4 work breakdown
+
+Same way of working as M3.1, on `m4/integration`: W93 to W95 are built in parallel against W92's contract, each reviewed by a sub-agent before the coordinator merges it.
+
+| Item | What | Branch | Size | Status |
+| --- | --- | --- | --- | --- |
+| W92 | M4's contract and design: the types and constants in `src/shared/protocol.ts`, the design in "M4 - My open pull requests", and these work items | coordinator, on `m4/integration` | S | Done 2026-10-28 |
+| W93 | The PR source and its routes: `src/prs/` runs the search with `gh api graphql`, reads the response defensively, and polls every 3 minutes and on Refresh; the server adds `GET /api/prs`, `POST /api/prs/refresh` and the `prs` message; the CLI adds `--no-prs`; and the test guard refuses `gh` without `PITWALL_LIVE=1` | `m4/prs-source` | M | Building |
+| W94 | PR links in the index: the worked-in scanner's pass also finds each session's `prLinks` (opened, pushed, prompted and mentioned), its sub-agents' included | `m4/pr-links` | M | Building |
+| W95 | Pull requests in the web UI: the repo list's item and count, the PR list and view, the session row's badge and the session view's links, the app check's part and its fake server's PRs, and the design system's sections | `m4/prs-web` | L | Building |
+| W96 | A security review of M4 before the merge into main, as M2 (W14), M3 (W48) and M3.1 (W85) had | - | M | After W93 to W95 |
 
 ## M3 work breakdown
 
@@ -730,7 +758,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] Not needed now, for a session in Needs you that's really waiting on someone else (W88, merged in #90)
 - [x] A licence for going public: Apache-2.0 (D21)
 - [x] The README rewritten for newcomers, with diagrams and a roadmap, and the decisions moved to `docs/decisions.md` (2026-10-28)
-- [ ] M4: my open pull requests
+- [ ] M4: my open pull requests (W92 to W96, on `m4/integration`)
 - [ ] M5: supervisor
 - [ ] M6: triage
 

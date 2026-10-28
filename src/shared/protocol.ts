@@ -187,6 +187,72 @@ export interface SessionSummary {
    * be read, and when no repo passes the rule.
    */
   workedIn?: WorkedIn[];
+  /**
+   * The pull requests this session opened, pushed to or was given in a
+   * prompt, and the ones Claude named in its replies, from its transcript and
+   * its sub-agents' (M4, W94). Newest first, one per kind and PR (or pushed
+   * branch), at most PR_LINKS_MAX. The index doesn't know which PRs are open
+   * or whose they are: the web UI matches these against PullRequestList with
+   * prLinkMatches(), so a link to a PR that isn't one of your open ones shows
+   * nothing. Absent until the session's transcripts have been scanned, when
+   * they can't be read, and when there are none.
+   */
+  prLinks?: PrLink[];
+}
+
+/**
+ * How a session is linked to a pull request (M4; coordinator's call,
+ * 2026-10-28). In Phil's transcripts from the 30 days to 2026-10-28, 22
+ * sessions named at least one of his 50 open PRs, and one named 13, mostly in
+ * tool output such as `gh pr list`, so a URL anywhere in a transcript isn't a
+ * link.
+ *
+ * - 'opened': the session created it. Its URL is in the result of a `gh pr
+ *   create`, or of a GitHub MCP server's create-pull-request tool.
+ * - 'pushed': the session pushed a branch, by `git push`'s output, which
+ *   names the repo and the branch. It matches the PR whose head is that branch
+ *   in that repo.
+ * - 'prompted': its URL is in a prompt you typed. Messages from other
+ *   sessions don't count, as for SessionSummary.lastUserPrompt.
+ * - 'mentioned': its URL is in Claude's own text in a reply. Tool input and
+ *   output never count.
+ *
+ * The first three are strong (prLinkIsStrong()): the session row's PR badge,
+ * the session view's PR links and the PR row's sessions use only those. The
+ * PR view lists 'mentioned' ones apart, as "Mentioned in".
+ */
+export type PrLinkKind = 'opened' | 'pushed' | 'prompted' | 'mentioned';
+
+/** One link from a session to a pull request (SessionSummary.prLinks). */
+export interface PrLink {
+  kind: PrLinkKind;
+  /**
+   * Lowercase `owner/name`. For 'pushed', the repo pushed to, compared with
+   * PullRequestSummary.head; otherwise compared with PullRequestSummary.repo.
+   */
+  repo: string;
+  /** The PR's number. Every kind but 'pushed'. */
+  number?: number;
+  /** The branch pushed, as the remote names it, without `refs/heads/`. 'pushed' only. */
+  branch?: string;
+  /** ISO 8601: the newest time the session did it. */
+  lastAt: string;
+}
+
+/** The most PR links one session carries (SessionSummary.prLinks). */
+export const PR_LINKS_MAX = 20;
+
+/** True for the kinds that say a session worked on the PR (PrLinkKind). */
+export function prLinkIsStrong(link: PrLink): boolean {
+  return link.kind !== 'mentioned';
+}
+
+/** True when `link` points at `pr`: by repo and number, or for 'pushed', by the PR's head. */
+export function prLinkMatches(link: PrLink, pr: PullRequestSummary): boolean {
+  if (link.kind === 'pushed') {
+    return pr.head !== undefined && link.repo === pr.head.repo && link.branch === pr.head.branch;
+  }
+  return link.repo === pr.repo && link.number === pr.number;
 }
 
 /** One repo a session worked in, beyond its start (SessionSummary.workedIn). */
@@ -344,12 +410,16 @@ export const PROTOCOL_VERSION = 3;
  *   other than generatedAt changed.
  * - 'heartbeat': sent after every poll that didn't change the snapshot, so the
  *   UI can show the index is alive without receiving the whole snapshot again.
+ * - 'prs' (M4): your open pull requests, sent right after the first
+ *   'snapshot', and again whenever anything in the list changes, `refreshing`
+ *   included. Its own poller sends it, never the session poll.
  */
 export type ServerMessage =
   | { type: 'challenge'; version: number; nonce: string }
   | { type: 'authenticated'; apiKey: string }
   | { type: 'snapshot'; snapshot: IndexSnapshot }
   | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
+  | { type: 'prs'; prs: PullRequestList }
   | { type: 'error'; error: string };
 
 /**
@@ -992,6 +1062,149 @@ export interface OpenInEditorRequest {
 export function openInEditorPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/open`;
 }
+
+// ---------------------------------------------------------------------------
+// M4: your open pull requests. Read-only and separate from the session index:
+// its own poller runs one `gh api graphql` search every PRS_POLL_INTERVAL_MS,
+// with no shell, so GitHub's token stays inside gh. PR titles from private
+// repos are as sensitive as session data.
+// ---------------------------------------------------------------------------
+
+/**
+ * The latest commit's status check rollup: SUCCESS is 'passing'; FAILURE and
+ * ERROR are 'failing'; PENDING and EXPECTED are 'pending'; 'none' when the
+ * commit has no checks.
+ */
+export type PullRequestChecks = 'passing' | 'failing' | 'pending' | 'none';
+
+/** GitHub's reviewDecision. */
+export type PullRequestReview = 'approved' | 'changes-requested' | 'review-required';
+
+/**
+ * GitHub's mergeable. 'unknown' while GitHub is still working it out, as it
+ * often is just after a push: 13 of Phil's 50 open PRs on 2026-10-28.
+ */
+export type PullRequestMergeable = 'clean' | 'conflicts' | 'unknown';
+
+export interface PullRequestSummary {
+  /**
+   * `https://github.com/<owner>/<name>/pull/<number>`. The server leaves out a
+   * PR whose URL isn't exactly that, for its own repo and number, so the web
+   * UI can link it as it is.
+   */
+  url: string;
+  /** Lowercase `owner/name`: what PrLink.repo is compared with. */
+  repo: string;
+  /** `owner/name` as GitHub spells it, for display. */
+  repoLabel: string;
+  number: number;
+  /**
+   * Plain text, with control and bidi control characters removed, at most
+   * PR_TITLE_MAX characters. Shown in `<bdi>`, never as Markdown.
+   */
+  title: string;
+  draft: boolean;
+  /** ISO 8601. */
+  createdAt: string;
+  /** ISO 8601. */
+  updatedAt: string;
+  /**
+   * The head branch, and the repo it's in as lowercase `owner/name`: a fork's,
+   * for a PR from a fork. What a 'pushed' PrLink is compared with. Absent when
+   * that repo no longer exists.
+   */
+  head?: { repo: string; branch: string };
+  checks: PullRequestChecks;
+  /**
+   * When `checks` is 'failing': the failing checks' names, plain text, at most
+   * PR_FAILING_CHECKS_MAX. A check run fails with conclusion FAILURE,
+   * TIMED_OUT, CANCELLED, ACTION_REQUIRED or STARTUP_FAILURE, and a status
+   * context with state FAILURE or ERROR.
+   */
+  failingChecks?: string[];
+  /** When more checks failed than failingChecks lists: how many failed in all. */
+  failingCount?: number;
+  /** Absent when GitHub reports no decision, as in a repo that requires no reviews. */
+  review?: PullRequestReview;
+  mergeable: PullRequestMergeable;
+}
+
+/**
+ * True for a PR that needs you: failing checks, merge conflicts or changes
+ * requested, drafts included. The Pull requests item's count is these.
+ */
+export function prNeedsAttention(pr: PullRequestSummary): boolean {
+  return pr.checks === 'failing' || pr.mergeable === 'conflicts' || pr.review === 'changes-requested';
+}
+
+/**
+ * Whether the latest fetch worked. On a failure the reason says why, and
+ * `error` says it in pitwall's words, never gh's output:
+ *
+ * - 'off': pitwall was started with `--no-prs`, and never runs gh.
+ * - 'gh-missing': there's no `gh` on PATH.
+ * - 'gh-auth': gh isn't logged in to github.com (gh's exit code 4).
+ * - 'error': anything else, such as a timeout, no network or a response
+ *   pitwall can't read.
+ */
+export type PullRequestSource =
+  | { ok: true }
+  | { ok: false; reason: 'off' | 'gh-missing' | 'gh-auth' | 'error'; error: string };
+
+/** Your open pull requests: GET PRS_PATH, and the 'prs' WebSocket message. */
+export interface PullRequestList {
+  /** ISO 8601: when the newest fetch that worked finished. Absent until one has. */
+  fetchedAt?: string;
+  source: PullRequestSource;
+  /** True while a fetch is running. */
+  refreshing: boolean;
+  /**
+   * `is:pr is:open author:@me archived:false` on github.com, newest updatedAt
+   * first, at most PRS_MAX. After a fetch fails, the last good list stays,
+   * with its fetchedAt. Empty before the first fetch that worked. The web UI
+   * shows those updated in the last PRS_SHOWN_DAYS, and the rest behind Show
+   * older.
+   */
+  prs: PullRequestSummary[];
+  /** True when GitHub found more than PRS_MAX, and the rest were left out. */
+  truncated?: true;
+}
+
+/** GET: the latest PullRequestList, with the same authorization as SNAPSHOT_PATH. */
+export const PRS_PATH = '/api/prs';
+
+/**
+ * POST, no body: fetch your open PRs now, answered with an ActionResult. It
+ * needs what every state-changing request needs: the apiKey, pitwall's
+ * Origin and its exact Host. ok when a fetch started or one was already
+ * running; the list arrives as a 'prs' message.
+ *
+ * - 409 when pull requests are off (`--no-prs`).
+ * - 429 with `Retry-After` when the latest fetch started less than
+ *   PRS_REFRESH_MIN_MS ago.
+ */
+export const PRS_REFRESH_PATH = '/api/prs/refresh';
+
+/** How often the PR poller fetches: 3 minutes. Never tied to the session poll. */
+export const PRS_POLL_INTERVAL_MS = 3 * 60 * 1000;
+
+/** The shortest gap between the starts of two fetches that a refresh may cause. */
+export const PRS_REFRESH_MIN_MS = 15 * 1000;
+
+/** A fetch that takes longer fails with reason 'error'. It took 8.5 s on 2026-10-28, for 50 PRs. */
+export const PRS_FETCH_TIMEOUT_MS = 30 * 1000;
+
+/** The most PRs a list holds: two pages of GitHub's search. */
+export const PRS_MAX = 200;
+
+/** The web UI lists PRs updated in this many days, and the rest behind Show older. */
+export const PRS_SHOWN_DAYS = 90;
+
+/** The longest PR title kept, in characters. */
+export const PR_TITLE_MAX = 300;
+
+/** The most failing checks' names kept per PR. */
+export const PR_FAILING_CHECKS_MAX = 5;
 
 // ---------------------------------------------------------------------------
 // Attach (W10, D3, D9): a WebSocket per attached background session, carrying
