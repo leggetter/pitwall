@@ -3,7 +3,8 @@
 // the v3 WebSocket challenge, all imported from the server build (dist/server, dist/shared), never
 // copied. Behind them it answers the snapshot, the directory list, conversation pages, the relay,
 // attach (a made-up terminal screen at the size the page gives, drawn again on each resize), spawn,
-// stop, remove and resume from the made-up World in fixtures.ts, and the editor list and open in an
+// stop, remove and resume, and a session's sub-agents and their transcripts (W77), from the made-up
+// World in fixtures.ts, and the editor list and open in an
 // editor (W72), which opens nothing.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
@@ -34,6 +35,7 @@ import type {
   SessionSummary,
   SpawnRequest,
   SpawnResult,
+  SubagentList,
 } from '../../src/shared/protocol.js';
 import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
@@ -179,12 +181,23 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.EDITORS_PATH) return json(res, 200, EDITORS);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open)$/.exec(url.pathname);
+    // A sub-agent's transcript (W77): 404 unless the session is listed and the agent is one of its sub-agents.
+    const agent = /^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/conversation$/.exec(url.pathname);
+    if (agent && method === 'GET') {
+      const before = url.searchParams.get('before') ?? undefined;
+      const page = world.subagentConversation(decodeURIComponent(agent[1]!), decodeURIComponent(agent[2]!), before);
+      // A cursor it doesn't know is stale, as the real route's is.
+      if (!page) return end(res, before === undefined ? 404 : 410);
+      return json(res, 200, page satisfies ConversationPage);
+    }
+
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
     const route = match[2];
     if (route === 'conversation' && method === 'GET') return json(res, 200, world.conversation(session.sessionId) satisfies ConversationPage | undefined);
+    if (route === 'subagents' && method === 'GET') return json(res, 200, world.subagents(session.sessionId) satisfies SubagentList | undefined);
     if (route === 'relay' && method === 'POST') {
       if (session.kind !== 'interactive' || !session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running interactive session.' } satisfies RelayResult);
       const body = await readJson(req);

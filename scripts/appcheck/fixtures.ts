@@ -14,6 +14,8 @@ import type {
   SessionGroup,
   SessionSummary,
   SpawnRequest,
+  SubagentList,
+  SubagentSummary,
 } from '../../src/shared/protocol.js';
 
 export const CODE = '/Users/example/code';
@@ -32,7 +34,7 @@ export const NAMES = {
   waiting: 'pitwall-test-docs',
   /** Interactive, idle, ended its turn with a question: needs you ('asked'). */
   asked: 'pitwall-test-review',
-  /** Interactive and idle, with every kind of conversation entry and links: the message box's session. */
+  /** Interactive and idle, with every kind of conversation entry and links: the message box's session. It has no sub-agents (W77). */
   conversation: 'pitwall-test-api',
   /** Background and running: Terminal opens and attaches. */
   running: 'pitwall-test-nightly-export',
@@ -44,6 +46,10 @@ export const NAMES = {
   finished: 'pitwall-test-old-migration',
   /** Started in the root itself; worked in two repos, so Group sessions by moves it. */
   fromRoot: 'pitwall-test-from-root',
+  /**
+   * In api-server, interactive and idle, with sub-agents (W77): two running, one started by the
+   * other, then done, failed and stopped ones. Its conversation names them (SUBAGENTS).
+   */
   inApi: 'pitwall-test-in-api',
   /** Under the second root, waiting, so its tab has a need-you badge. */
   blog: 'pitwall-test-blog-notes',
@@ -76,6 +82,21 @@ export const NAMES = {
 /** The short id the copy Claude Code starts in place of NAMES.endedCopy has. */
 export const COPY_SHORT_ID = 'pt67copy';
 
+/**
+ * NAMES.inApi's sub-agents (W77), by role, as the tab sorts them: running ones first, the newest started
+ * first, then the rest by start. Ids are letters and digits, as Claude Code's are.
+ */
+export const SUBAGENTS = {
+  /** Running, started by `reading`: the newest. */
+  checking: { agentId: 'pt77check', description: 'Check the made-up route tests' },
+  /** Running, started by the session. */
+  reading: { agentId: 'pt77read', description: 'Read the made-up routes' },
+  /** Done, with a page behind Load earlier; the session's conversation has its Agent call and its report. */
+  drafting: { agentId: 'pt77draft', description: 'Draft the made-up changelog entry' },
+  failed: { agentId: 'pt77flaky', description: 'Look for a made-up flaky test' },
+  stopped: { agentId: 'pt77docs', description: 'Search the made-up docs' },
+} as const;
+
 /** What a link in the conversation says and where it goes (the links part). */
 export const LINKS = {
   bare: 'http://example.com/ci/runs/1234',
@@ -88,6 +109,9 @@ export const LINKS = {
 } as const;
 
 const MINUTE = 60_000;
+
+/** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
+const SUBAGENT_CURSOR = 'pt77-older';
 
 interface Spawned {
   summary: SessionSummary;
@@ -167,8 +191,42 @@ export class World {
   conversation(sessionId: string): ConversationPage | undefined {
     const session = this.#sessions.get(sessionId);
     if (!session) return undefined;
-    const entries = session.name === NAMES.conversation ? this.#everyKind() : this.#short(session);
+    const entries = session.name === NAMES.conversation ? this.#everyKind() : session.name === NAMES.inApi ? this.#namingSubagents() : this.#short(session);
     return { sessionId, entries };
+  }
+
+  /** A listed session's sub-agents (W77): NAMES.inApi's, and none for the rest. */
+  subagents(sessionId: string): SubagentList | undefined {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return undefined;
+    return { sessionId, subagents: session.name === NAMES.inApi ? this.#subagents() : [], truncated: false };
+  }
+
+  /**
+   * One of NAMES.inApi's sub-agents' transcripts (W77): the newest page, or, for SUBAGENTS.drafting,
+   * the older one behind its cursor. Undefined for anyone else's, as the server's 404 is.
+   */
+  subagentConversation(sessionId: string, agentId: string, before: string | undefined): ConversationPage | undefined {
+    if (this.#sessions.get(sessionId)?.name !== NAMES.inApi) return undefined;
+    const agent = this.#subagents().find((each) => each.agentId === agentId);
+    if (!agent) return undefined;
+    if (before !== undefined) return agentId === SUBAGENTS.drafting.agentId && before === SUBAGENT_CURSOR ? { sessionId, entries: [{ kind: 'user', at: this.#ago(21), text: `The made-up task: ${agent.description}.` }] } : undefined;
+    // Its task, from the session or the sub-agent that started it, opens its transcript; SUBAGENTS.drafting's is behind Load earlier.
+    const task: ConversationEntry[] = agentId === SUBAGENTS.drafting.agentId ? [] : [{ kind: 'user', at: this.#ago(19.5), text: `The made-up task: ${agent.description}.` }];
+    const entries: ConversationEntry[] = [
+      ...task,
+      { kind: 'assistant', at: this.#ago(19), markdown: true, text: `Working on it: **${agent.description}**.` },
+      { kind: 'tool', at: this.#ago(18.5), toolName: 'Read', text: 'Read: src/routes.ts' },
+      // Its own Agent call, on its own rather than folded with the Read: the sub-agent it started.
+      ...(agentId === SUBAGENTS.reading.agentId
+        ? [
+            { kind: 'assistant' as const, at: this.#ago(4.5), markdown: true as const, text: 'Starting a made-up check of the tests.' },
+            { kind: 'tool' as const, at: this.#ago(4), toolName: 'Agent', text: `Agent: ${SUBAGENTS.checking.description}`, subagent: SUBAGENTS.checking },
+          ]
+        : []),
+      { kind: 'assistant', at: this.#ago(15), markdown: true, text: 'A made-up report: done.' },
+    ];
+    return agentId === SUBAGENTS.drafting.agentId ? { sessionId, entries, before: SUBAGENT_CURSOR } : { sessionId, entries };
   }
 
   /** The root a spawn's directory is under, or undefined when it's under none. */
@@ -311,7 +369,7 @@ export class World {
       job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } }),
       job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
       session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)] }),
-      session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route' }),
+      session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route', subagentsRunning: 2 }),
       session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } }),
       ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes' }),
       ended(NAMES.endedAsked, 1, { askedYou: { reason: 'question', excerpt: 'Should the made-up guide keep the old screenshots?' } }),
@@ -325,6 +383,28 @@ export class World {
       ended(NAMES.endedOldOnly, 20, { cwd: DOCS_SITE }),
     ];
     return all;
+  }
+
+  #subagents(): SubagentSummary[] {
+    return [
+      { ...SUBAGENTS.checking, agentType: 'Explore', state: 'running', startedBy: SUBAGENTS.reading.agentId, startedAt: this.#ago(4), lastActivityAt: this.#ago(0.2), toolCalls: 3 },
+      { ...SUBAGENTS.reading, agentType: 'general-purpose', state: 'running', background: true, startedAt: this.#ago(6), lastActivityAt: this.#ago(0.1), toolCalls: 7 },
+      { ...SUBAGENTS.drafting, agentType: 'general-purpose', state: 'done', startedAt: this.#ago(20), lastActivityAt: this.#ago(15), toolCalls: 12 },
+      { ...SUBAGENTS.failed, agentType: 'Explore', state: 'failed', startedAt: this.#ago(25), lastActivityAt: this.#ago(24), toolCalls: 2 },
+      { ...SUBAGENTS.stopped, state: 'stopped', startedAt: this.#ago(30), lastActivityAt: this.#ago(29), toolCalls: 0 },
+    ];
+  }
+
+  /** NAMES.inApi's conversation: the call that started a sub-agent and its report, then two calls folded, one starting another and one messaging it. */
+  #namingSubagents(): ConversationEntry[] {
+    return [
+      { kind: 'user', at: this.#ago(22), text: 'Add a made-up route, and draft its changelog entry.' },
+      { kind: 'tool', at: this.#ago(20), toolName: 'Agent', text: `Agent: ${SUBAGENTS.drafting.description}`, subagent: SUBAGENTS.drafting },
+      { kind: 'cross-session', at: this.#ago(15), from: SUBAGENTS.drafting.agentId, markdown: true, text: 'The made-up changelog entry is drafted.', subagent: SUBAGENTS.drafting },
+      { kind: 'assistant', at: this.#ago(14), markdown: true, text: 'The entry is in. Starting on the routes.' },
+      { kind: 'tool', at: this.#ago(6), toolName: 'Agent', text: `Agent: ${SUBAGENTS.reading.description}`, subagent: SUBAGENTS.reading },
+      { kind: 'tool', at: this.#ago(2), toolName: 'SendMessage', text: 'SendMessage', subagent: SUBAGENTS.reading },
+    ];
   }
 
   #short(session: SessionSummary): ConversationEntry[] {
