@@ -1,7 +1,8 @@
 // A started session is selected once it's listed (W63, docs/design-system.md, 4: Dialogs): its group
 // in the repo list, its row and its view, in one history entry, with its terminal attached but taking
 // no keyboard; held, with an "is listed now" toast and Open, while the view open has a draft; and,
-// started in a root tab you've left, it switches you back to that tab.
+// started in a root tab you've left, it switches you back to that tab. Each time, focus is back on New
+// session as the dialog goes, before anything that runs after (W83).
 
 import { API_SERVER, CODE, DEMO_APP, NAMES } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
@@ -36,6 +37,25 @@ const listedText = (name: string) => `${name} is listed now. It didn't open, so 
 const STARTED_ID = '00000000-0000-4000-8000-000000064';
 const MESSAGE_BOX = `${VIEW}?.querySelector('.relay-box textarea')`;
 
+/**
+ * Watches for the dialog leaving the page, and keeps what had focus at that moment in
+ * window.__pwFocusAsDialogWent: a mutation observer's callback runs before React's next task, where a
+ * passive effect's clean-up would have put focus back (W83). In this Chrome, a build without W83's fix
+ * passes too: focus was already back by then, in the same task, so happy-dom is where the gap showed.
+ * Dialog.test.tsx is the check that fails without the fix.
+ */
+const watchFocusAsDialogGoes = `(() => {
+  const dialog = ${DIALOG};
+  window.__pwFocusAsDialogWent = undefined;
+  const observer = new MutationObserver(() => {
+    if (dialog?.isConnected) return;
+    observer.disconnect();
+    window.__pwFocusAsDialogWent = ${focused};
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  return true;
+})()`;
+
 /** New session from the header: a directory, a name and a first prompt, then Start session. */
 async function start(t: Case, name: string, dir: string): Promise<void> {
   const { page } = t;
@@ -46,8 +66,10 @@ async function start(t: Case, name: string, dir: string): Promise<void> {
   await page.type(name);
   await page.click('First prompt', field('First prompt'));
   await page.type('A made-up first prompt for the app check.');
+  await page.evaluate(watchFocusAsDialogGoes);
   await page.click('Start session', dialogButton('Start session'));
   await page.waitFor('the dialog to close', `!${DIALOG}`);
+  t.expectEqual(await page.evaluate('window.__pwFocusAsDialogWent'), 'New session', 'focus is back on New session as the dialog goes (W83)');
 }
 
 /** The repo list's selected item: in the columns, or below 900 px in the drawer, opened and shut again. */
