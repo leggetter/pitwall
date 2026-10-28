@@ -10,7 +10,7 @@ import { group, NOW, session, snapshot } from '../test/fixtures.js';
 import { hover, unhover } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import dialogCss from './Dialog.css?raw';
-import { TRUST_TEXT } from './NewSessionDialog.js';
+import { NO_TRUST_COMMAND_TEXT, TRUST_TEXT } from './NewSessionDialog.js';
 
 // Made-up sessions and directories only.
 
@@ -481,17 +481,27 @@ describe('New session: when it is refused', () => {
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
   });
 
-  it("shows the server's reason, and no command, when it sends no hint, as for a directory whose path has a ' or \\ (W87)", async () => {
-    const error = `Workspace not trusted. Run \`claude\` in ${REPO} once and accept the trust prompt, then retry. There's no command to copy: the directory's path has a ' or \\, which shells don't all read the same way.`;
-    renderDashboard(fakeServer({ status: 422, body: { ok: false, error } }));
+  it("says in its own words, not in code style, why there's no command when an untrusted directory's 422 has no hint, as for a path with a ' or \\ (W87)", async () => {
+    const error = `Workspace not trusted. Run \`claude\` in ${REPO} once and accept the trust prompt, then retry.`;
+    renderDashboard(fakeServer({ status: 422, body: { ok: false, error } }, { status: 409, body: { ok: false, error: 'Something else.' } }));
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
     const alert = within(dialog).getByRole('alert');
-    expect(alert.textContent).toBe(`Couldn't start the session. ${error}`);
+    expect(alert.textContent).toBe(`Couldn't start the session. ${error}${NO_TRUST_COMMAND_TEXT}`);
+    // Claude Code's line in code style, pitwall's sentence after it as text, its ' and \\ as literal values.
+    expect(alert.querySelector('.alert-detail')?.textContent).toBe(error);
+    const sentence = alert.querySelector('p.spawn-trust');
+    expect(sentence?.textContent).toBe(NO_TRUST_COMMAND_TEXT);
+    expect(sentence?.closest('.alert-detail')).toBeNull();
+    expect([...(sentence?.querySelectorAll('code') ?? [])].map((code) => code.textContent)).toEqual(["'", '\\']);
     expect(within(alert).queryByText(TRUST_TEXT)).toBeNull();
     expect(alert.querySelector('.command-chip')).toBeNull();
     expect(within(alert).queryByRole('button', { name: 'Copy command' })).toBeNull();
+
+    // Only for a 422: any other refusal without a command has the reason alone.
+    await submit(dialog);
+    expect(within(dialog).getByRole('alert').textContent).toBe("Couldn't start the session. Something else.");
   });
 
   it('shows any other error without a command, and a status when the answer is not JSON', async () => {

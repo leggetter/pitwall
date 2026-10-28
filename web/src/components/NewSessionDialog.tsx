@@ -15,7 +15,8 @@
 // - While the request is out, Start session is busy, every other control is aria-disabled, and
 //   Escape, Close and the backdrop do nothing.
 // - A failure is an inline danger alert at the end of the body. When Claude Code hasn't trusted the
-//   directory, it has the command to run, in a command chip with its copy button.
+//   directory, it has the command to run, in a command chip with its copy button, or, for a path with
+//   a `'` or `\`, which has none, a sentence that says why (W87).
 // - Files for the first prompt (W82, spike 008): dropped on the prompt, with a drop target over it
 //   while files are dragged over the page, pasted into it, or chosen with Attach files, a native file
 //   input behind a real button. Each is checked and uploaded as it's added (attachments.ts), and
@@ -77,8 +78,24 @@ const MODELS = ['sonnet', 'opus', 'haiku'] as const;
 
 /** The sentence before the trust command (4: Dialogs, New session dialog). */
 export const TRUST_TEXT = "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:";
+/**
+ * In its place for a 422 with no command, a directory whose path has a `'` or `\`, which zsh and bash
+ * read one way inside single quotes and fish another (W87). pitwall's own words, after Claude Code's
+ * line, so as text, with the `'` and `\` in code style.
+ */
+export const NO_TRUST_COMMAND_TEXT = "pitwall never trusts a directory for you, and there's no command to copy for this one: its path has a ' or \\, which shells don't all read the same way.";
 
-type Failure = { kind: 'refused'; error: string; hint?: string } | { kind: 'failed'; error: string };
+type Failure = { kind: 'refused'; error: string; hint?: string; status?: number } | { kind: 'failed'; error: string };
+
+/** NO_TRUST_COMMAND_TEXT, with its `'` and `\` in code style: the same text. */
+function NoTrustCommand() {
+  const [before, rest] = NO_TRUST_COMMAND_TEXT.split(" ' or \\, ") as [string, string];
+  return (
+    <p className="spawn-trust">
+      {before} <code>&apos;</code> or <code>\</code>, {rest}
+    </p>
+  );
+}
 
 /** The directory list, fetched the first time "Another directory under a root…" is chosen. */
 type Listing = { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; list: DirectoryList } | { kind: 'failed' };
@@ -352,7 +369,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
         onStarted({ shortId: outcome.shortId, name: outcome.name });
         return;
       case 'refused':
-        setFailure(outcome.hint === undefined ? { kind: 'refused', error: outcome.error } : { kind: 'refused', error: outcome.error, hint: outcome.hint });
+        setFailure(outcome);
         return;
       case 'failed':
         setFailure({ kind: 'failed', error: outcome.error });
@@ -632,6 +649,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
               <CopyCommand command={failure.hint} />
             </>
           )}
+          {failure.kind === 'refused' && failure.hint === undefined && failure.status === 422 && <NoTrustCommand />}
         </Alert>
       )}
     </Dialog>

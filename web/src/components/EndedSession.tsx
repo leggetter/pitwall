@@ -33,10 +33,11 @@ export const ENDED_NOTE = 'It ended when its Claude Code process exited. Resume 
 /**
  * The note for one with no command to copy (resumeCommand()), as for a directory whose path has a `'`
  * or `\`, which zsh and bash read one way inside single quotes and fish another (W87). The server
- * lists no ended session that has none for any other reason. The `'` and `\` are in code style.
+ * lists no ended session that has none for any other reason. The `'` and `\` are in code style. It
+ * covers the trust command too: a refused resume's alert for such a path has Claude Code's line alone.
  */
 export const ENDED_NO_COMMAND_NOTE =
-  "It ended when its Claude Code process exited. Resume it here in the background. There's no command to copy: its directory's path has a ' or \\, which shells don't all read the same way.";
+  "It ended when its Claude Code process exited. Resume it here in the background; its directory's path has a ' or \\, which shells don't all read the same way, so there's no command to copy.";
 /** The note for one whose directory has gone (`cwdMissing`), which can't be resumed. */
 export const ENDED_GONE_NOTE = "It ended when its Claude Code process exited, and its directory no longer exists, so it can't be resumed.";
 /** The primary action's label, in the footer and the actions menu, and its busy label. */

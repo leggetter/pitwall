@@ -686,7 +686,8 @@ export type SpawnResult =
   /**
    * `hint` is a command for the user to run, such as the one that trusts a
    * workspace. None for a directory whose path has a `'` or `\`, which shells
-   * don't all read the same way inside single quotes; `error` says so (W87).
+   * don't all read the same way inside single quotes; `error` is then Claude
+   * Code's line alone, and the page says why there's no command (W87).
    */
   | { ok: false; error: string; hint?: string };
 

@@ -29,8 +29,7 @@ const NOTE_TEXT = 'It ended when its Claude Code process exited. Resume it here 
 const GONE_TEXT = "It ended when its Claude Code process exited, and its directory no longer exists, so it can't be resumed.";
 /** A directory whose path has a `'`, which zsh and bash read one way inside single quotes and fish another (W87). In demo-app's group, as a worktree is. */
 const QUOTED_DIR = `${DEMO_APP}/.claude/worktrees/pitwall-test-it's-fixed`;
-const NO_COMMAND_TEXT = "It ended when its Claude Code process exited. Resume it here in the background. There's no command to copy: its directory's path has a ' or \\, which shells don't all read the same way.";
-const NO_TRUST_COMMAND = "There's no command to copy: the directory's path has a ' or \\, which shells don't all read the same way.";
+const NO_COMMAND_TEXT = "It ended when its Claude Code process exited. Resume it here in the background; its directory's path has a ' or \\, which shells don't all read the same way, so there's no command to copy.";
 const COPY_TEXT = `It was open in another Claude Code process after all, so Claude Code started a copy as ${COPY_SHORT_ID} instead. The copy is listed as a background session with no name, which you can stop and remove.`;
 const ON_A_TAB = `document.activeElement?.getAttribute('role') === 'tab' && !!document.activeElement.closest('section.session-view')`;
 
@@ -258,8 +257,8 @@ const part: Part = {
       const shown = await page.evaluate<string>(`${ALERT}.textContent`);
       t.expectEqual(
         shown,
-        `Couldn't resume the session. Workspace not trusted. Run \`claude\` in ${QUOTED_DIR} once and accept the trust prompt, then retry. ${NO_TRUST_COMMAND}`,
-        "Claude Code's line, then why there's no command, and nothing more",
+        `Couldn't resume the session. Workspace not trusted. Run \`claude\` in ${QUOTED_DIR} once and accept the trust prompt, then retry.`,
+        "Claude Code's line alone: the footer's note already says why there's no command",
       );
       t.expect(!(await page.evaluate(`!!${ALERT}.querySelector('.command-chip')`)), 'no command chip');
       t.expectEqual(server.records.resumes, [NAMES.endedAsked], 'one resume, of it');

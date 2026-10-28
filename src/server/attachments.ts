@@ -130,8 +130,9 @@ const MOVED_UP = '.removing-';
  * Characters that show as nothing, which hasUnsafeCharacters() lets through: Unicode's
  * Default_Ignorable_Code_Point, which is the soft hyphen, the Mongolian vowel separator, zero-width
  * space, non-joiner and joiner, the word joiner and the invisible operators, and the zero-width
- * no-break space (BOM) that this rule had before W87, and also variation selectors (U+FE0F), tag
- * characters (U+E0000 to U+E0FFF), the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) and the rest.
+ * no-break space (BOM) that this rule had before W87, and also the variation selectors (U+FE00 to
+ * U+FE0F, and the supplementary ones, U+E0100 to U+E01EF), the tag characters (U+E0000 to U+E007F),
+ * the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) and the rest.
  * attachmentName() drops them, so one name can't pass for another, as `a<U+200B>.png` for `a.png`.
  * An emoji's joiner and variation selector go too, so it may show as its parts: a name is only ever
  * shown. Not added to guards.ts's rule, which spawn, resume, open in an editor and the directory list

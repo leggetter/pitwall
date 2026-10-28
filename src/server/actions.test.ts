@@ -30,7 +30,6 @@ import {
   resumeArgs,
   shellQuote,
   spawnArgs,
-  NO_TRUST_COMMAND,
   RateWindow,
   SpawnLimiter,
   trustHint,
@@ -597,14 +596,14 @@ describe('spawn: running claude --bg', () => {
     expect(stdout.trim()).toBe(dir);
   });
 
-  it("gives no hint for a directory whose path has a ' or \\, which fish reads differently in single quotes, and says why (W87)", async () => {
+  it("gives no hint for a directory whose path has a ' or \\, which fish reads differently in single quotes, and Claude Code's line alone (W87)", async () => {
     for (const name of ["it's a dir", 'back\\slash']) {
       const dir = join(root, name);
       const line = `Workspace not trusted. Run \`claude\` in ${dir} once and accept the trust prompt, then retry.`;
       const started = await start(fakeRunner(exited(1, '', `${line}\n`)));
       const res = await spawnAsPage(started, { ...valid(), cwd: dir });
       expect(res.status, name).toBe(422);
-      expect(res.json, name).toEqual({ ok: false, error: `${line} ${NO_TRUST_COMMAND}` });
+      expect(res.json, name).toEqual({ ok: false, error: line });
       expect(started.run.calls.map((call) => call.args[0]), name).toEqual(['--bg']);
     }
   });
@@ -1031,7 +1030,7 @@ describe('resume (W66)', () => {
     expect(started.run.calls.map((call) => call.args[0])).toEqual(['--resume']);
   });
 
-  it("answers 422 with no hint for a directory whose path has a ' or \\, saying why after Claude Code's message (W87)", async () => {
+  it("answers 422 with no hint for a directory whose path has a ' or \\, and Claude Code's message alone (W87)", async () => {
     const backslash = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
     for (const [id, name] of [[ENDED_QUOTED_ID, "it's a dir"], [backslash, 'back\\slash']] as const) {
       const dir = join(root, name);
@@ -1039,7 +1038,7 @@ describe('resume (W66)', () => {
       const started = await start(fakeRunner(exited(1, '', `${line}\n`)), {}, fakeIndexer(snapshotWith(ended(backslash, join(root, 'back\\slash')))));
       const res = await postAsPage(started, resumePath(id));
       expect(res.status, name).toBe(422);
-      expect(res.json, name).toEqual({ ok: false, error: `${line} ${NO_TRUST_COMMAND}` });
+      expect(res.json, name).toEqual({ ok: false, error: line });
       expect(started.run.calls.map((call) => call.args[0]), name).toEqual(['--resume']);
     }
   });

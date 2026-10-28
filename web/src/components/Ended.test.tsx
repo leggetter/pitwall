@@ -25,6 +25,7 @@ import {
   ENDED_NOTE,
   RESUME_HINT_TEXT,
   RESUME_LISTED_MS,
+  RESUME_REFUSED,
   resumedText,
   resumeToast,
 } from './EndedSession.js';
@@ -788,6 +789,20 @@ describe('Resume in background', () => {
     expect(alert.textContent).toContain(RESUME_HINT_TEXT);
     expect(alert.querySelector('.command-chip')?.textContent).toBe(`cd ${DEMO} && claude`);
     expect(within(alert).getByRole('button', { name: 'Copy trust command' })).toBeTruthy();
+  });
+
+  it("has Claude Code's line alone when the server sends no command, as for a path with a ' or \\, whose footer note already says why (W87)", async () => {
+    const quoted = `${DEMO}/it's here`;
+    const untrusted = `Workspace not trusted. Run \`claude\` in ${quoted} once and accept the trust prompt, then retry.`;
+    const demo = sessions().map((each) => (each.sessionId === ENDED ? { ...each, cwd: quoted } : each));
+    renderDashboard(snap(demo), { answers: [{ status: 422, body: { ok: false, error: untrusted } }] });
+    await open('demo-ended');
+    fireEvent.click(button('Resume in background'));
+    await settle();
+    const alert = footer()!.querySelector<HTMLElement>('.resume-failure')!;
+    expect(alert.textContent).toBe(`${RESUME_REFUSED} ${untrusted}`);
+    expect(alert.querySelector('.command-chip')).toBeNull();
+    expect(footer()?.querySelector('.session-view-note')?.textContent).toBe(ENDED_NO_COMMAND_NOTE);
   });
 
   it('warns when Claude Code started a copy instead, in the server’s words alone, which name the copy, and in a toast, which is what announces it', async () => {

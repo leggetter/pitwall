@@ -17,7 +17,7 @@
 //     415  the body isn't `Content-Type: application/json`
 //     422  Claude Code says the workspace isn't trusted. `hint` is the command that trusts it,
 //          for the user to run. pitwall never grants trust itself. A directory whose path has a
-//          `'` or `\` gets no `hint`, and `error` says why after Claude Code's line (W87, shellQuote())
+//          `'` or `\` gets no `hint`, and `error` is still Claude Code's line alone (W87, shellQuote())
 //     429  another spawn is still running, or too many sessions started in the last minute, new and
 //          resumed together (SpawnLimiter). Retry-After is set
 //     502  Claude Code failed or refused, with its first error line, or wasn't found
@@ -358,17 +358,14 @@ export function trustHint(dir: string): string | undefined {
   return word === undefined ? undefined : `cd ${word} && claude`;
 }
 
-/** What spawn and resume's 422 says, after Claude Code's line, when there's no trust hint for the directory. */
-export const NO_TRUST_COMMAND = "There's no command to copy: the directory's path has a ' or \\, which shells don't all read the same way.";
-
 /**
- * Spawn and resume's 422 for a workspace Claude Code doesn't trust: its line, with the command that
- * trusts `dir` as `hint`, or, when trustHint() has none, NO_TRUST_COMMAND after the line, so the page
- * says why there's no command to run.
+ * Spawn and resume's 422 for a workspace Claude Code doesn't trust: its line as `error`, with the
+ * command that trusts `dir` as `hint`, or with none when trustHint() has none. `error` stays Claude
+ * Code's line alone: the page says in its own words why there's no command (W87).
  */
 export function untrustedResult(line: string, dir: string): { ok: false; error: string; hint?: string } {
   const hint = trustHint(dir);
-  return hint === undefined ? { ok: false, error: `${line} ${NO_TRUST_COMMAND}` } : { ok: false, error: line, hint };
+  return hint === undefined ? { ok: false, error: line } : { ok: false, error: line, hint };
 }
 
 /** Claude Code's output as text: terminal escapes and controls other than tab and newline removed, trimmed. */
