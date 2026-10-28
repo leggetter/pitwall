@@ -17,7 +17,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 ## Rules
 
 - **A UI change runs the app check:** `npm run build && npm run appcheck -- --out <dir>`, and adds or extends its part in `scripts/appcheck/parts/`. On macOS, never send key presses to Google Chrome's headless mode: it plays the user's alert sound for each key a page doesn't handle (W64). The harness refuses any browser but the pinned `chrome-headless-shell` there.
-- **The plan is the source of truth.** Update `PLAN.md` in the same commit as the work. A settled decision moves to `README.md` with its reasoning.
+- **The plan is the source of truth.** Update `PLAN.md` in the same commit as the work. A settled decision moves to `docs/decisions.md` with its reasoning, under the ID it had in the plan.
 - **Prefer documented Claude Code interfaces:** `claude agents --json`, `claude --bg`, `claude attach`, `claude logs`, and cross-session messaging. Anything internal goes behind one adapter module and fails soft: show "unavailable", never crash. That covers transcript JSONL, sub-agents' `subagents/` folders, `~/.claude/jobs/*/state.json` and the inbox socket wire format.
 - **Never touch a real session.** During development and tests, don't message, stop, attach to or remove a session the user didn't name. Spikes and tests use throwaway sessions named `pitwall-test-*`, and remove them afterwards.
 - **Keep the security rules in `PLAN.md`:** localhost only, a token on every API request and WebSocket, `Host` and `Origin` checks. Don't weaken them for convenience, including in dev mode.
@@ -55,7 +55,8 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 
 ```
 PLAN.md                  the living plan: status, decisions, milestones
-README.md                what pitwall is, and settled decisions with reasons
+README.md                what pitwall is, how to run it, and how to use it
+docs/decisions.md        settled decisions, D1 to D21, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
@@ -77,7 +78,7 @@ scripts/readme-screenshot.ts
                          server; after a UI change it shows, copy it to docs/images/pitwall-light.png
 scripts/appcheck/        the app check: a fake server using pitwall's own security code, a Chrome driver,
                          and one part per area in parts/; typechecked, not built, not in npm test
-LICENSE                  Apache-2.0 (README's D21)
+LICENSE                  Apache-2.0 (D21, docs/decisions.md)
 THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7); .env is gitignored
 CLAUDE.md                imports this file for Claude Code
