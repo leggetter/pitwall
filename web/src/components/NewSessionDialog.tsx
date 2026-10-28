@@ -37,7 +37,7 @@ import {
 } from 'react';
 import type { DirectoryList, IndexSnapshot, SpawnRequest } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { ACCEPT, ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
+import { ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
 import {
   directoryCount,
   directoryOptions,
@@ -598,7 +598,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
           <Button ref={attachButton} size="sm" icon="attach" disabled={busy} aria-describedby={`${ids.prompt}-files`} onClick={() => fileInput.current?.click()}>
             Attach files
           </Button>
-          <input ref={fileInput} type="file" multiple accept={ACCEPT} hidden tabIndex={-1} onChange={chooseFiles} />
+          {/* No accept: a picker filtering by type would hide source files with no type of their own, such as a Go file. */}
+          <input ref={fileInput} type="file" multiple hidden tabIndex={-1} onChange={chooseFiles} />
           <p className="field-hint" id={`${ids.prompt}-files`}>
             {ATTACH_TEXT.hint}
           </p>
@@ -608,10 +609,12 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
             {shown.attachments}
           </p>
         )}
-        {/* There from the start, empty, so what each file comes to is announced. */}
-        <p className="visually-hidden" role="status">
-          {attachments.announcement}
-        </p>
+        {/* There from the start, empty, so what each file comes to is announced; two taking turns, so a sentence said twice is read twice. */}
+        {attachments.announcements.map((text, region) => (
+          <p key={region} className="visually-hidden" role="status">
+            {text}
+          </p>
+        ))}
       </div>
 
       {failure && (

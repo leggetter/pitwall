@@ -91,8 +91,10 @@ const input = (dialog: HTMLElement) => dialog.querySelector<HTMLInputElement>('i
 const list = (dialog: HTMLElement) => within(dialog).queryByRole('list', { name: 'Attached files' });
 const rows = (dialog: HTMLElement) => [...dialog.querySelectorAll<HTMLElement>('.attachment')];
 const states = (dialog: HTMLElement) => rows(dialog).map((row) => [row.querySelector('.attachment-name')?.textContent, row.dataset.state]);
-/** What the first prompt's field last announced about its files. */
-const announced = (dialog: HTMLElement) => within(prompt(dialog).closest<HTMLElement>('.field')!).getByRole('status').textContent;
+/** The first prompt's field's two status regions, which take turns. */
+const regions = (dialog: HTMLElement) => within(prompt(dialog).closest<HTMLElement>('.field')!).getAllByRole('status');
+/** What the field last announced about its files: the one region with text. */
+const announced = (dialog: HTMLElement) => regions(dialog).map((region) => region.textContent).join('');
 const start = (dialog: HTMLElement) => within(dialog).getByRole('button', { name: 'Start session' });
 const attachButton = (dialog: HTMLElement) => within(dialog).getByRole('button', { name: 'Attach files' });
 const describedText = (element: Element) =>
@@ -146,7 +148,8 @@ describe('New session: Attach files', () => {
     expect(field.multiple).toBe(true);
     expect(field.hidden).toBe(true);
     expect(field.tabIndex).toBe(-1);
-    expect(field.accept.split(',')).toEqual(expect.arrayContaining(['image/png', 'application/pdf', 'text/markdown', '.md', '.csv']));
+    // No accept: the system's picker would hide source files that have no type of their own.
+    expect(field.hasAttribute('accept')).toBe(false);
     const click = vi.spyOn(field, 'click').mockImplementation(() => {});
     fireEvent.click(button);
     expect(click).toHaveBeenCalledOnce();
@@ -203,6 +206,88 @@ describe('New session: Attach files', () => {
     expect(thumbnail?.getAttribute('alt')).toBe('');
     expect(drawImage).toHaveBeenCalledWith(expect.anything(), 28, 0, 72, 72, 0, 0, 64, 64);
     expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe('New session: code, configuration and logs', () => {
+  it('uploads each as text/plain, under its own name, whatever type the browser gives it', async () => {
+    const server = fakeServer({ auto: (upload) => server.kept(upload) });
+    const { dialog } = renderDialog(server.fetch);
+    const files: Array<[string, string]> = [
+      ['main.py', 'text/x-python'],
+      ['config.yaml', ''],
+      ['app.log', ''],
+      ['index.ts', 'video/mp2t'],
+      ['page.html', 'text/html'],
+      ['main.go', ''],
+    ];
+    await choose(dialog, files.map(([name, type]) => file(name, type)));
+    await settle();
+    await settle();
+    await settle();
+    expect(states(dialog)).toEqual(files.map(([name]) => [name, 'uploaded']));
+    expect(server.uploads.map(({ name, type }) => [name, type])).toEqual(files.map(([name]) => [name, 'text/plain']));
+  });
+
+  it('refuses an image pitwall takes no type of, such as HEIC or SVG, naming the ones it does', async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    await choose(dialog, [file('shot.heic', 'image/heic'), file('logo.svg', 'image/svg+xml')]);
+    expect(rows(dialog).map((row) => row.querySelector('.attachment-problem')?.textContent)).toEqual([`Couldn't attach it. ${ATTACH_TEXT.type}`, `Couldn't attach it. ${ATTACH_TEXT.type}`]);
+    expect(server.uploads).toEqual([]);
+  });
+});
+
+describe('New session: names and what is said', () => {
+  it('numbers a name the list has already, so each Remove is named apart, and sends the numbered name', async () => {
+    const server = fakeServer({ auto: (upload) => server.kept(upload) });
+    const { dialog } = renderDialog(server.fetch);
+    const clipboard = (files: File[]) => ({ files, items: [], types: ['Files'], getData: () => '' });
+    fireEvent.paste(prompt(dialog), { clipboardData: clipboard([file('image.png', 'image/png')]) });
+    fireEvent.paste(prompt(dialog), { clipboardData: clipboard([file('image.png', 'image/png'), file('image.png', 'image/png')]) });
+    await settle();
+    await settle();
+    expect(states(dialog).map(([name]) => name)).toEqual(['image.png', 'image (2).png', 'image (3).png']);
+    expect(within(dialog).getAllByRole('button', { name: /^Remove / }).map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Remove image.png',
+      'Remove image (2).png',
+      'Remove image (3).png',
+    ]);
+    expect(server.uploads.map((upload) => upload.name).sort()).toEqual(['image (2).png', 'image (3).png', 'image.png']);
+  });
+
+  it("shows a name as the server keeps it, NFC and trimmed, and refuses a blank one", async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    await choose(dialog, [file('  cafe\u0301.txt ', 'text/plain'), file('   ', 'text/plain')]);
+    expect(states(dialog)).toEqual([
+      ['caf\u00e9.txt', 'uploading'],
+      ['Unnamed file', 'refused'],
+    ]);
+    expect(rows(dialog)[1]!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't attach it. Its name is blank. Rename the file, then attach it again.");
+    expect(server.uploads.map((upload) => upload.name)).toEqual(['caf\u00e9.txt']);
+  });
+
+  it('says the same refusal twice in the other region, so it is read again', async () => {
+    const { dialog } = renderDialog();
+    await drop(dialog, [file('a.zip', 'application/zip')]);
+    const first = regions(dialog).map((region) => region.textContent);
+    await drop(dialog, [file('a.zip', 'application/zip')]);
+    const second = regions(dialog).map((region) => region.textContent);
+    expect(first).toEqual([`Couldn't attach a.zip. ${ATTACH_TEXT.type}`, '']);
+    expect(second).toEqual(['', `Couldn't attach a (2).zip. ${ATTACH_TEXT.type}`]);
+    await drop(dialog, [file('b.zip', 'application/zip')]);
+    expect(regions(dialog).map((region) => region.textContent)).toEqual([`Couldn't attach b.zip. ${ATTACH_TEXT.type}`, '']);
+  });
+
+  it('says what Remove did', async () => {
+    const server = fakeServer({ auto: (upload) => server.kept(upload) });
+    const { dialog } = renderDialog(server.fetch);
+    await choose(dialog, [file('notes.txt', 'text/plain')]);
+    await settle();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove notes.txt' }));
+    await settle();
+    expect(announced(dialog)).toBe('Removed notes.txt.');
   });
 });
 
@@ -292,7 +377,7 @@ describe('New session: refused files', () => {
       ['ok.json', 'uploading'],
     ]);
     const [docx, huge] = rows(dialog);
-    expect(docx!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't attach it. Only images, PDFs and text files can be attached.");
+    expect(docx!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't attach it. Only PNG, JPEG, GIF and WebP images, PDFs and text files can be attached.");
     expect(huge!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't attach it. It's 10.1 MB, over the 10 MB limit.");
     // Its size, rounded up as the problem has it, never as the limit.
     expect(huge!.querySelector('.attachment-meta')?.textContent).toBe('10.1 MB');
@@ -300,11 +385,11 @@ describe('New session: refused files', () => {
     expect(within(docx!).queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(server.uploads.map((upload) => upload.name)).toEqual(['ok.json']);
     expect(announced(dialog)).toBe(
-      "Couldn't attach report.docx. Only images, PDFs and text files can be attached. Couldn't attach huge.png. It's 10.1 MB, over the 10 MB limit.",
+      "Couldn't attach report.docx. Only PNG, JPEG, GIF and WebP images, PDFs and text files can be attached. Couldn't attach huge.png. It's 10.1 MB, over the 10 MB limit.",
     );
     // Its Remove says which file, and why it's there.
     const remove = within(docx!).getByRole('button', { name: 'Remove report.docx' });
-    expect(describedText(remove)).toBe("12 B | Couldn't attach it. Only images, PDFs and text files can be attached.");
+    expect(describedText(remove)).toBe("12 B | Couldn't attach it. Only PNG, JPEG, GIF and WebP images, PDFs and text files can be attached.");
   });
 
   it('refuses the eleventh file, with the limit, and counts no refused file towards it', async () => {
@@ -523,6 +608,23 @@ describe('New session: starting with files', () => {
     await settle();
     expect(states(dialog)).toEqual([['a.txt', 'uploaded']]);
     await act(async () => answerSpawn(json(201, { ok: true, shortId: 'c0ffee12', name: 'pitwall-test-spawn' })));
+  });
+
+  it("a failed start, then closing the dialog, asks the server to remove the files it kept", async () => {
+    const server = fakeServer({ auto: (upload) => server.kept(upload) });
+    const fetch = vi.fn<FetchLike>((url, init) =>
+      url === SPAWN_PATH ? Promise.resolve(json(400, { ok: false, error: "Made up: Claude Code hasn't trusted that directory." })) : server.fetch(url, init),
+    );
+    const { dialog, unmount } = renderDialog(fetch);
+    fireEvent.change(prompt(dialog), { target: { value: 'Look at these.' } });
+    await choose(dialog, [file('a.txt', 'text/plain'), file('b.txt', 'text/plain')]);
+    await settle();
+    fireEvent.click(start(dialog));
+    await settle();
+    expect(within(dialog).getByRole('alert').textContent).toContain("Couldn't start the session.");
+    unmount();
+    await settle();
+    expect(server.deletes.sort()).toEqual([attachmentPath('id-1'), attachmentPath('id-2')]);
   });
 
   it('keeps the dialog open on a click on the backdrop once a file is added', async () => {

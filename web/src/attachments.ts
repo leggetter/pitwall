@@ -2,10 +2,13 @@
 // file, the upload, and the list it keeps while it's open. The server (W79, ATTACHMENTS_PATH) is the
 // authority on every check; these repeat its limits so a file is refused before it's sent.
 //
-// - A file is checked as it's added: its type (ATTACHMENT_TYPES, from the browser's type or else its
-//   extension), its size (ATTACHMENT_MAX_BYTES), its name (what the server's 400 refuses) and the
-//   count (ATTACHMENTS_MAX_PER_SESSION, refused ones not counted). A refused file is listed with why,
-//   and the others go on.
+// - A file is checked as it's added: its type (attachmentType(): an image, a PDF, or any text file,
+//   code and configuration included, as text/plain), its size (ATTACHMENT_MAX_BYTES), its name (what
+//   the server's 400 refuses, after NFC normalisation, as the server counts it) and the count
+//   (ATTACHMENTS_MAX_PER_SESSION, refused ones not counted). A refused file is listed with why, and
+//   the others go on. A name already listed is numbered, "image (2).png", so each Remove is told apart.
+// - What each file comes to, and each Remove, is announced: by two status regions taking turns, so
+//   the same sentence twice is read twice.
 // - Each accepted file uploads as it's added, at most MAX_AT_ONCE at a time, through the app's
 //   ApiClient, which sends the apiKey. Remove aborts an upload, or, once it has uploaded, asks the
 //   server to remove it (attachmentPath(), DELETE), freeing its place among the pending ones.
@@ -58,28 +61,71 @@ const ALIASES: Readonly<Record<string, AttachmentType>> = {
   'text/x-markdown': 'text/markdown',
 };
 
-/** For the file input: the types, and their extensions, for a system that types a file by its name. */
-export const ACCEPT = [...ATTACHMENT_TYPES, ...Object.keys(EXTENSIONS).map((extension) => `.${extension}`)].join(',');
+/**
+ * application/* types that are text: JSON, XML and YAML (with any +json or +xml suffix), TOML,
+ * JavaScript and TypeScript, shell scripts, SQL, GraphQL and the like. They go as text/plain.
+ */
+const TEXT_APPLICATION =
+  /^application\/(?:[\w.-]+\+(?:json|xml|yaml)|json\d*|x?-?ndjson|xml|xml-dtd|x-yaml|yaml|toml|x-toml|javascript|x-javascript|ecmascript|typescript|x-typescript|x-sh|x-shellscript|x-csh|sql|graphql|x-httpd-php|x-php|x-perl|x-ruby|x-python|x-tex|x-latex|x-subrip|x-ipynb\+json|x-www-form-urlencoded)$/;
+
+/**
+ * Types that are never text: images, audio, video, fonts, 3D models, and the binary application
+ * types, such as archives, executables, office documents and databases.
+ */
+const BINARY_TYPE =
+  /^(?:image|audio|video|font|model)\/|^application\/(?:zip|gzip|x-gzip|x-tar|x-7z-compressed|x-rar-compressed|vnd\.rar|x-bzip2?|x-xz|zstd|java-archive|x-java-archive|x-msdownload|x-msi|x-executable|x-mach-binary|x-sharedlib|x-apple-diskimage|x-iso9660-image|wasm|msword|vnd\.ms-|vnd\.openxmlformats-|vnd\.oasis\.opendocument\.|vnd\.apple\.|epub\+zip|x-sqlite3|vnd\.sqlite3|x-python-code|x-font|font-)/;
+
+/** Extensions of images pitwall doesn't take, audio, video, and binary formats: never sent as text. */
+const BINARY_EXTENSIONS = new Set(
+  (
+    'heic heif avif svg svgz bmp tif tiff ico icns psd ai eps raw cr2 nef dng xcf sketch fig ' +
+    'mp3 wav flac aac ogg oga opus m4a aiff aif wma mid midi ' +
+    'mp4 m4v mov avi mkv webm wmv flv mpg mpeg 3gp ogv ' +
+    'zip gz tgz bz2 xz 7z rar tar zst lz4 jar war apk ipa dmg iso pkg deb rpm msi exe dll so dylib bin o a lib class wasm pyc pyo ' +
+    'doc docx xls xlsx ppt pptx odt ods odp pages numbers key rtf epub mobi ' +
+    'ttf otf woff woff2 eot sqlite sqlite3 db parquet avro pdb'
+  ).split(' '),
+);
+
+/** Text whose type the browser gets wrong: a TypeScript file is a video's to it (video/mp2t). */
+const MISTYPED_TEXT_EXTENSIONS = new Set(['ts', 'mts', 'cts']);
 
 /** A path separator, a C0 or C1 control, or a bidi control: what the server's 400 refuses in a name. */
-const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/;
+const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 function isAttachmentType(type: string): type is AttachmentType {
   return (ATTACHMENT_TYPES as readonly string[]).includes(type);
 }
 
+/** A file's extension, lower case, without its dot; empty for none, or a name that's only an extension, such as `.env`. */
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
 /**
- * The type to upload a file as: the browser's, when it's one the server takes, or else the one its
- * extension stands for, as a CSV that Windows calls application/vnd.ms-excel. Undefined for anything
- * else, which is refused.
+ * The type to upload a file as, or undefined for one that's refused (the contract's ATTACHMENT_TYPES):
+ * 1. the browser's type, when it's one the server takes, or another name for one;
+ * 2. text/plain for any other text: a text/* type, such as text/x-python or text/html, or a text-like
+ *    application/* one, such as YAML or JavaScript;
+ * 3. the type its extension stands for, as for a CSV that Windows calls application/vnd.ms-excel;
+ * 4. refused: an image pitwall doesn't take, such as HEIC or SVG, audio, video, or a binary format,
+ *    by its type or its extension, except text the browser mistypes, as `.ts` (video/mp2t);
+ * 5. text/plain for anything else, such as a Go file or a log with no type, since the server checks
+ *    it's UTF-8 with no NUL, and its 415 decides.
  */
 export function attachmentType(file: { name: string; type: string }): AttachmentType | undefined {
   const given = (file.type.split(';')[0] ?? '').trim().toLowerCase();
   if (isAttachmentType(given)) return given;
   const alias = ALIASES[given];
   if (alias) return alias;
-  const dot = file.name.lastIndexOf('.');
-  return dot > 0 ? EXTENSIONS[file.name.slice(dot + 1).toLowerCase()] : undefined;
+  if (given.startsWith('text/') || TEXT_APPLICATION.test(given)) return 'text/plain';
+  const extension = extensionOf(file.name);
+  const known = EXTENSIONS[extension];
+  if (known) return known;
+  if (MISTYPED_TEXT_EXTENSIONS.has(extension)) return 'text/plain';
+  if (BINARY_EXTENSIONS.has(extension) || BINARY_TYPE.test(given)) return undefined;
+  return 'text/plain';
 }
 
 export type AttachmentKind = 'image' | 'pdf' | 'text';
@@ -106,21 +152,23 @@ export function formatSize(bytes: number, { up = false }: { up?: boolean } = {})
 
 /** The sentences the dialog uses (docs/design-system.md, 4: Dialogs, New session's attachments). */
 export const ATTACH_TEXT = {
-  hint: `Or drop or paste them into the prompt: images, PDFs and text files, up to ${formatSize(ATTACHMENT_MAX_BYTES)} each.`,
+  hint: `Or drop or paste them into the prompt: images, PDFs and text files, code included, up to ${formatSize(ATTACHMENT_MAX_BYTES)} each.`,
   dropTarget: 'Drop files to attach them',
   listLabel: 'Attached files',
   uploading: 'Uploading…',
   waiting: 'Waiting…',
-  type: 'Only images, PDFs and text files can be attached.',
+  type: 'Only PNG, JPEG, GIF and WebP images, PDFs and text files can be attached.',
   empty: "It's empty.",
   size: (size: number) => `It's ${formatSize(size, { up: true })}, over the ${formatSize(ATTACHMENT_MAX_BYTES)} limit.`,
   count: `A first prompt takes at most ${ATTACHMENTS_MAX_PER_SESSION} files.`,
   long: `Its name is over ${ATTACHMENT_NAME_MAX} characters. Rename the file, then attach it again.`,
   name: 'Its name has a /, \\ or control character in it. Rename the file, then attach it again.',
+  blank: 'Its name is blank. Rename the file, then attach it again.',
   noServer: "Files can't be uploaded from here.",
   unavailable: "Files can't be attached on this machine. You can still start the session without them.",
   unclear: "pitwall's answer didn't say which file it kept.",
   attached: (name: string) => `Attached ${name}.`,
+  removed: (name: string) => `Removed ${name}.`,
 } as const;
 
 /** What's wrong with a file, before it's sent: why it's refused, or undefined. `count` is how many are already listed and not refused. */
@@ -128,11 +176,17 @@ export function fileProblem(file: { name: string; type: string; size: number }, 
   if (attachmentType(file) === undefined) return ATTACH_TEXT.type;
   if (file.size === 0) return ATTACH_TEXT.empty;
   if (file.size > ATTACHMENT_MAX_BYTES) return ATTACH_TEXT.size(file.size);
-  if (file.name.length > ATTACHMENT_NAME_MAX) return ATTACH_TEXT.long;
+  // As the server checks it: unsafe characters first, then the name normalised and trimmed.
   if (UNSAFE_NAME.test(file.name)) return ATTACH_TEXT.name;
+  const name = file.name.normalize('NFC').trim();
+  if (name === '') return ATTACH_TEXT.blank;
+  if (name.length > ATTACHMENT_NAME_MAX) return ATTACH_TEXT.long;
   if (count >= ATTACHMENTS_MAX_PER_SESSION) return ATTACH_TEXT.count;
   return undefined;
 }
+
+/** What the list calls a file whose name is blank, which is refused. */
+const UNNAMED = 'Unnamed file';
 
 /** A pasted file with no name, as some systems give an image, gets one from its type. */
 function nameOf(file: File): string {
@@ -227,10 +281,19 @@ export function problemSentence(problem: AttachmentProblem, subject: string): st
   return [problemLead(problem, subject), problem.reason, problem.detail].filter((part) => part !== undefined).join(' ');
 }
 
+/** One URL and nothing else, as a browser's Copy Image may put with the image: http(s), file, data or blob. */
+const SINGLE_URL = /^(?:https?:\/\/|file:\/\/|data:|blob:)\S+$/i;
+
+/** The forms of rich text a document or a spreadsheet copies with its plain text. */
+const RICH_TEXT = /^text\/(?:html|rtf)$|^application\/(?:rtf|x-rtf)$/i;
+
 /**
- * The files a paste carries, to attach, or undefined to let it paste as text. A paste with files and
- * text other than their names, as a copy from a spreadsheet or a document has, is text: it pastes
- * as text and attaches nothing. A copied file comes with its name, or its path, as its text.
+ * The files a paste carries, to attach, or undefined to let it paste as text. A copied file comes
+ * with its name, or its path, as its text, a browser's Copy Image may come with the image's URL, and
+ * Word's copy of an image alone with an object replacement character: those attach. A paste with other text, as a copy from a spreadsheet or a document has, which
+ * carries a picture of the text too, is text: it pastes as text and attaches nothing. Text that's
+ * only whitespace, as a blank cell copies, is text too, when it comes with rich text, as a cell
+ * does; alone with the files, it's nothing.
  */
 export function pastedFiles(data: DataTransfer | null): File[] | undefined {
   if (!data) return undefined;
@@ -238,11 +301,31 @@ export function pastedFiles(data: DataTransfer | null): File[] | undefined {
   const fromItems = () => [...(data.items ?? [])].filter((item) => item.kind === 'file').flatMap((item) => item.getAsFile() ?? []);
   const files = data.files && data.files.length > 0 ? [...data.files] : fromItems();
   if (files.length === 0) return undefined;
-  const text = data.getData('text/plain').trim();
-  if (text === '') return files;
+  const raw = data.getData('text/plain');
+  const text = raw.trim();
+  if (raw === '') return files;
+  if (text === '') return [...(data.types ?? [])].some((type) => RICH_TEXT.test(type)) ? undefined : files;
+  // An object replacement character stands for the image itself, as Word copies one alone.
+  if (/^[\ufffc\s]+$/.test(text) || SINGLE_URL.test(text)) return files;
   const names = files.map((file) => file.name).filter((name) => name !== '');
-  const onlyNames = text.split(/\r?\n/).every((line) => line.trim() === '' || names.some((name) => line.trim().endsWith(name)));
+  // Each line a file's name, or a path ending in one, never a sentence that happens to end with it.
+  const isName = (line: string) => names.some((name) => line === name || line.endsWith(`/${name}`) || line.endsWith(`\\${name}`));
+  const onlyNames = text.split(/\r?\n/).every((line) => line.trim() === '' || isName(line.trim()));
   return onlyNames ? files : undefined;
+}
+
+/**
+ * A name for the list that no listed file has: "image.png", then "image (2).png", "image (3).png",
+ * the number before the extension, so each Remove is named apart. `taken` are the names listed.
+ */
+export function uniqueName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name;
+  const dot = name.lastIndexOf('.');
+  const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+  for (let number = 2; ; number += 1) {
+    const candidate = `${stem} (${number})${extension}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 /** Whether a drag carries files, as one from the Finder or a desktop does. */
@@ -294,8 +377,11 @@ export interface AttachmentsController {
   pending: number;
   /** How many failed. */
   failed: number;
-  /** The latest result, for a polite status region: what was attached, refused or failed. */
-  announcement: string;
+  /**
+   * What the files came to, attached, refused, failed or removed, for two polite status regions
+   * taking turns: the latest in one, the other empty, so the same sentence twice is read twice.
+   */
+  announcements: readonly [string, string];
 }
 
 /**
@@ -304,7 +390,9 @@ export interface AttachmentsController {
  */
 export function useAttachments(api: ApiClient | undefined): AttachmentsController {
   const [items, setItems] = useState<readonly AttachmentItem[]>([]);
-  const [announcement, setAnnouncement] = useState('');
+  const [announcements, setAnnouncements] = useState<readonly [string, string]>(['', '']);
+  // Which region the next sentence goes to.
+  const turn = useRef<0 | 1>(0);
   // The list as it is now, for the async work, which mustn't read a render's stale copy.
   const list = useRef<readonly AttachmentItem[]>([]);
   // Each accepted file's bytes and type, and its upload's controller while it runs.
@@ -336,7 +424,10 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
     commit(list.current.map((item) => (item.key === key ? withPatch(item, patch) : item)));
   };
   const announce = (text: string) => {
-    if (alive.current) setAnnouncement(text);
+    if (!alive.current) return;
+    const region = turn.current;
+    turn.current = region === 0 ? 1 : 0;
+    setAnnouncements(region === 0 ? [text, ''] : ['', text]);
   };
 
   const pump = () => {
@@ -369,9 +460,9 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
       const name = list.current.find((each) => each.key === key)?.name ?? item.name;
       switch (outcome.kind) {
         case 'uploaded': {
-          const shown = plainText(outcome.attachment.name) || name;
-          change(key, { state: 'uploaded', id: outcome.attachment.id, name: shown, problem: undefined });
-          announce(ATTACH_TEXT.attached(shown));
+          // The list's name stays: it's the one sent, normalised as the server does, and numbered when listed twice.
+          change(key, { state: 'uploaded', id: outcome.attachment.id, problem: undefined });
+          announce(ATTACH_TEXT.attached(name));
           break;
         }
         case 'refused':
@@ -406,11 +497,15 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
     let count = list.current.filter((item) => item.state !== 'refused').length;
     const added: AttachmentItem[] = [];
     const refusals: string[] = [];
+    const taken = new Set(list.current.map((item) => item.name));
     for (const file of files) {
       const key = `attachment-${(counter.current += 1)}`;
-      const name = plainText(nameOf(file));
+      const raw = nameOf(file);
+      // As the server keeps it, NFC and trimmed, and numbered when the list has it already.
+      const name = uniqueName(plainText(raw.normalize('NFC').trim()) || UNNAMED, taken);
+      taken.add(name);
       const type = attachmentType(file);
-      const reason = fileProblem({ name: nameOf(file), type: file.type, size: file.size }, count);
+      const reason = fileProblem({ name: raw, type: file.type, size: file.size }, count) ?? (name.length > ATTACHMENT_NAME_MAX ? ATTACH_TEXT.long : undefined);
       const item: AttachmentItem = { key, name, size: file.size, kind: kindOf(type), state: reason === undefined ? 'waiting' : 'refused' };
       if (reason !== undefined || type === undefined) {
         const problem: AttachmentProblem = { verb: 'attach', reason: reason ?? ATTACH_TEXT.type };
@@ -418,7 +513,7 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
         refusals.push(problemSentence(problem, name));
       } else {
         count += 1;
-        held.current.set(key, { file, name: nameOf(file), type });
+        held.current.set(key, { file, name, type });
         if (item.kind === 'image') {
           void thumbnailOf(file).then((thumbnail) => {
             if (thumbnail !== undefined && held.current.has(key)) change(key, { thumbnail });
@@ -440,6 +535,7 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
     // Uploaded, and so held by the server as one of its pending: it can go now, not in an hour.
     if (item?.state === 'uploaded' && item.id !== undefined) release(apiRef.current, item.id);
     commit(list.current.filter((each) => each.key !== key));
+    if (item) announce(ATTACH_TEXT.removed(item.name));
     pump();
   }, []);
 
@@ -457,7 +553,7 @@ export function useAttachments(api: ApiClient | undefined): AttachmentsControlle
   const ids = items.flatMap((item) => (item.state === 'uploaded' && item.id !== undefined ? [item.id] : []));
   const pending = items.filter((item) => item.state === 'waiting' || item.state === 'uploading').length;
   const failed = items.filter((item) => item.state === 'failed').length;
-  return { items, add, remove, retry, started, ids, pending, failed, announcement };
+  return { items, add, remove, retry, started, ids, pending, failed, announcements };
 }
 
 /** Fields to change, an undefined one taking the field away. */

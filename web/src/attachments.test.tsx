@@ -1,10 +1,9 @@
 // New session's attachments (W82): the checks, the wording, the sizes, the paste rule and the upload
 // call, against ATTACHMENTS_PATH as the contract has it (src/shared/protocol.ts). Made-up files only.
 import { describe, expect, it, vi } from 'vitest';
-import { ATTACHMENT_MAX_BYTES, ATTACHMENT_TYPES, ATTACHMENTS_MAX_PER_SESSION, ATTACHMENTS_PATH, attachmentPath } from '../../src/shared/protocol.js';
+import { ATTACHMENT_MAX_BYTES, ATTACHMENTS_MAX_PER_SESSION, ATTACHMENTS_PATH, attachmentPath } from '../../src/shared/protocol.js';
 import { createApiClient, type FetchLike } from './api.js';
 import {
-  ACCEPT,
   ATTACH_TEXT,
   attachmentsProblem,
   attachmentType,
@@ -13,6 +12,7 @@ import {
   pastedFiles,
   problemLead,
   problemSentence,
+  uniqueName,
   uploadAttachment,
 } from './attachments.js';
 import { fileNameParts } from './format.js';
@@ -33,28 +33,57 @@ describe('which files it takes', () => {
     ['application/vnd.ms-excel', 'export.csv', 'text/csv'],
     ['text/plain;charset=utf-8', 'a.txt', 'text/plain'],
     ['', 'data.json', 'application/json'],
+    ['', 'notes.TXT', 'text/plain'],
   ])('a file typed %j and named %s uploads as %s', (type, name, expected) => {
     expect(attachmentType({ name, type })).toBe(expected);
+  });
+
+  // Code, configuration and logs, whatever type the browser gives them: the server checks they're UTF-8 with no NUL.
+  it.each([
+    ['text/x-python', 'main.py'],
+    ['', 'config.yaml'],
+    ['application/x-yaml', 'compose.yml'],
+    ['', 'app.log'],
+    ['video/mp2t', 'index.ts'],
+    ['video/mp2t', 'vite.config.mts'],
+    ['text/html', 'page.html'],
+    ['', 'main.go'],
+    ['', 'Makefile'],
+    ['', '.env'],
+    ['application/octet-stream', 'Cargo.lock'],
+    ['text/javascript', 'app.js'],
+    ['application/javascript', 'legacy.js'],
+    ['application/x-sh', 'build.sh'],
+    ['application/toml', 'pyproject.toml'],
+    ['application/xml', 'pom.xml'],
+    ['application/ld+json', 'schema.jsonld'],
+    ['application/sql', 'seed.sql'],
+    ['text/x-c', 'main.c'],
+  ])('a text file typed %j and named %s uploads as text/plain', (type, name) => {
+    expect(attachmentType({ name, type })).toBe('text/plain');
+    expect(fileProblem({ name, type, size: 10 }, 0)).toBeUndefined();
   });
 
   it.each([
     ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'report.docx'],
     ['image/svg+xml', 'logo.svg'],
+    ['image/heic', 'shot.heic'],
+    ['', 'shot.HEIC'],
     ['application/zip', 'site.zip'],
-    ['', 'Makefile'],
-    ['', '.png'],
-  ])('a file typed %j and named %s is refused', (type, name) => {
+    ['video/mp4', 'demo.mp4'],
+    ['video/mp4', 'demo'],
+    ['', 'voice.m4a'],
+    ['audio/mpeg', 'song'],
+    ['application/x-msdownload', 'setup.exe'],
+    ['', 'App.dmg'],
+    ['font/woff2', 'inter.woff2'],
+    ['application/x-sqlite3', 'local.db'],
+  ])('a file typed %j and named %s is refused, naming the images pitwall takes', (type, name) => {
     expect(attachmentType({ name, type })).toBeUndefined();
-    expect(fileProblem({ name, type, size: 10 }, 0)).toBe(ATTACH_TEXT.type);
+    expect(fileProblem({ name, type, size: 10 }, 0)).toBe('Only PNG, JPEG, GIF and WebP images, PDFs and text files can be attached.');
   });
 
-  it("offers the picker every type and the extensions that stand for them", () => {
-    const accepted = ACCEPT.split(',');
-    for (const type of ATTACHMENT_TYPES) expect(accepted).toContain(type);
-    for (const extension of ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.txt', '.md', '.csv', '.json']) expect(accepted).toContain(extension);
-  });
-
-  it('refuses, in this order, the type, an empty file, the size, a long name, a name the server refuses, then one past the limit', () => {
+  it('refuses, in this order, the type, an empty file, the size, a name the server refuses, a blank one, a long one, then one past the limit', () => {
     const ok = { name: 'shot.png', type: 'image/png', size: 1024 };
     expect(fileProblem(ok, 0)).toBeUndefined();
     expect(fileProblem({ ...ok, size: 0 }, 0)).toBe("It's empty.");
@@ -63,14 +92,31 @@ describe('which files it takes', () => {
     expect(fileProblem({ ...ok, size: ATTACHMENT_MAX_BYTES + 1 }, 0)).toBe("It's 10.1 MB, over the 10 MB limit.");
     expect(fileProblem({ ...ok, name: `${'a'.repeat(197)}.png` }, 0)).toBe(ATTACH_TEXT.long);
     expect(fileProblem({ ...ok, name: `${'a'.repeat(196)}.png` }, 0)).toBeUndefined();
-    for (const name of ['a/b.png', 'a\\b.png', 'a\nb.png', 'a\u0007b.png', 'a‮b.png', 'a⁦b.png', 'a‏b.png']) {
+    for (const name of ['a/b.png', 'a\\b.png', 'a\nb.png', 'a\u0007b.png', 'a\u202eb.png', 'a\u2066b.png', 'a\u200fb.png']) {
       expect(fileProblem({ ...ok, name }, 0), JSON.stringify(name)).toBe(ATTACH_TEXT.name);
     }
+    // Counted as the server counts it, after NFC normalisation: 100 é's written as e and a combining accent are 100 characters.
+    const decomposed = `${'e\u0301'.repeat(100)}.txt`;
+    expect(decomposed.length).toBe(204);
+    expect(fileProblem({ ...ok, name: decomposed }, 0)).toBeUndefined();
+    expect(fileProblem({ ...ok, name: `  ${'a'.repeat(196)}.png  ` }, 0)).toBeUndefined();
+    expect(fileProblem({ ...ok, name: '   ' }, 0)).toBe('Its name is blank. Rename the file, then attach it again.');
+    expect(fileProblem({ ...ok, name: '\u3000' }, 0)).toBe(ATTACH_TEXT.blank);
     // macOS screenshots' narrow no-break space is a space, not a control.
     expect(fileProblem({ ...ok, name: 'Screenshot 2026-10-28 at 10.15.32 AM.png' }, 0)).toBeUndefined();
     expect(fileProblem(ok, ATTACHMENTS_MAX_PER_SESSION - 1)).toBeUndefined();
     expect(fileProblem(ok, ATTACHMENTS_MAX_PER_SESSION)).toBe('A first prompt takes at most 10 files.');
     expect(fileProblem({ name: 'big.docx', type: '', size: ATTACHMENT_MAX_BYTES * 2 }, ATTACHMENTS_MAX_PER_SESSION)).toBe(ATTACH_TEXT.type);
+  });
+});
+
+describe('a name already listed', () => {
+  it('is numbered before its extension, with the first number free', () => {
+    expect(uniqueName('image.png', new Set())).toBe('image.png');
+    expect(uniqueName('image.png', new Set(['image.png']))).toBe('image (2).png');
+    expect(uniqueName('image.png', new Set(['image.png', 'image (2).png']))).toBe('image (3).png');
+    expect(uniqueName('Makefile', new Set(['Makefile']))).toBe('Makefile (2)');
+    expect(uniqueName('.env', new Set(['.env']))).toBe('.env (2)');
   });
 });
 
@@ -111,8 +157,10 @@ describe('the wording', () => {
     expect(problemLead({ verb: 'attach', reason: ATTACH_TEXT.type }, 'it')).toBe("Couldn't attach it.");
     expect(problemLead({ verb: 'upload', status: 500 }, 'it')).toBe("Couldn't upload it (HTTP 500).");
     expect(problemLead({ verb: 'upload', detail: 'Made up: full.', status: 503 }, 'it')).toBe("Couldn't upload it.");
-    expect(problemSentence({ verb: 'attach', reason: ATTACH_TEXT.type }, 'report.docx')).toBe("Couldn't attach report.docx. Only images, PDFs and text files can be attached.");
-    expect(ATTACH_TEXT.hint).toBe('Or drop or paste them into the prompt: images, PDFs and text files, up to 10 MB each.');
+    expect(problemSentence({ verb: 'attach', reason: ATTACH_TEXT.type }, 'report.docx')).toBe(
+      "Couldn't attach report.docx. Only PNG, JPEG, GIF and WebP images, PDFs and text files can be attached.",
+    );
+    expect(ATTACH_TEXT.hint).toBe('Or drop or paste them into the prompt: images, PDFs and text files, code included, up to 10 MB each.');
   });
 
   it("says why Start session is off: a failed file first, since one uploading finishes by itself", () => {
@@ -126,13 +174,36 @@ describe('the wording', () => {
 
 describe('a paste', () => {
   const image = new File([new Uint8Array([137, 80, 78, 71])], 'image.png', { type: 'image/png' });
-  const clipboard = (files: File[], text = '', items?: Array<{ kind: string; getAsFile: () => File | null }>) =>
-    ({ files, items: items ?? [], getData: (type: string) => (type === 'text/plain' ? text : '') }) as unknown as DataTransfer;
+  const clipboard = (files: File[], text = '', items?: Array<{ kind: string; getAsFile: () => File | null }>, types: string[] = []) =>
+    ({ files, items: items ?? [], types, getData: (type: string) => (type === 'text/plain' ? text : '') }) as unknown as DataTransfer;
 
   it('attaches the files it carries, alone or with their names as text, as a copied file has', () => {
     expect(pastedFiles(clipboard([image]))).toEqual([image]);
     expect(pastedFiles(clipboard([image], 'image.png'))).toEqual([image]);
     expect(pastedFiles(clipboard([image], '/Users/example/Desktop/image.png\n'))).toEqual([image]);
+    expect(pastedFiles(clipboard([image], 'C:\\Users\\example\\image.png'))).toEqual([image]);
+  });
+
+  it("attaches an image whose text is its URL, as a browser's Copy Image may put", () => {
+    expect(pastedFiles(clipboard([image], 'https://example.com/images/cat.jpg'))).toEqual([image]);
+    expect(pastedFiles(clipboard([image], '  data:image/png;base64,iVBORw0KGgo=\n', [], ['text/html', 'text/plain', 'Files']))).toEqual([image]);
+    // Two URLs, or a URL in a sentence, are text.
+    expect(pastedFiles(clipboard([image], 'https://example.com/a.png https://example.com/b.png'))).toBeUndefined();
+    expect(pastedFiles(clipboard([image], 'see https://example.com/a.png'))).toBeUndefined();
+  });
+
+  it("attaches the image Word copies alone, whose text is an object replacement character", () => {
+    expect(pastedFiles(clipboard([image], '\ufffc', [], ['text/html', 'text/rtf', 'text/plain', 'Files']))).toEqual([image]);
+  });
+
+  it('pastes whitespace as text when it comes with rich text, as a blank spreadsheet cell does, and attaches when nothing else came', () => {
+    expect(pastedFiles(clipboard([image], '\r\n', [], ['text/plain', 'text/html', 'Files']))).toBeUndefined();
+    expect(pastedFiles(clipboard([image], ' ', [], ['text/plain', 'text/rtf', 'Files']))).toBeUndefined();
+    expect(pastedFiles(clipboard([image], '\n', [], ['text/plain', 'Files']))).toEqual([image]);
+  });
+
+  it("doesn't take a sentence that ends with a file's name for its name", () => {
+    expect(pastedFiles(clipboard([image], 'please look at image.png'))).toBeUndefined();
   });
 
   it('pastes text as text, even with files, as a copy from a spreadsheet carries a picture of its cells', () => {
