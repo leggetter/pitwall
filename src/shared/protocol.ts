@@ -700,8 +700,9 @@ export const SPAWN_PATH = '/api/sessions';
  * (folders 0700, files 0600), under a safe stored name (letters, digits, `.`,
  * `-` and `_`, since an `@` mention ends at a space), never inside a
  * session's directory. An upload never used is removed after an hour; a used
- * one 7 days after its session started, because Claude Code keeps an
- * attachment's content in the transcript.
+ * one 7 days after its session started, or sooner, oldest first, once used
+ * uploads pass 500 MiB in all, because Claude Code keeps an attachment's
+ * content in the transcript.
  *
  * - 201 with the Attachment.
  * - 400 for an empty file, or a name that's empty, longer than 200
