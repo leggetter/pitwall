@@ -17,7 +17,7 @@
 // `whileWorking`. Done, it's a toast, "Ended name. Its terminal is back at the shell.", and the next
 // snapshot lists it as ended (W67), with Resume in background.
 
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { EndSessionWorking, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { couldNot, plainText } from '../format.js';
@@ -62,13 +62,22 @@ export const CONFIRM: Record<
   },
 };
 
-/** End's consequence (W90): the session by name, its running sub-agents from the snapshot, and what ending costs. */
-export function endConsequence(name: string, subagentsRunning: number | undefined): string {
+/**
+ * End's consequence (W90): the session by name, its running sub-agents from the snapshot, and what
+ * ending costs. The name is in its own `<bdi>`, so a right-to-left name, or one with directional
+ * marks, which plainText() keeps on purpose (W87), can't reorder the sentence around it.
+ */
+export function endConsequence(name: string, subagentsRunning: number | undefined): ReactNode {
   const running =
     subagentsRunning !== undefined && subagentsRunning > 0
       ? `, and ${subagentsRunning === 1 ? 'its running sub-agent is' : `its ${subagentsRunning} running sub-agents are`} stopped`
       : '';
-  return `${plainText(name)}'s Claude Code process ends, and its terminal goes back to the shell. Any reply in progress is lost${running}. Its conversation is kept, so you can resume it afterwards.`;
+  return (
+    <>
+      <bdi>{plainText(name)}</bdi>
+      {`'s Claude Code process ends, and its terminal goes back to the shell. Any reply in progress is lost${running}. Its conversation is kept, so you can resume it afterwards.`}
+    </>
+  );
 }
 
 /** The stronger warning's question, once the server says the session is working (spike 005's guard). */
@@ -80,7 +89,8 @@ export function workingConsequence(working: EndSessionWorking): string {
   const parts: string[] = [];
   if (working.turn === 'running') parts.push('Its turn is still running: a reply being written is lost, and its commands are stopped.');
   if (working.turn === 'unknown') parts.push("pitwall can't tell from its transcript whether its turn has ended, so a reply being written may be lost, and its commands stopped.");
-  if (working.subagents !== undefined) parts.push(`${working.subagents === 1 ? '1 sub-agent is' : `${working.subagents} sub-agents are`} running, and ${working.subagents === 1 ? 'it' : 'they'} end with it.`);
+  if (working.subagents === 'unknown') parts.push("pitwall can't tell whether its sub-agents are running; any that are end with it.");
+  else if (working.subagents !== undefined) parts.push(`${working.subagents === 1 ? '1 sub-agent is' : `${working.subagents} sub-agents are`} running, and ${working.subagents === 1 ? 'it' : 'they'} end with it.`);
   return `${parts.join(' ')} You can still resume it afterwards.`;
 }
 

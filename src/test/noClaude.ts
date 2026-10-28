@@ -21,13 +21,16 @@
 // and any of those behind `env`, after its options and assignments. A plain
 // `open <file>`, the CLI's way to open the browser, still goes through.
 //
-// And it refuses process.kill() with a signal that ends a process, SIGTERM,
-// SIGINT or SIGHUP (spike 005), by name or number, or with none, which is
-// SIGTERM, to any process but the test's own, without PITWALL_LIVE (W90): End
-// session's default signaller is process.kill, so a test that left it in place
-// would signal whatever real process had the made-up pid. SIGKILL and signal 0
-// still go through: End session never sends either, and tests use them to clean
-// up their own children and to check one is alive.
+// And it refuses process.kill() with any signal but 0, to any pid but those of
+// the children the wrapped APIs started and that are still running, without
+// PITWALL_LIVE (W90, and its review): End session's default signaller is
+// process.kill, so a test that left it in place would signal whatever real
+// process had the made-up pid. Every other signal counts, not only the ones
+// that end a session: '', null, false and NaN all send SIGTERM, and SIGQUIT,
+// SIGUSR1 and most others end a process too. A test that must clean up a
+// process its own child started, which the wrapper never saw, names it with
+// allowSignalsTo(). The test's own pid isn't one of its children, so it's
+// refused too. Signal 0 only asks whether a process is there.
 import childProcess from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
@@ -41,10 +44,16 @@ type AnyFunction = (...args: any[]) => any;
 interface GuardState {
   installed: boolean;
   refusals: string[];
+  /** The pids of the children the wrapped APIs started, while they run: the only ones a test may signal. */
+  spawned: Set<number>;
+  /** Pids a test said it may signal (allowSignalsTo()), such as a process its own child started. */
+  allowed: Set<number>;
 }
 
 const STATE = Symbol.for('pitwall.noClaude');
-const state: GuardState = ((globalThis as Record<symbol, GuardState | undefined>)[STATE] ??= { installed: false, refusals: [] });
+const state: GuardState = ((globalThis as Record<symbol, GuardState | undefined>)[STATE] ??= { installed: false, refusals: [], spawned: new Set(), allowed: new Set() });
+state.spawned ??= new Set();
+state.allowed ??= new Set();
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
 /** `claude` as a command in a shell command line: on its own, or as the last part of a path. */
@@ -58,14 +67,36 @@ const EDITOR_URL = /^(?:vscode|vscode-insiders|cursor):/i;
 /** In a shell command line: an editor's command, `open` with a flag group that names an app, or an editor's URL. */
 const EDITOR_IN_COMMAND =
   /(?:(?:^|[\s;&|()`'"/])(?:code|cursor|code-insiders|open\s+(?:\S+\s+)*-[A-Za-z]*[ab][A-Za-z]*)(?=$|[\s;&|()`'"]))|(?:(?:^|[\s;&|()`'"=])(?:vscode|vscode-insiders|cursor):)/i;
-/** The signals that end a session (spike 005), by name and by number. */
-const ENDING_SIGNALS: ReadonlySet<string | number> = new Set(['SIGTERM', 'SIGINT', 'SIGHUP', 15, 2, 1]);
 /** env's options that take a value as the next argument. */
 const ENV_VALUE_OPTIONS = new Set(['-u', '--unset', '-P', '-C', '--chdir']);
 
 /** The refusals since the last call, which the guard's own tests use. */
 export function takeRefusals(): string[] {
   return state.refusals.splice(0);
+}
+
+/**
+ * Lets a test signal `pid`, which the wrapper didn't see started, such as a process its own child
+ * started: say so where the test cleans it up. For this test file's worker, until it ends.
+ */
+export function allowSignalsTo(pid: number): void {
+  state.allowed.add(pid);
+}
+
+/** Notes a child the wrapped APIs started, and forgets it once it has exited, so a reused pid is never taken for it. */
+function remember(result: unknown): void {
+  // promisify(exec) and promisify(execFile) return a promise with the child as `child`.
+  const child = isRecord(result) && isRecord(result.child) && typeof result.then === 'function' ? result.child : result;
+  if (!isRecord(child) || typeof child.pid !== 'number') return;
+  const pid = child.pid;
+  if (typeof child.once === 'function') {
+    state.spawned.add(pid);
+    (child.once as (event: string, listener: () => void) => void).call(child, 'exit', () => state.spawned.delete(pid));
+  } else if (typeof child.onExit === 'function') {
+    // node-pty's IPty.
+    state.spawned.add(pid);
+    (child.onExit as (listener: () => void) => void).call(child, () => state.spawned.delete(pid));
+  }
 }
 
 function isLive(): boolean {
@@ -148,7 +179,7 @@ function refuse(api: string, what: 'claude' | 'editor' | 'signal'): never {
         'Pass a fake runner or spawner, or put the test behind PITWALL_LIVE like the live checks.'
       : what === 'editor'
         ? `pitwall tests: ${api}() would open an editor. Pass a fake runFile and the editors found (ServerInternals.editors).`
-        : `pitwall tests: ${api}() would signal another process to end without PITWALL_LIVE=1. Pass a fake signaller (ServerInternals.end).`;
+        : `pitwall tests: ${api}() would signal a process this test didn't start without PITWALL_LIVE=1. Pass a fake signaller (ServerInternals.end), or name a process your child started with allowSignalsTo().`;
   state.refusals.push(message);
   throw new Error(message);
 }
@@ -158,11 +189,15 @@ function guarded(
   original: AnyFunction,
   runsClaude: (args: unknown[]) => boolean,
   opensAnEditor: (args: unknown[]) => boolean = () => false,
+  remembers = false,
 ): AnyFunction {
   return function (this: unknown, ...args: unknown[]) {
     if (!isLive() && runsClaude(args)) refuse(api, 'claude');
     if (opensAnEditor(args)) refuse(api, 'editor');
-    return original.apply(this, args);
+    const result = original.apply(this, args);
+    // A running child, which a test may signal: not spawnSync's or execSync's, which have exited by now.
+    if (remembers) remember(result);
+    return result;
   };
 }
 
@@ -178,25 +213,26 @@ function install(): void {
   ];
   for (const [api, runsClaude, opensAnEditor] of apis) {
     const original = target[api] as AnyFunction & { [promisify.custom]?: AnyFunction };
-    const wrapped = guarded(api, original, runsClaude, opensAnEditor) as AnyFunction & { [promisify.custom]?: AnyFunction };
+    const remembers = api === 'spawn' || api === 'execFile' || api === 'exec';
+    const wrapped = guarded(api, original, runsClaude, opensAnEditor, remembers) as AnyFunction & { [promisify.custom]?: AnyFunction };
     // exec and execFile resolve to { stdout, stderr } when promisified, through their own custom form.
     const custom = original[promisify.custom];
-    if (custom !== undefined) wrapped[promisify.custom] = guarded(api, custom, runsClaude, opensAnEditor);
+    if (custom !== undefined) wrapped[promisify.custom] = guarded(api, custom, runsClaude, opensAnEditor, remembers);
     target[api] = wrapped;
   }
   // So `import { spawn } from 'node:child_process'` sees the wrapped functions too.
   syncBuiltinESMExports();
 
-  // End session's signal (W90): the test's own process, SIGKILL and signal 0 go through.
+  // End session's signal (W90): only signal 0, or a child the wrapped APIs started and that's still running.
   const kill = process.kill.bind(process);
   process.kill = function (pid: number, signal?: string | number) {
-    if (!isLive() && pid !== process.pid && (signal === undefined || ENDING_SIGNALS.has(signal))) refuse('process.kill', 'signal');
+    if (!isLive() && signal !== 0 && !state.spawned.has(pid) && !state.allowed.has(pid)) refuse('process.kill', 'signal');
     return kill(pid, signal);
   } as typeof process.kill;
 
   try {
     const pty = createRequire(import.meta.url)('node-pty') as { spawn: AnyFunction };
-    pty.spawn = guarded('node-pty spawn', pty.spawn, ([file]) => isClaude(file));
+    pty.spawn = guarded('node-pty spawn', pty.spawn, ([file]) => isClaude(file), undefined, true);
   } catch {
     // Without node-pty, nothing can start a PTY through it either.
   }

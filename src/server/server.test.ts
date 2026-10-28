@@ -76,6 +76,7 @@ function fakeIndexer(initial?: IndexSnapshot): FakeIndexer {
     pollSoon: vi.fn(),
     noteRestart: vi.fn(),
     turnState: async () => 'unknown',
+    runningSubagents: async () => undefined,
     stop: vi.fn(),
     push(snapshot) {
       latest = snapshot;

@@ -104,6 +104,14 @@ export interface Indexer {
    * reads. Never rejects.
    */
   turnState(sessionId: string): Promise<TurnState>;
+  /**
+   * How many of a session's sub-agents are running, by a scan that starts now
+   * (SubagentTracker.runningFresh()), for End session's idle check (W90). Unlike subagents(), which
+   * shows an empty list when it can't read them, this is undefined when it can't say: the session
+   * isn't in the latest snapshot, there's no sub-agent tracker, or the scan couldn't read what it
+   * needed. End counts undefined as working. Never rejects.
+   */
+  runningSubagents(sessionId: string): Promise<number | undefined>;
   stop(): void;
 }
 
@@ -303,6 +311,14 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
         return turnEnded === true ? 'ended' : turnEnded === false ? 'running' : 'unknown';
       } catch {
         return 'unknown';
+      }
+    },
+    async runningSubagents(sessionId) {
+      if (!current.has(sessionId) || deps.subagents === undefined) return undefined;
+      try {
+        return await deps.subagents.runningFresh(sessionId);
+      } catch {
+        return undefined;
       }
     },
     noteRestart(sessionId, atMs) {

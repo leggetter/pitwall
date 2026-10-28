@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createAgentsSource, listedSessionIds, parseAgentRows } from './agents.js';
+import { createAgentsSource, listedSessionIds, parseAgentRows, pidOwners, sessionPids } from './agents.js';
 import { RunError, type RunFile } from './exec.js';
 
 // Synthetic rows, shaped like Claude Code 2.1.301's and 2.1.302's `claude agents --json --all`.
@@ -183,7 +183,7 @@ describe('createAgentsSource', () => {
       return JSON.stringify([interactive]);
     });
     const result = await source.list();
-    expect(result).toEqual({ ok: true, rows: parseAgentRows([interactive]), sessionIds: [interactive.sessionId] });
+    expect(result).toEqual({ ok: true, rows: parseAgentRows([interactive]), sessionIds: [interactive.sessionId], pids: [{ pid: interactive.pid, sessionId: interactive.sessionId }] });
     expect(calls).toEqual([
       { file: 'claude-test', args: ['agents', '--json', '--all'], options: { cwd: '/tmp/pitwall-test-cwd', timeoutMs: 1234 } },
     ]);
@@ -214,7 +214,7 @@ describe('createAgentsSource', () => {
   });
 
   it('returns an empty list', async () => {
-    expect(await sourceWith(async () => '[]\n').list()).toEqual({ ok: true, rows: [], sessionIds: [] });
+    expect(await sourceWith(async () => '[]\n').list()).toEqual({ ok: true, rows: [], sessionIds: [], pids: [] });
   });
 
   it('names every session id in its output, in rows parseAgentRows skips too, so none of them reads as ended (W81)', async () => {
@@ -229,6 +229,44 @@ describe('createAgentsSource', () => {
     expect(result.rows.map((row) => row.sessionId)).toEqual([interactive.sessionId]);
     expect(result.sessionIds).toEqual([interactive.sessionId, ...odd.map((row) => row.sessionId)]);
     expect([...listedSessionIds(result)]).toEqual(result.sessionIds);
+  });
+
+  it('names every pid in its output, in rows parseAgentRows skips or merges too, so End session sees a pid two rows share (W90)', async () => {
+    const otherId = '33333333-3333-4333-8333-333333333333';
+    const output = [
+      interactive,
+      // Dropped by parseAgentRows: an unknown kind, a relative cwd, no startedAt.
+      { ...interactive, sessionId: otherId, kind: 'remote' },
+      { ...interactive, sessionId: '44444444-4444-4444-8444-444444444444', cwd: 'relative/dir', pid: 4103 },
+      { ...interactive, sessionId: '55555555-5555-4555-8555-555555555555', startedAt: undefined, pid: '4104' },
+      // The same session again, with another process: parseAgentRows keeps one row per session id.
+      { ...interactive, pid: 4105 },
+      // No session id, and pids that aren't one.
+      { pid: interactive.pid },
+      { ...background, pid: 0 },
+      { ...background, pid: -3 },
+      { ...background, pid: 1.5 },
+      { ...background, pid: '12a' },
+      'not a row',
+    ];
+    const result = await sourceWith(async () => JSON.stringify(output)).list();
+    if (!result.ok) throw new Error(result.error);
+    // One parsed row per session id; the background rows with a pid that isn't one parse as a row with no process.
+    expect(result.rows.map((row) => [row.sessionId, row.pid])).toEqual([
+      [interactive.sessionId, interactive.pid],
+      [background.sessionId, undefined],
+    ]);
+    expect(pidOwners(result, interactive.pid)).toEqual([interactive.sessionId, otherId, undefined]);
+    expect(pidOwners(result, 4104)).toEqual(['55555555-5555-4555-8555-555555555555']);
+    expect([...sessionPids(result, interactive.sessionId)]).toEqual([interactive.pid, 4105]);
+    expect(result.pids?.some((each) => each.pid <= 0 || !Number.isInteger(each.pid))).toBe(false);
+  });
+
+  it("pidOwners and sessionPids read the rows, for a source that doesn't say", () => {
+    const rows = parseAgentRows([interactive, background]);
+    expect(pidOwners({ ok: true, rows }, interactive.pid)).toEqual([interactive.sessionId]);
+    expect(pidOwners({ ok: true, rows }, 9999)).toEqual([]);
+    expect([...sessionPids({ ok: true, rows }, background.sessionId)]).toEqual([background.pid]);
   });
 
   it("listedSessionIds adds the rows' ids, for a source that doesn't say", () => {

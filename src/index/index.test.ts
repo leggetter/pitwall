@@ -236,6 +236,39 @@ describe('createIndexer', () => {
     }
   });
 
+  it("counts a listed session's running sub-agents afresh, for End session (W90), and undefined whenever it can't say", async () => {
+    vi.useRealTimers();
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('a', '/work/repo/a'), row('out', '/elsewhere/b')] };
+    // Without a tracker it can't say.
+    const bare = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+    await new Promise<IndexSnapshot>((resolve) => bare.subscribe(resolve));
+    expect(await bare.runningSubagents('a')).toBeUndefined();
+    bare.stop();
+
+    let answer: number | undefined | 'throw' = 2;
+    const asked: string[] = [];
+    const tracker = createSubagentTracker({ processStartMs: async () => undefined });
+    tracker.runningFresh = async (sessionId) => {
+      asked.push(sessionId);
+      if (answer === 'throw') throw new Error('a bug');
+      return answer;
+    };
+    const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, { ...deps, subagents: tracker });
+    expect(await indexer.runningSubagents('a')).toBeUndefined();
+    await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+    expect(await indexer.runningSubagents('a')).toBe(2);
+    answer = undefined;
+    expect(await indexer.runningSubagents('a')).toBeUndefined();
+    answer = 'throw';
+    expect(await indexer.runningSubagents('a')).toBeUndefined();
+    // Outside the roots, or never listed: not asked.
+    expect(await indexer.runningSubagents('out')).toBeUndefined();
+    expect(await indexer.runningSubagents('never-listed')).toBeUndefined();
+    expect(asked).toEqual(['a', 'a', 'a']);
+    indexer.stop();
+  });
+
   it("shows a session's SendMessage calls to the relay as to-pitwall entries when given the relay's name (W46), and as tool calls without it", async () => {
     vi.useRealTimers();
     const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-relay-'));

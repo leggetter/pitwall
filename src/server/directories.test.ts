@@ -372,6 +372,7 @@ function fakeIndexer(snapshot: IndexSnapshot | undefined): Indexer {
     pollSoon: () => {},
     noteRestart: () => {},
     turnState: async () => 'unknown',
+    runningSubagents: async () => undefined,
     stop: () => {},
   };
 }

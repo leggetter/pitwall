@@ -4,6 +4,7 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { childEnvironment, MAX_OUTPUT_BYTES, runCommand } from './command.js';
+import { allowSignalsTo } from '../test/noClaude.js';
 
 const node = process.execPath;
 const base = { cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, timeoutMs: 10_000 };
@@ -78,6 +79,8 @@ describe('runCommand', () => {
     } finally {
       if (pid > 0) {
         try {
+          // The child's own child, which noClaude.ts never saw started.
+          allowSignalsTo(pid);
           process.kill(pid, 'SIGKILL');
         } catch {
           // Already gone.

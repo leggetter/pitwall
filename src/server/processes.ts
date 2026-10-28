@@ -43,8 +43,11 @@ export type ProcessLookup =
 export type ProcessParents = { ok: true; parents: ReadonlyMap<number, number> } | { ok: false; error: string };
 
 export interface Processes {
-  /** The process with this pid, or none. Never rejects. */
-  lookup(pid: number): Promise<ProcessLookup>;
+  /**
+   * The process with this pid, or none. `timeoutMs` caps this one ps, below PS_TIMEOUT_MS, as End
+   * session's wait does with the time it has left. Never rejects.
+   */
+  lookup(pid: number, timeoutMs?: number): Promise<ProcessLookup>;
   /** Every process's parent pid, by pid. Never rejects. */
   parents(): Promise<ProcessParents>;
 }
@@ -102,14 +105,14 @@ export function createProcesses(options: ProcessesOptions = {}): Processes {
   const run = options.run ?? runFile;
   const ps = options.ps ?? PS;
   const timeoutMs = options.timeoutMs ?? PS_TIMEOUT_MS;
-  const runPs = (args: readonly string[]) => run(ps, args, { cwd: '/', env: PS_ENV, timeoutMs });
+  const runPs = (args: readonly string[], within = timeoutMs) => run(ps, args, { cwd: '/', env: PS_ENV, timeoutMs: Math.max(1, Math.min(within, timeoutMs)) });
 
   return {
-    async lookup(pid) {
+    async lookup(pid, within) {
       if (!Number.isSafeInteger(pid) || pid <= 0) return { ok: true };
       let stdout: string;
       try {
-        stdout = await runPs(['-o', 'lstart=', '-o', 'comm=', '-p', String(pid)]);
+        stdout = await runPs(['-o', 'lstart=', '-o', 'comm=', '-p', String(pid)], within);
       } catch (error) {
         // ps exits 1, printing nothing, when there's no such process.
         if (error instanceof RunError && error.reason === 'exit' && error.exitCode === 1) return { ok: true };

@@ -900,8 +900,11 @@ export interface EndSessionWorking {
    * say. Absent when its turn has ended.
    */
   turn?: 'running' | 'unknown';
-  /** How many of its sub-agents are running, when any are. They're killed with it. */
-  subagents?: number;
+  /**
+   * How many of its sub-agents are running, by a scan just then, when any are; they're killed with
+   * it. 'unknown' when pitwall couldn't read them, which counts as working too.
+   */
+  subagents?: number | 'unknown';
 }
 
 export type EndSessionResult =
@@ -926,11 +929,12 @@ export const END_SESSION_WAIT_MS = 5000;
  *
  * - 400 for a malformed body. 404 when the snapshot doesn't list the session.
  * - 409, and nothing signalled, when: it isn't interactive, running, and
- *   listed afresh with the snapshot's pid; its id isn't a UUID; its process
- *   isn't `claude`, or started after the session did, or isn't the same
- *   process just before the signal; pitwall runs under it or started it, as
- *   with pitwall's own relay; an end of it is already running; or, without
- *   `whileWorking`, it's working, with `working`.
+ *   listed afresh with the snapshot's pid; any other row names that pid, or
+ *   any row another pid for it; its id isn't a UUID; it's a relay, this
+ *   pitwall's or one named `pitwall-relay`; its process isn't `claude`, or
+ *   started after the session did, or isn't the same process just before the
+ *   signal; pitwall runs under it or started it; an end of it is already
+ *   running; or, without `whileWorking`, it's working, with `working`.
  * - 429 with `Retry-After`, sharing stop, remove, resume and open's 4 at once,
  *   and past 5 ends a minute.
  * - 502 when pitwall couldn't check it: `claude agents` or `ps` failed.

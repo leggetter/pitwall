@@ -28,14 +28,20 @@
 //      and its id is a UUID, as resume's is. No end of it is running already.
 //   2. ps says its pid is a `claude` process (processes.ts), read before the listing below.
 //   3. A fresh `claude agents --json --all` lists its session id as interactive, running, with the
-//      snapshot's pid, and no other row has that pid. It isn't pitwall's own relay (relay.ts' isRelay).
-//   4. The process started no later than the session did, by the listing's startedAt (plus
-//      START_SLACK_MS, as ps gives whole seconds), so it isn't a later process that took a dead
-//      session's pid.
+//      snapshot's pid. No other row names that pid, and no row names another pid for the session, by
+//      every row it printed, those parseAgentRows() skipped or merged included (pidOwners(),
+//      sessionPids()). It isn't a relay: this pitwall's (relay.ts' isRelay), or any session named
+//      RELAY_NAME, as another pitwall's relay is, in the snapshot or the listing.
+//   4. The process started no later than the session did, by the listing's startedAt: ps's `lstart`
+//      is whole seconds, rounded down, so it's never later than the real start, and Claude Code
+//      writes startedAt after its process has started, so the session's own process always passes.
+//      One that started later isn't the session's: a later process that took a dead session's pid.
+//      W90's live checks saw startedAt 0.5 to 1.7 s after `lstart`, for a resumed session too.
 //   5. Without `whileWorking`: its turn has ended, by its transcript's newest entries afresh (W69's
-//      rule; Indexer.turnState()), no prompt is on screen, and none of its sub-agents is running.
-//      Otherwise 409 with `working`, for the page's stronger warning, and the page sends again with
-//      `whileWorking` once you confirm it. A transcript that can't say counts as working.
+//      rule; Indexer.turnState()), no prompt is on screen, and none of its sub-agents is running, by
+//      a scan that starts now (Indexer.runningSubagents()). Otherwise 409 with `working`, for the
+//      page's stronger warning, and the page sends again with `whileWorking` once you confirm it. A
+//      transcript, or sub-agents, that can't be read count as working.
 //   6. It's neither pitwall's own process, nor one pitwall runs under (Phil's dev pitwall once ran
 //      under the coordinator's session), nor one pitwall started, as its relay, by ps's parent pids.
 //   7. Just before the signal, ps says the pid is still the process from 2: the same start time and
@@ -44,14 +50,19 @@
 //      7 and the signal.
 //
 // The pid is always the listing's, never anything the request names: the body has no pid.
+//
+// After the signal it waits up to END_SESSION_WAIT_MS by the clock, not by a count of lookups: each
+// ps gets only the time left, and is abandoned when that runs out, so a ps that hangs can't hold
+// the request, its command slot or the session's lock past the wait.
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { createAgentsSource, type AgentRow, type AgentsSource } from '../index/agents.js';
+import { createAgentsSource, pidOwners, sessionPids, type AgentRow, type AgentsSource } from '../index/agents.js';
 import type { Indexer } from '../index/index.js';
 import { isSessionUuid } from '../index/transcripts.js';
 import { END_SESSION_WAIT_MS, endSessionPath, type EndSessionResult, type EndSessionWorking } from '../shared/protocol.js';
 import { CommandSlots, LOOKUP_ERRORS, RateWindow } from './actions.js';
-import { ancestry, createProcesses, isClaudeCommand, type ProcessInfo, type Processes } from './processes.js';
+import { ancestry, createProcesses, isClaudeCommand, type ProcessInfo, type ProcessLookup, type Processes } from './processes.js';
+import { nameKey, RELAY_NAME } from './relayPrompt.js';
 import { resolveSession } from './sessions.js';
 
 /** The signal End session sends, and the only one (spike 005). */
@@ -65,9 +76,6 @@ export const DEFAULT_END_RATE = { max: 5, windowMs: 60_000 } as const;
 
 /** How often the process is looked up, while waiting for it to exit. */
 export const END_POLL_MS = 100;
-
-/** How much later than the session's startedAt its process may seem to start: ps gives whole seconds. */
-export const START_SLACK_MS = 2000;
 
 /** The largest body accepted. `{"whileWorking":true}` is 21 bytes. */
 export const MAX_END_BODY_BYTES = 1024;
@@ -92,14 +100,19 @@ export interface EndOptions {
   slots?: CommandSlots;
   /** Ends allowed per window. Default DEFAULT_END_RATE, 5 a minute. */
   endRate?: { max: number; windowMs: number };
-  /** Milliseconds since the epoch, for the rate limit. Default Date.now. */
+  /** Milliseconds since the epoch, for the rate limit and the wait's deadline. Default Date.now. */
   now?: () => number;
   /** How long to wait for the process to exit. Default END_SESSION_WAIT_MS. */
   waitMs?: number;
   /** How often to look while waiting. Default END_POLL_MS. */
   pollMs?: number;
-  /** Default a timer. Tests pass one that doesn't wait. */
+  /** The pause between lookups while waiting. Default a timer. */
   sleep?: (ms: number) => Promise<void>;
+}
+
+/** True for a session named as a pitwall relay is, this pitwall's or another's (RELAY_NAME). */
+export function isRelayName(name: string): boolean {
+  return nameKey(name.trim()) === nameKey(RELAY_NAME);
 }
 
 /** The request, when it's `{}` or `{ whileWorking: true }`. */
@@ -116,7 +129,8 @@ export function workingError(working: EndSessionWorking): string {
   const parts: string[] = [];
   if (working.turn === 'running') parts.push('its turn is still running');
   if (working.turn === 'unknown') parts.push("pitwall can't tell from its transcript whether its turn has ended");
-  if (working.subagents !== undefined) parts.push(`${working.subagents} ${working.subagents === 1 ? 'sub-agent is' : 'sub-agents are'} running`);
+  if (working.subagents === 'unknown') parts.push("pitwall can't tell whether its sub-agents are running");
+  else if (working.subagents !== undefined) parts.push(`${working.subagents} ${working.subagents === 1 ? 'sub-agent is' : 'sub-agents are'} running`);
   return `pitwall didn't end it: ${parts.join(', and ')}. Ending it now loses a reply being written and stops what it's running.`;
 }
 
@@ -136,13 +150,22 @@ const defaultSleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
+/** A lookup, or undefined once `ms` have passed without its answer, by a real timer, whatever the ps does. */
+function within(lookup: Promise<ProcessLookup>, ms: number): Promise<ProcessLookup | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  const cap = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  return Promise.race([lookup, cap]).finally(() => clearTimeout(timer));
+}
+
 /**
  * Adds POST endSessionPath(). Call it after the /api/* checks and before the /api/* catch-all, as
  * ServerInternals.routes does.
  */
 export function registerEndSession(
   app: Hono,
-  indexer: Pick<Indexer, 'latest' | 'pollSoon' | 'subagents' | 'turnState'>,
+  indexer: Pick<Indexer, 'latest' | 'pollSoon' | 'runningSubagents' | 'turnState'>,
   options: EndOptions = {},
 ): void {
   const agents = options.agents ?? createAgentsSource({ claudeBin: options.claudeBin ?? 'claude' });
@@ -152,7 +175,8 @@ export function registerEndSession(
   const selfPid = options.selfPid ?? process.pid;
   const slots = options.slots ?? new CommandSlots();
   const endRate = options.endRate ?? DEFAULT_END_RATE;
-  const ends = new RateWindow(endRate, options.now ?? Date.now);
+  const now = options.now ?? Date.now;
+  const ends = new RateWindow(endRate, now);
   const waitMs = options.waitMs ?? END_SESSION_WAIT_MS;
   const pollMs = options.pollMs ?? END_POLL_MS;
   const sleep = options.sleep ?? defaultSleep;
@@ -165,14 +189,20 @@ export function registerEndSession(
   };
   const refuse = (c: Context, error: string, status: 400 | 404 | 409 | 502 | 503) => answer(c, { ok: false, error }, status);
 
-  /** Whether the process from `first` has gone, or `pid` is another process now, within waitMs. */
+  /**
+   * Whether the process from `first` has gone, or `pid` is another process now, before waitMs have
+   * passed by the clock. Each lookup gets the time left, and is abandoned when that runs out.
+   */
   async function exited(pid: number, first: ProcessInfo): Promise<boolean> {
-    for (let waited = 0; waited < waitMs; waited += pollMs) {
-      await sleep(pollMs);
-      const now = await processes.lookup(pid);
-      if (now.ok && !sameProcess(first, now.process)) return true;
+    const deadline = now() + waitMs;
+    for (;;) {
+      if (deadline - now() <= 0) return false;
+      await sleep(Math.max(0, Math.min(pollMs, deadline - now())));
+      const left = deadline - now();
+      if (left <= 0) return false;
+      const found = await within(processes.lookup(pid, left), left);
+      if (found?.ok && !sameProcess(first, found.process)) return true;
     }
-    return false;
   }
 
   app.post(
@@ -200,6 +230,7 @@ export function registerEndSession(
       const pid = session.pid;
       if (!session.alive || pid === undefined || !Number.isSafeInteger(pid) || pid <= 1) return refuse(c, "It isn't running, so there's nothing to end.", 409);
       if (!isSessionUuid(sessionId)) return refuse(c, "Its session id isn't one pitwall can act on.", 409);
+      if (isRelayName(session.name)) return refuse(c, "That's a pitwall relay, which pitwall never ends.", 409);
       if (ending.has(sessionId)) return refuse(c, 'pitwall is already ending this session.', 409);
 
       const release = slots.acquire();
@@ -230,16 +261,26 @@ export function registerEndSession(
           return refuse(c, "It isn't running any more, so there's nothing to end.", 409);
         }
         if (row.kind !== 'interactive') return refuse(c, "It's a background session now. Stop it instead.", 409);
-        if (row.pid !== pid || listing.rows.some((each) => each !== row && each.pid === pid)) {
+        if (row.pid !== pid) {
           indexer.pollSoon();
           return refuse(c, "It's running in a different process from the one pitwall listed. Try again once the list updates.", 409);
         }
+        // Every row claude agents printed, those parseAgentRows() skipped or merged included.
+        const pids = sessionPids(listing, sessionId);
+        if (pidOwners(listing, pid).some((owner) => owner !== sessionId) || pids.size !== 1 || !pids.has(pid)) {
+          return refuse(c, "claude agents names that process for another row too, or another process for this session, so pitwall can't tell which is the session's. It didn't signal it.", 409);
+        }
         if (isRelay(row)) return refuse(c, "That's pitwall's own relay, which pitwall never ends.", 409);
+        if (isRelayName(row.name)) return refuse(c, "That's a pitwall relay, which pitwall never ends.", 409);
 
-        // 4. A process that started after the session did isn't the session's.
+        // 4. A process that started after the session did isn't the session's: lstart is rounded down, and startedAt is written after the start.
         const sessionStart = Date.parse(row.startedAt);
-        if (!Number.isFinite(sessionStart) || before.startedAtMs > sessionStart + START_SLACK_MS) {
-          return refuse(c, "Its process started after the session did, so it isn't the session's. pitwall didn't signal it.", 409);
+        if (!Number.isFinite(sessionStart) || before.startedAtMs > sessionStart) {
+          return refuse(
+            c,
+            `Its process started after the time claude agents gives for the session's start, as a process that took a dead session's pid would, so pitwall didn't signal it. If the session is still running in its terminal, type /exit there.`,
+            409,
+          );
         }
 
         // 5. Idle only, unless you confirmed the stronger warning.
@@ -247,8 +288,10 @@ export function registerEndSession(
           const working: EndSessionWorking = {};
           const turn = row.status === 'waiting' ? 'running' : await indexer.turnState(sessionId);
           if (turn !== 'ended') working.turn = turn;
-          const running = (await indexer.subagents(sessionId))?.subagents.filter((each) => each.state === 'running').length ?? 0;
-          if (running > 0) working.subagents = running;
+          // Afresh, and undefined when the scan couldn't read them, which counts as working, as a transcript that can't say does.
+          const running = await indexer.runningSubagents(sessionId);
+          if (running === undefined) working.subagents = 'unknown';
+          else if (running > 0) working.subagents = running;
           if (working.turn !== undefined || working.subagents !== undefined) {
             return answer(c, { ok: false, error: workingError(working), working }, 409);
           }
