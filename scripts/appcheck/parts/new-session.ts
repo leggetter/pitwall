@@ -225,7 +225,7 @@ const part: Part = {
       t.expect(await page.evaluate(`!!${dialogButton('Attach files')}`), 'Attach files is there');
       t.expectEqual(
         await page.evaluate(describedText(dialogButton('Attach files'))),
-        'Or drop or paste them into the prompt: images, PDFs and text files, up to 10 MB each.',
+        'Or drop or paste them into the prompt: images, PDFs and text files, code included, up to 10 MB each.',
         'it says what it takes',
       );
       await pick(t, await pickerFiles(t));
@@ -300,7 +300,7 @@ const part: Part = {
         'two refused, the third uploaded',
       );
       t.expectEqual(await page.evaluate(problemOf('pitwall-test-recording.png')), "Couldn't attach it. It's 10.1 MB, over the 10 MB limit.", 'why the large one');
-      t.expectEqual(await page.evaluate(problemOf('pitwall-test-report.docx')), "Couldn't attach it. Only images, PDFs and text files can be attached.", 'why the other');
+      t.expectEqual(await page.evaluate(problemOf('pitwall-test-report.docx')), "Couldn't attach it. Only PNG, JPEG, GIF and WebP images, PDFs and text files can be attached.", 'why the other');
       t.expectEqual(server.records.uploads.slice(before).map((upload) => upload.name), ['pitwall-test-data.json'], 'only the third was sent');
       t.expect(!(await page.evaluate<boolean>(START_OFF)), "the refused ones don't hold up Start session");
       await t.shot('refused');
@@ -389,19 +389,27 @@ const part: Part = {
       t.expectEqual(server.records.deletes.length, 1, "closing after the start asked the server to remove none of the session's files");
     });
 
-    await t.step('closing without starting asks the server to remove the files it kept', async () => {
+    await t.step('code goes as text, whatever type the browser gives it, and closing without starting asks the server to remove the files it kept', async () => {
       await t.fresh({ search: '?view=all' });
       await openDialog(t, 'New session');
       t.expect(
         await page.evaluate(
           pasteIntoPrompt([
-            { name: 'pitwall-test-left-1.txt', type: 'text/plain', text: 'made up' },
-            { name: 'pitwall-test-left-2.txt', type: 'text/plain', text: 'made up' },
+            { name: 'pitwall-test-main.py', type: 'text/x-python', text: 'print("made up")\n' },
+            { name: 'pitwall-test-index.ts', type: 'video/mp2t', text: 'export const madeUp = true;\n' },
           ]),
         ),
         'the page took the paste',
       );
       await page.waitFor('both uploaded', `${settledRows(2)} && ${ROWS}.every((row) => row.dataset.state === 'uploaded')`);
+      t.expectEqual(
+        server.records.uploads.map(({ name, type }) => [name, type]).sort(),
+        [
+          ['pitwall-test-index.ts', 'text/plain'],
+          ['pitwall-test-main.py', 'text/plain'],
+        ],
+        'each went as text/plain, under its own name',
+      );
       const ids = server.records.uploads.map((upload) => upload.id).sort();
       await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
