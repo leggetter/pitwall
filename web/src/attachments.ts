@@ -202,7 +202,7 @@ export type UploadOutcome =
   | { kind: 'refused'; error?: string; status?: number }
   /** 503: this pitwall keeps no attachments on this machine. The session can still start without them. */
   | { kind: 'unavailable'; error?: string }
-  /** Anything else, such as 429 with too many unused uploads, a 500 or no answer: trying again may. */
+  /** Anything else, such as 408 for an upload that stalled, 429 with too many unused uploads, a 500 or no answer: trying again may. */
   | { kind: 'failed'; error?: string; status?: number }
   | { kind: 'unauthorized' }
   | { kind: 'aborted' };

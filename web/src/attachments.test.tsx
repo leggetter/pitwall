@@ -262,6 +262,8 @@ describe('the upload', () => {
   });
 
   it('calls anything else a failure, which trying again may fix', async () => {
+    // An upload that stalled: the server kept nothing.
+    expect(await send(async () => json(408, { ok: false, error: 'Made up: the upload stalled.' }))).toEqual({ kind: 'failed', error: 'Made up: the upload stalled.' });
     expect(await send(async () => json(429, { ok: false, error: 'Made up: 30 unused uploads.' }))).toEqual({ kind: 'failed', error: 'Made up: 30 unused uploads.' });
     expect(await send(async () => new Response('', { status: 500 }))).toEqual({ kind: 'failed', status: 500 });
     expect(await send(async () => json(500, { ok: false, error: "Made up: pitwall couldn't write it." }))).toEqual({ kind: 'failed', error: "Made up: pitwall couldn't write it." });

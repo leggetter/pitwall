@@ -13,7 +13,7 @@ import { join, resolve } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
-import { FAIL_UPLOAD, SLOW_UPLOAD, UNAVAILABLE_UPLOAD } from '../server.js';
+import { FAIL_UPLOAD, SLOW_UPLOAD, STALLED_UPLOAD, UNAVAILABLE_UPLOAD } from '../server.js';
 import { chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, toasts, viewName } from './_dom.js';
 
 const q = JSON.stringify;
@@ -421,6 +421,18 @@ const part: Part = {
         'each one, with DELETE attachmentPath()',
       );
       t.expect(server.records.deletes.every((removed) => removed.status === 204), 'and the fake server removed each', server.records.deletes);
+    });
+
+    await t.step('an upload that stalled, 408, has failed, with Try again, and holds up Start session', async () => {
+      t.allow(/\/api\/attachments$/, 'the fake server answers 408, as W79 does an upload that stalls');
+      await t.fresh({ search: '?view=all' });
+      await openDialog(t, 'New session');
+      await dropOnPrompt(t, [{ name: `${STALLED_UPLOAD}.txt`, type: 'text/plain', text: 'made up' }]);
+      await page.waitFor('it to fail', `${ROWS}[0]?.dataset.state === 'failed'`);
+      t.expectEqual(await page.evaluate(problemOf(`${STALLED_UPLOAD}.txt`)), "Couldn't upload it. Made up: the upload stalled, so pitwall kept nothing.", 'why');
+      t.expect(await page.evaluate(`!!${ROWS}[0].querySelector('button.button')`), 'it has Try again');
+      t.expect(await page.evaluate(START_OFF), 'Start session is off');
+      t.expectEqual(server.records.uploads.map((upload) => upload.status), [408], 'the fake server answered 408');
     });
 
     await t.step('Cancel closes it, with focus back on New session', async () => {
