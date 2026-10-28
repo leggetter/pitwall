@@ -2,11 +2,15 @@
 
 The pit wall for your Claude Code sessions: watch every one on your machine, steer it, and start new ones, from a local web UI.
 
+Run many Claude Code sessions at once, across terminals and repos, and it's hard to see which ones need you. pitwall shows them all in one place, including the sessions it didn't start: the third-party session managers checked before it was built see only the sessions they launch themselves ([D1](docs/decisions.md#d1---the-session-list-comes-from-claude-agents---json---all)).
+
 ![pitwall in the light theme: Needs you, All sessions, Starred and the repos on the left; the starred sessions in the middle, each with its repo, its status and what it needs from you; and on the right, an open session's conversation, ending with the question it asked you, above the message box](docs/images/pitwall-light.png)
 
 *The sessions and the conversation in the screenshot are made up.*
 
 ## What it does
+
+Claude Code has two kinds of session, and pitwall handles both. Interactive sessions run in your terminals. Background sessions are started with `claude --bg` and run by Claude Code itself, with no terminal of their own.
 
 - **Lists every Claude Code session under a directory,** wherever it was started: Warp, Cursor or any other terminal. Sessions are grouped by git repo, with worktrees under the repo they belong to. Finished background sessions, and interactive sessions that ended recently, stay listed.
 - **Shows which sessions need you, and why:** a prompt on screen, a question it asked you, or what Claude Code says a background session needs.
@@ -15,7 +19,7 @@ The pit wall for your Claude Code sessions: watch every one on your machine, ste
 - **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, and brings an ended interactive session back in the background.
 - **Opens a session's directory** in VS Code or Cursor.
 
-**Status:** in daily use, on macOS only so far, and still changing quickly. It runs from a clone of this repo and isn't published to npm. The [roadmap](#roadmap) says what's next.
+**Status:** in daily use by its author, on macOS only so far, and still changing quickly. It runs from a clone of this repo and isn't published to npm. The [roadmap](#roadmap) says what's next.
 
 ## Try it
 
@@ -23,7 +27,7 @@ The pit wall for your Claude Code sessions: watch every one on your machine, ste
 
 - **macOS.** It's only been used on macOS. CI builds and tests it on Ubuntu, but nobody has run it on Linux or Windows.
 - **Node 22 or later,** with npm. CI uses Node 22.
-- **Claude Code,** logged in, with `claude` on your `PATH`. pitwall has been used with Claude Code 2.1.312. The one version it checks is for messaging an interactive session: that needs 2.1.295 or later, and pitwall won't start its relay on an older one.
+- **Claude Code,** logged in, with `claude` on your `PATH`. pitwall has been used with Claude Code 2.1.312. The one version it checks: messaging an interactive session needs 2.1.295 or later.
 - **git,** to clone the repo, and for grouping sessions by repo.
 
 ### Run it
@@ -42,7 +46,7 @@ node dist/cli.js ~/code
 
 ### What happens
 
-- **Your browser opens pitwall** at `http://127.0.0.1:4517/`. pitwall opens it through a launch file in `~/.pitwall/`, so the token is never in a command line that other users can see with `ps`. The page then moves the token out of the address bar.
+- **Your browser opens pitwall** at `http://127.0.0.1:4517/`, with a token: a random secret for this run, which the page needs to talk to pitwall. pitwall opens it through a launch file in `~/.pitwall/`, so the token is never in a command line that other users can see with `ps`. The page then moves the token out of the address bar.
 - **If it doesn't open,** use the link pitwall prints: `pitwall is running at http://127.0.0.1:4517/#token=…`.
 - **A new token every run.** A tab from an earlier run can't reconnect, so use the new link. `PITWALL_TOKEN` fixes the token, for a pinned tab on a single-user machine (see [Use](#use)).
 - **If port 4517 is busy,** pitwall uses a free port and says so. `--port <n>` picks one, and fails if it's busy.
@@ -62,7 +66,7 @@ node dist/cli.js ~/code
   - **Start** a session with `claude --bg`, and **stop** or **remove** a background one with `claude stop` or `claude rm`, after a confirmation.
   - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg`.
   - **Open** a session's directory in VS Code or Cursor.
-- **Its own files are all in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder.
+- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
 
 ### Security, in brief
 
@@ -80,71 +84,6 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 - **A running interactive session can only be messaged, not driven.** For anything more, such as answering a prompt, type `/bg` in the session's terminal to move it to the background, and pitwall can then attach to it ([D2](docs/decisions.md#d2---interactive-sessions-relay-messages-or-bg-for-full-control)).
 - **Untrusted directories:** Claude Code won't start a session from a script in a directory you haven't trusted. New session then shows Claude Code's error and the command to run; pitwall never grants trust for you.
 - **Cost:** each message you send starts a turn on the target session's own model, plus a Haiku turn in the relay.
-
-## How it works
-
-pitwall is one Node process, started by `node dist/cli.js`, and a page in your browser. It works through Claude Code's own commands, and adds no hooks or settings to your sessions.
-
-- **The index** polls `claude agents --json --all`, every 5 seconds by default, for every session on the machine, and keeps those under your roots. It reads each one's transcript, its sub-agents' and a background job's state from `~/.claude`, to say what it's doing and whether it needs you, and runs read-only `git` to group it by repo. When anything changes, it hands the server a new snapshot.
-- **The server** listens on 127.0.0.1 only. It serves the page, pushes each snapshot to it over a WebSocket, and answers its HTTP API, such as a session's conversation, a page at a time. When you act, it runs Claude Code's own commands: `claude --bg`, `claude stop`, `claude rm` and `claude --resume <id> --bg`. It also opens VS Code or Cursor.
-- **The terminal in the page** is xterm.js, on a second WebSocket, connected to a pseudo-terminal (PTY) that the server runs through `node-pty`. The PTY runs `claude attach <id>`, so you get Claude Code's whole interface, permission prompts included.
-- **The relay** reaches interactive sessions, which belong to the terminals they run in. Only a Claude session can send them a message, through Claude Code's cross-session messaging, so pitwall runs a headless one, `claude -p` named `pitwall-relay`, with `SendMessage` as its only tool. A gate hook lets it send only the message you wrote ([D8](docs/decisions.md#d8---messages-to-interactive-sessions-go-through-one-headless-relay-session)).
-
-```mermaid
-flowchart LR
-  page["Your browser: pitwall's page"]
-
-  subgraph pitwall["pitwall, on 127.0.0.1"]
-    server["Server: HTTP and WebSocket"]
-    index["Session index"]
-    pty["node-pty: claude attach id"]
-    relay["Relay: pitwall-relay"]
-  end
-
-  subgraph claude["Claude Code, on your machine"]
-    agents["claude agents"]
-    files["~/.claude: transcripts and job state"]
-    bg["Background sessions"]
-    interactive["Interactive sessions, in your terminals"]
-  end
-
-  editor["VS Code or Cursor"]
-
-  page <-->|"HTTP and WebSocket, with the token"| server
-  index -->|"polls every 5 s"| agents
-  index -->|reads| files
-  index -->|snapshots| server
-  server -->|"start, stop, remove, resume"| bg
-  server --> pty
-  pty -->|attach| bg
-  server -->|"your message"| relay
-  relay -->|"SendMessage, through the gate"| interactive
-  server -->|opens| editor
-```
-
-### Messaging an interactive session
-
-The relay starts on your first message and stops with pitwall. Before each message, pitwall writes down what it expects the relay to send: the session's name and a hash of your text. The gate allows a `SendMessage` only when it matches, once, and blocks anything else, such as a send that another session talked the relay into.
-
-```mermaid
-sequenceDiagram
-  participant page as Your browser
-  participant server as pitwall's server
-  participant relay as pitwall-relay
-  participant gate as Gate hook
-  participant session as Interactive session
-
-  page->>server: Send, with the page's key
-  server->>server: Check the session's name in claude agents
-  server->>relay: Your message, on its stdin
-  relay->>gate: SendMessage to the session
-  gate-->>relay: Allowed, for this message only
-  relay->>session: Your message, from another session
-  server-->>page: Delivered, held or refused
-  session->>session: A turn, within its own permissions
-  session-->>relay: Its reply, with SendMessage
-  Note over page,session: The reply shows in the session's conversation, read from its transcript
-```
 
 ## Use
 
@@ -165,7 +104,7 @@ node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
 | `-h`, `--help` | Show the help, with every option and variable | |
 | `-v`, `--version` | Show the version | |
 
-- **`PITWALL_TOKEN`:** a fixed token instead of a new one every run, so a pinned tab keeps working across restarts on the same port. It must be at least 32 characters from `A-Z`, `a-z`, `0-9`, `-` and `_`, and isn't printed. Any page or script that ever saw it can drive every later run that uses it, so use it only on a single-user machine ([D7](docs/decisions.md#d7---the-browser-is-opened-through-a-launch-file-not-a-url-with-the-token-in-it)). pitwall reads it from the environment only, never from a `.env` file.
+- **`PITWALL_TOKEN`:** a fixed token instead of a new one every run, so a pinned tab keeps working across restarts on the same port. It must be at least 32 characters from `A-Z`, `a-z`, `0-9`, `-` and `_`, with at least 8 different ones and not one piece repeated, as in `abcabc…`. It isn't printed. Any page or script that ever saw it can drive every later run that uses it, so use it only on a single-user machine ([D7](docs/decisions.md#d7---the-browser-is-opened-through-a-launch-file-not-a-url-with-the-token-in-it)). pitwall reads it from the environment only, never from a `.env` file.
 - **`PITWALL_HOME`:** where pitwall keeps its own files, instead of `~/.pitwall`.
 
 ### In the page
@@ -176,9 +115,74 @@ node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
 - **Keyboard:** `/` filters, `n` starts a session, `j` and `k` step to the next or previous session, `s` stars the open session and `?` lists every shortcut. F6 leaves the terminal. The shortcuts dialog can turn the single-key ones off.
 - **Preferences:** how to group sessions (by main repo, where they started, or every repo they worked in), which tab a running background session opens on, and whether the terminal takes the keyboard. The header's theme switch follows the system, or sets light or dark.
 
+## How it works
+
+pitwall is one Node process, started by `node dist/cli.js`, with the child processes it runs, and a page in your browser. It works through Claude Code's own commands, and adds no hooks or settings to the sessions it lists. Its one hook is on its own relay session, and a new session started with attachments gets `--add-dir` for each attachment's folder.
+
+```mermaid
+flowchart TB
+  page["Your browser: pitwall's page"]
+
+  subgraph pitwall["pitwall: one Node process and its children"]
+    index["Session index"]
+    server["Server, on 127.0.0.1: HTTP and WebSocket"]
+    pty["node-pty: claude attach id"]
+    relay["Relay: pitwall-relay"]
+  end
+
+  subgraph machine["On your machine"]
+    state["claude agents, and transcripts and job state in ~/.claude"]
+    bg["Background sessions"]
+    interactive["Interactive sessions, in your terminals"]
+    editor["VS Code or Cursor"]
+  end
+
+  page ~~~ index
+  page <-->|"HTTP and WebSocket, with the token"| server
+  index -->|snapshots| server
+  index -->|"polls every 5 s, and reads"| state
+  server -->|"start, stop, remove, resume"| bg
+  server --> pty
+  pty -->|attach| bg
+  server -->|"your message"| relay
+  relay -->|"SendMessage, through the gate"| interactive
+  server -->|opens| editor
+```
+
+- **The index** turns what it reads into a snapshot of the sessions under your roots: each one grouped by repo, with read-only `git`, and whether it needs you. The server pushes a snapshot to the page only when something changed.
+- **A conversation** comes over HTTP, a page at a time, and only when you open the session.
+- **The terminal in the page** is xterm.js, on its own WebSocket, connected to a pseudo-terminal (PTY) that runs `claude attach <id>`. So you get Claude Code's whole interface, permission prompts included.
+- **The relay** exists because the documented way to message an interactive session is Claude Code's cross-session messaging, which only a Claude session can use. So pitwall runs a headless one, `claude -p` named `pitwall-relay`, with `SendMessage` as its only tool, and a gate hook that lets it send only the message you wrote ([D8](docs/decisions.md#d8---messages-to-interactive-sessions-go-through-one-headless-relay-session)).
+
+### Messaging an interactive session
+
+The relay starts on your first message and stops with pitwall. Before each message, pitwall writes down what it expects the relay to send: the session's name and a hash of your text. The gate allows a `SendMessage` only when it matches, once, and blocks anything else, such as a send that another session talked the relay into.
+
+```mermaid
+sequenceDiagram
+  participant page as Your browser
+  participant server as pitwall's server
+  participant relay as pitwall-relay
+  participant gate as Gate hook
+  participant session as Interactive session
+
+  page->>server: Send, with the page's key
+  server->>server: Check the session's name in claude agents
+  server->>gate: Expect this name and this text's hash
+  server->>relay: Your message, on its stdin
+  relay->>gate: SendMessage to the session
+  gate-->>relay: Allowed, for this message only
+  relay->>session: Your message, from another session
+  relay-->>server: The call's result, on its stdout
+  server-->>page: Delivered, held or refused
+  session->>session: A turn, within its own permissions
+  session-->>relay: Its reply, with SendMessage
+  Note over page,session: The reply shows in the session's conversation, read from its transcript
+```
+
 ## Roadmap
 
-- **Now:** End session for interactive sessions, Clear filters as an icon, and finding out why the first paste into New session's prompt is sometimes lost. Also, the Vite and happy-dom updates that clear npm's advisories, once they're 14 days old.
+- **Now:** ending an interactive session from the page, and small fixes.
 - **Pull requests beside sessions (M4):** your open pull requests, with CI and review state, grouped by org and then repo. A pull request whose link appears in a session's recent turns names that session, and the session's row gets a badge.
 - **A supervisor (M5):** a background Claude Code session that pitwall starts and shows in its own panel, which you talk to instead of visiting each session. It lists, summarises, messages and starts sessions, and takes over from the relay. M5 also titles each session from its recent turns rather than its first prompt.
 - **Triage (M6):** urgency with reasons, from the index, the supervisor and M4's pull requests. The supervisor reads each idle session's latest turns to judge whether it really needs you. Triage tells "blocked on you" from "blocked on someone else", and pairs pull requests with sessions: "CI is failing on your PR, and the session that opened it is idle."
