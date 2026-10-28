@@ -2,6 +2,7 @@
   "name": "@leggetter/pitwall",
   "version": "0.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "A local CLI and web UI for supervising the Claude Code sessions on this machine.",
   "type": "module",
   "bin": {
