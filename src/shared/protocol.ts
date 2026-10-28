@@ -727,7 +727,13 @@ export function attachmentPath(id: string): string {
   return `${ATTACHMENTS_PATH}/${encodeURIComponent(id)}`;
 }
 
-/** The media types an attachment can have: images, PDF and plain text. */
+/**
+ * The media types an attachment can have: images, PDF and plain text. Any
+ * text file, such as source code, configuration or a log, goes as
+ * `text/plain` whatever type the browser gives it (`text/x-python`, none, or
+ * `video/mp2t` for a `.ts` file), and the server keeps its extension and
+ * checks that it's UTF-8 with no NUL.
+ */
 export const ATTACHMENT_TYPES = [
   'image/png',
   'image/jpeg',
