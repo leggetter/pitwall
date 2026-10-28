@@ -317,6 +317,18 @@ export class World {
   }
 
   /**
+   * A running interactive session, ended (W90): listed as an ended one is (W67), finished, with no
+   * process, status or need, as the index lists it from its transcript once its process has exited.
+   */
+  end(sessionId: string): void {
+    const was = this.#sessions.get(sessionId);
+    if (!was) return;
+    const ended: SessionSummary = { ...was, ended: true, finished: true, alive: false, lastActivityAt: new Date().toISOString() };
+    for (const key of ['pid', 'status', 'waitingFor', 'needsYou', 'subagentsRunning'] as const) delete ended[key];
+    this.#sessions.set(sessionId, ended);
+  }
+
+  /**
    * NAMES.endedCopy's original, open in a terminal again (W67): listed under the same id as a running
    * interactive session, as the index lists it once a resume has started a copy (spike 006, finding 5).
    */

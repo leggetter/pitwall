@@ -13,7 +13,7 @@ import { slowFirstSnapshot } from '../components/Dashboard.js';
 import { EndedFooter, useResume } from '../components/EndedSession.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
-import { SessionView, STOP_INTERACTIVE_HINT, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
+import { SessionView, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
 import { ToastProvider, useToast } from '../components/Toast.js';
 import { COPIED, COPY_FAILED, useCopy } from '../copy.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
@@ -45,7 +45,7 @@ import {
   WORKED_MULTI,
   WORKED_SNAPSHOT,
 } from './fixtures.js';
-import { element, hoverFor, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
+import { element, laidOut, press, Scenario, Specimen, specimenOf, text, type, until } from './kit.js';
 import { memoryDrafts, scriptedAttach, storedDraft, stubApi, type AttachScript, type StubOptions } from './stubs.js';
 
 const noop = () => {};
@@ -193,14 +193,6 @@ async function openMenu(root: HTMLElement): Promise<HTMLElement> {
   (await element<HTMLButtonElement>(root, 'button[aria-label="Session actions"]')).click();
   return element(root, '[role="menu"]');
 }
-
-/** Opens the actions menu and hovers `label`, a disabled item, for its tooltip. */
-const openMenuAt = (label: string) => async (root: HTMLElement) => {
-  await openMenu(root);
-  const item = await until(`the ${label} item`, () => [...root.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((candidate) => candidate.textContent?.trim() === label));
-  item.dataset.uikitHover = 'stop';
-  await hoverFor(root, '[data-uikit-hover="stop"]', STOP_INTERACTIVE_HINT);
-};
 
 /** Opens the actions menu and chooses `label`. */
 async function chooseFromMenu(root: HTMLElement, label: string): Promise<void> {
@@ -473,11 +465,11 @@ export function SessionViews() {
       </Specimen>
       <Specimen
         title="Actions menu, interactive"
-        note="Copy session ID, then Stop session, off: it has no attach command, and can't be stopped or removed from here (W40). Its tooltip says how /bg changes that."
+        note="Copy session ID, then End session (W90), in Stop session's icon and place: it has no attach command, and can't be removed. End session asks first; see Inline confirmations."
         frame="short"
       >
         <Stubbed>
-          <Scenario run={openMenuAt('Stop session')}>
+          <Scenario run={openMenu}>
             <SessionView session={MENU_INTERACTIVE} listed onClose={noop} />
           </Scenario>
         </Stubbed>
@@ -1334,8 +1326,8 @@ export function MessageBoxes() {
   );
 }
 
-/** Chooses Stop or Remove in the actions menu, and with `then`, confirms it and waits for what follows. */
-const confirm = (action: 'Stop' | 'Remove', then?: (root: HTMLElement) => Promise<unknown>) => async (root: HTMLElement) => {
+/** Chooses Stop, Remove or End in the actions menu, and with `then`, confirms it and waits for what follows. */
+const confirm = (action: 'Stop' | 'Remove' | 'End', then?: (root: HTMLElement) => Promise<unknown>) => async (root: HTMLElement) => {
   await chooseFromMenu(root, `${action} session`);
   await element(root, '.inline-confirm');
   if (!then) return;
@@ -1367,6 +1359,41 @@ const ACTION_CASES: ConfirmCase[] = [
     run: confirm('Stop', (root) => text(specimenOf(root), 'Stopped.')),
   },
   { title: 'Remove: asking', session: working('actions-confirm-remove'), run: confirm('Remove') },
+  // End session (W90): a running interactive session.
+  {
+    title: 'End: asking',
+    note: 'Names the session and its running sub-agents, and says what ending costs.',
+    session: session('actions-confirm-end', { subagentsRunning: 2 }),
+    run: confirm('End'),
+  },
+  {
+    title: 'End: ending',
+    note: 'Busy while the server checks it, signals it and waits up to 5 seconds for it to exit.',
+    session: session('actions-ending'),
+    options: { end: 'ending' },
+    run: confirm('End', (root) => text(root, 'Ending…')),
+  },
+  {
+    title: 'End: ended',
+    note: 'A toast; the next snapshot lists it as ended, with Resume in background (W67).',
+    session: session('actions-ended'),
+    options: { end: 'ended' },
+    run: confirm('End', (root) => text(specimenOf(root), 'Ended pitwall-test-actions-ended.')),
+  },
+  {
+    title: 'End: still working',
+    note: 'The server found it working, so the confirmation becomes the stronger warning, naming what runs; role="alertdialog", and Cancel takes focus.',
+    session: session('actions-end-working'),
+    options: { end: 'working' },
+    run: confirm('End', (root) => text(root, "It's still working. End this session anyway?")),
+  },
+  {
+    title: 'End: refused',
+    note: "pitwall's sentence, then the server's reason in code style.",
+    session: session('actions-end-refused'),
+    options: { end: 'refused' },
+    run: confirm('End', (root) => element(root, '.inline-alert.danger')),
+  },
   {
     title: 'Remove: removing',
     session: working('actions-removing'),

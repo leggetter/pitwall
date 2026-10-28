@@ -99,19 +99,23 @@ export const BG_NOTE = 'Typing /bg in its terminal moves it to the background, s
 /** The Terminal tab's tooltip for an interactive session, where the tab is off. */
 export const TERMINAL_INTERACTIVE_NOTE =
   "An interactive session can't be attached here. Type /bg in its terminal to move it to the background, then attach to it here.";
-/** Stop session's tooltip for an interactive session, where the item is off (W40). */
-export const STOP_INTERACTIVE_HINT =
-  "An interactive session can't be stopped here. Type /bg in its terminal to move it to the background, then stop it here.";
+/** The actions menu's End session (W90), in Stop session's icon and place. */
+export const END_LABEL = 'End session';
+/** End session's tooltip while it's off (W90): why. */
+export const END_HINTS = {
+  busy: 'Wait for the current action to finish.',
+  notRunning: "It isn't running, so there's nothing to end.",
+} as const;
 export const CWD_MISSING_HINT = 'The working directory no longer exists, for example after a worktree was removed.';
 /** The command that ends an interactive session from its own terminal, in code style wherever a note names it. */
 export const EXIT_COMMAND = '/exit';
 /**
  * The line under line 2 when a session's directory has gone (W47): why it's still listed, and what
- * ends it or takes it off the list, by kind and state. pitwall can't end an interactive session (W40).
+ * ends it or takes it off the list, by kind and state. End session ends an interactive one (W90).
  */
 export const CWD_MISSING_NOTES = {
-  /** Interactive, and running in its terminal. */
-  interactive: `It's still running in its terminal, so it's listed. Type ${EXIT_COMMAND} there to end it.`,
+  /** Interactive, and running in its terminal: End session is on, and so is /exit in its terminal. */
+  interactive: `It's still running in its terminal, so it's listed. End session, in the actions menu, ends it, as ${EXIT_COMMAND} there does.`,
   /** Background, and running: Stop session is on. */
   running: "It's still running, so it's listed. Stop session, in the actions menu, ends it.",
   /** Background, and not running, whether it finished or its process exited: Remove session is on. */
@@ -416,6 +420,7 @@ export function SessionView({
   const ownHeading = useRef<HTMLHeadingElement>(null);
   const heading = headingRef ?? ownHeading;
   const menuButton = useRef<HTMLButtonElement>(null);
+  const returnFocusToMenu = useCallback(() => focusQuietly(menuButton.current), []);
   const conversationTab = useRef<HTMLButtonElement>(null);
   const terminalTab = useRef<HTMLButtonElement>(null);
   const subagentsTab = useRef<HTMLButtonElement>(null);
@@ -667,6 +672,8 @@ export function SessionView({
   const missingNote = cwdMissingNote(session, listed);
   const waiting = waitingNote(session, listed, background && !terminalOff);
   const canAct = background && listed;
+  // End session (W90): a listed interactive session that hasn't ended.
+  const canEnd = !background && !ended && listed;
   const busy = actions.running !== undefined;
   // j, k, ↑ and ↓ wait for a resume's request too, so its result shows in the view it was asked from.
   const requesting = busy || resume.phase === 'running';
@@ -760,11 +767,19 @@ export function SessionView({
           },
         ]
       : []),
-    // An interactive session can't be stopped from here, so Stop session is off, saying how /bg changes that.
-    ...(!background && !ended && listed
+    // A running interactive session can be ended (W90, spike 005), in Stop's icon and place: its
+    // process gets SIGTERM, after its confirmation. Off while it isn't running, or another action is.
+    ...(canEnd
       ? [
           { kind: 'separator' as const, id: 'separator' },
-          { id: 'stop', label: 'Stop session', icon: 'stop' as const, disabled: true, hint: STOP_INTERACTIVE_HINT, onSelect: () => {} },
+          {
+            id: 'end',
+            label: END_LABEL,
+            icon: 'stop' as const,
+            disabled: busy || !session.alive || session.pid === undefined,
+            hint: busy ? END_HINTS.busy : END_HINTS.notRunning,
+            onSelect: () => actions.ask('end'),
+          },
         ]
       : []),
     ...(canAct
@@ -942,7 +957,10 @@ export function SessionView({
         )}
       </header>
 
-      {canAct && <SessionConfirm actions={actions} onReturnFocus={() => focusQuietly(menuButton.current)} />}
+      {/* An interactive session's too (W90), ended ones included, so End's answer still shows as the snapshot lists it as ended. */}
+      {(canAct || (!background && listed)) && (
+        <SessionConfirm actions={actions} session={session} ended={ended || !session.alive} onReturnFocus={returnFocusToMenu} />
+      )}
 
       <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
         <button

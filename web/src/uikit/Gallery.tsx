@@ -77,7 +77,7 @@ const SECTIONS: Section[] = [
   {
     id: 'confirmations',
     title: 'Inline confirmations',
-    intro: 'Stop session and Remove session, from the actions menu, and the restart before attaching, each asking, busy, and with its result.',
+    intro: 'Stop session and Remove session for a background session, End session for an interactive one (W90), from the actions menu, and the restart before attaching, each asking, busy, and with its result; End also with its stronger warning.',
     Content: Confirmations,
   },
   { id: 'terminal', title: 'Terminal', intro: 'The Terminal tab in each of its bar states, with both notices, attached to a scripted server instead of pitwall. The screen stays dark in both themes.', Content: Terminals },

@@ -236,7 +236,7 @@ describe('the actions menu', () => {
 
   it('has them for an interactive session', async () => {
     renderDashboard([CURSOR]);
-    expect(openMenu(await openView('pitwall-test-interactive'))).toEqual(['Copy session ID', '—', 'Open in Cursor', '—', 'Stop session']);
+    expect(openMenu(await openView('pitwall-test-interactive'))).toEqual(['Copy session ID', '—', 'Open in Cursor', '—', 'End session']);
   });
 
   it('has them for an ended session, whose directory may still be there, before Resume in background', async () => {
