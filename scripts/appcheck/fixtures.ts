@@ -97,12 +97,15 @@ interface Spawned {
 export interface ResetOptions {
   /** One root, /Users/example/code, or two, with /Users/example/oss as well. */
   roots?: 1 | 2;
+  /** Group labels by key, in place of the made-up ones, such as a longer name for a heading. */
+  labels?: Readonly<Record<string, string>>;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
 export class World {
   #now = Date.now();
   #roots: 1 | 2 = 1;
+  #labels: Readonly<Record<string, string>> = {};
   #sessions = new Map<string, SessionSummary>();
   #spawned: Spawned[] = [];
   #nextSpawn = 0;
@@ -114,6 +117,7 @@ export class World {
   reset(options: ResetOptions = {}): void {
     this.#now = Date.now();
     this.#roots = options.roots ?? 1;
+    this.#labels = options.labels ?? {};
     this.#spawned = [];
     this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
   }
@@ -138,7 +142,8 @@ export class World {
       if (home) home.sessions.unshift(summary);
       else groups.push({ key: summary.cwd, label: summary.cwd.slice(root.length + 1), kind: 'directory', root, sessions: [summary] });
     }
-    return { generatedAt: new Date().toISOString(), roots: this.roots, groups: groups.filter((group) => group.sessions.length > 0), source: { ok: true } };
+    const named = groups.map((group) => ({ ...group, label: this.#labels[group.key] ?? group.label }));
+    return { generatedAt: new Date().toISOString(), roots: this.roots, groups: named.filter((group) => group.sessions.length > 0), source: { ok: true } };
   }
 
   /** The directories under each root, as GET DIRECTORIES_PATH lists them (W70): shallower first, then by path. */

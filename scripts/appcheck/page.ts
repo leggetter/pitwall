@@ -62,6 +62,8 @@ export interface FreshOptions extends ResetOptions {
   storage?: Record<string, string>;
   /** An expression that's true once the page is ready. */
   ready?: string;
+  /** Emulate forced colours, as a Windows contrast theme sets them (W75). Off again at the next fresh page. */
+  forcedColors?: boolean;
 }
 
 const KEYS: Record<string, { code: string; keyCode: number; text?: string }> = {
@@ -311,7 +313,7 @@ export class Page {
    * the window and theme set, then the app loaded with the token in its fragment, as the CLI's
    * launch opens it, and waited on until it's ready.
    */
-  async fresh(viewport: Viewport, theme: Theme, { search = '?view=all', storage = {}, ready = LIST_READY, ...reset }: FreshOptions = {}): Promise<void> {
+  async fresh(viewport: Viewport, theme: Theme, { search = '?view=all', storage = {}, ready = LIST_READY, forcedColors = false, ...reset }: FreshOptions = {}): Promise<void> {
     await this.#blank();
     this.#server.reset(reset);
     await this.send('Storage.clearDataForOrigin', { origin: this.origin, storageTypes: 'local_storage,session_storage' });
@@ -324,7 +326,9 @@ export class Page {
             source: `(() => { if (location.origin !== ${JSON.stringify(this.origin)}) return; for (const [key, value] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(key, value); })()`,
           });
     await this.send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
-    await this.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
+    const media = [{ name: 'prefers-color-scheme', value: theme }, { name: 'prefers-reduced-motion', value: 'reduce' }];
+    if (forcedColors) media.push({ name: 'forced-colors', value: 'active' });
+    await this.send('Emulation.setEmulatedMedia', { features: media });
     try {
       await this.#load(() => this.send('Page.navigate', { url: `${this.origin}/${search}#token=${this.#token}` }), 'the app');
     } finally {
