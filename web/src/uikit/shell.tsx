@@ -41,7 +41,7 @@ import {
   WORKED_ROOT_GROUP,
   WORKED_SNAPSHOT,
 } from './fixtures.js';
-import { Reopenable, Specimen } from './kit.js';
+import { hoverFor, Reopenable, Scenario, Specimen } from './kit.js';
 import { memoryShortcuts, memoryStorage, storedHidden } from './stubs.js';
 
 const noop = () => {};
@@ -428,7 +428,18 @@ export function SessionListHeads() {
           onToggleFinished={noop}
         />
       </Specimen>
-      <Specimen title="In a narrow window" note="The summary and the filters wrap; Hide from repo list goes with the summary. Clear filters has no room beside the chips, so it's under them, and Sort after it." width={320}>
+      <Specimen title="At 440 px" note="The session list's width at 1,440 px: the field on its line, then the chips, Clear filters and Sort on one line, since Clear filters is a 24 px icon (W91). With the text button's room, Sort had a line of its own here. Press a chip or type: nothing moves." width={440}>
+        <SessionList
+          heading={{ label: 'All sessions' }}
+          summary={{ total: 10, shown: 4, attention: 2 }}
+          filters={<LiveFilters start={filters('', 'interactive')} />}
+          current={[]}
+          finished={[]}
+          finishedCollapsed
+          onToggleFinished={noop}
+        />
+      </Specimen>
+      <Specimen title="In a narrow window" note="The summary and the filters wrap; Hide from repo list goes with the summary. Clear filters, an icon, fits beside the chips, and Sort has a line of its own after them (W91): 3 lines, where the text button's room made 4." width={320}>
         <SessionList
           heading={{ label: 'pitwall-test-app/packages/a-package-directory-with-a-long-name', kind: 'git' }}
           summary={{ total: 4, shown: 4, attention: 2 }}
@@ -455,8 +466,18 @@ export function FilterSpecimens() {
           <LiveFilters />
         </ShortcutsStoreContext.Provider>
       </Specimen>
-      <Specimen title="With text" note="The clear button shows, and so does Clear filters. Escape clears the text.">
+      <Specimen title="With text" note="The field's clear button shows, and so does Clear filters, after the chips. Escape clears the text.">
         <LiveFilters start={filters('export')} />
+      </Specimen>
+      <Specimen
+        title="Clear filters, hovered"
+        note="An icon button at every width (W91): ghost sm, filter_alt_off, named Clear filters by its tooltip, which opens on hover after --pw-delay-tooltip and at once on keyboard focus. Not the field's cancel icon, which clears the text alone. It clears the text and the chips, and puts focus in the field, since it goes with them."
+      >
+        <Scenario run={(root) => hoverFor(root, 'button[aria-label="Clear filters"]', 'Clear filters')}>
+          <div className="uikit-tip-stage">
+            <LiveFilters start={filters('', 'interactive')} />
+          </div>
+        </Scenario>
       </Specimen>
       <Specimen title="A chip on" note="Background: background sessions only.">
         <LiveFilters start={filters('', 'background')} />

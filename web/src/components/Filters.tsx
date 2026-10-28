@@ -132,6 +132,8 @@ export interface FilterControlsProps {
  * The field, the chips and Clear filters, in role="search". The field has a line of its own, and the
  * chips, Clear filters and `children` share the next, wrapping when they must. Turning a filter on or
  * off moves none of them (W75): while no filter is on, an unseen copy of Clear filters keeps its room.
+ * Clear filters is an icon button at every width, named by its tooltip (W91), so the chips' line has
+ * room for Sort in a 1,440 px window, where the text button's room cost the bar a line.
  */
 export function FilterControls({ filters, onChange, children, fieldRef }: FilterControlsProps) {
   const own = useRef<HTMLInputElement>(null);
@@ -141,21 +143,23 @@ export function FilterControls({ filters, onChange, children, fieldRef }: Filter
       <FilterField value={filters.text} onChange={(text) => onChange({ ...filters, text })} inputRef={field} />
       <FilterChips chips={filters.chips} onChange={(chips) => onChange({ ...filters, chips })}>
         {filtering(filters) ? (
-          <button
-            type="button"
-            className="button ghost sm"
-            onClick={() => {
-              onChange(NO_FILTERS);
-              // The button goes away with the filters, so focus goes back to the field rather than the page.
-              field.current?.focus();
-            }}
-          >
-            Clear filters
-          </button>
+          <Tooltip content="Clear filters" relation="label">
+            <button
+              type="button"
+              className="icon-button ghost sm"
+              onClick={() => {
+                onChange(NO_FILTERS);
+                // The button goes away with the filters, so focus goes back to the field rather than the page.
+                field.current?.focus();
+              }}
+            >
+              <Icon name="clear-filters" />
+            </button>
+          </Tooltip>
         ) : (
           // Its room, the same size and unseen: not a button, and hidden from assistive technology.
-          <span className="button ghost sm filter-clear-room" aria-hidden="true">
-            Clear filters
+          <span className="icon-button ghost sm filter-clear-room" aria-hidden="true">
+            <Icon name="clear-filters" />
           </span>
         )}
       </FilterChips>
