@@ -14,7 +14,7 @@ export function isNonEmptyString(value: unknown): value is string {
  * never runs a command in one (checkDirectory, server/actions.ts), lists an ended session that
  * started in one (ended.ts) or lists one to pick (server/directories.ts).
  */
-const UNSAFE_CHARACTERS = /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/;
+const UNSAFE_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 /** True when `text` has a character from UNSAFE_CHARACTERS. */
 export function hasUnsafeCharacters(text: string): boolean {
