@@ -18,7 +18,7 @@ import { createJobReader, type JobNeeds, type JobReader } from './jobs.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
 import { createSubagentTracker, isSafeAgentId, type SubagentLabels, type SubagentTracker } from './subagents.js';
 import { buildGroups, isFinished, restartHolds, toSessionSummary, type PlacedSession } from './summaries.js';
-import { createTranscriptReader, isSafeSessionId, type TranscriptReader } from './transcripts.js';
+import { createTranscriptReader, isSafeSessionId, readNewestEntries, type TranscriptReader } from './transcripts.js';
 import { createWorkedInScanner, type WorkedInScanner } from './workedIn.js';
 
 export { isSafeSessionId } from './transcripts.js';
@@ -95,8 +95,20 @@ export interface Indexer {
    * isn't finite is ignored. Never throws.
    */
   noteRestart(sessionId: string, atMs: number): void;
+  /**
+   * Whether a running session's turn has ended, read afresh from its transcript's newest entries
+   * by W69's rule (TranscriptInfo.turnEnded), for End session's idle check (W90, spike 005):
+   * 'ended', 'running', or 'unknown' when the session isn't in the latest snapshot, has no
+   * transcript pitwall has found, or its newest entries record no turn's end, as from an older
+   * Claude Code or a turn longer than the window read. Reads the file once, outside the poll's own
+   * reads. Never rejects.
+   */
+  turnState(sessionId: string): Promise<TurnState>;
   stop(): void;
 }
+
+/** Indexer.turnState()'s answer. */
+export type TurnState = 'ended' | 'running' | 'unknown';
 
 /** Everything the poller depends on, so tests can replace any of it. */
 export interface IndexerDeps {
@@ -282,6 +294,17 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       return readPage(found.file, sessionId, before, { sidechain: true, noFollow: true, ...(subagents === undefined ? {} : { subagents }) });
     },
     pollSoon,
+    async turnState(sessionId) {
+      if (!current.has(sessionId)) return 'unknown';
+      const file = deps.transcripts.transcriptFile(sessionId);
+      if (file === undefined) return 'unknown';
+      try {
+        const turnEnded = (await readNewestEntries(file))?.info.turnEnded;
+        return turnEnded === true ? 'ended' : turnEnded === false ? 'running' : 'unknown';
+      } catch {
+        return 'unknown';
+      }
+    },
     noteRestart(sessionId, atMs) {
       if (stopped || !isSafeSessionId(sessionId) || !Number.isFinite(atMs)) return;
       restarts.set(sessionId, atMs);

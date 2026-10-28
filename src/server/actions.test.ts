@@ -168,6 +168,7 @@ function fakeIndexer(latest: IndexSnapshot | null = snapshot()): Indexer {
     subagentConversation: async () => undefined,
     pollSoon: vi.fn(),
     noteRestart: vi.fn(),
+    turnState: async () => 'unknown',
     stop: () => {},
   };
 }

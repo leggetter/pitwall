@@ -21,6 +21,7 @@ const OPEN = '/nonexistent/pitwall-test/open';
 const XDG_OPEN = '/nonexistent/pitwall-test/xdg-open';
 const ENV = '/nonexistent/pitwall-test/env';
 const EDITOR_REFUSED = /would open an editor/;
+const SIGNAL_REFUSED = /would signal another process to end without PITWALL_LIVE=1/;
 
 describe('the no-claude guard', () => {
   let saved: string | undefined;
@@ -144,5 +145,29 @@ describe('the no-claude guard', () => {
     process.env.PITWALL_LIVE = '1';
     expect(spawnSync(CLAUDE, ['--help']).error).toMatchObject({ code: 'ENOENT' });
     expect(takeRefusals()).toEqual([]);
+  });
+
+  // W90: End session's default signaller is process.kill. Only a child this test starts is ever signalled.
+  it('refuses process.kill with SIGTERM, SIGINT, SIGHUP or no signal to another process, and lets 0, SIGKILL and PITWALL_LIVE=1 through', async () => {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    const exited = new Promise<NodeJS.Signals | null>((resolve) => child.once('exit', (_code, signal) => resolve(signal)));
+    const pid = child.pid as number;
+    try {
+      expect(() => process.kill(pid, 'SIGTERM')).toThrow(SIGNAL_REFUSED);
+      expect(() => process.kill(pid, 'SIGINT')).toThrow(SIGNAL_REFUSED);
+      expect(() => process.kill(pid, 'SIGHUP')).toThrow(SIGNAL_REFUSED);
+      expect(() => process.kill(pid, 15)).toThrow(SIGNAL_REFUSED);
+      expect(() => process.kill(pid)).toThrow(SIGNAL_REFUSED);
+      expect(takeRefusals()).toHaveLength(5);
+      // Refused before it was sent: the child is still running.
+      expect(process.kill(pid, 0)).toBe(true);
+      expect(child.exitCode).toBeNull();
+      process.env.PITWALL_LIVE = '1';
+      expect(process.kill(pid, 'SIGTERM')).toBe(true);
+      expect(await exited).toBe('SIGTERM');
+      expect(takeRefusals()).toEqual([]);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
   });
 });

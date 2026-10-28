@@ -20,6 +20,14 @@
 // it; `open` or `xdg-open` with a `vscode:`, `vscode-insiders:` or `cursor:` URL;
 // and any of those behind `env`, after its options and assignments. A plain
 // `open <file>`, the CLI's way to open the browser, still goes through.
+//
+// And it refuses process.kill() with a signal that ends a process, SIGTERM,
+// SIGINT or SIGHUP (spike 005), by name or number, or with none, which is
+// SIGTERM, to any process but the test's own, without PITWALL_LIVE (W90): End
+// session's default signaller is process.kill, so a test that left it in place
+// would signal whatever real process had the made-up pid. SIGKILL and signal 0
+// still go through: End session never sends either, and tests use them to clean
+// up their own children and to check one is alive.
 import childProcess from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
@@ -50,6 +58,8 @@ const EDITOR_URL = /^(?:vscode|vscode-insiders|cursor):/i;
 /** In a shell command line: an editor's command, `open` with a flag group that names an app, or an editor's URL. */
 const EDITOR_IN_COMMAND =
   /(?:(?:^|[\s;&|()`'"/])(?:code|cursor|code-insiders|open\s+(?:\S+\s+)*-[A-Za-z]*[ab][A-Za-z]*)(?=$|[\s;&|()`'"]))|(?:(?:^|[\s;&|()`'"=])(?:vscode|vscode-insiders|cursor):)/i;
+/** The signals that end a session (spike 005), by name and by number. */
+const ENDING_SIGNALS: ReadonlySet<string | number> = new Set(['SIGTERM', 'SIGINT', 'SIGHUP', 15, 2, 1]);
 /** env's options that take a value as the next argument. */
 const ENV_VALUE_OPTIONS = new Set(['-u', '--unset', '-P', '-C', '--chdir']);
 
@@ -131,12 +141,14 @@ function commandRunsClaude([command]: unknown[]): boolean {
   return typeof command === 'string' && CLAUDE_IN_COMMAND.test(command);
 }
 
-function refuse(api: string, what: 'claude' | 'editor'): never {
+function refuse(api: string, what: 'claude' | 'editor' | 'signal'): never {
   const message =
     what === 'claude'
       ? `pitwall tests: ${api}() would run claude without PITWALL_LIVE=1. ` +
         'Pass a fake runner or spawner, or put the test behind PITWALL_LIVE like the live checks.'
-      : `pitwall tests: ${api}() would open an editor. Pass a fake runFile and the editors found (ServerInternals.editors).`;
+      : what === 'editor'
+        ? `pitwall tests: ${api}() would open an editor. Pass a fake runFile and the editors found (ServerInternals.editors).`
+        : `pitwall tests: ${api}() would signal another process to end without PITWALL_LIVE=1. Pass a fake signaller (ServerInternals.end).`;
   state.refusals.push(message);
   throw new Error(message);
 }
@@ -174,6 +186,13 @@ function install(): void {
   }
   // So `import { spawn } from 'node:child_process'` sees the wrapped functions too.
   syncBuiltinESMExports();
+
+  // End session's signal (W90): the test's own process, SIGKILL and signal 0 go through.
+  const kill = process.kill.bind(process);
+  process.kill = function (pid: number, signal?: string | number) {
+    if (!isLive() && pid !== process.pid && (signal === undefined || ENDING_SIGNALS.has(signal))) refuse('process.kill', 'signal');
+    return kill(pid, signal);
+  } as typeof process.kill;
 
   try {
     const pty = createRequire(import.meta.url)('node-pty') as { spawn: AnyFunction };
