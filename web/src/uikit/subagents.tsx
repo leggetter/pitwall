@@ -9,7 +9,7 @@
 
 import type { ConversationEntry } from '../../../src/shared/protocol.js';
 import { SessionView } from '../components/SessionView.js';
-import { background, SUBAGENT_CONVERSATION, SUBAGENTS, VIEW_SUBAGENTS } from './fixtures.js';
+import { background, REVIEW, SUBAGENT_CONVERSATION, VIEW_SUBAGENTS } from './fixtures.js';
 import { element, press, Scenario, Specimen, until } from './kit.js';
 import type { StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
@@ -157,7 +157,7 @@ export function SubagentViews() {
         frame="view"
       >
         <Stubbed options={{ subagents: 'ok', entries: SUBAGENT_CONVERSATION }}>
-          <Scenario run={openRow(SUBAGENTS[1]!.description)}>
+          <Scenario run={openRow(REVIEW.description)}>
             <SessionView session={VIEW_SUBAGENTS} listed onClose={noop} />
           </Scenario>
         </Stubbed>

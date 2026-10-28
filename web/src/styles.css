@@ -2581,6 +2581,12 @@ mark.match {
   .session-tab[aria-selected='true']::after {
     bottom: -5px;
   }
+
+  /* The row clips what's drawn past a tab, so its focus ring is inset (2.10). */
+  .session-tab:focus-visible {
+    outline-offset: -2px;
+    box-shadow: var(--pw-ring-focus-inset);
+  }
 }
 
 /* While attached: an 8 px success dot after the label. */

@@ -5,7 +5,8 @@
 //
 // - The list comes from subagentsPath() (subagents.ts): once when the view opens, so the tab shows only
 //   for a session that has any, again when the tab is opened, and while it's open and any are running,
-//   at the pace of the index's polls (SessionView.tsx decides when; useSubagents fetches).
+//   at the pace of the index's polls (SessionView.tsx decides when; useSubagents fetches, one request
+//   at a time, with one more after it when it was asked again meanwhile).
 // - Each row: the description, its state badge and when it was last active, in the row's fixed time
 //   slot; then its type, its tool calls and when it started; and for one another sub-agent started,
 //   "Started by *description*". The rows are buttons named by the description, one Tab stop for the
@@ -63,8 +64,10 @@ export interface SubagentsController {
 }
 
 /**
- * A session's sub-agents, fetched when asked. Only the newest request counts, and nothing after the
- * view has gone. `signal` aborts the requests when the view closes.
+ * A session's sub-agents, fetched when asked. One request at a time: asked again while one is out, it
+ * asks once more when that one answers, however often it was asked meanwhile, so a route slower than
+ * the index's polls still lands each answer, and never holds more than one of the server's four reads.
+ * Nothing after the view has gone. `signal` aborts the request when the view closes.
  */
 export function useSubagents(api: ApiClient | undefined, sessionId: string, signal: () => AbortSignal | undefined): SubagentsController {
   const [state, setState] = useState<SubagentsState>(() => ({ status: api ? 'idle' : 'unavailable', retrying: false, attempts: 0 }));
@@ -74,7 +77,9 @@ export function useSubagents(api: ApiClient | undefined, sessionId: string, sign
     setState(next);
   }, []);
   const made = useRef(false);
-  const latest = useRef(0);
+  // A request is out, and whether it was asked for again meanwhile.
+  const out = useRef(false);
+  const again = useRef(false);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -83,14 +88,13 @@ export function useSubagents(api: ApiClient | undefined, sessionId: string, sign
     };
   }, []);
 
-  const load = useCallback(async () => {
+  /** One request, and what it says, committed unless the view has gone. */
+  const once = useCallback(async () => {
     if (!api) return;
-    made.current = true;
-    const request = ++latest.current;
     const before = stateRef.current;
     if (before.status === 'idle') commit({ ...before, status: 'loading' });
     const result = await getSubagents(api, sessionId, signal());
-    if (!alive.current || request !== latest.current) return;
+    if (!alive.current) return;
     const now = stateRef.current;
     if (result.kind === 'ok') {
       commit({ status: 'ready', list: result.list, retrying: false, attempts: now.attempts });
@@ -110,6 +114,24 @@ export function useSubagents(api: ApiClient | undefined, sessionId: string, sign
     const attempts = now.retrying ? now.attempts + 1 : now.attempts;
     commit({ ...now, status: now.list ? 'ready' : 'failed', failure, retrying: false, attempts });
   }, [api, sessionId, signal, commit]);
+
+  const load = useCallback(async () => {
+    if (!api) return;
+    made.current = true;
+    if (out.current) {
+      again.current = true;
+      return;
+    }
+    out.current = true;
+    try {
+      do {
+        again.current = false;
+        await once();
+      } while (again.current && alive.current);
+    } finally {
+      out.current = false;
+    }
+  }, [api, once]);
 
   const ensure = useCallback(() => {
     if (!made.current) void load();
@@ -414,8 +436,13 @@ function SubagentTranscript({ api, sessionId, subagent, listed, all, hidden, ope
     () => (api ? (before) => getSubagentConversation(api, sessionId, agentId, before, signal()) : undefined),
     [api, sessionId, agentId, signal],
   );
-  // The newest page again whenever its activity moves, as the list, refreshed while any run, says.
-  const conversation = useConversation(listed?.lastActivityAt, loader);
+  // The newest page again whenever its activity moves, as the list, refreshed while any run, says. Its
+  // first activity time doesn't count as a move: opened from a link before the list arrived, the page
+  // it asked for as it opened is as new, so the time the list then brings would only ask for it again.
+  const activity = listed?.lastActivityAt;
+  const firstActivity = useRef(activity);
+  if (firstActivity.current === undefined) firstActivity.current = activity;
+  const conversation = useConversation(activity === firstActivity.current ? undefined : activity, loader);
   const name = subagentName(listed?.description ?? subagent.description);
   const badge = listed ? subagentBadge(listed.state) : undefined;
   const parent = listed?.startedBy === undefined ? undefined : startedByName(all, listed.startedBy);

@@ -544,28 +544,32 @@ function subagentCallLead(entry: ConversationEntry): string {
 /** A tool call's one line, cut with an ellipsis, the whole of it in a tooltip when it's cut, and its error badge. */
 function ToolCall({ entry }: { entry: ConversationEntry }) {
   const { subagent } = entry;
-  // A call about one of the session's sub-agents names it by its description, with its link (W77).
-  const text = subagent ? `${subagentCallLead(entry)}${subagentName(subagent.description)}` : plainText(entry.text);
+  const error = entry.toolError && (
+    <Badge look="subtle-danger" className="tool-call-error">
+      error
+    </Badge>
+  );
+  if (subagent) {
+    // A call about one of the session's sub-agents names it by its description, with its link (W77).
+    // No tooltip of the line's own, cut or not: the link has one, and two would open at once.
+    return (
+      <>
+        <span className="tool-call-text">
+          {subagentCallLead(entry)}
+          <SubagentName subagent={subagent} />
+        </span>
+        {error}
+      </>
+    );
+  }
+  const text = plainText(entry.text);
   return (
     <>
       {/* Never focusable, so it opens on hover; the whole line is in the DOM for screen readers and find. */}
       <Tooltip content={text} relation="none" onlyIfCut>
-        <span className="tool-call-text">
-          {subagent ? (
-            <>
-              {subagentCallLead(entry)}
-              <SubagentName subagent={subagent} />
-            </>
-          ) : (
-            text
-          )}
-        </span>
+        <span className="tool-call-text">{text}</span>
       </Tooltip>
-      {entry.toolError && (
-        <Badge look="subtle-danger" className="tool-call-error">
-          error
-        </Badge>
-      )}
+      {error}
     </>
   );
 }

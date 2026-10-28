@@ -4,7 +4,8 @@
 // first, then the newest started first, each with its badge, its time in the row's fixed slot, and
 // "Started by" for a nested one, with no message box; a row opens the sub-agent's transcript,
 // read-only, with Load earlier, and Back returns to its row; ↓ and ↑, Enter, Shift+Tab to Back; and
-// a link in the conversation opens a transcript in the tab. Focus never drops to the page.
+// a link in the conversation opens a transcript in the tab. Focus never drops to the page. And, from
+// the 375 px case, a 320 px window with a long count, where the tab row scrolls rather than the page.
 
 import { NAMES, SUBAGENTS } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -155,6 +156,41 @@ const part: Part = {
       await page.click('Back to sub-agents', BACK);
       await page.waitFor('the list', `${ROWS}.length === 5`);
       t.expect(await page.evaluate(onRow(SUBAGENTS.drafting.description)), 'Back returns to its row', await page.evaluate(focused));
+    });
+
+    // Once per theme, from the 375 px case: a window 320 px wide, the narrowest the design system
+    // supports (6.1, rule 12), with a count long enough that the three tabs don't fit.
+    if (t.viewport.name !== '375') return;
+    await t.step('at 320 px, with a long count, the tab row scrolls rather than the page, keeping the tab you move to in view', async () => {
+      await t.fresh({ search: '?view=all' });
+      server.world.manySubagents();
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: false });
+      await page.waitFor('the 320 px window', `window.innerWidth === 320`);
+      await openFromRow(t, NAMES.inApi);
+      await page.waitFor('the long count', `${TABS}.at(-1) === 'Sub-agents (200+)'`);
+      const ROW = `${VIEW}.querySelector('[role="tablist"]')`;
+      const row = await page.evaluate<{ overflow: string; scrolls: boolean; icons: number; page: boolean }>(`(() => {
+        const list = ${ROW};
+        return {
+          overflow: getComputedStyle(list).overflowX,
+          scrolls: list.scrollWidth > list.clientWidth,
+          icons: [...list.querySelectorAll('[role="tab"] > svg')].filter((svg) => getComputedStyle(svg).display !== 'none').length,
+          page: document.documentElement.scrollWidth <= window.innerWidth,
+        };
+      })()`);
+      t.expectEqual(row.overflow, 'auto', 'the row can scroll sideways');
+      t.expect(row.scrolls, 'and does, with three tabs and a long count', row);
+      t.expectEqual(row.icons, 0, 'the tabs have dropped their icons');
+      t.expect(row.page, "the page doesn't scroll sideways", row);
+      await page.evaluate(`${viewTabButton('Conversation')}.focus()`);
+      await page.key('ArrowLeft');
+      t.expectEqual(await page.evaluate(focused), 'Sub-agents (200+)', '← wraps to the last tab');
+      const inView = await page.evaluate<{ tab: [number, number]; row: [number, number] }>(`(() => { const tab = ${viewTabButton('Sub-agents (200+)')}.getBoundingClientRect(), row = ${ROW}.getBoundingClientRect(); return { tab: [Math.round(tab.left), Math.round(tab.right)], row: [Math.round(row.left), Math.round(row.right)] }; })()`);
+      t.expect(inView.tab[0] >= inView.row[0] && inView.tab[1] <= inView.row[1], 'scrolled into view in its row', inView);
+      await page.key('Enter');
+      await page.waitFor('the rows', `${ROWS}.length === 200`);
+      t.expectEqual(await page.evaluate(`${PANEL}.querySelector('.subagents-truncated')?.textContent`), 'This session has more than 200 sub-agents, so the oldest are left out.', 'the note that the oldest are left out');
+      await t.shot('320');
     });
   },
 };

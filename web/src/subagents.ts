@@ -36,7 +36,7 @@ const STATES: ReadonlySet<SubagentState> = new Set(['running', 'done', 'failed',
 const isTime = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value));
 
 /**
- * The body as the SubagentList of `sessionId`, sorted as the tab shows it (sortSubagents), or
+ * The body as the SubagentList of `sessionId`, ordered as the tab shows it (sortSubagents), or
  * undefined when it isn't one. Entries that aren't well formed are dropped rather than failing the
  * list, and a state it doesn't know reads as 'unknown'.
  */
@@ -63,21 +63,12 @@ function asSubagent(value: unknown): SubagentSummary | undefined {
 }
 
 /**
- * Running ones first, then the newest started first, one with no start time last, as the contract
- * orders them. The server sorts them already; this keeps the tab's order whatever arrives, and keeps
- * the server's order among equals.
+ * Running ones first, then the rest, each in the order the server sent them: it sorts them already
+ * (running ones first, then the newest started first), and its order is the one the tab keeps. Only a
+ * running one that arrives after the rest is moved up, so the tab always opens on what's running.
  */
 export function sortSubagents(subagents: readonly SubagentSummary[]): SubagentSummary[] {
-  const started = (subagent: SubagentSummary) => (subagent.startedAt === undefined ? Number.NEGATIVE_INFINITY : Date.parse(subagent.startedAt));
-  return subagents
-    .map((subagent, index) => ({ subagent, index }))
-    .sort((a, b) => {
-      const running = Number(b.subagent.state === 'running') - Number(a.subagent.state === 'running');
-      if (running !== 0) return running;
-      const newer = started(b.subagent) - started(a.subagent);
-      return newer !== 0 && !Number.isNaN(newer) ? newer : a.index - b.index;
-    })
-    .map(({ subagent }) => subagent);
+  return [...subagents.filter((subagent) => subagent.state === 'running'), ...subagents.filter((subagent) => subagent.state !== 'running')];
 }
 
 /** The words the contract uses when a sub-agent was started with no description. */
