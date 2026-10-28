@@ -510,6 +510,19 @@ describe('the session list', () => {
     expect(summary()).toBe('1 session·Nothing needs you');
   });
 
+  it('keeps the room the count takes filtered, "y of y sessions", in data-room, whether or not the filter hides any (W75)', () => {
+    renderDashboard(mixedSnapshot());
+    const count = () => document.querySelector('.session-list .summary-count');
+    expect(count()?.getAttribute('data-room')).toBe('5 of 5 sessions');
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'demo' } });
+    expect(count()?.textContent).toBe('3 of 5 sessions');
+    expect(count()?.getAttribute('data-room')).toBe('5 of 5 sessions');
+
+    choose('notes');
+    expect(count()?.getAttribute('data-room')).toBe('1 of 1 session');
+  });
+
   it('remembers each selection\'s Finished section apart, in pitwall.finished.v1, and never touches pitwall.groups.v1', () => {
     window.localStorage.setItem('pitwall.groups.v1', JSON.stringify({ x: true }));
     const first = renderDashboard(withFinished(), {}, { expand: false });

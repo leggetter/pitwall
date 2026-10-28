@@ -77,11 +77,18 @@ export interface SessionListProps {
   older?: OlderEnded | undefined;
 }
 
-/** "4 sessions", or "2 of 4 sessions" while the filters hide some, then the need-you badge or "Nothing needs you". */
+/**
+ * "4 sessions", or "2 of 4 sessions" while the filters hide some, then the need-you badge or "Nothing
+ * needs you". The count keeps the room its widest filtered form takes, "4 of 4 sessions" in tabular
+ * numbers, in data-room, which CSS draws unseen behind it, so turning a filter on can't wrap the
+ * heading's line and move what's below it (W75).
+ */
 export function Summary({ total, shown, attention }: SessionListSummary) {
   return (
     <p className="summary">
-      <span className="summary-count">{shown < total ? `${shown} of ${sessionCount(total)}` : sessionCount(total)}</span>
+      <span className="summary-count" data-room={`${total} of ${sessionCount(total)}`}>
+        <span>{shown < total ? `${shown} of ${sessionCount(total)}` : sessionCount(total)}</span>
+      </span>
       {attention > 0 ? (
         <span className="badge badge-attention">{needYou(attention)}</span>
       ) : (

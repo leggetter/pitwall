@@ -778,6 +778,27 @@ textarea {
 }
 
 /*
+ * The count, right-aligned in the room its widest filtered form takes (W75): data-room, "18 of 18
+ * sessions", drawn unseen in the same grid cell. Its alternative text is empty, so a screen reader
+ * reads the count alone; a browser without that syntax keeps the first `content`, still unseen.
+ */
+.summary-count {
+  display: inline-grid;
+  justify-items: end;
+}
+
+.summary-count > span,
+.summary-count::before {
+  grid-area: 1 / 1;
+}
+
+.summary-count::before {
+  content: attr(data-room);
+  content: attr(data-room) / '';
+  visibility: hidden;
+}
+
+/*
  * The summary and a group's Hide from repo list, or Show in repo list (W35), together at the right of
  * the heading's line, and wrapping together. The button is sm, 24 px, the line's height, so the header
  * is as tall for a group as for a view.
@@ -3433,10 +3454,14 @@ ol.md-list {
     outline-offset: -2px;
   }
 
-  /* Chips: an edge, and a thicker one in Highlight while pressed, the padding giving back what the border takes. */
+  /*
+   * Chips: an edge, and a thicker one in Highlight while pressed, the padding giving back what the
+   * border takes. Off, it still shares the check's 20 px between the sides, so a chip is as wide off
+   * as on here too (W75).
+   */
   .chip {
     border: 1px solid ButtonText;
-    padding: 0 calc(var(--pw-space-2) - 1px);
+    padding: 0 calc(var(--pw-space-2) + (16px + var(--pw-space-1)) / 2 - 1px);
   }
 
   .chip[aria-pressed='true'] {
