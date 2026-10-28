@@ -95,6 +95,11 @@ export class Case {
     this.result = { part: options.part.name, viewport: options.viewport.name, theme: options.theme, ms: 0, steps: [] };
   }
 
+  /** The run's output folder (--out), for files a part makes to hand to the page, such as ones to attach (W82). */
+  get out(): string {
+    return this.#options.out;
+  }
+
   /** Below 600 px: the session view is full width, with Back to sessions in place of Close. */
   get compact(): boolean {
     return this.viewport.width <= 600;
