@@ -18,6 +18,7 @@ import { ToastProvider, useToast } from '../components/Toast.js';
 import { COPIED, COPY_FAILED, useCopy } from '../copy.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
 import { EditorsContext } from '../editors.js';
+import { withMark, withoutMark, type NotNeeded } from '../notNeeded.js';
 import { MAX_RELAY_TEXT_LENGTH } from '../relay.js';
 import { resumeCommand, startLabel, workedInLabels } from '../sessions.js';
 import {
@@ -143,6 +144,19 @@ const COMPACT = session('view-compact', { title: 'Export retries' });
 const STARRED_VIEW = session('view-starred', { title: 'Export retries' });
 const STARRED_COMPACT = session('view-starred-compact', { title: 'Export retries' });
 
+/** A background job Claude Code calls blocked, waiting on someone else, marked not needed now (W88). */
+const NOT_NEEDED_VIEW = background('view-not-needed', {
+  state: 'blocked',
+  status: 'idle',
+  needsYou: { reason: 'claude-code', text: "Waiting for the made-up author's fix before re-running the check" },
+});
+
+/** A session view whose actions menu marks it not needed now or puts it back, with marks of its own, marked to start with (W88). */
+function Markable(props: SessionViewProps) {
+  const [entries, setEntries] = useState<NotNeeded>(() => withMark(new Map(), props.session));
+  return <SessionView {...props} notNeeded={{ entries, onChange: (changed, on) => setEntries((current) => (on ? withMark(current, changed) : withoutMark(current, changed.sessionId))) }} />;
+}
+
 /** A session view with its star toggle, starred or not to start with, and a state of its own, so it can be pressed (W53). */
 function Starrable({ starred: start, ...props }: SessionViewProps & { starred: boolean }) {
   const [starred, setStarred] = useState(start);
@@ -246,6 +260,15 @@ export function SessionViews() {
       <Specimen title="Finished, and it asked you" note="The row's outlined Asked you, with its explanation behind an info button too." frame="short">
         <Stubbed>
           <SessionView session={FINISHED_ASKED_VIEW} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="Not needed now (W88)"
+        note="Marked not needed now: the status badge keeps its text, outlined, with Not needed now after it, as its row has. The actions menu has Put back in Needs you, which takes the mark away, and then Mark not needed now. Under line 2, the note on where to answer stays: it's still waiting."
+        frame="short"
+      >
+        <Stubbed>
+          <Markable session={NOT_NEEDED_VIEW} listed onClose={noop} />
         </Stubbed>
       </Specimen>
       <Specimen

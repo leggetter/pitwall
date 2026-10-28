@@ -1226,6 +1226,18 @@ h2.empty-state-title:focus {
 }
 
 /*
+ * Marked not needed now (W88): outlined, as a stale Blocked is, whatever its status, which keeps its
+ * text. After the rules above, so it takes the place of the solid look: solid is for needing you.
+ */
+.badge.state-not-needed {
+  background: none;
+  box-shadow: none;
+  outline: 1px dashed var(--pw-state-offline-border);
+  outline-offset: -1px;
+  color: var(--pw-state-offline-fg);
+}
+
+/*
  * The status dot (section 4): an 8 px circle in the text's colour, which inside a badge is its tint's
  * -tint-fg (2.1). A label always goes with it, and it doesn't animate.
  */
@@ -1818,6 +1830,42 @@ mark.match {
   }
 }
 
+/*
+ * A row's Not needed now toggle (section 4: Not needed now, W88), on the rows of sessions that need
+ * you, or are marked: at the end of line 2, under the star, so line 1, the session's identity, gives
+ * none of its room to it. Line 2 gives way before it, as it does before the sub-agents count. It shows
+ * while its session is marked, and otherwise on the row's hover and focus, always on a touch screen,
+ * as the star does. 24 px in a 20 px line: the negative block margins keep line 2, and the row, as tall
+ * as before, and the end margin puts its icon under the star's.
+ */
+.session-line-2 {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+}
+
+.session-line-2 > .session-what {
+  flex: 1 1 auto;
+}
+
+.session-not-needed-toggle {
+  margin-block: calc((var(--pw-leading-s) - var(--pw-control-sm)) / 2);
+  margin-inline: auto calc(-1 * var(--pw-space-1));
+  transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .session-not-needed-toggle[aria-pressed='false'] {
+    opacity: 0;
+  }
+
+  .session:hover .session-not-needed-toggle,
+  .session:focus-within .session-not-needed-toggle {
+    opacity: 1;
+  }
+}
+
 .session-what {
   display: flex;
   min-width: 0;
@@ -1848,6 +1896,11 @@ mark.match {
 }
 
 .session-group {
+  color: var(--pw-text-subtle);
+}
+
+/* "Not needed now" (W88), as quiet as the group's label, before what it needs. */
+.session-not-needed {
   color: var(--pw-text-subtle);
 }
 
@@ -1884,6 +1937,12 @@ mark.match {
 
 .session.finished .asked,
 .session.finished .asked-label {
+  color: var(--pw-text-muted);
+}
+
+/* Marked not needed now (W88): what it needs or asked in muted, with nothing in a tone colour, as it doesn't need you now. */
+.session.not-needed .asked,
+.session.not-needed .asked-label {
   color: var(--pw-text-muted);
 }
 
@@ -2209,6 +2268,12 @@ mark.match {
   font-size: var(--pw-text-xs);
   line-height: var(--pw-leading-xs);
   font-variant-ligatures: none;
+}
+
+/* "Not needed now" after the outlined status badge (W88), in line 2's meta text, as the row says it. */
+.session-view-not-needed {
+  flex: none;
+  white-space: nowrap;
 }
 
 .session-view-missing {

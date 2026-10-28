@@ -29,6 +29,13 @@
 // Starring never selects or opens a session. Unstarred in Starred, a row leaves at once, and focus
 // goes to the star toggle of the row that took its place (SessionList.tsx).
 //
+// A session that needs you can be marked not needed now (W88, notNeeded.ts), from the toggle on its
+// row or its view's actions menu, and it leaves everything needsAttention() drives: Needs you, the
+// repo list's badges, the session list's "N need you", the root tabs' badges, the document title's
+// count and the urgency sort. Each snapshot drops the marks whose sessions need something else now,
+// so they're back in Needs you by themselves. Each mark says so in a toast with Undo; a row marked in
+// Needs you leaves at once, and focus goes to the toggle of the row that took its place.
+//
 // The single-key shortcuts (6.2) are handled here: `/` focuses the filter field, `n` opens the New
 // session dialog, `?` the keyboard shortcuts dialog, `j` and `k` move through the session list as
 // shown, and `s` stars or unstars the open session, with a toast, since focus isn't on its toggle. shortcuts.ts says which key is which, and when a key isn't one, such as while typing; here,
@@ -87,6 +94,7 @@ import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } 
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
+import { useNotNeeded } from '../notNeeded.js';
 import { useOpenSession, withSession } from '../openSession.js';
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
@@ -114,6 +122,7 @@ import {
   groupLabel,
   isOlderEnded,
   listScope,
+  needsAttention,
   NO_FILTERS,
   noMatchText,
   sessionsIn,
@@ -181,6 +190,21 @@ const startedKey = (shortId: string) => `started:${shortId}`;
 
 /** The toast for `s`, which stars or unstars the open session while focus is elsewhere (W53). */
 export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'Unstarred'} ${plainText(name)}.`;
+
+/**
+ * The toast once a session is marked not needed now (W88), with UNDO_NOT_NEEDED: it has left Needs you,
+ * and says when it comes back.
+ */
+export const notNeededText = (name: string) => `Marked ${plainText(name)} not needed now. It's back in Needs you once what it needs changes.`;
+
+/** That toast's action: it takes the mark away, so the session is back in Needs you. */
+export const UNDO_NOT_NEEDED = 'Undo';
+
+/** The toast once the session view's Put back in Needs you takes a mark away, since the menu has closed (W88). */
+export const putBackText = (name: string) => `Put ${plainText(name)} back in Needs you.`;
+
+/** What a session's Not needed now toasts are about, so each replaces the last. */
+const notNeededKey = (sessionId: string) => `not-needed:${sessionId}`;
 
 /** Starred's empty state, with nothing starred under the root (W53, 4: Empty states). */
 export const NO_STARRED = { title: 'No starred sessions', sentence: 'Star a session from its row or its view to keep it here.' } as const;
@@ -317,7 +341,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // the document title; the open tab's, for the lists.
   const everySession = useMemo(() => sessionsIn(groups), [groups]);
   const allSessions = useMemo(() => (tab === undefined ? everySession : sessionsIn(shownGroups)), [tab, everySession, shownGroups]);
-  const attention = countAttention(everySession);
+  // The sessions marked not needed now (W88), every root's, whether or not they're in the snapshot.
+  // Each snapshot drops those it lists as needing something else now; never those it doesn't list.
+  const notNeeded = useNotNeeded(storage);
+  const marks = notNeeded.entries;
+  const { prune } = notNeeded;
+  useEffect(() => {
+    if (startGroups) prune(sessionsIn(startGroups));
+  }, [startGroups, prune]);
+  const attention = countAttention(everySession, marks);
   const selectedGroup = findGroup(groups, selection);
   // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
   // The repo list shows the open tab's.
@@ -328,8 +360,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const starred = useStarred(storage);
   const scope = scopeFor(shownGroups, selection, starred.set);
   const listed = useMemo(
-    () => (scope ? listScope(shownGroups, scope, sort, grouped.home) : { current: [], finished: [] }),
-    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set],
+    () => (scope ? listScope(shownGroups, scope, sort, grouped.home, marks) : { current: [], finished: [] }),
+    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, marks],
   );
   const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
   const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
@@ -571,12 +603,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const stepByKey = (root: HTMLElement, by: 1 | -1): boolean => {
     const buttons = rowButtons();
     const active = document.activeElement;
-    // A row's name button, or its star toggle (W53).
+    // A row's name button, its star toggle (W53), or its Not needed now toggle (W88).
+    const toggleOf = active instanceof HTMLElement ? (active.dataset.starSession ?? active.dataset.notNeededSession) : undefined;
     const onRow =
       active instanceof HTMLElement && active.closest('.session-list') !== null
         ? buttons.includes(active)
           ? active.dataset.openSession
-          : buttons.find((button) => active.dataset.starSession !== undefined && button.dataset.openSession === active.dataset.starSession)?.dataset.openSession
+          : buttons.find((button) => toggleOf !== undefined && button.dataset.openSession === toggleOf)?.dataset.openSession
         : undefined;
     const from = onRow ?? openId;
     const at = from === undefined ? -1 : buttons.findIndex((button) => button.dataset.openSession === from);
@@ -750,6 +783,60 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     toasts.show({ tone: 'success', message: starredText(shownOpen.name, on) });
     return true;
   };
+
+  // Not needed now (W88): from a row's toggle or the view's actions menu. A mark is a toast with Undo,
+  // since the session has left Needs you, where it may not be in sight; a later one about the same
+  // session replaces it. Taking a mark away from the row needs no toast, as the toggle shows it, and
+  // the mark's toast goes, with nothing left to undo; from the menu, which has closed, it's a toast.
+  const undoFocus = useRef<string | undefined>(undefined);
+  const undoNotNeeded = useRef<(sessionId: string) => void>(() => {});
+  // The sessions whose mark's toast, with Undo, may still show: it goes once the mark goes by itself,
+  // as what the session needs changes or another tab takes it away, since Undo would have nothing to do.
+  const markToasts = useRef(new Set<string>());
+  const { dismiss: dismissToast } = toasts;
+  useEffect(() => {
+    for (const sessionId of markToasts.current) {
+      if (marks.has(sessionId)) continue;
+      markToasts.current.delete(sessionId);
+      dismissToast(notNeededKey(sessionId));
+    }
+  }, [marks, dismissToast]);
+  const setNotNeeded = (session: SessionSummary, on: boolean, from: 'row' | 'menu') => {
+    const key = notNeededKey(session.sessionId);
+    if (!on) {
+      markToasts.current.delete(session.sessionId);
+      notNeeded.unmark(session.sessionId);
+      if (from === 'menu') toasts.show({ tone: 'success', key, message: putBackText(session.name) });
+      else toasts.dismiss(key);
+      return;
+    }
+    // Only one the index says needs you: the toggle and the menu item are on no other.
+    if (!needsAttention(session)) return;
+    notNeeded.mark(session);
+    markToasts.current.add(session.sessionId);
+    toasts.show({ tone: 'success', key, message: notNeededText(session.name), action: { label: UNDO_NOT_NEEDED, onAction: () => undoNotNeeded.current(session.sessionId) } });
+  };
+  // Undo takes its toast away, so focus it had goes to the session's toggle, back in the list and
+  // unpressed, or where focusList() puts it when the list doesn't show it or the view covers it.
+  // Focus that wasn't in the toast, as after a click that doesn't focus, stays where it is.
+  undoNotNeeded.current = (sessionId) => {
+    const active = document.activeElement;
+    markToasts.current.delete(sessionId);
+    notNeeded.unmark(sessionId);
+    if (active instanceof Element && active.closest('.toasts') !== null) undoFocus.current = sessionId;
+  };
+  useEffect(() => {
+    const sessionId = undoFocus.current;
+    if (sessionId === undefined) return;
+    undoFocus.current = undefined;
+    const toggle = overlaid
+      ? undefined
+      : [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-not-needed-session]') ?? [])].find(
+          (button) => button.dataset.notNeededSession === sessionId && !button.closest('[hidden]'),
+        );
+    if (toggle) toggle.focus();
+    else focusList();
+  });
 
   // The latest of each, for the one key listener. Each says whether it did anything.
   const actions = useRef<Record<Shortcut, (root: HTMLElement) => boolean> | undefined>(undefined);
@@ -1105,6 +1192,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       hidden={{ groups: shownHidden, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: unhide }}
       tab={tab}
       starred={starred.set}
+      notNeeded={marks}
     />
   );
 
@@ -1141,6 +1229,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         prompts.current.set(session.sessionId, open);
       }}
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
+      notNeeded={{ entries: marks, onChange: (changed, on) => setNotNeeded(changed, on, 'menu') }}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
@@ -1223,7 +1312,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         tabs={
           tab === undefined
             ? undefined
-            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root) })), active: tab, onSelect: switchTab, panelId, tabId }
+            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, marks) })), active: tab, onSelect: switchTab, panelId, tabId }
         }
       />
 
@@ -1236,7 +1325,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             heading={heading}
             headingRef={listHeading}
             headingAction={headingAction}
-            summary={summarised ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session)) } : undefined}
+            summary={summarised ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session), marks) } : undefined}
             filters={
               allSessions.length > 0 && (
                 <FilterControls filters={filters} onChange={setFilters} fieldRef={filterField}>
@@ -1257,6 +1346,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             openSessionId={openId}
             starred={starred.set}
             onStar={starred.star}
+            notNeeded={marks}
+            onNotNeeded={(changed, on) => setNotNeeded(changed, on, 'row')}
             inert={overlaid}
             older={olderCount > 0 ? { count: olderCount, shown: showOlder, onToggle: toggleOlder } : undefined}
           />

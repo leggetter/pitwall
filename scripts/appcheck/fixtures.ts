@@ -337,6 +337,16 @@ export class World {
     if (session) this.#sessions.set(sessionId, { ...session, cwd });
   }
 
+  /**
+   * Until the next reset, what the session needs changes (W88): a new question, a new line from Claude
+   * Code, a prompt on screen or a change of state, any of which brings a session marked not needed now
+   * back to Needs you.
+   */
+  need(sessionId: string, change: Partial<Pick<SessionSummary, 'needsYou' | 'askedYou' | 'state' | 'status' | 'waitingFor'>>): void {
+    const session = this.#sessions.get(sessionId);
+    if (session) this.#sessions.set(sessionId, { ...session, ...change });
+  }
+
   /** What the index shows on a session's row after a relayed message: its latest exchange. */
   relayed(sessionId: string, exchange: RelayExchange): void {
     const session = this.#sessions.get(sessionId);

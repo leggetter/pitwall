@@ -42,10 +42,10 @@ function BadgeContent({ lead, children }: { lead?: BadgeProps['lead']; children:
   );
 }
 
-/** A session's status, as statusBadge() describes it. */
+/** A session's status, as statusBadge() describes it: outlined, with its status kept, while it's marked not needed now (W88). */
 export function StatusBadge({ badge }: { badge: StatusBadgeData }) {
   return (
-    <span className={`badge state-${badge.status}`} data-status={badge.status}>
+    <span className={`badge state-${badge.status}${badge.notNeeded ? ' state-not-needed' : ''}`} data-status={badge.status}>
       <BadgeContent lead={badge.dot ? 'dot' : undefined}>{plainText(badge.label)}</BadgeContent>
     </span>
   );

@@ -9,8 +9,9 @@
 // added or removed apply at once, and every row updates in place.
 
 import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
-import { ENDED_SHOWN_DAYS, type SessionGroup } from '../../../src/shared/protocol.js';
+import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
+import type { NotNeeded } from '../notNeeded.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
@@ -68,6 +69,10 @@ export interface SessionListProps {
   starred?: ReadonlySet<string> | undefined;
   /** Stars or unstars a session from its row. Rows have no star toggle without it. */
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
+  /** The viewer's Not needed now marks (W88), for each row. */
+  notNeeded?: NotNeeded | undefined;
+  /** Marks a session not needed now from its row, or takes the mark away. Rows have no Not needed now toggle without it. */
+  onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /** Covered by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
   inert?: boolean;
   /**
@@ -104,12 +109,23 @@ export function Summary({ total, shown, attention }: SessionListSummary) {
 /** The rows' name buttons in the order shown, without those in a collapsed Finished section. */
 const rowButtons = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>('[data-open-session]')].filter((button) => !button.closest('[hidden]'));
 
-/** A row's own control that can have focus: its name's button, or its star toggle (W53). */
-type RowPart = 'open' | 'star';
+/** A row's own control that can have focus: its name's button, its star toggle (W53), or its Not needed now toggle (W88). */
+type RowPart = 'open' | 'star' | 'not-needed';
+
+/** Each toggle's data attribute, which holds its session's id. */
+const PART_SELECTOR: Readonly<Record<Exclude<RowPart, 'open'>, string>> = { star: '[data-star-session]', 'not-needed': '[data-not-needed-session]' };
 
 /** The control in `row`'s row that's `part`, or its name's button when it has no such control. */
 function partOf(row: HTMLElement, part: RowPart): HTMLElement {
-  return (part === 'star' ? row.closest('li.session')?.querySelector<HTMLElement>('[data-star-session]') : null) ?? row;
+  return (part === 'open' ? null : row.closest('li.session')?.querySelector<HTMLElement>(PART_SELECTOR[part])) ?? row;
+}
+
+/** Which of its row's controls `target` is, and its session's id, or undefined for anything else. */
+function rowPart(target: HTMLElement | undefined): { part: RowPart; id: string } | undefined {
+  if (target?.dataset.starSession !== undefined) return { part: 'star', id: target.dataset.starSession };
+  if (target?.dataset.notNeededSession !== undefined) return { part: 'not-needed', id: target.dataset.notNeededSession };
+  if (target?.dataset.openSession !== undefined) return { part: 'open', id: target.dataset.openSession };
+  return undefined;
 }
 
 const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, index) => id === b[index]);
@@ -157,6 +173,8 @@ export interface FinishedSectionProps {
   openSessionId?: string | undefined;
   starred?: ReadonlySet<string> | undefined;
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
+  notNeeded?: NotNeeded | undefined;
+  onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /** Show older, after the rows, while the selection has older ended sessions (W67). */
   older?: OlderEnded | undefined;
 }
@@ -166,7 +184,7 @@ export interface FinishedSectionProps {
  * selection has ended sessions older than ENDED_SHOWN_DAYS, Show older, which lists them, or Hide older
  * once they're listed. It's the same button with its other name, so focus stays on it.
  */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, older }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, notNeeded, onNotNeeded, older }: FinishedSectionProps) {
   const listId = useId();
   const olderNoteId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
@@ -190,6 +208,8 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
             isOpen={session.sessionId === openSessionId}
             starred={starred?.has(session.sessionId) ?? false}
             onStar={onStar}
+            notNeeded={notNeeded}
+            onNotNeeded={onNotNeeded}
           />
         ))}
         {older && older.count > 0 && (
@@ -227,6 +247,8 @@ export function SessionList({
   openSessionId,
   starred,
   onStar,
+  notNeeded,
+  onNotNeeded,
   inert = false,
   older,
 }: SessionListProps) {
@@ -242,7 +264,8 @@ export function SessionList({
   // (W34), takes focus with it, and no blur says so. Focus goes to the row that took its place, or
   // the one before it if it was last, or else the list's heading, rather than to the page. So does a
   // row unstarred in Starred (W53), from its star toggle: focus goes to the star toggle of the row
-  // that took its place, so the next can be unstarred too.
+  // that took its place, so the next can be unstarred too; and a row marked not needed now in Needs
+  // you (W88), whose focus goes to the next row's Not needed now toggle.
   const focusedRow = useRef<{ id: string; index: number; part: RowPart } | undefined>(undefined);
   useEffect(() => {
     if (!focusInside || main.current?.contains(document.activeElement)) return;
@@ -263,11 +286,9 @@ export function SessionList({
 
   const onFocusIn = (event: FocusEvent<HTMLElement>) => {
     setFocusInside(true);
-    const target = event.target instanceof HTMLElement ? event.target : undefined;
-    const part: RowPart = target?.dataset.starSession !== undefined ? 'star' : 'open';
-    const id = part === 'star' ? target?.dataset.starSession : target?.dataset.openSession;
-    const index = id === undefined || !main.current ? -1 : rowButtons(main.current).findIndex((button) => button.dataset.openSession === id);
-    focusedRow.current = id !== undefined && index >= 0 ? { id, index, part } : undefined;
+    const found = rowPart(event.target instanceof HTMLElement ? event.target : undefined);
+    const index = found === undefined || !main.current ? -1 : rowButtons(main.current).findIndex((button) => button.dataset.openSession === found.id);
+    focusedRow.current = found !== undefined && index >= 0 ? { ...found, index } : undefined;
   };
 
   const onBlur = (event: FocusEvent<HTMLElement>) => {
@@ -323,6 +344,8 @@ export function SessionList({
                 isOpen={session.sessionId === openSessionId}
                 starred={starred?.has(session.sessionId) ?? false}
                 onStar={onStar}
+                notNeeded={notNeeded}
+                onNotNeeded={onNotNeeded}
               />
             ))}
             {(shownFinished.length > 0 || (older !== undefined && older.count > 0)) && (
@@ -336,6 +359,8 @@ export function SessionList({
                 openSessionId={openSessionId}
                 starred={starred}
                 onStar={onStar}
+                notNeeded={notNeeded}
+                onNotNeeded={onNotNeeded}
                 older={older}
               />
             )}

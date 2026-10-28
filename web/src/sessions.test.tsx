@@ -231,7 +231,7 @@ describe('needsAttention, with no idle badge in the list', () => {
     const hidden = everySession().filter((shown) => rowStatusBadge(shown) === undefined);
     expect(hidden.length).toBeGreaterThan(0);
     expect(hidden.every((shown) => statusBadge(shown).status === 'idle')).toBe(true);
-    expect(hidden.filter(needsAttention)).toEqual([]);
+    expect(hidden.filter((shown) => needsAttention(shown))).toEqual([]);
   });
 
   it('counts an idle session that asked you, whose badge says Asked you', () => {
