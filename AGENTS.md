@@ -25,7 +25,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 - **Dependencies are pinned exactly and must be at least 14 days old.** Pick the newest version published 14 or more days ago (`npm view <pkg> time --json`) and install with `npm install <pkg>@<version> --before=<date>`, so transitive dependencies follow the same cutoff. `.npmrc` enforces exact versions. Prefer a few lines of code over a new dependency.
 - **Commits and PRs:** conventional commits for commit messages and PR titles. Keep the PR summary short and put detail in a `<details>` block.
 - **Worktrees go in `.worktrees/<name>`** inside the main checkout, which `.gitignore` ignores (Phil, 2026-10-27), not in folders beside it. ripgrep, the editors' search, vitest and tsc leave them alone, and New session's directory list skips hidden folders. A plain `git clean -fdx` skips them as nested repositories; only `-ff` would delete them.
-- **Write as if the repo may go public.** It's private, but don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
+- **Write for a public repo.** It's going public (Phil, 2026-10-28), so don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
 
 ## Commands
 
@@ -72,8 +72,11 @@ web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves i
 web/src/test/            test helpers and fixtures shared across the web UI's tests; not built
 scripts/dev.ts           runs the two watchers behind `npm run dev`
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
+scripts/readme-screenshot.ts  makes docs/images/pitwall-light.png from made-up sessions on the app check's
+                         fake server; run it after a UI change the screenshot shows
 scripts/appcheck/        the app check: a fake server using pitwall's own security code, a Chrome driver,
                          and one part per area in parts/; typechecked, not built, not in npm test
+LICENSE                  Apache-2.0 (README's D21)
 THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7); .env is gitignored
 CLAUDE.md                imports this file for Claude Code

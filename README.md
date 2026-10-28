@@ -25,7 +25,6 @@ pitwall runs from a clone of this repo. It isn't published to npm.
 - **Node 22 or later,** with npm. CI uses Node 22.
 - **Claude Code,** logged in, with `claude` on your `PATH`. pitwall has been used with Claude Code 2.1.312. The one version it checks is for messaging an interactive session: its relay needs 2.1.295 or later, and pitwall won't start it on an older one.
 - **git,** to clone the repo, and for grouping sessions by repo.
-- **Access to the repo:** it's private, so cloning needs your GitHub credentials, such as `gh auth login` or an SSH key.
 
 ### Run it
 
@@ -93,6 +92,10 @@ node dist/cli.js [root...] [--interval <seconds>] [--port <n>] [--no-open]
 - **Interval:** `--interval` sets the poll, in seconds (default 5).
 - **Acting on sessions:** open a session to read its conversation, and its sub-agents in their own tab; attach to a background session in a terminal in the page; message an interactive session through the relay (D8); start a session, with attachments (D20), and stop and remove background sessions; resume an ended interactive session (D17); open a session's directory in an editor (D19). Finished background sessions and ended interactive ones stay listed, in a Finished section at the end of the list.
 - **Layout:** repos, then the selected repo's sessions, then the open session (D11). `/` filters, `n` starts a session, `?` lists the shortcuts, `j`/`k` move through the list and `s` stars the open session; a setting turns them off (D13).
+
+## Licence
+
+Apache-2.0: see [`LICENSE`](LICENSE) (D21). The bundled fonts and icons keep their own licences, listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Decisions
 
@@ -261,3 +264,10 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **Limits:** images, PDF and text only, 10 MiB each, 10 per session, and 30 unused at once.
 - **Retention:** the transcript keeps an attachment's content, so pitwall's copy is needed only until the session starts. An unused upload goes after an hour, a used one 7 days after its session started, and used ones past 500 MiB in all sooner, oldest first.
 - **Not yet:** the session view's message box takes no files, because a running session isn't started with a prompt.
+
+### D21 - Apache-2.0
+
+- **Why** (Phil, 2026-10-28): pitwall is meant to be used, so it has a permissive licence that people and companies can adopt without asking. Apache-2.0 rather than MIT for its explicit patent grant.
+- **A commercial side isn't ruled out:** a licence decides what others may do. As the copyright holder, Phil can still license later versions differently or offer a commercial edition; versions already released stay Apache-2.0.
+- **Considered:** FSL-1.1-Apache-2.0, which keeps competing commercial use to the author for two years per version but isn't open source, and AGPL-3.0, which many companies won't use.
+- **Bundled assets:** Inter and JetBrains Mono (OFL 1.1) and Material Symbols (Apache-2.0) keep their own licences (D10).
