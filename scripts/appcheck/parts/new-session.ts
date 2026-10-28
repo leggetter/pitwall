@@ -3,8 +3,9 @@
 // session's view opens once the index lists it, as the fake server does a moment later; "Another
 // directory under a root…" reveals the directory autocomplete (W70), which narrows as you type, takes
 // an option from the keyboard, and starts a session in it; files for the first prompt (W82), through
-// Attach files, a drop and a paste, refused ones, the server's refusal, an upload that's slow, one
-// that fails, Remove, and a start that sends their ids; Cancel closes it. W63's switch to the new
+// Attach files, a drop and a paste, refused ones, the server's refusal and its 503, Remove, which
+// asks the server to remove a kept one, an upload that's slow, one that fails, a start that sends
+// their ids, and a close that asks the server to remove them; Cancel closes it. W63's switch to the new
 // session's group and tab is its own part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -12,7 +13,7 @@ import { join, resolve } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
-import { FAIL_UPLOAD, SLOW_UPLOAD } from '../server.js';
+import { FAIL_UPLOAD, SLOW_UPLOAD, UNAVAILABLE_UPLOAD } from '../server.js';
 import { chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, toasts, viewName } from './_dom.js';
 
 const q = JSON.stringify;
@@ -39,6 +40,7 @@ const problemOf = (name: string) => `${ROWS}.find((row) => row.querySelector('.a
 /** What describes an element, its aria-describedby's text, joined. */
 const describedText = (element: string) => `((${element})?.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' | ')`;
 const START_OFF = `${dialogButton('Start session')}?.getAttribute('aria-disabled') === 'true'`;
+const ROW_COUNT = `${ROWS}.length`;
 const settledRows = (count: number) => `${ROWS}.length === ${count} && ${ROWS}.every((row) => row.dataset.state !== 'waiting' && row.dataset.state !== 'uploading')`;
 
 /** A file to hand the page: its bytes as base64, or text, or a size of zeros. */
@@ -312,10 +314,32 @@ const part: Part = {
       t.expectEqual(server.records.uploads.at(-1)?.status, 415, 'the fake server answered 415');
     });
 
-    await t.step('Remove takes a file off the list, with focus on the next one', async () => {
+    await t.step("a 503, attachments unavailable on this machine, says the session can still start without them", async () => {
+      t.allow(/\/api\/attachments$/, 'the fake server answers 503, as a pitwall that keeps no attachments does');
+      await dropOnPrompt(t, [{ name: `${UNAVAILABLE_UPLOAD}.txt`, type: 'text/plain', text: 'made up' }]);
+      await page.waitFor('it to settle', settledRows(9));
+      t.expectEqual(
+        await page.evaluate(problemOf(`${UNAVAILABLE_UPLOAD}.txt`)),
+        "Couldn't attach it. Files can't be attached on this machine. You can still start the session without them. Made up: this pitwall doesn't keep attachments.",
+        'what it says',
+      );
+      t.expectEqual(server.records.uploads.at(-1)?.status, 503, 'the fake server answered 503');
+      t.expect(!(await page.evaluate<boolean>(START_OFF)), "it doesn't hold up Start session");
+    });
+
+    await t.step('Remove takes a file off the list, asks the server to remove it, and puts focus on the next one', async () => {
+      const id = server.records.uploads.find((upload) => upload.name === 'pitwall-test-diagram.png')?.id;
       await page.click('Remove pitwall-test-diagram.png', dialogButton('Remove pitwall-test-diagram.png'));
-      await page.waitFor('the row to go', `${ROWS}.length === 7`);
+      await page.waitFor('the row to go', `${ROW_COUNT} === 8`);
       t.expect((await page.evaluate(`document.activeElement?.getAttribute('aria-label')`)) === 'Remove pitwall-test-notes.txt', 'focus is on the next one', await page.evaluate(focused));
+      const deadline = Date.now() + 3000;
+      while (server.records.deletes.length === 0 && Date.now() < deadline) await page.settle(50);
+      t.expectEqual(server.records.deletes, [{ id, status: 204 }], 'the fake server removed it, with DELETE attachmentPath()');
+      // A refused file was never kept: its Remove asks nothing of the server.
+      await page.click(`Remove ${UNAVAILABLE_UPLOAD}.txt`, dialogButton(`Remove ${UNAVAILABLE_UPLOAD}.txt`));
+      await page.waitFor('the row to go', `${ROW_COUNT} === 7`);
+      await page.settle(200);
+      t.expectEqual(server.records.deletes.length, 1, 'a refused one asked nothing');
     });
 
     await t.step('Start session waits for an upload, saying why, and Remove aborts one on its way', async () => {
@@ -331,7 +355,7 @@ const part: Part = {
       await dropOnPrompt(t, [{ name: `${SLOW_UPLOAD}-two.txt`, type: 'text/plain', text: 'slow' }]);
       await page.waitFor('it to be uploading', `${ROWS}.at(-1)?.dataset.state === 'uploading'`);
       await page.click(`Remove ${SLOW_UPLOAD}-two.txt`, dialogButton(`Remove ${SLOW_UPLOAD}-two.txt`));
-      await page.waitFor('the row to go', `${ROWS}.length === 8`);
+      await page.waitFor('the row to go', `${ROW_COUNT} === 8`);
       const deadline = Date.now() + 3000;
       while (!server.records.uploads.some((upload) => upload.name === `${SLOW_UPLOAD}-two.txt`) && Date.now() < deadline) await page.settle(50);
       t.expectEqual(server.records.uploads.find((upload) => upload.name === `${SLOW_UPLOAD}-two.txt`)?.status, 'aborted', 'its upload was aborted');
@@ -339,10 +363,10 @@ const part: Part = {
     });
 
     await t.step('a failed upload says so, with Try again, and Start session waits for it', async () => {
-      t.allow(/\/api\/attachments$/, 'the fake server fails a file the first time it is sent, with 503');
+      t.allow(/\/api\/attachments$/, 'the fake server fails a file the first time it is sent, with 500');
       await dropOnPrompt(t, [{ name: `${FAIL_UPLOAD}-notes.txt`, type: 'text/plain', text: 'fails once' }]);
       await page.waitFor('it to fail', `${ROWS}.at(-1)?.dataset.state === 'failed'`);
-      t.expectEqual(await page.evaluate(problemOf(`${FAIL_UPLOAD}-notes.txt`)), "Couldn't upload it. Made up: pitwall couldn't store it.", 'why');
+      t.expectEqual(await page.evaluate(problemOf(`${FAIL_UPLOAD}-notes.txt`)), "Couldn't upload it. Made up: pitwall couldn't write it.", 'why');
       t.expectEqual(await page.evaluate(describedText(dialogButton('Start session'))), "A file didn't upload. Try it again, or remove it.", 'Start session says why it is off');
       await t.shot('failed');
       await page.click('Try again', `${ROWS}.at(-1).querySelector('button.button')`);
@@ -361,6 +385,34 @@ const part: Part = {
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expectEqual(server.records.spawns, [{ cwd, promptLength: FIRST_PROMPT.length, attachments: ids }], 'the fake server got the start, with their ids');
+      await page.settle(300);
+      t.expectEqual(server.records.deletes.length, 1, "closing after the start asked the server to remove none of the session's files");
+    });
+
+    await t.step('closing without starting asks the server to remove the files it kept', async () => {
+      await t.fresh({ search: '?view=all' });
+      await openDialog(t, 'New session');
+      t.expect(
+        await page.evaluate(
+          pasteIntoPrompt([
+            { name: 'pitwall-test-left-1.txt', type: 'text/plain', text: 'made up' },
+            { name: 'pitwall-test-left-2.txt', type: 'text/plain', text: 'made up' },
+          ]),
+        ),
+        'the page took the paste',
+      );
+      await page.waitFor('both uploaded', `${settledRows(2)} && ${ROWS}.every((row) => row.dataset.state === 'uploaded')`);
+      const ids = server.records.uploads.map((upload) => upload.id).sort();
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      const deadline = Date.now() + 3000;
+      while (server.records.deletes.length < 2 && Date.now() < deadline) await page.settle(50);
+      t.expectEqual(
+        server.records.deletes.map((removed) => removed.id).sort(),
+        ids,
+        'each one, with DELETE attachmentPath()',
+      );
+      t.expect(server.records.deletes.every((removed) => removed.status === 204), 'and the fake server removed each', server.records.deletes);
     });
 
     await t.step('Cancel closes it, with focus back on New session', async () => {
