@@ -4,8 +4,8 @@
 // copied. Behind them it answers the snapshot, the directory list, conversation pages, the relay,
 // attach (a made-up terminal screen at the size the page gives, drawn again on each resize), spawn,
 // stop, remove and resume, and a session's sub-agents and their transcripts (W77), from the made-up
-// World in fixtures.ts, and the editor list and open in an
-// editor (W72), which opens nothing.
+// World in fixtures.ts, the editor list and open in an editor (W72), which opens nothing, and New
+// session's uploads (W82), with the contract's checks, keeping nothing of a file but its size.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
@@ -13,9 +13,9 @@
 //
 // What the page did is recorded in `records`, for the parts to check: attaches, keys and resizes sent
 // to an attached session, the sizes it gave each one, spawns, relayed messages, stops and removes,
-// resumes, opens in an editor, and every request.
+// resumes, opens in an editor, uploads, and every request.
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
@@ -25,6 +25,8 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type {
   ActionResult,
   AttachClientMessage,
+  AttachmentResult,
+  AttachmentType,
   ConversationPage,
   DirectoryList,
   EditorId,
@@ -64,7 +66,13 @@ export interface Records {
   inputs: Array<{ name: string; type: 'input' | 'resize'; data: string }>;
   /** Every size the page gave an attached session, in order: its `open`'s, then each resize's (W74). */
   sizes: Array<{ name: string; from: 'open' | 'resize' } & TerminalSize>;
-  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; promptLength: number }>;
+  /** `attachments` only when the request had them (W82). */
+  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  /**
+   * Each upload to ATTACHMENTS_PATH (W82), in the order they were answered: its name, type and size,
+   * the status it got, and its id when kept. `aborted` is one the page gave up on before its answer.
+   */
+  uploads: Array<{ name: string; type: string; size: number; status: number | 'aborted'; id?: string }>;
   relays: Array<{ name: string; length: number }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
@@ -75,7 +83,27 @@ export interface Records {
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], requests: [] });
+const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], uploads: [], requests: [] });
+
+/** A name the contract's 400 refuses: a path separator, a control or a bidi control (ATTACHMENTS_PATH). */
+const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+
+/** The first bytes an image or a PDF starts with; text types have none to check. */
+const SIGNATURES: Partial<Record<AttachmentType, (head: Buffer) => boolean>> = {
+  'image/png': (head) => head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/jpeg': (head) => head.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])),
+  'image/gif': (head) => /^GIF8[79]a/.test(head.subarray(0, 6).toString('latin1')),
+  'image/webp': (head) => head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP',
+  'application/pdf': (head) => head.subarray(0, 5).toString('latin1') === '%PDF-',
+};
+
+/**
+ * Names the fake server answers differently, for the steps that check an upload's busy state and a
+ * failure: one starting SLOW_UPLOAD is answered after a moment, and one starting FAIL_UPLOAD gets a
+ * 503 the first time it's sent.
+ */
+export const SLOW_UPLOAD = 'pitwall-test-slow';
+export const FAIL_UPLOAD = 'pitwall-test-fail';
 
 /** The editors the fake server says it found at startup (W72), as pitwall's would on a Mac with both. */
 export const EDITORS: EditorList = { editors: [{ id: 'vscode', label: 'VS Code' }, { id: 'cursor', label: 'Cursor' }] };
@@ -126,6 +154,9 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const headers = Object.entries(security.securityHeaders(port));
   const world = new World();
   let records = emptyRecords();
+  // The uploads kept (W82), by id, and the names that have had their one failure.
+  const uploaded = new Map<string, { used: boolean }>();
+  const failedOnce = new Set<string>();
   const resumeOrder = { listedFirst: false, copyReopens: false };
   const timers = new Set<NodeJS.Timeout>();
   const indexSockets = new Set<WebSocket>();
@@ -180,6 +211,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.DIRECTORIES_PATH) return json(res, 200, world.directories() satisfies DirectoryList);
     if (method === 'GET' && url.pathname === protocol.EDITORS_PATH) return json(res, 200, EDITORS);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
+    if (method === 'POST' && url.pathname === protocol.ATTACHMENTS_PATH) return upload(req, res);
 
     // A sub-agent's transcript (W77): 404 unless the session is listed and the agent is one of its sub-agents.
     const agent = /^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/conversation$/.exec(url.pathname);
@@ -295,6 +327,52 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     later(options.listDelayMs ?? 800, list);
   }
 
+  /**
+   * An upload for New session's first prompt (W82), with the checks the contract gives ATTACHMENTS_PATH
+   * (W79): the type, then the name, the size, and that an image's or a PDF's first bytes are that
+   * type's, then how many unused uploads there are. It keeps the name, type and size, never the bytes.
+   */
+  async function upload(req: IncomingMessage, res: ServerResponse) {
+    const type = (req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+    const header = req.headers['x-pitwall-filename'];
+    let name = '';
+    try {
+      name = typeof header === 'string' ? decodeURIComponent(header) : '';
+    } catch {
+      // Not URL-encoded: refused below, as an empty name.
+    }
+    const { size, head } = await readUpload(req);
+    const answer = (status: number, body: AttachmentResult) => {
+      records.uploads.push({ name, type, size, status, ...(body.ok ? { id: body.attachment.id } : {}) });
+      json(res, status, body);
+    };
+    if (!(protocol.ATTACHMENT_TYPES as readonly string[]).includes(type)) return answer(415, { ok: false, error: 'Made up: pitwall takes images, PDFs and text files.' });
+    const known = type as AttachmentType;
+    if (name === '' || name.length > 200 || UNSAFE_NAME.test(name)) return answer(400, { ok: false, error: 'Made up: that name has a character pitwall refuses.' });
+    if (size > protocol.ATTACHMENT_MAX_BYTES) return answer(413, { ok: false, error: 'Made up: it is over 10 MiB.' });
+    if (SIGNATURES[known] && !SIGNATURES[known](head)) return answer(415, { ok: false, error: `Made up: its first bytes aren't those of ${known}.` });
+    if ([...uploaded.values()].filter((each) => !each.used).length >= protocol.ATTACHMENTS_MAX_PENDING) {
+      return answer(429, { ok: false, error: 'Made up: too many unused uploads.' });
+    }
+    if (name.startsWith(FAIL_UPLOAD) && !failedOnce.has(name)) {
+      failedOnce.add(name);
+      return answer(503, { ok: false, error: "Made up: pitwall couldn't store it." });
+    }
+    const keep = () => {
+      const id = randomUUID();
+      uploaded.set(id, { used: false });
+      answer(201, { ok: true, attachment: { id, name, type: known, size } });
+    };
+    if (!name.startsWith(SLOW_UPLOAD)) return keep();
+    // A slow one: the page may give up first, as Remove does.
+    res.on('close', () => {
+      if (!res.writableFinished) records.uploads.push({ name, type, size, status: 'aborted' });
+    });
+    later(1200, () => {
+      if (!res.destroyed) keep();
+    });
+  }
+
   /** New session: pitwall's JSON checks, a made-up background session, and its listing a moment later. */
   async function spawn(req: IncomingMessage, res: ServerResponse) {
     if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 415, { ok: false, error: 'Send the request as application/json.' } satisfies SpawnResult);
@@ -304,8 +382,27 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     }
     const root = world.rootFor(body.cwd);
     if (root === undefined) return json(res, 400, { ok: false, error: 'Made up: that directory is under no root.' } satisfies SpawnResult);
-    const request: SpawnRequest = { cwd: body.cwd, prompt: body.prompt, ...(typeof body.name === 'string' ? { name: body.name } : {}), ...(typeof body.model === 'string' ? { model: body.model } : {}) };
-    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, promptLength: request.prompt.length });
+    // The files (W82): uploads this server kept and no spawn has used, each once, at most ATTACHMENTS_MAX_PER_SESSION.
+    let attachments: string[] | undefined;
+    if (body.attachments !== undefined) {
+      const ids = body.attachments;
+      const usable =
+        Array.isArray(ids) &&
+        ids.length <= protocol.ATTACHMENTS_MAX_PER_SESSION &&
+        new Set(ids).size === ids.length &&
+        ids.every((id) => typeof id === 'string' && uploaded.get(id)?.used === false);
+      if (!usable) return json(res, 400, { ok: false, error: 'Made up: an attachment that is unknown or already used.' } satisfies SpawnResult);
+      attachments = ids as string[];
+      for (const id of attachments) uploaded.set(id, { used: true });
+    }
+    const request: SpawnRequest = {
+      cwd: body.cwd,
+      prompt: body.prompt,
+      ...(typeof body.name === 'string' ? { name: body.name } : {}),
+      ...(typeof body.model === 'string' ? { model: body.model } : {}),
+      ...(attachments ? { attachments } : {}),
+    };
+    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, promptLength: request.prompt.length, attachments: request.attachments });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
     later(options.listDelayMs ?? 800, () => {
@@ -435,6 +532,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       for (const ws of [...indexSockets, ...attachSockets]) ws.terminate();
       world.reset(resetOptions);
       records = emptyRecords();
+      uploaded.clear();
+      failedOnce.clear();
       resumeOrder.listedFirst = false;
       resumeOrder.copyReopens = false;
     },
@@ -487,6 +586,21 @@ function readJson(req: IncomingMessage): Promise<unknown> {
       }
     });
     req.on('error', () => resolve(undefined));
+  });
+}
+
+/** An upload's body: how many bytes it had, and the first 16, all a check of its type needs. */
+function readUpload(req: IncomingMessage): Promise<{ size: number; head: Buffer }> {
+  return new Promise((resolve) => {
+    const kept: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      if (size < 16) kept.push(chunk.subarray(0, 16 - size));
+      size += chunk.length;
+    });
+    const done = () => resolve({ size, head: Buffer.concat(kept) });
+    req.on('end', done);
+    req.on('error', done);
   });
 }
 

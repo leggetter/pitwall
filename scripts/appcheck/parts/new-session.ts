@@ -2,11 +2,17 @@
 // roots' directories; Start session asks for a first prompt; a start says so in a toast, and the
 // session's view opens once the index lists it, as the fake server does a moment later; "Another
 // directory under a root…" reveals the directory autocomplete (W70), which narrows as you type, takes
-// an option from the keyboard, and starts a session in it; Cancel closes it. W63's switch to the new
+// an option from the keyboard, and starts a session in it; files for the first prompt (W82), through
+// Attach files, a drop and a paste, refused ones, the server's refusal, an upload that's slow, one
+// that fails, Remove, and a start that sends their ids; Cancel closes it. W63's switch to the new
 // session's group and tab is its own part, new-session-selected.
 
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB } from '../fixtures.js';
-import type { Part } from '../runner.js';
+import type { Case, Part } from '../runner.js';
+import { FAIL_UPLOAD, SLOW_UPLOAD } from '../server.js';
 import { chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, toasts, viewName } from './_dom.js';
 
 const q = JSON.stringify;
@@ -23,6 +29,101 @@ const EXPANDED = `${COMBOBOX}?.getAttribute('aria-expanded')`;
 const ACTIVE = `document.getElementById(${COMBOBOX}?.getAttribute('aria-activedescendant') ?? '')`;
 /** Each request for the directory list, as the fake server recorded it. */
 const listRequests = (requests: string[]) => requests.filter((request) => request.startsWith('GET /api/directories '));
+
+/** The 10 MiB limit (ATTACHMENT_MAX_BYTES). */
+const MAX_BYTES = 10 * 1024 * 1024;
+/** The files' rows, and each one's name and state, as listed. */
+const ROWS = `[...(${DIALOG}?.querySelectorAll('.attachment') ?? [])]`;
+const LISTED = `${ROWS}.map((row) => [row.querySelector('.attachment-name').textContent, row.dataset.state])`;
+const problemOf = (name: string) => `${ROWS}.find((row) => row.querySelector('.attachment-name').textContent === ${q(name)})?.querySelector('.attachment-problem')?.textContent`;
+/** What describes an element, its aria-describedby's text, joined. */
+const describedText = (element: string) => `((${element})?.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' | ')`;
+const START_OFF = `${dialogButton('Start session')}?.getAttribute('aria-disabled') === 'true'`;
+const settledRows = (count: number) => `${ROWS}.length === ${count} && ${ROWS}.every((row) => row.dataset.state !== 'waiting' && row.dataset.state !== 'uploading')`;
+
+/** A file to hand the page: its bytes as base64, or text, or a size of zeros. */
+type MadeUpFile = { name: string; type: string; base64?: string; text?: string; size?: number };
+
+/** A DataTransfer holding `files`, made in the page. */
+const transfer = (files: MadeUpFile[]) => `(() => {
+  const transfer = new DataTransfer();
+  for (const f of ${q(files)}) {
+    const bytes = f.base64 !== undefined ? Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)) : f.text !== undefined ? new TextEncoder().encode(f.text) : new Uint8Array(f.size ?? 0);
+    transfer.items.add(new File([bytes], f.name, { type: f.type }));
+  }
+  return transfer;
+})()`;
+/** Drags `files` onto the first prompt and holds them there, as from the Finder: dragenter, then dragover. */
+const dragOnPrompt = (files: MadeUpFile[]) => `(() => {
+  const transfer = ${transfer(files)};
+  window.__appcheckDrag = transfer;
+  for (const type of ['dragenter', 'dragover']) ${PROMPT}.dispatchEvent(new DragEvent(type, { dataTransfer: transfer, bubbles: true, cancelable: true }));
+  return [...transfer.types];
+})()`;
+/** Drops what dragOnPrompt holds; true when the page took the drop. */
+const DROP_ON_PROMPT = `!${PROMPT}.dispatchEvent(new DragEvent('drop', { dataTransfer: window.__appcheckDrag, bubbles: true, cancelable: true }))`;
+/** Pastes `files`, and `text` with them, into the first prompt; true when the page took the paste. */
+const pasteIntoPrompt = (files: MadeUpFile[], text?: string) => `(() => {
+  const transfer = ${transfer(files)};
+  ${text === undefined ? '' : `transfer.setData('text/plain', ${q(text)});`}
+  return !${PROMPT}.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+})()`;
+
+async function dropOnPrompt(t: Case, files: MadeUpFile[]): Promise<void> {
+  await t.page.evaluate(dragOnPrompt(files));
+  await t.page.evaluate(DROP_ON_PROMPT);
+  await t.page.settle();
+}
+
+/** A made-up PNG, its left half blue and its right half red, so its thumbnail can be seen. */
+function madeUpPng(width: number, height: number): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bits per channel
+  header[9] = 2; // RGB
+  const stride = width * 3 + 1;
+  const pixels = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) pixels.set(x < width / 2 ? [0x00, 0x44, 0xcc] : [0xe0, 0x7b, 0x72], y * stride + 1 + x * 3);
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+const PNG = madeUpPng(48, 32);
+const PICKED = [
+  { name: 'pitwall-test-diagram.png', type: 'image/png', bytes: PNG },
+  { name: 'pitwall-test-notes.txt', type: 'text/plain', bytes: Buffer.from('Made-up notes for the app check.\n') },
+];
+
+/** Writes the picker's files into the run's output folder, once, and returns their absolute paths. */
+async function pickerFiles(t: Case): Promise<string[]> {
+  const dir = resolve(join(t.out, 'files', 'new-session'));
+  await mkdir(dir, { recursive: true });
+  return Promise.all(
+    PICKED.map(async ({ name, bytes }) => {
+      const path = join(dir, name);
+      await writeFile(path, bytes);
+      return path;
+    }),
+  );
+}
+
+/** Chooses files in Attach files' native input, as the system's picker would (DOM.setFileInputFiles). */
+async function pick(t: Case, paths: string[]): Promise<void> {
+  const { result } = await t.page.send<{ result: { objectId?: string } }>('Runtime.evaluate', { expression: `${DIALOG}?.querySelector('input[type="file"]')` });
+  if (!result.objectId) throw new Error("the dialog has no file input for Attach files");
+  await t.page.send('DOM.setFileInputFiles', { files: paths, objectId: result.objectId });
+  await t.page.settle();
+}
 
 const part: Part = {
   name: 'new-session',
@@ -114,6 +215,152 @@ const part: Part = {
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP_WEB, promptLength: FIRST_PROMPT.length }], 'the fake server got the start, in the absolute path');
       t.expectEqual(listRequests(server.records.requests).length, 1, 'one list for the whole opening');
+    });
+
+    await t.step('Attach files takes files from the picker, uploads each, and lists it with its size, and a thumbnail for an image', async () => {
+      await t.fresh({ search: '?view=all' });
+      await openDialog(t, 'New session');
+      t.expect(await page.evaluate(`!!${dialogButton('Attach files')}`), 'Attach files is there');
+      t.expectEqual(
+        await page.evaluate(describedText(dialogButton('Attach files'))),
+        'Or drop or paste them into the prompt: images, PDFs and text files, up to 10 MB each.',
+        'it says what it takes',
+      );
+      await pick(t, await pickerFiles(t));
+      await page.waitFor('both uploaded', `${settledRows(2)} && ${ROWS}.every((row) => row.dataset.state === 'uploaded')`);
+      t.expectEqual(
+        await page.evaluate(LISTED),
+        [
+          ['pitwall-test-diagram.png', 'uploaded'],
+          ['pitwall-test-notes.txt', 'uploaded'],
+        ],
+        'each listed, in order',
+      );
+      t.expectEqual(
+        await page.evaluate(`${ROWS}.map((row) => row.querySelector('.attachment-meta').textContent)`),
+        [`${PNG.length} B`, `${PICKED[1]!.bytes.length} B`],
+        'with its size',
+      );
+      // Both go at once, so the fake server may answer them in either order.
+      t.expectEqual(
+        server.records.uploads.map(({ name, type, size, status }) => ({ name, type, size, status })).sort((a, b) => a.name.localeCompare(b.name)),
+        PICKED.map(({ name, type, bytes }) => ({ name, type, size: bytes.length, status: 201 })),
+        'the fake server got each, with its type, its name and its bytes',
+      );
+      await page.waitFor('the thumbnail', `${ROWS}[0].querySelector('img')?.getAttribute('src')?.startsWith('data:image/png;base64,')`);
+      t.expect(await page.evaluate(`!${ROWS}[1].querySelector('img') && !!${ROWS}[1].querySelector('.attachment-tile svg')`), 'a text file has its type icon');
+      const fits = await page.evaluate<boolean>(`(() => { const card = ${DIALOG}.getBoundingClientRect(); return ${ROWS}.every((row) => { const r = row.getBoundingClientRect(); return r.left >= card.left && r.right <= card.right; }); })()`);
+      t.expect(fits, 'each row fits the dialog');
+      t.expect(!(await page.evaluate<boolean>(START_OFF)), 'Start session is on');
+      await t.shot('attached');
+    });
+
+    await t.step('a drop on the first prompt attaches the files, with the drop target over it while they are dragged', async () => {
+      const types = await page.evaluate<string[]>(dragOnPrompt([{ name: 'pitwall-test-plan.md', type: 'text/markdown', text: '# A made-up plan\n' }]));
+      t.expect(types.includes('Files'), 'the drag carries files', types);
+      await page.waitFor('the drop target', `!!${DIALOG}.querySelector('.prompt-drop-target.over')`);
+      const covers = await page.evaluate<boolean>(`(() => { const a = ${DIALOG}.querySelector('.prompt-drop-target').getBoundingClientRect(), b = ${PROMPT}.getBoundingClientRect(); return Math.abs(a.top - b.top) < 1 && Math.abs(a.bottom - b.bottom) < 1 && Math.abs(a.left - b.left) < 1 && Math.abs(a.right - b.right) < 1; })()`);
+      t.expect(covers, 'it covers the prompt');
+      t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.prompt-drop-target').textContent`), 'Drop files to attach them', 'it says what to do');
+      await t.shot('drop-target');
+      t.expect(await page.evaluate(DROP_ON_PROMPT), 'the page took the drop, so the browser opens nothing');
+      await page.waitFor('it to upload', settledRows(3));
+      t.expect(await page.evaluate(`!${DIALOG}.querySelector('.prompt-drop-target')`), 'the drop target has gone');
+      t.expectEqual((await page.evaluate<string[][]>(LISTED))[2], ['pitwall-test-plan.md', 'uploaded'], 'it is listed, uploaded');
+    });
+
+    await t.step('pasting an image attaches it, and pasted text is left to paste as text', async () => {
+      t.expect(await page.evaluate(pasteIntoPrompt([{ name: 'image.png', type: 'image/png', base64: PNG.toString('base64') }])), 'the page took the paste');
+      await page.waitFor('it to upload', settledRows(4));
+      t.expectEqual((await page.evaluate<string[][]>(LISTED))[3], ['image.png', 'uploaded'], 'it is listed, uploaded');
+      t.expectEqual(await page.evaluate(`${PROMPT}.value`), '', 'no text went into the prompt');
+      t.expect(!(await page.evaluate(pasteIntoPrompt([], 'Some made-up text'))), 'text alone is left to the browser');
+      t.expect(!(await page.evaluate(pasteIntoPrompt([{ name: 'cells.png', type: 'image/png', base64: PNG.toString('base64') }], 'Region\tTotal'))), "and so is text with a picture of it, as a spreadsheet's copy has");
+      await page.settle();
+      t.expectEqual(await page.evaluate(`${ROWS}.length`), 4, 'neither attached anything');
+    });
+
+    await t.step("refuses a file over 10 MB and one of a type pitwall doesn't take, saying why, and uploads the rest", async () => {
+      const before = server.records.uploads.length;
+      await dropOnPrompt(t, [
+        { name: 'pitwall-test-recording.png', type: 'image/png', size: MAX_BYTES + 1 },
+        { name: 'pitwall-test-report.docx', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', text: 'made up' },
+        { name: 'pitwall-test-data.json', type: 'application/json', text: '{"made":"up"}' },
+      ]);
+      await page.waitFor('them to settle', settledRows(7));
+      t.expectEqual(
+        (await page.evaluate<string[][]>(LISTED)).slice(4),
+        [
+          ['pitwall-test-recording.png', 'refused'],
+          ['pitwall-test-report.docx', 'refused'],
+          ['pitwall-test-data.json', 'uploaded'],
+        ],
+        'two refused, the third uploaded',
+      );
+      t.expectEqual(await page.evaluate(problemOf('pitwall-test-recording.png')), "Couldn't attach it. It's 10.1 MB, over the 10 MB limit.", 'why the large one');
+      t.expectEqual(await page.evaluate(problemOf('pitwall-test-report.docx')), "Couldn't attach it. Only images, PDFs and text files can be attached.", 'why the other');
+      t.expectEqual(server.records.uploads.slice(before).map((upload) => upload.name), ['pitwall-test-data.json'], 'only the third was sent');
+      t.expect(!(await page.evaluate<boolean>(START_OFF)), "the refused ones don't hold up Start session");
+      await t.shot('refused');
+    });
+
+    await t.step("the server's refusal of bytes that aren't the type's is listed, with its reason", async () => {
+      t.allow(/\/api\/attachments$/, "the fake server refuses a PNG whose bytes aren't one, with 415, as W79's route does");
+      await dropOnPrompt(t, [{ name: 'pitwall-test-fake.png', type: 'image/png', text: 'not a PNG' }]);
+      await page.waitFor('it to settle', settledRows(8));
+      t.expectEqual(await page.evaluate(problemOf('pitwall-test-fake.png')), "Couldn't attach it. Made up: its first bytes aren't those of image/png.", "the server's reason");
+      t.expectEqual(server.records.uploads.at(-1)?.status, 415, 'the fake server answered 415');
+    });
+
+    await t.step('Remove takes a file off the list, with focus on the next one', async () => {
+      await page.click('Remove pitwall-test-diagram.png', dialogButton('Remove pitwall-test-diagram.png'));
+      await page.waitFor('the row to go', `${ROWS}.length === 7`);
+      t.expect((await page.evaluate(`document.activeElement?.getAttribute('aria-label')`)) === 'Remove pitwall-test-notes.txt', 'focus is on the next one', await page.evaluate(focused));
+    });
+
+    await t.step('Start session waits for an upload, saying why, and Remove aborts one on its way', async () => {
+      await dropOnPrompt(t, [{ name: `${SLOW_UPLOAD}-one.txt`, type: 'text/plain', text: 'slow' }]);
+      await page.waitFor('it to be uploading', `${ROWS}.at(-1)?.dataset.state === 'uploading'`);
+      t.expect(await page.evaluate(START_OFF), 'Start session is off');
+      t.expectEqual(await page.evaluate(describedText(dialogButton('Start session'))), 'Wait for the file to upload, or remove it.', 'and says why');
+      t.expect((await page.evaluate<string>(`${ROWS}.at(-1).querySelector('.attachment-meta').textContent`)).endsWith('Uploading…'), 'the row says it is uploading');
+      await t.shot('uploading');
+      await page.waitFor('it to upload', `${ROWS}.at(-1)?.dataset.state === 'uploaded'`, 4000);
+      t.expect(!(await page.evaluate<boolean>(START_OFF)), 'Start session is on again');
+
+      await dropOnPrompt(t, [{ name: `${SLOW_UPLOAD}-two.txt`, type: 'text/plain', text: 'slow' }]);
+      await page.waitFor('it to be uploading', `${ROWS}.at(-1)?.dataset.state === 'uploading'`);
+      await page.click(`Remove ${SLOW_UPLOAD}-two.txt`, dialogButton(`Remove ${SLOW_UPLOAD}-two.txt`));
+      await page.waitFor('the row to go', `${ROWS}.length === 8`);
+      const deadline = Date.now() + 3000;
+      while (!server.records.uploads.some((upload) => upload.name === `${SLOW_UPLOAD}-two.txt`) && Date.now() < deadline) await page.settle(50);
+      t.expectEqual(server.records.uploads.find((upload) => upload.name === `${SLOW_UPLOAD}-two.txt`)?.status, 'aborted', 'its upload was aborted');
+      t.expect(!(await page.evaluate<boolean>(START_OFF)), 'Start session is on');
+    });
+
+    await t.step('a failed upload says so, with Try again, and Start session waits for it', async () => {
+      t.allow(/\/api\/attachments$/, 'the fake server fails a file the first time it is sent, with 503');
+      await dropOnPrompt(t, [{ name: `${FAIL_UPLOAD}-notes.txt`, type: 'text/plain', text: 'fails once' }]);
+      await page.waitFor('it to fail', `${ROWS}.at(-1)?.dataset.state === 'failed'`);
+      t.expectEqual(await page.evaluate(problemOf(`${FAIL_UPLOAD}-notes.txt`)), "Couldn't upload it. Made up: pitwall couldn't store it.", 'why');
+      t.expectEqual(await page.evaluate(describedText(dialogButton('Start session'))), "A file didn't upload. Try it again, or remove it.", 'Start session says why it is off');
+      await t.shot('failed');
+      await page.click('Try again', `${ROWS}.at(-1).querySelector('button.button')`);
+      await page.waitFor('it to upload', `${ROWS}.at(-1)?.dataset.state === 'uploaded'`);
+      t.expect((await page.evaluate(`document.activeElement?.getAttribute('aria-label')`)) === `Remove ${FAIL_UPLOAD}-notes.txt`, 'focus is on its Remove', await page.evaluate(focused));
+      t.expect(!(await page.evaluate<boolean>(START_OFF)), 'Start session is on');
+    });
+
+    await t.step("Start session sends the uploaded files' ids, in the list's order", async () => {
+      const listed = (await page.evaluate<string[][]>(LISTED)).filter(([, state]) => state === 'uploaded').map(([name]) => name);
+      const ids = listed.map((name) => server.records.uploads.find((upload) => upload.name === name && upload.status === 201)?.id);
+      t.expectEqual(listed, ['pitwall-test-notes.txt', 'pitwall-test-plan.md', 'image.png', 'pitwall-test-data.json', `${SLOW_UPLOAD}-one.txt`, `${FAIL_UPLOAD}-notes.txt`], 'the uploaded files');
+      const cwd = await page.evaluate<string>(`${DIRECTORY}.value`);
+      await page.click('First prompt', PROMPT);
+      await page.type(FIRST_PROMPT);
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns, [{ cwd, promptLength: FIRST_PROMPT.length, attachments: ids }], 'the fake server got the start, with their ids');
     });
 
     await t.step('Cancel closes it, with focus back on New session', async () => {
