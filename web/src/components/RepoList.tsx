@@ -14,6 +14,9 @@
 // need-you badge when any need you, otherwise how many, and nothing while none is starred, as Needs you
 // shows nothing while nothing needs you.
 //
+// A session marked not needed now (W88, notNeeded.ts) counts in none of the need-you badges: Needs
+// you's, Starred's, the groups' and the Hidden section's. Each group still counts it among its sessions.
+//
 // With two or more roots, the list is the open root tab's (W38): the dashboard passes that root's
 // groups and hidden groups alone, so the views, their counts and the Hidden section are the root's
 // too, and every link names the root, so the URL says which tab it opens.
@@ -34,6 +37,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, t
 import type { SessionGroup } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { absentGroup, sameGroup, type HiddenGroup } from '../hidden.js';
+import type { NotNeeded } from '../notNeeded.js';
 import { groupSelection, sameSelection, selectionHref, VIEW_NAMES, viewIn, type Selection } from '../selection.js';
 import { allFinished, countAttention, groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
 import { Icon } from './Icon.js';
@@ -54,14 +58,17 @@ interface Item {
   muted: boolean;
 }
 
-/** A group's item: its sessions, each once, as Group sessions by lists them (W42), and how many of them need you. */
-function groupItem(group: SessionGroup, roots: readonly string[]): Item {
+/**
+ * A group's item: its sessions, each once, as Group sessions by lists them (W42), and how many of them
+ * need you, without those marked not needed now (W88).
+ */
+function groupItem(group: SessionGroup, roots: readonly string[], notNeeded: NotNeeded | undefined): Item {
   return {
     id: groupId(group),
     selection: groupSelection(group, roots),
     label: plainText(groupLabel(group)),
     kind: group.kind,
-    attention: countAttention(group.sessions),
+    attention: countAttention(group.sessions, notNeeded),
     count: group.sessions.length,
     muted: allFinished(group),
   };
@@ -97,19 +104,21 @@ export interface RepoListProps {
   tab?: string | undefined;
   /** The starred sessions' ids, under any root, for Starred's count (W53). Nothing is starred when it's undefined. */
   starred?: ReadonlySet<string> | undefined;
+  /** The viewer's Not needed now marks (W88), which no need-you badge counts. Nothing is marked when it's undefined. */
+  notNeeded?: NotNeeded | undefined;
 }
 
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session once, though in Every repo it worked in it may be in several groups (W42).
   const sessions = sessionsIn(groups ?? []);
   const starredSessions = starred ? sessions.filter((session) => starred.has(session.sessionId)) : [];
   const views: Item[] = [
-    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: VIEW_NAMES['needs-you'], attention: countAttention(sessions), count: undefined, muted: false },
+    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: VIEW_NAMES['needs-you'], attention: countAttention(sessions, notNeeded), count: undefined, muted: false },
     // The total, never a badge: Needs you, just above, has that.
     { id: 'view:all', selection: viewIn('all', tab), label: VIEW_NAMES.all, attention: 0, count: groups ? sessions.length : undefined, muted: false },
     // As a group counts: its badge, or how many; nothing while none is starred.
@@ -117,7 +126,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
       id: 'view:starred',
       selection: viewIn('starred', tab),
       label: VIEW_NAMES.starred,
-      attention: countAttention(starredSessions),
+      attention: countAttention(starredSessions, notNeeded),
       count: groups && starredSessions.length > 0 ? starredSessions.length : undefined,
       muted: false,
     },
@@ -127,7 +136,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
   const sections = repoListGroups(
     (groups ?? []).filter((group) => !hiddenGroups.some((entry) => sameGroup(entry, group))),
     roots,
-  ).map(({ root, groups: rootGroups }) => ({ root, entries: rootGroups.map((group) => groupItem(group, roots)) }));
+  ).map(({ root, groups: rootGroups }) => ({ root, entries: rootGroups.map((group) => groupItem(group, roots, notNeeded)) }));
   const items = [...views, ...sections.flatMap((section) => section.entries)];
 
   // The hidden groups as the snapshot has them, or with no sessions when it hasn't, in the list's order.
@@ -139,12 +148,12 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
     root,
     entries: rootGroups.flatMap((group) => {
       const listed = listedHidden.find(({ entry }) => sameGroup(entry, group));
-      return listed ? [{ item: groupItem(group, roots), entry: listed.entry, present: listed.group !== undefined }] : [];
+      return listed ? [{ item: groupItem(group, roots, notNeeded), entry: listed.entry, present: listed.group !== undefined }] : [];
     }),
   }));
   const hiddenEntries = hiddenSections.flatMap((section) => section.entries);
   // The hidden groups' sessions that need you, each once, so nothing that needs you is out of sight.
-  const hiddenAttention = countAttention(sessionsIn(listedHidden.flatMap(({ group }) => (group ? [group] : []))));
+  const hiddenAttention = countAttention(sessionsIn(listedHidden.flatMap(({ group }) => (group ? [group] : []))), notNeeded);
 
   // The one item in the Tab order: the last one focused, else the selection, else the first.
   const [focused, setFocused] = useState<string>();

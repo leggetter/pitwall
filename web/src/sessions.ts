@@ -3,6 +3,7 @@
 
 import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionKind, type SessionSummary } from '../../src/shared/protocol.js';
 import { shortenHome } from './format.js';
+import { markedNow, type NotNeeded } from './notNeeded.js';
 
 /**
  * A session the index says needs Phil (SessionSummary.needsYou, W69), for one of NeedsYou's reasons,
@@ -11,10 +12,22 @@ import { shortenHome } from './format.js';
  * `state: 'blocked'` alone isn't one. Never a stale or finished one, which the index never marks,
  * checked here too: a finished session's question still shows on its row, muted, but it isn't
  * counted anywhere. Nor an ended interactive session (W67), which is finished too, whatever it asked.
+ *
+ * With `notNeeded`, the viewer's marks (W88, notNeeded.ts), nor one marked not needed now that still
+ * needs what it needed when it was marked: Needs you, every need-you count and the urgency sort leave
+ * it out. Without them, as for what a row says it needs, whether the index says it needs you.
  */
-export function needsAttention(session: SessionSummary): boolean {
+export function needsAttention(session: SessionSummary, notNeeded?: NotNeeded): boolean {
   if (session.stale || session.finished || session.ended) return false;
-  return session.needsYou !== undefined;
+  return session.needsYou !== undefined && !markedNow(session, notNeeded);
+}
+
+/**
+ * A session that needs you, by the index, but is marked not needed now for what it needs (W88): its
+ * row keeps its badge, outlined, and says "Not needed now", with its toggle pressed.
+ */
+export function isNotNeeded(session: SessionSummary, notNeeded: NotNeeded | undefined): boolean {
+  return needsAttention(session) && markedNow(session, notNeeded);
 }
 
 /**
@@ -47,6 +60,8 @@ export interface StatusBadge {
   look: BadgeLook;
   /** An 8 px status dot before the label: busy and working. */
   dot?: boolean;
+  /** Marked not needed now (W88): outlined, whatever its status, which it keeps, as its label does. */
+  notNeeded?: true;
 }
 
 /**
@@ -62,8 +77,16 @@ export interface StatusBadge {
  * something; its row shows that separately, as an outline badge. An ended interactive session
  * (W67), whose process has exited, shows Ended, as a stopped one shows Stopped: it has no status or
  * state.
+ *
+ * One marked not needed now (W88, `notNeeded`) keeps its badge's text, outlined, as a stale blocked
+ * job's is: solid is for needing you only.
  */
-export function statusBadge(session: SessionSummary): StatusBadge {
+export function statusBadge(session: SessionSummary, notNeeded?: NotNeeded): StatusBadge {
+  const badge = needsBadge(session);
+  return isNotNeeded(session, notNeeded) ? { ...badge, look: 'outline', notNeeded: true } : badge;
+}
+
+function needsBadge(session: SessionSummary): StatusBadge {
   if (session.ended) return { status: 'ended', label: 'Ended', look: 'subtle-neutral' };
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
   switch (needsAttention(session) ? session.needsYou?.reason : undefined) {
@@ -105,8 +128,8 @@ export function needsText(session: SessionSummary): string | undefined {
  * quiet, and "Idle" is in the session view. Whether a session needs you never depends on this; it
  * comes from needsAttention().
  */
-export function rowStatusBadge(session: SessionSummary): StatusBadge | undefined {
-  const badge = statusBadge(session);
+export function rowStatusBadge(session: SessionSummary, notNeeded?: NotNeeded): StatusBadge | undefined {
+  const badge = statusBadge(session, notNeeded);
   return badge.status === 'idle' ? undefined : badge;
 }
 
@@ -370,22 +393,31 @@ function compareIds(a: SessionSummary, b: SessionSummary): number {
 }
 
 /**
- * The index's own order (src/index/summaries.ts, compareSessions), which is the Urgency sort: needs
- * you first, whatever the reason (W69), then busy, then most recently active. Stale sessions after
- * those, and finished sessions last, by activity alone.
+ * The Urgency sort, with the viewer's Not needed now marks (W88): needs you first, whatever the reason
+ * (W69), then busy, then most recently active. Stale sessions after those, and finished sessions last,
+ * by activity alone. A session marked not needed now sorts as if it didn't need you: by its status.
  */
-export function compareSessions(a: SessionSummary, b: SessionSummary): number {
+export function urgencyOrder(notNeeded?: NotNeeded): (a: SessionSummary, b: SessionSummary) => number {
   const bucket = (session: SessionSummary) => (session.finished ? 2 : session.stale ? 1 : 0);
   const rank = (session: SessionSummary) => {
-    if (needsAttention(session)) return 0;
+    if (needsAttention(session, notNeeded)) return 0;
     if (session.status === 'busy') return 1;
     return 2;
   };
-  const ba = bucket(a);
-  const bb = bucket(b);
-  if (ba !== bb) return ba - bb;
-  return (ba === 2 ? 0 : rank(a) - rank(b)) || activityMs(b) - activityMs(a) || compareIds(a, b);
+  return (a, b) => {
+    const ba = bucket(a);
+    const bb = bucket(b);
+    if (ba !== bb) return ba - bb;
+    return (ba === 2 ? 0 : rank(a) - rank(b)) || activityMs(b) - activityMs(a) || compareIds(a, b);
+  };
 }
+
+/**
+ * The index's own order (src/index/summaries.ts, compareSessions), which is the Urgency sort with no
+ * marks: needs you first, whatever the reason (W69), then busy, then most recently active. Stale
+ * sessions after those, and finished sessions last, by activity alone.
+ */
+export const compareSessions: (a: SessionSummary, b: SessionSummary) => number = urgencyOrder();
 
 // The Sort setting (docs/design-system.md, 3: Session list), Phil, 2026-10-20.
 
@@ -409,11 +441,12 @@ export function compareNames(a: SessionSummary, b: SessionSummary): number {
 /**
  * How an order sorts a selection's unfinished sessions, and its finished ones. Finished sessions
  * follow the setting too, except that Urgency orders them by activity alone: none of them needs you.
+ * Urgency leaves out what's marked not needed now (W88).
  */
-export function sessionOrder(order: SortOrder, finished: boolean): (a: SessionSummary, b: SessionSummary) => number {
+export function sessionOrder(order: SortOrder, finished: boolean, notNeeded?: NotNeeded): (a: SessionSummary, b: SessionSummary) => number {
   if (order === 'name') return compareNames;
   if (order === 'recent' || finished) return compareRecent;
-  return compareSessions;
+  return notNeeded === undefined || notNeeded.size === 0 ? compareSessions : urgencyOrder(notNeeded);
 }
 
 /**
@@ -422,13 +455,15 @@ export function sessionOrder(order: SortOrder, finished: boolean): (a: SessionSu
  * session, finished ones in one section at the end; Starred is the starred ones among them, finished
  * ones in its own Finished section, as All sessions has (W53). Each lists each session once, under its
  * home group in `home` (groupBy.ts), or the first group that lists it. The index's order is Urgency,
- * so it's sorted here.
+ * so it's sorted here. With `notNeeded` (W88), Needs you and Urgency leave out what's marked not
+ * needed now, which stays in every other list.
  */
 export function listScope(
   groups: readonly SessionGroup[],
   scope: Scope,
   order: SortOrder = 'urgency',
   home?: ReadonlyMap<string, SessionGroup>,
+  notNeeded?: NotNeeded,
 ): { current: Listed[]; finished: Listed[] } {
   const listed: Listed[] =
     scope.kind === 'group'
@@ -436,10 +471,10 @@ export function listScope(
       : // Each session once, under its home group, which its row names.
         listedOnce(groups, home);
   const sorted = (items: Listed[], finished: boolean) => {
-    const compare = sessionOrder(order, finished);
+    const compare = sessionOrder(order, finished, notNeeded);
     return items.sort((a, b) => compare(a.session, b.session));
   };
-  if (scope.kind === 'needs-you') return { current: sorted(listed.filter(({ session }) => needsAttention(session)), false), finished: [] };
+  if (scope.kind === 'needs-you') return { current: sorted(listed.filter(({ session }) => needsAttention(session, notNeeded)), false), finished: [] };
   const shown = scope.kind === 'starred' ? listed.filter(({ session }) => scope.ids.has(session.sessionId)) : listed;
   return {
     current: sorted(shown.filter(({ session }) => !session.finished), false),
@@ -501,8 +536,9 @@ export function filterListed(listed: readonly Listed[], filters: Filters): Liste
   });
 }
 
-export function countAttention(sessions: readonly SessionSummary[]): number {
-  return sessions.reduce((count, session) => count + (needsAttention(session) ? 1 : 0), 0);
+/** How many of `sessions` need you, without those marked not needed now (W88). */
+export function countAttention(sessions: readonly SessionSummary[], notNeeded?: NotNeeded): number {
+  return sessions.reduce((count, session) => count + (needsAttention(session, notNeeded) ? 1 : 0), 0);
 }
 
 /** "1 needs you", "3 need you". */

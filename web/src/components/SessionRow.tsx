@@ -1,7 +1,8 @@
 // A session row (docs/design-system.md, 4: Session rows), two lines at most: which session it is,
 // its badges, when it was last active and its star toggle (W53); then what it needs or asked, or what
-// it was last asked, after its group's label in Needs you, All sessions and Starred, and, quietly at
-// its end, how many of its sub-agents are running while any are (W77). A finished session's row
+// it was last asked, after its group's label in Needs you, All sessions and Starred, and "Not needed
+// now" while it's marked so (W88), and, quietly at its end, how many of its sub-agents are running
+// while any are (W77), then, while it needs you or is marked, its Not needed now toggle, under the star. A finished session's row
 // is muted, an ended interactive session's too (W67), with Ended as its status. The rest, such as its
 // replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
 // session view, one click away.
@@ -16,10 +17,12 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
-import { groupLabel, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
+import type { NotNeeded } from '../notNeeded.js';
+import { groupLabel, isNotNeeded, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
+import { NotNeededButton } from './NotNeededButton.js';
 import { StarButton } from './StarButton.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -38,6 +41,9 @@ const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = 
   'claude-code': "Claude Code's title, from the session's first prompt",
   pitwall: "pitwall's title, from the session's recent turns",
 };
+
+/** What a row marked not needed now says on line 2, quietly, after its group's label (W88). */
+export const NOT_NEEDED_TEXT = 'Not needed now';
 
 /** The id of the session view, which every row's name controls. */
 export const SESSION_VIEW_ID = 'session-view';
@@ -116,12 +122,18 @@ export interface SessionRowProps {
   starred?: boolean;
   /** Stars or unstars it: the star toggle at the end of line 1, which there's none without. */
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
+  /** The viewer's Not needed now marks (W88), so a marked session's row is quiet. */
+  notNeeded?: NotNeeded | undefined;
+  /** Marks it not needed now, or takes the mark away: its toggle, while it needs you, which there's none without. */
+  onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar }: SessionRowProps) {
-  const attention = needsAttention(session);
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded }: SessionRowProps) {
+  // Marked not needed now (W88): it still needs you, by the index, but has no bar, its badge is outlined, and line 2 says so.
+  const marked = isNotNeeded(session, notNeeded);
+  const attention = needsAttention(session, notNeeded);
   const { finished } = session;
-  const badge = rowStatusBadge(session);
+  const badge = rowStatusBadge(session, notNeeded);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
   const wants = whatItWants(session);
@@ -144,7 +156,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     event.preventDefault();
     onStep(session.sessionId, event.key === 'ArrowDown' ? 1 : -1);
   };
-  const className = ['session', attention && 'attention', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
+  const className = ['session', attention && 'attention', marked && 'not-needed', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
     .filter(Boolean)
     .join(' ');
   const badges = [
@@ -160,6 +172,56 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
       </Badge>
     ),
   ].filter(Boolean);
+
+  // Line 2, when there's anything to say (W88's toggle has a line 2 to itself when there isn't).
+  const line2 = (label !== undefined || wants || running || marked) && (
+    <Tooltip content={wants?.hint} relation="none" onlyIfCut>
+      <p className="session-what">
+        {/* What gives way, with an ellipsis, before the running count does. */}
+        <span className="session-what-text">
+          {label !== undefined && (
+            <>
+              <span className="session-group">
+                <Highlight text={label} />
+              </span>
+              {(marked || wants) && (
+                <span className="session-what-sep" aria-hidden="true">
+                  {' · '}
+                </span>
+              )}
+            </>
+          )}
+          {marked && (
+            // Quiet, as the group's label is, and before what it needs, so it's seen when that's cut short.
+            <>
+              <span className="session-not-needed">{NOT_NEEDED_TEXT}</span>
+              {wants && (
+                <span className="session-what-sep" aria-hidden="true">
+                  {' · '}
+                </span>
+              )}
+            </>
+          )}
+          {wants?.content}
+        </span>
+        {running !== undefined && (
+          // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
+          <span className="session-running">
+            {(label !== undefined || wants || marked) && (
+              <span className="session-what-sep" aria-hidden="true">
+                {' · '}
+              </span>
+            )}
+            {running}
+          </span>
+        )}
+      </p>
+    </Tooltip>
+  );
+  // While it needs you, or is marked not needed now (W88). Shown while it's marked, otherwise on hover and focus.
+  const toggle = onNotNeeded && (attention || marked) && (
+    <NotNeededButton sessionId={session.sessionId} name={session.name} marked={marked} onChange={(on) => onNotNeeded(session, on)} className="session-not-needed-toggle" />
+  );
 
   return (
     <li className={className} data-attention={attention || undefined} onClick={openFromRow}>
@@ -198,38 +260,14 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {/* Always shown while it's starred; otherwise on hover and focus, so the list stays calm. */}
         {onStar && <StarButton sessionId={session.sessionId} name={session.name} starred={starred} onStar={onStar} size="sm" className="session-star" />}
       </div>
-      {(label !== undefined || wants || running) && (
-        <Tooltip content={wants?.hint} relation="none" onlyIfCut>
-          <p className="session-what">
-            {/* What gives way, with an ellipsis, before the running count does. */}
-            <span className="session-what-text">
-              {label !== undefined && (
-                <>
-                  <span className="session-group">
-                    <Highlight text={label} />
-                  </span>
-                  {wants && (
-                    <span className="session-what-sep" aria-hidden="true">
-                      {' · '}
-                    </span>
-                  )}
-                </>
-              )}
-              {wants?.content}
-            </span>
-            {running !== undefined && (
-              // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
-              <span className="session-running">
-                {(label !== undefined || wants) && (
-                  <span className="session-what-sep" aria-hidden="true">
-                    {' · '}
-                  </span>
-                )}
-                {running}
-              </span>
-            )}
-          </p>
-        </Tooltip>
+      {toggle ? (
+        // While it needs you, or is marked: line 2 ends with the toggle, under the star, and gives way before it.
+        <div className="session-line-2">
+          {line2}
+          {toggle}
+        </div>
+      ) : (
+        line2
       )}
     </li>
   );

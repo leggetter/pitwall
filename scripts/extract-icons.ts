@@ -84,6 +84,11 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   // A session's star, off and on (W53): the same glyph, outlined, then filled, as Material Symbols draws a toggle's two states.
   star: 'star',
   starred: ['star', FILLED],
+  // A session's Not needed now toggle, off and on (W88): snoozed until what it needs changes, outlined, then
+  // filled, as the star is. And the actions menu's Put back in Needs you, which undoes it.
+  'not-needed': 'snooze',
+  'not-needed-on': ['snooze', FILLED],
+  undo: 'undo',
   // The session view's Sub-agents tab (W77): a session and the sub-agents it started, some of them by another.
   subagents: 'account_tree',
   // New session's Attach files (W82), and the type of each file in its list: an image, a PDF, or text.

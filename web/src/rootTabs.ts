@@ -21,6 +21,7 @@
 
 import type { IndexSnapshot, SessionGroup } from '../../src/shared/protocol.js';
 import { browserStorage, type StorageSource } from './groupState.js';
+import type { NotNeeded } from './notNeeded.js';
 import { countAttention, sessionsIn } from './sessions.js';
 
 export const ROOT_TAB_KEY = 'pitwall.root-tab.v1';
@@ -73,7 +74,10 @@ export function tabGroups(groups: readonly SessionGroup[], tab: string | undefin
   return tab === undefined ? groups : groups.filter((group) => group.root === tab);
 }
 
-/** How many of a root's sessions need you, each counted once, though in Every repo it worked in it may be in several of the root's groups: an inactive tab's badge. */
-export function tabAttention(groups: readonly SessionGroup[], root: string): number {
-  return countAttention(sessionsIn(tabGroups(groups, root)));
+/**
+ * How many of a root's sessions need you, each counted once, though in Every repo it worked in it may
+ * be in several of the root's groups: an inactive tab's badge. Not those marked not needed now (W88).
+ */
+export function tabAttention(groups: readonly SessionGroup[], root: string, notNeeded?: NotNeeded): number {
+  return countAttention(sessionsIn(tabGroups(groups, root)), notNeeded);
 }
