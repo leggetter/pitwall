@@ -5,8 +5,10 @@
 // tab alone and Copy command and Resume in background in its footer; Copy command's command; a
 // resume that works, after which the view opens the Terminal tab, attached, with no keyboard, the
 // snapshot arriving after the answer or before it; each way a resume fails, as the fake server
-// answers each session by its name; and a copy's warning kept in its toast once the snapshot lists
-// the original as running in its terminal, which takes the footer away.
+// answers each session by its name; one whose directory's path has a `'`, with no command to copy in
+// the footer, the menu or a refused resume's alert, and the note saying why (W87); and a copy's
+// warning kept in its toast once the snapshot lists the original as running in its terminal, which
+// takes the footer away.
 
 import { COPY_SHORT_ID, DEMO_APP, NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -25,6 +27,10 @@ const footButton = (label: string) => `[...(${VIEW}?.querySelectorAll('.ended-ac
 const ALERT = `${VIEW}?.querySelector('.resume-failure')`;
 const NOTE_TEXT = 'It ended when its Claude Code process exited. Resume it here in the background, or copy the command that resumes it in a terminal.';
 const GONE_TEXT = "It ended when its Claude Code process exited, and its directory no longer exists, so it can't be resumed.";
+/** A directory whose path has a `'`, which zsh and bash read one way inside single quotes and fish another (W87). In demo-app's group, as a worktree is. */
+const QUOTED_DIR = `${DEMO_APP}/.claude/worktrees/pitwall-test-it's-fixed`;
+const NO_COMMAND_TEXT = "It ended when its Claude Code process exited. Resume it here in the background. There's no command to copy: its directory's path has a ' or \\, which shells don't all read the same way.";
+const NO_TRUST_COMMAND = "There's no command to copy: the directory's path has a ' or \\, which shells don't all read the same way.";
 const COPY_TEXT = `It was open in another Claude Code process after all, so Claude Code started a copy as ${COPY_SHORT_ID} instead. The copy is listed as a background session with no name, which you can stop and remove.`;
 const ON_A_TAB = `document.activeElement?.getAttribute('role') === 'tab' && !!document.activeElement.closest('section.session-view')`;
 
@@ -228,6 +234,37 @@ const part: Part = {
         await t.shot(`failed-${failure.name}`);
       });
     }
+
+    await t.step("one whose directory's path has a ' has no command to copy, in the footer, the menu or a refused resume's alert, and says why (W87)", async () => {
+      server.clearRecords();
+      server.world.move(id(NAMES.endedAsked), QUOTED_DIR);
+      server.broadcast();
+      t.allow(new RegExp(`/api/sessions/${id(NAMES.endedAsked)}/resume$`), 'the refused resume this step asks for');
+      await openFromUrl(NAMES.endedAsked);
+      await page.settle(100);
+      t.expectEqual(await page.evaluate(NOTE), NO_COMMAND_TEXT, 'the note says why there’s none');
+      t.expectEqual(await page.evaluate(`[...${VIEW}.querySelectorAll('.ended-foot .session-view-note code')].map((code) => code.textContent)`), ["'", '\\'], "its ' and \\ in code style");
+      t.expectEqual(await page.evaluate(ACTIONS), ['Resume in background'], 'Resume in background alone');
+      await t.shot('no-command');
+      await page.click('Session actions', `${VIEW}.querySelector('button[aria-label="Session actions"]')`);
+      await page.waitFor('the menu', `!!${VIEW}.querySelector('[role="menu"]')`);
+      const items = await page.evaluate<string[]>(`[...${VIEW}.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent.trim())`);
+      t.expect(!items.includes('Copy resume command') && items.includes('Resume in background'), 'no Copy resume command in the menu', items);
+      await page.key('Escape');
+      await page.waitFor('the menu to close', `!${VIEW}.querySelector('[role="menu"]')`);
+      await page.click('Resume in background', footButton('Resume in background'));
+      await page.waitFor('the alert', `!!${ALERT}`, 5000);
+      await page.settle(100);
+      const shown = await page.evaluate<string>(`${ALERT}.textContent`);
+      t.expectEqual(
+        shown,
+        `Couldn't resume the session. Workspace not trusted. Run \`claude\` in ${QUOTED_DIR} once and accept the trust prompt, then retry. ${NO_TRUST_COMMAND}`,
+        "Claude Code's line, then why there's no command, and nothing more",
+      );
+      t.expect(!(await page.evaluate(`!!${ALERT}.querySelector('.command-chip')`)), 'no command chip');
+      t.expectEqual(server.records.resumes, [NAMES.endedAsked], 'one resume, of it');
+      await t.shot('no-command-refused');
+    });
 
     await t.step('one whose directory has gone says it can’t be resumed, with nothing to press', async () => {
       await openFromUrl(NAMES.endedGone);

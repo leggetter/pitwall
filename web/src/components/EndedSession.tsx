@@ -4,7 +4,8 @@
 // Resume in background, which resumes it with `claude --resume <id> --bg` through resumePath() (spike
 // 006), and Copy command, which copies the command that resumes it in a terminal (resumeCommand()).
 // A session whose directory has gone has the note alone: Claude Code resumes a session in its own
-// directory. The actions menu has both too (SessionView.tsx).
+// directory. One whose directory's path has a `'` or `\` has Resume in background alone, and its note
+// says why there's no command to copy (W87). The actions menu has both too (SessionView.tsx).
 //
 // Resume in background is busy while its request is out, and stays busy once Claude Code has resumed
 // it, until the snapshot lists the session as running, or RESUME_LISTED_MS has passed. Resumed, a
@@ -29,6 +30,13 @@ import '../actions.css';
 
 /** The footer's note, where an interactive session has its message box. */
 export const ENDED_NOTE = 'It ended when its Claude Code process exited. Resume it here in the background, or copy the command that resumes it in a terminal.';
+/**
+ * The note for one with no command to copy (resumeCommand()), as for a directory whose path has a `'`
+ * or `\`, which zsh and bash read one way inside single quotes and fish another (W87). The server
+ * lists no ended session that has none for any other reason. The `'` and `\` are in code style.
+ */
+export const ENDED_NO_COMMAND_NOTE =
+  "It ended when its Claude Code process exited. Resume it here in the background. There's no command to copy: its directory's path has a ' or \\, which shells don't all read the same way.";
 /** The note for one whose directory has gone (`cwdMissing`), which can't be resumed. */
 export const ENDED_GONE_NOTE = "It ended when its Claude Code process exited, and its directory no longer exists, so it can't be resumed.";
 /** The primary action's label, in the footer and the actions menu, and its busy label. */
@@ -207,7 +215,7 @@ export function EndedFooter({ session, resume, onCopy, onFocusLeaving }: EndedFo
   }, []);
   return (
     <div className="ended-foot" ref={root}>
-      <p className="session-view-note">{gone ? ENDED_GONE_NOTE : ENDED_NOTE}</p>
+      <p className="session-view-note">{gone ? ENDED_GONE_NOTE : onCopy ? ENDED_NOTE : <NoCommandNote />}</p>
       {!gone && resume.failure && <ResumeAlert failure={resume.failure} />}
       {!gone && (
         <div className="ended-actions">
@@ -222,6 +230,16 @@ export function EndedFooter({ session, resume, onCopy, onFocusLeaving }: EndedFo
         </div>
       )}
     </div>
+  );
+}
+
+/** ENDED_NO_COMMAND_NOTE, with its `'` and `\` in code style (5: Casing and style): the same text. */
+function NoCommandNote() {
+  const [before, rest] = ENDED_NO_COMMAND_NOTE.split(" ' or \\, ") as [string, string];
+  return (
+    <>
+      {before} <code>&apos;</code> or <code>\</code>, {rest}
+    </>
   );
 }
 

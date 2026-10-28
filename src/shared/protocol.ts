@@ -683,7 +683,11 @@ export interface SpawnRequest {
 
 export type SpawnResult =
   | { ok: true; shortId: string; name: string }
-  /** `hint` is a command for the user to run, such as the one that trusts a workspace. */
+  /**
+   * `hint` is a command for the user to run, such as the one that trusts a
+   * workspace. None for a directory whose path has a `'` or `\`, which shells
+   * don't all read the same way inside single quotes; `error` says so (W87).
+   */
   | { ok: false; error: string; hint?: string };
 
 /** Start a new background session with `claude --bg`. */
@@ -846,7 +850,8 @@ export const ENDED_SHOWN_DAYS = 7;
  *   with no prompt, so it waits for one. `shortId` is the id `claude attach`
  *   takes.
  * - not ok: `hint` is a command for the user to run, such as the one that
- *   trusts a workspace. `copyShortId` is set when Claude Code started a copy
+ *   trusts a workspace, none for a path with a `'` or `\`, as for spawn
+ *   (W87). `copyShortId` is set when Claude Code started a copy
  *   under a new id instead, because the session was open in another Claude
  *   Code process after all (spike 006, finding 5); the copy is a background
  *   session with no name.

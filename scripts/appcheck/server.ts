@@ -287,6 +287,17 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   }
 
   /**
+   * The 422 for a directory Claude Code doesn't trust, in W66's words (untrustedResult() in
+   * src/server/actions.ts): the command that trusts it, or, for a path with a `'` or `\`, which shells
+   * don't all read the same way, no command and why (W87). Every made-up path but those is a plain word.
+   */
+  function untrusted(cwd: string): ResumeResult {
+    const line = `Workspace not trusted. Run \`claude\` in ${cwd} once and accept the trust prompt, then retry.`;
+    if (/['\\]/.test(cwd)) return { ok: false, error: `${line} There's no command to copy: the directory's path has a ' or \\, which shells don't all read the same way.` };
+    return { ok: false, error: line, hint: `cd ${cwd} && claude` };
+  }
+
+  /**
    * Resume in background (W67): NAMES.ended resumes, and is listed as a running background session a
    * moment later, as the index lists it on a later poll; each other ended session fails one way, by
    * its name, with W66's status and words (src/server/actions.ts), the paths made up.
@@ -300,11 +311,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     records.resumes.push(session.name);
     switch (session.name) {
       case NAMES.endedAsked:
-        return json(res, 422, {
-          ok: false,
-          error: `Workspace not trusted. Run \`claude\` in ${session.cwd} once and accept the trust prompt, then retry.`,
-          hint: `cd ${session.cwd} && claude`,
-        } satisfies ResumeResult);
+        return json(res, 422, untrusted(session.cwd) satisfies ResumeResult);
       case NAMES.endedCopy:
         json(res, 409, {
           ok: false,

@@ -134,23 +134,40 @@ const RESUME_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/;
  */
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
-/** `value` in POSIX single quotes, each `'` in it closed, escaped and opened again: one word to any shell. */
-export function posixQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+/**
+ * The two characters single quotes can't carry the same way in every shell (W87). Inside single
+ * quotes, POSIX shells such as zsh and bash take every character as it is, but fish reads `\'` as a
+ * quote and `\\` as one backslash. So POSIX's `'\''` for a `'` ends fish's word early, and the rest
+ * of the path runs as a command there. Without either, single-quoted text is one word, as written, in
+ * all of them.
+ */
+const NOT_QUOTABLE = /['\\]/;
+
+/**
+ * `value` in single quotes, one word that POSIX shells and fish read as written, or undefined when
+ * there's none: for a `'` or `\` (NOT_QUOTABLE), or a control or bidi character (UNSAFE). The server's
+ * trust hint follows the same rule (shellQuote() in src/server/actions.ts).
+ */
+export function shellWord(value: string): string | undefined {
+  if (NOT_QUOTABLE.test(value) || UNSAFE.test(value)) return undefined;
+  return `'${value}'`;
 }
 
 /**
  * The command that resumes an ended interactive session in a terminal (W67): `cd '<cwd>' && claude
  * --resume <sessionId>`, for Copy command, or undefined. Only for one whose directory is still there,
  * since Claude Code finds a session's transcript by the directory it runs in. The directory is always
- * quoted, so it pastes into Warp, Cursor's terminal or any shell as one word; one with a control
- * or bidi character (UNSAFE), and an id that fails a conservative pattern, give none, as
- * attachCommand() refuses an unsafe short id.
+ * in single quotes, so it pastes into Warp, Cursor's terminal, zsh, bash or fish as one word; one
+ * shellWord() has no word for, with a `'`, a `\`, a control or a bidi character, and an id that fails
+ * a conservative pattern, give none, as attachCommand() refuses an unsafe short id. The server lists
+ * no ended session with a control or bidi character in its directory or an id that isn't a UUID (W81),
+ * so a `'` or `\` is in practice the only reason one has none (EndedFooter's note).
  */
 export function resumeCommand(session: SessionSummary): string | undefined {
   if (!session.ended || session.cwdMissing) return undefined;
-  if (!RESUME_ID.test(session.sessionId) || session.cwd === '' || UNSAFE.test(session.cwd)) return undefined;
-  return `cd ${posixQuote(session.cwd)} && claude --resume ${session.sessionId}`;
+  if (!RESUME_ID.test(session.sessionId) || session.cwd === '') return undefined;
+  const dir = shellWord(session.cwd);
+  return dir === undefined ? undefined : `cd ${dir} && claude --resume ${session.sessionId}`;
 }
 
 // Ended interactive sessions (W67, Phil, 2026-10-27): the server lists them for ENDED_LISTED_DAYS,
