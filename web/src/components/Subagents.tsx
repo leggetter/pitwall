@@ -88,7 +88,7 @@ export function useSubagents(api: ApiClient | undefined, sessionId: string, sign
     made.current = true;
     const request = ++latest.current;
     const before = stateRef.current;
-    if (before.status === 'idle' || before.status === 'failed') commit({ ...before, status: before.status === 'idle' ? 'loading' : before.status });
+    if (before.status === 'idle') commit({ ...before, status: 'loading' });
     const result = await getSubagents(api, sessionId, signal());
     if (!alive.current || request !== latest.current) return;
     const now = stateRef.current;

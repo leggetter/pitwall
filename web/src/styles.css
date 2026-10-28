@@ -1843,6 +1843,8 @@ mark.match {
 .session-running {
   flex: none;
   color: var(--pw-text-subtle);
+  /* Its own flex item, which would drop the space before its " · ". */
+  white-space: pre;
 }
 
 .session-group {
