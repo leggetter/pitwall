@@ -1154,7 +1154,7 @@ describe('startServer', () => {
           agents: { list: async () => ({ ok: true, rows: [{ sessionId: SID, name: 'pitwall-test-subagents', kind: 'interactive', cwd: '/work/repo', pid: 4242, status: 'idle', startedAt: at(0) }] }) },
           groups: { resolve: async (cwd) => ({ key: cwd, kind: 'directory' }), prune() {} },
           transcripts: { read: async () => ({ transcript: 'ok' }), transcriptFile: () => main, retain() {} },
-          subagents: createSubagentTracker(),
+          subagents: createSubagentTracker({ processStartMs: async () => undefined }),
           realpath: async (p) => p,
           now: Date.now,
           home: '/home/someone',

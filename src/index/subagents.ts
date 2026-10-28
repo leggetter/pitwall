@@ -24,15 +24,22 @@
 //     'stopped'; anything else is no end. Read from a user entry's text, a queue-operation's
 //     content, or a string in an attachment, each of which must start with the tag, so a tool's
 //     output that quotes one isn't taken for one. The newest wins;
-//   - for one the session waited for, its call's result: an error is 'failed', anything else
-//     'done'. A background one's result comes back at once, so it's no end unless it's an error.
-//     It's background by the meta's `requestShape` ('background', or anything else for not), the
-//     call's `run_in_background`, a result marked async (`toolUseResult.isAsync`, or its `status`
-//     'async_launched'), or a task notification about it;
+//   - for one the session waited for, its call's result: an error is 'failed', or 'stopped' when
+//     it's Claude Code's interrupt marker, `[Request interrupted…`; anything else is 'done'. A
+//     background one's result comes back at once, so it's no end unless it's an error. It's
+//     background by the meta's `requestShape` 'background', the call's `run_in_background`, a
+//     result marked async (`toolUseResult.isAsync`, or its `status` 'async_launched'), or a task
+//     notification about it; and not background by `requestShape` 'foreground' or
+//     `run_in_background: false`. Any other shape leaves it unknown;
+//   - an end is no end once the sub-agent's own transcript has entries more than 10 s newer than
+//     it, as when SendMessage resumes one that had finished;
 // - no end: 'running' while the session's process is alive, else 'unknown'. Not 'running' either
-//   when it started before the session's current process: before the session's startedAt, or
-//   before the poll that last saw the old process, when pitwall saw it change (a new pid, or alive
-//   again after it wasn't, as when a session is resumed). Those died with the old process.
+//   when it has no activity since the session's current process started: its newest entry, its
+//   files' mtimes and its call. The process's start is the OS's (`ps -o etime=`, once per pid);
+//   without it, the later of the session's startedAt and the poll that last saw the old process
+//   when pitwall saw it change (a new pid, or alive again after it wasn't). Those died with the old
+//   process. And one with no start record, an Agent call, counts only with activity in the last
+//   10 minutes, so a stray meta file or transcript doesn't count for the whole session.
 //
 // Cost. The poll never waits on it. The index calls track() with the sessions it lists, which queues
 // a scan of each one whose process is alive, and reads running() synchronously. A scan lists the
@@ -40,9 +47,10 @@
 // the last scan, a chunk at a time, yielding to the event loop between chunks, with one file system
 // call at a time. The first scan of a session reads its transcripts in full; later ones stat them and
 // read only what's new. In the session's transcript, only lines that name an Agent call, a result of
-// one, or a task notification are parsed; in a sub-agent's, also its tool calls, and its lines up to
-// 1 MiB for their times. A session whose process isn't alive is scanned only when its list is asked
-// for. One that's no longer listed is forgotten.
+// one, or a task notification are parsed; in a sub-agent's, also its tool calls, its first line, and
+// the last lines of each chunk read until one has a time, for its first and newest times. A session
+// whose process isn't alive is scanned only when its list is asked for. One that's no longer listed
+// is forgotten.
 //
 // Memory, never on disk, because descriptions and ids are session content: per transcript, its
 // inode, offset and what its lines said (the Agent calls, their results and the task notifications,
@@ -53,6 +61,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { SUBAGENTS_MAX, type SubagentList, type SubagentState, type SubagentSummary } from '../shared/protocol.js';
+import { runFile, type RunFile } from './exec.js';
 import { isRecord } from './guards.js';
 import { cap, plainLine, tail } from './text.js';
 import { stripSystemReminders } from './transcripts.js';
@@ -69,10 +78,19 @@ export const META_MAX_BYTES = 64 * 1024;
 export const SUBAGENTS_LISTED_MAX = 5000;
 /** The most of each kind of record kept per transcript; past it, the oldest go. */
 const FACTS_MAX = 10_000;
-/** A sub-agent transcript's lines up to this long are parsed for their times. */
+/** A line up to this long in a sub-agent's transcript is parsed for its time alone. */
 const TIME_LINE_MAX = 1 << 20;
-/** A process start this close to a sub-agent's start is taken as the same moment. */
-const START_SLACK_MS = 2000;
+/** How many of a chunk's last lines are kept to read the newest time from. */
+const TAIL_LINES = 4;
+/** Activity this close before the process's start is taken as after it: `ps` counts whole seconds. */
+const PROCESS_SLACK_MS = 2000;
+/** Entries in a sub-agent's own transcript more than this newer than its end mean it was resumed. */
+export const RESUMED_AFTER_MS = 10_000;
+/** A sub-agent with no Agent call on record counts as running only with activity this recent. */
+export const UNSTARTED_ACTIVE_MS = 10 * 60_000;
+/** How long `ps` may take, and how many run at once. */
+const PS_TIMEOUT_MS = 2000;
+const PS_CONCURRENCY = 2;
 /** A meta file changed this recently is read again whatever its size and mtime say. */
 const META_SETTLE_MS = 2000;
 /**
@@ -191,6 +209,8 @@ export interface SubagentTrackerStats {
 export interface SubagentTrackerOptions {
   /** Milliseconds since the epoch. Default Date.now. */
   now?: () => number;
+  /** When a process started, in milliseconds since the epoch, or undefined. Default processStartTime(), which runs `ps`. */
+  processStartMs?: (pid: number) => Promise<number | undefined>;
   /** Bytes read at a time. Default 1 MiB. */
   chunkBytes?: number;
   /** A line longer than this is skipped. Default 16 MiB. */
@@ -206,6 +226,9 @@ interface Call {
 
 interface Result {
   error: boolean;
+  /** An error that's Claude Code's interrupt marker. */
+  interrupted?: boolean;
+  atMs?: number;
   /** Marked as a background launch. */
   async?: boolean;
   /** The agent it names. */
@@ -236,6 +259,8 @@ interface FileState {
   owner: string | undefined;
   dev: number;
   ino: number;
+  /** As of the last scan. */
+  mtimeMs: number;
   /** Bytes read so far, including the carry. */
   offset: number;
   /** The bytes after the last newline read: the start of a line a later read finishes. */
@@ -271,8 +296,10 @@ interface Listed {
 interface Row {
   summary: Omit<SubagentSummary, 'state'>;
   end?: EndState;
-  /** When it started, as best known: its call's time, else its transcript's first entry. */
-  startMs?: number;
+  /** Its Agent call is on record. */
+  started: boolean;
+  /** Its newest sign of life: its newest entry, its files' mtimes, its call. */
+  activityMs?: number;
   /** For the order: its transcript's first entry, else its call's time. */
   sortMs?: number;
 }
@@ -288,6 +315,10 @@ interface SessionState {
   restartMs: number | undefined;
   /** When track() last saw it. */
   trackedMs: number | undefined;
+  /** The pid whose start is being or was looked up, the lookup, and what it found. */
+  startPid: number | undefined;
+  startLookup: Promise<void> | undefined;
+  processStartMs: number | undefined;
   /** When a scan that checked everything last started. */
   checkedMs: number | undefined;
   files: Map<string, FileState>;
@@ -304,6 +335,7 @@ const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 export function createSubagentTracker(options: SubagentTrackerOptions = {}): SubagentTracker {
   const now = options.now ?? Date.now;
+  const lookupStart = limited(options.processStartMs ?? ((pid: number) => processStartTime(pid)), PS_CONCURRENCY);
   const chunkBytes = Math.max(1, options.chunkBytes ?? 1 << 20);
   const maxLineBytes = options.maxLineBytes ?? 16 << 20;
 
@@ -385,7 +417,10 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
         state.files.delete(file);
         return;
       }
-      if (known !== undefined && known.dev === info.dev && known.ino === info.ino && known.offset === info.size) return;
+      if (known !== undefined && known.dev === info.dev && known.ino === info.ino && known.offset === info.size) {
+        known.mtimeMs = info.mtimeMs;
+        return;
+      }
       handle = await open(file, follow ? FOLLOW_FLAGS : OPEN_FLAGS);
       const opened = await handle.stat();
       if (!opened.isFile()) {
@@ -394,9 +429,10 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
       }
       let target = known;
       if (target === undefined || target.dev !== opened.dev || target.ino !== opened.ino || opened.size < target.offset) {
-        target = { owner, dev: opened.dev, ino: opened.ino, offset: 0, carry: [], carryBytes: 0, skip: false, facts: emptyFacts() };
+        target = { owner, dev: opened.dev, ino: opened.ino, mtimeMs: opened.mtimeMs, offset: 0, carry: [], carryBytes: 0, skip: false, facts: emptyFacts() };
         state.files.set(file, target);
       }
+      target.mtimeMs = opened.mtimeMs;
       const end = opened.size;
       if (target.offset >= end) return;
       const buffer = Buffer.allocUnsafe(Math.min(chunkBytes, end - target.offset));
@@ -416,22 +452,36 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
     }
   }
 
-  /** Splits a chunk into lines, finishing the carried one first, and takes each complete one. */
+  /**
+   * Splits a chunk into lines, finishing the carried one first, and takes each complete one. In a
+   * sub-agent's transcript, its newest time then comes from the chunk's last lines that weren't
+   * parsed, newest first, until one has a time.
+   */
   function consume(file: FileState, chunk: Buffer): void {
+    const unparsed: Buffer[] = [];
+    const take = (line: Buffer) => {
+      if (takeLine(file, line)) unparsed.length = 0;
+      else if (file.owner !== undefined) {
+        unparsed.push(line);
+        if (unparsed.length > TAIL_LINES) unparsed.shift();
+      }
+    };
     let newline = chunk.indexOf(NEWLINE);
     if (newline === -1) {
       carry(file, chunk);
       return;
     }
     if (file.skip) file.skip = false;
-    else takeLine(file, file.carryBytes > 0 ? Buffer.concat([...file.carry, chunk.subarray(0, newline)]) : chunk.subarray(0, newline));
+    else take(file.carryBytes > 0 ? Buffer.concat([...file.carry, chunk.subarray(0, newline)]) : chunk.subarray(0, newline));
     file.carry = [];
     file.carryBytes = 0;
     let pos = newline + 1;
     for (newline = chunk.indexOf(NEWLINE, pos); newline !== -1; newline = chunk.indexOf(NEWLINE, pos)) {
-      takeLine(file, chunk.subarray(pos, newline));
+      take(chunk.subarray(pos, newline));
       pos = newline + 1;
     }
+    // Before the carry: these are views of the chunk, which is read into again.
+    for (let i = unparsed.length - 1; i >= 0; i--) if (timeOfLine(file, unparsed[i] as Buffer)) break;
     if (pos < chunk.length) carry(file, chunk.subarray(pos));
   }
 
@@ -448,30 +498,85 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
     file.carryBytes += bytes.length;
   }
 
-  /** One line: parsed only when it names something kept, or, in a sub-agent's transcript, when it's short enough to read its time. */
-  function takeLine(file: FileState, line: Buffer): void {
+  /**
+   * One line, parsed only when it names something kept, or, in a sub-agent's transcript, when its
+   * first time is still to be found. True when it gave a sub-agent's transcript a time.
+   */
+  function takeLine(file: FileState, line: Buffer): boolean {
     const sub = file.owner !== undefined;
     const calls = line.indexOf(MARK_AGENT) !== -1 || line.indexOf(MARK_TASK) !== -1 || (sub && line.indexOf(MARK_TOOL_USE) !== -1);
     const results = file.facts.calls.size > 0 && namesKnownCall(file.facts, line);
     const notices = line.indexOf(MARK_NOTICE) !== -1;
-    if (!calls && !results && !notices && !(sub && line.length <= TIME_LINE_MAX)) return;
-    let entry: unknown;
+    const first = sub && file.facts.firstMs === undefined && line.length <= TIME_LINE_MAX;
+    if (!calls && !results && !notices && !first) return false;
+    const entry = parse(line);
+    if (entry === undefined) return false;
+    const atMs = timeOf(entry);
+    if (calls) takeCalls(file, entry, atMs);
+    if (results) takeResults(file.facts, entry, atMs);
+    if (notices) takeNotices(file.facts, entry, atMs);
+    return noteTime(file, atMs);
+  }
+
+  /** A line of a sub-agent's transcript read for its time alone. True when it had one. */
+  function timeOfLine(file: FileState, line: Buffer): boolean {
+    if (line.length > TIME_LINE_MAX) return false;
+    const entry = parse(line);
+    return entry !== undefined && noteTime(file, timeOf(entry));
+  }
+
+  function parse(line: Buffer): Record<string, unknown> | undefined {
     try {
-      entry = JSON.parse(line.toString('utf8'));
+      const entry: unknown = JSON.parse(line.toString('utf8'));
+      counters.linesParsed++;
+      return isRecord(entry) ? entry : undefined;
     } catch {
+      return undefined;
+    }
+  }
+
+  /** A sub-agent's transcript's first and newest times. */
+  function noteTime(file: FileState, atMs: number | undefined): boolean {
+    if (file.owner === undefined || atMs === undefined) return false;
+    const { facts } = file;
+    if (facts.firstMs === undefined) facts.firstMs = atMs;
+    if (facts.lastMs === undefined || atMs > facts.lastMs) facts.lastMs = atMs;
+    return true;
+  }
+
+  // --- The session's process ---------------------------------------------------------------------
+
+  /**
+   * Looks up when the session's process started, once per pid: from a scan that found sub-agents,
+   * so a session with none never runs `ps`. The scan waits for it before it decides anything.
+   */
+  function lookUpStart(state: SessionState, pid: number | undefined): void {
+    if (pid === state.startPid) return;
+    state.startPid = pid;
+    state.processStartMs = undefined;
+    if (pid === undefined) {
+      state.startLookup = undefined;
       return;
     }
-    counters.linesParsed++;
-    if (!isRecord(entry)) return;
-    const atMs = timeOf(entry);
-    const { facts } = file;
-    if (sub && atMs !== undefined) {
-      if (facts.firstMs === undefined) facts.firstMs = atMs;
-      if (facts.lastMs === undefined || atMs > facts.lastMs) facts.lastMs = atMs;
-    }
-    if (calls) takeCalls(file, entry, atMs);
-    if (results) takeResults(facts, entry);
-    if (notices) takeNotices(facts, entry, atMs);
+    const lookup: Promise<void> = lookupStart(pid)
+      .then(
+        (startMs) => {
+          if (state.startPid === pid && typeof startMs === 'number' && Number.isFinite(startMs)) state.processStartMs = startMs;
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        if (state.startLookup === lookup) state.startLookup = undefined;
+      });
+    state.startLookup = lookup;
+  }
+
+  /** Not 'running' unless it shows activity since the session's current process started, and, with no start on record, lately. */
+  function isRunning(row: Row, state: SessionState): boolean {
+    if (row.end !== undefined || !state.alive) return false;
+    if (!row.started && (row.activityMs === undefined || row.activityMs < now() - UNSTARTED_ACTIVE_MS)) return false;
+    const since = state.processStartMs ?? Math.max(state.startedAtMs ?? -Infinity, state.restartMs ?? -Infinity);
+    return row.activityMs === undefined || row.activityMs >= since - PROCESS_SLACK_MS;
   }
 
   // --- Scans and the queue -----------------------------------------------------------------------
@@ -494,6 +599,8 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
       if (owner !== undefined && ended.has(owner) && state.files.has(file)) continue;
       await scanFile(state, file, owner, current);
     }
+    if (listing.size > 0) lookUpStart(state, state.alive ? state.pid : undefined);
+    if (state.startLookup !== undefined) await state.startLookup;
     if (!current()) return;
     state.rows = rowsOf(state);
     state.scanned = true;
@@ -522,9 +629,8 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
   }
 
   function runningOf(state: SessionState): number {
-    if (!state.alive) return 0;
     let count = 0;
-    for (const row of state.rows) if (row.end === undefined && startedInThisProcess(row, state)) count++;
+    for (const row of state.rows) if (isRunning(row, state)) count++;
     return count;
   }
 
@@ -583,6 +689,8 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
           if (newProcess) state.restartMs = state.trackedMs;
           state.alive = session.alive;
           state.pid = session.pid;
+          // Another process, or none: its start is looked up again by the next scan.
+          if (state.startPid !== undefined && state.startPid !== (session.alive ? session.pid : undefined)) lookUpStart(state, undefined);
           const startedMs = session.startedAt === undefined ? NaN : Date.parse(session.startedAt);
           state.startedAtMs = Number.isFinite(startedMs) ? startedMs : undefined;
           state.trackedMs = nowMs;
@@ -608,7 +716,7 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
         if (state === undefined) return undefined;
         await scanFresh(sessionId, state);
         if (sessions.get(sessionId) === state) report(state);
-        return listOf(sessionId, state);
+        return listOf(sessionId, state, isRunning);
       } catch {
         return undefined;
       }
@@ -658,6 +766,25 @@ export function createSubagentTracker(options: SubagentTrackerOptions = {}): Sub
   };
 }
 
+/**
+ * When a process started, in milliseconds since the epoch, from `ps -o etime= -p <pid>`, the time
+ * since it started, to the second ([[dd-]hh:]mm:ss on macOS and Linux). Undefined when there's no
+ * such process, or `ps` fails or says something else. Never rejects.
+ */
+export async function processStartTime(pid: number, run: RunFile = runFile, now: () => number = Date.now): Promise<number | undefined> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+  try {
+    const out = await run('ps', ['-o', 'etime=', '-p', String(pid)], { timeoutMs: PS_TIMEOUT_MS, env: { ...process.env, LC_ALL: 'C' }, maxStdoutBytes: 1024 });
+    const match = /^\s*(?:(\d{1,5})-)?(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s*$/.exec(out);
+    if (match === null) return undefined;
+    const [, days, hours, minutes, seconds] = match;
+    const elapsed = ((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 + Number(seconds);
+    return now() - elapsed * 1000;
+  } catch {
+    return undefined;
+  }
+}
+
 function newSession(main: string): SessionState {
   const sessionDir = path.join(path.dirname(main), path.basename(main, '.jsonl'));
   return {
@@ -669,6 +796,9 @@ function newSession(main: string): SessionState {
     startedAtMs: undefined,
     restartMs: undefined,
     trackedMs: undefined,
+    startPid: undefined,
+    startLookup: undefined,
+    processStartMs: undefined,
     checkedMs: undefined,
     files: new Map(),
     metas: new Map(),
@@ -682,6 +812,24 @@ function newSession(main: string): SessionState {
 
 function emptyFacts(): Facts {
   return { calls: new Map(), results: new Map(), notices: new Map(), toolCalls: 0 };
+}
+
+/** `fn`, with at most `max` calls running at once, the rest waiting their turn in order. */
+function limited<A, R>(fn: (arg: A) => Promise<R>, max: number): (arg: A) => Promise<R> {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async (arg) => {
+    // A finishing call hands its place straight to the next one.
+    if (active < max) active++;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await fn(arg);
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
 }
 
 /** Sets a record, dropping the oldest once there are FACTS_MAX. */
@@ -735,8 +883,11 @@ function takeCalls(file: FileState, entry: Record<string, unknown>, atMs: number
 
 const AGENT_ID_IN_TEXT = /\bagentId:\s*([A-Za-z0-9]{1,64})\b/;
 
-/** A user entry's results for this transcript's Agent calls: whether each was an error, marked as a background launch, and the agent it names. */
-function takeResults(facts: Facts, entry: Record<string, unknown>): void {
+/** Claude Code's text for a tool call the user interrupted. */
+const INTERRUPTED = '[Request interrupted';
+
+/** A user entry's results for this transcript's Agent calls: whether each was an error, an interrupt, marked as a background launch, and the agent it names. */
+function takeResults(facts: Facts, entry: Record<string, unknown>, atMs: number | undefined): void {
   if (entry.type !== 'user' || !isRecord(entry.message)) return;
   const content = entry.message.content;
   if (!Array.isArray(content)) return;
@@ -745,6 +896,12 @@ function takeResults(facts: Facts, entry: Record<string, unknown>): void {
     const id = block.tool_use_id;
     if (typeof id !== 'string' || !facts.calls.has(id)) continue;
     const result: Result = { error: block.is_error === true };
+    if (atMs !== undefined) result.atMs = atMs;
+    if (result.error) {
+      const text = textOf(block.content) ?? (typeof entry.toolUseResult === 'string' ? entry.toolUseResult : undefined);
+      const said = text === undefined ? '' : cap(text, 256).trim().replace(/^Error:\s*/, '');
+      if (said.startsWith(INTERRUPTED)) result.interrupted = true;
+    }
     // The line's toolUseResult is its one result's.
     const about = blocks.length === 1 ? entry.toolUseResult : undefined;
     if (isRecord(about)) {
@@ -840,7 +997,9 @@ async function readMeta(file: string): Promise<Meta> {
     const agentType = typeText(parsed.agentType);
     if (agentType !== undefined) meta.agentType = agentType;
     if (typeof parsed.toolUseId === 'string' && TOOL_USE_ID.test(parsed.toolUseId)) meta.toolUseId = parsed.toolUseId;
-    if (typeof parsed.requestShape === 'string' && parsed.requestShape !== '') meta.background = parsed.requestShape === 'background';
+    // Only the shapes known for each: any other leaves it unknown.
+    if (parsed.requestShape === 'background') meta.background = true;
+    else if (parsed.requestShape === 'foreground') meta.background = false;
     return meta;
   } catch {
     return {};
@@ -891,10 +1050,14 @@ function rowsOf(state: SessionState): Row[] {
     let background = meta.background ?? call?.background;
     if (background === undefined && (notice !== undefined || result?.async === true)) background = true;
     let end = notice?.state;
+    let endMs = notice?.atMs;
     if (end === undefined && result !== undefined) {
-      if (result.error) end = 'failed';
+      if (result.error) end = result.interrupted === true ? 'stopped' : 'failed';
       else if (background !== true && result.async !== true) end = 'done';
+      endMs = result.atMs;
     }
+    // Its own transcript went on after its end: SendMessage resumed it.
+    if (end !== undefined && endMs !== undefined && own?.lastMs !== undefined && own.lastMs > endMs + RESUMED_AFTER_MS) end = undefined;
 
     const summary: Row['summary'] = {
       agentId,
@@ -907,10 +1070,11 @@ function rowsOf(state: SessionState): Row[] {
     if (started?.owner !== undefined && started.owner !== agentId && state.listing.has(started.owner)) summary.startedBy = started.owner;
     if (own?.firstMs !== undefined) summary.startedAt = new Date(own.firstMs).toISOString();
     if (own?.lastMs !== undefined) summary.lastActivityAt = new Date(own.lastMs).toISOString();
-    const row: Row = { summary };
+    const row: Row = { summary, started: call !== undefined };
     if (end !== undefined) row.end = end;
-    const startMs = call?.atMs ?? own?.firstMs;
-    if (startMs !== undefined) row.startMs = startMs;
+    const ownFile = listed.transcript === undefined ? undefined : state.files.get(path.join(state.folder, listed.transcript));
+    const signs = [own?.lastMs, ownFile?.mtimeMs, state.metas.get(agentId)?.mtimeMs, call?.atMs].filter((ms): ms is number => ms !== undefined && Number.isFinite(ms));
+    if (signs.length > 0) row.activityMs = Math.max(...signs);
     const sortMs = own?.firstMs ?? call?.atMs;
     if (sortMs !== undefined) row.sortMs = sortMs;
     rows.push(row);
@@ -918,16 +1082,9 @@ function rowsOf(state: SessionState): Row[] {
   return rows;
 }
 
-/** No end recorded and the session alive is 'running', unless it started before the session's current process did. */
-function startedInThisProcess(row: Row, state: SessionState): boolean {
-  if (row.startMs === undefined) return true;
-  const boundary = Math.max(state.startedAtMs ?? -Infinity, state.restartMs ?? -Infinity);
-  return row.startMs >= boundary - START_SLACK_MS;
-}
-
-function listOf(sessionId: string, state: SessionState): SubagentList {
+function listOf(sessionId: string, state: SessionState, isRunning: (row: Row, state: SessionState) => boolean): SubagentList {
   const all = state.rows.map((row) => {
-    const subagent: SubagentSummary = { ...row.summary, state: row.end ?? (state.alive && startedInThisProcess(row, state) ? 'running' : 'unknown') };
+    const subagent: SubagentSummary = { ...row.summary, state: row.end ?? (isRunning(row, state) ? 'running' : 'unknown') };
     return { subagent, sortMs: row.sortMs };
   });
   // Running first, then the newest started, those with no time last, then by id so the order holds.

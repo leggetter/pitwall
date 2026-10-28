@@ -1,8 +1,9 @@
 // Synthetic fixtures only: made-up sessions, ids and descriptions, never a real transcript.
-import { appendFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RunError } from './exec.js';
 import { SUBAGENTS_MAX, type SubagentSummary } from '../shared/protocol.js';
 import {
   createSubagentTracker,
@@ -10,8 +11,11 @@ import {
   descriptionText,
   isSafeAgentId,
   META_MAX_BYTES,
+  processStartTime,
+  RESUMED_AFTER_MS,
   SUBAGENT_DESCRIPTION_MAX,
   SUBAGENT_RECHECK_MS,
+  UNSTARTED_ACTIVE_MS,
   type SubagentTracker,
   type TrackedSubagentSession,
 } from './subagents.js';
@@ -85,6 +89,8 @@ let main: string;
 let folder: string;
 let tracker: SubagentTracker;
 let clock: number;
+/** What the tracker is told the session's process's start was: unknown unless a test says. */
+let processStart: ReturnType<typeof vi.fn<(pid: number) => Promise<number | undefined>>>;
 
 beforeEach(async () => {
   dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-subagents-')));
@@ -93,7 +99,8 @@ beforeEach(async () => {
   await mkdir(folder, { recursive: true });
   main = path.join(project, `${SID}.jsonl`);
   clock = T0 + 3_600_000;
-  tracker = createSubagentTracker({ now: () => clock });
+  processStart = vi.fn(async (_pid: number) => undefined as number | undefined);
+  tracker = createSubagentTracker({ now: () => clock, processStartMs: processStart });
 });
 
 afterEach(async () => {
@@ -110,6 +117,12 @@ async function background(agentId: string, description: string, seconds: number,
   return agentCall(`toolu_${agentId}`, description, seconds, { run_in_background: true }) + launched(`toolu_${agentId}`, agentId, seconds);
 }
 
+/** Sets a sub-agent's files' mtimes, as if it was last active at `seconds`. */
+async function age(agentId: string, seconds: number): Promise<void> {
+  const when = new Date(Date.parse(at(seconds)));
+  for (const name of [`agent-${agentId}.jsonl`, `agent-${agentId}.meta.json`]) await utimes(path.join(folder, name), when, when).catch(() => undefined);
+}
+
 async function listed(): Promise<Map<string, SubagentSummary>> {
   const list = await tracker.list(SID);
   return new Map((list?.subagents ?? []).map((s) => [s.agentId, s]));
@@ -119,12 +132,12 @@ describe('descriptionText and isSafeAgentId', () => {
   it('keeps a description as plain text on one line, at most 200 characters', () => {
     expect(descriptionText('  Build\nW72\topen in an editor  ')).toBe('Build W72 open in an editor');
     expect(descriptionText('Fix \u001b[31mred\u001b[0m \u0007tests\u0000')).toBe('Fix red tests');
-    expect(descriptionText('Rename ‮gnp.exe‬ and ⁦this⁩‏')).toBe('Rename gnp.exe and this');
+    expect(descriptionText('Rename \u202egnp.exe\u202c and \u2066this\u2069\u200f')).toBe('Rename gnp.exe and this');
     const long = descriptionText(`${'word '.repeat(100)}end`);
     expect(long?.length).toBeLessThanOrEqual(SUBAGENT_DESCRIPTION_MAX);
     expect(long?.endsWith('…')).toBe(true);
     expect(descriptionText('x'.repeat(1_000_000))?.length).toBe(SUBAGENT_DESCRIPTION_MAX);
-    expect(descriptionText(' \n‎ ')).toBeUndefined();
+    expect(descriptionText(' \n\u200e ')).toBeUndefined();
     expect(descriptionText(42)).toBeUndefined();
   });
 
@@ -291,8 +304,8 @@ describe('createSubagentTracker', () => {
   });
 
   it('cleans a meta file’s description and type', async () => {
-    await writeFile(path.join(folder, 'agent-c1.meta.json'), meta('toolu_c1', 'Line one\nline ‮two\u0007', { agentType: ' Explore\t' }));
-    await writeFile(path.join(folder, 'agent-c2.meta.json'), meta('toolu_c2', ' ‏\n '));
+    await writeFile(path.join(folder, 'agent-c1.meta.json'), meta('toolu_c1', 'Line one\nline \u202etwo\u0007', { agentType: ' Explore\t' }));
+    await writeFile(path.join(folder, 'agent-c2.meta.json'), meta('toolu_c2', ' \u200f\n '));
     await writeFile(path.join(folder, 'agent-c3.meta.json'), meta('toolu_c3', 'y'.repeat(500)));
     tracker.track([live()]);
     const agents = await listed();
@@ -434,8 +447,10 @@ describe('createSubagentTracker', () => {
     expect(read()).toBe(before + Buffer.byteLength(more));
   });
 
-  it('isn’t running when it started before the session’s current process: by startedAt, or a new pid seen', async () => {
+  it('without the OS’s start time, isn’t running with no activity since the session’s startedAt, or since a new pid was seen', async () => {
     await writeFile(main, (await background('o1', 'From before', 10)) + (await background('o2', 'From now', 500)));
+    await age('o1', 12);
+    await age('o2', 502);
     // The session's process started at 100 s: o1 was from an earlier one.
     clock = T0 + 550_000;
     tracker.track([live({ startedAt: at(100) })]);
@@ -456,8 +471,164 @@ describe('createSubagentTracker', () => {
     expect((await listed()).get('o3')?.state).toBe('running');
   });
 
+  it('with the OS’s start time: an orphan of an earlier process isn’t running the first time it’s seen, and one resumed since is', async () => {
+    // A background job's startedAt is when the job was made, long before its current process.
+    processStart.mockImplementation(async () => Date.parse(at(1000)));
+    let body = '';
+    body += await background('o1', 'Orphan of the old process', 10);
+    await age('o1', 12);
+    // Finished under the old process, then resumed by SendMessage under the new one.
+    body += (await background('r1', 'Resumed after the restart', 20)) + notice('r1', 'completed', 40);
+    body += line({ type: 'assistant', timestamp: at(1100), message: { content: [{ type: 'tool_use', id: 'toolu_send_r1', name: 'SendMessage', input: { to: 'r1', message: 'More please.' } }] } });
+    await writeFile(main, body);
+    await appendFile(path.join(folder, 'agent-r1.jsonl'), subTranscript('r1', 1100, 2));
+    await age('r1', 1102);
+    // Started by the new process.
+    await appendFile(main, await background('n1', 'New', 1050));
+    await age('n1', 1052);
+    tracker.track([live({ pid: 4242, startedAt: at(0) })]);
+    const states = Object.fromEntries([...(await listed())].map(([id, s]) => [id, s.state]));
+    expect(states).toEqual({ o1: 'unknown', r1: 'running', n1: 'running' });
+    expect(tracker.running(SID)).toBe(2);
+    expect(processStart).toHaveBeenCalledWith(4242);
+    // Once per pid; a new pid is looked up again.
+    tracker.track([live({ pid: 4242, startedAt: at(0) })]);
+    await tracker.settled();
+    expect(processStart).toHaveBeenCalledTimes(1);
+    processStart.mockImplementation(async () => Date.parse(at(1200)));
+    tracker.track([live({ pid: 5151, startedAt: at(0) })]);
+    expect(Object.fromEntries([...(await listed())].map(([id, s]) => [id, s.state]))).toEqual({ o1: 'unknown', r1: 'unknown', n1: 'unknown' });
+    expect(processStart).toHaveBeenLastCalledWith(5151);
+  });
+
+  it('looks up the process’s start only for a session with sub-agents, at most 2 at a time', async () => {
+    const waiting: (() => void)[] = [];
+    let most = 0;
+    let now = 0;
+    const lookups: number[] = [];
+    const slow = vi.fn(async (pid: number) => {
+      lookups.push(pid);
+      most = Math.max(most, ++now);
+      await new Promise<void>((resolve) => waiting.push(resolve));
+      now--;
+      return undefined;
+    });
+    const many = createSubagentTracker({ processStartMs: slow });
+    try {
+      const sessions: TrackedSubagentSession[] = [];
+      for (let i = 0; i < 6; i++) {
+        const id = `33333333-3333-4333-8333-${String(i).padStart(12, '0')}`;
+        const file = path.join(dir, 'projects', '-work-app', `${id}.jsonl`);
+        await writeFile(file, '');
+        // Every other one has a sub-agent.
+        if (i % 2 === 0) {
+          await mkdir(path.join(dir, 'projects', '-work-app', id, 'subagents'), { recursive: true });
+          await writeFile(path.join(dir, 'projects', '-work-app', id, 'subagents', 'agent-z1.meta.json'), meta('toolu_z1', 'Job'));
+        }
+        sessions.push({ sessionId: id, file, alive: true, pid: 7000 + i, startedAt: at(0) });
+      }
+      many.track(sessions);
+      const lists = Promise.all(sessions.map((session) => many.list(session.sessionId)));
+      for (let tries = 0; tries < 200 && lookups.length < 3; tries++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        for (const finish of waiting.splice(0)) finish();
+      }
+      await lists;
+      await many.settled();
+      expect([...new Set(lookups)].sort()).toEqual([7000, 7002, 7004]);
+      expect(most).toBeLessThanOrEqual(2);
+    } finally {
+      many.stop();
+    }
+  });
+
+  it(`clears an end once the sub-agent’s own transcript goes on more than ${RESUMED_AFTER_MS / 1000} s after it, as SendMessage resuming it does`, async () => {
+    let body = '';
+    body += (await background('s1', 'Resumed', 10)) + notice('s1', 'completed', 30);
+    // Entries a few seconds after its end, within the slack: still done.
+    body += (await background('s2', 'Finished', 20)) + notice('s2', 'completed', 40);
+    // Waited for, done, then resumed.
+    await writeFile(path.join(folder, 'agent-f1.meta.json'), meta('toolu_f1', 'Waited for', { requestShape: 'foreground' }));
+    await writeFile(path.join(folder, 'agent-f1.jsonl'), subTranscript('f1', 51, 1));
+    body += agentCall('toolu_f1', 'Waited for', 50) + agentResult('toolu_f1', 55);
+    body += line({ type: 'assistant', timestamp: at(100), message: { content: [{ type: 'tool_use', id: 'toolu_send', name: 'SendMessage', input: { to: 's1', message: 'More please.' } }] } });
+    await writeFile(main, body);
+    await appendFile(path.join(folder, 'agent-s1.jsonl'), subTranscript('s1', 100, 2));
+    await appendFile(path.join(folder, 'agent-s2.jsonl'), subTranscript('s2', 40 + RESUMED_AFTER_MS / 1000 - 2, 1));
+    await appendFile(path.join(folder, 'agent-f1.jsonl'), subTranscript('f1', 120, 1));
+    tracker.track([live()]);
+    let states = Object.fromEntries([...(await listed())].map(([id, s]) => [id, s.state]));
+    expect(states).toEqual({ s1: 'running', s2: 'done', f1: 'running' });
+    expect(tracker.running(SID)).toBe(2);
+    // Its next end ends it again.
+    await appendFile(main, notice('s1', 'completed', 200));
+    states = Object.fromEntries([...(await listed())].map(([id, s]) => [id, s.state]));
+    expect(states).toMatchObject({ s1: 'done' });
+  });
+
+  it(`counts one with no Agent call on record only with activity in the last ${UNSTARTED_ACTIVE_MS / 60_000} minutes`, async () => {
+    clock = Date.now();
+    // A meta file whose call isn't in any transcript, and a transcript with no meta and no call.
+    await writeFile(path.join(folder, 'agent-m1.meta.json'), meta('toolu_gone1', 'Fresh meta'));
+    await writeFile(path.join(folder, 'agent-m2.meta.json'), meta('toolu_gone2', 'Old meta'));
+    await writeFile(path.join(folder, 'agent-i1.jsonl'), subTranscript('i1', 1, 1));
+    await writeFile(path.join(folder, 'agent-i2.jsonl'), subTranscript('i2', 1, 1));
+    const old = new Date(clock - UNSTARTED_ACTIVE_MS - 60_000);
+    await utimes(path.join(folder, 'agent-m2.meta.json'), old, old);
+    await utimes(path.join(folder, 'agent-i2.jsonl'), old, old);
+    await writeFile(main, '');
+    tracker.track([live()]);
+    const states = Object.fromEntries([...(await listed())].map(([id, s]) => [id, s.state]));
+    expect(states).toEqual({ m1: 'running', m2: 'unknown', i1: 'running', i2: 'unknown' });
+    expect(tracker.running(SID)).toBe(2);
+  });
+
+  it('a sub-agent the session waited for that you interrupted is stopped; any other error is failed', async () => {
+    for (const id of ['x1', 'x2', 'x3']) {
+      await writeFile(path.join(folder, `agent-${id}.meta.json`), meta(`toolu_${id}`, `Job ${id}`, { requestShape: 'foreground' }));
+    }
+    await writeFile(
+      main,
+      agentCall('toolu_x1', 'Job x1', 10) +
+        agentResult('toolu_x1', 11, { error: true, text: '[Request interrupted by user for tool use]' }) +
+        agentCall('toolu_x2', 'Job x2', 20) +
+        line({ type: 'user', timestamp: at(21), message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_x2', is_error: true, content: [] }] }, toolUseResult: 'Error: [Request interrupted by user for tool use]' }) +
+        agentCall('toolu_x3', 'Job x3', 30) +
+        agentResult('toolu_x3', 31, { error: true, text: 'Agent failed: the made-up error.' }),
+    );
+    tracker.track([live()]);
+    const states = Object.fromEntries([...(await listed())].map(([id, s]) => [id, s.state]));
+    expect(states).toEqual({ x1: 'stopped', x2: 'stopped', x3: 'failed' });
+  });
+
+  it('says background only for a requestShape it knows, and leaves any other unset', async () => {
+    for (const [id, shape] of [['k1', 'background'], ['k2', 'foreground'], ['k3', 'async'], ['k4', '']] as const) {
+      await writeFile(path.join(folder, `agent-${id}.meta.json`), meta(`toolu_${id}`, `Job ${id}`, { requestShape: shape }));
+    }
+    tracker.track([live()]);
+    const agents = await listed();
+    expect(agents.get('k1')?.background).toBe(true);
+    expect(agents.get('k2')?.background).toBe(false);
+    expect(agents.get('k3')).not.toHaveProperty('background');
+    expect(agents.get('k4')).not.toHaveProperty('background');
+  });
+
+  it('reads a sub-agent transcript’s times from its first line and its last lines, without parsing the rest', async () => {
+    let body = '';
+    for (let i = 0; i < 200; i++) body += line({ type: 'user', isSidechain: true, timestamp: at(100 + i), message: { content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: 'x'.repeat(2000) }] } });
+    // A last line with no time: the one before it gives the newest.
+    body += line({ type: 'summary', isSidechain: true, summary: 'no time' });
+    await writeFile(path.join(folder, 'agent-q1.jsonl'), body);
+    await writeFile(main, '');
+    tracker.track([live()]);
+    const before = tracker.stats().linesParsed;
+    expect((await listed()).get('q1')).toMatchObject({ startedAt: at(100), lastActivityAt: at(299), toolCalls: 0 });
+    expect(tracker.stats().linesParsed - before).toBeLessThanOrEqual(4);
+  });
+
   it('a session that comes back after its process ended: what ran before isn’t running', async () => {
     await writeFile(main, await background('w1', 'Before the restart', 10));
+    await age('w1', 12);
     tracker.track([live({ alive: false, pid: undefined })]);
     expect((await listed()).get('w1')?.state).toBe('unknown');
     clock = T0 + 7_200_000;
@@ -510,7 +681,7 @@ describe('createSubagentTracker', () => {
   });
 
   it('finishes a line split between reads, and skips one too long to keep', async () => {
-    const small = createSubagentTracker({ chunkBytes: 7, maxLineBytes: 4096 });
+    const small = createSubagentTracker({ chunkBytes: 7, maxLineBytes: 4096, processStartMs: async () => undefined });
     try {
       await writeFile(main, (await background('p1', 'Split', 10, 2)) + line({ type: 'user', pad: 'x'.repeat(8192) }) + notice('p1', 'completed', 60));
       small.track([live()]);
@@ -518,5 +689,40 @@ describe('createSubagentTracker', () => {
     } finally {
       small.stop();
     }
+  });
+});
+
+describe('processStartTime', () => {
+  const NOW_MS = Date.parse('2026-10-28T00:00:00.000Z');
+  const answering = (out: string) => vi.fn(async (_file: string, _args: readonly string[]) => out);
+
+  it('takes the start from ps’s time since it started, in each of its forms', async () => {
+    for (const [out, seconds] of [
+      ['00:05\n', 5],
+      ['  12:34\n', 12 * 60 + 34],
+      ['1:02:03', 3723],
+      ['03-11:44:39\n', ((3 * 24 + 11) * 60 + 44) * 60 + 39],
+    ] as const) {
+      expect(await processStartTime(4242, answering(out), () => NOW_MS), out).toBe(NOW_MS - seconds * 1000);
+    }
+    const run = answering('00:01');
+    await processStartTime(4242, run, () => NOW_MS);
+    expect(run).toHaveBeenCalledWith('ps', ['-o', 'etime=', '-p', '4242'], expect.objectContaining({ timeoutMs: expect.any(Number) }));
+  });
+
+  it('is undefined for no such process, a failure, something else printed, or a pid that isn’t one', async () => {
+    const failing = vi.fn(async () => {
+      throw new RunError('exit', 'exited with code 1', 1);
+    });
+    expect(await processStartTime(4242, failing)).toBeUndefined();
+    for (const out of ['', 'ELAPSED', '5', 'a:bc', '00:05 00:06']) expect(await processStartTime(4242, answering(out)), out).toBeUndefined();
+    for (const pid of [0, -1, 1.5, Number.NaN]) expect(await processStartTime(pid, answering('00:05'))).toBeUndefined();
+  });
+
+  it('finds this process’s own start, before now', async () => {
+    const start = await processStartTime(process.pid);
+    expect(start).toBeDefined();
+    expect(start).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(start).toBeGreaterThan(Date.now() - 24 * 60 * 60 * 1000);
   });
 });
