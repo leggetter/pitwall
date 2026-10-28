@@ -4,6 +4,8 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 
 ![pitwall in the light theme: Needs you, All sessions, Starred and the repos on the left, and the starred sessions in the middle, each with its repo, its status and what it needs from you](docs/images/pitwall-light.png)
 
+*The sessions' names and questions in the screenshot are made up.*
+
 - **Lists every live Claude Code session under a directory,** wherever it was started (Warp, Cursor, any terminal), grouped by git repo. Finished background sessions, and interactive sessions that ended recently, are listed too.
 - **Shows which sessions need you,** judged from each session's context: a prompt on screen, a question it asked, or what Claude Code says a background session needs.
 - **Lets you act on a session:** read its conversation and its sub-agents', message it, or drive a background session in a terminal in the page, permission prompts included.
