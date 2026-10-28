@@ -25,6 +25,15 @@ export interface ServerOptions {
    * file at the first. A hook that throws is ignored.
    */
   onAuthenticated?: () => void;
+  /**
+   * pitwall's own folder, `$PITWALL_HOME` or `~/.pitwall`, which the CLI
+   * passes (pitwallHome()). Uploads for New session's first prompt (W79) are
+   * kept in its `attachments` folder, which is swept at startup and every 10
+   * minutes. Without it, ATTACHMENTS_PATH answers 503, spawn knows no
+   * attachment ids, and nothing on disk is touched, so a test never reaches
+   * the real ~/.pitwall.
+   */
+  pitwallHome?: string;
 }
 
 export interface RunningServer {

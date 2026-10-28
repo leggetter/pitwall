@@ -8,8 +8,11 @@
 //
 //   POST SPAWN_PATH               body: SpawnRequest as JSON           answers: SpawnResult
 //     201  started: { ok: true, shortId, name }
-//     400  the body isn't a valid SpawnRequest, `cwd` isn't a directory at or under a root, or the
-//          prompt is just the name of a claude subcommand, which `claude --bg` could run instead
+//     400  the body isn't a valid SpawnRequest, `cwd` isn't a directory at or under a root, the
+//          prompt is just the name of a claude subcommand, which `claude --bg` could run instead,
+//          or `attachments` has more than ATTACHMENTS_MAX_PER_SESSION, the same id twice, or an id
+//          that's unknown, already used, expired, being used by a spawn that's starting, or whose
+//          file has gone (attachments.ts). Then nothing starts
 //     413  the body is over 128 KiB
 //     415  the body isn't `Content-Type: application/json`
 //     422  Claude Code says the workspace isn't trusted. `hint` is the command that trusts it,
@@ -54,6 +57,17 @@
 // starts, never a directory the request names, with `PWD` set to that `cwd`,
 // its `sessionId`, a UUID, and no prompt, so no message text is on the command
 // line.
+//
+// Attachments (W79, spike 008): spawn appends one `@<path>` line per file to
+// the first prompt, after a blank line, and passes `--add-dir=<its folder>` for
+// each, always in the `=` form, since `--add-dir` takes several values and
+// would take the prompt as one (finding 4). The paths are the realpaths
+// AttachmentStore kept for the ids, never anything the request names. The
+// prompt's 16,384-character limit is the user's own text: the `@` lines are
+// pitwall's, at most ATTACHMENTS_MAX_PER_SESSION of them, each at most
+// STORED_PATH_MAX characters, so a prompt the dialog accepted is never
+// refused for them. The ids are claimed before `claude --bg` runs, marked
+// used only when it reports the new session, and given back otherwise.
 import { realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -65,6 +79,7 @@ import type { Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
 import { isSessionUuid } from '../index/transcripts.js';
 import {
+  ATTACHMENTS_MAX_PER_SESSION,
   removePath,
   resumePath,
   SPAWN_PATH,
@@ -73,6 +88,7 @@ import {
   type ResumeResult,
   type SpawnResult,
 } from '../shared/protocol.js';
+import { UNKNOWN_ATTACHMENT_ERROR, type AttachmentFile, type AttachmentStore } from './attachments.js';
 import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
@@ -114,7 +130,12 @@ export interface ActionOptions {
    * for both. Default: new ones, `maxConcurrentCommands` of them.
    */
   slots?: CommandSlots;
+  /** The uploads spawn's `attachments` name (W79). The server passes its store. Without one, every id is unknown. */
+  attachments?: SpawnAttachments;
 }
+
+/** What spawn needs from the AttachmentStore. */
+export type SpawnAttachments = Pick<AttachmentStore, 'lookup' | 'claim' | 'release' | 'markUsed'>;
 
 export const DEFAULT_ACTION_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_CONCURRENT_SPAWNS = 1;
@@ -149,9 +170,12 @@ const CONTROLS_BUT_NEWLINES = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 /** A request to start a session that passed every check. `cwd` is the realpath. */
 export interface ValidSpawn {
   cwd: string;
+  /** The user's own prompt, without the `@` lines spawnPrompt() adds. */
   prompt: string;
   name?: string;
   model?: string;
+  /** The kept files for SpawnRequest.attachments, in its order. Absent for none. */
+  attachments?: readonly AttachmentFile[];
 }
 
 export type SpawnValidation = { ok: true; spawn: ValidSpawn } | { ok: false; error: string };
@@ -159,11 +183,16 @@ export type SpawnValidation = { ok: true; spawn: ValidSpawn } | { ok: false; err
 /**
  * Checks a parsed body against the SpawnRequest rules. `roots` are the
  * snapshot's real-path roots. The directory is checked through its realpath,
- * so a symlink under a root that points outside it is refused.
+ * so a symlink under a root that points outside it is refused. `attachments`
+ * looks up SpawnRequest.attachments' ids; without it, any id is unknown.
  */
-export async function validateSpawnRequest(body: unknown, roots: readonly string[]): Promise<SpawnValidation> {
+export async function validateSpawnRequest(
+  body: unknown,
+  roots: readonly string[],
+  attachments?: Pick<SpawnAttachments, 'lookup'>,
+): Promise<SpawnValidation> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return invalid('The body must be a JSON object.');
-  const { cwd, prompt, name, model } = body as Record<string, unknown>;
+  const { cwd, prompt, name, model, attachments: ids } = body as Record<string, unknown>;
 
   if (typeof prompt !== 'string' || prompt.trim() === '') return invalid('The first prompt is required.');
   if (prompt.length > MAX_PROMPT_LENGTH) return invalid(`The first prompt can be at most ${MAX_PROMPT_LENGTH} characters.`);
@@ -181,6 +210,11 @@ export async function validateSpawnRequest(body: unknown, roots: readonly string
   if (model !== undefined && (typeof model !== 'string' || !MODEL_PATTERN.test(model))) {
     return invalid('The model must be a short alias such as sonnet, opus or haiku: letters, digits, "-" and ".", at most 40.');
   }
+  if (ids !== undefined) {
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) return invalid('The attachments must be a list of attachment ids.');
+    if (ids.length > ATTACHMENTS_MAX_PER_SESSION) return invalid(`A new session can have at most ${ATTACHMENTS_MAX_PER_SESSION} attachments.`);
+    if (new Set(ids).size !== ids.length) return invalid('Each attachment can be used once.');
+  }
 
   const dir = await checkDirectory(cwd, roots);
   if (!dir.ok) return dir;
@@ -188,6 +222,11 @@ export async function validateSpawnRequest(body: unknown, roots: readonly string
   const spawn: ValidSpawn = { cwd: dir.path, prompt };
   if (name !== undefined) spawn.name = name as string;
   if (model !== undefined) spawn.model = model as string;
+  if (ids !== undefined && ids.length > 0) {
+    const found = attachments ? await attachments.lookup(ids as string[]) : { ok: false as const, error: UNKNOWN_ATTACHMENT_ERROR };
+    if (!found.ok) return invalid(found.error);
+    spawn.attachments = found.files;
+  }
   return { ok: true, spawn };
 }
 
@@ -229,13 +268,25 @@ function invalid(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
-/** The arguments for `claude`. `--` ends the options, so a prompt that starts with `-` stays a prompt. */
+/**
+ * The arguments for `claude`. `--` ends the options, so a prompt that starts with `-` stays a prompt,
+ * and the prompt is always the last argument. Each attachment's folder is `--add-dir=<dir>`, one
+ * argument, never `--add-dir <dir>`, which would take the prompt as another directory (spike 008).
+ */
 export function spawnArgs(spawn: ValidSpawn): string[] {
   const args = ['--bg'];
   if (spawn.name !== undefined) args.push('--name', spawn.name);
   if (spawn.model !== undefined) args.push('--model', spawn.model);
-  args.push('--', spawn.prompt);
+  for (const file of spawn.attachments ?? []) args.push(`--add-dir=${file.dir}`);
+  args.push('--', spawnPrompt(spawn));
   return args;
+}
+
+/** The first prompt as `claude --bg` gets it: the user's, then, after a blank line, an `@<path>` line per attachment. */
+export function spawnPrompt(spawn: Pick<ValidSpawn, 'prompt' | 'attachments'>): string {
+  const files = spawn.attachments ?? [];
+  if (files.length === 0) return spawn.prompt;
+  return `${spawn.prompt}\n\n${files.map((file) => `@${file.file}`).join('\n')}`;
 }
 
 /**
@@ -476,46 +527,64 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       const snapshot = indexer.latest();
       if (!snapshot) return spawnResult(c, { ok: false, error: LOOKUP_ERRORS[503] }, 503);
 
-      const validation = await validateSpawnRequest(body, snapshot.roots);
+      const validation = await validateSpawnRequest(body, snapshot.roots, options.attachments);
       if (!validation.ok) return spawnResult(c, { ok: false, error: validation.error }, 400);
       const { spawn } = validation;
 
+      // Checked again and taken, then the slot, with nothing that waits between: two spawns can't
+      // both use one attachment, and one that can't be used doesn't count toward the rate limit.
+      const ids = spawn.attachments?.map((file) => file.id) ?? [];
+      const attachments = options.attachments;
+      if (ids.length > 0) {
+        const claim = attachments?.claim(ids) ?? { ok: false as const, error: UNKNOWN_ATTACHMENT_ERROR };
+        if (!claim.ok) return spawnResult(c, { ok: false, error: claim.error }, 400);
+      }
       const slot = limiter.acquire();
       if (!slot.ok) {
+        if (ids.length > 0) attachments?.release(ids);
         c.header('Retry-After', String(slot.retryAfterSeconds));
         return spawnResult(c, { ok: false, error: slot.error }, 429);
       }
-      let result: CommandResult;
+      let started: { shortId: string; name?: string } | undefined;
       try {
-        // PWD is the directory it runs in, as for resume: a new session records where it started.
-        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...env(), PWD: spawn.cwd }, timeoutMs });
-      } finally {
-        slot.release();
-      }
-
-      if (result.kind === 'failed') {
-        if (result.reason === 'timeout') {
-          return spawnResult(c, { ok: false, error: `claude --bg ${result.message}. The session may still appear in the list.` }, 504);
+        let result: CommandResult;
+        try {
+          // PWD is the directory it runs in, as for resume: a new session records where it started.
+          result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...env(), PWD: spawn.cwd }, timeoutMs });
+        } finally {
+          slot.release();
         }
-        return spawnResult(c, { ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
+
+        if (result.kind === 'failed') {
+          if (result.reason === 'timeout') {
+            return spawnResult(c, { ok: false, error: `claude --bg ${result.message}. The session may still appear in the list.` }, 504);
+          }
+          return spawnResult(c, { ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
+        }
+        if (result.code !== 0) {
+          const message = said(result);
+          const untrusted = untrustedLine(message);
+          if (untrusted !== undefined) return spawnResult(c, { ok: false, error: untrusted, hint: trustHint(spawn.cwd) }, 422);
+          return spawnResult(c, { ok: false, error: firstLine(message) ?? `claude --bg exited with code ${result.code}.` }, 502);
+        }
+        started = parseBackgrounded(result.stdout);
+        if (!started) {
+          const line = firstLine(result.stdout);
+          return spawnResult(
+            c,
+            { ok: false, error: `Claude Code didn't report the new session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
+            502,
+          );
+        }
+        options.spawned?.add(started.shortId);
+        return spawnResult(c, { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId }, 201);
+      } finally {
+        // Used only by a session that started; given back for any other answer.
+        if (ids.length > 0) {
+          if (started) await attachments?.markUsed(ids);
+          else attachments?.release(ids);
+        }
       }
-      if (result.code !== 0) {
-        const message = said(result);
-        const untrusted = untrustedLine(message);
-        if (untrusted !== undefined) return spawnResult(c, { ok: false, error: untrusted, hint: trustHint(spawn.cwd) }, 422);
-        return spawnResult(c, { ok: false, error: firstLine(message) ?? `claude --bg exited with code ${result.code}.` }, 502);
-      }
-      const started = parseBackgrounded(result.stdout);
-      if (!started) {
-        const line = firstLine(result.stdout);
-        return spawnResult(
-          c,
-          { ok: false, error: `Claude Code didn't report the new session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
-          502,
-        );
-      }
-      options.spawned?.add(started.shortId);
-      return spawnResult(c, { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId }, 201);
     },
   );
 

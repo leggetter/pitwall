@@ -78,7 +78,8 @@ Environment:
                          from a .env file; npm run dev also reads it from the
                          pitwall repo's own .env.
   PITWALL_NO_OPEN        Set to 1 to skip opening the browser.
-  PITWALL_HOME           Where launch files go, instead of ~/.pitwall.
+  PITWALL_HOME           Where launch files and attachments go, instead of
+                         ~/.pitwall.
   PITWALL_OPEN_MARKER    A file path. Open the browser only if it doesn't exist
                          yet, then create it. npm run dev sets it, so the
                          browser opens once per dev run, not on every restart.
@@ -491,6 +492,8 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       relay,
       onAuthenticated: () => launchFileUsed?.(),
       webRoot: resolveWebRoot(),
+      // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.
+      pitwallHome: pitwallHome(),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {
