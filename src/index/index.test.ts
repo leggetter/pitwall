@@ -1710,7 +1710,8 @@ describe('createIndexer: sub-agents (W76)', () => {
         row('gone', '/work/repo/c', { kind: 'background', shortId: 'gone1', pid: undefined, state: 'done', status: undefined, startedAt: at(0) }),
       ],
     };
-    deps.subagents = createSubagentTracker();
+    // No `ps` in tests: the process's start is unknown, so the startedAt rule applies.
+    deps.subagents = createSubagentTracker({ processStartMs: async () => undefined });
     const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
     return { indexer, state };
   }
