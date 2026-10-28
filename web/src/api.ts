@@ -91,23 +91,36 @@ export function apiUpload(path: string, apiKey: string, upload: ApiUpload, optio
   return apiRequest('POST', path, apiKey, { kind: 'raw', value: upload }, options);
 }
 
+/**
+ * DELETEs `path`, which must start with `/api/`, with the apiKey as a bearer token, as an unused
+ * attachment is removed (W82). The browser adds this page's Origin. Never rejects, except for a path
+ * outside /api/.
+ */
+export function apiDelete(path: string, apiKey: string, options: ApiGetOptions = {}): Promise<ApiResult> {
+  return apiRequest('DELETE', path, apiKey, undefined, options);
+}
+
 type RequestBody = { kind: 'json'; value: unknown } | { kind: 'raw'; value: ApiUpload };
 
 async function apiRequest(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   path: string,
   apiKey: string,
   body: RequestBody | undefined,
   options: ApiGetOptions,
 ): Promise<ApiResult> {
   // A relative /api/ path only, so the key can't be sent to another origin.
-  if (!path.startsWith('/api/')) throw new TypeError(`api${method === 'GET' ? 'Get' : body?.kind === 'raw' ? 'Upload' : 'Post'}: not an API path: ${path}`);
+  if (!path.startsWith('/api/')) {
+    const name = method === 'GET' ? 'Get' : method === 'DELETE' ? 'Delete' : body?.kind === 'raw' ? 'Upload' : 'Post';
+    throw new TypeError(`api${name}: not an API path: ${path}`);
+  }
   const fetchImpl = options.fetch ?? defaultFetch;
   // A route's own headers, without any that would replace the key or the type, whatever their case.
   const own = Object.entries(body?.kind === 'raw' ? (body.value.headers ?? {}) : {}).filter(([name]) => !/^(authorization|content-type)$/i.test(name));
   const headers: Record<string, string> = { ...Object.fromEntries(own), Authorization: `Bearer ${apiKey}` };
   // GET is fetch's default, so a GET's init stays exactly as it was before POST existed.
   const init: RequestInit = { headers, cache: 'no-store' };
+  if (method === 'DELETE') init.method = 'DELETE';
   if (method === 'POST') {
     init.method = 'POST';
     if (body?.kind === 'raw') {
@@ -126,6 +139,8 @@ async function apiRequest(
     return { kind: 'failed' };
   }
   if (response.status === 401) return { kind: 'unauthorized' };
+  // No content, as a DELETE answers: done, with no body to read.
+  if (response.status === 204) return { kind: 'ok', status: 204, body: undefined };
   let parsed: unknown;
   let isJson = true;
   try {
@@ -171,6 +186,8 @@ export interface ApiClient {
    * New session's attachments (W82).
    */
   upload(path: string, upload: ApiUpload, options?: { signal?: AbortSignal }): Promise<ApiResult>;
+  /** DELETEs `path` (apiDelete) with the current apiKey, with the same waiting and single retry after a 401 as post(). */
+  delete(path: string, options?: { signal?: AbortSignal }): Promise<ApiResult>;
 }
 
 /** The connection's side of an ApiClient: it hands over each apiKey, and hears when one has gone stale. */
@@ -271,6 +288,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient & { k
     },
     upload(path, upload, { signal } = {}) {
       return request((apiKey, options) => apiUpload(path, apiKey, upload, options), signal);
+    },
+    delete(path, { signal } = {}) {
+      return request((apiKey, options) => apiDelete(path, apiKey, options), signal);
     },
   };
 }

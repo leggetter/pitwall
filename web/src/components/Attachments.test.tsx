@@ -4,7 +4,7 @@
 // them and sending their ids. Against a fake fetch; made-up files only.
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ATTACHMENT_MAX_BYTES, ATTACHMENTS_PATH, SPAWN_PATH, type IndexSnapshot } from '../../../src/shared/protocol.js';
+import { ATTACHMENT_MAX_BYTES, ATTACHMENTS_PATH, attachmentPath, SPAWN_PATH, type IndexSnapshot } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { ATTACH_TEXT } from '../attachments.js';
 import { group, session, snapshot } from '../test/fixtures.js';
@@ -25,14 +25,20 @@ interface Upload {
 }
 
 /**
- * A fake pitwall: each upload waits until the test answers it (or answers at once with `auto`), and
- * a spawn starts. An aborted upload rejects, as fetch does.
+ * A fake pitwall: each upload waits until the test answers it (or answers at once with `auto`), a
+ * spawn starts, and a DELETE of an upload is recorded and answered 204. An aborted upload rejects,
+ * as fetch does.
  */
 function fakeServer({ auto }: { auto?: (upload: Omit<Upload, 'answer'>, index: number) => Response } = {}) {
   const uploads: Upload[] = [];
   const spawns: unknown[] = [];
+  const deletes: string[] = [];
   let id = 0;
   const fetch = vi.fn<FetchLike>((url, init) => {
+    if (init.method === 'DELETE') {
+      deletes.push(url);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
     if (url === SPAWN_PATH) {
       spawns.push(JSON.parse(String(init.body)));
       return Promise.resolve(json(201, { ok: true, shortId: 'c0ffee12', name: 'pitwall-test-spawn' }));
@@ -55,7 +61,7 @@ function fakeServer({ auto }: { auto?: (upload: Omit<Upload, 'answer'>, index: n
     id += 1;
     return json(201, { ok: true, attachment: { id: `id-${id}`, name: upload.name, type: upload.type, size: upload.size } });
   };
-  return { fetch, uploads, spawns, kept };
+  return { fetch, uploads, spawns, deletes, kept };
 }
 
 /** `null` renders it without an API, as where sessions can't be started from. */
@@ -357,14 +363,14 @@ describe('New session: uploads', () => {
   });
 
   it('a failure says so, with Try again and Remove; Try again uploads it again, with focus on its Remove', async () => {
-    const server = fakeServer({ auto: (upload, index) => (index === 0 ? json(503, { ok: false, error: "Made up: pitwall couldn't store it." }) : server.kept(upload)) });
+    const server = fakeServer({ auto: (upload, index) => (index === 0 ? json(500, { ok: false, error: "Made up: pitwall couldn't write it." }) : server.kept(upload)) });
     const { dialog } = renderDialog(server.fetch);
     await choose(dialog, [file('notes.txt', 'text/plain')]);
     await settle();
     const [row] = rows(dialog);
     expect(row!.dataset.state).toBe('failed');
-    expect(row!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't upload it. Made up: pitwall couldn't store it.");
-    expect(announced(dialog)).toBe("Couldn't upload notes.txt. Made up: pitwall couldn't store it.");
+    expect(row!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't upload it. Made up: pitwall couldn't write it.");
+    expect(announced(dialog)).toBe("Couldn't upload notes.txt. Made up: pitwall couldn't write it.");
     const retry = within(row!).getByRole('button', { name: 'Try again' });
     expect(within(row!).getByRole('button', { name: 'Remove notes.txt' })).toBeTruthy();
 
@@ -389,12 +395,50 @@ describe('New session: uploads', () => {
     expect(rows(dialog)[0]!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't upload it. Files can't be uploaded from here.");
   });
 
-  it('closing the dialog aborts the uploads still running', async () => {
+  it('Remove asks the server to remove a file it has kept, and not one still on its way', async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    await choose(dialog, [file('a.txt', 'text/plain'), file('b.txt', 'text/plain')]);
+    await act(async () => server.uploads[0]!.answer(server.kept(server.uploads[0]!)));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove a.txt' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove b.txt' }));
+    await settle();
+    expect(server.deletes).toEqual([attachmentPath('id-1')]);
+    expect(server.uploads[1]!.signal?.aborted).toBe(true);
+  });
+
+  it('closing the dialog without starting aborts the uploads still running, and asks the server to remove the kept ones', async () => {
     const server = fakeServer();
     const { dialog, unmount } = renderDialog(server.fetch);
-    await choose(dialog, [file('a.txt', 'text/plain')]);
+    await choose(dialog, [file('a.txt', 'text/plain'), file('b.txt', 'text/plain'), file('c.txt', 'text/plain')]);
+    await act(async () => server.uploads[1]!.answer(server.kept(server.uploads[1]!)));
     unmount();
+    await settle();
     expect(server.uploads[0]!.signal?.aborted).toBe(true);
+    expect(server.uploads[2]!.signal?.aborted).toBe(true);
+    expect(server.deletes).toEqual([attachmentPath('id-1')]);
+  });
+
+  it("refuses an empty file before sending it", async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    await choose(dialog, [new File([], 'empty.txt', { type: 'text/plain' })]);
+    expect(rows(dialog)[0]!.querySelector('.attachment-problem')?.textContent).toBe("Couldn't attach it. It's empty.");
+    expect(server.uploads).toEqual([]);
+  });
+
+  it("a 503, a pitwall that keeps no attachments here, says the session can still start without them, and doesn't hold it up", async () => {
+    const server = fakeServer({ auto: () => json(503, { ok: false, error: "Made up: this pitwall doesn't keep attachments." }) });
+    const { dialog } = renderDialog(server.fetch);
+    await choose(dialog, [file('a.txt', 'text/plain')]);
+    await settle();
+    const [row] = rows(dialog);
+    expect(row!.dataset.state).toBe('refused');
+    expect(row!.querySelector('.attachment-problem')?.textContent).toBe(
+      "Couldn't attach it. Files can't be attached on this machine. You can still start the session without them. Made up: this pitwall doesn't keep attachments.",
+    );
+    expect(within(row!).queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(start(dialog).getAttribute('aria-disabled')).toBeNull();
   });
 });
 
@@ -424,6 +468,20 @@ describe('New session: starting with files', () => {
     await settle();
     expect(server.spawns).toEqual([{ cwd: REPO, prompt: 'Look at these.', attachments: ['id-1'] }]);
     expect(onStarted).toHaveBeenCalledOnce();
+  });
+
+  it('closing after the session started leaves its files to it', async () => {
+    const server = fakeServer({ auto: (upload) => server.kept(upload) });
+    const { dialog, unmount } = renderDialog(server.fetch);
+    fireEvent.change(prompt(dialog), { target: { value: 'Look at this.' } });
+    await choose(dialog, [file('a.txt', 'text/plain')]);
+    await settle();
+    fireEvent.click(start(dialog));
+    await settle();
+    expect(server.spawns).toHaveLength(1);
+    unmount();
+    await settle();
+    expect(server.deletes).toEqual([]);
   });
 
   it('is off while a file has failed, until it is removed', async () => {

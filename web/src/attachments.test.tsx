@@ -1,7 +1,7 @@
 // New session's attachments (W82): the checks, the wording, the sizes, the paste rule and the upload
 // call, against ATTACHMENTS_PATH as the contract has it (src/shared/protocol.ts). Made-up files only.
 import { describe, expect, it, vi } from 'vitest';
-import { ATTACHMENT_MAX_BYTES, ATTACHMENT_TYPES, ATTACHMENTS_MAX_PER_SESSION, ATTACHMENTS_PATH } from '../../src/shared/protocol.js';
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_TYPES, ATTACHMENTS_MAX_PER_SESSION, ATTACHMENTS_PATH, attachmentPath } from '../../src/shared/protocol.js';
 import { createApiClient, type FetchLike } from './api.js';
 import {
   ACCEPT,
@@ -54,9 +54,11 @@ describe('which files it takes', () => {
     for (const extension of ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.txt', '.md', '.csv', '.json']) expect(accepted).toContain(extension);
   });
 
-  it('refuses, in this order, the type, the size, a long name, a name the server refuses, then one past the limit', () => {
+  it('refuses, in this order, the type, an empty file, the size, a long name, a name the server refuses, then one past the limit', () => {
     const ok = { name: 'shot.png', type: 'image/png', size: 1024 };
     expect(fileProblem(ok, 0)).toBeUndefined();
+    expect(fileProblem({ ...ok, size: 0 }, 0)).toBe("It's empty.");
+    expect(fileProblem({ ...ok, size: 1 }, 0)).toBeUndefined();
     expect(fileProblem({ ...ok, size: ATTACHMENT_MAX_BYTES }, 0)).toBeUndefined();
     expect(fileProblem({ ...ok, size: ATTACHMENT_MAX_BYTES + 1 }, 0)).toBe("It's 10.1 MB, over the 10 MB limit.");
     expect(fileProblem({ ...ok, name: `${'a'.repeat(197)}.png` }, 0)).toBe(ATTACH_TEXT.long);
@@ -183,9 +185,15 @@ describe('the upload', () => {
     expect(await send(async () => json(status, { ok: false, error }))).toEqual({ kind: 'refused', error });
   });
 
+  it("calls a 503 unavailable: this pitwall keeps no attachments, which trying again won't change", async () => {
+    expect(await send(async () => json(503, { ok: false, error: "This pitwall doesn't keep attachments." }))).toEqual({ kind: 'unavailable', error: "This pitwall doesn't keep attachments." });
+    expect(await send(async () => new Response('', { status: 503 }))).toEqual({ kind: 'unavailable' });
+  });
+
   it('calls anything else a failure, which trying again may fix', async () => {
     expect(await send(async () => json(429, { ok: false, error: 'Made up: 30 unused uploads.' }))).toEqual({ kind: 'failed', error: 'Made up: 30 unused uploads.' });
     expect(await send(async () => new Response('', { status: 500 }))).toEqual({ kind: 'failed', status: 500 });
+    expect(await send(async () => json(500, { ok: false, error: "Made up: pitwall couldn't write it." }))).toEqual({ kind: 'failed', error: "Made up: pitwall couldn't write it." });
     expect(await send(async () => json(413, { ok: false }))).toEqual({ kind: 'refused', status: 413 });
     expect(await send(async () => Promise.reject(new TypeError('Failed to fetch')))).toEqual({ kind: 'failed' });
   });
@@ -194,6 +202,16 @@ describe('the upload', () => {
     for (const attachment of [undefined, { id: '', name: 'a', type: 'text/plain', size: 1 }, { id: ID, name: 'a', type: 'text/html', size: 1 }, { id: ID, name: 'a', type: 'text/plain', size: -1 }]) {
       expect(await send(async () => json(201, { ok: true, attachment }))).toEqual({ kind: 'failed', error: ATTACH_TEXT.unclear });
     }
+  });
+
+  it("removes an unused upload with DELETE attachmentPath(), the apiKey and no body, and takes a 204 as done", async () => {
+    const fetch = vi.fn<FetchLike>(async () => new Response(null, { status: 204 }));
+    expect(await createApiClient({ apiKey: API_KEY, fetch }).delete(attachmentPath(ID))).toEqual({ kind: 'ok', status: 204, body: undefined });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe(`${ATTACHMENTS_PATH}/${ID}`);
+    expect(init.method).toBe('DELETE');
+    expect(init.body).toBeUndefined();
+    expect(init.headers).toEqual({ Authorization: `Bearer ${API_KEY}` });
   });
 
   it('says it was aborted, whatever the fetch did', async () => {
