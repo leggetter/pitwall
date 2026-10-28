@@ -669,6 +669,16 @@ export interface SpawnRequest {
   name?: string;
   /** Optional model alias, such as `sonnet` or `haiku`. */
   model?: string;
+  /**
+   * Optional files for the first prompt (W79, spike 008): ids from
+   * AttachmentResult, at most ATTACHMENTS_MAX_PER_SESSION, each used once.
+   * The server appends one `@<absolute path>` line per file to the prompt,
+   * after a blank line, which Claude Code turns into attachments, and passes
+   * `--add-dir=<its folder>` for each, always in the `=` form, since
+   * `--add-dir` takes several values and would swallow the prompt. An
+   * unknown, expired or already-used id gets 400, and nothing starts.
+   */
+  attachments?: string[];
 }
 
 export type SpawnResult =
@@ -678,6 +688,63 @@ export type SpawnResult =
 
 /** Start a new background session with `claude --bg`. */
 export const SPAWN_PATH = '/api/sessions';
+
+/**
+ * Upload one file for New session's first prompt (W79, spike 008), answered
+ * with an AttachmentResult. POST, the file's bytes as the body, its media type
+ * as `Content-Type` (one of ATTACHMENT_TYPES), and its name, URL-encoded, in
+ * `X-Pitwall-Filename`. The same apiKey, `Host` and `Origin` checks as every
+ * other POST.
+ *
+ * The server keeps it in a folder of its own, `~/.pitwall/attachments/<id>/`
+ * (folders 0700, files 0600), under a safe stored name (letters, digits, `.`,
+ * `-` and `_`, since an `@` mention ends at a space), never inside a
+ * session's directory. An upload never used is removed after an hour; a used
+ * one 7 days after its session started, because Claude Code keeps an
+ * attachment's content in the transcript.
+ *
+ * - 400 for a name that's empty, longer than 200 characters, or has a path
+ *   separator, control or bidi character; 413 past ATTACHMENT_MAX_BYTES; 415
+ *   for a type not in ATTACHMENT_TYPES, or one its first bytes contradict;
+ *   429 past ATTACHMENTS_MAX_PENDING unused uploads.
+ */
+export const ATTACHMENTS_PATH = '/api/attachments';
+
+/** The media types an attachment can have: images, PDF and plain text. */
+export const ATTACHMENT_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+] as const;
+
+export type AttachmentType = (typeof ATTACHMENT_TYPES)[number];
+
+/** The largest file an attachment can be: 10 MiB. */
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+/** The most attachments one new session's first prompt can carry. */
+export const ATTACHMENTS_MAX_PER_SESSION = 10;
+
+/** The most uploads the server holds that no spawn has used yet. */
+export const ATTACHMENTS_MAX_PENDING = 30;
+
+export interface Attachment {
+  /** The server's id for it, a UUID. */
+  id: string;
+  /** The name as uploaded, cleaned, for display. */
+  name: string;
+  type: AttachmentType;
+  /** In bytes. */
+  size: number;
+}
+
+export type AttachmentResult = { ok: true; attachment: Attachment } | { ok: false; error: string };
 
 /**
  * The directories under the roots, for the New session dialog's "Another
