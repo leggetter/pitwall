@@ -3,7 +3,8 @@
 // the v3 WebSocket challenge, all imported from the server build (dist/server, dist/shared), never
 // copied. Behind them it answers the snapshot, the directory list, conversation pages, the relay,
 // attach (a made-up terminal screen at the size the page gives, drawn again on each resize), spawn,
-// stop, remove and resume, and a session's sub-agents and their transcripts (W77), from the made-up
+// stop, remove, resume and end session (W90), which signals nothing, and a session's sub-agents and
+// their transcripts (W77), from the made-up
 // World in fixtures.ts, the editor list and open in an editor (W72), which opens nothing, and New
 // session's uploads (W82), with the contract's checks, keeping nothing of a file but its size.
 //
@@ -13,7 +14,7 @@
 //
 // What the page did is recorded in `records`, for the parts to check: attaches, keys and resizes sent
 // to an attached session, the sizes it gave each one, spawns, relayed messages, stops and removes,
-// resumes, opens in an editor, uploads, and every request.
+// resumes, opens in an editor, ends, uploads, and every request.
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -31,6 +32,7 @@ import type {
   DirectoryList,
   EditorId,
   EditorList,
+  EndSessionResult,
   IndexSnapshot,
   RelayResult,
   ResumeResult,
@@ -81,11 +83,13 @@ export interface Records {
   resumes: string[];
   /** Each open in an editor the server answered (W72), by the session's name and the editor's id. Nothing is opened. */
   opens: Array<{ name: string; editor: EditorId }>;
+  /** Each End session the server answered (W90), by the session's name, whether it was sent with `whileWorking`, and its status. Nothing is signalled. */
+  ends: Array<{ name: string; whileWorking: boolean; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], uploads: [], deletes: [], requests: [] });
+const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], ends: [], uploads: [], deletes: [], requests: [] });
 
 /** A name the contract's 400 refuses: a path separator, a control or a bidi control (ATTACHMENTS_PATH). */
 const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
@@ -123,6 +127,20 @@ function isText(body: Buffer): boolean {
 /** The session whose opens in an editor the fake server answers with 429, past the opens a minute (W87), and what it says. */
 export const OPEN_LIMITED = NAMES.running2;
 export const OPEN_LIMITED_ERROR = 'pitwall opens at most 10 directories in an editor every 60 seconds. Try again in 42s.';
+
+/**
+ * End session's answers (W90), by the session's name, in the server's words (src/server/end.ts):
+ * END_WORKING's turn is running, as a prompt on screen makes it, and END_SUBAGENTS' sub-agents are,
+ * so each gets the 409 with `working` until it's sent `whileWorking`; END_REFUSED's process changed
+ * while pitwall checked it; END_LIMITED is past the 5 ends a minute. Every other running interactive
+ * session ends, and is listed as ended a moment later.
+ */
+export const END_WORKING = NAMES.waiting;
+export const END_SUBAGENTS = NAMES.inApi;
+export const END_REFUSED = NAMES.conversation;
+export const END_REFUSED_ERROR = "Its process changed while pitwall checked it, so pitwall didn't signal it.";
+export const END_LIMITED = NAMES.fromRoot;
+export const END_LIMITED_ERROR = 'pitwall ends at most 5 sessions every 60 seconds. Try again in 42s.';
 
 /** The editors the fake server says it found at startup (W72), as pitwall's would on a Mac with both. */
 export const EDITORS: EditorList = { editors: [{ id: 'vscode', label: 'VS Code' }, { id: 'cursor', label: 'Cursor' }] };
@@ -245,7 +263,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       return json(res, 200, page satisfies ConversationPage);
     }
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -271,7 +289,50 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     }
     if (route === 'resume' && method === 'POST') return resume(req, res, session.sessionId);
     if (route === 'open' && method === 'POST') return openInEditor(req, res, session.sessionId);
+    if (route === 'end' && method === 'POST') return endSession(req, res, session.sessionId);
     return end(res, 405);
+  }
+
+  /**
+   * End session (W90), with the server's body check and words (src/server/end.ts): JSON, `{}` or
+   * `{ whileWorking: true }`, for a running interactive session. It answers each by its name (END_*),
+   * records the end, signals nothing, and lists one it ended as ended a moment later, as the index
+   * lists it on the poll after (W67).
+   */
+  async function endSession(req: IncomingMessage, res: ServerResponse, sessionId: string) {
+    if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 400, { ok: false, error: 'Send the request as application/json.' } satisfies EndSessionResult);
+    const body = await readJson(req);
+    const keys = isRecord(body) ? Object.keys(body) : undefined;
+    const whileWorking = keys?.length === 1 && keys[0] === 'whileWorking' && isRecord(body) && body.whileWorking === true;
+    if (!(keys?.length === 0 || whileWorking)) return json(res, 400, { ok: false, error: 'The body must be {} or { "whileWorking": true }.' } satisfies EndSessionResult);
+    const session = world.session(sessionId);
+    if (!session) return end(res, 404);
+    const answer = (status: number, result: EndSessionResult) => {
+      records.ends.push({ name: session.name, whileWorking, status });
+      return json(res, status, result);
+    };
+    if (session.kind !== 'interactive' || session.ended || !session.alive) {
+      return answer(409, { ok: false, error: 'Only a running interactive session can be ended from pitwall. Stop a background session instead.' });
+    }
+    if (session.name === END_REFUSED) return answer(409, { ok: false, error: END_REFUSED_ERROR });
+    if (session.name === END_LIMITED) {
+      res.setHeader('Retry-After', '42');
+      return answer(429, { ok: false, error: END_LIMITED_ERROR });
+    }
+    if (!whileWorking && session.name === END_WORKING) {
+      return answer(409, { ok: false, error: "pitwall didn't end it: its turn is still running. Ending it now loses a reply being written and stops what it's running.", working: { turn: 'running' } });
+    }
+    if (!whileWorking && session.name === END_SUBAGENTS) {
+      return answer(409, { ok: false, error: "pitwall didn't end it: 2 sub-agents are running. Ending it now loses a reply being written and stops what it's running.", working: { subagents: 2 } });
+    }
+    // Checked, signalled and gone within the server's wait, so it answers after a moment.
+    later(300, () => {
+      answer(200, { ok: true, ended: true });
+      later(options.listDelayMs ?? 800, () => {
+        world.end(sessionId);
+        broadcast();
+      });
+    });
   }
 
   /**

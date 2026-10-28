@@ -576,18 +576,19 @@ describe('SessionView: notes that say what to do (W47)', () => {
       expect(await tooltipText(missing)).toBe(CWD_MISSING_HINT);
     });
 
-    it('says an interactive session is still running in its terminal, and that /exit there ends it, in code style', () => {
+    it('says an interactive session is still running in its terminal, and that End session, or /exit there, ends it, in code style', () => {
       const { view } = renderView(interactive());
       const note = cwdNote(view)!;
-      expect(note.textContent).toBe("It's still running in its terminal, so it's listed. Type /exit there to end it.");
+      expect(note.textContent).toBe("It's still running in its terminal, so it's listed. End session, in the actions menu, ends it, as /exit there does.");
       expect(note.textContent).toBe(CWD_MISSING_NOTES.interactive);
       expect([...note.querySelectorAll('code')].map((code) => code.textContent)).toEqual([EXIT_COMMAND]);
       // A line of its own, right under line 2, in the header.
       expect(note.tagName).toBe('P');
       expect(note.previousElementSibling).toBe(view.querySelector('.session-view-meta'));
       expect(head(view).contains(note)).toBe(true);
-      // pitwall can't end it: Stop session is there, and off (W40).
-      expect(menuItem(view, 'Stop session')).toBe('off');
+      // End session ends it (W90), though its directory has gone: its process is still running.
+      expect(menuItem(view, 'End session')).toBe('on');
+      expect(menuItem(view, 'Stop session')).toBe('absent');
     });
 
     it('says the same while it waits on you or is busy', () => {

@@ -101,6 +101,13 @@ export interface StubOptions {
    */
   open?: 'opened' | 'opening' | 'refused';
   /**
+   * What End session gets (W90), in the server's words (src/server/end.ts). `ending` never answers;
+   * `lingering` is a process that hadn't exited after 5 seconds; `working` answers `{}` with a 409
+   * naming a running turn and two sub-agents, and `{ whileWorking: true }` with ended; `refused` is a
+   * process that changed while pitwall checked it.
+   */
+  end?: 'ended' | 'ending' | 'lingering' | 'working' | 'refused';
+  /**
    * A session's sub-agents (W77). Left out, the route is a 404, as before W76, so a view shows no
    * Sub-agents tab. `ok` is one of each state and a nested one; `many` is 72; `truncated` is twelve
    * the server cut short; `empty` has none; `loading` never answers; `failed` is a 500 every time, and
@@ -127,7 +134,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
   const fetched = new Map<string, number>();
   const fetchedOlder = new Map<string, number>();
   let listed = 0;
-  const answer = (method: 'GET' | 'POST', path: string): Promise<ApiResult> => {
+  const answer = (method: 'GET' | 'POST', path: string, body?: unknown): Promise<ApiResult> => {
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
     if (method === 'GET' && path === DIRECTORIES_PATH) return directories(options.directories ?? 'ok');
     const agents = method === 'GET' ? SUBAGENTS_PATH.exec(path) : null;
@@ -157,12 +164,13 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
     if (method === 'POST' && route === 'resume') return resume(options.resume ?? 'resumed');
     if (method === 'POST' && route === 'open') return openEditor(options.open ?? 'opened');
+    if (method === 'POST' && route === 'end') return endAnswer(options.end ?? 'ended', body);
     return Promise.resolve(failed(404));
   };
   let uploads = 0;
   return {
     get: (path) => answer('GET', path),
-    post: (path) => answer('POST', path),
+    post: (path, body) => answer('POST', path, body),
     upload: (path, file) => {
       if (path !== ATTACHMENTS_PATH) return Promise.resolve(failed(404));
       uploads += 1;
@@ -302,6 +310,30 @@ function action(route: 'stop' | 'remove', result: 'done' | 'refused' | 'busy'): 
       ? 'claude rm kept the worktree ~/code/pitwall-test-app/.claude/worktrees/pitwall-test-export-fix, because it has unpushed commits.'
       : 'claude stop failed: the session had already exited.';
   return Promise.resolve(failed(409, { ok: false, error }));
+}
+
+function endAnswer(result: NonNullable<StubOptions['end']>, body: unknown): Promise<ApiResult> {
+  const whileWorking = typeof body === 'object' && body !== null && (body as { whileWorking?: unknown }).whileWorking === true;
+  switch (result) {
+    case 'ending':
+      return forever();
+    case 'ended':
+      return Promise.resolve(ok({ ok: true, ended: true }));
+    case 'lingering':
+      return Promise.resolve(ok({ ok: true, ended: false }));
+    case 'working':
+      return whileWorking
+        ? Promise.resolve(ok({ ok: true, ended: true }))
+        : Promise.resolve(
+            failed(409, {
+              ok: false,
+              error: "pitwall didn't end it: its turn is still running, and 2 sub-agents are running. Ending it now loses a reply being written and stops what it's running.",
+              working: { turn: 'running', subagents: 2 },
+            }),
+          );
+    case 'refused':
+      return Promise.resolve(failed(409, { ok: false, error: "Its process changed while pitwall checked it, so pitwall didn't signal it." }));
+  }
 }
 
 function resume(result: NonNullable<StubOptions['resume']>): Promise<ApiResult> {

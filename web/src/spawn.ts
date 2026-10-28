@@ -1,15 +1,19 @@
-// Starting, stopping and removing background sessions (W12), and resuming an
-// ended interactive session in the background (W67): the API calls, through
+// Starting, stopping and removing background sessions (W12), resuming an
+// ended interactive session in the background (W67), and ending a running
+// interactive one (W90): the API calls, through
 // the app's ApiClient (api.ts), which sends the apiKey, never the token, and
 // the checks the "New session" dialog makes before it sends one.
 // The server (src/server/actions.ts) is the authority on every check.
 
 import { useEffect, useState } from 'react';
 import {
+  endSessionPath,
   removePath,
   resumePath,
   SPAWN_PATH,
   stopPath,
+  type EndSessionRequest,
+  type EndSessionWorking,
   type IndexSnapshot,
   type SessionSummary,
   type SpawnRequest,
@@ -113,6 +117,46 @@ export async function resumeSession(api: ApiClient, sessionId: string): Promise<
   }
   // A 429 with no reason of its own still says when to try again.
   const failed: ResumeOutcome = { kind: 'failed', error: `${couldNot('resume the session', result.status)}${tryAgainIn(result.kind === 'failed' ? result.retryAfter : undefined)}` };
+  return result.status === undefined ? failed : { ...failed, status: result.status };
+}
+
+export type EndOutcome =
+  /** Signalled. `exited` is whether its process had exited by the time the server answered. */
+  | { kind: 'ended'; exited: boolean }
+  /** Not signalled: it's working, and `working` says what's running, for the stronger warning. */
+  | { kind: 'working'; working: EndSessionWorking }
+  /** The server refused, with why: one of its guards, such as a process that changed meanwhile. */
+  | { kind: 'refused'; error: string }
+  | { kind: 'unauthorized' }
+  /** No answer pitwall understands. `status` is the HTTP status, when the server answered. */
+  | { kind: 'failed'; error: string; status?: number };
+
+/** What's running, from a 409's `working`, when it names something; anything else is dropped. */
+function workingOf(value: unknown): EndSessionWorking | undefined {
+  const body = asRecord(value);
+  if (!body) return undefined;
+  const working: EndSessionWorking = {};
+  if (body.turn === 'running' || body.turn === 'unknown') working.turn = body.turn;
+  if (typeof body.subagents === 'number' && Number.isSafeInteger(body.subagents) && body.subagents > 0) working.subagents = body.subagents;
+  return working.turn === undefined && working.subagents === undefined ? undefined : working;
+}
+
+/**
+ * Ends a running interactive session with POST endSessionPath() (W90), sent as Stop and Remove are:
+ * `{}`, or `{ whileWorking: true }` once you've confirmed the stronger warning. Never rejects.
+ */
+export async function endSession(api: ApiClient, sessionId: string, whileWorking: boolean): Promise<EndOutcome> {
+  const request: EndSessionRequest = whileWorking ? { whileWorking: true } : {};
+  const result = await api.post(endSessionPath(sessionId), request);
+  if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
+  const body = asRecord(result.body);
+  if (result.kind === 'ok' && body?.ok === true && typeof body.ended === 'boolean') return { kind: 'ended', exited: body.ended };
+  if (result.kind === 'failed' && body?.ok === false && typeof body.error === 'string') {
+    const working = result.status === 409 ? workingOf(body.working) : undefined;
+    return working ? { kind: 'working', working } : { kind: 'refused', error: body.error };
+  }
+  // A 429 with no reason of its own still says when to try again.
+  const failed: EndOutcome = { kind: 'failed', error: `${couldNot('end the session', result.status)}${tryAgainIn(result.kind === 'failed' ? result.retryAfter : undefined)}` };
   return result.status === undefined ? failed : { ...failed, status: result.status };
 }
 
