@@ -1574,8 +1574,8 @@ For a destructive or surprising action in the session view, without a dialog.
 - **Behaviour:**
   - `role="dialog"`, `aria-modal="true"`, `aria-labelledby` (the title).
   - Focus moves to the first field on open, Tab and Shift + Tab are trapped inside, and focus returns to the opener on close, without opening the opener's tooltip (`focusQuietly`), which would take the next Escape: one more Escape then goes on to what's behind, such as the session view.
-  - Focus is back on the opener as the dialog leaves the page, in the same commit, however it closes, including New session's once its request answers. Nothing that looks after it, such as a started session's switch (W63), finds focus on the page (W83).
     - A [radio group](#inputs-textareas-and-selects) is one field, its checked radio, as the browser's Tab has it (W59): the dialog opens on the first group's choice, and the trap counts the last group's choice as the last stop, not its last radio.
+  - Focus is back on the opener in the commit that removes the dialog, however it closes, including New session's once its request answers (W83). After such a close, React runs a passive effect's clean-up a task later, so focus would be on the page in between. Only the web tests, in happy-dom, have shown that gap; Chrome 155 had focus back already.
   - Escape closes it, except while submitting (and it doesn't also close the session view behind).
   - A click on the backdrop closes it only when nothing has been typed. A press that starts in the card and ends on the backdrop, as when selecting text, isn't a click on it, and a press on the backdrop doesn't take focus out of the dialog.
 - **Busy:** the primary button's busy state; the other controls are `aria-disabled`, Close included, and the text fields are read-only. Escape and the backdrop do nothing.

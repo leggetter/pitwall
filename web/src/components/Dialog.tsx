@@ -74,10 +74,10 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
   const pressedBackdrop = useRef(false);
 
   // The first field takes focus; whatever had it before gets it back when the dialog goes. A layout
-  // effect, so focus goes back before the dialog leaves the page, in the same commit (W83). A passive
-  // effect's clean-up runs in a later task when the dialog closes from something other than a click
-  // or a key, as New session does once its request answers: until then focus was on the page, where
-  // anything that looked, such as a started session's switch (W63), or a key, found it.
+  // effect, so focus goes back before the dialog leaves the page, in the same commit (W83). When the
+  // dialog closes from something other than a click or a key, as New session does once its request
+  // answers, React runs a passive effect's clean-up in a later task, leaving focus on the page in
+  // between. The web tests, in happy-dom, saw that gap; Chrome 155 had focus back already.
   useLayoutEffect(() => {
     const returnTo = document.activeElement;
     (tabStops(body.current)[0] ?? tabStops(card.current)[0])?.focus();
