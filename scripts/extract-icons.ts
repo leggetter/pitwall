@@ -55,7 +55,7 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   search: 'search',
   clear: 'cancel',
   // The filter bar's Clear filters (W91): a funnel struck through, filters off. Not cancel, which is the
-  // field's own Clear filter, beside it while there's text.
+  // field's own Clear text, beside it while there's text.
   'clear-filters': 'filter_alt_off',
   add: 'add',
   copy: 'content_copy',

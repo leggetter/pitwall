@@ -581,8 +581,8 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `more` | more_horiz | The session view's actions menu |
 | `menu` | menu | The header's Repos button, which opens the repo list drawer below 900 px |
 | `search` | search | The filter field |
-| `clear` | cancel | Clearing the filter field's text |
-| `clear-filters` | filter_alt_off | The filter bar's [Clear filters](#filter-chips) (W91), which clears the text and the chips: a funnel struck through, Material Symbols' own glyph for filters off. Not `clear`, since the field's own Clear filter, which clears the text alone, can be beside it |
+| `clear` | cancel | The filter field's Clear text, which clears its text |
+| `clear-filters` | filter_alt_off | The filter bar's [Clear filters](#filter-chips) (W91), which clears the text and the chips: a funnel struck through, Material Symbols' own glyph for filters off. Not `clear`, since the field's own Clear text, which clears the text alone, can be beside it |
 | `add` | add | New session |
 | `copy` / `copied` | content_copy / check | Copy buttons |
 | `terminal` | terminal | The Terminal tab, attach |
@@ -889,7 +889,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 ### Icon buttons
 
 - **Sizes:** square: sm 24 px (4 px padding), md 28 px (6 px), lg 32 px (8 px). The icon is 16 px, or 24 px in lg when it stands alone.
-- **Variants:** ghost by default; outline when it stands alone outside a toolbar.
+- **Variants:** ghost by default; outline when it stands alone outside a toolbar. The filter bar's Clear filters, beside the outlined chips, is ghost (see [Filter chips](#filter-chips)).
 - **Names:** always an `aria-label`, plus a tooltip with the same text and its shortcut as key caps. The icon is `aria-hidden`.
 - **Toggles** (such as a theme option) also set `aria-pressed`.
 - **Target size:** 24 × 24 px at least (WCAG 2.5.8), so there's no icon button below sm.
@@ -924,7 +924,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 ### Search
 
 - **The filter field:** height 28 px, the whole width of a line it has to itself (see [Session list](#session-list)). A 16 px `search` icon at 8 px from the left in `--pw-text-subtle`; text padding-left 32 px, and padding-right 32 px once there's text. A placeholder too long for the field ends in an ellipsis.
-- **Right side:** a `/` key cap while it's empty and unfocused, 4 px from the right edge and centred, while the single-key shortcuts are on; a ghost sm `clear` icon button ("Clear filter"), 2 px from the right edge, once there's text. Clearing with it keeps focus in the field. The browser's own clear button is hidden.
+- **Right side:** a `/` key cap while it's empty and unfocused, 4 px from the right edge and centred, while the single-key shortcuts are on; a ghost sm `clear` icon button, "Clear text", 2 px from the right edge, once there's text. Before W91's review it was "Clear filter", one letter from the filter bar's Clear filters, which shows beside it. Clearing with it keeps focus in the field. The browser's own clear button is hidden.
   - The key cap is a hint, `aria-hidden`, and clicks go through it to the field. The field says the same in `aria-keyshortcuts="/"`, only while the shortcuts are on.
   - While the shortcuts are on, the text keeps 32 px clear on the right, focused or not, so the placeholder doesn't move when the key cap goes.
 - **Behaviour:**
@@ -993,8 +993,9 @@ A text field with a list of suggestions that narrows as you type (W70; Phil, 202
 - **The chips:** "Interactive" and "Background", which combine as OR, so either one alone narrows the list and both together show every session.
   - "Needs you" is a view in the [repo list](#repo-list), replacing today's "Needs attention only" checkbox, and finished sessions have their own [section](#finished-section), so neither is a chip.
   - **Clear filters** appears after the chips, inside their group so it wraps with them, when any chip is on or the field has text. It clears the text and the chips, and puts focus in the field, since the button itself goes away.
-    - **A ghost sm [icon button](#icon-buttons) at every width** (W91): 24 px square, the `clear-filters` icon, named "Clear filters" by its tooltip, which is its `aria-label` (`Tooltip`'s `label` relation), so a screen reader hears "Clear filters, button" and voice control finds it by those words. Its tooltip opens on hover and on keyboard focus, as every icon button's does. Tab reaches it after the chips, and Enter or Space presses it. Why an icon, and not only where the words cost a line, is in [Session list](#session-list).
-    - It isn't the field's Clear filter, the `clear` icon inside the field, which clears the text alone and keeps focus in the field.
+    - **A ghost sm [icon button](#icon-buttons) at every width** (W91): 24 px square, the `clear-filters` icon, named "Clear filters" by its tooltip, which is its `aria-label` (`Tooltip`'s `label` relation). That name is distinct from the field's Clear text, which shows beside it while there's text. Its tooltip opens on hover and on keyboard focus, as every icon button's does. Tab reaches it after the chips, and Enter or Space presses it. Why an icon, and not only where the words cost a line, is in [Session list](#session-list).
+    - It isn't the field's Clear text, the `clear` icon inside the field, which clears the text alone and keeps focus in the field.
+    - **Ghost, not outline** (W91's review), though an icon button is outline where it stands alone outside a toolbar ([Icon buttons](#icon-buttons)). Outlined, it had the off chip's fill, edge and 24 px height, 8 px after the last chip, so it read as a third chip with no label: a toggle's look, on the action that clears the toggles. Ghost keeps it apart from them, and it takes the control edge on hover, as every ghost button does. It sits in the filter bar's row of controls, with the chips and Sort, which counts as a toolbar for that rule.
   - While no filter is on, its room is kept (W75): an unseen copy in its place, a `<span>` with the button's classes and icon, `visibility: hidden` and `aria-hidden="true"`, so it's no button, takes no focus, has no name and says nothing to a screen reader. So what comes after it, such as the session list's Sort, never moves as the button comes and goes.
 
 ### Tabs

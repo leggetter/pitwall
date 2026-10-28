@@ -71,7 +71,7 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
         </span>
       )}
       {value !== '' && (
-        <Tooltip content="Clear filter" relation="label">
+        <Tooltip content="Clear text" relation="label">
           <button
             type="button"
             className="icon-button ghost sm filter-clear"
