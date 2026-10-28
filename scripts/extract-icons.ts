@@ -84,6 +84,8 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   // A session's star, off and on (W53): the same glyph, outlined, then filled, as Material Symbols draws a toggle's two states.
   star: 'star',
   starred: ['star', FILLED],
+  // The session view's Sub-agents tab (W77): a session and the sub-agents it started, some of them by another.
+  subagents: 'account_tree',
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',

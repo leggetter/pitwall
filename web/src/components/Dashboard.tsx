@@ -1145,6 +1145,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
       terminalFocus={terminalFocus}
+      polledAt={updatedAt}
     />
   );
   let sessionView: ReactNode;

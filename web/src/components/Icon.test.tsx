@@ -7,7 +7,7 @@ import { Icon } from './Icon.js';
 const NAMES = [
   'close', 'expand', 'select', 'more', 'menu', 'search', 'clear', 'add', 'copy', 'copied', 'terminal',
   'conversation', 'send', 'stop', 'remove', 'restart', 'retry', 'info', 'success', 'warning', 'error',
-  'repo', 'directory', 'external', 'latest', 'back', 'keyboard', 'hide', 'show', 'preferences', 'checked', 'star', 'starred', 'theme-system',
+  'repo', 'directory', 'external', 'latest', 'back', 'keyboard', 'hide', 'show', 'preferences', 'checked', 'star', 'starred', 'subagents', 'theme-system',
   'theme-light', 'theme-dark',
 ];
 

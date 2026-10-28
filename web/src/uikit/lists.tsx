@@ -9,7 +9,7 @@ import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.
 import { FinishedSection, type OlderEnded } from '../components/SessionList.js';
 import { SessionRow } from '../components/SessionRow.js';
 import { listScope, type Listed } from '../sessions.js';
-import { APP_DIR, AWKWARD_ROWS, ENDED_ROWS, FINISHED_ROWS, group, JOBS_DIR, OLDER_ENDED_ROWS, ROOT, STATE_ROWS, STATUS_ROWS, statusRow, WORKED_SNAPSHOT } from './fixtures.js';
+import { ago, APP_DIR, AWKWARD_ROWS, ENDED_ROWS, FINISHED_ROWS, group, JOBS_DIR, OLDER_ENDED_ROWS, ROOT, session, STATE_ROWS, STATUS_ROWS, statusRow, WORKED_SNAPSHOT } from './fixtures.js';
 import { Specimen } from './kit.js';
 
 /** Rows all in one group, as a group's own list has them. */
@@ -164,6 +164,18 @@ function States({ showGroup }: { showGroup: boolean }) {
   );
 }
 
+/** Sessions with sub-agents running (W77): the count ends line 2, quietly, and never gives way. */
+const RUNNING_ROWS = [
+  session('agents-two', { subagentsRunning: 2, lastActivityAt: ago(0.2) }),
+  session('agents-one', { subagentsRunning: 1, status: 'busy', lastActivityAt: ago(0.4) }),
+  session('agents-long-prompt', {
+    subagentsRunning: 12,
+    lastUserPrompt: 'Review every made-up export job for retries, the batch writer and the CSV export, and report what is missing from their tests.',
+    lastActivityAt: ago(1),
+  }),
+  session('agents-none', { lastActivityAt: ago(3) }),
+];
+
 /** Long text and narrow lists, at the widths the session list has from 1,200 px. */
 const NARROW_ROWS = [statusRow('waiting'), statusRow('blocked'), statusRow('asked-you'), statusRow('stale'), ...AWKWARD_ROWS.slice(0, 4)];
 
@@ -215,6 +227,15 @@ export function SessionRows() {
         note="Each session once, its line 2 naming the group it started in, the only one it's listed under: pitwall-test-across-repos under pitwall-test-app, pitwall-test-from-root under ~/code, though both worked in pitwall-test-api and pitwall-test-docs. The session view names those."
       >
         <Rows rows={listScope(WORKED_SNAPSHOT.groups, { kind: 'all' }).current} showGroup />
+      </Specimen>
+      <Specimen
+        title="Sub-agents running (W77)"
+        note="While any of a session's sub-agents run, line 2 ends with how many, quietly, in the group label's colour: 2 sub-agents running, or 1 sub-agent running, after a · when something comes before it. What it was last asked gives way first; the count is never cut. Nothing when none runs."
+      >
+        <Rows rows={inGroup('pitwall-test-app', RUNNING_ROWS)} />
+      </Specimen>
+      <Specimen title="Sub-agents running, in Needs you and All sessions, 360 px wide" note="After the group's label and what it was last asked, at the session list's width at 1,200 px." width={360}>
+        <Rows rows={acrossGroups(RUNNING_ROWS)} showGroup />
       </Specimen>
       <Specimen title="360 px wide" note="The session list's width at 1,200 px. Line 1 stays one line: the title gives way first, then the name." width={360}>
         <Rows rows={acrossGroups(NARROW_ROWS)} showGroup />
