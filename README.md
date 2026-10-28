@@ -2,7 +2,7 @@
 
 A local CLI and web UI for supervising the Claude Code sessions running on your machine.
 
-![pitwall in the light theme: a list of repos on the left, the selected repo's sessions in the middle, and an open session's conversation on the right](docs/images/pitwall-light.png)
+![pitwall in the light theme: Needs you, All sessions, Starred and the repos on the left, and the starred sessions in the middle, each with its repo, its status and what it needs from you](docs/images/pitwall-light.png)
 
 - **Lists every live Claude Code session under a directory,** wherever it was started (Warp, Cursor, any terminal), grouped by git repo. Finished background sessions, and interactive sessions that ended recently, are listed too.
 - **Shows which sessions need you,** judged from each session's context: a prompt on screen, a question it asked, or what Claude Code says a background session needs.
@@ -23,7 +23,7 @@ pitwall runs from a clone of this repo. It isn't published to npm.
 - **Node 22 or later,** with npm. CI uses Node 22.
 - **Claude Code,** logged in, with `claude` on your `PATH`. pitwall has been used with Claude Code 2.1.312. The one version it checks is for messaging an interactive session: its relay needs 2.1.295 or later, and pitwall won't start it on an older one.
 - **git,** to clone the repo, and for grouping sessions by repo.
-- **Access to the repo:** it's private.
+- **Access to the repo:** it's private, so cloning needs your GitHub credentials, such as `gh auth login` or an SSH key.
 
 ### Run it
 
@@ -38,7 +38,7 @@ node dist/cli.js ~/code
 
 - **The branch:** `main` has M1 to M3. Check out `m3.1/integration` for M3.1, until it's merged into `main`.
 - **The root:** `~/code` stands for the directory that holds your work. pitwall lists every session whose working directory is in it or below it. Give two or more roots, such as `~/work ~/oss`, to get a tab for each, or none for the current directory.
-- **npm's notes:** `npm ci` may say it skipped install scripts for `esbuild`, `fsevents` and `node-pty`, as npm 11 does by default. On macOS that's fine: `node-pty`, the one native module, loads the macOS build it ships with, and pitwall makes its helper executable the first time it attaches. It may also report advisories in two dev dependencies, Vite and happy-dom. pitwall uses Vite only to build the web UI, never its dev server, and happy-dom only in `npm test`.
+- **npm's notes:** `npm ci` may say it skipped install scripts for `esbuild`, `fsevents` and `node-pty`, as recent npm 11 releases do by default. On macOS that's fine: `node-pty`, the one native module, loads the macOS build it ships with, and pitwall makes its helper executable the first time it attaches. It may also report advisories in two dev dependencies, Vite and happy-dom. pitwall uses Vite only to build the web UI, never its dev server, and happy-dom only in `npm test`.
 - **On Linux,** which is untried, `node-pty` ships no build and compiles in its install script, which needs Python, `make` and a C++ compiler. npm 10 runs that script, as CI does; npm 11 skips it unless it's approved (`npm help install-scripts`). Without it, attaching to a session fails with a message, and the rest of pitwall works.
 
 ### What happens
@@ -54,6 +54,8 @@ node dist/cli.js ~/code
 - **It reads, and changes nothing:**
   - `claude agents --json --all`, every 5 seconds, for the list of sessions.
   - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing and whether it needs you.
+  - To find ended sessions, the start of every transcript in `~/.claude/projects/` changed in the last 30 days, whatever its directory, kept in memory. Only those under your roots are listed.
+  - `ps` for when a session's process started, `claude --version` before its relay starts, and `/Applications` and `~/Applications` for VS Code and Cursor.
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked (D8). The session sees it as a message from another session, so a message can't approve a permission prompt.
@@ -75,7 +77,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 
 - **Undocumented rows:** pitwall finds the interactive sessions running in your terminals through their rows in `claude agents --json`, which Claude Code's docs don't describe: they describe background sessions only. If a release drops those rows, pitwall loses most of its value (D1).
 - **Internal files:** transcripts, sub-agents' folders and job state are Claude Code's internal formats, which change between versions. pitwall reads them read-only, behind adapters that fail soft: a file it can't read shows as unavailable, or as less detail, never as a crash.
-- **Interactive sessions can only be messaged.** For anything more, such as answering a prompt, type `/bg` in the session's terminal to move it to the background, and pitwall can then attach to it (D2).
+- **A running interactive session can only be messaged, not driven.** For anything more, such as answering a prompt, type `/bg` in the session's terminal to move it to the background, and pitwall can then attach to it (D2).
 - **Untrusted directories:** Claude Code won't start a session from a script in a directory you haven't trusted. New session then shows Claude Code's error and the command to run; pitwall never grants trust for you.
 - **Cost:** each message you send starts a turn on the target session's own model, plus a Haiku turn in the relay.
 
