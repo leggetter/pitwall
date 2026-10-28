@@ -102,12 +102,14 @@ const SIGNATURES: Partial<Record<AttachmentType, (head: Buffer) => boolean>> = {
 /**
  * Names the fake server answers differently, for the steps that check an upload's busy state and a
  * failure: one starting SLOW_UPLOAD is answered after a moment; one starting FAIL_UPLOAD gets a 500,
- * a file that couldn't be written, the first time it's sent; and one starting UNAVAILABLE_UPLOAD a
- * 503, as from a pitwall that keeps no attachments on its machine.
+ * a file that couldn't be written, the first time it's sent; one starting UNAVAILABLE_UPLOAD a
+ * 503, as from a pitwall that keeps no attachments on its machine; and STALLED_UPLOAD below a 408.
  */
 export const SLOW_UPLOAD = 'pitwall-test-slow';
 export const FAIL_UPLOAD = 'pitwall-test-fail';
 export const UNAVAILABLE_UPLOAD = 'pitwall-test-unavailable';
+/** A name the fake server answers 408, as W79's route does an upload that stalls, keeping nothing. */
+export const STALLED_UPLOAD = 'pitwall-test-stalled';
 
 /** Text that's UTF-8 with no NUL, as W79's route wants of a text or JSON file. */
 function isText(body: Buffer): boolean {
@@ -373,6 +375,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (SIGNATURES[known] && !SIGNATURES[known](head)) return answer(415, { ok: false, error: `Made up: its first bytes aren't those of ${known}.` });
     if (!SIGNATURES[known] && !isText(bytes)) return answer(415, { ok: false, error: "Made up: it isn't UTF-8 text." });
     if (name.startsWith(UNAVAILABLE_UPLOAD)) return answer(503, { ok: false, error: "Made up: this pitwall doesn't keep attachments." });
+    if (name.startsWith(STALLED_UPLOAD)) return answer(408, { ok: false, error: 'Made up: the upload stalled, so pitwall kept nothing.' });
     if ([...uploaded.values()].filter((each) => !each.used).length >= protocol.ATTACHMENTS_MAX_PENDING) {
       return answer(429, { ok: false, error: 'Made up: too many unused uploads.' });
     }
