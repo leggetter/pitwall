@@ -3,9 +3,9 @@
 pitwall's settled decisions, each with its reasoning. A decision record here says what was decided and why, and often what was rejected and what's left for later, so you can learn why pitwall works the way it does without digging through pull requests.
 
 - **Where they come from:** a decision starts in [`PLAN.md`](../PLAN.md) while it's open, with a lean. Once it's settled, its reasoning moves here, and `PLAN.md` keeps a one-line status. What's still open is in `PLAN.md`, under Decisions and Open questions.
-- **IDs are stable:** D1 to D21 are cited across the repo, in the docs and in code comments. A decision that's revised, as D8 was after spike 003, keeps its ID and is updated in place.
+- **IDs are stable:** D1 to D22 are cited across the repo, in the docs and in code comments. A decision that's revised, as D8 was after spike 003, keeps its ID and is updated in place.
 - **How to read them:** M numbers are milestones and W numbers are work items, both in `PLAN.md`. A name and a date, such as "(Phil, 2026-10-23)", say who decided and when. Phil is Phil Leggetter, pitwall's author, and "I" and "me" are him too. "The coordinator" is the Claude Code session that coordinates the work.
-- **By milestone:** D1 to D4 and D6 were settled from the first spikes, and D5, the stack, is Phil's choice. D6 took its current shape in M3 (W39, W42 and W59). D7 to D9 come from M2, D10 to D16 from M3, D17 to D20 from M3.1, and D21 is the licence. Many have gained detail since.
+- **By milestone:** D1 to D4 and D6 were settled from the first spikes, and D5, the stack, is Phil's choice. D6 took its current shape in M3 (W39, W42 and W59). D7 to D9 come from M2, D10 to D16 from M3, D17 to D20 from M3.1, D21 is the licence, and D22, End session, came after M3.1 (W90). Many have gained detail since.
 - **Evidence:** the spike write-ups in [`spikes/`](spikes/), starting with [`001-session-control.md`](spikes/001-session-control.md).
 
 ## D1 - The session list comes from `claude agents --json --all`
@@ -22,6 +22,7 @@ pitwall's settled decisions, each with its reasoning. A decision record here say
 - **So:** pitwall relays messages through its relay, a headless session named `pitwall-relay` (D8): the page shows each send as "Message from pitwall", and the target sees a message from `pitwall-relay`. A relayed message still triggers real work: it starts a turn, and the session acts within its own permissions (spike 002). The relay arrives in M2, as a headless session pitwall runs, limited to `SendMessage` behind a gate (D8), which the M5 supervisor later takes over. For anything that needs full control, it asks me to run `/bg` in the session, then attaches.
 - **Rejected:** posting to a session's inbox socket directly. Only the socket's auth line is documented, not the message format.
 - **Waiting on you:** while an interactive session waits on you, its view says to answer in its terminal; a relayed message seems to wait until then (W47; not yet confirmed on a live dialog).
+- **Ending one** (W90): pitwall can end an interactive session's Claude Code process, which leaves its terminal at the shell, and never closes the terminal itself (D22).
 
 ## D3 - Background sessions are driven through a PTY running `claude attach <id>`, shown with xterm.js
 
@@ -180,3 +181,29 @@ pitwall's settled decisions, each with its reasoning. A decision record here say
 - **A commercial side isn't ruled out:** a licence decides what others may do. While Phil holds the copyright in pitwall, he can license later versions differently or offer a commercial edition. Versions already released stay Apache-2.0, and so do others' contributions (section 5), unless a contributor licence agreement says otherwise. Who holds the copyright in AI-written code is unsettled law, and none of this is legal advice.
 - **Considered:** the Functional Source License (`FSL-1.1-ALv2`), which keeps competing commercial use to the author for two years per version but isn't open source, and AGPL-3.0, which many companies won't use.
 - **Bundled assets:** Inter and JetBrains Mono (OFL 1.1) and Material Symbols (Apache-2.0) keep their own licences (D10).
+
+## D22 - End session sends a running interactive session's process SIGTERM, and only an idle one without a stronger warning
+
+- **Why** (Phil, 2026-10-21: "close a session and kill the terminal process", worried about side effects; approved 2026-10-28 as W90): an interactive session belongs to its terminal (D2), and Claude Code documents no way to end one from outside it. Spike 005 found that signalling its Claude Code process ends it in about a second: its SessionEnd hooks run, its MCP servers, background commands and sub-agents end with it, nothing is orphaned, its transcript stays whole, and `claude --resume` brings it back. pitwall never closes the terminal tab: its parent process isn't always a shell, and ending that would end everything else in the tab.
+- **The signal: SIGTERM, once.** All three that spike 005 tried end a session in 0.6 to 1.8 s, but they differ:
+  - **SIGTERM** exits 143, which a shell can tell from a normal `/exit`, and git cleans up its lock files on it.
+  - **SIGINT** exits 0, which looks like `/exit`.
+  - **SIGHUP** exits 129 and says the terminal hung up, when it hasn't.
+  - **Never SIGKILL,** and nothing after the SIGTERM: SIGKILL skips the hooks and git's clean-up, and the spike recommends no escalation. The server waits up to 5 s for the process to exit and says whether it did.
+- **What it costs,** which the confirmation says:
+  - a reply being written is lost, since Claude Code writes a reply to the transcript only once it's finished;
+  - running commands, background commands and sub-agents are killed, not moved to the background as `/exit`'s dialog offers;
+  - a commit in progress doesn't happen, though spike 005 found the repo left consistent, with no lock.
+- **The guards,** all on the server; if any one refuses, nothing is signalled:
+  - **Who asks:** the apiKey, this server's Origin and an exact Host, as for every state-changing route.
+  - **Which session:** one the snapshot lists as a running interactive session, with a pid and a UUID id.
+  - **A fresh listing:** `claude agents --json --all` lists it as interactive, with the snapshot's pid, which no other row has. It isn't pitwall's own relay.
+  - **The same process:** `ps` says the pid is `claude`, and that it started no later than the session did. Its start time and command are read before that listing and again just before the signal, and must match, so a pid reused meanwhile can't be hit.
+  - **Never pitwall:** not pitwall's own process, nor one pitwall runs under (Phil's dev pitwall once ran under the coordinator's session), nor one it started, as its relay is. It checks `ps`'s parent pids.
+  - **Idle only,** unless you confirm a stronger warning. Its turn must have ended by its transcript, read afresh by W69's rule, with no prompt on screen and none of its sub-agents running. "Idle" can't come from Claude Code's status, which a plugin's monitor keeps at busy (spike 005, finding 8). A working session gets a 409 naming what runs, the page shows the stronger warning, and only its End session anyway sends `whileWorking`. A transcript that can't say counts as working.
+  - **Limits:** at most 5 ends a minute, as well as the 4 commands at once it shares with stop, remove, resume and open.
+- **Asks first,** as Stop and Remove do: an inline confirmation naming the session and its running sub-agents, and what ending costs. Afterwards the session leaves `claude agents` at once (spike 005, finding 5), so the next snapshot lists it as ended, with Resume in background and Copy command (D17).
+- **`ps` isn't Claude Code's interface,** but its fields here are POSIX's. pitwall reads only a pid's start time and command name, and the table of parent pids, never a command line, which can carry another process's secrets: spike 005's process listings showed an API key in an MCP server's URL. It fails soft: when `ps` can't say, nothing is signalled.
+- **Not now:**
+  - a session whose process isn't named `claude`, as when Claude Code runs through Node, which End session refuses;
+  - naming running background commands in the warning, which the transcript doesn't record reliably.

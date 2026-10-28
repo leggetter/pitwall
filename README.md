@@ -16,7 +16,7 @@ Claude Code has two kinds of session, and pitwall handles both. Interactive sess
 - **Shows which sessions need you, and why:** a prompt on screen, a question it asked you, or what Claude Code says a background session needs.
 - **Opens a session** to read its conversation, and its sub-agents' in a tab of their own.
 - **Lets you steer it:** send an interactive session a message, or drive a background session in a terminal in the page, permission prompts and dialogs included.
-- **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, and brings an ended interactive session back in the background.
+- **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, ends a running interactive session, leaving its terminal at the shell, and brings an ended interactive session back in the background.
 - **Opens a session's directory** in VS Code or Cursor.
 
 **Status:** in daily use by its author, on macOS only so far, and still changing quickly. It runs from a clone of this repo and isn't published to npm. The [roadmap](#roadmap) says what's next.
@@ -58,12 +58,13 @@ node dist/cli.js ~/code
   - `claude agents --json --all`, every 5 seconds, for the list of sessions.
   - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you and which repos it worked in.
   - To find ended sessions, the start and end of every transcript in `~/.claude/projects/` changed in the last 30 days, whatever its directory, kept in memory. Only those under your roots are listed.
-  - `ps` for when a session's process started, `claude --version` before its relay starts, and `/Applications` and `~/Applications` for VS Code and Cursor.
+  - `ps` for when a session's process started, and, before End session, its command name and the parent pids, never a command line; `claude --version` before its relay starts; and `/Applications` and `~/Applications` for VS Code and Cursor.
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked. The session sees it as a message from another session, so a message can't approve a permission prompt.
   - **Attach** to a background session, in a terminal in the page. Opening a running one's view attaches to it by default, since that's where it takes input. One that has finished asks first, because attaching restarts it.
   - **Start** a session with `claude --bg`, and **stop** or **remove** a background one with `claude stop` or `claude rm`, after a confirmation.
+  - **End** a running interactive session, after a confirmation, by sending its Claude Code process SIGTERM, never SIGKILL. Its terminal goes back to the shell, and its conversation is kept, but a reply in progress is lost. One that's still working asks again, naming what's running. pitwall never ends its own relay, or a process it runs under.
   - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg`.
   - **Open** a session's directory in VS Code or Cursor.
 - **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
@@ -110,7 +111,7 @@ node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
 ### In the page
 
 - **Three columns:** repos, then the selected repo's sessions, then the open session. Needs you, All sessions and Starred head the repo list. On a narrower window the session view lies over the list, and the repo list becomes a drawer.
-- **A session's view** has its conversation, a Terminal tab for a background session, and a Sub-agents tab once it has any. An interactive session's view ends with a message box, where ⌘↵ (Ctrl+Enter elsewhere) sends and Enter adds a line. Its actions menu stops or removes a background session, opens the directory in an editor and copies the session's commands. An ended session's view offers Resume in background.
+- **A session's view** has its conversation, a Terminal tab for a background session, and a Sub-agents tab once it has any. An interactive session's view ends with a message box, where ⌘↵ (Ctrl+Enter elsewhere) sends and Enter adds a line. Its actions menu stops or removes a background session, ends a running interactive one, opens the directory in an editor and copies the session's commands. An ended session's view offers Resume in background.
 - **Finished and ended sessions** sit in a Finished section at the end of each list. Not needed now takes a session out of Needs you until what it needs changes.
 - **Keyboard:** `/` filters, `n` starts a session, `j` and `k` step to the next or previous session, `s` stars the open session and `?` lists every shortcut. F6 leaves the terminal. The shortcuts dialog can turn the single-key ones off.
 - **Preferences:** how to group sessions (by main repo, where they started, or every repo they worked in), which tab a running background session opens on, and whether the terminal takes the keyboard. The header's theme switch follows the system, or sets light or dark.
@@ -182,7 +183,7 @@ sequenceDiagram
 
 ## Roadmap
 
-- **Now:** ending an interactive session from the page, and small fixes.
+- **Now:** small fixes.
 - **Pull requests beside sessions (M4):** your open pull requests, with CI and review state, grouped by org and then repo. A pull request whose link appears in a session's recent turns names that session, and the session's row gets a badge.
 - **A supervisor (M5):** a background Claude Code session that pitwall starts and shows in its own panel, which you talk to instead of visiting each session. It lists, summarises, messages and starts sessions, and takes over from the relay. M5 also titles each session from its recent turns rather than its first prompt.
 - **Triage (M6):** urgency with reasons, from the index, the supervisor and M4's pull requests. The supervisor reads each idle session's latest turns to judge whether it really needs you. Triage tells "blocked on you" from "blocked on someone else", and pairs pull requests with sessions: "CI is failing on your PR, and the session that opened it is idle."

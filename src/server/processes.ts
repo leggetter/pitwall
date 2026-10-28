@@ -11,6 +11,10 @@
 // Only a pid's start time and command name are read, and the table of pids and parent pids: never a
 // command line, which can carry another process's secrets, such as an API key in an MCP server's
 // URL (spike 005).
+//
+// Not subagents.ts' processStartTime(), which works a start out from `etime` and the clock, so two
+// reads of one process can differ by a second. End session compares two reads for equality, and
+// `lstart` is the start time the kernel keeps, the same on every read.
 import path from 'node:path';
 import { RunError, runFile, type RunFile } from '../index/exec.js';
 
