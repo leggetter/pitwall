@@ -65,11 +65,11 @@ export interface SessionSummary {
   sessionId: string;
   /** Short id for `claude attach` / `claude logs`. Background sessions only. */
   shortId?: string;
-  /** Display name: the set name, or Claude Code's default such as `website-98`. */
+  /** Display name: the set name, or Claude Code's default such as `demo-app-3f`. */
   name: string;
   /**
    * A short description of what the session is about, shown after the name, as
-   * in `website-98 · Standard Webhooks destination auth review`. Omitted when
+   * in `demo-app-3f · Fix the flaky export test`. Omitted when
    * there's none, or when it equals `name`, as with background sessions, whose
    * name is already the generated title.
    */

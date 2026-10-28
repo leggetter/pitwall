@@ -81,7 +81,7 @@ describe('framing', () => {
 });
 
 describe('isAddressable', () => {
-  it.each(['pitwall-test-target', 'website-98', 'release notes', 'Ünïcödé name'])('accepts %j', (name) => {
+  it.each(['pitwall-test-target', 'demo-app-3f', 'release notes', 'Ünïcödé name'])('accepts %j', (name) => {
     expect(isAddressable(name)).toBe(true);
   });
 
