@@ -13,7 +13,7 @@ A local CLI and web UI for supervising the Claude Code sessions running on your 
 - **Opens a session's directory** in VS Code or Cursor.
 - **Will have a supervisor session** (M5) you can talk to instead of visiting each session, knowing what each one is waiting on and what's urgent.
 
-**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, M3, a design system and restyle, and M3.1, the work after M3, are merged into `main`: M3 on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51), and M3.1 on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87). End session for interactive sessions waits on a decision. Next: M4, open pull requests next to the sessions working on them. See [`PLAN.md`](PLAN.md).
+**Status:** M1, a read-only index, M2, interacting with sessions from the web UI, M3, a design system and restyle, and M3.1, the work after M3, are merged into `main`: M3 on 2026-10-23 in [PR #51](https://github.com/leggetter/pitwall/pull/51), and M3.1 on 2026-10-28 in [PR #87](https://github.com/leggetter/pitwall/pull/87). End session for interactive sessions is approved and next (W90). Next: M4, open pull requests next to the sessions working on them. See [`PLAN.md`](PLAN.md).
 
 ## Try it
 
