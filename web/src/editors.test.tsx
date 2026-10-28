@@ -63,6 +63,19 @@ describe('openInEditor', () => {
     expect(await openInEditor(api(async () => Promise.reject(new TypeError('offline'))), BG, 'cursor')).toEqual({ kind: 'failed' });
   });
 
+  it("is refused with the server's words for a 429, which say when to try again, and keeps Retry-After when it gave none (W87)", async () => {
+    const error = 'pitwall opens at most 10 directories in an editor every 60 seconds. Try again in 42s.';
+    const limited = (body?: unknown) => async () => new Response(body === undefined ? 'not json' : JSON.stringify(body), { status: 429, headers: { 'Retry-After': '42' } });
+    expect(await openInEditor(api(limited({ ok: false, error })), BG, 'cursor')).toEqual({ kind: 'refused', error });
+    expect(await openInEditor(api(limited()), BG, 'cursor')).toEqual({ kind: 'failed', status: 429, retryAfter: 42 });
+    expect(openToast('pitwall-test-bg', CURSOR, { kind: 'refused', error })).toEqual({ tone: 'error', message: `Couldn't open pitwall-test-bg's directory in Cursor. ${error}` });
+    expect(openToast('pitwall-test-bg', CURSOR, { kind: 'failed', status: 429, retryAfter: 42 })).toEqual({
+      tone: 'error',
+      message: "Couldn't open pitwall-test-bg's directory in Cursor (HTTP 429). Try again in 42 seconds.",
+    });
+    expect(openToast('pitwall-test-bg', CURSOR, { kind: 'failed', status: 429, retryAfter: 1 })?.message).toBe("Couldn't open pitwall-test-bg's directory in Cursor (HTTP 429). Try again in 1 second.");
+  });
+
   it('has a toast for each outcome, naming the session and the editor, and none for unauthorized', () => {
     expect(openToast('pitwall-test-bg', CURSOR, { kind: 'opened' })).toEqual({ tone: 'success', message: "Opened pitwall-test-bg's directory in Cursor." });
     expect(openToast('pitwall-test-bg', VSCODE, { kind: 'refused', error: 'Its directory, /tmp/x, no longer exists.' })).toEqual({
@@ -269,6 +282,20 @@ describe('opening', () => {
     const message = `Couldn't open pitwall-test-bg's directory in Cursor. ${error}`;
     await waitFor(() => expect(toastMessages()).toEqual([message]));
     expect(toastSaying(message).className).toContain('error');
+  });
+
+  it("says when to try again past the opens a minute, in the server's words, and the item works again (W87)", async () => {
+    const error = 'pitwall opens at most 10 directories in an editor every 60 seconds. Try again in 42s.';
+    const fetch = fakeServer({ status: 429, body: { ok: false, error } }, { status: 200, body: { ok: true } });
+    renderDashboard([CURSOR], fetch);
+    const view = await openView('pitwall-test-bg');
+    choose(view, 'Open in Cursor');
+    const message = `Couldn't open pitwall-test-bg's directory in Cursor. ${error}`;
+    await waitFor(() => expect(toastMessages()).toEqual([message]));
+    expect(toastSaying(message).className).toContain('error');
+    choose(view, 'Open in Cursor');
+    await waitFor(() => expect(toastMessages()).toContain("Opened pitwall-test-bg's directory in Cursor."));
+    expect(posts(fetch)).toHaveLength(2);
   });
 
   it('gives the status when the server gave no reason', async () => {

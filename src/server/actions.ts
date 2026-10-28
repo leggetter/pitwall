@@ -409,33 +409,62 @@ function said(result: Extract<CommandResult, { kind: 'exited' }>): string {
 export type LimitRefusal = { ok: false; error: string; retryAfterSeconds: number };
 
 /**
+ * At most `rate.max` of something in any `rate.windowMs`, as a sliding window: the sessions pitwall
+ * starts (SpawnLimiter, W81), and the directories it opens in an editor (editors.ts, W87).
+ */
+export class RateWindow {
+  #at: number[] = [];
+
+  constructor(
+    readonly rate: { max: number; windowMs: number },
+    private readonly now: () => number,
+  ) {}
+
+  /**
+   * Counts one now, or, when `rate.max` were counted in the window, says how many whole seconds until
+   * the oldest leaves it, at least 1. Synchronous, so two requests can't both pass between the check
+   * and the count.
+   */
+  take(): { ok: true } | { ok: false; retryAfterSeconds: number } {
+    const now = this.now();
+    this.#at = this.#at.filter((at) => now - at < this.rate.windowMs);
+    if (this.#at.length >= this.rate.max) {
+      const oldest = this.#at[0] as number;
+      return { ok: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + this.rate.windowMs - now) / 1000)) };
+    }
+    this.#at.push(now);
+    return { ok: true };
+  }
+}
+
+/**
  * Counts the long-lived sessions pitwall starts, so a stuck UI can't fork-bomb them: at most `max`
  * spawns running at once, and `rate.max` sessions started per `rate.windowMs`, spawns and resumes
  * together (W81).
  */
 export class SpawnLimiter {
   private running = 0;
-  private started: number[] = [];
+  readonly #started: RateWindow;
 
   constructor(
     private readonly maxConcurrent: number,
     private readonly rate: { max: number; windowMs: number },
-    private readonly now: () => number,
-  ) {}
+    now: () => number,
+  ) {
+    this.#started = new RateWindow(rate, now);
+  }
 
   /**
    * Takes a spawn's slot, and counts it as a start, or says how many seconds to wait. Synchronous,
    * so two requests can't both pass between the check and the take.
    */
   acquire(): { ok: true; release: () => void } | LimitRefusal {
-    const now = this.now();
     if (this.running >= this.maxConcurrent) {
       return { ok: false, error: 'Another session is still starting. Try again in a moment.', retryAfterSeconds: 1 };
     }
-    const limited = this.limited(now);
-    if (limited) return limited;
+    const start = this.countStart();
+    if (!start.ok) return start;
     this.running += 1;
-    this.started.push(now);
     let released = false;
     return {
       ok: true,
@@ -453,19 +482,9 @@ export class SpawnLimiter {
    * (CommandSlots). Synchronous, as acquire() is.
    */
   countStart(): { ok: true } | LimitRefusal {
-    const now = this.now();
-    const limited = this.limited(now);
-    if (limited) return limited;
-    this.started.push(now);
-    return { ok: true };
-  }
-
-  /** The refusal when `rate.max` sessions started in the window before `now`, after forgetting older starts. */
-  private limited(now: number): LimitRefusal | undefined {
-    this.started = this.started.filter((at) => now - at < this.rate.windowMs);
-    if (this.started.length < this.rate.max) return undefined;
-    const oldest = this.started[0] as number;
-    const seconds = Math.max(1, Math.ceil((oldest + this.rate.windowMs - now) / 1000));
+    const taken = this.#started.take();
+    if (taken.ok) return taken;
+    const seconds = taken.retryAfterSeconds;
     return {
       ok: false,
       error: `pitwall starts at most ${this.rate.max} sessions every ${Math.round(this.rate.windowMs / 1000)} seconds, new and resumed together. Try again in ${seconds}s.`,

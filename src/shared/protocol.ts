@@ -820,7 +820,7 @@ export interface DirectoryList {
  * Result of stop, remove and open in an editor. Stop and remove apply to
  * background sessions only; others get 409, ended interactive sessions
  * included. More than 4 stop, remove, resume or open commands at once get 429
- * with `Retry-After`.
+ * with `Retry-After`, and so do opens in an editor past 10 a minute (W87).
  */
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -922,7 +922,8 @@ export interface OpenInEditorRequest {
  * - 400 for a malformed body or an editor that isn't in EditorList.
  * - 404 when the snapshot doesn't list the session; 409 when its directory
  *   no longer exists (`cwdMissing`).
- * - 429 with `Retry-After`, sharing stop, remove and resume's limit.
+ * - 429 with `Retry-After`, sharing stop, remove and resume's limit, and
+ *   past 10 opens a minute, of any session in either editor (W87).
  * - 502 when the editor failed to start, and 504 when it didn't return within
  *   10 seconds.
  */

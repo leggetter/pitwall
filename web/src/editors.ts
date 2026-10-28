@@ -11,7 +11,7 @@
 import { createContext, useEffect, useState } from 'react';
 import { EDITORS_PATH, openInEditorPath, type Editor, type EditorId } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
-import { couldNot, plainText } from './format.js';
+import { couldNot, plainText, tryAgainIn } from './format.js';
 import type { ToastInput } from './components/Toast.js';
 
 const IDS: ReadonlySet<string> = new Set<EditorId>(['vscode', 'cursor']);
@@ -60,17 +60,25 @@ export type OpenOutcome =
   | { kind: 'refused'; error: string }
   /** The connection was refused (WebSocket 4401): the app is already showing it. */
   | { kind: 'unauthorized' }
-  /** No answer pitwall understands. `status` is the HTTP status, when the server answered. */
-  | { kind: 'failed'; status?: number };
+  /**
+   * No answer pitwall understands. `status` is the HTTP status, when the server answered, and
+   * `retryAfter` a 429's Retry-After, in seconds, as resume's failure has it.
+   */
+  | { kind: 'failed'; status?: number; retryAfter?: number };
 
-/** Opens the session's own directory in `editor` with POST openInEditorPath(). Never rejects. */
+/**
+ * Opens the session's own directory in `editor` with POST openInEditorPath(). Never rejects. A 429,
+ * past the commands at once or the opens a minute (W87), is the server's reason, as any refusal is,
+ * which says when to try again; one with no reason of its own keeps its Retry-After, as resume's does.
+ */
 export async function openInEditor(api: ApiClient, sessionId: string, editor: EditorId): Promise<OpenOutcome> {
   const result = await api.post(openInEditorPath(sessionId), { editor });
   if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
   const body = typeof result.body === 'object' && result.body !== null ? (result.body as Record<string, unknown>) : undefined;
   if (result.kind === 'ok' && body?.ok === true) return { kind: 'opened' };
   if (result.kind === 'failed' && body?.ok === false && typeof body.error === 'string' && body.error !== '') return { kind: 'refused', error: body.error };
-  return result.status === undefined ? { kind: 'failed' } : { kind: 'failed', status: result.status };
+  const failed: OpenOutcome = result.status === undefined ? { kind: 'failed' } : { kind: 'failed', status: result.status };
+  return result.kind === 'failed' && result.retryAfter !== undefined ? { ...failed, retryAfter: result.retryAfter } : failed;
 }
 
 /** The menu item's label: "Open in Cursor". */
@@ -85,7 +93,7 @@ export function openToast(name: string, editor: Editor, outcome: OpenOutcome): T
     case 'refused':
       return { tone: 'error', message: `${couldNot(what, undefined)} ${plainText(outcome.error)}` };
     case 'failed':
-      return { tone: 'error', message: couldNot(what, outcome.status) };
+      return { tone: 'error', message: `${couldNot(what, outcome.status)}${tryAgainIn(outcome.retryAfter)}` };
     case 'unauthorized':
       return undefined;
   }

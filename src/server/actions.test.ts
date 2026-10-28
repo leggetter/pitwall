@@ -31,6 +31,7 @@ import {
   shellQuote,
   spawnArgs,
   NO_TRUST_COMMAND,
+  RateWindow,
   SpawnLimiter,
   trustHint,
   type ActionOptions,
@@ -1300,6 +1301,21 @@ describe('helpers', () => {
   it('spawnArgs always ends the options before the prompt', () => {
     expect(spawnArgs({ cwd: '/x', prompt: '-p' })).toEqual(['--bg', '--', '-p']);
     expect(spawnArgs({ cwd: '/x', prompt: 'p', name: 'n', model: 'm' })).toEqual(['--bg', '--name', 'n', '--model', 'm', '--', 'p']);
+  });
+
+  it('RateWindow counts at most max in any window, says when the oldest leaves it, and forgets it then (W87)', () => {
+    let now = 0;
+    const window = new RateWindow({ max: 2, windowMs: 10_000 }, () => now);
+    expect(window.take()).toEqual({ ok: true });
+    now = 4000;
+    expect(window.take()).toEqual({ ok: true });
+    expect(window.take()).toEqual({ ok: false, retryAfterSeconds: 6 });
+    now = 9999;
+    expect(window.take()).toEqual({ ok: false, retryAfterSeconds: 1 });
+    // The first has left the window; the one at 4 s hasn't.
+    now = 10_000;
+    expect(window.take()).toEqual({ ok: true });
+    expect(window.take()).toEqual({ ok: false, retryAfterSeconds: 4 });
   });
 
   it('SpawnLimiter releases a slot once, however often release is called', () => {

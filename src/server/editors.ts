@@ -15,7 +15,10 @@
 //     404, 503  from resolveSession(): not listed, no snapshot yet
 //     409  its directory has gone: `cwdMissing` in the snapshot, or no longer a directory under a root
 //          now, through its realpath, as resume checks it
-//     429  4 stop, remove, resume and open commands are already running (CommandSlots). Retry-After is set
+//     429  4 stop, remove, resume and open commands are already running (CommandSlots); or, checked
+//          after its directory, just before it runs, DEFAULT_OPEN_RATE's 10 opens in the last
+//          minute, since `open -a` returns at once, so the 4 alone don't hold it back (W87).
+//          Retry-After is set
 //     502  the editor didn't start, or exited non-zero: a short line, never its output. When `open` or the
 //          command exits non-zero or has gone, as when the app moved after startup, it says to restart
 //          pitwall so it looks again
@@ -46,7 +49,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { RunError, runFile as defaultRunFile, type RunFile } from '../index/exec.js';
 import type { Indexer } from '../index/index.js';
 import { EDITORS_PATH, openInEditorPath, type ActionResult, type Editor, type EditorId, type EditorList } from '../shared/protocol.js';
-import { checkDirectory, CommandSlots, LOOKUP_ERRORS } from './actions.js';
+import { checkDirectory, CommandSlots, LOOKUP_ERRORS, RateWindow } from './actions.js';
 import { childEnvironment } from './command.js';
 import { resolveSession } from './sessions.js';
 
@@ -65,6 +68,13 @@ export const EDITOR_TIMEOUT_MS = 10_000;
 export const DETECT_TIMEOUT_MS = 2000;
 /** The largest body accepted. `{"editor":"vscode"}` is 19 bytes. */
 export const MAX_OPEN_BODY_BYTES = 1024;
+/**
+ * The most opens in any minute, of any session's directory, in either editor (W87). `open -a` and an
+ * editor's command return as soon as the editor has the directory, so the commands' limit of 4 at once
+ * (CommandSlots) wouldn't stop one client opening window after window. Ten is more than a person opens
+ * in a minute; a client past it waits.
+ */
+export const DEFAULT_OPEN_RATE = { max: 10, windowMs: 60_000 } as const;
 
 /** An editor found at startup, and what to run to open a directory in it. */
 export interface FoundEditor extends Editor {
@@ -182,6 +192,10 @@ export interface EditorOptions {
   slots?: CommandSlots;
   /** Default EDITOR_TIMEOUT_MS. */
   timeoutMs?: number;
+  /** Opens allowed per window, together. Default DEFAULT_OPEN_RATE, 10 a minute. */
+  openRate?: { max: number; windowMs: number };
+  /** Milliseconds since the epoch, for `openRate`. Default Date.now. */
+  now?: () => number;
 }
 
 const EDITOR_IDS: ReadonlySet<string> = new Set(KNOWN_EDITORS.map((editor) => editor.id));
@@ -222,6 +236,8 @@ export function registerEditors(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
   const run = options.runFile ?? defaultRunFile;
   const slots = options.slots ?? new CommandSlots();
   const timeoutMs = options.timeoutMs ?? EDITOR_TIMEOUT_MS;
+  const openRate = options.openRate ?? DEFAULT_OPEN_RATE;
+  const opens = new RateWindow(openRate, options.now ?? Date.now);
 
   app.get(EDITORS_PATH, async (c) => {
     c.header('Cache-Control', 'no-store');
@@ -271,6 +287,13 @@ export function registerEditors(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
         // is under a root, which starts with `/`, so it can't be read as an option.
         const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
         if (!dir.ok) return refuse(c, dir.error, 409);
+        // Counted only now, after every check, as resume counts a start (W81): a refused open doesn't count.
+        const taken = opens.take();
+        if (!taken.ok) {
+          c.header('Retry-After', String(taken.retryAfterSeconds));
+          const every = Math.round(openRate.windowMs / 1000);
+          return answer(c, { ok: false, error: `pitwall opens at most ${openRate.max} ${openRate.max === 1 ? 'directory' : 'directories'} in an editor every ${every} seconds. Try again in ${taken.retryAfterSeconds}s.` }, 429);
+        }
         try {
           await run(editor.file, openArgs(editor, dir.path), { cwd: os.tmpdir(), env: childEnvironment(options.env ?? process.env, options.token), timeoutMs });
         } catch (error) {

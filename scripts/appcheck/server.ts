@@ -120,6 +120,10 @@ function isText(body: Buffer): boolean {
   }
 }
 
+/** The session whose opens in an editor the fake server answers with 429, past the opens a minute (W87), and what it says. */
+export const OPEN_LIMITED = NAMES.running2;
+export const OPEN_LIMITED_ERROR = 'pitwall opens at most 10 directories in an editor every 60 seconds. Try again in 42s.';
+
 /** The editors the fake server says it found at startup (W72), as pitwall's would on a Mac with both. */
 export const EDITORS: EditorList = { editors: [{ id: 'vscode', label: 'VS Code' }, { id: 'cursor', label: 'Cursor' }] };
 
@@ -282,6 +286,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const session = world.session(sessionId);
     if (!session) return end(res, 404);
     if (session.cwdMissing) return json(res, 409, { ok: false, error: `Its directory, ${session.cwd}, no longer exists.` } satisfies ActionResult);
+    // Past the opens a minute (W87), for one session by its name, in pitwall's words: it opened nothing.
+    if (session.name === OPEN_LIMITED) {
+      res.setHeader('Retry-After', '42');
+      return json(res, 429, { ok: false, error: OPEN_LIMITED_ERROR } satisfies ActionResult);
+    }
     records.opens.push({ name: session.name, editor: editor.id });
     return json(res, 200, { ok: true } satisfies ActionResult);
   }

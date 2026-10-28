@@ -2,11 +2,12 @@
 // actions menu): the page GETs the editor list once, after it has authenticated; a listed session's
 // actions menu has Open in VS Code and Open in Cursor after the copies, one per editor the server
 // found; choosing one POSTs that editor alone, and a success toast says it opened; a session whose
-// directory has gone has neither. The fake server says it found both, records each open, and opens
-// nothing.
+// directory has gone has neither; past the opens a minute, a 429, an error toast in the server's words
+// (W87). The fake server says it found both, records each open, and opens nothing.
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
+import { OPEN_LIMITED, OPEN_LIMITED_ERROR } from '../server.js';
 import { focused, openFromRow, toasts, VIEW, viewName } from './_dom.js';
 
 const q = JSON.stringify;
@@ -59,6 +60,27 @@ const part: Part = {
       await t.shot('opened');
     });
 
+    await t.step("past the opens a minute, a 429: an error toast in the server's words, which say when to try again, and nothing opened (W87)", async () => {
+      server.clearRecords();
+      t.allow(new RegExp(`/api/sessions/${id(OPEN_LIMITED)}/open$`), 'the 429 this step asks for');
+      await page.navigate(`/?view=all&session=${id(OPEN_LIMITED)}`);
+      await page.waitFor(`the ${OPEN_LIMITED} view`, `${viewName} === ${q(OPEN_LIMITED)}`, 10_000);
+      await openMenu();
+      await page.click('Open in VS Code', menuItem('Open in VS Code'));
+      const message = `Couldn't open ${OPEN_LIMITED}'s directory in VS Code. ${OPEN_LIMITED_ERROR}`;
+      await page.waitFor('the toast', `${toasts}.includes(${q(message)})`);
+      t.expect(await page.evaluate<boolean>(`!!document.querySelector('.toasts .toast.error')`), 'an error toast');
+      t.expect(server.records.requests.includes(`POST /api/sessions/${id(OPEN_LIMITED)}/open 429`), 'answered 429', server.records.requests);
+      t.expectEqual(server.records.opens, [], 'nothing opened');
+      t.expectEqual(await page.evaluate(focused), 'Session actions', 'focus is back on the menu button');
+      const items = await openMenu();
+      t.expect(items.includes('Open in VS Code'), 'the item is there', items);
+      t.expectEqual(await page.evaluate(`${menuItem('Open in VS Code')}.getAttribute('aria-disabled')`), null, 'and on again');
+      await page.key('Escape');
+      await page.waitFor('the menu to close', `!${VIEW}?.querySelector('[role="menu"]')`);
+      await t.shot('limited');
+    });
+
     await t.step('a session whose directory has gone has neither', async () => {
       await page.navigate(`/?view=all&session=${id(NAMES.endedGone)}`);
       await page.waitFor(`the ${NAMES.endedGone} view`, `${viewName} === ${q(NAMES.endedGone)}`, 10_000);
@@ -66,7 +88,7 @@ const part: Part = {
       t.expect(!items.some((item) => item.startsWith('Open in')), 'no Open in items', items);
       await page.key('Escape');
       await page.waitFor('the menu to close', `!${VIEW}?.querySelector('[role="menu"]')`);
-      t.expectEqual(server.records.opens, [{ name: NAMES.running, editor: 'cursor' }], 'and nothing more was opened');
+      t.expectEqual(server.records.opens, [], 'and nothing more was opened');
     });
   },
 };

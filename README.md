@@ -257,6 +257,7 @@ Settled decisions move here from `PLAN.md`, with their reasoning. The evidence i
 - **How:** at startup it looks for VS Code and Cursor: on macOS their apps in `/Applications` or `~/Applications`, opened with `open -a`; on other Unixes `code` and `cursor` on the `PATH`; on Windows, none. It opens a listed session's own directory, its real path checked to be under a root, never a path the page sends, with no shell and the scrubbed environment.
 - **Rejected:** `vscode://` and `cursor://` links, which can't tell what's installed and may ask each time.
 - **Security:** it's a state-changing route that starts a process, so it had a security look, shared with resume's (W73).
+- **A limit a minute** (W85's security review, fixed in W87): at most 10 opens a minute, of any session in either editor, as well as the 4 commands at once it shares with stop, remove and resume. `open -a` returns as soon as the editor has the directory, so the 4 alone wouldn't stop a client with the key opening window after window.
 
 ### D20 - Files for a new session reach it as `@` mentions of private copies
 
