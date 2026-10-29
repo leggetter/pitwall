@@ -8,7 +8,9 @@
 // PRS_SHOWN_DAYS ago. Before the first fetch, skeleton rows; with pull requests off, gh missing or
 // not logged in, or a fetch that failed with no list, an empty state that says how to fix it; with a
 // fetch that failed after one worked, the last list, under a notice saying when it's from; with a
-// chip on and none of its kind, an empty state that says what's missing (W101).
+// search that failed while the others worked, the list, under a notice naming that part and when
+// it's from; with a chip on and none of its kind, an empty state that says what's missing, or that
+// its search couldn't be listed (W101).
 //
 // A row is two lines, as a session row is: its title, in <bdi>, its state badges, Review requested
 // or Mentioned first on one that isn't yours, and when it was updated; then its number and the
@@ -34,6 +36,7 @@ import {
   prKey,
   prListState,
   RELATION_CHIPS,
+  SEARCH_NAMES,
   sessionsFor,
   splitPrs,
   type LinkedSession,
@@ -72,7 +75,7 @@ export const NO_RELATION: Readonly<Record<PullRequestRelation, { title: string; 
   authored: { title: 'No open pull requests of yours', sentence: 'Pull requests you open on github.com show here, with their checks, reviews and the sessions that worked on them.' },
   'review-requested': {
     title: 'No reviews requested',
-    sentence: "Open pull requests that ask your review, or a team's you're on, show here until you've reviewed them.",
+    sentence: "Open pull requests that ask your review, or a team's you're on, show here. One asked of you leaves once you've reviewed it.",
   },
   mentioned: { title: 'No mentions', sentence: "Open pull requests that mention you show here, when they aren't yours and don't ask your review." },
 };
@@ -413,6 +416,9 @@ export function PrList({
     fieldRef?.current?.focus();
   };
   const [onlyRelation] = relations.size === 1 ? relations : [];
+  // Searches whose latest try failed while another worked (W101), and of those, the ones that have never worked.
+  const failedSearches = state.kind === 'list' ? (state.failed ?? []) : [];
+  const unlisted = (relation: PullRequestRelation) => failedSearches.find((each) => each.relation === relation && each.fetchedAt === undefined);
 
   const olderButton = (
     <Button size="sm" aria-describedby={olderNoteId} onClick={onToggleOlder} data-older-prs-toggle="">
@@ -480,6 +486,26 @@ export function PrList({
         icon="success"
         title="No open pull requests"
         sentence="Pull requests you open, that ask your review or that mention you on github.com show here, with their checks, reviews and the sessions that worked on them."
+      />
+    );
+  } else if (ofRelations.length === 0 && !hasText && onlyRelation !== undefined && olderShown === 0 && unlisted(onlyRelation)) {
+    // One chip on, and its search has failed every time: not none of its kind, but none known.
+    const failure = unlisted(onlyRelation)!;
+    body = (
+      <EmptyState
+        icon="warning"
+        title={`Couldn't list ${SEARCH_NAMES[onlyRelation].charAt(0).toLowerCase()}${SEARCH_NAMES[onlyRelation].slice(1)}`}
+        sentence={
+          <>
+            <Detail>{plainText(failure.error)}</Detail> Refresh to try again.
+          </>
+        }
+        actions={
+          <>
+            <Button onClick={clearFilters}>Clear filters</Button>
+            <RefreshAction refresh={refresh} refreshing={refreshing} />
+          </>
+        }
       />
     );
   } else if (ofRelations.length === 0 && !hasText && onlyRelation !== undefined && olderShown === 0) {
@@ -625,6 +651,25 @@ export function PrList({
       </div>
       <HighlightContext.Provider value={filterNeedle(filter)}>
         <div className="session-list-body">
+          {failedSearches.length > 0 && (
+            <div className="pr-stale">
+              <Alert tone="warning" role="status" title="Couldn't refresh part of your pull requests">
+                {failedSearches.map((each) => (
+                  <p key={each.relation} className="pr-stale-search" data-search={each.relation}>
+                    {SEARCH_NAMES[each.relation]}{' '}
+                    {each.fetchedAt === undefined ? (
+                      "aren't listed."
+                    ) : (
+                      <>
+                        are from <Timestamp at={each.fetchedAt} />.
+                      </>
+                    )}{' '}
+                    <Detail>{plainText(each.error)}</Detail>
+                  </p>
+                ))}
+              </Alert>
+            </div>
+          )}
           {stale && (
             <div className="pr-stale">
               <Alert tone="warning" role="status" title="Couldn't refresh your pull requests">

@@ -612,7 +612,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
     renderDashboard(prList([failing, approved]));
     fireEvent.click(chip('Review requested'));
     expect(screen.getByText(NO_RELATION['review-requested'].title)).toBeDefined();
-    expect(NO_RELATION['review-requested']).toEqual({ title: 'No reviews requested', sentence: "Open pull requests that ask your review, or a team's you're on, show here until you've reviewed them." });
+    expect(NO_RELATION['review-requested']).toEqual({ title: 'No reviews requested', sentence: "Open pull requests that ask your review, or a team's you're on, show here. One asked of you leaves once you've reviewed it." });
     fireEvent.click(within(main()).getByRole('button', { name: 'Review requested', pressed: true }));
     fireEvent.click(chip('Mentioned'));
     expect(screen.getByText('No mentions')).toBeDefined();
@@ -630,6 +630,36 @@ describe('PRs that ask your review or mention you (W101)', () => {
     expect(main().querySelector('.empty-state-sentence')?.textContent).toBe('Nothing in Pull requests matches "retry budget" with these filters.');
     fireEvent.click(within(main()).getByRole('button', { name: 'Yours', pressed: true }));
     expect(prRows()).toEqual(['example/demo-app/77']);
+  });
+
+  it("names a search that failed while the others worked, and when its pull requests are from, or that they aren't listed (W101's review)", () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    // The mention search has never worked, so there's no mention in the list.
+    const list = prList(ALL.filter((each) => each.relation !== 'mentioned'), {
+      searches: {
+        authored: { fetchedAt: minutesAgo(2) },
+        'review-requested': { fetchedAt: minutesAgo(125), failed: { reason: 'error', error: 'gh api failed with exit code 1.' } },
+        mentioned: { failed: { reason: 'error', error: "GitHub didn't answer within 30 seconds." } },
+      },
+    });
+    renderDashboard(list);
+    const notice = main().querySelector('.pr-stale .inline-alert');
+    expect(notice?.querySelector('.inline-alert-title')?.textContent).toBe("Couldn't refresh part of your pull requests");
+    expect([...(notice?.querySelectorAll('.pr-stale-search') ?? [])].map((line) => line.textContent)).toEqual([
+      'The pull requests that ask your review are from 2h ago. gh api failed with exit code 1.',
+      "The pull requests that mention you aren't listed. GitHub didn't answer within 30 seconds.",
+    ]);
+    // The list is kept: every PR, the review requests' last good ones among them.
+    expect(prRows()).toHaveLength(6);
+    // A chip whose search has never worked says it couldn't list them, not that there are none.
+    fireEvent.click(chip('Mentioned'));
+    expect(screen.getByText("Couldn't list the pull requests that mention you")).toBeDefined();
+    expect(within(main().querySelector('.empty-state')!).getByRole('button', { name: 'Refresh' })).toBeDefined();
+  });
+
+  it('has no notice while every search worked', () => {
+    renderDashboard(prList(ALL, { searches: { authored: { fetchedAt: minutesAgo(2) }, 'review-requested': { fetchedAt: minutesAgo(2) }, mentioned: { fetchedAt: minutesAgo(2) } } }));
+    expect(main().querySelector('.pr-stale')).toBeNull();
   });
 
   it('says in the PR view how it is yours: your review, of you or a team, or a mention', () => {

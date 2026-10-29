@@ -22,7 +22,7 @@ import {
   type PullRequestSummary,
   type ServerMessage,
 } from '../shared/protocol.js';
-import { fakeClock, fakeFetch, prNode } from '../test/prs.js';
+import { fakeClock, fakeFetch, fetched, fetchFailed, prNode } from '../test/prs.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
@@ -76,7 +76,7 @@ function fakeIndexer(initial: IndexSnapshot | null = snapshot()): FakeIndexer {
 
 const pr = (number: number, overrides: Record<string, unknown> = {}): PullRequestSummary =>
   parsePullRequest(prNode({ repo: 'example/demo-app', number, ...overrides }))!;
-const ok = (prs: PullRequestSummary[]): FetchResult => ({ ok: true, prs, truncated: false });
+const ok = (prs: PullRequestSummary[]): FetchResult => fetched(prs);
 
 const running: RunningServer[] = [];
 afterEach(async () => {
@@ -404,7 +404,7 @@ describe("the 'prs' message", () => {
     clock.advance(PRS_POLL_INTERVAL_MS);
     await waitFor(() => prsMessages(a).length >= 3 && prsMessages(b).length >= 3);
     expect(prsMessages(b).at(-1)).toMatchObject({ refreshing: true });
-    await fetch.finish({ ok: false, reason: 'gh-auth', error: "gh isn't logged in to github.com. Run gh auth login, then Refresh." });
+    await fetch.finish(fetchFailed('gh-auth', "gh isn't logged in to github.com. Run gh auth login, then Refresh."));
     await waitFor(() => prsMessages(a).length >= 4 && prsMessages(b).length >= 4);
     expect(prsMessages(a).at(-1)).toMatchObject({ refreshing: false, source: { ok: false, reason: 'gh-auth' }, prs: [pr(1), pr(2)] });
     expect(prsMessages(a)).toEqual(prsMessages(b));

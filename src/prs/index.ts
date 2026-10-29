@@ -1,4 +1,4 @@
-// Your open pull requests (M4, W93): one `gh api graphql` call, with three searches since W101,
+// Your open pull requests (M4, W93): `gh api graphql` searches, three since W101, one call each,
 // yours, those that ask your review and those that mention you, read defensively and polled on its
 // own timer. Read-only, and separate from the session index. Entry points: createPrPoller(), and
 // prsOff() for `--no-prs`.

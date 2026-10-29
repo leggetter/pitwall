@@ -2,8 +2,9 @@
 // source's tests. Every repo, title, branch, login and team here is invented: example/demo-app and
 // its friends.
 // In src/test/, so not built.
-import type { FetchResult } from '../prs/fetch.js';
+import type { FetchResult, SearchResult } from '../prs/fetch.js';
 import type { PrTimers } from '../prs/poller.js';
+import type { PullRequestRelation, PullRequestSummary } from '../shared/protocol.js';
 
 /** One PullRequest node as GitHub returns it. Override any field; `null` stands for GitHub's null. */
 export function prNode(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -45,7 +46,7 @@ export const statusContext = (context: unknown, state: string): Record<string, u
   state,
 });
 
-/** One search's page, as it sits under its alias in the answer. */
+/** A page's issueCount and page info. */
 export interface PageOptions {
   total?: number;
   hasNextPage?: boolean;
@@ -55,34 +56,34 @@ export interface PageOptions {
 /** The login the made-up answers give for the viewer: never a real one. */
 export const VIEWER = 'pitwall-test-viewer';
 
-function page(nodes: unknown[], options: PageOptions = {}): Record<string, unknown> {
-  return {
-    issueCount: options.total ?? nodes.length,
-    pageInfo: { hasNextPage: options.hasNextPage ?? false, endCursor: options.endCursor ?? null },
-    nodes,
-  };
-}
-
 /**
- * One call's answer, as JSON text (W101): each search under its alias, `authored`,
- * `reviewRequested` and `mentioned`, with none found for any not given, and the viewer's login, or
- * with `null`, no viewer.
+ * One page of one search, as JSON text, with the viewer's login, as the review-requested search
+ * asks for it (W101), or with `viewer: null`, none.
  */
-export function searchResponse(
-  searches: Partial<Record<'authored' | 'reviewRequested' | 'mentioned', { nodes: unknown[] } & PageOptions>>,
-  viewer: unknown = VIEWER,
-): string {
-  const data: Record<string, unknown> = { viewer: viewer === null ? null : { login: viewer } };
-  for (const alias of ['authored', 'reviewRequested', 'mentioned'] as const) {
-    const search = searches[alias];
-    data[alias] = page(search?.nodes ?? [], search);
-  }
-  return JSON.stringify({ data });
+export function searchPage(nodes: unknown[], options: PageOptions & { viewer?: unknown } = {}): string {
+  const viewer = options.viewer === undefined ? VIEWER : options.viewer;
+  return JSON.stringify({
+    data: {
+      viewer: viewer === null ? null : { login: viewer },
+      search: {
+        issueCount: options.total ?? nodes.length,
+        pageInfo: { hasNextPage: options.hasNextPage ?? false, endCursor: options.endCursor ?? null },
+        nodes,
+      },
+    },
+  });
 }
 
-/** One call's answer with `nodes` as the author search's page, and none found for the other two. */
-export function searchPage(nodes: unknown[], options: PageOptions = {}): string {
-  return searchResponse({ authored: { nodes, ...options } });
+/** A fetch in which every search worked (W101): `prs` split among them by relation, `truncated` on the author search. */
+export function fetched(prs: PullRequestSummary[], truncated = false): FetchResult {
+  const of = (relation: PullRequestRelation): SearchResult => ({ ok: true, prs: prs.filter((pr) => pr.relation === relation), truncated: truncated && relation === 'authored' });
+  return { authored: of('authored'), 'review-requested': of('review-requested'), mentioned: of('mentioned') };
+}
+
+/** A fetch in which every search failed alike, as when gh is missing or not logged in. */
+export function fetchFailed(reason: Extract<SearchResult, { ok: false }>['reason'], error: string): FetchResult {
+  const failed: SearchResult = { ok: false, reason, error };
+  return { authored: failed, 'review-requested': failed, mentioned: failed };
 }
 
 /** A PR's review requests, as the review-requested search asks for them: each a User's login or a Team's `org/slug`. */

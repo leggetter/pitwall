@@ -1,7 +1,7 @@
 // One fetch of your open pull requests (M4, W93; W101): GitHub's search through `gh api graphql`,
-// three searches in one call, as aliases: the PRs you opened, those whose review is requested of
-// you, and those that mention you (PullRequestRelation, PRS_SEARCHES). At most two pages of 100 for
-// each, so at most PRS_MAX of each.
+// three searches, one call each, run at once: the PRs you opened, those whose review is requested
+// of you and those that mention you (PullRequestRelation, PRS_SEARCHES). At most two pages of 100
+// for each, so at most PRS_MAX of each.
 //
 //   how it runs   the index's runFile (index/exec.ts): no shell, stdin and stderr ignored, and the
 //                 environment scrubbed by childEnvironment(), with GH_PROMPT_DISABLED and
@@ -9,26 +9,28 @@
 //                 never asks, never checks for an update and prints plain JSON. In the temp
 //                 directory, as stop and remove run, so the directory pitwall started in, and its
 //                 git remotes, never matter. GitHub's token stays inside gh: pitwall never reads it
-//   calls         one, with page 1 of all three searches. Only when a search has more than 100 is
-//                 there a second, with page 2 of each search that has one, as W93's single search
-//                 had it
+//   calls         one per search, the three at once, and a second for a search with more than 100.
+//                 Not one call with the three as aliases: GitHub ends a request that takes more than
+//                 10 seconds, and the three together took 9.9 s on 2026-10-29 (W101's review). Apart,
+//                 one that fails or is slow fails only itself: the poller keeps the others
 //   arguments     every variable with -f, a string, never -F, which reads `@value` as a file. The
-//                 query and the searches are constants; the only values from outside are page 2's
-//                 cursors, from page 1's answer, each passed on only when it looks like one
-//   time          PRS_FETCH_TIMEOUT_MS for the whole fetch, both calls together
-//   the list      each search's PRs, at most PRS_MAX of each, newest update first, then each PR
+//                 query and the searches are constants; the only value from outside is page 2's
+//                 cursor, from page 1's answer, and it's passed on only when it looks like one
+//   time          PRS_FETCH_TIMEOUT_MS for each search, both its pages together
+//   each search   its PRs, at most PRS_MAX, newest update first. mergeSearches() then lists each PR
 //                 once, as the first relation in PR_RELATIONS that found it, so a PR that's yours
 //                 and mentions you is yours, and one that asks your review and mentions you asks it
 //   errors        gh not on PATH is 'gh-missing'; gh's exit code 4, its documented "authentication
 //                 required", is 'gh-auth'; anything else is 'error'. Each says what happened in
 //                 pitwall's words, never gh's output: runFile ignores stderr, and stdout is only
 //                 ever read as JSON
-//   none kept     GitHub found PRs, but every one was dropped, as after a change in its answer's
-//                 shape: that's 'error', unreadable, so the poller keeps the last good list rather
-//                 than replace it with an empty one
+//   none kept     GitHub found PRs, but every one was dropped as malformed, as after a change in its
+//                 answer's shape: that search is 'error', unreadable, so the poller keeps its last
+//                 good list rather than replace it with an empty one. One left out as reviewed
+//                 already (parse.ts) isn't malformed
 //
-// Measured on 2026-10-28, for the author search alone: 50 PRs in one page, 2 of the 5,000
-// rate-limit points an hour, 8.5 s and 38 KB. With W101's three searches, see PLAN.md (W101).
+// Measured on 2026-10-29, by hand: yours 2 of the 5,000 rate-limit points an hour, 9.4 s for 54
+// PRs; review requested 3 points, 1.7 s; mentioned 2 points, 2.6 s. 7 points a fetch (PLAN.md, W101).
 import os from 'node:os';
 import { RunError, type RunFile } from '../index/exec.js';
 import {
@@ -40,9 +42,23 @@ import {
   type PullRequestSummary,
 } from '../shared/protocol.js';
 import { byUpdatedNewestFirst, parseSearchResponse, type SearchPage } from './parse.js';
-import { PRS_ALIASES, PRS_SEARCHES } from './searches.js';
 
-export { PRS_ALIASES, PRS_SEARCHES } from './searches.js';
+/**
+ * The searches, one per relation: open PRs on github.com, in repos that aren't archived, sorted by
+ * GitHub, newest update first, so that past PRS_MAX the ones left out are the oldest.
+ *
+ * - `review-requested:@me` finds a request of you or of a team you're on; `user-review-requested:@me`
+ *   finds only those of you by name (GitHub's search docs). pitwall uses the first, as GitHub's own
+ *   Review requests list does, and tells the two apart from each PR's review requests.
+ * - The two that aren't yours leave out your own PRs (`-author:@me`), so they can't take their
+ *   PRS_MAX: one of yours that asks a team you're on, or mentions you, is listed as yours anyway.
+ *   One that asks your review and mentions you is listed as review requested.
+ */
+export const PRS_SEARCHES: Readonly<Record<PullRequestRelation, string>> = {
+  authored: 'is:pr is:open author:@me archived:false sort:updated-desc',
+  'review-requested': 'is:pr is:open review-requested:@me -author:@me archived:false sort:updated-desc',
+  mentioned: 'is:pr is:open mentions:@me -author:@me archived:false sort:updated-desc',
+};
 
 /** The most PRs one page asks for: GitHub's limit. */
 export const PRS_PAGE_SIZE = 100;
@@ -57,10 +73,10 @@ export const PRS_CONTEXTS_MAX = 100;
 export const PRS_REVIEW_REQUESTS_MAX = 100;
 
 /**
- * The most bytes one call may print. 50 PRs with their checks were 38 KB; three searches of 100 PRs
- * with 100 checks each, with long names, stay under 12 MiB.
+ * The most bytes one page may print. 50 PRs with their checks were 38 KB; 100 PRs with 100 checks
+ * each, with long names, stay under 4 MiB.
  */
-export const PRS_PAGE_MAX_BYTES = 12 * 1024 * 1024;
+export const PRS_PAGE_MAX_BYTES = 4 * 1024 * 1024;
 
 /** The fields of PullRequestSummary, for every search. */
 export const PRS_FRAGMENT = `fragment pr on PullRequest {
@@ -104,37 +120,28 @@ export const PRS_REVIEW_REQUESTS = `reviewRequests(first: ${PRS_REVIEW_REQUESTS_
           }
         }`;
 
-/** One search in the query, under its alias. `$<alias>After` is null for page 1. */
-function searchField(relation: PullRequestRelation): string {
-  const alias = PRS_ALIASES[relation];
-  const extra = relation === 'review-requested' ? `\n        ${PRS_REVIEW_REQUESTS}` : '';
-  return `  ${alias}: search(query: $${alias}, type: ISSUE, first: ${PRS_PAGE_SIZE}, after: $${alias}After) {
+/**
+ * The query for one search: one page, `$after` null for page 1, with the viewer's login for the
+ * review-requested one, which says whether a request names you. Made only from constants.
+ */
+export function prsQuery(relation: PullRequestRelation): string {
+  const reviews = relation === 'review-requested';
+  return `query($q: String!, $after: String) {${reviews ? '\n  viewer { login }' : ''}
+  search(query: $q, type: ISSUE, first: ${PRS_PAGE_SIZE}, after: $after) {
     issueCount
     pageInfo { hasNextPage endCursor }
     nodes {
       ... on PullRequest {
-        ...pr${extra}
+        ...pr${reviews ? `\n        ${PRS_REVIEW_REQUESTS}` : ''}
       }
     }
-  }`;
-}
-
-/**
- * The query for the given searches, each under its alias, with the viewer's login, which says
- * whether a review request names you. Made only from constants, in PR_RELATIONS' order.
- */
-export function prsQuery(relations: readonly PullRequestRelation[] = PR_RELATIONS): string {
-  const wanted = PR_RELATIONS.filter((relation) => relations.includes(relation));
-  const variables = wanted.flatMap((relation) => [`$${PRS_ALIASES[relation]}: String!`, `$${PRS_ALIASES[relation]}After: String`]).join(', ');
-  return `query(${variables}) {
-  viewer { login }
-${wanted.map(searchField).join('\n')}
+  }
 }
 ${PRS_FRAGMENT}`;
 }
 
-/** The query with every search: page 1's. */
-export const PRS_QUERY = prsQuery();
+/** Each search's query. */
+export const PRS_QUERIES: Readonly<Record<PullRequestRelation, string>> = Object.fromEntries(PR_RELATIONS.map((relation) => [relation, prsQuery(relation)])) as Record<PullRequestRelation, string>;
 
 /**
  * What GitHub's search cursors look like: base64, such as `Y3Vyc29yOjEwMA==`, short, starting with
@@ -146,9 +153,13 @@ const CURSOR = /^[A-Za-z0-9][A-Za-z0-9+/=_-]{0,255}$/;
 /** gh's exit code for "authentication required" (`gh help exit-codes`). */
 export const GH_EXIT_AUTH = 4;
 
-export type FetchResult =
+/** One search's result: its PRs, or why it couldn't be fetched. */
+export type SearchResult =
   | { ok: true; prs: PullRequestSummary[]; truncated: boolean }
   | { ok: false; reason: Exclude<Extract<PullRequestSource, { ok: false }>['reason'], 'off'>; error: string };
+
+/** One fetch: each search's result, on its own, so one that failed leaves the others (W101). */
+export type FetchResult = Readonly<Record<PullRequestRelation, SearchResult>>;
 
 export interface FetchOptions {
   runFile: RunFile;
@@ -157,11 +168,11 @@ export interface FetchOptions {
   /** What gh's environment is made from, before runFile scrubs it. Default process.env. */
   env?: NodeJS.ProcessEnv;
   /**
-   * A monotonic clock in milliseconds, for the deadline across both calls, so a change to the
-   * system clock can't stretch or cut it. Default performance.now().
+   * A monotonic clock in milliseconds, for each search's deadline across its pages, so a change to
+   * the system clock can't stretch or cut it. Default performance.now().
    */
   monotonicNow?: () => number;
-  /** Default PRS_FETCH_TIMEOUT_MS. */
+  /** For each search. Default PRS_FETCH_TIMEOUT_MS. */
   timeoutMs?: number;
 }
 
@@ -187,26 +198,10 @@ export function ghEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
-/** One search in a call: which, and for page 2, the cursor page 1 gave it. */
-export interface SearchRequest {
-  relation: PullRequestRelation;
-  after?: string;
-}
-
-/**
- * gh's arguments for one call: page 1 of every search, or page 2 of those given. Every variable is a
- * string field, -f: each search's text, and on page 2 each one's cursor.
- */
-export function ghArgs(searches: readonly SearchRequest[] = PR_RELATIONS.map((relation) => ({ relation }))): string[] {
-  const relations = searches.map(({ relation }) => relation);
-  const args = ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${prsQuery(relations)}`];
-  for (const relation of PR_RELATIONS) {
-    const search = searches.find((each) => each.relation === relation);
-    if (search === undefined) continue;
-    const alias = PRS_ALIASES[relation];
-    args.push('-f', `${alias}=${PRS_SEARCHES[relation]}`);
-    if (search.after !== undefined) args.push('-f', `${alias}After=${search.after}`);
-  }
+/** gh's arguments for one page of one search. Every variable is a string field, -f. */
+export function ghArgs(relation: PullRequestRelation, after?: string): string[] {
+  const args = ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${PRS_QUERIES[relation]}`, '-f', `q=${PRS_SEARCHES[relation]}`];
+  if (after !== undefined) args.push('-f', `after=${after}`);
   return args;
 }
 
@@ -216,65 +211,66 @@ export function isWellFormedCursor(cursor: string): boolean {
 }
 
 /**
- * Your open PRs, those you opened, those that want your review and those that mention you, each
- * once, newest update first, at most PRS_MAX from each search; or why they couldn't be fetched.
- * Never throws.
+ * Your open PRs, those that want your review and those that mention you: each search's, run at
+ * once, each at most PRS_MAX, newest update first, or why that one couldn't be fetched. Never throws.
  */
 export async function fetchPullRequests(options: FetchOptions): Promise<FetchResult> {
+  const results = await Promise.all(PR_RELATIONS.map((relation) => fetchSearch(relation, options)));
+  return Object.fromEntries(PR_RELATIONS.map((relation, index) => [relation, results[index]!])) as Record<PullRequestRelation, SearchResult>;
+}
+
+/** One search: page 1, then page 2 when there's more, within its own deadline. Never throws. */
+export async function fetchSearch(relation: PullRequestRelation, options: FetchOptions): Promise<SearchResult> {
   const now = options.monotonicNow ?? (() => performance.now());
   const deadline = now() + (options.timeoutMs ?? PRS_FETCH_TIMEOUT_MS);
   const env = ghEnvironment(options.env ?? process.env);
-  const call = async (searches: readonly SearchRequest[]): Promise<Partial<Record<PullRequestRelation, SearchPage>> | FetchResult> => {
+  const page = async (after?: string): Promise<SearchPage | SearchResult> => {
     const timeoutMs = deadline - now();
     if (timeoutMs <= 0) return { ok: false, reason: 'error', error: FETCH_ERRORS.timeout };
     let stdout: string;
     try {
-      stdout = await options.runFile(options.ghBin ?? 'gh', ghArgs(searches), { cwd: os.tmpdir(), timeoutMs, env, maxStdoutBytes: PRS_PAGE_MAX_BYTES });
+      stdout = await options.runFile(options.ghBin ?? 'gh', ghArgs(relation, after), { cwd: os.tmpdir(), timeoutMs, env, maxStdoutBytes: PRS_PAGE_MAX_BYTES });
     } catch (error) {
       return failure(error);
     }
-    return parseSearchResponse(stdout, searches.map(({ relation }) => relation)) ?? { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
+    return parseSearchResponse(stdout, relation) ?? { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
   };
 
-  const first = await call(PR_RELATIONS.map((relation) => ({ relation })));
+  const first = await page();
   if ('ok' in first) return first;
-  const pages = new Map<PullRequestRelation, SearchPage[]>(PR_RELATIONS.map((relation) => [relation, [first[relation]!]]));
-  const more = new Map<PullRequestRelation, boolean>(PR_RELATIONS.map((relation) => [relation, first[relation]!.hasNextPage]));
-  const second = PR_RELATIONS.flatMap((relation): SearchRequest[] => {
-    const page = first[relation]!;
-    return page.hasNextPage && page.endCursor !== undefined && isWellFormedCursor(page.endCursor) ? [{ relation, after: page.endCursor }] : [];
-  });
-  if (second.length > 0) {
-    const next = await call(second);
-    if ('ok' in next) return next;
-    for (const { relation } of second) {
-      pages.get(relation)!.push(next[relation]!);
-      more.set(relation, next[relation]!.hasNextPage);
-    }
+  const pages = [first];
+  let more = first.hasNextPage;
+  if (more && first.endCursor !== undefined && isWellFormedCursor(first.endCursor)) {
+    const second = await page(first.endCursor);
+    if ('ok' in second) return second;
+    pages.push(second);
+    more = second.hasNextPage;
   }
 
-  // Each search on its own first: by URL, since a PR updated between the two pages can move from one
-  // to the other; then its PRS_MAX newest. Then each PR once, as the first relation that found it.
+  // By URL, since a PR updated between the two pages can move from one to the other.
   const byUrl = new Map<string, PullRequestSummary>();
-  let truncated = false;
-  let returned = 0;
-  let total = 0;
-  for (const relation of PR_RELATIONS) {
-    const own = new Map<string, PullRequestSummary>();
-    for (const { prs } of pages.get(relation)!) for (const pr of prs) if (!own.has(pr.url)) own.set(pr.url, pr);
-    const prs = [...own.values()].sort(byUpdatedNewestFirst);
-    const searchTotal = pages.get(relation)![0]!.total ?? 0;
-    returned += pages.get(relation)!.reduce((sum, { nodes }) => sum + nodes, 0);
-    total += searchTotal;
-    if (more.get(relation) || searchTotal > PRS_MAX || prs.length > PRS_MAX) truncated = true;
-    for (const pr of prs.slice(0, PRS_MAX)) if (!byUrl.has(pr.url)) byUrl.set(pr.url, pr);
-  }
+  for (const { prs } of pages) for (const pr of prs) if (!byUrl.has(pr.url)) byUrl.set(pr.url, pr);
   const prs = [...byUrl.values()].sort(byUpdatedNewestFirst);
-  if (prs.length === 0 && (returned > 0 || total > 0)) return { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
-  return { ok: true, prs, truncated };
+  const total = first.total ?? 0;
+  // What GitHub returned that wasn't left out on purpose, as already reviewed: none kept of it is a change in shape.
+  const malformedOrKept = pages.reduce((sum, { nodes, skipped }) => sum + nodes - skipped, 0);
+  const skipped = pages.reduce((sum, page) => sum + page.skipped, 0);
+  if (prs.length === 0 && (malformedOrKept > 0 || (total > 0 && skipped === 0))) return { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
+  const truncated = more || total > PRS_MAX || prs.length > PRS_MAX;
+  return { ok: true, prs: prs.slice(0, PRS_MAX), truncated };
 }
 
-function failure(error: unknown): FetchResult {
+/**
+ * The searches' PRs as one list: each PR once, as the first relation in PR_RELATIONS that found it,
+ * newest update first. A search not given adds nothing.
+ */
+export function mergeSearches(lists: Partial<Record<PullRequestRelation, readonly PullRequestSummary[]>>): PullRequestSummary[] {
+  const byUrl = new Map<string, PullRequestSummary>();
+  for (const relation of PR_RELATIONS) for (const pr of lists[relation] ?? []) if (!byUrl.has(pr.url)) byUrl.set(pr.url, pr);
+  return [...byUrl.values()].sort(byUpdatedNewestFirst);
+}
+
+function failure(error: unknown): SearchResult {
   if (error instanceof RunError) {
     if (error.reason === 'not-found') return { ok: false, reason: 'gh-missing', error: FETCH_ERRORS['gh-missing'] };
     if (error.reason === 'exit' && error.exitCode === GH_EXIT_AUTH) return { ok: false, reason: 'gh-auth', error: FETCH_ERRORS['gh-auth'] };

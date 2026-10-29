@@ -1,9 +1,9 @@
-// Reads `gh api graphql`'s answer to fetch.ts's searches, defensively: GitHub's answer is data, and
-// a PR's title is text anyone with push access to its branch can write.
+// Reads `gh api graphql`'s answer to one of fetch.ts's searches, defensively: GitHub's answer is
+// data, and a PR's title is text anyone with push access to its branch can write.
 //
-//   the answer    `data.<alias>` with `nodes` an array for every search asked, else the whole
-//                 answer is unreadable. `data.viewer.login`, when it's a login, for review requests
-//   the page      one search's: its PRs, each with the search's relation
+//   the page      `data.search` with `nodes` an array, else the whole page is unreadable. Each PR
+//                 gets the search's relation. `data.viewer.login`, when it's a login, for review
+//                 requests
 //   each node     kept only when every field the contract needs is there and well formed: a repo
 //                 `owner/name` of GitHub's characters, a whole positive number, a url that is
 //                 exactly https://github.com/<owner>/<name>/pull/<number> for that repo and number,
@@ -17,7 +17,11 @@
 //   head          its repo and branch, or absent when the head repo is gone, or either is malformed
 //   review asked  for the review-requested search (W101): 'direct' when a requested reviewer is a
 //                 User whose login is the viewer's, else 'team' when any is a Team, named by its
-//                 `org/slug` when it's the only one; absent when neither can be read
+//                 `org/slug` when it's the only one; absent when neither can be read. When the login
+//                 and every request can be read and none is you or a team, the PR is left out as
+//                 reviewed already: GitHub's search index lags, so a PR you've just reviewed can
+//                 still come back from `review-requested:@me` while its own requests have moved on
+//                 (W101's review). The page counts it (`skipped`), so it isn't taken as malformed
 //
 // Nothing here logs: a title from a private repo is as sensitive as session data.
 import { hasUnsafeCharacters, isNonEmptyString, isRecord } from '../index/guards.js';
@@ -34,13 +38,14 @@ import {
   type PullRequestReviewRequest,
   type PullRequestSummary,
 } from '../shared/protocol.js';
-import { PRS_ALIASES } from './searches.js';
 
 /** One page of the search, as read. */
 export interface SearchPage {
   prs: PullRequestSummary[];
   /** How many nodes GitHub returned, before any was dropped. */
   nodes: number;
+  /** How many of them were left out on purpose, as reviewed already, rather than as malformed. */
+  skipped: number;
   /** How many PRs the search found in all (`issueCount`), when GitHub said. */
   total?: number;
   hasNextPage: boolean;
@@ -100,11 +105,10 @@ const LOGIN = new RegExp(`^${OWNER}$`);
 const TEAM = new RegExp(`^(${OWNER})/(${NAME})$`);
 
 /**
- * The answer to one call of fetch.ts's query: each of `relations`' searches, as a page, or undefined
- * when it isn't one: not JSON, or any of them without its `nodes`. Searches not asked for are
- * ignored.
+ * One page of a search, its PRs with the search's relation, or undefined when it isn't one: not
+ * JSON, or without `data.search.nodes`.
  */
-export function parseSearchResponse(stdout: string, relations: readonly PullRequestRelation[]): Partial<Record<PullRequestRelation, SearchPage>> | undefined {
+export function parseSearchResponse(stdout: string, relation: PullRequestRelation = 'authored'): SearchPage | undefined {
   let json: unknown;
   try {
     json = JSON.parse(stdout);
@@ -114,13 +118,7 @@ export function parseSearchResponse(stdout: string, relations: readonly PullRequ
   const data = isRecord(json) && isRecord(json.data) ? json.data : undefined;
   if (data === undefined) return undefined;
   const login = isRecord(data.viewer) && typeof data.viewer.login === 'string' && LOGIN.test(data.viewer.login) ? data.viewer.login : undefined;
-  const pages: Partial<Record<PullRequestRelation, SearchPage>> = {};
-  for (const relation of relations) {
-    const page = parseSearchPage(data[PRS_ALIASES[relation]], relation, login);
-    if (page === undefined) return undefined;
-    pages[relation] = page;
-  }
-  return pages;
+  return parseSearchPage(data.search, relation, login);
 }
 
 /**
@@ -130,12 +128,14 @@ export function parseSearchResponse(stdout: string, relations: readonly PullRequ
 export function parseSearchPage(search: unknown, relation: PullRequestRelation = 'authored', viewer?: string): SearchPage | undefined {
   if (!isRecord(search) || !Array.isArray(search.nodes)) return undefined;
   const prs: PullRequestSummary[] = [];
+  let skipped = 0;
   for (const node of search.nodes) {
-    const pr = parsePullRequest(node, relation, viewer);
-    if (pr !== undefined) prs.push(pr);
+    const pr = readPullRequest(node, relation, viewer);
+    if (pr === 'reviewed') skipped += 1;
+    else if (pr !== undefined) prs.push(pr);
   }
   const pageInfo = isRecord(search.pageInfo) ? search.pageInfo : {};
-  const page: SearchPage = { prs, nodes: search.nodes.length, hasNextPage: pageInfo.hasNextPage === true };
+  const page: SearchPage = { prs, nodes: search.nodes.length, skipped, hasNextPage: pageInfo.hasNextPage === true };
   if (typeof search.issueCount === 'number' && Number.isSafeInteger(search.issueCount) && search.issueCount >= 0) page.total = search.issueCount;
   if (typeof pageInfo.endCursor === 'string') page.endCursor = pageInfo.endCursor;
   return page;
@@ -147,6 +147,12 @@ export function parseSearchPage(search: unknown, relation: PullRequestRelation =
  * says whether the request names you.
  */
 export function parsePullRequest(node: unknown, relation: PullRequestRelation = 'authored', viewer?: string): PullRequestSummary | undefined {
+  const pr = readPullRequest(node, relation, viewer);
+  return pr === 'reviewed' ? undefined : pr;
+}
+
+/** parsePullRequest(), or 'reviewed' for a review-requested PR whose own requests have moved on from you. */
+function readPullRequest(node: unknown, relation: PullRequestRelation, viewer: string | undefined): PullRequestSummary | 'reviewed' | undefined {
   if (!isRecord(node)) return undefined;
   const repoLabel = repoName(isRecord(node.repository) ? node.repository.nameWithOwner : undefined);
   if (repoLabel === undefined) return undefined;
@@ -178,6 +184,7 @@ export function parsePullRequest(node: unknown, relation: PullRequestRelation = 
   if (review !== undefined) pr.review = review;
   if (relation === 'review-requested') {
     const request = reviewRequestOf(node.reviewRequests, viewer);
+    if (request === 'none') return 'reviewed';
     if (request !== undefined) pr.reviewRequest = request;
   }
   return pr;
@@ -185,19 +192,26 @@ export function parsePullRequest(node: unknown, relation: PullRequestRelation = 
 
 /**
  * Whether the PR's review requests name you or a team (W101). GitHub's search found it, so one of
- * them is yours: one of a User whose login is yours, compared without case as GitHub's are, is
- * 'direct'; otherwise one of a Team is 'team', named when it's the only team asked. Absent when it
- * can't say: no request of you or of a team can be read, or your login can't, which can't rule out
+ * them should be yours: one of a User whose login is yours, compared without case as GitHub's are,
+ * is 'direct'; otherwise one of a Team is 'team', named when it's the only team asked.
+ *
+ * 'none' when your login and every request can be read, and none is you or a team: the search's
+ * index is behind the PR, as just after you've reviewed it, so it doesn't ask you now. Undefined
+ * when it can't say: no list, a request it can't read, or your login unknown, which can't rule out
  * one of you by name.
  */
-export function reviewRequestOf(requests: unknown, viewer: string | undefined): PullRequestReviewRequest | undefined {
-  const nodes = isRecord(requests) && Array.isArray(requests.nodes) ? requests.nodes : [];
+export function reviewRequestOf(requests: unknown, viewer: string | undefined): PullRequestReviewRequest | 'none' | undefined {
+  if (!isRecord(requests) || !Array.isArray(requests.nodes)) return undefined;
   const me = viewer?.toLowerCase();
   /** Each team asked: its `org/slug`, or undefined when that can't be read. */
   const teams: (string | undefined)[] = [];
-  for (const node of nodes) {
+  let unreadable = false;
+  for (const node of requests.nodes) {
     const reviewer = isRecord(node) ? node.requestedReviewer : undefined;
-    if (!isRecord(reviewer)) continue;
+    if (!isRecord(reviewer) || typeof reviewer.__typename !== 'string') {
+      unreadable = true;
+      continue;
+    }
     if (reviewer.__typename === 'User' && me !== undefined && typeof reviewer.login === 'string' && reviewer.login.toLowerCase() === me) return { via: 'direct' };
     if (reviewer.__typename === 'Team') {
       const slug = reviewer.combinedSlug;
@@ -206,7 +220,8 @@ export function reviewRequestOf(requests: unknown, viewer: string | undefined): 
     }
   }
   // A login that couldn't be read can't rule out a request of you by name.
-  if (teams.length === 0 || me === undefined) return undefined;
+  if (me === undefined) return undefined;
+  if (teams.length === 0) return unreadable ? undefined : 'none';
   const [only] = teams;
   return teams.length === 1 && only !== undefined ? { via: 'team', team: only } : { via: 'team' };
 }

@@ -168,7 +168,8 @@ describe('the no-claude guard', () => {
 
   it("records a refusal of the PR fetch's gh, which fails soft, so the test still fails", async () => {
     const result = await fetchPullRequests({ runFile, ghBin: GH });
-    expect(result).toMatchObject({ ok: false, reason: 'error' });
+    // Each search its own call (W101's review), each refused.
+    expect(result).toMatchObject({ authored: { ok: false, reason: 'error' }, 'review-requested': { ok: false, reason: 'error' }, mentioned: { ok: false, reason: 'error' } });
     expect(() => failOnRefusals()).toThrow(GH_REFUSED);
     expect(takeRefusals()).toEqual([]);
   });

@@ -149,20 +149,28 @@ export const PR_TEAM = 'example/reviewers';
 /**
  * What the PR source says (W95), for the steps that check each state: 'ok', the list; 'mine', the
  * list with only your own PRs, as once you've reviewed each one asked and nothing mentions you
- * (W101); 'loading', before the first fetch has finished; 'off', `--no-prs`; 'gh-missing', 'gh-auth'
- * and 'error', a fetch that failed with no list; 'stale', one that failed after a list, which is
- * kept, two hours old.
+ * (W101); 'partial', a fetch in which your own search worked and the other two failed, the
+ * review-requested one with its list from two hours ago kept, the mentions one never listed
+ * (W101's review); 'loading', before the first fetch has finished; 'off', `--no-prs`; 'gh-missing',
+ * 'gh-auth' and 'error', a fetch that failed with no list; 'stale', one that failed after a list,
+ * which is kept, two hours old.
  */
-export type PrsState = 'ok' | 'mine' | 'loading' | 'off' | 'gh-missing' | 'gh-auth' | 'error' | 'stale';
+export type PrsState = 'ok' | 'mine' | 'partial' | 'loading' | 'off' | 'gh-missing' | 'gh-auth' | 'error' | 'stale';
 
 /** The error each failed state says, in pitwall's made-up words. */
-export const PRS_ERRORS: Readonly<Record<Exclude<PrsState, 'ok' | 'mine' | 'loading'>, string>> = {
+export const PRS_ERRORS: Readonly<Record<Exclude<PrsState, 'ok' | 'mine' | 'partial' | 'loading'>, string>> = {
   off: 'Pull requests are off: pitwall was started with --no-prs.',
   'gh-missing': "gh isn't on pitwall's PATH.",
   'gh-auth': "gh isn't logged in to github.com.",
   error: 'Made up: gh took longer than 30 seconds.',
   stale: 'Made up: no network.',
 };
+
+/** What 'partial' says of the two searches that failed (W101's review), in made-up words. */
+export const PRS_SEARCH_ERRORS = {
+  'review-requested': 'Made up: GitHub ended the request after 10 seconds.',
+  mentioned: 'Made up: gh api failed with exit code 1.',
+} as const;
 
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
 const SUBAGENT_CURSOR = 'pt77-older';
@@ -255,14 +263,27 @@ export class World {
    */
   prList(): PullRequestList {
     const refreshing = this.#prsRefreshing || this.#prs === 'loading';
-    if (this.#prs === 'ok') return { fetchedAt: new Date(this.#prsFetchedAt).toISOString(), source: { ok: true }, refreshing, prs: this.#pullRequests() };
+    const fetchedAt = new Date(this.#prsFetchedAt).toISOString();
+    const worked = (at: string) => ({ authored: { fetchedAt: at }, 'review-requested': { fetchedAt: at }, mentioned: { fetchedAt: at } });
+    if (this.#prs === 'ok') return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests() };
     if (this.#prs === 'mine') {
-      return { fetchedAt: new Date(this.#prsFetchedAt).toISOString(), source: { ok: true }, refreshing, prs: this.#pullRequests().filter((pr) => pr.relation === 'authored') };
+      return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests().filter((pr) => pr.relation === 'authored') };
+    }
+    if (this.#prs === 'partial') {
+      const searches = {
+        authored: { fetchedAt },
+        'review-requested': { fetchedAt: this.#ago(125), failed: { reason: 'error' as const, error: PRS_SEARCH_ERRORS['review-requested'] } },
+        mentioned: { failed: { reason: 'error' as const, error: PRS_SEARCH_ERRORS.mentioned } },
+      };
+      return { fetchedAt, source: { ok: true }, refreshing, searches, prs: this.#pullRequests().filter((pr) => pr.relation !== 'mentioned') };
     }
     if (this.#prs === 'loading') return { source: { ok: true }, refreshing, prs: [] };
     const reason = this.#prs === 'stale' ? 'error' : this.#prs;
     const source = { ok: false as const, reason, error: PRS_ERRORS[this.#prs] };
-    if (this.#prs === 'stale') return { fetchedAt: this.#ago(125), source, refreshing, prs: this.#pullRequests() };
+    if (this.#prs === 'stale') {
+      const failed = { fetchedAt: this.#ago(125), failed: { reason: 'error' as const, error: source.error } };
+      return { fetchedAt: this.#ago(125), source, refreshing, searches: { authored: failed, 'review-requested': failed, mentioned: failed }, prs: this.#pullRequests() };
+    }
     return { source, refreshing, prs: [] };
   }
 
