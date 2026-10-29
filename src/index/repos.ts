@@ -22,9 +22,15 @@
 //                 and every refreshMs (5 minutes) after the last one ends; a repo the snapshot knows
 //                 that hasn't been read is read on the update() that names it. Never on the 5 s poll
 //   git           at most 2 processes at once, each with a 5 s timeout
+//   file system   each readdir, stat and realpath gets REPOS_FS_TIMEOUT_MS, 2 s, as editor detection
+//                 has (W108's finding): one that hasn't answered by then, as on a hung network mount,
+//                 counts as failed, so its directory is skipped, the discovery ends and the next one
+//                 runs. The same call isn't made again until the first answers, so a directory that
+//                 hangs holds one of libuv's threads, never one per discovery
 //   listeners     told after a discovery or a read changes what repos() returns
 //
-// Fails soft: a directory it can't read is skipped, and a repo git fails in has no remotes.
+// Fails soft: a directory it can't read, or that doesn't answer, is skipped, and a repo git fails in
+// has no remotes.
 // Nothing here throws to its caller, and nothing is logged: paths and repo names are session content.
 
 import type { Dirent } from 'node:fs';
@@ -119,10 +125,23 @@ export interface RepoDiscoveryOptions {
   timeoutMs?: number;
   /** Default 2. */
   gitConcurrency?: number;
+  /** Per file system call. Default REPOS_FS_TIMEOUT_MS. */
+  fsTimeoutMs?: number;
 }
 
 /** How often every repo under the roots is found again, and its remotes read: 5 minutes. */
 export const REPOS_REFRESH_MS = 5 * 60_000;
+
+/** How long one file system call of a discovery may take before it counts as failed: 2 s, as editor detection's DETECT_TIMEOUT_MS. */
+export const REPOS_FS_TIMEOUT_MS = 2_000;
+
+/** A file system call that hasn't answered within its time, or whose earlier call still hasn't. */
+class Unanswered extends Error {
+  constructor() {
+    super("didn't answer in time");
+    this.name = 'Unanswered';
+  }
+}
 
 /** How deep below a root a repo is looked for: `<root>/<repo>` and `<root>/<dir>/<repo>`. */
 export const REPOS_DEPTH = 2;
@@ -213,7 +232,52 @@ function createLimiter(max: number): <T>(fn: () => Promise<T>) => Promise<T> {
 const sameRoots = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((root, i) => root === b[i]);
 
 export function createRepoDiscovery(options: RepoDiscoveryOptions = {}): RepoDiscovery {
-  const fs: DiscoveryFs = { ...nodeFs, ...options.fs };
+  const fsTimeoutMs = options.fsTimeoutMs ?? REPOS_FS_TIMEOUT_MS;
+  /** The calls that didn't answer in time and still haven't, by kind and path: not made again until they do. */
+  const unanswered = new Set<string>();
+  /**
+   * `call`, rejected with Unanswered when it takes longer than fsTimeoutMs, or at once while the same
+   * call made before still hasn't answered. Real, unref'd timers, not `timers`, which schedule only
+   * the next discovery.
+   */
+  const bounded = <T>(kind: string, at: string, call: () => Promise<T>): Promise<T> => {
+    const id = `${kind}\0${at}`;
+    if (unanswered.has(id)) return Promise.reject(new Unanswered());
+    return new Promise<T>((resolve, reject) => {
+      let late = false;
+      const timer = setTimeout(() => {
+        late = true;
+        unanswered.add(id);
+        reject(new Unanswered());
+      }, fsTimeoutMs);
+      timer.unref();
+      const settle = () => {
+        if (late) unanswered.delete(id);
+        else clearTimeout(timer);
+        return !late;
+      };
+      let pending: Promise<T>;
+      try {
+        pending = call();
+      } catch (error) {
+        pending = Promise.reject(error);
+      }
+      pending.then(
+        (value) => {
+          if (settle()) resolve(value);
+        },
+        (error: unknown) => {
+          if (settle()) reject(error);
+        },
+      );
+    });
+  };
+  const given: DiscoveryFs = { ...nodeFs, ...options.fs };
+  const fs: DiscoveryFs = {
+    readdir: (dir) => bounded('readdir', dir, () => given.readdir(dir)),
+    dotGit: (dir) => bounded('dotGit', dir, () => given.dotGit(dir)),
+    realpath: (p) => bounded('realpath', p, () => given.realpath(p)),
+  };
   const timers = options.timers ?? realTimers;
   const monotonicNow = options.monotonicNow ?? (() => performance.now());
   const refreshMs = options.refreshMs ?? REPOS_REFRESH_MS;
@@ -287,7 +351,14 @@ export function createRepoDiscovery(options: RepoDiscoveryOptions = {}): RepoDis
   /** The repos at and below `dir`, to `depth` more levels, never below a repo. */
   async function findUnder(dir: string, root: string, depth: number, into: Map<string, string>): Promise<void> {
     if (stopped || into.size >= MAX_REPOS) return;
-    const dotGit = await fs.dotGit(dir).catch(() => null);
+    let dotGit: 'dir' | 'file' | null;
+    try {
+      dotGit = await fs.dotGit(dir);
+    } catch (error) {
+      // A directory that doesn't answer is skipped: reading it would hang too.
+      if (error instanceof Unanswered) return;
+      dotGit = null;
+    }
     if (dotGit !== null) {
       const key = await keyOf(dir, dotGit);
       if (key !== undefined && !into.has(key)) into.set(key, root);

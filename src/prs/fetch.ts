@@ -6,9 +6,12 @@
 //   how it runs   the index's runFile (index/exec.ts): no shell, stdin and stderr ignored, and the
 //                 environment scrubbed by childEnvironment(), with GH_PROMPT_DISABLED and
 //                 GH_NO_UPDATE_NOTIFIER set and GH_FORCE_TTY and CLICOLOR_FORCE left out, so gh
-//                 never asks, never checks for an update and prints plain JSON. In the temp
-//                 directory, as stop and remove run, so the directory pitwall started in, and its
-//                 git remotes, never matter. GitHub's token stays inside gh: pitwall never reads it
+//                 never asks, never checks for an update and prints plain JSON. In a fresh 0700
+//                 directory of pitwall's own, `mkdtemp(<tmpdir>/pitwall-gh-)`, one per fetch,
+//                 removed after, as W107's clone runs gh (W108's finding): never the directory
+//                 pitwall started in, so its git remotes never matter, nor the shared temp
+//                 directory itself, which on Linux any local user can write to, so a `.git` planted
+//                 there is never read. GitHub's token stays inside gh: pitwall never reads it
 //   calls         one per page of each search, the three searches at once, each page after the one
 //                 before. Not one call with the three as aliases: GitHub ends a request that takes
 //                 more than 10 seconds, and the three together took 9.9 s on 2026-10-29 (W101's
@@ -45,7 +48,9 @@
 // PRs; review requested 3 points, 1.7 s; mentioned 2 points, 2.6 s. 7 points a fetch (PLAN.md, W101).
 // In pages of 25 (W105), the same day: yours 55 PRs in 3 pages of 3.7, 4.8 and 2.9 s, 11.4 s in
 // all; review requested 1.5 s; mentioned 2.6 s. A page of 25 costs 1 point by GitHub's formula.
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 import { RunError, type RunFile } from '../index/exec.js';
 import {
   PR_RELATIONS,
@@ -195,6 +200,34 @@ export interface FetchOptions {
   monotonicNow?: () => number;
   /** For each search. Default PRS_FETCH_TIMEOUT_MS. */
   timeoutMs?: number;
+  /** The system's temp directory, where gh's own working directory goes (GH_CWD_PREFIX). Default os.tmpdir(), read per fetch. */
+  tmpdir?: string;
+  /**
+   * gh's working directory, pitwall's own: fetchPullRequests() makes one for its three searches. A
+   * search given none makes its own.
+   */
+  cwd?: string;
+}
+
+/** The prefix of the directory gh runs in, in the system's temp directory: pitwall's own, 0700 as mkdtemp makes it, removed after (W107, W108). */
+export const GH_CWD_PREFIX = 'pitwall-gh-';
+
+/**
+ * Runs `fn` in a fresh directory of pitwall's own for gh, `mkdtemp(<tmpdir>/pitwall-gh-)`, 0700, and
+ * removes it after, or gives `failed` when it can't be made.
+ */
+async function inGhDirectory<T>(tmpdir: string, fn: (cwd: string) => Promise<T>, failed: () => T): Promise<T> {
+  let dir: string;
+  try {
+    dir = await mkdtemp(path.join(tmpdir, GH_CWD_PREFIX));
+  } catch {
+    return failed();
+  }
+  try {
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** The error each failure says, in pitwall's words. */
@@ -204,6 +237,7 @@ export const FETCH_ERRORS = {
   timeout: `GitHub didn't answer within ${PRS_FETCH_TIMEOUT_MS / 1000} seconds. Check your network, then Refresh.`,
   unreadable: "GitHub's answer couldn't be read. Refresh to try again.",
   tooLarge: "GitHub's answer was larger than pitwall reads. Refresh to try again.",
+  noDirectory: "pitwall couldn't make a folder of its own in the system's temp directory for gh to run in. Check that it has room and can be written to, then Refresh.",
 } as const;
 
 /** gh exited with another code: say which, and how to look further. */
@@ -236,7 +270,11 @@ export function isWellFormedCursor(cursor: string): boolean {
  * once, each at most PRS_MAX, newest update first, or why that one couldn't be fetched. Never throws.
  */
 export async function fetchPullRequests(options: FetchOptions): Promise<FetchResult> {
-  const results = await Promise.all(PR_RELATIONS.map((relation) => fetchSearch(relation, options)));
+  const results = await inGhDirectory(
+    options.tmpdir ?? os.tmpdir(),
+    (cwd) => Promise.all(PR_RELATIONS.map((relation) => fetchSearch(relation, { ...options, cwd }))),
+    () => PR_RELATIONS.map((): SearchResult => ({ ok: false, reason: 'error', error: FETCH_ERRORS.noDirectory })),
+  );
   return Object.fromEntries(PR_RELATIONS.map((relation, index) => [relation, results[index]!])) as Record<PullRequestRelation, SearchResult>;
 }
 
@@ -270,6 +308,10 @@ export function consistent(pages: readonly SearchPage[]): boolean {
  * first when the second fails. Never throws.
  */
 export async function fetchSearch(relation: PullRequestRelation, options: FetchOptions): Promise<SearchResult> {
+  const { cwd } = options;
+  if (cwd === undefined) {
+    return inGhDirectory(options.tmpdir ?? os.tmpdir(), (dir) => fetchSearch(relation, { ...options, cwd: dir }), () => ({ ok: false, reason: 'error', error: FETCH_ERRORS.noDirectory }));
+  }
   const now = options.monotonicNow ?? (() => performance.now());
   const env = ghEnvironment(options.env ?? process.env);
 
@@ -280,7 +322,7 @@ export async function fetchSearch(relation: PullRequestRelation, options: FetchO
       if (timeoutMs <= 0) return { ok: false, reason: 'error', error: FETCH_ERRORS.timeout };
       let stdout: string;
       try {
-        stdout = await options.runFile(options.ghBin ?? 'gh', ghArgs(relation, after), { cwd: os.tmpdir(), timeoutMs, env, maxStdoutBytes: PRS_PAGE_MAX_BYTES });
+        stdout = await options.runFile(options.ghBin ?? 'gh', ghArgs(relation, after), { cwd, timeoutMs, env, maxStdoutBytes: PRS_PAGE_MAX_BYTES });
       } catch (error) {
         return failure(error);
       }

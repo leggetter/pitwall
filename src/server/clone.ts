@@ -23,7 +23,10 @@
 //                other: the list is from gh's own searches, of your PRs, those asking your review and
 //                those mentioning you
 //   the root     the place's, never the request's, and only while the snapshot lists it as a root and
-//                it's a directory at its own real path
+//                it's a directory at its own real path; never your home folder or a folder above it
+//                (W108's finding): a root at `~`, which the config file allows, would let a clone make
+//                `~/bin`, which Ubuntu's default profile puts on PATH, or `~/Applications`, where
+//                editors.ts looks for editors' bundles
 //   the name     GitHub's spelling of the repo's name (repoLabel), as `gh repo clone` would name the
 //                directory; refused when it's `.`, `..` or starts with `.`, which would be the root, its
 //                parent or a hidden directory pitwall's discovery and New session's list skip
@@ -51,7 +54,9 @@
 //
 // Shutting down (close(), from the server's): gh and git run in a session of their own, so Ctrl-C or
 // closing pitwall's terminal never reaches them. close() aborts a clone that's running, which sends
-// its whole group SIGTERM (runFile's `signal`), waits for gh to exit, and removes the temp directory.
+// its whole group SIGTERM (runFile's `signal`), then SIGKILL 2 s later to whatever is left of it,
+// waits until gh has exited and nothing in its group is left, 2.5 s at most, and removes the temp
+// directory.
 // A pitwall killed outright can't, so start() sweeps, once, with the first snapshot's roots: a direct
 // child of a root, by its real path, named as ownTempDir() says, a real directory (lstat, never a
 // symlink) owned by this user, whose own time and its entries' are all older than CLONE_TIMEOUT_MS
@@ -69,7 +74,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { RunError, runFile as realRunFile, type RunFile } from '../index/exec.js';
 import { gitEnvironment } from '../index/grouping.js';
 import type { Indexer } from '../index/index.js';
-import { GH_EXIT_AUTH, ghEnvironment } from '../prs/fetch.js';
+import { GH_CWD_PREFIX, GH_EXIT_AUTH, ghEnvironment } from '../prs/fetch.js';
 import type { PrSource } from '../prs/index.js';
 import {
   CLONE_PATH,
@@ -91,9 +96,6 @@ export const CLONE_SWEEP_AGAIN_MS = 10_000;
 
 /** How much older than CLONE_TIMEOUT_MS a temp directory must be before start() sweeps it. */
 export const CLONE_SWEEP_MARGIN_MS = 5 * 60_000;
-
-/** The prefix of the directory gh runs in, in the system's temp directory: pitwall's own, 0700. */
-export const GH_CWD_PREFIX = 'pitwall-gh-';
 
 const REPO = new RegExp(`^(${GITHUB_OWNER_PATTERN})/(${GITHUB_REPO_NAME_PATTERN})$`);
 const NAME = new RegExp(`^${GITHUB_REPO_NAME_PATTERN}$`);
@@ -134,6 +136,8 @@ export interface CloneOptions {
   uid?: number | undefined;
   /** The system's temp directory, where gh's own working directory goes. Default os.tmpdir(). */
   tmpdir?: string;
+  /** Your home folder, which no clone goes into, nor into a folder above it. Default os.homedir(), read per request. */
+  home?: string;
 }
 
 /** What a clone will do, from a request that passed every check that needs no disk. */
@@ -149,6 +153,21 @@ export interface ClonePlan {
 }
 
 export type PlanResult = { ok: true; plan: ClonePlan } | { ok: false; status: 400 | 404 | 409; error: string };
+
+/** True when `root` is `home` or a folder above it, both real paths. */
+export function holdsHome(root: string, home: string): boolean {
+  const relative = path.relative(root, home);
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+/**
+ * Why pitwall doesn't clone into `root`, which is your home folder or holds it (W108's finding): a
+ * clone there could make a folder that changes what runs, `~/bin` or `~/Applications`.
+ */
+export function homeRefusal(root: string, home: string): string {
+  const where = root === home ? 'your home folder' : `${root}, which holds your home folder`;
+  return `pitwall doesn't clone into ${where}: a new folder there could be ~/bin, which some shells' profiles put on PATH, or ~/Applications, where pitwall looks for editors. Give a folder inside your home folder this owner in pitwall's config file, or clone it yourself.`;
+}
 
 /** Why a name can't be a directory pitwall makes, or undefined when it can. */
 export function unsafeName(name: string): string | undefined {
@@ -261,6 +280,22 @@ export function createCloneRoute(indexer: Pick<Indexer, 'latest'>, prs: Pick<PrS
     });
   const now = options.now ?? Date.now;
   const tmp = options.tmpdir ?? os.tmpdir();
+
+  /** Your home folder's real path, or as given when it can't be resolved; undefined when there's none to be found. */
+  const homeFolder = async (): Promise<string | undefined> => {
+    let home: string;
+    try {
+      home = options.home ?? os.homedir();
+    } catch {
+      return undefined;
+    }
+    if (!path.isAbsolute(home)) return undefined;
+    try {
+      return await fs.realpath(home);
+    } catch {
+      return path.resolve(home);
+    }
+  };
   // One clone at a time, and which repo it is.
   let cloning: string | undefined;
   // The clone running now: how to stop it, its temp directory, and when it has finished, cleaned up.
@@ -382,6 +417,11 @@ export function createCloneRoute(indexer: Pick<Indexer, 'latest'>, prs: Pick<PrS
         } catch {
           return answer(c, { ok: false, error: `${root} can't be read, so pitwall didn't clone into it.` }, 409);
         }
+        // Not your home folder, nor one above it, by real paths, as the roots are. A home folder pitwall
+        // can't find refuses every clone: it can't tell.
+        const home = await homeFolder();
+        if (home === undefined) return answer(c, { ok: false, error: "pitwall can't tell where your home folder is, so it doesn't clone: it never clones into your home folder or a folder above it." }, 409);
+        if (holdsHome(root, home)) return answer(c, { ok: false, error: homeRefusal(root, home) }, 409);
         try {
           await fs.lstat(target);
           return answer(c, { ok: false, error: `${target} already exists, so pitwall didn't clone into it. If it's a clone of ${slug}, start a session there with New session.` }, 409);

@@ -16,6 +16,7 @@ import type {
   PrLink,
   PullRequestList,
   PullRequestPlace,
+  PullRequestRelation,
   PullRequestSummary,
   RelayExchange,
   SessionGroup,
@@ -236,6 +237,8 @@ export class World {
   #cloned = new Map<string, string>();
   /** Whether a clone fails, as gh does for a repo you can't see (W107). */
   #cloneFails = false;
+  /** PRs listed with another relation than their own until the next reset, by key (W108): `notYours()`. */
+  #relations = new Map<string, PullRequestRelation>();
 
   constructor() {
     this.reset();
@@ -255,6 +258,7 @@ export class World {
     this.#prsFetchStarted = this.#prsFetchedAt - 8_500;
     this.#cloned = new Map();
     this.#cloneFails = false;
+    this.#relations = new Map();
     this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
   }
 
@@ -344,6 +348,11 @@ export class World {
   /** Until the next reset, every clone fails, as gh does for a repo you can't see (W107). */
   failClones(): void {
     this.#cloneFails = true;
+  }
+
+  /** Until the next reset, the PR `key` (PRS) is listed as `relation`, as one of yours mentioned by someone else's would be (W108). The server sends the list to the page. */
+  listAs(key: string, relation: PullRequestRelation): void {
+    this.#relations.set(key, relation);
   }
 
   setPrs(state: PrsState): void {
@@ -678,6 +687,7 @@ export class World {
         mergeable: 'clean',
         relation: 'authored',
         ...extra,
+        ...(this.#relations.has(key) ? { relation: this.#relations.get(key) as PullRequestRelation } : {}),
       };
     };
     const day = 24 * 60;
