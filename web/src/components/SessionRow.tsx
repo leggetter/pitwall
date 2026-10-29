@@ -25,7 +25,7 @@ import { prNeedsAttention, type PullRequestSummary, type SessionGroup, type Sess
 import { absoluteTime, plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { prReason, sessionPrBadge } from '../prs.js';
-import { quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
+import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
 import { groupLabel, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
@@ -50,6 +50,14 @@ const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = 
   'claude-code': "Claude Code's title, from the session's first prompt",
   pitwall: "pitwall's title, from the session's recent turns",
 };
+
+/** Line 2's label for what a recap says you need to do (W111), as "Asked:" and "Needs:" are. */
+export const RECAP_NEXT_LABEL = 'Next:';
+
+/** The hint for a finished or ended session's Waiting on you (W111): it isn't counted as needing you. */
+export function finishedRecapHint(session: SessionSummary): string {
+  return session.ended ? ENDED_RECAP_HINT : FINISHED_RECAP_HINT;
+}
 
 /** What a row marked not needed now says on line 2, quietly, after its group's label (W88). */
 export const NOT_NEEDED_TEXT = 'Not needed now';
@@ -85,18 +93,19 @@ function whatItWants(session: SessionSummary): { content: ReactNode; hint?: stri
       hint: text,
     };
   }
-  // Its recap's `next`, from the index's recap, not the transcript: shown whatever the transcript's state, as Needs is.
-  if (needsAttention(session) && session.needsYou?.reason === 'recap') {
-    const next = recapNeedsText(session);
-    const text = next === undefined ? undefined : plainText(next);
+  // Its recap's `next`, from the index's recap, not the transcript: shown whatever the transcript's
+  // state, as Needs is. "Next:", as Asked and Needs have theirs: the badge already says it waits on you.
+  // With no next, the badge says it all, and line 2 says what it did last.
+  const next = recapNeedsText(session);
+  if (next !== undefined) {
+    const text = plainText(next);
     return {
       content: (
         <span className="asked">
-          <span className="asked-label">{WAITING_ON_TEXT.you}{text === undefined ? '' : ':'}</span>
-          {text !== undefined && <> {text}</>}
+          <span className="asked-label">{RECAP_NEXT_LABEL}</span> {text}
         </span>
       ),
-      hint: text === undefined ? WAITING_ON_TEXT.you : `${WAITING_ON_TEXT.you}: ${text}`,
+      hint: text,
     };
   }
   if (session.transcript !== 'ok') {
@@ -205,6 +214,11 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     session.finished && session.askedYou && (
       <Badge key="asked" look="outline" hint={finishedAskedHint(session)}>
         Asked you
+      </Badge>
+    ),
+    finishedWaitingOnYou(session) && (
+      <Badge key="recap" look="outline" hint={finishedRecapHint(session)}>
+        {WAITING_ON_TEXT.you}
       </Badge>
     ),
     session.stale && (

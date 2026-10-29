@@ -38,6 +38,7 @@ import type {
   EndSessionResult,
   IndexSnapshot,
   PullRequestList,
+  RecapRefreshResult,
   RelayResult,
   SessionRecap,
   ResumeResult,
@@ -418,8 +419,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
 
   /**
    * Ask for a new recap (W111), as the contract has recapRefreshPath() answer, in made-up words: no
-   * body is read; 404 for a session it doesn't list or recap, 409 with recaps off, 429 with the day's
-   * budget spent or a call for it running, otherwise 200, and the new recap in the snapshot a moment
+   * body is read; 404 for a session it doesn't list or with no transcript, 409 with recaps off, 429,
+   * with `busy`, with the day's budget spent or a call for it running, otherwise 200, and the new recap in the snapshot a moment
    * later, or, while recaps are failing, none.
    */
   async function refreshRecap(req: IncomingMessage, res: ServerResponse, sessionId: string) {
@@ -435,11 +436,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     }
     if (answer.result === 'not-recapped') {
       record(404);
-      return json(res, 404, { ok: false, error: "Made up: pitwall doesn't recap this session." } satisfies ActionResult);
+      return json(res, 404, { ok: false, error: "Made up: pitwall can't recap this session: it has no transcript pitwall can read." } satisfies ActionResult);
     }
     if (answer.result === 'spent' || answer.result === 'running') {
       record(429);
-      return json(res, 429, { ok: false, error: answer.result === 'spent' ? "Made up: today's recaps are used up." : 'Made up: a recap of it is already being made.' } satisfies ActionResult);
+      return json(res, 429, { ok: false, error: answer.result === 'spent' ? "Made up: today's recaps are used up." : 'Made up: a recap of it is already being made.', busy: answer.result } satisfies RecapRefreshResult);
     }
     record(200);
     json(res, 200, { ok: true } satisfies ActionResult);

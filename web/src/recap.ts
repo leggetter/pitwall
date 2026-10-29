@@ -13,10 +13,12 @@
 //   as it's never attached (W54). Never again by itself, whatever arrives: the recap engine makes the
 //   next one 5 minutes after a turn ends (W110), and Refresh is there for the rest. Not while the
 //   day's budget is spent, which the snapshot says (RecapHealth).
-// - **No strip** with recaps off (no `recaps` on the snapshot, or a 409), for an ended session, which
-//   pitwall doesn't recap, and for one the server says it doesn't recap (a 404), such as its own.
+// - **No strip** with recaps off (no `recaps` on the snapshot, or a 409), and for a session the server
+//   says it can't recap (a 404): one with no transcript it can read. An ended session has one: it's
+//   recapped when you ask (D26), and its view asks once as it opens, as any other's does.
 // - **Refresh** POSTs recapRefreshPath(), and is busy until the snapshot's `recap.at` changes and the
-//   new recap is fetched, or for RECAP_WAIT_MS, or until a call fails, which the app strip then says.
+//   new recap is fetched, or a stale one is current again, or for RECAP_WAIT_MS, or until a call fails
+//   after it asked (RecapHealth's errorAt), which the app strip then says.
 //   Off, saying why, while the day's budget is spent. Its other results are toasts, as Refresh for
 //   the PR list has them.
 //
@@ -24,6 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  RECAP_DAILY_BUDGET,
   RECAP_FIELD_MAX,
   RECAP_WAITING_ON,
   recapPath,
@@ -178,7 +181,7 @@ export const budgetText = (budget: number) => `Today's ${budget} recaps are used
 export const RECAPS_OFF_TEXT = "Recaps are off: pitwall was started with --no-recaps, so it doesn't make them.";
 
 /** The info toast after a 404 from Refresh. */
-export const NOT_RECAPPED_TEXT = "pitwall doesn't recap this session.";
+export const NOT_RECAPPED_TEXT = "pitwall can't recap this session: it has no transcript pitwall can read.";
 
 /** Refresh's name and tooltip, and its tooltip while busy. */
 export const REFRESH_RECAP_LABEL = 'Refresh the recap';
@@ -214,12 +217,27 @@ export function quietWaitingOn(session: SessionSummary, needsYou: boolean): stri
   return WAITING_ON_TEXT[recap.waitingOn];
 }
 
+/**
+ * Whether a finished or ended session's current recap, pitwall's, says it's waiting on you (W111's
+ * review): its row and view show an outline "Waiting on you", as a finished session's Asked you is,
+ * with FINISHED_RECAP_HINT or ENDED_RECAP_HINT, and it never counts as needing you, since the index
+ * never puts a finished session in Needs you. Not where it shows a finished Asked you already.
+ */
+export function finishedWaitingOnYou(session: SessionSummary): boolean {
+  const recap = session.recap;
+  if (!session.finished || session.askedYou !== undefined || !recap) return false;
+  return recap.source === 'pitwall' && recap.waitingOn === 'you' && recap.stale !== true;
+}
+
+export const FINISHED_RECAP_HINT = "Its recap says it's waiting on you. It has finished, so it isn't counted as needing you.";
+export const ENDED_RECAP_HINT = "Its recap says it's waiting on you. It has ended, so it isn't counted as needing you.";
+
 /** How long Refresh stays busy waiting for the new recap: spike 010's calls took 3 to 7 s, plus the poll's 5. */
 export const RECAP_WAIT_MS = 60_000;
 
 /** What the strip shows. */
 export type RecapStripState =
-  /** No strip: recaps are off, the session has ended, or pitwall doesn't recap it. */
+  /** No strip: recaps are off, or pitwall can't recap the session, which has no transcript it can read. */
   | { kind: 'off' }
   /** Nothing to show yet: the first is on its way, or the snapshot's summary is all there is so far. */
   | { kind: 'loading'; summary?: RecapSummary }
@@ -268,7 +286,8 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
   const { sessionId } = session;
   const summary = session.recap;
   const summaryAt = summary?.at;
-  const enabled = api !== undefined && health !== undefined && session.ended !== true;
+  // Ended sessions too (D26): one has a recap once you ask, and the view asks once as it opens, as for any other.
+  const enabled = api !== undefined && health !== undefined;
 
   const [fetched, setFetched] = useState<SessionRecap>();
   // The latest fetch's outcome, for the summary it was for.
@@ -294,8 +313,8 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
   summaryRef.current = summary;
   const toastRef = useRef(toast);
   toastRef.current = toast;
-  // What a refresh waits for: a summary other than this one, or a failed call after these many.
-  const awaited = useRef<{ fromAt: string | undefined; calls: number | undefined }>({ fromAt: undefined, calls: undefined });
+  // What a refresh waits for: a summary other than this one, or this stale one made current, or an error set after this time.
+  const awaited = useRef<{ fromAt: string | undefined; fromStale: boolean; askedAtMs: number }>({ fromAt: undefined, fromStale: false, askedAtMs: 0 });
 
   // The whole recap, once the view is shown, and again whenever the snapshot's `recap.at` changes.
   const tried = useRef<string | undefined>(undefined);
@@ -332,7 +351,7 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
     (auto: boolean) => {
       if (!api || phaseRef.current === 'asking' || phaseRef.current === 'awaiting') return;
       setPhase('asking');
-      awaited.current = { fromAt: summaryRef.current?.at, calls: healthRef.current?.calls };
+      awaited.current = { fromAt: summaryRef.current?.at, fromStale: summaryRef.current?.stale === true, askedAtMs: Date.now() };
       void api.post(recapRefreshPath(sessionId), {}).then((result) => {
         if (!alive.current) return;
         const say = (tone: 'info' | 'error', message: string) => {
@@ -343,9 +362,12 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
         // The connection was refused, and the page says so in place of the dashboard.
         if (result.kind === 'unauthorized') return;
         if (result.status === 429) {
+          // Which 429 the server says it is, since a budget shared with another pitwall can be spent
+          // before this snapshot says so; without a word, by the snapshot.
           const current = healthRef.current;
-          if (budgetSpent(current)) return say('info', budgetText(current?.budget ?? 0));
-          // Not the budget: a call for it is already running, so its recap is on its way.
+          const busy = isRecord(result.body) ? result.body.busy : undefined;
+          if (busy === 'spent' || (busy !== 'running' && budgetSpent(current))) return say('info', budgetText(current?.budget ?? RECAP_DAILY_BUDGET));
+          // A call for it is already running, so its recap is on its way.
           return setPhase('awaiting');
         }
         if (result.status === 409 || result.status === 404) {
@@ -387,11 +409,14 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
   }, [decided, enabled, hidden, listed]);
 
   // Waiting for the recap a refresh asked for: until the snapshot's summary changes and the new recap
-  // has been fetched, or fetching it has failed, so Refresh isn't idle beside the old one; until a call
-  // fails; or for RECAP_WAIT_MS.
-  const calls = health?.calls;
-  const failedSince = health?.error !== undefined && calls !== undefined && awaited.current.calls !== undefined && calls > awaited.current.calls;
-  const arrived = summaryAt !== awaited.current.fromAt && (fetchedAt === summaryAt || (got !== undefined && got.for === summaryAt && got.status !== 'loading'));
+  // has been fetched, or fetching it has failed, so Refresh isn't idle beside the old one; until a
+  // stale recap is current again, as when the turns since it showed nothing new, so the engine moved
+  // its throughAt and kept its at; until a call fails after the ask, by RecapHealth's errorAt, since an
+  // error from before it stays until a call succeeds; or for RECAP_WAIT_MS.
+  const errorAtMs = health?.error !== undefined && health.errorAt !== undefined ? Date.parse(health.errorAt) : NaN;
+  const failedSince = errorAtMs >= awaited.current.askedAtMs;
+  const madeCurrent = awaited.current.fromStale && summaryAt === awaited.current.fromAt && summary !== undefined && summary.stale !== true;
+  const arrived = madeCurrent || (summaryAt !== awaited.current.fromAt && (fetchedAt === summaryAt || (got !== undefined && got.for === summaryAt && got.status !== 'loading')));
   useEffect(() => {
     if (phase !== 'awaiting') return;
     if (arrived || failedSince) {

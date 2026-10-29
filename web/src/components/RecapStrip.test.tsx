@@ -116,12 +116,20 @@ describe('when there is a strip', () => {
     expect(server.post).not.toHaveBeenCalled();
   });
 
-  it('has none for an ended session, which pitwall never recaps', async () => {
+  it('has one for an ended session, which asks once as its view opens, as any other does (D26)', async () => {
     const server = fakeApi();
-    renderStrip({ session: target(undefined, { ended: true, finished: true, alive: false }) }, server.api);
+    const ended = (recap?: SessionRecap) => target(recap, { ended: true, finished: true, alive: false, pid: undefined, status: undefined });
+    const view = renderStrip({ session: ended() }, server.api);
+    expect(strip()?.dataset.recap).toBe('loading');
     await pastAskDelay();
-    expect(strip()).toBeNull();
-    expect(server.post).not.toHaveBeenCalled();
+    expect(server.post).toHaveBeenCalledTimes(1);
+    const recap = full({ waitingOn: 'nothing', next: 'Nothing is left to do.' });
+    server.setRecap(recap);
+    view.update({ session: ended(recap) });
+    await settle();
+    expect(strip()?.dataset.recap).toBe('shown');
+    expect(headline()).toBe('Done: It opened draft PR #42 with a fix and a test.');
+    expect(server.post).toHaveBeenCalledTimes(1);
   });
 
   it('goes when the server says it does not recap the session (404) or recaps are off (409)', async () => {
@@ -288,7 +296,7 @@ describe('asking for a new recap as the view opens', () => {
     const server = fakeApi();
     const view = renderStrip({ session: target(undefined) }, server.api);
     await pastAskDelay();
-    view.update({ session: target(undefined), health: { ...HEALTH, calls: HEALTH.calls + 1, error: 'Made up: claude -p exited with code 1' } });
+    view.update({ session: target(undefined), health: { ...HEALTH, calls: HEALTH.calls + 1, error: 'Made up: claude -p exited with code 1', errorAt: new Date(Date.now() + 1000).toISOString() } });
     await settle();
     expect(strip()?.dataset.recap).toBe('none');
     expect(strip()?.textContent).toContain('No recap yet. The latest recap failed: Made up: claude -p exited with code 1.');
@@ -342,12 +350,14 @@ describe('the headline and the lines', () => {
     expect(lines()).toEqual([]);
   });
 
-  it('says a stale recap may be out of date, first', async () => {
+  it('says a stale recap may be out of date, on line 1 beside its age, so the headline keeps its width', async () => {
     const stale = full({ stale: true });
     const server = fakeApi({ recap: stale, posts: ['pending'] });
     renderStrip({ session: target(stale) }, server.api);
     await settle();
-    expect(headline()).toBe(`${STALE_LABEL}. You need to: Say whether to mark #42 ready.`);
+    expect(document.querySelector('.recap-head .recap-stale')?.textContent).toBe(STALE_LABEL);
+    expect(document.querySelector('.recap-age + .recap-stale')).not.toBeNull();
+    expect(headline()).toBe('You need to: Say whether to mark #42 ready.');
   });
 
   it('shows the recap’s text as text, and its age', async () => {
@@ -436,6 +446,54 @@ describe('Refresh', () => {
     await settle();
     expect(refreshButton()?.getAttribute('aria-busy')).toBeNull();
     expect(lines()).toContainEqual(['Now', 'It marked #42 ready.']);
+  });
+
+  it('stays busy through an error from before it asked, and stops at one after (errorAt)', async () => {
+    const recap = full();
+    const server = fakeApi({ recap });
+    const before = { ...HEALTH, error: 'Made up: an older failure.', errorAt: new Date(Date.now() - 60_000).toISOString() };
+    const view = renderStrip({ session: target(recap), health: before }, server.api);
+    await settle();
+    fireEvent.click(refreshButton()!);
+    await settle();
+    // The engine counts the call as it starts; the old error stands until a call succeeds.
+    view.update({ session: target(recap), health: { ...before, calls: before.calls + 1 } });
+    await settle();
+    expect(refreshButton()?.getAttribute('aria-busy')).toBe('true');
+    // Another session's call starting changes nothing either.
+    view.update({ session: target(recap), health: { ...before, calls: before.calls + 2 } });
+    await settle();
+    expect(refreshButton()?.getAttribute('aria-busy')).toBe('true');
+    view.update({ session: target(recap), health: { ...before, calls: before.calls + 2, error: 'Made up: it failed now.', errorAt: new Date(Date.now() + 1).toISOString() } });
+    await settle();
+    expect(refreshButton()?.getAttribute('aria-busy')).toBeNull();
+  });
+
+  it('stops being busy when a stale recap is made current with nothing new to say: its at kept, its stale gone', async () => {
+    const stale = full({ stale: true });
+    const server = fakeApi({ recap: stale, posts: [status(500), ok({ ok: true })] });
+    const view = renderStrip({ session: target(stale) }, server.api);
+    // The view's own ask fails quietly; then Refresh.
+    await pastAskDelay();
+    fireEvent.click(refreshButton()!);
+    await settle();
+    expect(refreshButton()?.getAttribute('aria-busy')).toBe('true');
+    view.update({ session: target({ ...stale, stale: undefined }) });
+    await settle();
+    expect(refreshButton()?.getAttribute('aria-busy')).toBeNull();
+    expect(document.querySelector('.recap-stale')).toBeNull();
+    expect(server.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads which 429 it is from the answer, for a budget another pitwall spent', async () => {
+    const recap = full();
+    const toast = vi.fn<ShowToast>();
+    renderStrip({ session: target(recap) }, fakeApi({ recap, posts: [status(429, { ok: false, error: 'Made up.', busy: 'spent' })] }).api, toast);
+    await settle();
+    fireEvent.click(refreshButton()!);
+    await settle();
+    expect(toast).toHaveBeenCalledWith({ tone: 'info', key: 'recap-refresh', message: budgetText(RECAP_DAILY_BUDGET) });
+    expect(refreshButton()?.getAttribute('aria-busy')).toBeNull();
   });
 
   it('stops being busy after RECAP_WAIT_MS with no new recap', async () => {

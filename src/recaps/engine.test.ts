@@ -29,7 +29,7 @@ interface FakeCall {
 const answer = (overrides: Record<string, unknown> = {}) => ({
   why: 'You asked it to fix the nightly export.',
   now: 'It opened draft PR #42 with a fix, and CI passes.',
-  next: 'It is waiting for you to say whether to mark #42 ready.',
+  next: 'Say whether to mark #42 ready.',
   waitingOn: 'you',
   title: 'Fix the nightly export',
   ...overrides,
@@ -402,7 +402,8 @@ describe('failures', () => {
     const a = h.add('a');
     await h.poll([a]);
     await h.reply(h.calls[0], envelope('Sure! Here is your recap: {"why": "a"}'));
-    expect(h.engine.health()).toEqual({ calls: 1, budget: RECAP_DAILY_BUDGET, costUsd: 0.0011, error: ANSWER_INVALID });
+    // errorAt is when the error was set, so a page can tell a failure since its ask from an older one (W111's review).
+    expect(h.engine.health()).toEqual({ calls: 1, budget: RECAP_DAILY_BUDGET, costUsd: 0.0011, error: ANSWER_INVALID, errorAt: new Date(h.clock.now).toISOString() });
     expect(JSON.stringify(h.engine.health())).not.toContain('Sure!');
     expect(h.engine.recap(a)).toBeUndefined();
     await h.poll([a]);
@@ -411,8 +412,11 @@ describe('failures', () => {
     h.clock.now += RETRY_AFTER_FAILURE_MS;
     await h.poll([a]);
     expect(h.calls).toHaveLength(2);
+    // A call that starts while the error stands leaves errorAt where it was: it isn't a new failure.
+    expect(h.engine.health()).toMatchObject({ calls: 2, error: ANSWER_INVALID, errorAt: new Date(h.clock.now - RETRY_AFTER_FAILURE_MS).toISOString() });
     await h.reply(h.calls[1], envelope(answer()));
     expect(h.engine.health()).not.toHaveProperty('error');
+    expect(h.engine.health()).not.toHaveProperty('errorAt');
   });
 
   it('turns each kind of failure into a reason that never quotes what claude printed', async () => {
@@ -483,7 +487,7 @@ describe('failures', () => {
     h.start();
     await h.poll([h.add('a')]);
     expect(h.calls).toHaveLength(0);
-    expect(h.engine.health()).toEqual({ calls: 0, budget: RECAP_DAILY_BUDGET, costUsd: 0, error: 'Recaps need Claude Code 2.1.312 or later, and this is 2.1.300.' });
+    expect(h.engine.health()).toEqual({ calls: 0, budget: RECAP_DAILY_BUDGET, costUsd: 0, error: 'Recaps need Claude Code 2.1.312 or later, and this is 2.1.300.', errorAt: new Date(h.clock.now).toISOString() });
     const broken = harness({ claudeVersion: async () => Promise.reject(new Error('ENOENT')) });
     broken.start();
     await broken.poll([broken.add('a')]);

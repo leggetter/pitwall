@@ -9,18 +9,19 @@
 //     200  pitwall's recap, or Claude Code's away_summary in its place (source 'claude-code')
 //     404  none yet, and always with --no-recaps
 //
-//   POST recapRefreshPath(id)     no body                                 answers: ActionResult
+//   POST recapRefreshPath(id)     no body                                 answers: RecapRefreshResult
 //     200  queued: the recap arrives in the snapshot, and from GET
 //     404  pitwall has no transcript of it to recap
 //     409  recaps are off (--no-recaps), so pitwall never runs a recap call
-//     429  the day's budget is spent (Retry-After: local midnight), or a call for it is running
+//     429  the day's budget is spent (Retry-After: local midnight), or a call for it is running,
+//          which the answer's `busy` says, 'spent' or 'running'
 //     503  the server is closing
 //
 // Neither ever runs claude itself: the engine (src/recaps/engine.ts) does, at most two at a time.
 import type { Hono } from 'hono';
 import type { Indexer } from '../index/index.js';
 import type { RecapEngine } from '../recaps/engine.js';
-import { recapPath, recapRefreshPath, type ActionResult } from '../shared/protocol.js';
+import { recapPath, recapRefreshPath, type RecapRefreshResult } from '../shared/protocol.js';
 import { LOOKUP_ERRORS } from './actions.js';
 import { resolveSession } from './sessions.js';
 
@@ -39,7 +40,7 @@ export function registerRecaps(app: Hono, indexer: Pick<Indexer, 'latest'>, reca
 
   app.post(RECAP_REFRESH_ROUTE, (c) => {
     c.header('Cache-Control', 'no-store');
-    const answer = (result: ActionResult, status: 200 | 400 | 404 | 409 | 429 | 503) => c.json(result, status);
+    const answer = (result: RecapRefreshResult, status: 200 | 400 | 404 | 409 | 429 | 503) => c.json(result, status);
     if (recaps === undefined) return answer({ ok: false, error: 'Recaps are off: pitwall was started with --no-recaps, so it never runs a recap call.' }, 409);
     const lookup = resolveSession(indexer, c.req.param('sessionId'));
     if (!lookup.ok) return answer({ ok: false, error: LOOKUP_ERRORS[lookup.status] }, lookup.status);
@@ -51,11 +52,11 @@ export function registerRecaps(app: Hono, indexer: Pick<Indexer, 'latest'>, reca
         return answer({ ok: false, error: "pitwall can't recap this session: it has no transcript pitwall can read." }, 404);
       case 'spent': {
         c.header('Retry-After', String(result.retryAfterSeconds));
-        return answer({ ok: false, error: "Today's recaps are used up, so the next one can be made after midnight." }, 429);
+        return answer({ ok: false, error: "Today's recaps are used up, so the next one can be made after midnight.", busy: 'spent' }, 429);
       }
       case 'running':
         c.header('Retry-After', String(result.retryAfterSeconds));
-        return answer({ ok: false, error: "A recap of this session is being made now. It'll show here in a few seconds." }, 429);
+        return answer({ ok: false, error: "A recap of this session is being made now. It'll show here in a few seconds.", busy: 'running' }, 429);
       case 'closed':
         return answer({ ok: false, error: 'pitwall is shutting down.' }, 503);
     }

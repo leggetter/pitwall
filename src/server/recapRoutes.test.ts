@@ -236,12 +236,15 @@ describe('the recap routes', () => {
     const busy = await post(server.port, recapRefreshPath('a'), apiKey);
     expect(busy.status).toBe(429);
     expect(busy.headers['retry-after']).toBe('5');
+    // Which 429 it is, so a page with a budget shared with another pitwall can tell (W111's review).
+    expect(JSON.parse(busy.body).busy).toBe('running');
     recaps.answer(0);
     await waitFor(() => recaps.engine.recap(session('a')) !== undefined);
     const spent = await post(server.port, recapRefreshPath('a'), apiKey);
     expect(spent.status).toBe(429);
     expect(Number(spent.headers['retry-after'])).toBeGreaterThan(0);
     expect(JSON.parse(spent.body).error).toMatch(/after midnight/);
+    expect(JSON.parse(spent.body).busy).toBe('spent');
     ws.close();
   });
 

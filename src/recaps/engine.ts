@@ -252,6 +252,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   let calls = 0;
   let costUsd = 0;
   let lastError: string | undefined;
+  /** When lastError was set, for RecapHealth.errorAt. */
+  let lastErrorAt: number | undefined;
   let failuresInRow = 0;
   let pausedUntil = 0;
   /** Set once `claude --version` has said it's new enough; until then, when to ask again. */
@@ -416,6 +418,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     if (!Number.isNaN(throughMs)) failures.set(sessionId, { throughMs, atMs: now() });
     if (kind === 'quiet') return;
     lastError = reason;
+    lastErrorAt = now();
     if (kind === 'call') {
       failuresInRow++;
       if (failuresInRow >= PAUSE_AFTER_FAILURES) {
@@ -524,6 +527,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     failuresInRow = 0;
     pausedUntil = 0;
     lastError = undefined;
+    lastErrorAt = undefined;
     changed();
   }
 
@@ -656,7 +660,10 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     health() {
       rollDay();
       const health: RecapHealth = { calls, budget, costUsd: Math.round(costUsd * 1e6) / 1e6 };
-      if (lastError !== undefined) health.error = lastError;
+      if (lastError !== undefined) {
+        health.error = lastError;
+        if (lastErrorAt !== undefined) health.errorAt = new Date(lastErrorAt).toISOString();
+      }
       return health;
     },
     version() {

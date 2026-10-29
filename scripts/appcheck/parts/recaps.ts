@@ -1,13 +1,14 @@
 // Recaps (M5, W111; docs/design-system.md, 4: Recap strip): the strip between the session view's
 // header and its tabs, on every tab, with its headline by what the recap waits on, Why and Now or
 // Next; collapsed, and kept so after a reload; a stale recap, and a session with none, asking for one
-// once as the view opens; Refresh, busy until the new one comes, and off while the day's budget is
-// spent; Claude Code's recap; the rows' recap reasons on line 2; the app strip's recap lines; and,
-// with recaps off, no strip and nothing asked.
+// once as the view opens, an ended session's included (D26); Refresh, busy until the new one comes,
+// and off while the day's budget is spent; Claude Code's recap; the rows' recap reasons on line 2,
+// and an outline Waiting on you on an ended one; the app strip's recap lines; and, with recaps off,
+// no strip and nothing asked.
 
 import { NAMES, RECAP_CALL_MS, RECAPPED, RECAPS_ERROR } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { attachStatus, openFromRow, row, VIEW, viewClose, viewName } from './_dom.js';
+import { attachStatus, openFinished, openFromRow, row, VIEW, viewClose, viewName } from './_dom.js';
 
 const STRIP = `${VIEW}?.querySelector('.session-recap')`;
 const strip = `(() => {
@@ -30,6 +31,7 @@ const strip = `(() => {
     lines: [...strip.querySelectorAll('.recap-line dt')].map((dt) => dt.textContent),
     bodyHidden: body ? body.hidden : null,
     stale: !!strip.querySelector('.recap-stale'),
+    staleOnLine1: !!strip.querySelector('.recap-head .recap-age + .recap-stale'),
     busy: refresh?.getAttribute('aria-busy') === 'true',
     off: refresh?.getAttribute('aria-disabled') === 'true',
     age: strip.querySelector('.recap-age')?.textContent ?? null,
@@ -48,6 +50,7 @@ type Strip = {
   lines: string[];
   bodyHidden: boolean | null;
   stale: boolean;
+  staleOnLine1: boolean;
   busy: boolean;
   off: boolean;
   age: string | null;
@@ -83,7 +86,7 @@ const part: Part = {
       await t.fresh({ search: '?view=all', recaps: 'ok' });
       const shown = await open(NAMES.conversation);
       t.expectEqual(shown.title, 'Recap', 'its title');
-      t.expect(shown.headline?.startsWith('You need to: Say whether it should fix the lint errors on #51') ?? false, 'the headline: what you need to do', shown.headline);
+      t.expect(shown.headline?.startsWith('You need to: Say whether to fix the lint errors on #51') ?? false, 'the headline: what you need to do', shown.headline);
       t.expectEqual(shown.lines, ['Why', 'Now'], 'then Why and Now');
       t.expectEqual(shown.expanded, 'true', 'open, by default');
       t.expect(shown.between && shown.inside, 'between the header and the tabs, inside the view', shown);
@@ -119,7 +122,7 @@ const part: Part = {
       const shown = await open(RECAPPED.ci);
       await page.waitFor('the terminal to attach', `${attachStatus} === 'attached'`);
       const onTerminal = await page.evaluate<Strip>(strip);
-      t.expect(onTerminal.headline?.startsWith("Waiting on CI: It's waiting for the made-up CI run") ?? false, 'the headline: what it waits on', onTerminal.headline);
+      t.expect(onTerminal.headline?.startsWith('Waiting on CI: The made-up CI run on its branch to finish.') ?? false, 'the headline: what it waits on', onTerminal.headline);
       t.expect(onTerminal.between, 'still between the header and the tabs', onTerminal);
       t.expectEqual(shown.lines, ['Why', 'Now'], 'then Why and Now');
       await t.shot('terminal');
@@ -147,6 +150,25 @@ const part: Part = {
       t.expectEqual(asked(NAMES.waiting).length, 1, 'asked once');
     });
 
+    await t.step('an ended session: its view asks once, its recap shows, and it waits on you, outlined', async () => {
+      await closeView();
+      await page.navigate('/?view=all');
+      await page.waitFor('All sessions', `!!document.querySelector('.session-list .finished-toggle')`, 15_000);
+      await openFinished(t);
+      const shown = await open(NAMES.ended);
+      t.expect(shown.headline?.startsWith('You need to: Say whether to publish the made-up release notes.') ?? false, 'its first recap', shown.headline);
+      await page.settle(1_000);
+      t.expectEqual(asked(NAMES.ended), [{ name: NAMES.ended, status: 200 }], 'asked once, as it opened');
+      t.expectEqual(await page.evaluate(`${VIEW}?.querySelector('.session-view-meta .badge-outline')?.textContent ?? null`), 'Waiting on you', 'an outline Waiting on you in its header, as a finished Asked you is');
+      t.expectEqual(
+        await page.evaluate(`(${row(NAMES.ended)})?.closest('li.session')?.querySelector('.badge-outline')?.textContent ?? null`),
+        'Waiting on you',
+        'and on its row, which never needs you',
+      );
+      t.expectEqual(await page.evaluate(`(${row(NAMES.ended)})?.closest('li.session')?.dataset.attention ?? null`), null, 'no bar');
+      await t.shot('ended');
+    });
+
     await t.step('Refresh: busy until the new recap comes', async () => {
       await open(NAMES.conversation);
       await page.click('Refresh the recap', `${STRIP}?.querySelector('[data-recap-refresh]')`);
@@ -162,7 +184,7 @@ const part: Part = {
       await page.navigate('/?view=needs-you');
       await page.waitFor('Needs you', `!!${row(NAMES.conversation)}`, 15_000);
       const needs = await page.evaluate<string | null>(lineTwo(NAMES.conversation));
-      t.expect(needs?.includes('Waiting on you: Say whether it should fix the lint errors on #51') ?? false, "Needs you's 'recap' reason on line 2", needs);
+      t.expect(needs?.includes('Next: Say whether to fix the lint errors on #51') ?? false, "Needs you's 'recap' reason on line 2, after Next:", needs);
       t.expectEqual(await page.evaluate(badge(NAMES.conversation)), 'Waiting on you', 'its badge');
       await t.shot('needs-you');
       await page.navigate('/?view=all');
@@ -177,7 +199,7 @@ const part: Part = {
       await t.fresh({ search: '?view=all', recaps: 'spent' });
       t.expect((await page.evaluate<string | null>(APP_STRIP))?.startsWith("Today's 200 recaps are used up") ?? false, 'the app strip', await page.evaluate(APP_STRIP));
       const shown = await open(RECAPPED.stale);
-      t.expect(shown.stale && shown.headline?.startsWith('May be out of date. You need to:') === true, 'its stale recap, which says so first', shown);
+      t.expect(shown.stale && shown.staleOnLine1 && shown.headline?.startsWith('You need to:') === true, 'its stale recap, which says so on line 1, beside its age', shown);
       t.expectEqual(shown.off, true, 'Refresh is off');
       await page.click('Refresh the recap', `${STRIP}?.querySelector('[data-recap-refresh]')`);
       await page.settle(1_000);

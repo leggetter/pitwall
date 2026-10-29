@@ -1595,6 +1595,12 @@ export interface RecapHealth {
   costUsd: number;
   /** Set when the latest call failed: why, in pitwall's words, never the model's or claude's output. */
   error?: string;
+  /**
+   * ISO 8601: when `error` was set, with it, so a page waiting for a recap it asked for can tell a
+   * failure since its ask from one before it (W111's review): `calls` rises as each call starts, and
+   * `error` stays until a call succeeds.
+   */
+  errorAt?: string;
 }
 
 /** The model recaps run on (spike 010: as right as Sonnet 5.5 on 56 recaps, at a fifteenth of the cost). */
@@ -1624,11 +1630,20 @@ export function recapPath(sessionId: string): string {
 }
 
 /**
- * POST, no body: recap the session now, answered with an ActionResult; the recap arrives in the
+ * POST, no body: recap the session now, answered with a RecapRefreshResult; the recap arrives in the
  * snapshot and from recapPath(). It needs what every state-changing request needs: the apiKey,
- * pitwall's Origin and its exact Host. 404 for a session pitwall doesn't recap, 409 with
- * `--no-recaps`, 429 when the day's budget is spent or a call for it is already running.
+ * pitwall's Origin and its exact Host. 404 when pitwall has no transcript of the session to recap,
+ * 409 with `--no-recaps`, 429 when the day's budget is spent or a call for it is already running,
+ * which the answer's `busy` says.
  */
 export function recapRefreshPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/recap/refresh`;
 }
+
+/**
+ * recapRefreshPath()'s answer: an ActionResult, and with a 429, why (W111's review), since a budget
+ * shared with another pitwall on the same home can be spent before this one's snapshot says so:
+ * - 'spent': the day's budget is spent; Retry-After is local midnight.
+ * - 'running': a call for this session is running; its recap arrives in a few seconds.
+ */
+export type RecapRefreshResult = ActionResult | { ok: false; error: string; busy: 'spent' | 'running' };
