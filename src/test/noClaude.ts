@@ -22,9 +22,16 @@
 // process a test starts, at any depth, that runs `gh` by name finds it, unless
 // the test deliberately puts its own fake first, as cli.test.ts does for the
 // CLI it runs. It writes down each call and exits 1, and the test, or the file,
-// fails if it was reached. GH_CONFIG_DIR points at an empty folder, and
-// GH_TOKEN, GITHUB_TOKEN and their Enterprise forms are removed, so even a gh
-// found some other way has no login.
+// fails if it was reached. For a gh found some other way, by an absolute path
+// or on a PATH that leaves the stand-in out, GH_CONFIG_DIR points at an empty
+// folder, and GH_TOKEN and GH_ENTERPRISE_TOKEN hold a placeholder that is no
+// login, with GITHUB_TOKEN and GITHUB_ENTERPRISE_TOKEN removed. The empty folder
+// alone isn't enough (W96, W98): with no hosts in its config, gh 2.100 still
+// falls back to a token in the macOS keychain, the item `gh:github.com` with an
+// empty account, as W96 found on a Mac that has one. A token in the
+// environment wins over the config and the keychain (gh's
+// internal/config/config.go, AuthConfig.ActiveToken()), so that gh asks
+// GitHub, if it asks at all, with the placeholder, and is refused.
 //
 // It also refuses to open an editor (W72), with or without PITWALL_LIVE: no
 // test, live or not, opens VS Code or Cursor. That's `code`, `cursor` or
@@ -284,14 +291,22 @@ function install(): void {
 /** Variables that would give gh a login without its config folder. */
 const GH_TOKEN_VARIABLES = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'] as const;
 
+/**
+ * What GH_TOKEN and GH_ENTERPRISE_TOKEN hold without PITWALL_LIVE=1: not a token GitHub knows. gh
+ * reads GH_TOKEN for github.com and GH_ENTERPRISE_TOKEN for any other host before its config and
+ * the keychain, so a gh run some other way than through the stand-in has no login there either.
+ */
+export const GH_NO_LOGIN = 'pitwall-test-no-login';
+
 /** A single-quoted shell word, for a path written into the stand-in. */
 function shellQuoted(text: string): string {
   return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
- * The second layer for gh: a refusing gh first on PATH, an empty GH_CONFIG_DIR and no token
- * variables, for every process this test process starts. Removed when the process exits.
+ * The second layer for gh: a refusing gh first on PATH, an empty GH_CONFIG_DIR, and GH_NO_LOGIN
+ * as the only token in the environment, for every process this test process starts. The folder is
+ * removed when the process exits.
  */
 function installGhStandIn(): void {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-gh-guard-'));
@@ -316,6 +331,9 @@ function installGhStandIn(): void {
   process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ''}`;
   process.env.GH_CONFIG_DIR = config;
   for (const name of GH_TOKEN_VARIABLES) delete process.env[name];
+  // Not only removed: without one, gh would use a login from the macOS keychain.
+  process.env.GH_TOKEN = GH_NO_LOGIN;
+  process.env.GH_ENTERPRISE_TOKEN = GH_NO_LOGIN;
   state.ghStandIn = { bin, calls };
   process.once('exit', () => rmSync(dir, { recursive: true, force: true }));
 }

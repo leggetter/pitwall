@@ -2,7 +2,7 @@
 // test file. Every command here names a claude or a gh that doesn't exist, so
 // even a broken guard couldn't start Claude Code or reach GitHub.
 import { exec, execFile, execFileSync, execSync, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -15,7 +15,7 @@ import { spawnPty } from '../server/pty.js';
 // Read before this file loads the guard itself, so it shows the setup file did.
 const installedBySetup =
   (globalThis as Record<symbol, { installed?: boolean } | undefined>)[Symbol.for('pitwall.noClaude')]?.installed === true;
-const { allowSignalsTo, failOnGhCalls, failOnRefusals, ghStandIn, takeGhCalls, takeRefusals } = await import('./noClaude.js');
+const { allowSignalsTo, failOnGhCalls, failOnRefusals, GH_NO_LOGIN, ghStandIn, takeGhCalls, takeRefusals } = await import('./noClaude.js');
 
 const CLAUDE = '/nonexistent/pitwall-test/claude';
 const REFUSED = /would run claude without PITWALL_LIVE=1/;
@@ -194,13 +194,44 @@ describe('the no-claude guard', () => {
         { env },
       ).status;
 
-    it('is first on PATH, with an empty GH_CONFIG_DIR and no GitHub token in the environment', () => {
+    it('is first on PATH, with an empty GH_CONFIG_DIR and only the placeholder as a GitHub token in the environment', () => {
       const standIn = ghStandIn();
       expect(standIn).toBeDefined();
       expect(process.env.PATH?.split(delimiter)[0]).toBe(standIn?.bin);
       expect(statSync(join(standIn!.bin, 'gh')).mode & 0o111).not.toBe(0);
       expect(readdirSync(process.env.GH_CONFIG_DIR!)).toEqual([]);
-      for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) expect(process.env[name], name).toBeUndefined();
+      // W96's finding (W98): gh reads these before its config and the keychain, so they're set, not only removed.
+      expect(GH_NO_LOGIN).toBe('pitwall-test-no-login');
+      expect(process.env.GH_TOKEN).toBe(GH_NO_LOGIN);
+      expect(process.env.GH_ENTERPRISE_TOKEN).toBe(GH_NO_LOGIN);
+      for (const name of ['GITHUB_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) expect(process.env[name], name).toBeUndefined();
+    });
+
+    // A made-up gh at an absolute path, which the stand-in on PATH can't catch: what it sees is all a real one would have.
+    it('gives a gh run by an absolute path, two levels down, the placeholder token and the empty config, so no login', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'pitwall-test-fake-gh-'));
+      try {
+        const gh = join(dir, 'gh');
+        const seen = join(dir, 'seen');
+        writeFileSync(
+          gh,
+          `#!/bin/sh\nprintf '%s\\n' "GH_TOKEN=\${GH_TOKEN-unset}" "GH_ENTERPRISE_TOKEN=\${GH_ENTERPRISE_TOKEN-unset}" "GITHUB_TOKEN=\${GITHUB_TOKEN-unset}" "GH_CONFIG_DIR=\${GH_CONFIG_DIR-unset}" > '${seen}'\n`,
+          { mode: 0o755 },
+        );
+        const status = spawnSync(process.execPath, ['-e', `process.exit(require('node:child_process').spawnSync(${JSON.stringify(gh)}, ['api', 'graphql'], { stdio: 'ignore' }).status ?? 99)`]).status;
+        expect(status).toBe(0);
+        expect(readFileSync(seen, 'utf8').split('\n')).toEqual([
+          `GH_TOKEN=${GH_NO_LOGIN}`,
+          `GH_ENTERPRISE_TOKEN=${GH_NO_LOGIN}`,
+          'GITHUB_TOKEN=unset',
+          `GH_CONFIG_DIR=${process.env.GH_CONFIG_DIR}`,
+          '',
+        ]);
+        // Not the stand-in: nothing was written down.
+        expect(takeGhCalls()).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     // The positive control: --version, so even a broken guard that reached a real gh would ask GitHub nothing.
