@@ -163,8 +163,9 @@ export interface SessionSummary {
   needsYou?: NeedsYou;
   /**
    * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, with
-   * `--no-recaps`, and for sessions pitwall doesn't recap: ended ones, sub-agents, pitwall's own.
-   * The whole recap is fetched with recapPath() (D14).
+   * `--no-recaps`, and for sessions pitwall doesn't recap: sub-agents and pitwall's own, which are
+   * never listed, and an ended or finished one until you ask for one with recapRefreshPath(). The
+   * whole recap is fetched with recapPath() (D14).
    */
   recap?: RecapSummary;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
@@ -1550,8 +1551,9 @@ export interface SessionRecap {
   /**
    * 'pitwall' for pitwall's own recap. 'claude-code' when only Claude Code's `away_summary` is
    * there, before pitwall's first recap or while the day's budget is spent: then `why` is empty,
-   * `now` is the away_summary, `next` is empty, and `waitingOn` is 'nothing', so it never puts a
-   * session in Needs you.
+   * `now` is the away_summary, `next` is empty, `title` is empty, `waitingOn` is 'nothing', so it
+   * never puts a session in Needs you, and `at` and `throughAt` are the away_summary's time. Only
+   * for a session pitwall recaps by itself: its process running, not ended or finished.
    */
   source: 'pitwall' | 'claude-code';
   /** True when the session has activity newer than `throughAt`. */
