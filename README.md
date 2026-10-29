@@ -64,7 +64,7 @@ node dist/cli.js ~/code
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked. The session sees it as a message from another session, so a message can't approve a permission prompt.
   - **Attach** to a background session, in a terminal in the page. Opening a running one's view attaches to it by default, since that's where it takes input. One that has finished asks first, because attaching restarts it.
-  - **Start** a session with `claude --bg`, and **stop** or **remove** a background one with `claude stop` or `claude rm`, after a confirmation.
+  - **Start** a session with `claude --bg`, and **stop** or **remove** a background one with `claude stop` or `claude rm`, after a confirmation. A session pitwall starts or resumes gets your environment without pitwall's own variables, and with PATH's absolute entries only, a leading `~` expanded, so a relative entry such as `./node_modules/.bin` isn't on it ([D23](docs/decisions.md#d23---a-childs-path-keeps-only-its-absolute-directories)).
   - **End** a running interactive session, after a confirmation, by sending its Claude Code process SIGTERM, never SIGKILL. Its terminal goes back to the shell, and its conversation is kept, but a reply in progress is lost. One that's still working asks again, naming what's running. pitwall never ends a relay, its own or another pitwall's, or a process it runs under.
   - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg`.
   - **Open** a session's directory in VS Code or Cursor.
@@ -203,7 +203,7 @@ Apache-2.0: see [`LICENSE`](LICENSE). The bundled fonts and icons keep their own
 
 ## More
 
-- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D21, with their reasoning.
+- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D23, with their reasoning.
 - **[`PLAN.md`](PLAN.md):** the living plan: status, what's next, open questions, and each milestone's work.
 - **[`docs/design-system.md`](docs/design-system.md):** the web UI's design system: tokens, layout, components, content and accessibility.
 - **[`docs/spikes/`](docs/spikes/):** the experiments behind the decisions, one write-up each.

@@ -59,7 +59,7 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 ```
 PLAN.md                  the living plan: status, decisions, milestones
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
-docs/decisions.md        settled decisions, D1 to D22, with their reasoning
+docs/decisions.md        settled decisions, D1 to D23, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
