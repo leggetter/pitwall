@@ -17,6 +17,7 @@ import {
   setNameOf,
   stripSystemReminders,
   TITLE_MAX,
+  turnSignalOf,
   userPromptOf,
   type Fields,
   type TranscriptReaderOptions,
@@ -398,6 +399,16 @@ describe("applyEntry: the turn's end and the newest prompt (W69)", () => {
     const later = fieldsOf(prompt, user([toolResult('r')]), user('<cross-session-message from="x">hi</cross-session-message>', { isMeta: true, origin: { kind: 'peer' } }));
     expect(later.lastPromptMs).toBe(Date.parse(prompt.timestamp as string));
     expect(fieldsOf(user('no time', { timestamp: undefined })).lastPromptMs).toBeUndefined();
+  });
+
+  it('keeps the turn ended through a message from another session or a task notification, so a question stays in Needs you until a turn runs (W102)', () => {
+    const asked = () => [user('go'), assistant([text('Tea or coffee?')]), turnDuration()];
+    const message = user('Another Claude session sent a message:\n<cross-session-message from="pitwall-test-peer">hi</cross-session-message>', { isMeta: true, origin: { kind: 'peer' } });
+    const notification = user('<task-notification><status>completed</status></task-notification>', { origin: { kind: 'task-notification' } });
+    expect(fieldsOf(...asked(), message).turnEnded).toBe(true);
+    expect(fieldsOf(...asked(), notification).turnEnded).toBe(true);
+    // Claude's first entry runs one, a thinking block's alone included.
+    expect(fieldsOf(...asked(), notification, assistant([{ type: 'thinking', thinking: 'made up', signature: 'sig' }], 'm2')).turnEnded).toBe(false);
   });
 
   it('reads turn_duration lines through the pre-filter', () => {
@@ -1120,3 +1131,33 @@ function lineOfBytes(bytes: number): string {
   const overhead = Buffer.byteLength(`${JSON.stringify({ type: 'attachment', body: '' })}\n`);
   return `${JSON.stringify({ type: 'attachment', body: 'x'.repeat(bytes - overhead) })}\n`;
 }
+
+describe('turnSignalOf: what an entry says of the turn, for W69 and the working line (W102)', () => {
+  it('ends at Claude Code\'s mark, and runs for Claude\'s entries, a thinking block\'s alone included, a prompt and a tool result', () => {
+    expect(turnSignalOf(turnDuration())).toBe('ended');
+    expect(turnSignalOf(assistant([{ type: 'thinking', thinking: 'made up', signature: 'sig' }]))).toBe('running');
+    expect(turnSignalOf(assistant([text('Done.')]))).toBe('running');
+    expect(turnSignalOf(user('A made-up prompt.'))).toBe('running');
+    expect(turnSignalOf(user([toolResult('ok')]))).toBe('running');
+    expect(turnSignalOf(queued('Typed mid-turn.', { origin: { kind: 'human' } }))).toBe('running');
+  });
+
+  it('says a message or a task notification arrived, between turns or mid-turn', () => {
+    expect(turnSignalOf(user('Another Claude session sent a message:\n<cross-session-message from="x">hi</cross-session-message>', { isMeta: true }))).toBe('arrived');
+    expect(turnSignalOf(user('<agent-message from="a1">report</agent-message>', { isMeta: true, origin: { kind: 'peer', from: 'a1' } }))).toBe('arrived');
+    expect(turnSignalOf(user('<task-notification><status>completed</status></task-notification>'))).toBe('arrived');
+    expect(turnSignalOf(user('Build finished', { origin: { kind: 'task-notification' } }))).toBe('arrived');
+    expect(turnSignalOf(queued('<task-notification><status>failed</status></task-notification>', { commandMode: 'task-notification', origin: { kind: 'task-notification' } }))).toBe('arrived');
+  });
+
+  it('says nothing for a sidechain\'s entries, a meta entry, a local command, a compaction and other system entries', () => {
+    expect(turnSignalOf(turnDuration({ isSidechain: true }))).toBeUndefined();
+    expect(turnSignalOf(assistant([text('sub-agent')], 's1', { isSidechain: true }))).toBeUndefined();
+    expect(turnSignalOf(user('<local-command-caveat>Caveat: made up.</local-command-caveat>', { isMeta: true }))).toBeUndefined();
+    expect(turnSignalOf(user('<command-name>/model</command-name>', { promptSource: 'typed' }))).toBeUndefined();
+    expect(turnSignalOf(user('<local-command-stdout>Set model</local-command-stdout>'))).toBeUndefined();
+    expect(turnSignalOf(user('This session is being continued…', { isCompactSummary: true }))).toBeUndefined();
+    expect(turnSignalOf({ type: 'system', subtype: 'away_summary', content: 'recap' })).toBeUndefined();
+    expect(turnSignalOf({ type: 'attachment', attachment: { type: 'note' } })).toBeUndefined();
+  });
+});

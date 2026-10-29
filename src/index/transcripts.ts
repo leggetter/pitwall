@@ -496,7 +496,7 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   }
   if (type === 'system') {
     // Claude Code writes it when a turn ends, after the turn's last entry (spike 007, finding 4). Not activity.
-    if (entry.subtype === 'turn_duration' && entry.isSidechain !== true) fields.turnEnded = true;
+    if (turnSignalOf(entry) === 'ended') fields.turnEnded = true;
     return;
   }
   if (type !== 'user' && type !== 'assistant') return;
@@ -515,7 +515,7 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if (type === 'assistant') {
     // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
     // sub-agent's, which can run on after the main turn has ended.
-    if (fields.turnEnded !== undefined && entry.isSidechain !== true) fields.turnEnded = false;
+    if (fields.turnEnded !== undefined && turnSignalOf(entry) === 'running') fields.turnEnded = false;
     const text = assistantTextOf(entry);
     if (text === undefined) return;
     const sameMessage =
@@ -534,8 +534,10 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   }
   // Only a prompt or a tool's result means a turn is running again. A meta entry, a local command such
   // as /model and its output, or a manual /compact's summary come with no turn and no turn_duration
-  // after them, so they leave the last turn's end, and the question it asked, as they were.
-  if (fields.turnEnded !== undefined && (prompt !== undefined || isToolResult(entry))) fields.turnEnded = false;
+  // after them, so they leave the last turn's end, and the question it asked, as they were. So does a
+  // message or a task notification that arrived ('arrived'): one isn't always followed by a turn, and
+  // a question should stay in Needs you until one runs (W102 reads it the other way, turnSignalOf()).
+  if (fields.turnEnded !== undefined && turnSignalOf(entry) === 'running') fields.turnEnded = false;
   if ((prompt !== undefined || typed) && at !== undefined && (fields.lastPromptMs === undefined || at > fields.lastPromptMs)) {
     fields.lastPromptMs = at;
   }
@@ -695,6 +697,53 @@ export function queuedEntryOf(entry: Record<string, unknown>): Record<string, un
   for (const key of ['timestamp', 'isSidechain', 'sessionKind'] as const) if (entry[key] !== undefined) user[key] = entry[key];
   if (attachment.isMeta === true || entry.isMeta === true) user.isMeta = true;
   return user;
+}
+
+/**
+ * What an entry says of the session's turn: one rule for W69's turn's end (applyEntry(), for askedYou
+ * and End session's turnState) and the conversation page's (ConversationPage.turnEnded, W102). Never
+ * for a sidechain's entry, a sub-agent's, which can run on after the main turn has ended.
+ * - 'ended': Claude Code's mark that a turn ended, a `system` entry of subtype `turn_duration`
+ *   (spike 007, finding 4).
+ * - 'running': an entry that runs a turn: any assistant entry, a thinking block's alone included; a
+ *   prompt you typed (promptTextOf()), mid-turn ones included (W99); a tool's result.
+ * - 'arrived': a message from another session or a sub-agent, or a task notification. Claude Code
+ *   starts a turn for most that come between turns (the W102 review: 428 of 438 task notifications
+ *   after a turn's end), but not all. The working line reads it as running, since Claude Code's own
+ *   status says first whether it works; W69 leaves the turn's end as it was, so a question asked
+ *   stays in Needs you, and End session's check reads the session as idle until Claude's first entry,
+ *   a few seconds later.
+ * Undefined for anything else: a meta entry, a local command and its output, a compaction, a slash
+ * command's wrapper, other system entries and attachments.
+ */
+export type TurnSignal = 'ended' | 'running' | 'arrived';
+
+export function turnSignalOf(entry: Record<string, unknown>): TurnSignal | undefined {
+  if (entry.isSidechain === true) return undefined;
+  if (entry.type === 'attachment') {
+    // What arrived mid-turn, as the user entry it stands for (W99).
+    const queued = queuedEntryOf(entry);
+    return queued === undefined ? undefined : turnSignalOf(queued);
+  }
+  if (entry.type === 'system') return entry.subtype === 'turn_duration' ? 'ended' : undefined;
+  if (entry.type === 'assistant') return 'running';
+  if (entry.type !== 'user') return undefined;
+  if (isToolResult(entry) || promptTextOf(entry) !== undefined) return 'running';
+  return arrived(entry) ? 'arrived' : undefined;
+}
+
+/** The longest text read to tell what arrived: the markers are at its start. */
+const ARRIVED_READ_MAX = 4 * 1024;
+
+/** A user entry that's a message from another session or a sub-agent, or a task notification, by its origin or how it starts. */
+function arrived(entry: Record<string, unknown>): boolean {
+  const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
+  if (origin === 'peer' || origin === 'task-notification') return true;
+  const message = entry.message;
+  const raw = isRecord(message) ? textOf(message.content) : undefined;
+  if (raw === undefined) return false;
+  const text = stripSystemReminders(cap(raw, ARRIVED_READ_MAX)).trim();
+  return text.startsWith(CROSS_SESSION_PREFIX) || text.startsWith('<task-notification>') || CROSS_SESSION_TAGS.some((tag) => text.startsWith(`<${tag}`));
 }
 
 /** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
