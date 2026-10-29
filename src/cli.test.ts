@@ -5,7 +5,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
@@ -484,11 +484,17 @@ echo '{"data":{"search":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCurs
 
 /**
  * Stand-ins for `open` (macOS) and `xdg-open` (Linux), first on the CLI's PATH
- * so no test ever opens a real browser. Each call appends its argument count
- * and then each argument, one per line, to $PITWALL_TEST_OPEN_LOG.
+ * so no test ever opens a real browser. Each call writes what it saw of its
+ * environment to $PWTEST_OPEN_LOG.env, then appends its argument count and
+ * each argument, one per line, to $PWTEST_OPEN_LOG. Not PITWALL_*, which
+ * childEnvironment() keeps from the opener (W98).
  */
 const FAKE_OPENER = `#!/bin/sh
-printf '%s\\n' "$#" "$@" >> "\${PITWALL_TEST_OPEN_LOG:?}"
+{
+  printf 'PATH=%s\\n' "$PATH"
+  if [ -n "\${PITWALL_HOME+set}" ]; then echo "PITWALL_HOME=set"; else echo "PITWALL_HOME=unset"; fi
+} > "\${PWTEST_OPEN_LOG:?}.env"
+printf '%s\\n' "$#" "$@" >> "\${PWTEST_OPEN_LOG:?}"
 `;
 
 /** Each recorded call of the fake opener, as its list of arguments. */
@@ -565,7 +571,7 @@ describe('pitwall (the process)', () => {
         ...process.env,
         PITWALL_NO_OPEN: '1',
         PITWALL_HOME: fresh('home'),
-        PITWALL_TEST_OPEN_LOG: fresh('opened'),
+        PWTEST_OPEN_LOG: fresh('opened'),
         PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
         ...env,
       },
@@ -781,7 +787,7 @@ describe('pitwall (the process)', () => {
     async function startOpening(env: NodeJS.ProcessEnv = {}) {
       const home = fresh('home');
       const log = fresh('opened');
-      const started = await start([], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log, ...env });
+      const started = await start([], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PWTEST_OPEN_LOG: log, ...env });
       await waitUntil(async () => (await openerCalls(log)).length > 0);
       return { ...started, home, log };
     }
@@ -812,6 +818,21 @@ describe('pitwall (the process)', () => {
       expect(output.code).toBe(0);
       expect(output.stdout + output.stderr).not.toContain(token);
       expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    // W96's finding (W98): an empty or relative PATH entry would find `open` in the directory pitwall started in.
+    it('gives the opener the environment every child gets: no PITWALL_ variables, and only the absolute directories on PATH', async () => {
+      const path = `${bin}${delimiter}${delimiter}.${delimiter}relative-bin${delimiter}${process.env.PATH ?? ''}${delimiter}`;
+      const { child, result, log } = await startOpening({ PATH: path });
+      const seen = await readFile(`${log}.env`, 'utf8');
+      expect(seen).toContain('PITWALL_HOME=unset\n');
+      const entries = /^PATH=(.*)$/m.exec(seen)?.[1]?.split(delimiter) ?? [];
+      expect(entries[0]).toBe(bin);
+      expect(entries.filter((entry) => !isAbsolute(entry))).toEqual([]);
+      expect(entries).toEqual(path.split(delimiter).filter((entry) => isAbsolute(entry)));
+
+      child.kill('SIGTERM');
+      expect((await result).code).toBe(0);
     }, 30_000);
 
     it('deletes the launch file on SIGINT too', async () => {
@@ -942,7 +963,7 @@ describe('pitwall (the process)', () => {
       const link = fresh('link');
       await symlink(target, link);
       const log = fresh('opened');
-      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: link, PITWALL_TEST_OPEN_LOG: log }));
+      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: link, PWTEST_OPEN_LOG: log }));
       expect(result.code).toBe(1);
       expect(result.stderr).toContain(`pitwall: ${link} is a symbolic link.`);
       expect(result.stdout).not.toContain('running at');
@@ -954,7 +975,7 @@ describe('pitwall (the process)', () => {
       await mkdir(home);
       await chmod(home, 0o755);
       const log = fresh('opened');
-      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log }));
+      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PWTEST_OPEN_LOG: log }));
       expect(result.code).toBe(1);
       expect(result.stderr).toContain(`pitwall: ${home} can be read or entered by other users (mode 755). Run chmod 700 ${home}`);
       expect(result.stdout).not.toContain('running at');
@@ -976,7 +997,7 @@ describe('pitwall (the process)', () => {
       const marker = fresh('marker');
       const log = fresh('opened');
       const home = fresh('home');
-      const env = { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log, PITWALL_OPEN_MARKER: marker };
+      const env = { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PWTEST_OPEN_LOG: log, PITWALL_OPEN_MARKER: marker };
 
       const first = await start([], env);
       await waitUntil(async () => (await openerCalls(log)).length > 0);
@@ -1006,7 +1027,7 @@ describe('pitwall (the process)', () => {
           run(['--port', String(squatter.port), tmp], {
             PITWALL_TOKEN: token,
             PITWALL_NO_OPEN: '0',
-            PITWALL_TEST_OPEN_LOG: log,
+            PWTEST_OPEN_LOG: log,
             PITWALL_OPEN_MARKER: marker,
           }),
         );
@@ -1119,7 +1140,7 @@ describe('npm run dev (scripts/dev.ts)', () => {
         PITWALL_DEV_PORT: String(port),
         PITWALL_NO_OPEN: '0',
         PITWALL_HOME: files.home,
-        PITWALL_TEST_OPEN_LOG: files.log,
+        PWTEST_OPEN_LOG: files.log,
         PITWALL_TEST_DEV_LOG: files.devLog,
       },
     });
@@ -1505,7 +1526,7 @@ describe('npm run dev: what the CLI prints on every restart (W51)', () => {
       PITWALL_DEV_PORT: String(port),
       PITWALL_NO_OPEN: '0',
       PITWALL_HOME: join(tmp, `home-${++n}`),
-      PITWALL_TEST_OPEN_LOG: join(tmp, `opened-${n}`),
+      PWTEST_OPEN_LOG: join(tmp, `opened-${n}`),
       PITWALL_TEST_DEV_LOG: devLog,
     };
     delete childEnv.PITWALL_TOKEN;

@@ -1,8 +1,10 @@
 // The command runner, on real child processes. They're `node -e` scripts,
 // never `claude`.
-import { realpath } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { absoluteSearchPath } from '../index/exec.js';
 import { childEnvironment, MAX_OUTPUT_BYTES, runCommand } from './command.js';
 import { allowSignalsTo } from '../test/noClaude.js';
 
@@ -179,5 +181,59 @@ describe('childEnvironment', () => {
 
   it('drops undefined values and keeps the rest exactly as they are', () => {
     expect(childEnvironment({ ...KEPT_BASE, UNSET: undefined, SPACED: ' a b ', EMPTY: '' })).toEqual({ ...KEPT_BASE, SPACED: ' a b ', EMPTY: '' });
+  });
+
+  // W96's finding (W98): an empty or relative entry finds a bare command in the child's working directory.
+  describe.skipIf(process.platform === 'win32')('PATH', () => {
+    it('keeps only its absolute directories, in their order, duplicates included', () => {
+      expect(absoluteSearchPath('/opt/homebrew/bin:/usr/bin:/bin')).toBe('/opt/homebrew/bin:/usr/bin:/bin');
+      expect(absoluteSearchPath('.:/usr/bin')).toBe('/usr/bin');
+      expect(absoluteSearchPath('/usr/bin::/bin')).toBe('/usr/bin:/bin');
+      expect(absoluteSearchPath(':/usr/bin')).toBe('/usr/bin');
+      expect(absoluteSearchPath('/usr/bin:')).toBe('/usr/bin');
+      expect(absoluteSearchPath('/b:bin:./bin:../bin:node_modules/.bin:/a')).toBe('/b:/a');
+      // No shell expanded it, so it's relative: Node would look in <cwd>/~/.dotnet/tools.
+      expect(absoluteSearchPath('/usr/bin:~/.dotnet/tools')).toBe('/usr/bin');
+      expect(absoluteSearchPath('/usr/bin:/bin:/usr/bin')).toBe('/usr/bin:/bin:/usr/bin');
+      // An absolute path is kept as it's written, spaces and all.
+      expect(absoluteSearchPath('/Applications/My Tools/bin:/usr/bin/../bin')).toBe('/Applications/My Tools/bin:/usr/bin/../bin');
+    });
+
+    it('is undefined when no absolute directory is left', () => {
+      for (const value of ['', ':', '::', '.', 'a::b', 'bin:./x:']) expect(absoluteSearchPath(value), JSON.stringify(value)).toBeUndefined();
+    });
+
+    it('gives a child PATH cut that way, and leaves PATH out, never empty, when nothing is left', () => {
+      expect(childEnvironment({ PATH: '.:/usr/bin::bin:/bin:', HOME: '/Users/example' })).toEqual({ PATH: '/usr/bin:/bin', HOME: '/Users/example' });
+      // An empty PATH searches the working directory; none searches the system's default.
+      expect(childEnvironment({ PATH: '.:', HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
+      expect(childEnvironment({ PATH: '', HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
+      expect(childEnvironment({ HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
+    });
+
+    it('cuts PATH alone: other variables with paths in them, and a lowercase path, are kept as they are', () => {
+      const others = { MANPATH: ':/usr/share/man', NODE_OPTIONS: '--require ./x.js', CDPATH: '.:/Users/example', path: '.:/usr/bin' };
+      expect(childEnvironment({ PATH: '/usr/bin', ...others })).toEqual({ PATH: '/usr/bin', ...others });
+    });
+
+    it('still drops a PATH that holds the token', () => {
+      expect(childEnvironment({ PATH: `/usr/bin:/tmp/${TOKEN}`, HOME: '/Users/example' }, TOKEN)).toEqual({ HOME: '/Users/example' });
+    });
+
+    // With fakes only: a made-up program planted in the working directory, as in /tmp, where stop and remove run.
+    it("keeps runCommand, which spawn, stop, remove and resume use, from finding a bare command in its working directory", async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'pitwall-test-planted-'));
+      try {
+        await writeFile(join(dir, 'pitwall-test-planted'), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+        const unfiltered = await runCommand('pitwall-test-planted', [], { ...base, cwd: dir, env: { PATH: '.:/usr/bin' } });
+        expect(unfiltered).toMatchObject({ kind: 'exited', code: 0, stdout: 'planted\n' });
+        for (const PATH of ['.:/usr/bin', '/usr/bin::/bin', '/usr/bin:', '']) {
+          const result = await runCommand('pitwall-test-planted', [], { ...base, cwd: dir, env: childEnvironment({ PATH }) });
+          expect(result, JSON.stringify(PATH)).toEqual({ kind: 'failed', reason: 'not-found', message: 'pitwall-test-planted was not found' });
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 });

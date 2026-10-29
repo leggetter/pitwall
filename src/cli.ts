@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
+import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
@@ -371,12 +372,15 @@ export function browserCommand(file: string, platform: NodeJS.Platform = process
 }
 
 /**
- * Opens the file with execFile, so no shell parses it. A failure is reported,
- * not fatal, with what to open instead (`fixed`: the token isn't printed).
+ * Opens the file with execFile, so no shell parses it, in the environment
+ * every child gets (childEnvironment()), so `open` or `xdg-open` is never
+ * found in the directory pitwall started in through an empty or relative
+ * PATH entry (W98). A failure is reported, not fatal, with what to open
+ * instead (`fixed`: the token isn't printed).
  */
 export function openBrowser(file: string, fixed: boolean): void {
   const [command, args] = browserCommand(file);
-  const child = execFile(command, args, (error) => {
+  const child = execFile(command, args, { env: childEnvironment(process.env) }, (error) => {
     // On one line: execFile's message ends with a line break and the opener's stderr.
     if (error) console.error(`pitwall: couldn't open a browser (${error.message.trim().replace(/\s+/g, ' ')}). ${openInsteadHint(fixed)}`);
   });

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 
 export interface RunOptions {
   cwd?: string;
@@ -85,15 +86,37 @@ const DROPPED_NAMES: ReadonlySet<string> = new Set([
 // CLAUDE.md), never more.
 
 /**
+ * PATH with only its absolute directories, in their order, or undefined when
+ * none is left (W96's finding, W98). An empty entry (`a::b`, or a leading or
+ * trailing `:`), a relative one (`.`, `bin`, a `~/bin` no shell expanded) and
+ * an empty PATH all make a bare command, such as `claude`, `gh` or `git`,
+ * resolve in the child's working directory: Node's spawn and node-pty's execvp
+ * search PATH as the shell does. pitwall runs gh from the temp directory,
+ * which on Linux every local user can write to, so another user could plant
+ * `/tmp/gh` there. A PATH with nothing left is left out rather than set
+ * empty: without one, the child searches the system's default, `/usr/bin:/bin`
+ * on macOS, never the working directory.
+ */
+export function absoluteSearchPath(value: string): string | undefined {
+  const kept = value.split(path.delimiter).filter((entry) => path.isAbsolute(entry));
+  return kept.length > 0 ? kept.join(path.delimiter) : undefined;
+}
+
+/**
  * The environment for every process pitwall starts: the index's `claude
- * agents` and `git` (runFile, below), spawn, stop and remove
- * (server/actions.ts), the attach PTY (server/attach.ts) and the relay
- * (server/relay.ts). It's `env` without the variables named above, and, when
+ * agents`, `git` and `ps` (runFile, below), the PR poller's `gh`
+ * (prs/fetch.ts, through runFile), End session's `/bin/ps`
+ * (server/processes.ts), spawn, stop, remove and resume (server/actions.ts),
+ * the attach PTY (server/attach.ts), the relay and its `claude --version`
+ * (server/relay.ts), the editors (server/editors.ts) and the CLI's browser
+ * opener (cli.ts). It's `env` without the variables named above, and, when
  * `token` is given, without any variable whose value contains it, so a child
  * can neither drive pitwall nor pass for the Claude Code session pitwall runs
- * inside. The CLI also deletes token-valued variables from process.env when
- * it starts, so a caller with no token to pass, such as runFile or the relay,
- * is covered too. server/command.ts re-exports it.
+ * inside; and with PATH cut to its absolute directories (absoluteSearchPath()),
+ * so no bare command is found in the child's working directory. The CLI also
+ * deletes token-valued variables from process.env when it starts, so a caller
+ * with no token to pass, such as runFile or the relay, is covered too.
+ * server/command.ts re-exports it.
  */
 export function childEnvironment(env: NodeJS.ProcessEnv, token?: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -103,6 +126,12 @@ export function childEnvironment(env: NodeJS.ProcessEnv, token?: string): Record
     if (DROPPED_PREFIXES.some((prefix) => upper.startsWith(prefix)) || DROPPED_NAMES.has(upper)) continue;
     // An empty token would match every value.
     if (token !== undefined && token !== '' && value.includes(token)) continue;
+    // The search path: `PATH` exactly, as libuv and execvp read it, but any case on Windows, whose names have none.
+    if (process.platform === 'win32' ? upper === 'PATH' : name === 'PATH') {
+      const searchPath = absoluteSearchPath(value);
+      if (searchPath !== undefined) result[name] = searchPath;
+      continue;
+    }
     result[name] = value;
   }
   return result;
