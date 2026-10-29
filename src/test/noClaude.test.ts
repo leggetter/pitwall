@@ -2,6 +2,9 @@
 // test file. Every command here names a claude or a gh that doesn't exist, so
 // even a broken guard couldn't start Claude Code or reach GitHub.
 import { exec, execFile, execFileSync, execSync, spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAgentsSource } from '../index/agents.js';
@@ -12,7 +15,7 @@ import { spawnPty } from '../server/pty.js';
 // Read before this file loads the guard itself, so it shows the setup file did.
 const installedBySetup =
   (globalThis as Record<symbol, { installed?: boolean } | undefined>)[Symbol.for('pitwall.noClaude')]?.installed === true;
-const { allowSignalsTo, failOnRefusals, takeRefusals } = await import('./noClaude.js');
+const { allowSignalsTo, failOnGhCalls, failOnRefusals, ghStandIn, takeGhCalls, takeRefusals } = await import('./noClaude.js');
 
 const CLAUDE = '/nonexistent/pitwall-test/claude';
 const REFUSED = /would run claude without PITWALL_LIVE=1/;
@@ -179,6 +182,53 @@ describe('the no-claude guard', () => {
     process.env.PITWALL_LIVE = '1';
     expect(spawnSync(GH, ['api', 'graphql']).error).toMatchObject({ code: 'ENOENT' });
     expect(takeRefusals()).toEqual([]);
+  });
+
+  // W93's review: a second layer for gh, which a process at any depth finds first on PATH.
+  describe('the refusing gh first on PATH', () => {
+    /** A grandchild of this test, which the in-process wrapper can't see: node, running `gh <args>` by name. */
+    const grandchildRuns = (args: string[], env: NodeJS.ProcessEnv = process.env) =>
+      spawnSync(
+        process.execPath,
+        ['-e', `process.exit(require('node:child_process').spawnSync('gh', ${JSON.stringify(args)}, { stdio: 'ignore' }).status ?? 99)`],
+        { env },
+      ).status;
+
+    it('is first on PATH, with an empty GH_CONFIG_DIR and no GitHub token in the environment', () => {
+      const standIn = ghStandIn();
+      expect(standIn).toBeDefined();
+      expect(process.env.PATH?.split(delimiter)[0]).toBe(standIn?.bin);
+      expect(statSync(join(standIn!.bin, 'gh')).mode & 0o111).not.toBe(0);
+      expect(readdirSync(process.env.GH_CONFIG_DIR!)).toEqual([]);
+      for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) expect(process.env[name], name).toBeUndefined();
+    });
+
+    // The positive control: --version, so even a broken guard that reached a real gh would ask GitHub nothing.
+    it('catches gh run by a grandchild, which exits 1, and fails the test that started it', () => {
+      expect(grandchildRuns(['--version'])).toBe(1);
+      expect(() => failOnGhCalls()).toThrow(/a process a test started ran gh without PITWALL_LIVE=1, 1 time/);
+      expect(takeGhCalls()).toEqual([]);
+    });
+
+    it('catches gh through a shell two levels down, and writes down each call', () => {
+      const status = spawnSync(process.execPath, ['-e', "process.exit(require('node:child_process').spawnSync('/bin/sh', ['-c', 'gh --version; gh --help'], { stdio: 'ignore' }).status ?? 99)"]).status;
+      expect(status).toBe(1);
+      const calls = takeGhCalls();
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatch(/^gh --version {2}\(pid \d+, parent \d+\)$/);
+      expect(calls[1]).toMatch(/^gh --help /);
+    });
+
+    it('lets a test’s own fake gh win, when the test puts it first on the PATH it passes', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'pitwall-test-fake-gh-'));
+      try {
+        writeFileSync(join(dir, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        expect(grandchildRuns(['--version'], { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH ?? ''}` })).toBe(0);
+        expect(takeGhCalls()).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   it('lets claude through with PITWALL_LIVE=1, as the live checks need', () => {
