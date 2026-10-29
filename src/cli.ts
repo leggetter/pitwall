@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-// The `pitwall` command: parse the roots, start the indexer and the server,
-// print the URL and open the browser.
+// The `pitwall` command: parse the arguments and read the config file
+// (src/config.ts, W103), start the indexer and the server, print the URL and
+// open the browser.
 //
 // The browser is opened through a launch file (D7, src/server/launch.ts), never
 // with the token URL on a command line, because `ps` shows every process's
@@ -22,6 +23,7 @@ import { closeSync, existsSync, openSync, readFileSync, realpathSync, statSync, 
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { ConfigError, loadConfig, type LoadedConfig } from './config.js';
 import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
 import { childEnvironment } from './server/command.js';
@@ -41,12 +43,14 @@ export const INTERVAL_MAX_SECONDS = 300;
  */
 export const TOKEN_MIN_DIFFERENT = 8;
 
-export const USAGE = `Usage: pitwall [root...] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
+export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
-The roots default to the current directory.
+The roots default to the config file's, then to the current directory.
 
 Options:
+  --config <path>       Read this config file instead of ~/.pitwall/config.json.
+                        It must exist.
   --port <n>            Port on 127.0.0.1. Default ${DEFAULT_PORT}, or a free port if
                         ${DEFAULT_PORT} is busy. 0 always picks a free port. A pinned
                         tab needs the same port every run, so give one with --port
@@ -60,6 +64,34 @@ Options:
                         github.com. gh must be installed and logged in.
   -h, --help            Show this help.
   -v, --version         Show the version.
+
+Config file:
+  pitwall reads config.json in ~/.pitwall, or in PITWALL_HOME when that's
+  set, if it's there, or else the file --config names. It's JSON, with //
+  and /* */ comments and trailing commas allowed:
+
+    {
+      "roots": [
+        "~/oss",
+        { "path": "~/work", "github": { "owners": ["example-co"] } }
+      ]
+    }
+
+  roots                 The roots to watch when none are given as arguments.
+                        Each is a path, absolute or starting with ~/, or an
+                        object with "path" and "github".
+  github.owners         Whose pull requests a root lists for repos it has no
+                        clone of: a list of GitHub owners, "all" for every
+                        owner no other root lists, or "none" for its own
+                        clones only. Without it, each owner goes to the root
+                        with the most clones from it.
+
+  A flag wins over an environment variable, which wins over the file. Roots
+  given as arguments replace the file's, and each keeps its "github" settings
+  when it's the same directory as one in the file. A bad value stops pitwall,
+  and an unknown key is a warning. The file must be yours, and not writable by
+  group or others. It can't hold the token: PITWALL_TOKEN comes from the
+  environment only.
 
 The browser is opened through a launch file in ~/.pitwall (mode 0600, in a
 0700 directory), so the token never appears in a command line. The file is
@@ -84,8 +116,8 @@ Environment:
                          from a .env file; npm run dev also reads it from the
                          pitwall repo's own .env.
   PITWALL_NO_OPEN        Set to 1 to skip opening the browser.
-  PITWALL_HOME           Where launch files and attachments go, instead of
-                         ~/.pitwall.
+  PITWALL_HOME           Where config.json, launch files and attachments are,
+                         instead of ~/.pitwall.
   PITWALL_OPEN_MARKER    A file path. Open the browser only if it doesn't exist
                          yet, then create it. npm run dev sets it, so the
                          browser opens once per dev run, not on every restart.
@@ -124,8 +156,10 @@ export type CliCommand =
   | { kind: 'version' }
   | {
       kind: 'run';
-      /** As given, not yet resolved. Empty means the current directory. */
+      /** As given, not yet resolved. Empty means the config file's roots, else the current directory. */
       roots: string[];
+      /** From `--config <path>`, as given. Undefined means config.json in pitwall's folder, if it exists. */
+      config?: string;
       /** Undefined means the default port, with fallback. */
       port?: number;
       /** From `--interval <seconds>`. Undefined means the indexer's default. */
@@ -143,6 +177,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       allowPositionals: true,
       strict: true,
       options: {
+        config: { type: 'string' },
         port: { type: 'string' },
         interval: { type: 'string' },
         'no-open': { type: 'boolean' },
@@ -158,9 +193,11 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (values.help) return { kind: 'help' };
   if (values.version) return { kind: 'version' };
 
+  if (values.config === '') throw new UsageError('--config needs a path');
   return {
     kind: 'run',
     roots: positionals,
+    ...(values.config === undefined ? {} : { config: values.config }),
     ...(values.port === undefined ? {} : { port: parsePort(values.port) }),
     ...(values.interval === undefined ? {} : { intervalMs: parseInterval(values.interval) * 1000 }),
     open: !values['no-open'] && env.PITWALL_NO_OPEN !== '1',
@@ -204,6 +241,24 @@ export function resolveRoots(roots: string[], cwd: string): string[] {
     if (!isDirectory) throw new UsageError(`root is not a directory: ${root}`);
   }
   return absolute;
+}
+
+/**
+ * The roots to watch: the arguments, resolved by resolveRoots(); without any,
+ * the config file's, each checked as an argument is, with its key and the file
+ * named in the message; without those, the current directory. Arguments
+ * replace the file's roots rather than adding to them (W103).
+ */
+export function effectiveRoots(args: string[], config: Pick<LoadedConfig, 'file' | 'roots'>, cwd: string): string[] {
+  if (args.length > 0 || config.roots === undefined) return resolveRoots(args, cwd);
+  return config.roots.map((root) => {
+    try {
+      return resolveRoots([root.path], cwd)[0]!;
+    } catch (error) {
+      if (error instanceof UsageError) throw new UsageError(`${error.message} ("${root.key}" in ${config.file})`);
+      throw error;
+    }
+  });
 }
 
 /**
@@ -415,6 +470,7 @@ export interface MainOptions {
 
 export async function main(argv: string[] = process.argv.slice(2), options: MainOptions = {}): Promise<number> {
   let command: CliCommand;
+  let config: LoadedConfig;
   let roots: string[];
   let token: string;
   // Where the launch file goes, when this run opens the browser.
@@ -441,10 +497,13 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       console.error(`pitwall: ${CWD_GONE_MESSAGE}`);
       return 1;
     }
-    roots = resolveRoots(command.roots, cwd);
+    // The config file (W103, D24), before the roots, which can come from it.
+    config = loadConfig({ ...(command.config === undefined ? {} : { file: command.config }), cwd });
+    for (const warning of config.warnings) console.error(`pitwall: ${warning}`);
+    roots = effectiveRoots(command.roots, config, cwd);
     token = resolveToken();
   } catch (error) {
-    if (!(error instanceof UsageError)) throw error;
+    if (!(error instanceof UsageError || error instanceof ConfigError)) throw error;
     console.error(`pitwall: ${error.message}\nRun pitwall --help for usage.`);
     return 1;
   }
@@ -554,6 +613,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   const url = `${server.url}/#token=${token}`;
   if (command.port === undefined && server.port !== DEFAULT_PORT) console.log(fallbackPortMessage(DEFAULT_PORT, server.port));
   for (const line of runningLines(server.url, token, fixed)) console.log(line);
+  if (config.found) console.log(`Using the config file ${config.file}`);
   console.log(`Watching ${roots.length === 1 ? 'root' : 'roots'}: ${roots.join(', ')}, polling every ${intervalMs / 1000}s`);
   // Only now that this process's own server is listening, so the browser is
   // never sent to whatever else holds the port.

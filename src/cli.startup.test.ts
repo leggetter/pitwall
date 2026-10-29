@@ -2,8 +2,8 @@
 // server replaced: the token is scrubbed from process.env before anything that
 // starts a child process exists, and a deleted current directory stops pitwall
 // before any of them. The CLI as a process is tested in cli.test.ts.
-import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
+import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,14 +61,18 @@ const gone = (): string => {
 describe('main(): startup', () => {
   const saved = { ...process.env };
   let listeners: Map<string, Function[]>;
+  // Each test's own PITWALL_HOME, so main() never reads the real ~/.pitwall/config.json (W103).
+  let pitwallHome: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     seen.calls.length = 0;
     listeners = new Map(SIGNALS.map((signal) => [signal, process.listeners(signal)]));
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    pitwallHome = await mkdtemp(join(tmpdir(), 'pitwall-test-home-'));
+    process.env.PITWALL_HOME = pitwallHome;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     // main() adds signal handlers to this process; take them off again.
     for (const signal of SIGNALS) {
       for (const listener of process.listeners(signal)) {
@@ -78,6 +82,7 @@ describe('main(): startup', () => {
     for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
     Object.assign(process.env, saved);
     vi.restoreAllMocks();
+    await rm(pitwallHome, { recursive: true, force: true });
   });
 
   it('removes every variable holding the token before the relay, the indexer and the server are created', async () => {
@@ -204,6 +209,111 @@ describe('main(): startup', () => {
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
+    });
+  });
+  describe('the config file (W103)', () => {
+    let dir: string;
+
+    beforeEach(async () => {
+      dir = realpathSync(await mkdtemp(join(tmpdir(), 'pitwall-test-')));
+      await mkdir(join(dir, 'work'));
+      await mkdir(join(dir, 'oss'));
+    });
+
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    /** Writes `text` as PITWALL_HOME's config.json, at 0600. */
+    async function config(text: string, file = join(pitwallHome, 'config.json')): Promise<string> {
+      await writeFile(file, text, { mode: 0o600 });
+      await chmod(file, 0o600);
+      return file;
+    }
+
+    it("watches the file's roots when none are given, and says which file it used", async () => {
+      const file = await config(`{
+        // comments and trailing commas are fine
+        "roots": ["${join(dir, 'work')}", { "path": "${join(dir, 'oss')}", "github": { "owners": "all" } },],
+      }`);
+      expect(await main(['--no-open', '--port', '0'])).toBe(0);
+      expect(seen.calls[1]?.roots).toEqual([join(dir, 'work'), join(dir, 'oss')]);
+      expect(console.log).toHaveBeenCalledWith(`Using the config file ${file}`);
+    });
+
+    it("replaces the file's roots with the arguments", async () => {
+      await config(`{ "roots": ["${join(dir, 'work')}"] }`);
+      expect(await main(['--no-open', '--port', '0', 'oss'], { cwd: () => dir })).toBe(0);
+      expect(seen.calls[1]?.roots).toEqual([join(dir, 'oss')]);
+    });
+
+    it('watches the current directory with no file, and says nothing about one', async () => {
+      expect(await main(['--no-open', '--port', '0'], { cwd: () => dir })).toBe(0);
+      expect(seen.calls[1]?.roots).toEqual([dir]);
+      expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining('config file'));
+    });
+
+    it('reads --config instead, and stops when it is missing', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await config(`{ "roots": ["${join(dir, 'work')}"] }`);
+      const other = await config(`{ "roots": ["${join(dir, 'oss')}"] }`, join(dir, 'other.json'));
+      expect(await main(['--no-open', '--port', '0', '--config', 'other.json'], { cwd: () => dir })).toBe(0);
+      expect(seen.calls[1]?.roots).toEqual([join(dir, 'oss')]);
+      expect(console.log).toHaveBeenCalledWith(`Using the config file ${other}`);
+
+      seen.calls.length = 0;
+      expect(await main(['--no-open', '--port', '0', '--config', 'missing.json'], { cwd: () => dir })).toBe(1);
+      expect(errors.mock.calls).toEqual([[`pitwall: the config file ${join(dir, 'missing.json')} does not exist (--config)\nRun pitwall --help for usage.`]]);
+      expect(seen.calls).toEqual([]);
+    });
+
+    it('stops before starting anything on a bad value, naming the key and the file', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const file = await config('{ "roots": ["work"] }');
+      expect(await main(['--no-open', '--port', '0'], { cwd: () => dir })).toBe(1);
+      expect(errors.mock.calls).toEqual([
+        [`pitwall: ${file}: "roots[0]" must be an absolute path or start with ~/, not "work"\nRun pitwall --help for usage.`],
+      ]);
+      expect(seen.calls).toEqual([]);
+    });
+
+    it('stops on a token in the file, without quoting it', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await config(`{ "token": "${TOKEN}" }`);
+      expect(await main(['--no-open', '--port', '0'], { cwd: () => dir })).toBe(1);
+      expect(errors.mock.calls[0]?.[0]).toContain('PITWALL_TOKEN comes from the environment only');
+      expect(JSON.stringify(errors.mock.calls)).not.toContain(TOKEN);
+      expect(seen.calls).toEqual([]);
+    });
+
+    it("names the file's key when one of its roots doesn't exist", async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const file = await config(`{ "roots": ["${join(dir, 'work')}", "${join(dir, 'gone')}"] }`);
+      expect(await main(['--no-open', '--port', '0'], { cwd: () => dir })).toBe(1);
+      expect(errors.mock.calls).toEqual([[`pitwall: root does not exist: ${join(dir, 'gone')} ("roots[1]" in ${file})\nRun pitwall --help for usage.`]]);
+    });
+
+    it("doesn't check the file's roots when arguments replace them", async () => {
+      await config(`{ "roots": ["${join(dir, 'gone')}"] }`);
+      expect(await main(['--no-open', '--port', '0', 'work'], { cwd: () => dir })).toBe(0);
+      expect(seen.calls[1]?.roots).toEqual([join(dir, 'work')]);
+    });
+
+    it('warns about an unknown key on stderr, and starts', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const file = await config(`{ "port": 1, "roots": ["${join(dir, 'work')}"] }`);
+      expect(await main(['--no-open', '--port', '0'], { cwd: () => dir })).toBe(0);
+      expect(errors.mock.calls).toEqual([[`pitwall: ${file}: unknown key "port", ignored. A newer pitwall may use it.`]]);
+      expect(seen.calls[1]?.roots).toEqual([join(dir, 'work')]);
+    });
+
+    it.skipIf(process.platform === 'win32')('refuses a file group or others can write to', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const file = await config(`{ "roots": ["${join(dir, 'work')}"] }`);
+      await chmod(file, 0o664);
+      expect(await main(['--no-open', '--port', '0'], { cwd: () => dir })).toBe(1);
+      expect(errors.mock.calls[0]?.[0]).toContain(`the config file ${file} can be changed by other users (mode 664)`);
+      expect(seen.calls).toEqual([]);
     });
   });
 });
