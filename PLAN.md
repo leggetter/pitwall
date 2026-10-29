@@ -402,9 +402,9 @@ Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeepin
 - **PRs and sessions together,** for example: "CI is failing on your PR, and the session that opened it is idle."
 - **Blocked on someone else, not me** (Phil, 2026-10-28). Claude Code's own `blocked` state and needs line can mean waiting on another person or an event. My example: a background session that had posted a request-changes review and was waiting for the author's fix before it re-ran a check and tore down what it had started. I read it as done; W69 lists it in Needs you, since Claude Code says it's blocked. Triage tells waiting on someone else from waiting on me, and lists it under its own heading rather than Needs you. With M4's PR state, it notices the event, such as a new push to that PR, and tells me or the session. Until then, W88's Not needed now is the manual way.
 
-### Considering: agent conversations (undecided, [#99](https://github.com/leggetter/pitwall/issues/99))
+### Considering: Peers, sessions talking to each other (undecided, [#99](https://github.com/leggetter/pitwall/issues/99))
 
-Show top-level sessions talking to each other, as peers or as conversations, beside the Sub-agents tab, which keeps the sub-agents (Phil, 2026-10-29). It's undecided: a consideration for after M4, likely tied to M5 and M6. #99 has the research, the UX options with mockups, and the open and spike questions.
+Show top-level sessions talking to each other beside the Sub-agents tab, which keeps the sub-agents (Phil, 2026-10-29). It's called **Peers**, Claude Code's own word for them (Phil, 2026-10-29). Whether to build it is undecided: a consideration for after M4, likely tied to M5 and M6. #99 has the research, the UX options with mockups, and the open and spike questions.
 
 - **It already happens:** on my machine, 15 sessions exchanged 135 cross-session messages in 26 days, one pair 75 of them. That leaves out the relay, `pitwall-test-*` sessions and sub-agents.
 - **Both sides pair up:** a send's `toolUseResult.msg_id` matches its receipt's `origin.msg_id`, which paired all 135. Both are internal, so this goes behind the transcript adapter and fails soft.
@@ -746,7 +746,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 
 - **Is pitwall open-sourced, and how?** Decided (Phil, 2026-10-28): it goes public, under Apache-2.0 (D21).
 - **Should the supervisor survive pitwall restarts?** Lean: yes. It's a named background session, and pitwall reattaches to it by name.
-- **Agent conversations ([#99](https://github.com/leggetter/pitwall/issues/99)):** build them at all, and under which name: Peers, or agent conversations? Undecided.
+- **Peers ([#99](https://github.com/leggetter/pitwall/issues/99)):** build it at all? Undecided. The name is settled: Peers, not agent conversations (Phil, 2026-10-29).
 - **Cursor's Claude Code extension panel:** do I use it? Its sessions keep a separate list and may not appear in `claude agents --json`.
 
 ## Suggested actions
@@ -783,7 +783,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [ ] M5: supervisor
 - [ ] M6: triage
 - [ ] Messages and sub-agent reports that arrive mid-turn, missing from the conversation (found in #99's research; not started)
-- [ ] Agent conversations: undecided ([#99](https://github.com/leggetter/pitwall/issues/99))
+- [ ] Peers, sessions talking to each other: undecided ([#99](https://github.com/leggetter/pitwall/issues/99))
 
 ---
 
