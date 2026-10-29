@@ -2016,21 +2016,13 @@ mark.match {
   line-height: var(--pw-leading-s);
 }
 
-/* The Sort setting, at the right of the filters' line (section 3: Session list). */
+/* The Sort setting, a menu button at the right of the filters' line (section 3: Session list). */
 
 .sort {
   display: flex;
   flex: none;
   align-items: center;
-  gap: var(--pw-space-1-5);
   margin-left: auto;
-}
-
-.sort-label {
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-xs);
-  font-weight: var(--pw-weight-medium);
-  line-height: var(--pw-leading-xs);
 }
 
 /* A native select in a field's box, with the select icon over its right edge (section 4: Inputs). */

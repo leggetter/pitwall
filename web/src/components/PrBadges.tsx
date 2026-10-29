@@ -1,6 +1,6 @@
 // A pull request's badges (docs/design-system.md, 4: Pull requests): its state badges, as the PR row
-// and the PR view show them, and the session row's PR badge, "#42 CI failing", with "+2" for more,
-// for the most urgent open PR the session owns (M4, W95, W106). Badges aren't focusable, so a badge's
+// and the PR view show them, and the session row's PR badge, "#42", with "+2" for more, in its
+// state's colour, for the most urgent open PR the session owns (M4, W95, W106). Badges aren't focusable, so a badge's
 // tooltip is hover-only; what it says is in the DOM, or in the PR view, too.
 
 import type { PullRequestSummary } from '../../../src/shared/protocol.js';
@@ -23,16 +23,17 @@ export function PrStateBadges({ pr }: { pr: PullRequestSummary }) {
 }
 
 /**
- * The session row's PR badge (W106): "#42", with its most urgent state while it needs attention,
- * "#42 CI failing", then "+2" when the session owns more open PRs. Subtle danger while the PR it
- * names needs attention, subtle neutral otherwise. Not a control: its tooltip, on hover, names each
- * PR, and the session view's Pull requests tab has them all.
+ * The session row's PR badge (W106): "#42", then "+2" when the session owns more open PRs, in subtle
+ * danger while the PR it names needs attention, subtle neutral otherwise. Its state, "CI failing", is
+ * in its hidden text and its hover tooltip, and line 2 says it while the PR needs you: on line 1 it
+ * cut the session's name beside the status badge in a 440 px list (#109's review). Not a control: the
+ * session view's Pull requests tab has each PR.
  */
 export function SessionPrBadgeView({ badge }: { badge: SessionPrBadge }) {
   return (
     <Badge look={badge.attention ? 'subtle-danger' : 'subtle-neutral'} hint={badge.hint} className="pr-badge">
       <span className="visually-hidden">Pull request </span>#{badge.pr.number}
-      {badge.state !== undefined && <span className="pr-badge-state"> {badge.state}</span>}
+      {badge.state !== undefined && <span className="visually-hidden">, {badge.state}</span>}
       {badge.attention && <span className="visually-hidden">, needs attention</span>}
       {badge.more > 0 && (
         <>

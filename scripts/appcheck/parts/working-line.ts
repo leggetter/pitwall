@@ -6,7 +6,7 @@
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { openFromRow, VIEW, viewClose, viewTabButton } from './_dom.js';
+import { attachStatus, openFromRow, VIEW, viewClose, viewTabButton } from './_dom.js';
 
 const LINE = `${VIEW}?.querySelector('.session-view-body .working-line')`;
 const line = `(() => {
@@ -43,10 +43,15 @@ const part: Part = {
       await page.click('Close', viewClose);
       await page.waitFor('the view to close', `!${VIEW}?.querySelector('h2')`);
     };
-    /** A running background session opens on Terminal (W54): Conversation shows its working line. */
+    /**
+     * A running background session opens on Terminal (W54): Conversation shows its working line. Its
+     * terminal attaches first, so leaving the tab doesn't close the socket before it's open, which
+     * the browser reports as a problem (a race #109's app check runs found, on the base branch too).
+     */
     const openConversation = async (name: string) => {
       await closeView();
       await openFromRow(t, name);
+      await page.waitFor('the terminal to attach', `${attachStatus} === 'attached'`);
       await page.click('the Conversation tab', viewTabButton('Conversation'));
       await page.waitFor('the working line', `!!${LINE}`);
     };
@@ -90,7 +95,8 @@ const part: Part = {
       server.broadcast();
       await page.waitFor('the line to go', `!${LINE}`);
       t.expectEqual(await page.evaluate(ANNOUNCER), 'Finished', 'said once the turn ends');
-      t.expect(await page.evaluate<boolean>(`[...${VIEW}.querySelectorAll('li.entry-assistant')].some((li) => li.textContent.includes('The made-up export tests pass now.'))`), 'with its reply in the conversation');
+      // The line goes with the snapshot; the reply comes with the conversation's next fetch, a moment later.
+      await page.waitFor('its reply in the conversation', `[...${VIEW}.querySelectorAll('li.entry-assistant')].some((li) => li.textContent.includes('The made-up export tests pass now.'))`);
       t.expect(await page.evaluate<boolean>(AT_BOTTOM), 'still at the bottom');
       const after = fetches(NAMES.running);
       await page.settle(2_500);

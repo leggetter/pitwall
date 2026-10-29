@@ -448,7 +448,7 @@ export function prStateBadges(pr: PullRequestSummary): PrStateBadge[] {
 
 /**
  * The session row's PR badge's state (W106): the most urgent of the PR's highlighted states, short,
- * after its number, "#128 CI failing", or undefined for one that needs nothing.
+ * "CI failing", for its hidden text, or undefined for one that needs nothing.
  */
 const BADGE_STATES: Readonly<Partial<Record<PrStateBadge['state'], string>>> = {
   'review-requested': 'review requested',
@@ -460,7 +460,7 @@ const BADGE_STATES: Readonly<Partial<Record<PrStateBadge['state'], string>>> = {
 /** What the session row's PR badge shows: the most urgent open PR the session owns, its state, and how many more it owns. */
 export interface SessionPrBadge {
   pr: PullRequestSummary;
-  /** Its most urgent highlighted state, short: "CI failing", "conflicts". None for a PR that needs nothing. */
+  /** Its most urgent highlighted state, short: "CI failing", "conflicts", in its hidden text. None for a PR that needs nothing. */
   state?: string;
   more: number;
   attention: boolean;

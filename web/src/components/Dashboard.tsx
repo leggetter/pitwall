@@ -112,10 +112,13 @@ import {
   hiddenOwners,
   listWork,
   matchesRelations,
+  olderPrRows,
   ownerIds,
+  prNeeding,
   prRowCounts,
   prRowKey,
   rowNeedsYou,
+  rowOrder,
   withPrRows,
   type ListGroup,
   type WorkScope,
@@ -191,7 +194,7 @@ import { RepoList } from './RepoList.js';
 import { olderText, SessionList, type SessionListHeading } from './SessionList.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from './SessionView.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
-import { SortSelect } from './SortSelect.js';
+import { SortMenu } from './SortMenu.js';
 import { ToastContext, ToastRegion, useToastStack } from './Toast.js';
 import { focusQuietly } from './Tooltip.js';
 import { SkeletonRows, useWaiting, WaitingStatus } from './Waiting.js';
@@ -238,6 +241,12 @@ export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'U
  * and says when it comes back.
  */
 export const notNeededText = (name: string) => `Marked ${plainText(name)} not needed now. It comes back to Needs you when what it needs changes.`;
+
+/**
+ * The same toast for a session that also needs you through an open PR it owns (W106): the mark is
+ * for what the session needs, so it stays in Needs you while the PR does.
+ */
+export const notNeededStaysText = (name: string, number: number) => `Marked ${plainText(name)} not needed now. It stays in Needs you while #${number} needs you.`;
 
 /** That toast's action: it takes the mark away, so the session is back in Needs you. */
 export const UNDO_NOT_NEEDED = 'Undo';
@@ -332,7 +341,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Which session owns each open PR, over every session in the snapshot, and where each PR no session
   // owns is listed (W106). Off, the list has no PRs, so nothing is owned or placed.
   const snapshotSessions = useMemo(() => sessionsIn(startGroups ?? []), [startGroups]);
-  const work = useMemo(() => composeWork(snapshotSessions, allPrs, { now: prNow, showOlder: showOlderPrs }), [snapshotSessions, allPrs, prNow, showOlderPrs]);
+  // Show older for PRs doesn't change it: the older PR rows are the Pull requests view's alone (olderPrRows()).
+  const work = useMemo(() => composeWork(snapshotSessions, allPrs, { now: prNow }), [snapshotSessions, allPrs, prNow]);
   const owners = useMemo(() => ownerIds(work), [work]);
   // The snapshot's groups without the older ended sessions, unless Show older is on: what everything
   // below lists and counts. An ended session that owns an open PR stays (W106).
@@ -362,9 +372,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const [filtersByTab, setFiltersByTab] = useState<ReadonlyMap<string, Filters>>(() => new Map());
   const filterKey = tab ?? '';
   // Has PR is a chip only while there's a list of pull requests (W106): not before the server sends
-  // one, as a pitwall from before M4 never does, nor with pull requests off, when it would only empty
-  // the list. A filter it was on for drops it then.
-  const hasPrChip = view.prs !== undefined && !prsOff(view.prs);
+  // one, as a pitwall from before M4 never does, nor while the first fetch runs, nor with pull
+  // requests off or gh missing, not logged in or failing with no list, when it would only empty the
+  // list. A filter it was on for drops it then.
+  const hasPrChip = prListState(view.prs).kind === 'list';
   const tabFilters = filtersByTab.get(filterKey) ?? NO_FILTERS;
   const filters = useMemo(
     () => (hasPrChip || !tabFilters.chips.has('has-pr') ? tabFilters : { ...tabFilters, chips: new Set([...tabFilters.chips].filter((chip) => chip !== 'has-pr')) }),
@@ -455,10 +466,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Pull requests lists every row with an open PR (W106); the group a selection names is one of these groups, PR rows and all.
   const scopeOf = (from: readonly ListGroup[]): WorkScope | undefined => (prsSelected ? { kind: 'prs' } : (scopeFor(from, selection, starred.set) as WorkScope | undefined));
   const scope = scopeOf(shownGroups);
-  const listed = useMemo(
-    () => (scope ? listWork(shownGroups, scope, sort, grouped.home, marks, work) : { current: [], finished: [] }),
-    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, marks, work],
-  );
+  // The root tab's older PR rows (W106): only the Pull requests view lists them, with Show older on, and nothing counts them.
+  const olderPrs = useMemo(() => olderPrRows(shownGroups, work, tab), [shownGroups, work, tab]);
+  const listed = useMemo(() => {
+    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, marks, work) : { current: [], finished: [] };
+    if (scope?.kind !== 'prs' || !showOlderPrs || olderPrs.length === 0) return base;
+    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', marks, work)), finished: [] };
+  }, [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, marks, work, showOlderPrs, olderPrs]);
   const [prFilter, setPrFilter] = useState('');
   // The Pull requests view's chips (W101): the page's, none on at each load, never stored, as the filter's text.
   const [prRelations, setPrRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set());
@@ -1059,7 +1073,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (!needsAttention(session)) return;
     notNeeded.mark(session);
     markToasts.current.add(session.sessionId);
-    toasts.show({ tone: 'success', key, message: notNeededText(session.name), action: { label: UNDO_NOT_NEEDED, onAction: () => undoNotNeeded.current(session.sessionId) } });
+    const stays = prNeeding(session, work);
+    const message = stays === undefined ? notNeededText(session.name) : notNeededStaysText(session.name, stays.number);
+    toasts.show({ tone: 'success', key, message, action: { label: UNDO_NOT_NEEDED, onAction: () => undoNotNeeded.current(session.sessionId) } });
   };
   // Undo takes its toast away, so focus it had goes to the session's toggle, back in the list and
   // unpressed, or where focusList() puts it when the list doesn't show it or the view covers it.
@@ -1327,7 +1343,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const prsFoot = (
     <PrListFoot
       list={prList}
-      older={work.older}
+      older={olderPrs.length}
       showOlder={showOlderPrs}
       onToggleOlder={toggleOlderPrs}
       hidden={work.hidden.length}
@@ -1365,7 +1381,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         title="No open pull requests"
         sentence="Pull requests you open, that ask your review or that mention you on github.com show here, with the sessions that worked on them."
         actions={
-          (work.older > 0 || work.hidden.length > 0) && (
+          (olderPrs.length > 0 || work.hidden.length > 0) && (
             <div className="pr-empty-foot">
               {prsFoot}
             </div>
@@ -1740,7 +1756,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
               ) : (
                 tabRows > 0 && (
                   <FilterControls filters={filters} onChange={setFilters} fieldRef={filterField} options={hasPrChip ? FILTER_CHIPS : KIND_CHIPS}>
-                    <SortSelect value={sort} onChange={setSort} />
+                    <SortMenu value={sort} onChange={setSort} />
                   </FilterControls>
                 )
               )

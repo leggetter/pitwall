@@ -6,13 +6,16 @@
 
 import { API_SERVER, CODE, DEMO_APP, NAMES, OSS } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { chooseInRepoList, chooseOption, listHeading, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo } from './_dom.js';
+import { chooseInRepoList, focused, listHeading, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo } from './_dom.js';
 
 const q = JSON.stringify;
 const FIELD = `document.querySelector('.session-list input.filter-input')`;
 const SUMMARY = `document.querySelector('.session-list .summary-count')?.textContent`;
 const chip = (label: string) => `[...document.querySelectorAll('.session-list .filter-chips .chip')].find((b) => b.textContent.trim() === ${q(label)})`;
-const SORT = `document.querySelector('.session-list .sort select')`;
+/** Sort, a menu button since W106's review, and an order in its menu's radio group. */
+const SORT = `document.querySelector('.session-list .sort button[aria-haspopup="menu"]')`;
+const sortOption = (label: string) => `[...document.querySelectorAll('.session-list .sort [role="menuitemradio"]')].find((el) => el.textContent.trim() === ${q(label)})`;
+const sortChecked = `[...document.querySelectorAll('.session-list .sort [role="menuitemradio"]')].find((el) => el.getAttribute('aria-checked') === 'true')?.textContent.trim() ?? null`;
 const star = (name: string) => `document.querySelector(${q(`.session-list button.star-toggle[aria-label="Star ${name}"]`)})`;
 const BACKGROUND = [NAMES.prompting, NAMES.running, NAMES.running2, NAMES.running3];
 /**
@@ -32,11 +35,11 @@ const CLEAR_FILTERS = `document.querySelector('.session-list .filter-chips butto
 /**
  * How many lines the filter bar takes at each window, filtered or not (W75, W91, W106): the field's,
  * the chips' with Clear filters, and Sort's where it doesn't fit beside them. Since W106 there are
- * three chips, Has PR the third: they and Clear filters take 327 px and Sort 131, so they fit on one
- * line only in a session list about 502 px wide or more, as at 900 px. At 1,440 px, where the bar is
- * 408 px, Sort has a line of its own, as it did before W91.
+ * three chips, Has PR the third, which with Clear filters take 327 px; Sort, a 24 px menu button
+ * since W106's review rather than a 131 px select, keeps them to 2 lines at 1,440 px, where the bar
+ * is 408 px, as W91 had it. At 1,200 and 375 px it has a line of its own.
  */
-const BAR_LINES: Readonly<Record<string, number>> = { '375': 3, '375x540': 3, '900': 2, '1200': 3, '1440': 3 };
+const BAR_LINES: Readonly<Record<string, number>> = { '375': 3, '375x540': 3, '900': 2, '1200': 3, '1440': 2 };
 /**
  * The filter bar's lines, from the boxes of what's in it: the field, each chip, Clear filters or its
  * room, and Sort. A box that starts below the bottom of the line before starts a new one; Sort is
@@ -297,13 +300,29 @@ const part: Part = {
       t.expectEqual(moved(unfiltered, await page.evaluate<Boxes>(headBoxes)), [], 'with both off again, everything is where it started');
     });
 
-    await t.step('Sort by name orders the rows by name, and is kept', async () => {
-      t.expectEqual(await page.evaluate(chooseOption(SORT, 'name')), 'name', 'Name chosen');
+    await t.step('Sort, a 24 px menu button, orders the rows by name, and is kept; its menu works from the keyboard', async () => {
+      const button = await page.evaluate<{ name: string | null; width: number; height: number }>(`(() => { const b = ${SORT}; const r = b.getBoundingClientRect(); return { name: b.getAttribute('aria-label'), width: Math.round(r.width), height: Math.round(r.height) }; })()`);
+      t.expectEqual(button, { name: 'Sort', width: 24, height: 24 }, 'named Sort, 24 px square');
+      await page.click('Sort', SORT);
+      await page.waitFor('its menu', `!!${sortOption('Name')}`);
+      t.expectEqual(await page.evaluate(sortChecked), 'Urgency', 'Urgency checked');
+      await t.shot('sort-menu');
+      await page.click('Name', sortOption('Name'));
+      await page.waitFor('the menu to close', `!${sortOption('Name')}`);
       await page.settle(50);
       const names = await page.evaluate<string[]>(rowNames);
       t.expectEqual(names, [...names].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })), 'the rows are in name order');
       t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.sort.v1')`), 'name', 'stored');
-      t.expectEqual(await page.evaluate(chooseOption(SORT, 'urgency')), 'urgency', 'Urgency again');
+      // From the keyboard: Enter opens it on the chosen order, Home goes to Urgency, Enter chooses it, and focus is back on Sort.
+      await page.evaluate(`${SORT}.focus()`);
+      await page.key('Enter');
+      await page.waitFor('its menu', `!!${sortOption('Name')}`);
+      t.expectEqual(await page.evaluate('document.activeElement?.textContent.trim()'), 'Name', 'focus on the chosen order');
+      await page.key('Home');
+      await page.key('Enter');
+      await page.waitFor('the menu to close', `!${sortOption('Name')}`);
+      t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.sort.v1')`), 'urgency', 'Urgency again');
+      t.expectEqual(await page.evaluate(focused), 'Sort', 'focus back on Sort');
       await page.settle(50);
       // The ended pitwall-test-ended-pr owns an open PR, so it's listed with the rest (W106), last, as the least recently active.
       t.expectEqual((await page.evaluate<string[]>(rowNames)).slice(-1), [NAMES.endedPr], 'urgency puts the least recent session last');

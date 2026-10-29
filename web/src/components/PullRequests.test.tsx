@@ -21,7 +21,7 @@ import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
 import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard } from './Dashboard.js';
+import { Dashboard, notNeededStaysText } from './Dashboard.js';
 import { CONFIGURATION_URL, NO_RELATION, prSourceBody, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
 import { COPY_LINK, OPEN_ON_GITHUB, OWNS_IT, PR_MISSING, PrView } from './PrView.js';
 import { LINKED_NOTE } from './SessionPrs.js';
@@ -210,9 +210,9 @@ describe('rows', () => {
     renderDashboard(prList(PRS), { search: '?view=all' });
     const badgeOf = (name: string) => sessionRow(name).querySelector('.pr-badge');
     const alpha = badgeOf('alpha');
-    expect(alpha?.textContent).toBe('Pull request #42 CI failing, needs attention+1, and 1 more');
+    expect(alpha?.textContent).toBe('Pull request #42, CI failing, needs attention+1, and 1 more');
     expect(alpha?.classList.contains('badge-subtle-danger')).toBe(true);
-    expect(badgeOf('beta')?.textContent).toBe('Pull request #9 conflicts, needs attention');
+    expect(badgeOf('beta')?.textContent).toBe('Pull request #9, conflicts, needs attention');
     // Only mentioned, or a weaker link to a PR another session owns: no badge.
     expect(badgeOf('gamma')).toBeNull();
     expect(badgeOf('delta')).toBeNull();
@@ -235,12 +235,24 @@ describe('rows', () => {
     expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · You: run the tests');
   });
 
+  it('marking a session not needed now while its PR needs you keeps it in Needs you, and the toast says why', async () => {
+    const base = snap();
+    const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)] });
+    const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [kappa] })] };
+    render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you')} storage={memory().source} />);
+    fireEvent.click(sessionRow('kappa').querySelector<HTMLElement>('[data-not-needed-session]')!);
+    await settle();
+    expect(toastMessages()).toEqual([notNeededStaysText('kappa', 42)]);
+    expect(notNeededStaysText('kappa', 42)).toBe('Marked kappa not needed now. It stays in Needs you while #42 needs you.');
+    expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe('more · Not needed now · CI is failing on #42');
+  });
+
   it('moves a PR to the session that acted on it later, which takes its badge over', () => {
     const base = snap();
     const zeta = session({ sessionId: 'pr-zeta', name: 'zeta', prLinks: [prLink('pushed', approved, 1)] });
     const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [zeta] })] };
     render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=all')} storage={memory().source} />);
-    expect(sessionRow('alpha').querySelector('.pr-badge')?.textContent).toBe('Pull request #42 CI failing, needs attention');
+    expect(sessionRow('alpha').querySelector('.pr-badge')?.textContent).toBe('Pull request #42, CI failing, needs attention');
     expect(sessionRow('zeta').querySelector('.pr-badge')?.textContent).toBe('Pull request #43');
   });
 
@@ -265,16 +277,16 @@ describe('rows', () => {
     const eight = row(8);
     expect(eight.querySelector('h3 button')?.textContent).toBe('#8 Document the made-up retry headers');
     expect([...eight.querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Draft', 'Checks pending']);
-    expect(eight.querySelector('.pr-what')?.textContent).toMatch(/^event-relay · Yours · Updated .+ ago · No session yet$/);
-    // The time's slot is kept empty, and the slot for W107's actions.
-    expect(eight.querySelector('.session-line > .activity')?.textContent).toBe('');
+    expect(eight.querySelector('.pr-what')?.textContent).toBe('event-relay · Yours · No session listed');
+    // When it was updated, in the time's fixed slot, as a session row's last activity; and the slot for W107's actions.
+    expect(eight.querySelector('.session-line > time.activity')?.getAttribute('datetime')).toBe(draft.updatedAt);
     expect(eight.querySelector('.pr-row-actions')).not.toBeNull();
     expect(eight.classList.contains('attention')).toBe(false);
     // In its group's own list, line 2 has no label; one that needs you says why, with the bar.
     const asked = placed(pr({ number: 77, repoLabel: 'example/event-relay', relation: 'review-requested' }, 20), cloned(RELAY, 'event-relay'));
     renderDashboard(prList([asked]), { search: `?repo=${RELAY}` });
     const seventySeven = screen.getAllByRole('main').at(-1)!.querySelector('li[data-pr$="/77"]')!;
-    expect(seventySeven.querySelector('.pr-what')?.textContent).toMatch(/^Your review is requested · Updated .+ ago · No session yet$/);
+    expect(seventySeven.querySelector('.pr-what')?.textContent).toBe('Your review is requested · No session listed');
     expect(seventySeven.classList.contains('attention')).toBe(true);
   });
 
@@ -301,7 +313,7 @@ describe('rows', () => {
 describe('Has PR, with no list of pull requests (W106)', () => {
   const chipLabels = () => [...main().querySelectorAll('.filter-chips .chip')].map((chip) => chip.textContent);
 
-  it('is no chip before a list comes or with pull requests off, and a filter it was on for drops it', () => {
+  it('is no chip before a list comes, while the first fetch runs, with pull requests off or gh failing, and a filter it was on for drops it', () => {
     const { again } = renderDashboard(null, { search: '?view=all' });
     expect(chipLabels()).toEqual(['Interactive', 'Background']);
     again(prList(PRS));
@@ -311,6 +323,11 @@ describe('Has PR, with no list of pull requests (W106)', () => {
     again(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } }));
     expect(chipLabels()).toEqual(['Interactive', 'Background']);
     expect(rows()).toEqual(['alpha', 'beta', 'epsilon', 'gamma']);
+    // Nor while the first fetch runs, or once gh has failed with no list.
+    again(prList([], { fetchedAt: undefined, refreshing: true }));
+    expect(chipLabels()).toEqual(['Interactive', 'Background']);
+    again(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'gh-auth', error: 'Not logged in.' } }));
+    expect(chipLabels()).toEqual(['Interactive', 'Background']);
   });
 });
 
@@ -320,7 +337,7 @@ describe('the Pull requests view', () => {
     expect(rows()).toEqual(['alpha', 'beta', '#5', '#8']);
     expect(summary()).toBe('4 sessions2 need you');
     // Line 2 names each row's group, as the other views do.
-    expect(row(5).querySelector('.pr-what')?.textContent).toMatch(/^example\/Docs-Site · Yours · Updated .+ ago · Not cloned$/);
+    expect(row(5).querySelector('.pr-what')?.textContent).toBe('example/Docs-Site · Yours · Not cloned');
   });
 
   it('says how many PRs are hidden because no root claims their owner, with a link to the README’s Configuration', () => {
@@ -340,10 +357,15 @@ describe('the Pull requests view', () => {
     fireEvent.click(show);
     await settle();
     expect(prRows()).toContain('example/blog/3');
-    expect(summary()).toBe('5 sessions3 need you');
+    // Listed here alone, and counted in no need-you count, though its changes are requested: it has no bar.
+    expect(summary()).toBe('5 sessions2 need you');
+    expect(row(3).classList.contains('attention')).toBe(false);
     expect(document.activeElement?.textContent).toBe('Hide older pull requests');
-    // It's a row everywhere while it's shown: blog is in the repo list.
-    expect(repoItem('blog')).toBeDefined();
+    expect(repoItem('blog')).toBeUndefined();
+    expect(repoItem('Needs you')?.querySelector('.badge')?.textContent).toBe('2 need you');
+    fireEvent.click(repoItem('All sessions')!);
+    await settle();
+    expect(prRows()).not.toContain('example/blog/3');
   });
 
   it('says when no row has an open PR, with the hidden line', () => {

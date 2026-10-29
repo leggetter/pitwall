@@ -160,7 +160,7 @@ export function PullRequestSpecimens() {
 
       <Specimen
         title="Rows"
-        note="Session rows carry the open PRs they own: the most urgent as a badge, '#51 CI failing', with +n for more, before the status badge; line 2 says why while a PR needs you and the session doesn't. A session that only named one, or whose PR another session took over, has none. An ended session that owns an open PR is listed with the rest, not muted. Then PR rows, for the PRs no session owns: '#57' and the title, the badges, then line 2: its group, why it needs you or how it's yours, when it was updated, and 'No session yet' or 'Not cloned'."
+        note="Session rows carry the open PRs they own: the most urgent as a badge, '#51', in subtle danger while it needs attention, with +n for more, before the status badge; line 2 says why while a PR needs you and the session doesn't. A session that only named one, or whose PR another session took over, has none. An ended session that owns an open PR is listed with the rest, not muted. Then PR rows, for the PRs no session owns: '#57' and the title, the badges and when it was updated, then line 2: its group, why it needs you or how it's yours, and 'No session listed' or 'Not cloned'."
       >
         <Rows />
       </Specimen>

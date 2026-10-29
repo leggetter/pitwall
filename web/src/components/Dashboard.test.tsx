@@ -7,6 +7,7 @@ import { FINISHED_STATE_KEY, type StorageSource } from '../groupState.js';
 import { memoryNavigation, VIEW_STATE_KEY, type NavigationEnv } from '../selection.js';
 import { SORT_KEY } from '../sort.js';
 import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot } from '../test/fixtures.js';
+import { chooseSort, sortButton, sortMenu } from '../test/sort.js';
 import { cutShort, tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 
@@ -1368,8 +1369,8 @@ describe('finished sessions', () => {
 });
 
 describe('the Sort setting', () => {
-  const sortSelect = () => screen.getByRole('combobox', { name: 'Sort' }) as HTMLSelectElement;
-  const sortBy = (order: string) => fireEvent.change(sortSelect(), { target: { value: order } });
+  const LABELS: Record<string, string> = { urgency: 'Urgency', recent: 'Recent', name: 'Name' };
+  const sortBy = (order: string) => chooseSort(LABELS[order]!);
   const finished = { kind: 'background' as const, alive: false, pid: undefined, status: undefined, finished: true };
 
   function sortSnapshot(): IndexSnapshot {
@@ -1388,15 +1389,16 @@ describe('the Sort setting', () => {
     ]);
   }
 
-  it('is a select labelled Sort, after the filter chips, with Urgency, the default, then Recent and Name', () => {
+  it('is a menu button named Sort, after the filter chips, whose radio group has Urgency, the default, then Recent and Name', () => {
     renderDashboard(sortSnapshot());
 
-    expect(sortSelect().value).toBe('urgency');
-    expect([...sortSelect().options].map((option) => option.textContent)).toEqual(['Urgency', 'Recent', 'Name']);
+    expect(sortButton().getAttribute('aria-haspopup')).toBe('menu');
+    expect(sortButton().classList.contains('sm')).toBe(true);
+    expect(sortMenu()).toEqual({ options: ['Urgency', 'Recent', 'Name'], chosen: 'Urgency' });
     const line2 = document.querySelector('.session-list-filters')!;
-    expect(line2.contains(sortSelect())).toBe(true);
+    expect(line2.contains(sortButton())).toBe(true);
     const chips = within(line2 as HTMLElement).getByRole('group', { name: 'Filters' });
-    expect(chips.compareDocumentPosition(sortSelect()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chips.compareDocumentPosition(sortButton()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('sorts by Urgency, Recent or Name, and the Finished section follows, except that Urgency orders it by activity alone', () => {
@@ -1414,13 +1416,13 @@ describe('the Sort setting', () => {
     sortBy('name');
     expect(window.localStorage.getItem(SORT_KEY)).toBe('name');
     choose('Needs you');
-    expect(sortSelect().value).toBe('name');
+    expect(sortMenu().chosen).toBe('Name');
     choose('demo-app');
     expect(visibleRowNames()).toEqual(['Alpha', 'job-2', 'job-10', 'zeta', 'a-done', 'b-done', 'c-done']);
     first.unmount();
 
     renderDashboard(sortSnapshot());
-    expect(sortSelect().value).toBe('name');
+    expect(sortMenu().chosen).toBe('Name');
     expect(visibleRowNames()).toEqual(['Alpha', 'job-2', 'job-10', 'zeta', 'a-done', 'b-done', 'c-done']);
   });
 
@@ -1430,7 +1432,7 @@ describe('the Sort setting', () => {
     };
     renderDashboard(sortSnapshot(), {}, { storage: denied });
 
-    expect(sortSelect().value).toBe('urgency');
+    expect(sortMenu().chosen).toBe('Urgency');
     sortBy('name');
     expect(visibleRowNames()[0]).toBe('Alpha');
   });
@@ -1547,14 +1549,13 @@ describe('holding the row order while the reader is in the list', () => {
 
   it('applies a sort the reader chose at once, though the pointer and focus are in the list', () => {
     renderList(reordered());
-    const select = screen.getByRole('combobox', { name: 'Sort' });
     expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
 
     fireEvent.pointerEnter(list());
-    act(() => select.focus());
-    fireEvent.change(select, { target: { value: 'name' } });
+    act(() => sortButton().focus());
+    chooseSort('Name');
     expect(visibleRowNames()).toEqual(['first', 'second', 'third']);
-    fireEvent.change(select, { target: { value: 'urgency' } });
+    chooseSort('Urgency');
     expect(visibleRowNames()).toEqual(['third', 'first', 'second']);
   });
 
