@@ -50,7 +50,9 @@
 // SIGUSR1 and most others end a process too. A test that must clean up a
 // process its own child started, which the wrapper never saw, names it with
 // allowSignalsTo(). The test's own pid isn't one of its children, so it's
-// refused too. Signal 0 only asks whether a process is there.
+// refused too. Signal 0 only asks whether a process is there. A negative pid,
+// a process group, counts as its leader's: runFile's `processGroup` (W107)
+// signals the group of a child it started in one of its own.
 import childProcess from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
@@ -276,7 +278,9 @@ function install(): void {
   // End session's signal (W90): only signal 0, or a child the wrapped APIs started and that's still running.
   const kill = process.kill.bind(process);
   process.kill = function (pid: number, signal?: string | number) {
-    if (!isLive() && signal !== 0 && !state.spawned.has(pid) && !state.allowed.has(pid)) refuse('process.kill', 'signal');
+    // A group (a negative pid) by its leader, which runFile's processGroup started in a group of its own (W107).
+    const leader = Number.isInteger(pid) && pid < -1 ? -pid : pid;
+    if (!isLive() && signal !== 0 && !state.spawned.has(leader) && !state.allowed.has(leader)) refuse('process.kill', 'signal');
     return kill(pid, signal);
   } as typeof process.kill;
 

@@ -431,3 +431,21 @@
 .pr-view-owner {
   color: var(--pw-text-muted);
 }
+
+/* A PR row's action (W107, PrStartButton): shown on hover and focus, as an unpressed star is, so the list stays calm. */
+@media (hover: hover) {
+  .pr-start {
+    opacity: 0;
+    transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
+  }
+
+  .session:hover .pr-start,
+  .session:focus-within .pr-start {
+    opacity: 1;
+  }
+}
+
+/* The PR view's New session or Clone and start, under "No session has opened it…" (W107). */
+.pr-view-start {
+  margin-top: var(--pw-space-2);
+}

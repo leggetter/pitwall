@@ -271,8 +271,9 @@ describe('the tab a view opens on', () => {
     expect(shownTab()).toBe('Conversation');
     await open('job-exited');
     expect(shownTab()).toBe('Conversation');
-    // Attaching would restart it, which the Terminal tab asks first.
-    expect(footerNote()).toBe('To message it, open its Terminal tab, which asks before restarting it.');
+    // Attaching would restart it, which the Terminal tab asks first; or it resumes in the background (W107).
+    expect(footerNote()).toBe('To message it, open its Terminal tab, which asks before restarting it, or resume it here in the background.');
+    expect(within(view()!).getByRole('button', { name: 'Resume in background' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
     await open('job-done');
     expect(shownTab()).toBe('Conversation');

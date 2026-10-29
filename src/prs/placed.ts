@@ -9,6 +9,8 @@
 //              the repos its sessions worked in, wherever they are. That's cheap, and runs no git
 //   start()    starts the poller and, from the index's next snapshot, discovery. Nothing runs before
 //   refresh()  the poller's, and when a fetch starts, a discovery too, so a repo cloned since is found
+//   rediscover()  a discovery alone, once started, with no fetch: after W107's clone, so its PRs move
+//              from 'not-cloned' to 'cloned' without a call to GitHub
 //   stop()     stops the poller and discovery
 //
 // Never logs: repo names and paths are as sensitive as session data.
@@ -112,6 +114,9 @@ export function withPlaces(source: PrSource, options: PlacementOptions): PrSourc
       const result = source.refresh();
       if (result.kind === 'started' && started) repos.refresh();
       return result;
+    },
+    rediscover() {
+      if (started && !stopped) repos.refresh();
     },
     start() {
       if (started || stopped) return;

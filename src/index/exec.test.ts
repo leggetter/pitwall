@@ -215,6 +215,36 @@ describe('runFile', () => {
     expect(Date.now() - started).toBeLessThan(2_500);
   });
 
+  it.skipIf(process.platform === 'win32')('with processGroup, a timeout stops what the child started too, as gh starts git (W107)', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-exec-'));
+    const pidFile = path.join(dir, 'pid');
+    try {
+      // The child starts a grandchild in its own group, as gh runs git, writes its pid, and both wait.
+      const script = [
+        'const { spawn } = require("node:child_process");',
+        'const g = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+        'require("node:fs").writeFileSync(process.argv[1], String(g.pid));',
+        'setInterval(() => {}, 1000);',
+      ].join(' ');
+      const err = await failure(runFile(node, ['-e', script, pidFile], { timeoutMs: 1_000, processGroup: true }));
+      expect(err.reason).toBe('timeout');
+      const grandchild = Number(await readFile(pidFile, 'utf8'));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(isRunning(grandchild)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it.skipIf(process.platform === 'win32')('with processGroup, the child has no controlling terminal', async () => {
+    // Opening /dev/tty fails with no controlling terminal, so nothing it runs can prompt in pitwall's.
+    const stdout = await runFile(node, ['-e', 'try { require("node:fs").openSync("/dev/tty", "r"); process.stdout.write("tty") } catch { process.stdout.write("none") }'], {
+      timeoutMs: 10_000,
+      processGroup: true,
+    });
+    expect(stdout).toBe('none');
+  });
+
   it('rejects when stdout is larger than the limit', async () => {
     const err = await failure(
       runFile(node, ['-e', 'process.stdout.write("x".repeat(5000))'], { timeoutMs: 10_000, maxStdoutBytes: 1000 }),
