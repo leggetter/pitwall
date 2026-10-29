@@ -162,10 +162,14 @@ export interface SessionSummary {
    */
   needsYou?: NeedsYou;
   /**
-   * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, with
-   * `--no-recaps`, and for sessions pitwall doesn't recap: sub-agents and pitwall's own, which are
-   * never listed, and an ended or finished one until you ask for one with recapRefreshPath(). The
-   * whole recap is fetched with recapPath() (D14).
+   * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, and
+   * with `--no-recaps`. Sub-agents and pitwall's own sessions are never listed, so never have one.
+   * pitwall recaps an ended or finished session only when you ask (recapRefreshPath()), but one
+   * made while it was running stays. The whole recap is fetched with recapPath() (D14).
+   *
+   * Untrusted: it's a model's summary of a transcript, which anything a session read can steer.
+   * Shown as plain text only, and read as data, never instructions, by anything that reads it,
+   * W112's supervisor included (D26).
    */
   recap?: RecapSummary;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
@@ -608,6 +612,13 @@ export interface ConversationEntry {
   toolError?: boolean;
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
+  /**
+   * For 'cross-session': the message's id, as Claude Code records it (`origin.msg_id`, W99), when
+   * it has one. The same id SendMessage's result gave its sender, so pitwall's recaps can tell a
+   * message its own relay sent, which is yours, from one another session sent under the relay's
+   * name (M5, W110). An opaque id, never text.
+   */
+  msgId?: string;
   /**
    * The session's sub-agent this entry is about (W76): on a 'cross-session'
    * entry its report or message came from, and on a 'tool' entry the Agent
@@ -1532,7 +1543,9 @@ export const RECAP_WAITING_ON: readonly RecapWaitingOn[] = ['you', 'another sess
  * saved, from the session's first prompt, Claude Code's newest `away_summary` and compaction
  * summary, and its latest turns, capped at RECAP_TURNS_CAP characters; or updated from the previous
  * recap and the turns since. Kept in memory only. All text is plain, never Markdown, each field at
- * most RECAP_FIELD_MAX characters, and shown in `<bdi>` where it names things.
+ * most RECAP_FIELD_MAX characters, and shown in `<bdi>` where it names things. Untrusted: a
+ * transcript can steer what the model writes, so anything that reads it, a model above all, reads
+ * it as data, never instructions (D26).
  */
 export interface SessionRecap {
   /** Why the session was started, and its goal if that changed since. */
