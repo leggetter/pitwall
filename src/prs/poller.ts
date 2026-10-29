@@ -16,9 +16,14 @@
 //                a change to the system clock can't open or close them; fetchedAt is wall time
 //   stop()       no more fetches; a fetch still running is left to its timeout, and what it finds
 //                is dropped. The server stops it on close()
+//   places       with `index` (W105), every PR gets its place and the list its roots' owners
+//                (placed.ts): from the repos under the snapshot's roots, found again every 5 minutes,
+//                and `ownersByRoot` from the config file (W103). Without it, neither is set
 //
 // Never logs: a title from a private repo is as sensitive as session data.
 import { runFile as realRunFile, type RunFile } from '../index/exec.js';
+import type { Indexer } from '../index/index.js';
+import type { RepoDiscovery } from '../index/repos.js';
 import {
   PR_RELATIONS,
   PRS_POLL_INTERVAL_MS,
@@ -29,6 +34,8 @@ import {
   type PullRequestSummary,
 } from '../shared/protocol.js';
 import { fetchPullRequests, mergeSearches, type FetchResult, type SearchResult } from './fetch.js';
+import type { OwnersByRoot } from './place.js';
+import { withPlaces } from './placed.js';
 
 /** What a refresh did, for POST PRS_REFRESH_PATH. */
 export type PrRefreshResult =
@@ -77,6 +84,22 @@ export interface PrPollerOptions {
   intervalMs?: number;
   /** Default PRS_REFRESH_MIN_MS. */
   refreshMinMs?: number;
+  /**
+   * The index (M4 redesign, W105): with it, every PR gets PullRequestSummary.place and the list
+   * PullRequestList.roots, from the repos under its snapshot's roots and those it knows. Without
+   * it, neither is set.
+   */
+  index?: Pick<Indexer, 'latest' | 'subscribe'>;
+  /**
+   * Which GitHub owners each root claims, keyed by real-path root (RootOwners): a list, 'all' or
+   * 'none', from the config file (W103). A root it names doesn't infer its owners from its clones.
+   * Only with `index`.
+   */
+  ownersByRoot?: OwnersByRoot;
+  /** For tests, with `index`: the repo discovery. Default createRepoDiscovery(). */
+  repos?: RepoDiscovery;
+  /** For tests, with `index`: the home directory labels shorten to `~`. Default os.homedir(). */
+  home?: string;
 }
 
 const realTimers: PrTimers = {
@@ -113,8 +136,23 @@ export function prsOff(): PrSource {
   };
 }
 
-/** A poller of your open PRs. Nothing runs until start(), or a refresh. */
+/**
+ * A poller of your open PRs, each placed when `index` is given (withPlaces()). Nothing runs until
+ * start(), or a refresh.
+ */
 export function createPrPoller(options: PrPollerOptions = {}): PrSource {
+  const poller = createUnplacedPoller(options);
+  if (options.index === undefined) return poller;
+  return withPlaces(poller, {
+    index: options.index,
+    ...(options.ownersByRoot === undefined ? {} : { ownersByRoot: options.ownersByRoot }),
+    ...(options.repos === undefined ? {} : { repos: options.repos }),
+    ...(options.home === undefined ? {} : { home: options.home }),
+  });
+}
+
+/** The poller itself, without places. */
+function createUnplacedPoller(options: PrPollerOptions): PrSource {
   const now = options.now ?? Date.now;
   const monotonicNow = options.monotonicNow ?? (() => performance.now());
   const timers = options.timers ?? realTimers;

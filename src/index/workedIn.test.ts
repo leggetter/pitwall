@@ -3,7 +3,7 @@ import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile }
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PR_LINKS_MAX } from '../shared/protocol.js';
+import { PR_LINKS_MAX, PR_LINKS_STRONG_MAX } from '../shared/protocol.js';
 import { RunError, type RunFile } from './exec.js';
 import { addLink, newestLinks, toPrLink, type FoundLink } from './prLinks.js';
 import { createWorkedInScanner, type ScannerFs, type WorkedInScanner, type WorkedInScannerOptions } from './workedIn.js';
@@ -721,13 +721,13 @@ describe('createWorkedInScanner', () => {
       expect(await links()).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(1) }]);
     });
 
-    it('prunes a file past 80 links to what the result keeps, and keeps what merging them whole would', async () => {
+    it('prunes a file past 440 links to what the result keeps, and keeps what merging them whole would', async () => {
       const lines: string[] = [];
       const found = new Map<string, FoundLink>();
-      // 300 lines with times out of order and repeats, some newer than when they were pruned.
-      for (let i = 0; i < 300; i++) {
-        const minute = (i * 37) % 211;
-        const number = ((i * 13) % 140) + 1;
+      // 1,500 lines with times out of order and repeats, some newer than when they were pruned.
+      for (let i = 0; i < 1500; i++) {
+        const minute = (i * 37) % 1009;
+        const number = ((i * 13) % 700) + 1;
         if (i % 3 === 0) {
           lines.push(said(`${API}/pull/${number}`, minute));
           addLink(found, { kind: 'mentioned', repo: 'example/demo-api', number, at: AT + minute * 60_000 });
@@ -736,7 +736,7 @@ describe('createWorkedInScanner', () => {
           addLink(found, { kind: 'prompted', repo: 'example/demo-app', number, at: AT + minute * 60_000 });
         }
       }
-      expect(found.size).toBeGreaterThan(80);
+      expect(found.size).toBeGreaterThan(440);
       await writeFile(main, lines.join(''));
       expect(await links()).toEqual(newestLinks(found.values()).map(toPrLink));
     });
@@ -752,8 +752,8 @@ describe('createWorkedInScanner', () => {
     it('waits on at most 32 calls at once, dropping the oldest', async () => {
       const waiting = Array.from({ length: 33 }, (_, i) => use('mcp__github__create_pull_request', {}, i));
       await writeFile(main, waiting.map((w) => w.line).join('') + waiting.map((w, i) => result(w.id, `${APP}/pull/${i + 1}`, 50)).join(''));
-      // The 32 it waited for, of which the cap keeps 20; all have the same time, so lowest number first.
-      expect(((await links()) ?? []).map((l) => l.number)).toEqual(Array.from({ length: PR_LINKS_MAX }, (_, i) => i + 2));
+      // The 32 it waited for; all have the same time, so lowest number first.
+      expect(((await links()) ?? []).map((l) => l.number)).toEqual(Array.from({ length: 32 }, (_, i) => i + 2));
     });
 
     it('sub-agents: counts what one opened and pushed, not its prompts or its text', async () => {
@@ -782,6 +782,69 @@ describe('createWorkedInScanner', () => {
       await writeFile(path.join(subagents(), 'agent-a1.jsonl'), ran('git push', pushedNew('feature/one'), 7));
       await writeFile(path.join(subagents(), 'agent-a2.jsonl'), ran('git push', pushedNew('feature/one'), 4));
       expect(await links()).toEqual([{ kind: 'pushed', repo: 'example/demo-app', branch: 'feature/one', lastAt: time(8) }]);
+    });
+
+    describe("linked: Claude Code's own pr-link entries (W105)", () => {
+      /** A `pr-link` entry as Claude Code writes one, made up. */
+      const prLink = (number: number, minute: number, overrides: Record<string, unknown> = {}) =>
+        `${JSON.stringify({ type: 'pr-link', sessionId: SESSION, prNumber: number, prUrl: `${APP}/pull/${number}`, prRepository: 'Example/Demo-App', timestamp: time(minute), ...overrides })}\n`;
+
+      it('links each PR an entry names, with the newest of its times, however often it is written again', async () => {
+        await writeFile(main, prLink(12, 1) + prLink(12, 2) + typed('a made-up prompt', 3) + prLink(13, 4) + prLink(12, 9) + prLink(12, 5));
+        expect(await links()).toEqual([
+          { kind: 'linked', repo: 'example/demo-app', number: 12, lastAt: time(9) },
+          { kind: 'linked', repo: 'example/demo-app', number: 13, lastAt: time(4) },
+        ]);
+      });
+
+      it('keeps it beside the same PR’s other links, one per kind', async () => {
+        await writeFile(main, ran('gh pr create --fill', ghCreated(12), 1) + prLink(12, 3) + typed(`${APP}/pull/12`, 4));
+        expect((await links())?.map((l) => [l.kind, l.number, l.lastAt])).toEqual([
+          ['prompted', 12, time(4)],
+          ['linked', 12, time(3)],
+          ['opened', 12, time(2)],
+        ]);
+      });
+
+      it("reads one in a sub-agent's transcript too, though Claude Code writes them in the parent's", async () => {
+        await mkdir(subagents(), { recursive: true });
+        await writeFile(main, typed('a made-up prompt', 1));
+        await writeFile(path.join(subagents(), 'agent-a1.jsonl'), prLink(14, 2));
+        expect(await links()).toEqual([{ kind: 'linked', repo: 'example/demo-app', number: 14, lastAt: time(2) }]);
+      });
+
+      it("leaves out one that isn't well formed, names another session, or isn't an entry of its own", async () => {
+        const nested = use('Read', { file_path: path.join(repo('app'), 'notes.jsonl') }, 1);
+        await writeFile(
+          main,
+          prLink(20, 1, { prUrl: `${API}/pull/20` }) +
+            prLink(21, 1, { prUrl: `${APP}/pull/22` }) +
+            prLink(23, 1, { prNumber: '23' }) +
+            prLink(24, 1, { prUrl: `${APP}/pull/24/files` }) +
+            prLink(25, 1, { timestamp: 'soon' }) +
+            prLink(26, 1, { sessionId: '77777777-7777-4777-8777-777777777772' }) +
+            `${prLink(27, 1).slice(0, -2)}\n` +
+            // A transcript read by a tool, which holds an entry inside its result: not this session's.
+            nested.line +
+            result(nested.id, prLink(28, 1), 2) +
+            `${JSON.stringify({ type: 'user', timestamp: time(2), message: { content: [{ type: 'pr-link', prNumber: 29, prUrl: `${APP}/pull/29`, prRepository: 'example/demo-app', sessionId: SESSION, timestamp: time(2) }] } })}\n`,
+        );
+        expect(await links()).toEqual([]);
+      });
+
+      it('looks for one only in a line of at most 1 KiB, and parses only the lines that name one', async () => {
+        const padded = `${JSON.stringify({ type: 'pr-link', sessionId: SESSION, prNumber: 30, prUrl: `${APP}/pull/30`, prRepository: 'example/demo-app', timestamp: time(1), pad: 'x'.repeat(1024) })}\n`;
+        await writeFile(main, padded + prLink(31, 2) + typed('a made-up prompt', 3).repeat(50) + said('a made-up reply', 4).repeat(50));
+        const parse = vi.spyOn(JSON, 'parse');
+        try {
+          expect(await links()).toEqual([{ kind: 'linked', repo: 'example/demo-app', number: 31, lastAt: time(2) }]);
+          // The long one, which also names a PR URL in the main transcript, once, by the old rule; the short one once.
+          expect(parse.mock.calls.filter(([text]) => String(text).includes('"pr-link"'))).toHaveLength(2);
+          expect(parse.mock.calls.filter(([text]) => String(text).includes('made-up'))).toHaveLength(0);
+        } finally {
+          parse.mockRestore();
+        }
+      });
     });
 
     it('is empty for a scanned session with no links, and undefined before its first scan', async () => {
@@ -827,17 +890,19 @@ describe('createWorkedInScanner', () => {
       expect(await links(s)).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 13, lastAt: time(6) }]);
     });
 
-    it(`keeps at most ${PR_LINKS_MAX}, newest first, dropping the oldest mentioned links first`, async () => {
+    it(`keeps at most ${PR_LINKS_STRONG_MAX} strong links and ${PR_LINKS_MAX} mentioned ones, each the newest of its kind (W105)`, async () => {
       const prompts = Array.from({ length: 15 }, (_, i) => typed(`${APP}/pull/${i + 1}`, i)).join('');
-      const mentions = Array.from({ length: 10 }, (_, i) => said(`${API}/pull/${i + 1}`, 100 + i)).join('');
+      const mentions = Array.from({ length: 25 }, (_, i) => said(`${API}/pull/${i + 1}`, 100 + i)).join('');
       await writeFile(main, prompts + mentions);
       const kept = (await links()) ?? [];
-      expect(kept).toHaveLength(PR_LINKS_MAX);
-      expect(kept.slice(0, 5).map((l) => [l.kind, l.number])).toEqual([10, 9, 8, 7, 6].map((n) => ['mentioned', n]));
-      expect(kept.slice(5).map((l) => [l.kind, l.number])).toEqual(Array.from({ length: 15 }, (_, i) => ['prompted', 15 - i]));
-      await appendFile(main, Array.from({ length: 10 }, (_, i) => typed(`${APP}/pull/${100 + i}`, 200 + i)).join(''));
-      const strong = (await links()) ?? [];
-      expect(strong.map((l) => l.number)).toEqual([...Array.from({ length: 10 }, (_, i) => 109 - i), ...Array.from({ length: 10 }, (_, i) => 15 - i)]);
+      expect(kept).toHaveLength(15 + PR_LINKS_MAX);
+      expect(kept.slice(0, PR_LINKS_MAX).map((l) => [l.kind, l.number])).toEqual(Array.from({ length: PR_LINKS_MAX }, (_, i) => ['mentioned', 25 - i]));
+      expect(kept.slice(PR_LINKS_MAX).map((l) => [l.kind, l.number])).toEqual(Array.from({ length: 15 }, (_, i) => ['prompted', 15 - i]));
+      // 200 more strong links, all newer: the oldest strong ones go, and the mentions stay.
+      await appendFile(main, Array.from({ length: 200 }, (_, i) => typed(`${APP}/pull/${100 + i}`, 200 + i)).join(''));
+      const after = (await links()) ?? [];
+      expect(after.filter((l) => l.kind === 'prompted').map((l) => l.number)).toEqual(Array.from({ length: PR_LINKS_STRONG_MAX }, (_, i) => 299 - i));
+      expect(after.filter((l) => l.kind === 'mentioned')).toHaveLength(PR_LINKS_MAX);
     });
 
     it('has no prLinks for a transcript that can’t be read, tries again later, and keeps none in memory meanwhile', async () => {

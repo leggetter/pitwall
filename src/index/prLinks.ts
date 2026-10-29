@@ -3,7 +3,7 @@
 // finds these in the same pass. Pure: it reads no files and runs nothing. The index doesn't know
 // which PRs are open; the web UI matches the links against the PR list (prLinkMatches()).
 //
-// The four kinds (PrLinkKind), each from its own place, since a PR URL anywhere in a transcript
+// The five kinds (PrLinkKind), each from its own place, since a PR URL anywhere in a transcript
 // would link the wrong sessions (`gh pr list`'s output names many):
 // - opened: a successful result of a call that creates a PR: a failed `gh pr create` prints the
 //   URL of the PR that already exists. For a Bash `gh pr create` (or `gh pr new`), each line of its
@@ -17,13 +17,28 @@
 //   tags, other refs, and a later `git fetch` or `git pull`'s lines, after `From`, are left out.
 // - prompted: a PR URL in a prompt you typed, by the rule behind lastUserPrompt (promptTextOf()),
 //   in the main transcript: a sub-agent's prompts are its parent's.
+// - linked: Claude Code's own `pr-link` entry (M4 redesign, W105), `{"type":"pr-link","prNumber",
+//   "prRepository","prUrl","sessionId","timestamp"}`, in any of the session's files: Claude Code
+//   writes a sub-agent's in its parent's transcript. Internal, so read defensively (claudeLinkOf()):
+//   kept only when its URL is exactly https://github.com/<owner>/<name>/pull/<n> for the repo and
+//   number it names, by the contract's patterns, its time is one, and it's the session's own.
 // - mentioned: a PR URL in Claude's own text blocks in the main transcript.
 // A call's input and every other tool result count for nothing.
+//
+// Caps (W105): strong links up to PR_LINKS_STRONG_MAX and mentioned ones up to PR_LINKS_MAX, each
+// the newest of its own, so mentions never push out a strong link, nor strong links a mention.
 //
 // Every step is linear in the text's size, and ref lines over MAX_OUTPUT_LINE aren't read: the
 // scanner runs these on the main thread.
 
-import { PR_LINKS_MAX, type PrLink, type PrLinkKind } from '../shared/protocol.js';
+import {
+  GITHUB_OWNER_PATTERN,
+  GITHUB_REPO_NAME_PATTERN,
+  PR_LINKS_MAX,
+  PR_LINKS_STRONG_MAX,
+  type PrLink,
+  type PrLinkKind,
+} from '../shared/protocol.js';
 import { NOT_OWNERS, prCommandsOf, slugsIn } from './toolCalls.js';
 
 /** A PR, by its repo, lowercase `owner/name`, and number. */
@@ -69,6 +84,10 @@ const FROM_LINE = /^From \S/;
  */
 const REF_LINE = /^\s*(?:([+*=!-])\s+)?(\[[a-z ]{1,40}\]|[0-9a-f]{4,64}\.\.\.?[0-9a-f]{4,64})\s+(\S{1,255}) -> (\S{1,255})(?: \(.{1,200}\))?$/;
 const HASH_RANGE = /^[0-9a-f]+\.\.\.?[0-9a-f]+$/;
+/** A `pr-link` entry's `prRepository`, by the contract's patterns. */
+const LINK_REPO = new RegExp(`^(${GITHUB_OWNER_PATTERN})/(${GITHUB_REPO_NAME_PATTERN})$`);
+/** A `pr-link` entry's `prUrl`: exactly a PR's URL, nothing before or after. */
+const LINK_URL = new RegExp(`^https://github\\.com/(${GITHUB_OWNER_PATTERN})/(${GITHUB_REPO_NAME_PATTERN})/pull/([1-9][0-9]{0,9})$`);
 
 function prRef(owner: string, name: string, digits: string): PrRef | undefined {
   if (NOT_OWNERS.has(owner.toLowerCase())) return undefined;
@@ -178,6 +197,40 @@ export function linkingCall(name: string, input: unknown): LinkingCall | undefin
   return { ...(prCreate ? { opens: 'gh' as const } : {}), ...(push ? { pushes: true as const } : {}) };
 }
 
+/**
+ * The longest line read as a `pr-link` entry. Claude Code's were 208 to 264 bytes on 2026-10-29, in
+ * 10,428 entries; a longer line isn't looked at, so the scanner's test for one stays tiny. With 4 KiB,
+ * a full scan of 3.3 GiB of transcripts took 5 to 7% longer than without the test; with 1 KiB, within
+ * the noise of 2%.
+ */
+export const PR_LINK_LINE_MAX = 1024;
+
+/**
+ * The link a `pr-link` entry makes, Claude Code's own (PrLinkKind 'linked'), or undefined for any
+ * other entry and for one that isn't well formed: `prUrl` must be exactly
+ * `https://github.com/<owner>/<name>/pull/<n>` (GITHUB_OWNER_PATTERN, GITHUB_REPO_NAME_PATTERN, but
+ * not `.` or `..`), naming the repo `prRepository` names, in any case, and the number `prNumber`
+ * is, a positive whole number; `timestamp` a time. When `sessionId` is given, the entry's must be
+ * it, so a link copied from another session's transcript isn't this one's. The repo is lowercase.
+ */
+export function claudeLinkOf(entry: Record<string, unknown>, sessionId?: string): FoundLink | undefined {
+  if (entry.type !== 'pr-link') return undefined;
+  if (sessionId !== undefined && entry.sessionId !== sessionId) return undefined;
+  const { prNumber, prRepository, prUrl, timestamp } = entry;
+  if (typeof prNumber !== 'number' || !Number.isSafeInteger(prNumber) || prNumber <= 0) return undefined;
+  if (typeof prRepository !== 'string' || typeof prUrl !== 'string' || typeof timestamp !== 'string') return undefined;
+  const repo = LINK_REPO.exec(prRepository);
+  const url = LINK_URL.exec(prUrl);
+  if (!repo || !url) return undefined;
+  const name = repo[2] ?? '';
+  if (name === '.' || name === '..' || NOT_OWNERS.has((repo[1] ?? '').toLowerCase())) return undefined;
+  const slug = prRepository.toLowerCase();
+  if (`${url[1]}/${url[2]}`.toLowerCase() !== slug || Number(url[3]) !== prNumber) return undefined;
+  const at = Date.parse(timestamp);
+  if (!Number.isFinite(at) || at <= 0) return undefined;
+  return { kind: 'linked', repo: slug, number: prNumber, at };
+}
+
 /** A link as the scanner keeps it: a PrLink with its time as epoch milliseconds. */
 export interface FoundLink {
   kind: PrLinkKind;
@@ -211,35 +264,24 @@ function order(a: string, b: string): number {
 }
 
 /**
- * The links to keep, newest first, at most `max`: over that, the oldest 'mentioned' links go first,
- * then the oldest of the rest. So with `max` or more strong links, the newest `max` of those.
+ * The links to keep, newest first: the newest `strongMax` strong links (prLinkIsStrong()) and the
+ * newest `mentionedMax` mentioned ones, each cap on its own (W105), so neither kind crowds out the
+ * other.
  */
-export function newestLinks(links: Iterable<FoundLink>, max = PR_LINKS_MAX): FoundLink[] {
-  const sorted = [...links].sort(newestFirst);
-  let over = sorted.length - max;
-  if (over <= 0) return sorted;
-  const kept: FoundLink[] = [];
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const link = sorted[i] as FoundLink;
-    if (over > 0 && link.kind === 'mentioned') over--;
-    else kept.push(link);
-  }
-  return kept.reverse().slice(0, max);
+export function newestLinks(links: Iterable<FoundLink>, strongMax = PR_LINKS_STRONG_MAX, mentionedMax = PR_LINKS_MAX): FoundLink[] {
+  let strong = 0;
+  let mentioned = 0;
+  return [...links].sort(newestFirst).filter((link) => (link.kind === 'mentioned' ? ++mentioned <= mentionedMax : ++strong <= strongMax));
 }
 
 /**
- * Drops what newestLinks() could never keep from one file's links: beyond the newest `max` strong
- * links and the newest `max` mentioned ones. Merging files' pruned links then keeps what merging
- * them whole would, so a transcript that names thousands of PRs holds a bounded number.
+ * Drops what newestLinks() could never keep from one file's links: beyond the newest `strongMax`
+ * strong links and the newest `mentionedMax` mentioned ones. Merging files' pruned links then keeps
+ * what merging them whole would, so a transcript that names thousands of PRs holds a bounded number.
  */
-export function pruneLinks(links: Map<string, FoundLink>, max = PR_LINKS_MAX): void {
-  const sorted = [...links.values()].sort(newestFirst);
-  let strong = 0;
-  let mentioned = 0;
-  for (const link of sorted) {
-    const keep = link.kind === 'mentioned' ? ++mentioned <= max : ++strong <= max;
-    if (!keep) links.delete(linkKey(link));
-  }
+export function pruneLinks(links: Map<string, FoundLink>, strongMax = PR_LINKS_STRONG_MAX, mentionedMax = PR_LINKS_MAX): void {
+  const kept = new Set(newestLinks(links.values(), strongMax, mentionedMax));
+  for (const [key, link] of links) if (!kept.has(link)) links.delete(key);
 }
 
 /** A found link as SessionSummary.prLinks carries it. */

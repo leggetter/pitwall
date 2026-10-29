@@ -14,7 +14,9 @@ import {
   ghEnvironment,
   isWellFormedCursor,
   mergeSearches,
+  PRS_MAX_PAGES,
   PRS_PAGE_MAX_BYTES,
+  PRS_PAGE_SIZE,
   PRS_QUERIES,
   PRS_SEARCHES,
 } from './fetch.js';
@@ -108,7 +110,7 @@ describe('fetchPullRequests: the command', () => {
         '... on StatusContext { context state }',
         'pageInfo { hasNextPage endCursor }',
         'issueCount',
-        'search(query: $q, type: ISSUE, first: 100, after: $after)',
+        'search(query: $q, type: ISSUE, first: 25, after: $after)',
       ]) {
         expect(PRS_QUERIES[relation], `${relation}: ${field}`).toContain(field);
       }
@@ -252,14 +254,14 @@ describe('fetchSearch: one search, the author one', () => {
     const page1 = searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: 'abc' });
     const { runFile, calls } = fakeRunFile([page1, searchPage(prs(50, 101))], (call) => {
       // Page 1 takes 20 s.
-      if (call.args.every((arg) => !arg.startsWith('after='))) clock += 20_000;
+      if (call.args.every((arg) => !arg.startsWith('after='))) clock += 40_000;
     });
     expect(await authored({ runFile, monotonicNow: () => clock })).toMatchObject({ ok: true });
-    expect(calls.map((call) => call.options.timeoutMs)).toEqual([30_000, 10_000]);
+    expect(calls.map((call) => call.options.timeoutMs)).toEqual([60_000, 20_000]);
 
     clock = 0;
     const slow = fakeRunFile([page1, searchPage([])], () => {
-      clock += 30_000;
+      clock += 60_000;
     });
     expect(await authored({ runFile: slow.runFile, monotonicNow: () => clock })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
     expect(slow.calls).toHaveLength(1);
@@ -286,6 +288,50 @@ describe('fetchSearch: one search, the author one', () => {
     expect(await authored({ runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
     const unreadable = fakeRunFile([searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: 'abc' }), 'not json']);
     expect(await authored({ runFile: unreadable.runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
+  });
+
+  it(`asks for pages of ${PRS_PAGE_SIZE}, each with the cursor of the one before, up to ${PRS_MAX} (W105)`, async () => {
+    expect([PRS_PAGE_SIZE, PRS_MAX_PAGES]).toEqual([25, 8]);
+    const cursor = (n: number) => Buffer.from(`cursor:${n}`).toString('base64');
+    const pages = Array.from({ length: 9 }, (_, i) => searchPage(prs(25, 1 + i * 25), { total: 230, hasNextPage: true, endCursor: cursor(i + 1) }));
+    const { runFile, calls } = fakeRunFile(pages);
+    const result = await authored({ runFile });
+    expect(calls).toHaveLength(PRS_MAX_PAGES);
+    expect(calls.map((call) => fields(call.args).after)).toEqual([undefined, ...Array.from({ length: 7 }, (_, i) => cursor(i + 1))]);
+    expect(result).toMatchObject({ ok: true, truncated: true });
+    expect(result.ok && result.prs).toHaveLength(PRS_MAX);
+  });
+
+  it('stops at the page GitHub says is the last, and puts the pages together', async () => {
+    const { runFile, calls } = fakeRunFile([
+      searchPage(prs(25, 1), { total: 54, hasNextPage: true, endCursor: 'YQ==' }),
+      searchPage(prs(25, 26), { total: 54, hasNextPage: true, endCursor: 'Yg==' }),
+      searchPage(prs(4, 51), { total: 54, hasNextPage: false, endCursor: 'Yw==' }),
+    ]);
+    const result = await authored({ runFile });
+    expect(calls).toHaveLength(3);
+    expect(result).toMatchObject({ ok: true, truncated: false });
+    expect(result.ok && result.prs.map((pr) => pr.number)).toEqual(Array.from({ length: 54 }, (_, i) => 54 - i));
+  });
+
+  it('fails the search when a later page fails, and stops at a later cursor of the wrong shape', async () => {
+    const two = (third: string | Error) =>
+      fakeRunFile([searchPage(prs(25, 1), { total: 60, hasNextPage: true, endCursor: 'YQ==' }), searchPage(prs(25, 26), { total: 60, hasNextPage: true, endCursor: 'Yg==' }), third]);
+    expect(await authored({ runFile: two(new RunError('timeout', 'timed out after 30s')).runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
+    const bad = fakeRunFile([searchPage(prs(25, 1), { total: 60, hasNextPage: true, endCursor: 'YQ==' }), searchPage(prs(25, 26), { total: 60, hasNextPage: true, endCursor: '@/etc/passwd' })]);
+    expect(await authored({ runFile: bad.runFile })).toMatchObject({ ok: true, truncated: true });
+    expect(bad.calls).toHaveLength(2);
+  });
+
+  it('gives each page only the time left of the search’s PRS_FETCH_TIMEOUT_MS', async () => {
+    let clock = 0;
+    const page = (n: number) => searchPage(prs(25, 1 + n * 25), { total: 100, hasNextPage: true, endCursor: 'YQ==' });
+    // Each page takes 24 s: the third gets 12 s, and none is left for a fourth.
+    const { runFile, calls } = fakeRunFile([page(0), page(1), page(2), page(3)], () => {
+      clock += 24_000;
+    });
+    expect(await authored({ runFile, monotonicNow: () => clock })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
+    expect(calls.map((call) => call.options.timeoutMs)).toEqual([60_000, 36_000, 12_000]);
   });
 
   it('reads failing checks through to the list', async () => {
@@ -318,7 +364,7 @@ describe('fetchSearch: errors', () => {
     expect(await failWith(new RunError('exit', 'exited with code 1', 1))).toEqual({ ok: false, reason: 'error', error: exitError(1) });
     expect(exitError(1)).toBe('gh api failed with exit code 1. Check your network, or run gh auth status, then Refresh.');
     expect(await failWith(new RunError('timeout', 'timed out after 30s'))).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
-    expect(FETCH_ERRORS.timeout).toContain('30 seconds');
+    expect(FETCH_ERRORS.timeout).toContain('60 seconds');
     expect(await failWith(new RunError('too-large', 'printed more than 4194304 bytes'))).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.tooLarge });
     for (const error of [new RunError('signal', 'was killed by SIGKILL'), new RunError('spawn', 'EACCES'), new Error('boom'), 'a string']) {
       expect(await failWith(error)).toEqual({ ok: false, reason: 'error', error: "gh couldn't be run. Refresh to try again." });

@@ -567,7 +567,8 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.
       pitwallHome: pitwallHome(),
       // Your open PRs (M4), which the server starts fetching once it's listening. With --no-prs, never gh.
-      prs: command.prs ? createPrPoller() : prsOff(),
+      // With the index, each PR is placed under the clone of its repo, or the root that claims its owner (W105).
+      prs: command.prs ? createPrPoller({ index: indexer }) : prsOff(),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {

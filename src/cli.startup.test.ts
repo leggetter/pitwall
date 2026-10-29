@@ -185,8 +185,9 @@ describe('main(): startup', () => {
       expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
       const poller = seen.calls.at(-1)?.prs;
       expect(poller).toBeDefined();
-      // The server starts it once listening; until then nothing has run gh.
-      expect(poller?.latest()).toEqual({ source: { ok: true }, refreshing: false, prs: [] });
+      // The server starts it once listening; until then nothing has run gh, nor found a repo. It
+      // places each PR from the index's snapshots (W105), and there's none yet: no roots.
+      expect(poller?.latest()).toEqual({ source: { ok: true }, refreshing: false, prs: [], roots: [] });
       poller?.stop();
 
       expect(await main(['--no-open', '--no-prs', '--port', '0', tmpdir()])).toBe(0);

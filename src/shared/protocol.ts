@@ -188,10 +188,11 @@ export interface SessionSummary {
    */
   workedIn?: WorkedIn[];
   /**
-   * The pull requests this session opened, pushed to or was given in a
-   * prompt, and the ones Claude named in its replies, from its transcript and
-   * its sub-agents' (M4, W94). Newest first, one per kind and PR (or pushed
-   * branch), at most PR_LINKS_MAX. The index doesn't know which PRs are open
+   * The pull requests this session opened, pushed to, was linked to by Claude
+   * Code (W105) or was given in a prompt, and the ones Claude named in its
+   * replies, from its transcript and its sub-agents' (M4, W94). Newest first,
+   * one per kind and PR (or pushed branch), at most PR_LINKS_STRONG_MAX strong
+   * links and PR_LINKS_MAX mentioned ones. The index doesn't know which PRs are open
    * or whose they are: the web UI matches these against PullRequestList with
    * prLinkMatches(), so a link to a PR that isn't one of your open ones shows
    * nothing. Absent until the session's transcripts have been scanned, when
@@ -1380,10 +1381,12 @@ export const PRS_POLL_INTERVAL_MS = 3 * 60 * 1000;
 export const PRS_REFRESH_MIN_MS = 60 * 1000;
 
 /**
- * A search that takes longer, both its pages, fails with reason 'error'. The author search took
- * 8.5 s on 2026-10-28, for 50 PRs. GitHub itself ends a single request after 10 s.
+ * A search that takes longer, all its pages, fails with reason 'error'. GitHub itself ends a single
+ * request after 10 s. Since W105 a page holds 25 PRs: on 2026-10-29 the author search's 55 took
+ * three pages, 3.7, 4.8 and 2.9 s, 11.4 s in all, so the 8 pages of PRS_MAX would take about 36 s,
+ * more than the 30 s this was for one or two pages of 100.
  */
-export const PRS_FETCH_TIMEOUT_MS = 30 * 1000;
+export const PRS_FETCH_TIMEOUT_MS = 60 * 1000;
 
 /** The most PRs one search keeps: two pages of GitHub's search. */
 export const PRS_MAX = 200;
