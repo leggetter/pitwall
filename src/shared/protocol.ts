@@ -633,12 +633,17 @@ export interface ConversationPage {
   /**
    * On the newest page only (W102): true when Claude Code's mark that a turn
    * ended, a `turn_duration` system entry (spike 007, finding 4), is newer than
-   * every entry that runs a turn: Claude's entries, a tool's result, a prompt
-   * or a message from another session; false when one of those is newer, as
-   * always for an older Claude Code, which writes no such mark. Absent when
-   * the page has neither, as for an empty transcript. The web UI
-   * hides its working line when it's true, whatever Claude Code's status says,
-   * which a plugin's monitor can keep at busy (spike 007, finding 6).
+   * every entry that runs a turn: any of Claude's lines, a thinking block's
+   * alone included, a tool's result or a prompt, or a message from another
+   * session or a task notification, which Claude Code starts a turn for; false
+   * when one of those is newer, as always for an older Claude Code, which
+   * writes no such mark. Absent when the page has neither, as for an empty
+   * transcript, and on a sub-agent's page, whose entries are all its own. The
+   * index's rule for its own turn's end (W69) is the same, but leaves a
+   * message or a task notification out, so a question asked stays in Needs
+   * you. The web UI hides its working line when it's true, whatever Claude
+   * Code's status says, which a plugin's monitor can keep at busy (spike 007,
+   * finding 6).
    */
   turnEnded?: boolean;
 }
