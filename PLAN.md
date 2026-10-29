@@ -414,6 +414,12 @@ Phil, 2026-10-29, after the first try-out: the separate PR list doesn't work. PR
   - **Cloning:** `gh repo clone owner/name <root>/<name>`, through gh's own login so private repos work, only after a click that shows the path. pitwall never grants trust: whether trusting the root covers a new clone is checked in W107.
   - **A minimal config file now** ([#101](https://github.com/leggetter/pitwall/issues/101)): the roots and each root's GitHub owners, W103. The rest of #101 later.
   - **Finished:** an ended session with an open PR stays in the main list until the PR closes.
+- **W106's calls, as Phil ruled** (2026-10-29):
+  - **Old PRs:** a PR with no session, not updated in 90 days, goes behind Show older in the Pull requests view only, so it never adds to Needs you elsewhere.
+  - **Not needed now** doesn't hide a PR's problem: "Let's see how it works."
+  - **The filter bar:** "We've got to have a decent filter bar UX." Has PR mustn't cost W91's two lines at 1,440 px, so Sort becomes an icon menu, as Clear filters did.
+  - **The Pull requests item's badge** is solid, as Needs you's is.
+  - **Crowded rows:** "Let's just see how it looks", with a session row's PR badge cut to the number and the state on line 2.
 - **Work items:**
   - **W103,** the minimal config file;
   - **W104,** the contract, by the coordinator, after #102;
