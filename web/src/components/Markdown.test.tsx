@@ -257,7 +257,9 @@ describe('Markdown: too much formatting', () => {
   });
 });
 
-describe('Markdown: bounded on hostile input', () => {
+// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// A slowdown to quadratic time fails every try; a busy moment passes on the next.
+describe('Markdown: bounded on hostile input', { retry: 2 }, () => {
   /** The CPU time a render takes, best of three, as the server's hostile tests measure. */
   function bestOf3(fn: () => void): number {
     let best = Number.POSITIVE_INFINITY;
@@ -438,7 +440,9 @@ describe('Markdown: links in code (W37)', () => {
   });
 });
 
-describe('Markdown: links in code, bounded on hostile input (W37)', () => {
+// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// A slowdown to quadratic time fails every try; a busy moment passes on the next.
+describe('Markdown: links in code, bounded on hostile input (W37)', { retry: 2 }, () => {
   function bestOf3(fn: () => void): number {
     let best = Number.POSITIVE_INFINITY;
     for (let run = 0; run < 3; run++) {

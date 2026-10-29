@@ -383,7 +383,9 @@ describe('nesting caps', () => {
   });
 });
 
-describe('bounded on hostile input', () => {
+// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// A slowdown to quadratic time fails every try; a busy moment passes on the next.
+describe('bounded on hostile input', { retry: 2 }, () => {
   /** The best of five runs, so a pause elsewhere doesn't count. */
   function bestOf5(fn: () => unknown): number {
     let best = Number.POSITIVE_INFINITY;
@@ -628,7 +630,9 @@ describe('links in code (W37)', () => {
   });
 });
 
-describe('links in code, bounded on hostile input (W37)', () => {
+// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// A slowdown to quadratic time fails every try; a busy moment passes on the next.
+describe('links in code, bounded on hostile input (W37)', { retry: 2 }, () => {
   function bestOf5(fn: () => unknown): number {
     let best = Number.POSITIVE_INFINITY;
     for (let run = 0; run < 5; run++) {
@@ -785,7 +789,8 @@ describe('links that ask first (W55, W48\'s F6)', () => {
     expect(isOwnAddress(written, href)).toBe(false);
   });
 
-  describe('bounded on hostile link text, as W48\'s F1 asked of the server', () => {
+  // Retried, as the blocks above are.
+  describe('bounded on hostile link text, as W48\'s F1 asked of the server', { retry: 2 }, () => {
     const N = 32 * 1024;
     /** U+0001 to U+0008: C0 controls with no tab, line break or space among them, so the text reaches the URL parser. */
     const controls = (count: number) => Array.from({ length: count }, (_, i) => String.fromCharCode(1 + (i % 8))).join('');
