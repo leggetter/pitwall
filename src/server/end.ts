@@ -92,7 +92,7 @@ export interface EndOptions {
   processes?: Processes;
   /** Default process.kill. Tests pass a fake, so no test signals a process (src/test/noClaude.ts refuses one). */
   signal?: Signaller;
-  /** True for a `claude agents` row that is pitwall's own relay (RelayManager.isRelay). Default none. */
+  /** True for a `claude agents` row that is pitwall's own relay (RelayManager.isRelay), or one of its recap calls (RecapEngine.isOwn). Default none. */
   isRelay?: (row: AgentRow) => boolean;
   /** pitwall's own pid. Default process.pid. */
   selfPid?: number;

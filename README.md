@@ -13,7 +13,7 @@ Run many Claude Code sessions at once, across terminals and repos, and it's hard
 Claude Code has two kinds of session, and pitwall handles both. Interactive sessions run in your terminals. Background sessions are started with `claude --bg` and run by Claude Code itself, with no terminal of their own.
 
 - **Lists every Claude Code session under a directory,** wherever it was started: Warp, Cursor or any other terminal. Sessions are grouped by git repo, with worktrees under the repo they belong to. Finished background sessions, and interactive sessions that ended recently, stay listed.
-- **Shows which sessions need you, and why:** a prompt on screen, a question it asked you, or what Claude Code says a background session needs.
+- **Shows which sessions need you, and why:** a prompt on screen, a question it asked you, what Claude Code says a background session needs, or what its recap says it's waiting on you for.
 - **Opens a session** to read its conversation, and its sub-agents' in a tab of their own. While it works, the conversation ends with what it's doing and for how long, such as "Working · 2m 14s, Running Bash: npm test", or what it's waiting on you for.
 - **Lets you steer it:** send an interactive session a message, or drive a background session in a terminal in the page, permission prompts and dialogs included.
 - **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, ends a running interactive session, leaving its terminal at the shell, and brings an ended interactive session back in the background.
@@ -62,6 +62,12 @@ node dist/cli.js ~/code
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
   - The git remotes of every repo under your roots, two levels down, and of every repo your sessions worked in, with `git config --local --no-includes --get-regexp`, at start, every 5 minutes, when the roots change and on Refresh, to place each pull request under the clone of its repo, or under the root whose GitHub owners cover it. It never fetches, pulls or changes a repo, and only with pull requests on.
   - `gh api graphql` on github.com, with your GitHub login, at start, every 3 minutes and on Refresh, at most once a minute: three searches, each in pages of 25, for your open pull requests, the open ones that ask your review, or a team's you're on, and the open ones that mention you. `--no-prs` turns it off, and pitwall then never runs `gh`.
+- **It sends excerpts of your sessions' transcripts to Anthropic, for recaps** ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)):
+  - **What:** for each recap, one `claude -p` call to Haiku 5.5 on your Claude login, the same login your sessions use, with no API key. It sends the session's first prompt, up to 1,500 characters; Claude Code's own short recap of it; parts of its compaction summary, up to 2,000 characters each; and its latest turns, up to 8,000 characters, one line each, where a tool call is Claude Code's one-line summary of it, such as `Bash: npm test`. An update sends the previous recap and the turns since instead. It gets back why the session started, where it is, what's next, what it's waiting on, and a title.
+  - **When:** once a running session's turn has ended and it's been idle 5 minutes since something new, and when you ask for one. At most 2 at a time and 200 a day, each about $0.001 at API list prices; on a Max plan they count against its usage limits instead.
+  - **How it's fenced:** the call has no tools, loads none of your settings, hooks, plugins, `CLAUDE.md` or MCP servers, saves no session, and runs in `~/.pitwall/recap/`, where nothing is written. Recaps are kept in memory only, so a restart makes them again.
+  - **What a recap can change:** what the page shows: the recap, the session's title, and Needs you, which a recap can add a session to but never take one out of. Text in a transcript can steer what a recap says, as with any summary, but a recap can't run or send anything.
+  - **`--no-recaps` turns them off,** and pitwall then never runs a recap call.
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked. The session sees it as a message from another session, so a message can't approve a permission prompt.
   - **Attach** to a background session, in a terminal in the page. Opening a running one's view attaches to it by default, since that's where it takes input. One that has finished asks first, because attaching restarts it.
@@ -69,7 +75,7 @@ node dist/cli.js ~/code
   - **End** a running interactive session, after a confirmation, by sending its Claude Code process SIGTERM, never SIGKILL. Its terminal goes back to the shell, and its conversation is kept, but a reply in progress is lost. One that's still working asks again, naming what's running. pitwall never ends a relay, its own or another pitwall's, or a process it runs under.
   - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg`.
   - **Open** a session's directory in VS Code or Cursor.
-- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
+- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, the empty folder its recap calls run in, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
 
 ### Security, in brief
 
@@ -79,6 +85,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 - **A token:** every API request and the WebSocket need it. The page proves it holds the token over the WebSocket instead of sending it, and anything that changes state also needs a key that only that page gets.
 - **`Host` and `Origin` checks:** `Host` must be `127.0.0.1:<port>` on every request, against DNS rebinding. A WebSocket must come from pitwall's own page, an API request from another origin is refused, and there's no CORS.
 - **A strict Content Security Policy:** the page loads only pitwall's own files, and no other site can put it in a frame.
+- **Recaps leave your machine:** unless you start pitwall with `--no-recaps`, it sends excerpts of your sessions' transcripts to Anthropic's model on your Claude login, for each session's recap, as [above](#what-it-reads-and-what-it-does-only-when-you-ask). The call can't use a tool, and what comes back is only shown.
 
 ### Caveats
 
@@ -93,7 +100,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 From the clone, after `npm run build`:
 
 ```
-node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
+node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps]
 ```
 
 `npm start -- [root...]`, with the same options, runs the same thing.
@@ -106,6 +113,7 @@ node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>]
 | `--interval <seconds>` | How often to poll `claude agents`, in whole seconds from 1 to 300 | 5 |
 | `--no-open` | Don't open the browser. `PITWALL_NO_OPEN=1` does the same | Opens it |
 | `--no-prs` | Don't list your open pull requests, so pitwall never runs `gh`. Without it, pitwall runs `gh api graphql` at start, every 3 minutes and on Refresh, for your open PRs on github.com, and those that ask your review or mention you; `gh` must be installed and logged in | Lists them |
+| `--no-recaps` | Don't recap your sessions, so pitwall never runs a recap call. Without it, pitwall sends excerpts of a session's transcript to Haiku 5.5 with `claude -p` on your Claude login, once its turn has ended and it's been idle 5 minutes, and when you ask, at most 200 calls a day ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)) | Recaps them |
 | `-h`, `--help` | Show the help, with every option and variable | |
 | `-v`, `--version` | Show the version | |
 
@@ -155,6 +163,7 @@ flowchart TB
     pty["node-pty: claude attach id"]
     relay["Relay: pitwall-relay"]
     prs["PR poller"]
+    recaps["Recaps: claude -p, pitwall-recap"]
   end
 
   subgraph machine["On your machine"]
@@ -165,6 +174,7 @@ flowchart TB
   end
 
   github["github.com, through gh api graphql"]
+  model["Anthropic's model, on your Claude login"]
 
   page ~~~ index
   page <-->|"HTTP and WebSocket, with the token"| server
@@ -178,12 +188,16 @@ flowchart TB
   server -->|opens| editor
   prs -->|"every 3 min, and on Refresh"| github
   prs -->|"your open PRs"| server
+  index -->|"what it read"| recaps
+  recaps -->|"excerpts, once idle, and on Refresh"| model
+  recaps -->|"each session's recap"| server
 ```
 
 - **The index** turns what it reads into a snapshot of the sessions under your roots: each one grouped by repo, with read-only `git`, and whether it needs you. The server pushes a snapshot to the page only when something changed.
 - **A conversation** comes over HTTP, a page at a time, and only when you open the session. While the session works and its conversation is on screen, the newest page is fetched every 2 s, read backwards from the end of its transcript.
 - **The PR poller** runs three `gh api graphql` searches, one call each, for your open pull requests and those that ask your review or mention you, on its own timer, never with the session poll, so `gh` keeps your GitHub token and pitwall never reads it. The server pushes the list to the page when it changes.
 - **The terminal in the page** is xterm.js, on its own WebSocket, connected to a pseudo-terminal (PTY) that runs `claude attach <id>`. So you get Claude Code's whole interface, permission prompts included.
+- **Recaps** are one short `claude -p` call per session on Haiku 5.5, with no tools and no session saved, once its turn has ended and it's been idle 5 minutes, or when you ask. The server adds each session's recap to the snapshot, its title from the recap, and Needs you when the recap says it's waiting on you, and pushes the snapshot again when one lands. While a call runs, Claude Code lists it as a session, `pitwall-recap`, which pitwall leaves out of its list ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)).
 - **The relay** exists because the documented way to message an interactive session is Claude Code's cross-session messaging, which only a Claude session can use. So pitwall runs a headless one, `claude -p` named `pitwall-relay`, with `SendMessage` as its only tool, and a gate hook that lets it send only the message you wrote ([D8](docs/decisions.md#d8---messages-to-interactive-sessions-go-through-one-headless-relay-session)).
 
 ### Messaging an interactive session
@@ -215,7 +229,7 @@ sequenceDiagram
 ## Roadmap
 
 - **Now, pull requests with their sessions (M4):** your open pull requests, and the open ones that ask your review or mention you, with CI and review state. A session that worked on a pull request carries it on its row, and one no session has worked on is a row of its own under its repo, cloned or not. A row needs you when its pull request does: failing checks, conflicts or changes requested on your own, or a review requested of you. A session that ended with its pull request still open stays in the list until it closes.
-- **A supervisor (M5):** a Claude Code session that pitwall runs and shows in its own chat panel, which you talk to instead of visiting each session. It lists and summarises sessions, and messages or starts them once you approve. M5 also gives each session a recap of why it started, where it is now and what's next, shown in its view, and its title comes from the same recap.
+- **A supervisor (M5):** a Claude Code session that pitwall runs and shows in its own chat panel, which you talk to instead of visiting each session. It lists and summarises sessions, and messages or starts them once you approve. M5 also gives each session a recap of why it started, where it is now and what's next, shown in its view, and its title comes from the same recap. Recaps come first: the server makes them now (W110), and their strip in the page is next.
 - **Triage (M6):** urgency with reasons, from the index, the supervisor and M4's pull requests. The supervisor reads each idle session's latest turns to judge whether it really needs you. Triage tells "blocked on you" from "blocked on someone else", and pairs pull requests with sessions: "CI is failing on your PR, and the session that opened it is idle."
 - **Considering, undecided: Peers ([#99](https://github.com/leggetter/pitwall/issues/99)).** Sessions already message each other with Claude Code's cross-session messaging. pitwall could show who a session has talked to, and both sides of each exchange as one thread, apart from sub-agents. The supervisor's messages would show the same way, as its audit trail.
 
@@ -227,7 +241,7 @@ Apache-2.0: see [`LICENSE`](LICENSE). The bundled fonts and icons keep their own
 
 ## More
 
-- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D24, with their reasoning.
+- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D26, with their reasoning.
 - **[`PLAN.md`](PLAN.md):** the living plan: status, what's next, open questions, and each milestone's work.
 - **[`docs/design-system.md`](docs/design-system.md):** the web UI's design system: tokens, layout, components, content and accessibility.
 - **[`docs/spikes/`](docs/spikes/):** the experiments behind the decisions, one write-up each.

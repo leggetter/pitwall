@@ -48,8 +48,9 @@ npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5),
                          `--port <n>` the port (default 4517, or a free one if it's busy),
                          `--no-open` leaves the browser alone, `--no-prs` turns off your open
-                         pull requests, so pitwall never runs gh, and `--config <path>` reads that
-                         config file instead of ~/.pitwall/config.json (README's Configuration)
+                         pull requests, so pitwall never runs gh, `--no-recaps` turns off recaps, so
+                         pitwall never sends transcript excerpts to the model, and `--config <path>`
+                         reads that config file instead of ~/.pitwall/config.json (README's Configuration)
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
                          (scripts/appcheck/README.md); --list, --only <part>, --widths, --themes, --ports
 npm run appcheck:install-shell    once on macOS: the pinned chrome-headless-shell it runs in
@@ -62,7 +63,7 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 ```
 PLAN.md                  the living plan: status, decisions, milestones
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
-docs/decisions.md        settled decisions, D1 to D24, with their reasoning
+docs/decisions.md        settled decisions, D1 to D26, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
@@ -73,12 +74,18 @@ src/prs/                 your open pull requests (M4): three gh api graphql sear
                          those that ask your review and those that mention you (W101), read defensively,
                          on its own poller, each PR placed under its repo or root (W105, place.ts).
                          Entry point index.ts: createPrPoller(), prsOff() for --no-prs
+src/recaps/              per-session recaps (M5, W110, D26): engine.ts schedules them, a short claude -p on Haiku
+                         per session, at most 2 at a time and 200 a day, and decorates the snapshot; input.ts
+                         builds the input, prompt.ts the command line, environment and strict parsing, call.ts
+                         runs one. The transcript reads are src/index/recapSources.ts; the snapshot's view
+                         and routes are src/server/snapshotRecaps.ts and recapRoutes.ts. Off with --no-recaps
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side
 src/test/                test helpers shared across test files, such as the v3 proof, made-up PRs, and
                          noClaude.ts, which fails any server test that would run `claude` or `gh` without
-                         PITWALL_LIVE=1, or open an editor at all; not built
+                         PITWALL_LIVE=1, or open an editor at all; not built. Recap tests pass the engine a
+                         fake spawner, so none runs claude
 web/                     the React web UI, built by Vite to dist/web
 web/public/theme-init.js sets the theme before first paint (a same-origin script, for the CSP)
 web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out

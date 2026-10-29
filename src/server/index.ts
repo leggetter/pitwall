@@ -1,5 +1,6 @@
 import type { Indexer } from '../index/index.js';
 import type { PrSource } from '../prs/index.js';
+import type { RecapEngine } from '../recaps/engine.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
 
@@ -42,6 +43,15 @@ export interface ServerOptions {
    * gh, so a test never reaches GitHub.
    */
   prs?: PrSource;
+  /**
+   * Per-session recaps (M5, W110): the engine the CLI makes with createRecapEngine(), so the indexer
+   * can hide its calls and hand it what it read. The server starts it once it's listening, composes
+   * its view of the snapshot under W105's, serves recapPath() and recapRefreshPath(), and closes it on
+   * close(). Without it, recaps are off, as with `--no-recaps`: no snapshot has `recap` or `recaps`,
+   * GET recapPath() answers 404, Refresh answers 409, and nothing runs a recap call, so a test never
+   * reaches the model.
+   */
+  recaps?: RecapEngine;
 }
 
 export interface RunningServer {

@@ -34,7 +34,13 @@
 //   static files                Host only. They are the public build output.
 //
 // The snapshot, on GET /api/snapshot and /ws, carries each session's PR links only to PRs in the
-// current list, and goes out again when the list changes that (snapshotLinks.ts, D14, W105).
+// current list, and goes out again when the list changes that (snapshotLinks.ts, D14, W105). With
+// recaps on, it carries each session's recap first, and goes out again when one lands
+// (snapshotRecaps.ts, M5, W110):
+//
+//   GET /api/sessions/:sessionId/recap           then recapRoutes.ts: the session's SessionRecap, else 404
+//   POST /api/sessions/:sessionId/recap/refresh  then recapRoutes.ts: a recap now; 409 with --no-recaps,
+//                                                429 when the day's budget is spent or one is running
 //
 // The token can read the API, for scripts. The apiKey, which only a client
 // that answered a challenge gets, can read it too, and is the only credential
@@ -66,7 +72,9 @@ import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { registerPrs } from './prs.js';
+import { registerRecaps } from './recapRoutes.js';
 import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
+import { createRecapView } from './snapshotRecaps.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import {
@@ -195,8 +203,12 @@ export async function startServerWithInternals(
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
   // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close().
   const prs = options.prs ?? prsOff();
+  // Per-session recaps (M5, W110), or off. Started once listening, closed on close().
+  const recaps = options.recaps;
+  // With recaps, each session's recap, its title and Needs you's 'recap' reason, under W105's view.
+  const recapped = recaps === undefined ? undefined : createRecapView(indexer, recaps);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
-  const snapshots = createSnapshotView(indexer, prs);
+  const snapshots = createSnapshotView(recapped ?? indexer, prs);
   // The directory list (W70), your open PRs and Refresh (M4), then the input routes: attachments
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
   // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
@@ -207,8 +219,9 @@ export async function startServerWithInternals(
     registerAttachments(app, attachments);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
-    registerEndSession(app, indexer, { isRelay: (row) => relay.isRelay(row), ...internals.end, slots: commandSlots });
+    registerEndSession(app, indexer, { isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true, ...internals.end, slots: commandSlots });
     registerRelay(app, indexer, relay);
+    registerRecaps(app, indexer, recaps);
     internals.routes?.(app);
   };
   const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
@@ -277,6 +290,8 @@ export async function startServerWithInternals(
   attachments.start();
   // The first fetch of your open PRs, now that there's a server to show them.
   prs.start();
+  // Recaps from the index's snapshots, now that there's a server to show them.
+  recaps?.start(indexer);
 
   let closed: Promise<void> | undefined;
   return {
@@ -286,6 +301,7 @@ export async function startServerWithInternals(
       // No more fetches, and no more 'prs' messages to clients that are closing.
       prs.stop();
       snapshots.stop();
+      recapped?.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
           closing = true;
@@ -293,6 +309,7 @@ export async function startServerWithInternals(
         attach.close(),
         relay.close(),
         attachments.close(),
+        recaps?.close(),
       ]).then(() => undefined);
       return closed;
     },

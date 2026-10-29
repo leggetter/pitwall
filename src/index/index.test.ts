@@ -501,6 +501,49 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
+  it('hands sessionFacts what it read that the snapshot leaves out, for listed sessions only, before the listeners (W110)', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('a', '/work/repo/a'), row('b', '/work/repo/b'), row('outside', '/elsewhere/x')] };
+    const away = { text: 'Waiting for your go-ahead.', at: '2026-10-16T11:58:00.000Z' };
+    state.transcripts.set('a', { transcript: 'ok', lastActivityAt: '2026-10-16T11:55:00.000Z', turnEnded: true, awaySummary: away });
+    state.transcripts.set('b', { transcript: 'ok', turnEnded: false });
+    state.files.set('a', '/made-up/projects/a.jsonl');
+    const seen: { facts: Map<string, unknown>; latest: IndexSnapshot | undefined }[] = [];
+    let indexer: ReturnType<typeof createIndexer> | undefined;
+    indexer = createIndexer(
+      { roots: ['/work'], intervalMs: 1000, sessionFacts: (facts) => seen.push({ facts: new Map(facts), latest: indexer?.latest() }) },
+      deps,
+    );
+    await flush();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.facts).toEqual(new Map<string, unknown>([['a', { file: '/made-up/projects/a.jsonl', turnEnded: true, awaySummary: away }], ['b', { turnEnded: false }]]));
+    // Before the snapshot it goes with is the latest.
+    expect(seen[0]?.latest).toBeUndefined();
+    expect(JSON.stringify(indexer.latest())).not.toContain('Waiting for your go-ahead');
+    // Not when the listing fails: the facts would be of no sessions.
+    state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(seen).toHaveLength(1);
+    indexer.stop();
+  });
+
+  it('keeps polling when sessionFacts throws', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
+    const indexer = createIndexer(
+      {
+        roots: ['/work'],
+        sessionFacts: () => {
+          throw new Error('broken hook');
+        },
+      },
+      deps,
+    );
+    await flush();
+    expect(indexer.latest()?.groups.flatMap((g) => g.sessions.map((s) => s.sessionId))).toEqual(['a']);
+    indexer.stop();
+  });
+
   it('adds the relay’s alert to the snapshot, also when the source fails, and nothing when the hook has none or throws', async () => {
     const { state, deps } = harness();
     state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
@@ -1476,6 +1519,18 @@ describe('createIndexer with ended interactive sessions (W66)', () => {
     expect(groups[1]?.sessions[0]).toMatchObject({ name: 'named-by-flag', lastUserPrompt: 'Fix the flaky test', ended: true });
     // The transcript reader isn't asked about them: the scanner read them.
     expect(state.reads).toEqual(['live']);
+    indexer.stop();
+  });
+
+  it("hands sessionFacts an ended session's transcript, as the scanner found it (W110)", async () => {
+    const { state, deps, ended } = setup();
+    state.result = { ok: true, rows: [] };
+    const away = { text: 'Done, and the PR is merged.', at: new Date(NOW - 4 * 60_000).toISOString() };
+    ended.found = [endedSession('ended-1', '/work/repo/b', 5, { transcript: { transcript: 'ok', lastActivityAt: new Date(NOW - 5 * 60_000).toISOString(), turnEnded: true, awaySummary: away } })];
+    let facts: ReadonlyMap<string, unknown> | undefined;
+    const indexer = createIndexer({ roots: ['/work'], sessionFacts: (given) => (facts = given) }, deps);
+    await flush();
+    expect(facts?.get('ended-1')).toEqual({ file: '/made-up/projects/ended-1.jsonl', turnEnded: true, awaySummary: away });
     indexer.stop();
   });
 
