@@ -47,6 +47,10 @@ export interface AskedYou {
  *   from the job's `state.json`. Not its start placeholder, "send a prompt to
  *   start", which a resumed session shows though it asked nothing.
  * - 'asked': its last turn ended by asking you something (askedYou).
+ * - 'recap': its recap (M5, SessionSummary.recap) says it's waiting on you, and the recap is
+ *   current: made after the session's newest activity. `text` is the recap's `next`. Phil,
+ *   2026-10-29: sessions marked Done "whereas I'm sure there are open questions in them". The
+ *   heuristics above still decide first; a recap only adds a reason, never removes one.
  * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
  *   pitwall, and no prompt has been sent to it since.
  * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why:
@@ -55,8 +59,11 @@ export interface AskedYou {
  *   question is never hidden.
  */
 export interface NeedsYou {
-  reason: 'prompt' | 'claude-code' | 'asked' | 'restarted' | 'blocked';
-  /** For 'claude-code' only: Claude Code's line, as plain text, at most 200 characters. */
+  reason: 'prompt' | 'claude-code' | 'asked' | 'recap' | 'restarted' | 'blocked';
+  /**
+   * For 'claude-code': Claude Code's line, as plain text, at most 200 characters. For 'recap':
+   * the recap's `next`, plain text, at most RECAP_FIELD_MAX characters.
+   */
   text?: string;
 }
 
@@ -78,7 +85,8 @@ export interface SessionSummary {
    * Where `title` came from.
    * - 'claude-code': the title Claude Code generated from the session's first
    *   prompt. It isn't updated as the session moves on.
-   * - 'pitwall': a title pitwall generated from the session's recent turns (M5).
+   * - 'pitwall': a title pitwall generated from the session's recent turns (M5): its recap's
+   *   `title`.
    */
   titleSource?: 'claude-code' | 'pitwall';
   kind: SessionKind;
@@ -153,6 +161,12 @@ export interface SessionSummary {
    * exactly the sessions that have it.
    */
   needsYou?: NeedsYou;
+  /**
+   * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, with
+   * `--no-recaps`, and for sessions pitwall doesn't recap: ended ones, sub-agents, pitwall's own.
+   * The whole recap is fetched with recapPath() (D14).
+   */
+  recap?: RecapSummary;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
@@ -404,6 +418,8 @@ export interface IndexSnapshot {
    * restart the relay.
    */
   relayOff?: RelayOff;
+  /** How recaps are doing (M5): absent with `--no-recaps`. */
+  recaps?: RecapHealth;
 }
 
 /** Why pitwall stopped using its relay for this run (D8). */
@@ -1492,3 +1508,112 @@ export type AttachServerMessage =
   | { type: 'attached' }
   | { type: 'exit'; code: number | null }
   | { type: 'error'; error: string };
+
+// --- Recaps (M5, spike 010) -----------------------------------------------------------------------
+
+/**
+ * What a session is waiting on, by its recap (spike 010's prompt):
+ * - 'you': its latest turn asks you a question, or needs your decision, approval or action.
+ * - 'another session': a reply or a result from another Claude Code session.
+ * - 'CI': checks, a build or a deploy.
+ * - 'someone else': another person, such as a reviewer or an author (M6's "blocked on someone else").
+ * - 'nothing': its work is finished, or nothing is pending.
+ */
+export type RecapWaitingOn = 'you' | 'another session' | 'CI' | 'someone else' | 'nothing';
+
+/** The values, for checking a model's answer. */
+export const RECAP_WAITING_ON: readonly RecapWaitingOn[] = ['you', 'another session', 'CI', 'someone else', 'nothing'];
+
+/**
+ * A session's recap (M5; spike 010; Phil, 2026-10-29: "a recap of what we're trying to achieve at
+ * the minute, both at a top level (why did we kick this off?) and in terms of where we are now"):
+ * GET recapPath(). Made by one short `claude -p` call on RECAP_MODEL, with no tools and no session
+ * saved, from the session's first prompt, Claude Code's newest `away_summary` and compaction
+ * summary, and its latest turns, capped at RECAP_TURNS_CAP characters; or updated from the previous
+ * recap and the turns since. Kept in memory only. All text is plain, never Markdown, each field at
+ * most RECAP_FIELD_MAX characters, and shown in `<bdi>` where it names things.
+ */
+export interface SessionRecap {
+  /** Why the session was started, and its goal if that changed since. */
+  why: string;
+  /** Where it stands after the latest turn it covers. */
+  now: string;
+  /** What happens next, or what it's waiting for, naming any question you still have to answer. */
+  next: string;
+  waitingOn: RecapWaitingOn;
+  /** What the session is about, at most RECAP_TITLE_MAX_WORDS words. */
+  title: string;
+  /** ISO 8601: when it was made. */
+  at: string;
+  /** ISO 8601: the newest transcript entry it covers. */
+  throughAt: string;
+  /**
+   * 'pitwall' for pitwall's own recap. 'claude-code' when only Claude Code's `away_summary` is
+   * there, before pitwall's first recap or while the day's budget is spent: then `why` is empty,
+   * `now` is the away_summary, `next` is empty, and `waitingOn` is 'nothing', so it never puts a
+   * session in Needs you.
+   */
+  source: 'pitwall' | 'claude-code';
+  /** True when the session has activity newer than `throughAt`. */
+  stale?: true;
+}
+
+/**
+ * What the snapshot carries of a recap (SessionSummary.recap): what the list and Needs you need.
+ * `next` only when waitingOn is 'you', for the row's second line (D14).
+ */
+export interface RecapSummary {
+  waitingOn: RecapWaitingOn;
+  title: string;
+  next?: string;
+  at: string;
+  source: SessionRecap['source'];
+  stale?: true;
+}
+
+/** How recaps are doing today (IndexSnapshot.recaps). Days are local midnight to midnight. */
+export interface RecapHealth {
+  /** Calls made today, and the most allowed in a day (RECAP_DAILY_BUDGET). */
+  calls: number;
+  budget: number;
+  /** Sum of the calls' `total_cost_usd` today, at API list prices, as `claude -p` reports them. */
+  costUsd: number;
+  /** Set when the latest call failed: why, in pitwall's words, never the model's or claude's output. */
+  error?: string;
+}
+
+/** The model recaps run on (spike 010: as right as Sonnet 5.5 on 56 recaps, at a fifteenth of the cost). */
+export const RECAP_MODEL = 'claude-haiku-5-5';
+
+/** How long a session must be idle after a turn ends before it's recapped (spike 010: trailing, 5 minutes). */
+export const RECAP_DEBOUNCE_MS = 5 * 60 * 1000;
+
+/** The most recap calls in a day (spike 010: about twice the busiest day measured, 96). */
+export const RECAP_DAILY_BUDGET = 200;
+
+/** Characters of the latest turns a recap reads (spike 010: 24k changed no answer and cost 37% more). */
+export const RECAP_TURNS_CAP = 8000;
+
+/** Characters of the first prompt a recap reads, keeping its start and end. */
+export const RECAP_FIRST_PROMPT_CAP = 1500;
+
+/** The longest `why`, `now` or `next`. */
+export const RECAP_FIELD_MAX = 400;
+
+/** The most words in a recap's title. */
+export const RECAP_TITLE_MAX_WORDS = 8;
+
+/** GET: the session's SessionRecap, or 404 when there's none yet. The same authorization as SNAPSHOT_PATH. */
+export function recapPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/recap`;
+}
+
+/**
+ * POST, no body: recap the session now, answered with an ActionResult; the recap arrives in the
+ * snapshot and from recapPath(). It needs what every state-changing request needs: the apiKey,
+ * pitwall's Origin and its exact Host. 404 for a session pitwall doesn't recap, 409 with
+ * `--no-recaps`, 429 when the day's budget is spent or a call for it is already running.
+ */
+export function recapRefreshPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/recap/refresh`;
+}

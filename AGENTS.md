@@ -16,6 +16,8 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, is being built on `m4/integration`, which merges into `main` with Phil's approval. See "M4 - My open pull requests" and "M4 work breakdown" in `PLAN.md`, and `docs/design-system.md`.
 
+M5, the supervisor, is being built on `m5/integration`, branched from `m4/integration` before M4 reached `main`, starting with per-session recaps (W109 to W111). See "M5 - Supervisor" and "M5 work breakdown" in `PLAN.md`.
+
 ## Rules
 
 - **A UI change runs the app check:** `npm run build && npm run appcheck -- --out <dir>`, and adds or extends its part in `scripts/appcheck/parts/`. On macOS, never send key presses to Google Chrome's headless mode: it plays the user's alert sound for each key a page doesn't handle (W64). The harness refuses any browser but the pinned `chrome-headless-shell` there.
