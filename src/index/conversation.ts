@@ -39,7 +39,8 @@
 // For the web UI's working line (W102): each of those, a compaction summary and
 // Claude Code's own API error notice is marked `midTurn`, since none of them began
 // a turn, and the newest page says whether its newest turn has ended, by Claude
-// Code's `turn_duration` mark (spike 007, finding 4), which a page otherwise skips.
+// Code's `turn_duration` mark (spike 007, finding 4), which a page otherwise skips,
+// with W69's rule for what runs a turn (turnSignalOf(), in transcripts.ts).
 
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -48,7 +49,7 @@ import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shar
 import { isRecord } from './guards.js';
 import type { SubagentLabels } from './subagents.js';
 import { cap, truncate } from './text.js';
-import { queuedEntryOf, stripSystemReminders } from './transcripts.js';
+import { queuedEntryOf, stripSystemReminders, turnSignalOf, type TurnSignal } from './transcripts.js';
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -697,8 +698,8 @@ type Item =
    * `msgId`: its `origin.msg_id`, the same in the user entry and the mid-turn attachment that can stand for it (W99).
    */
   | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string; msgId?: string }
-  /** Claude Code's mark that a turn has ended, a `system` entry of subtype `turn_duration` (spike 007, finding 4; W102). */
-  | { kind: 'turn-end' };
+  /** What the line says of the turn (turnSignalOf(), W102): it ended, one runs, or something arrived that starts one. */
+  | { kind: 'turn'; signal: TurnSignal };
 
 /** A SendMessage call on the page whose result, if it has one yet, didn't fail, and where its line starts. */
 interface SendDraft extends SendCall {
@@ -771,19 +772,16 @@ class PageBuilder {
   }
 
   /**
-   * Whether the newest turn has ended (W102), from the newest line that says either: a `turn_duration`
-   * mark says it has; Claude's own entries, a tool's result, a prompt or a message from another session
-   * say one is running. Notices say neither: a local command and its output, a compaction and a task
-   * notification can come between turns. Lines are offered newest first, so the first that says wins.
+   * Whether the newest turn has ended (W102), from the newest line that says either, by W69's rule
+   * (turnSignalOf()): a `turn_duration` mark says it has; any assistant line, a thinking block's alone
+   * included, a tool's result or a prompt says one is running, and so does a message or a task
+   * notification that arrived, which Claude Code starts a turn for. A local command and its output, a
+   * compaction and the rest say neither. Lines are offered newest first, so the first that says wins.
    */
   private noteTurn(items: Item[]): void {
     if (this.turnEnded !== undefined) return;
-    for (const item of items) {
-      if (item.kind === 'turn-end') this.turnEnded = true;
-      else if (item.kind !== 'entry' || item.entry.kind === 'user' || item.entry.kind === 'cross-session') this.turnEnded = false;
-      else continue;
-      return;
-    }
+    const turn = items.find((item) => item.kind === 'turn');
+    if (turn?.kind === 'turn') this.turnEnded = turn.signal === 'ended';
   }
 
   /** How many new entries the line's items would add, given the oldest entry so far. */
@@ -792,7 +790,7 @@ class PageBuilder {
     let added = 0;
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i] as Item;
-      if (item.kind === 'result' || item.kind === 'turn-end') continue;
+      if (item.kind === 'result' || item.kind === 'turn') continue;
       if (item.kind === 'text' && joins(oldest, item.messageId)) continue;
       if (item.kind === 'entry' && item.msgId !== undefined && this.msgIds.has(item.msgId)) continue;
       added++;
@@ -809,7 +807,7 @@ class PageBuilder {
 
   private apply(item: Item, offset: number, end: number): void {
     switch (item.kind) {
-      case 'turn-end':
+      case 'turn':
         return;
       case 'result': {
         this.pending.delete(item.id);
@@ -1098,7 +1096,15 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
     return [];
   }
   if (!isRecord(entry) || (entry.isSidechain === true && !sidechain)) return [];
-  const at = timestampOf(entry);
+  const items = entryItems(entry, timestampOf(entry));
+  // What the line says of the session's turn (W102). Never a sidechain's, so a sub-agent's page has none.
+  const signal = turnSignalOf(entry);
+  if (signal !== undefined) items.push({ kind: 'turn', signal });
+  return items;
+}
+
+/** The entries, tool calls and results a parsed line contributes, by its type. */
+function entryItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
   switch (entry.type) {
     case 'assistant':
       return assistantItems(entry, at);
@@ -1338,11 +1344,10 @@ function asTyped(text: string): string {
 }
 
 /**
- * Claude Code writes local slash-command output as `system` entries too, and its mark that a turn has
- * ended (W102), which is no entry. Other system entries are left out.
+ * Claude Code writes local slash-command output as `system` entries too. Other system entries are left
+ * out, its mark that a turn has ended (W102) included: that's no entry, and itemsOfLine() notes it.
  */
 function systemItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
-  if (entry.subtype === 'turn_duration') return [{ kind: 'turn-end' }];
   if (entry.subtype !== 'local_command' || typeof entry.content !== 'string') return [];
   return localCommandNotice(entry.content.trim(), at) ?? [];
 }

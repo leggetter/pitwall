@@ -1605,6 +1605,10 @@ describe('readConversationPage: turns, for the working line (W102)', () => {
       ['Claude', [user('Second.'), assistant([thinking('t')], 'msg_2'), assistant([text('On it.')], 'msg_2')]],
       ['a tool call', [user('Second.'), assistant([toolUse('toolu_2', 'Bash', { command: 'sleep 60' })], 'msg_2')]],
       ['a tool result', [user('Second.'), assistant([toolUse('toolu_2', 'Bash', { command: 'true' })], 'msg_2'), toolResult('toolu_2')]],
+      // A task notification starts a turn, and Claude's first visible line can be seconds later (the W102 review).
+      ['a task notification', [user('<task-notification><task-id>b7</task-id><status>completed</status><summary>Build finished</summary></task-notification>', { origin: { kind: 'task-notification' } })]],
+      ['Claude thinking, with nothing shown yet', [user('Second.'), assistant([thinking('made up')], 'msg_2')]],
+      ['a task notification, then Claude thinking', [user('<task-notification><status>completed</status></task-notification>'), assistant([thinking('made up')], 'msg_2')]],
     ];
     for (const [what, after] of cases) {
       expect((await page(await transcript(jsonl(...before, ...after)))).turnEnded, what).toBe(false);
@@ -1620,6 +1624,13 @@ describe('readConversationPage: turns, for the working line (W102)', () => {
     expect(newest.turnEnded).toBe(false);
     expect(newest.before).toBeDefined();
     expect(await page(file, newest.before)).not.toHaveProperty('turnEnded');
+  });
+
+  it("says nothing on a sub-agent's page, whose entries are all its own", async () => {
+    const file = await transcript(jsonl(user('Read the routes.', { isSidechain: true }), assistant([text('Read.')], 'msg_s', { isSidechain: true }), { ...turnEnd(), isSidechain: true }));
+    const subagent = await page(file, undefined, { sidechain: true });
+    expect(subagent.entries).toHaveLength(2);
+    expect(subagent).not.toHaveProperty('turnEnded');
   });
 
   it('says nothing for a page with no entry that runs a turn and no mark', async () => {

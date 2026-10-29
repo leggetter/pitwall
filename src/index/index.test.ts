@@ -220,6 +220,21 @@ describe('createIndexer', () => {
       await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
 
       expect(await indexer.turnState('turn')).toBe('ended');
+      // A message from another session, or a task notification, isn't a turn yet: End session reads the
+      // session as idle until Claude's first entry, as before W102 (turnSignalOf()'s 'arrived').
+      const message = {
+        type: 'user',
+        isMeta: true,
+        timestamp: at,
+        origin: { kind: 'peer', from: 'uds:/tmp/pitwall-test.sock' },
+        message: { content: 'Another Claude session sent a message:\n<cross-session-message from="pitwall-test-peer">hi</cross-session-message>' },
+      };
+      const notification = { type: 'user', timestamp: at, origin: { kind: 'task-notification' }, message: { content: '<task-notification><status>completed</status></task-notification>' } };
+      await appendFile(file, lines(message, notification));
+      expect(await indexer.turnState('turn')).toBe('ended');
+      // Claude's first entry, a thinking block alone, runs one.
+      await appendFile(file, lines({ type: 'assistant', timestamp: at, message: { id: 'm2', content: [{ type: 'thinking', thinking: 'made up', signature: 'sig' }] } }));
+      expect(await indexer.turnState('turn')).toBe('running');
       // A new prompt since, written after the poll: read afresh, not from the poll's fields.
       await appendFile(file, lines(prompt));
       expect(await indexer.turnState('turn')).toBe('running');
