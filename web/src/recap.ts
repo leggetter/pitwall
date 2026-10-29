@@ -15,7 +15,8 @@
 //   day's budget is spent, which the snapshot says (RecapHealth).
 // - **No strip** with recaps off (no `recaps` on the snapshot, or a 409), for an ended session, which
 //   pitwall doesn't recap, and for one the server says it doesn't recap (a 404), such as its own.
-// - **Refresh** POSTs recapRefreshPath(), and is busy until the snapshot's `recap.at` changes, or for
+// - **Refresh** POSTs recapRefreshPath(), and is busy until the snapshot's `recap.at` changes and the
+//   new recap is fetched, or for
 //   RECAP_WAIT_MS, or until a call fails, which the app strip then says. Off, saying why, while the
 //   day's budget is spent. Its other results are toasts, as Refresh for the PR list has them.
 //
@@ -271,7 +272,7 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
 
   const [fetched, setFetched] = useState<SessionRecap>();
   // The latest fetch's outcome, for the summary it was for.
-  const [got, setGot] = useState<{ for: string; status: 'loading' | 'missing' | 'failed'; code?: number }>();
+  const [got, setGot] = useState<{ for: string; status: 'loading' | 'done' | 'missing' | 'failed'; code?: number }>();
   const [refused, setRefused] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   // Whether the open-time decision, to ask for one or not, has been made.
@@ -313,7 +314,7 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
         const recap = parseRecap(result.body);
         if (recap) {
           setFetched(recap);
-          setGot(undefined);
+          setGot({ for: summaryAt, status: 'done' });
         } else setGot({ for: summaryAt, status: 'failed', code: result.status });
         return;
       }
@@ -385,18 +386,21 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
     // `wanted`, `health` and `post` are read as they are when it's shown, not followed.
   }, [decided, enabled, hidden, listed]);
 
-  // Waiting for the recap a refresh asked for: until the snapshot's summary changes, a call fails, or RECAP_WAIT_MS.
+  // Waiting for the recap a refresh asked for: until the snapshot's summary changes and the new recap
+  // has been fetched, or fetching it has failed, so Refresh isn't idle beside the old one; until a call
+  // fails; or for RECAP_WAIT_MS.
   const calls = health?.calls;
   const failedSince = health?.error !== undefined && calls !== undefined && awaited.current.calls !== undefined && calls > awaited.current.calls;
+  const arrived = summaryAt !== awaited.current.fromAt && (fetchedAt === summaryAt || (got !== undefined && got.for === summaryAt && got.status !== 'loading'));
   useEffect(() => {
     if (phase !== 'awaiting') return;
-    if (summaryAt !== awaited.current.fromAt || failedSince) {
+    if (arrived || failedSince) {
       setPhase('idle');
       return;
     }
     const timer = setTimeout(() => setPhase((current) => (current === 'awaiting' ? 'idle' : current)), RECAP_WAIT_MS);
     return () => clearTimeout(timer);
-  }, [phase, summaryAt, failedSince]);
+  }, [phase, arrived, failedSince]);
 
   const spent = budgetSpent(health);
   const refreshing = phase !== 'idle';
