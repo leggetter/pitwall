@@ -11,7 +11,7 @@ import { SessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import type { StorageSource } from '../groupState.js';
 import { RECAP_COLLAPSED_KEY } from '../recap.js';
-import { ago, background, session } from './fixtures.js';
+import { ago, background, endedSession, session } from './fixtures.js';
 import { element, hoverFor, Scenario, Specimen } from './kit.js';
 import { acrossGroups, inGroup, Rows } from './lists.js';
 import { Stubbed } from './views.js';
@@ -106,10 +106,10 @@ function Strip({
 
 const IN_VIEW = recapped('recap-view', recap());
 const YOU = recapped('recap-you', recap());
-const CI = recapped('recap-ci', recap({ waitingOn: 'CI', next: "It's waiting for the made-up e2e run on #42 to finish, then it marks #42 ready." }));
-const SESSION = recapped('recap-session', recap({ waitingOn: 'another session', next: "It's waiting for pitwall-test-api to finish the made-up migration it asked for." }));
-const SOMEONE = recapped('recap-someone', recap({ waitingOn: 'someone else', next: "It's waiting for the made-up author to push a fix for the review's comments on #42." }));
-const DONE = recapped('recap-done', recap({ waitingOn: 'nothing', now: 'It fixed the made-up export, #42 merged, and the nightly run passed with a 3 GB file.', next: '' }));
+const CI = recapped('recap-ci', recap({ waitingOn: 'CI', next: 'The made-up e2e run on #42 to finish, before it marks #42 ready.' }));
+const SESSION = recapped('recap-session', recap({ waitingOn: 'another session', next: 'pitwall-test-api to finish the made-up migration it asked for.' }));
+const SOMEONE = recapped('recap-someone', recap({ waitingOn: 'someone else', next: "The made-up author's fix for the review's comments on #42." }));
+const DONE = recapped('recap-done', recap({ waitingOn: 'nothing', now: 'It fixed the made-up export, #42 merged, and the nightly run passed with a 3 GB file.', next: 'Nothing is left to do.' }));
 const STALE = recapped('recap-stale', recap({ stale: true }), { lastActivityAt: ago(1) });
 const CLAUDE = recapped('recap-claude-code', recap({ source: 'claude-code', why: '', next: '', waitingOn: 'nothing', now: 'The export fix is in draft PR #42 with green CI. Next, you decide whether to mark it ready.' }));
 const COLLAPSED = recapped('recap-collapsed', recap());
@@ -144,6 +144,9 @@ const ROW_CI = recapped('row-recap-ci', recap({ waitingOn: 'CI' }), { lastUserPr
 const ROW_SESSION = recapped('row-recap-session', recap({ waitingOn: 'another session' }), { lastUserPrompt: 'Ask pitwall-test-api for the migration.' }).session;
 const ROW_SOMEONE = recapped('row-recap-someone', recap({ waitingOn: 'someone else' }), { lastUserPrompt: 'Wait for the author to fix the review comments.' }).session;
 const ROW_STALE_CI = recapped('row-recap-stale-ci', recap({ waitingOn: 'CI', stale: true }), { lastUserPrompt: 'Push it and wait for CI.' }).session;
+// Ended, with a current recap that waits on you (D26): an outline Waiting on you, never needing you.
+const ROW_ENDED = endedSession('row-recap-ended', { title: 'Fix the made-up export on large files', titleSource: 'pitwall', recap: summaryOf(recap()), lastUserPrompt: 'Run the made-up export with a 3 GB file.' });
+const VIEW_ENDED = endedSession('recap-ended-view', { title: 'Fix the made-up export on large files', titleSource: 'pitwall', recap: summaryOf(recap()) });
 
 /** A specimen of one strip. */
 function StripSpecimen({ title, note, children }: { title: string; note: ReactNode; children: ReactNode }) {
@@ -166,6 +169,15 @@ export function RecapSpecimens() {
           <SessionView session={IN_VIEW.session} listed onClose={noop} recaps={HEALTHY} />
         </Stubbed>
       </Specimen>
+      <Specimen
+        title="An ended session"
+        note="Recapped when you ask (D26): its view asks once as it opens, as any other's does. Its recap waits on you, so its header has an outline Waiting on you, with an info button, as a finished Asked you has; it never needs you."
+        frame="short"
+      >
+        <Stubbed options={{ recaps: { [VIEW_ENDED.sessionId]: recap() } }}>
+          <SessionView session={VIEW_ENDED} listed onClose={noop} recaps={HEALTHY} />
+        </Stubbed>
+      </Specimen>
       <StripSpecimen title="You need to" note="It waits on you: the headline is what's next, in the Needs you tone, subtle warning, as Asked you; then Why and Now. The session needs you, for Needs you's reason 'recap'.">
         <Strip of={YOU} />
       </StripSpecimen>
@@ -178,12 +190,12 @@ export function RecapSpecimens() {
       <StripSpecimen title="Waiting on someone else" note="As Waiting on CI: a reviewer or an author, M6's blocked on someone else.">
         <Strip of={SOMEONE} />
       </StripSpecimen>
-      <StripSpecimen title="Done" note="Nothing pending: the headline is where it is, quiet success, then Why, and Next when there is one, which here there isn't.">
+      <StripSpecimen title="Done" note="Nothing pending: the headline is where it is, quiet success, then Why and Next.">
         <Strip of={DONE} />
       </StripSpecimen>
       <StripSpecimen
         title="May be out of date"
-        note="Older than the session's latest turn. The view asked for a new one once as it opened, which this stub refuses quietly; Refresh asks again. Its hint: It's older than the session's latest turn."
+        note="Older than the session's latest turn, on line 1 beside its age, so the headline keeps its width. The view asked for a new one once as it opened, which this stub refuses quietly; Refresh asks again. Its hint: It's older than the session's latest turn."
       >
         <Strip of={STALE} options={{ recapRefresh: 'failed' }} />
       </StripSpecimen>
@@ -226,9 +238,9 @@ export function RecapSpecimens() {
       </StripSpecimen>
       <Specimen
         title="Session rows"
-        note="Needs you's 'recap' reason: Waiting on you, subtle warning, in Done's place on a job Claude Code calls done, and on line 2 what's next. Then what an idle session's current recap says it waits on otherwise, quiet, first on line 2; a stale recap's says nothing."
+        note="Needs you's 'recap' reason: Waiting on you, subtle warning, in Done's place on a job Claude Code calls done, and on line 2 Next: and what's next. Then what an idle session's current recap says it waits on otherwise, quiet, first on line 2; a stale recap's says nothing. Last, an ended session whose recap waits on you: an outline Waiting on you, which never needs you, as a finished Asked you is."
       >
-        <Rows rows={inGroup('pitwall-test-app', [ROW_YOU, ROW_DONE_JOB, ROW_CI, ROW_SESSION, ROW_SOMEONE, ROW_STALE_CI])} />
+        <Rows rows={inGroup('pitwall-test-app', [ROW_YOU, ROW_DONE_JOB, ROW_CI, ROW_SESSION, ROW_SOMEONE, ROW_STALE_CI, ROW_ENDED])} />
       </Specimen>
       <Specimen title="Session rows, in Needs you and All sessions" note="After the group's label.">
         <Rows rows={acrossGroups([ROW_YOU, ROW_CI, ROW_SOMEONE])} showGroup />

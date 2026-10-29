@@ -2566,7 +2566,7 @@ mark.match {
 /*
  * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
  * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
- * age and Refresh. Then the headline, always, on one line with an ellipsis while it's collapsed; then,
+ * age, "May be out of date" while it's stale, and Refresh. Then the headline, always, on one line with an ellipsis while it's collapsed; then,
  * while it's open, Why and Now or Next. At most 35% of the view's height, scrolling inside itself
  * past that, as the footer does at half, so the body always keeps its room.
  */
@@ -2646,6 +2646,11 @@ mark.match {
   flex: none;
   color: var(--pw-text-subtle);
   font-variant-numeric: tabular-nums;
+}
+
+/* "May be out of date", beside the age, so the headline keeps its width. */
+.recap-head .badge.recap-stale {
+  flex: none;
 }
 
 /* At the end of line 1, its block margins taken back so the line stays 24 px. */

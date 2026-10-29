@@ -205,7 +205,7 @@ function recapRefresh(result: NonNullable<StubOptions['recapRefresh']>): Promise
     case 'sending':
       return forever();
     case 'spent':
-      return Promise.resolve(failed(429, { ok: false, error: "Made up: today's recaps are used up." }));
+      return Promise.resolve(failed(429, { ok: false, error: "Made up: today's recaps are used up.", busy: 'spent' }));
     case 'off':
       return Promise.resolve(failed(409, { ok: false, error: 'Made up: recaps are off.' }));
     case 'failed':

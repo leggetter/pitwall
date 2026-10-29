@@ -73,6 +73,7 @@ import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { replyInConversation } from '../relay.js';
+import { finishedWaitingOnYou, WAITING_ON_TEXT } from '../recap.js';
 import { attachCommand, isNotNeeded, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
 import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
@@ -93,7 +94,7 @@ import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { RecapStrip } from './RecapStrip.js';
-import { finishedAskedHint, NOT_NEEDED_TEXT, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
+import { finishedAskedHint, finishedRecapHint, NOT_NEEDED_TEXT, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
 import { StarButton } from './StarButton.js';
 import { SubagentsPanel, subagentsCount, useSubagents } from './Subagents.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
@@ -943,6 +944,12 @@ export function SessionView({
             <span className="session-view-badge">
               <Badge look="outline">Asked you</Badge>
               <InfoTip text={finishedAskedHint(session)} className="session-view-info" />
+            </span>
+          )}
+          {finishedWaitingOnYou(session) && (
+            <span className="session-view-badge">
+              <Badge look="outline">{WAITING_ON_TEXT.you}</Badge>
+              <InfoTip text={finishedRecapHint(session)} className="session-view-info" />
             </span>
           )}
           {session.stale && (

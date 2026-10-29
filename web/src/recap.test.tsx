@@ -14,6 +14,7 @@ import {
   budgetSpent,
   budgetText,
   cutText,
+  finishedWaitingOnYou,
   parseRecap,
   quietWaitingOn,
   readRecapCollapsed,
@@ -120,21 +121,37 @@ describe("Needs you's 'recap' reason", () => {
     expect(rowStatusBadge(waiting())?.label).toBe('Waiting on you');
   });
 
-  it('says on line 2 what the recap says you need to do, cut as line 2 cuts', () => {
+  it('says on line 2 what the recap says you need to do, after "Next:", as Asked and Needs have theirs', () => {
     const row = renderRow(waiting());
-    expect(row.querySelector('.session-what-text')?.textContent).toBe(`Waiting on you: ${RECAP.next}`);
-    expect(row.querySelector('.asked-label')?.textContent).toBe('Waiting on you:');
+    expect(row.querySelector('.session-what-text')?.textContent).toBe(`Next: ${RECAP.next}`);
+    expect(row.querySelector('.asked-label')?.textContent).toBe('Next:');
+    expect(row.querySelector('[data-status]')?.textContent).toBe('Waiting on you');
     expect(row.dataset.attention).toBe('true');
   });
 
-  it('says Waiting on you alone when the recap gives no next', () => {
+  it('says what it did last when the recap gives no next: the badge says the rest', () => {
     const row = renderRow(waiting({ needsYou: { reason: 'recap' }, recap: summary() }));
-    expect(row.querySelector('.session-what-text')?.textContent).toBe('Waiting on you');
+    expect(row.querySelector('.session-what-text')?.textContent).toBe('You: Run the made-up export.');
   });
 
   it('shows its text as plain text', () => {
     const row = renderRow(waiting({ needsYou: { reason: 'recap', text: 'Say \u001b[31mwhether\u0007 to ship.' } }));
-    expect(row.querySelector('.session-what-text')?.textContent).toBe('Waiting on you: Say whether to ship.');
+    expect(row.querySelector('.session-what-text')?.textContent).toBe('Next: Say whether to ship.');
+  });
+
+  it('is an outline Waiting on you on a finished or ended row, which never needs you, as a finished Asked you is', () => {
+    const finished = session({ kind: 'background', shortId: 'pt111c', status: undefined, state: 'done', alive: false, pid: undefined, finished: true, recap: summary({ next: RECAP.next }) });
+    expect(needsAttention(finished)).toBe(false);
+    expect(finishedWaitingOnYou(finished)).toBe(true);
+    const row = renderRow(finished);
+    const badge = [...row.querySelectorAll('.badge-outline')].find((each) => each.textContent === 'Waiting on you');
+    expect(badge).toBeTruthy();
+    expect(row.dataset.attention).toBeUndefined();
+    const ended = session({ ended: true, finished: true, alive: false, pid: undefined, status: undefined, recap: summary({ next: RECAP.next }) });
+    expect(finishedWaitingOnYou(ended)).toBe(true);
+    // Not from a stale recap, nor beside a finished Asked you.
+    expect(finishedWaitingOnYou({ ...ended, recap: summary({ stale: true }) })).toBe(false);
+    expect(finishedWaitingOnYou({ ...ended, askedYou: { reason: 'question', excerpt: 'Ship it?' } })).toBe(false);
   });
 });
 

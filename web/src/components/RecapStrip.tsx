@@ -4,18 +4,20 @@
 // the conversation"). Phil, 2026-10-29: "Can you give me a status update? Where are we?"
 //
 // - **Line 1:** the disclosure button, "Recap", or "Claude Code's recap" when only Claude Code's
-//   `away_summary` is there, with aria-expanded; how old it is; and Refresh, an icon button, busy
-//   while a new one is coming and off, saying why, while the day's budget is spent.
+//   `away_summary` is there, with aria-expanded; how old it is, and "May be out of date" beside it
+//   while it's older than the session's latest turn, so the headline keeps its width at 375 px; and
+//   Refresh, an icon button, busy while a new one is coming and off, saying why, while the day's
+//   budget is spent.
 // - **The headline,** always shown, collapsed too: one line chosen by what it waits on (recap.ts,
 //   recapHeadline()): "You need to" and what's next, in the Needs you tone; "Waiting on CI" and the
-//   like, quiet; "Done" and where it is, quiet success. "May be out of date" first while it's older
-//   than the session's latest turn.
+//   like, quiet; "Done" and where it is, quiet success.
 // - **Then, while it's open:** Why, and whichever of Now and Next the headline didn't show.
 // - **While the first is on its way,** the strip's line 1 at once, so the tabs don't move twice, and
 //   skeleton bars after --pw-delay-spinner; "No recap yet." once none is coming, with why when pitwall
 //   can say; and "Couldn't load the recap." with Try again when fetching it failed.
 //
-// No strip with recaps off, for an ended session, or for one pitwall doesn't recap. Nothing in it is a
+// No strip with recaps off, or for a session pitwall can't recap, with no transcript it can read; an
+// ended session has one, made when its view asks (D26). Nothing in it is a
 // live region, so a snapshot that changes it announces nothing; Refresh's results are toasts. Every
 // text from the recap is plain text, in <bdi>, since it names files, PRs and people.
 
@@ -101,11 +103,16 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
           )}
         </h3>
         {at !== undefined && <Timestamp className="recap-age" at={at} />}
+        {recap.stale && at !== undefined && (
+          <Badge look="outline" hint={STALE_RECAP_HINT} className="recap-stale">
+            {STALE_LABEL}
+          </Badge>
+        )}
         <RefreshButton recap={recap} />
       </div>
 
       {headline ? (
-        <Headline headline={headline} stale={recap.stale} />
+        <Headline headline={headline} />
       ) : state.kind === 'loading' ? (
         <>
           <span className="visually-hidden">Loading the recap</span>
@@ -165,23 +172,14 @@ function summaryHeadline(summary: RecapSummary): RecapHeadline | undefined {
 }
 
 /**
- * The headline: "May be out of date" while it's stale, the label as a badge in its tone, then the
- * text, one line with an ellipsis while the strip is collapsed, its whole in a tooltip when it's cut.
- * Screen readers hear "May be out of date. You need to: …".
+ * The headline: the label as a badge in its tone, then the text, one line with an ellipsis while the
+ * strip is collapsed, its whole in a tooltip when it's cut. Screen readers hear "You need to: …".
  */
-function Headline({ headline, stale }: { headline: RecapHeadline; stale: boolean }) {
+function Headline({ headline }: { headline: RecapHeadline }) {
   const text = plainText(headline.text);
   return (
     <Tooltip content={text} relation="none" onlyIfCut>
       <p className="recap-headline" data-headline={headline.field}>
-        {stale && (
-          <>
-            <Badge look="outline" hint={STALE_RECAP_HINT} className="recap-stale">
-              {STALE_LABEL}
-            </Badge>
-            <span className="visually-hidden">. </span>
-          </>
-        )}
         <Badge look={headline.look} className="recap-label">
           {headline.label}
         </Badge>

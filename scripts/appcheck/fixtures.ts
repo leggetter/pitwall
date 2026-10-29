@@ -279,6 +279,8 @@ export class World {
   #recapCalls = 0;
   #recapping = new Set<string>();
   #recapBudget = 200;
+  /** When the latest made-up call failed, for RecapHealth.errorAt, with 'failing'. */
+  #recapErrorAt = 0;
 
   constructor() {
     this.reset();
@@ -306,6 +308,7 @@ export class World {
     this.#recapsState = options.recaps ?? 'off';
     this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
     this.#recapping = new Set();
+    this.#recapErrorAt = this.#now - 3 * MINUTE;
     this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
   }
 
@@ -352,7 +355,7 @@ export class World {
   recapHealth(): RecapHealth | undefined {
     if (this.#recapsState === 'off') return undefined;
     const health: RecapHealth = { calls: this.#recapCalls, budget: this.#recapBudget, costUsd: Math.round(this.#recapCalls * 11) / 10_000 };
-    return this.#recapsState === 'failing' ? { ...health, error: RECAPS_ERROR } : health;
+    return this.#recapsState === 'failing' ? { ...health, error: RECAPS_ERROR, errorAt: new Date(this.#recapErrorAt).toISOString() } : health;
   }
 
   /** A listed session's whole recap (W111), as GET recapPath() answers it, with `stale` from its activity; undefined without one. */
@@ -365,14 +368,15 @@ export class World {
 
   /**
    * Refresh (W111), in the order the contract gives recapRefreshPath()'s answers: 'off' with recaps
-   * off (409); 'not-recapped' for a session pitwall doesn't recap, an ended one (404); 'spent' with
-   * the day's budget used up, and 'running' while a call for it runs (429); otherwise 'started', and
-   * `done`, which ends the call: a new recap, through its latest activity, or with 'failing' none.
+   * off (409); 'not-recapped' for a session with no transcript (404), none here, since every made-up
+   * session has one, ended ones included (D26); 'spent' with the day's budget used up, and 'running'
+   * while a call for it runs (429); otherwise 'started', and `done`, which ends the call: a new recap,
+   * through its latest activity, or with 'failing' none.
    */
   refreshRecap(sessionId: string): { result: 'off' } | { result: 'not-recapped' } | { result: 'spent' } | { result: 'running' } | { result: 'started'; done: () => void } {
     if (this.#recapsState === 'off') return { result: 'off' };
     const session = this.#sessions.get(sessionId);
-    if (!session || session.ended) return { result: 'not-recapped' };
+    if (!session || session.transcript !== 'ok') return { result: 'not-recapped' };
     if (this.#recapCalls >= this.#recapBudget) return { result: 'spent' };
     if (this.#recapping.has(sessionId)) return { result: 'running' };
     this.#recapping.add(sessionId);
@@ -381,7 +385,10 @@ export class World {
       result: 'started',
       done: () => {
         this.#recapping.delete(sessionId);
-        if (this.#recapsState === 'failing') return;
+        if (this.#recapsState === 'failing') {
+          this.#recapErrorAt = Date.now();
+          return;
+        }
         const now = new Date().toISOString();
         const through = this.#sessions.get(sessionId)?.lastActivityAt ?? now;
         const was = this.#recaps.get(sessionId);
@@ -415,7 +422,7 @@ export class World {
       recap: {
         why: 'You asked it to add a made-up health route to the API, with a test.',
         now: 'The route and its test are in, and the made-up CI run on #51 is red on lint.',
-        next: 'Say whether it should fix the lint errors on #51 now, or leave them for the made-up follow-up.',
+        next: 'Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up.',
         waitingOn: 'you',
         title: 'Add a made-up health route',
         at: through(name),
@@ -434,10 +441,10 @@ export class World {
         at: this.#ago(19),
         throughAt: this.#ago(20),
       }),
-      made(RECAPPED.someoneElse, { why: 'You asked it to tidy both made-up services.', now: 'It pushed #19 and asked for a review.', next: "It's waiting for the made-up reviewer's approval on #19.", waitingOn: 'someone else', title: 'Tidy both made-up services' }),
-      made(RECAPPED.anotherSession, { why: 'You asked it to add a made-up route.', now: 'Its sub-agents are drafting the route and its tests.', next: "It's waiting for pitwall-test-api's made-up health route to land first.", waitingOn: 'another session', title: 'Add a made-up route' }),
-      made(RECAPPED.ci, { why: 'You asked it to make the made-up retry worker back off.', now: 'It pushed the backoff to its branch.', next: "It's waiting for the made-up CI run to finish.", waitingOn: 'CI', title: 'Back off the made-up retry worker' }),
-      made(RECAPPED.done, { why: 'You asked it to run the made-up migration.', now: 'The made-up migration ran, and every table checks out.', next: '', waitingOn: 'nothing', title: 'Run the made-up migration' }),
+      made(RECAPPED.someoneElse, { why: 'You asked it to tidy both made-up services.', now: 'It pushed #19 and asked for a review.', next: "The made-up reviewer's approval on #19.", waitingOn: 'someone else', title: 'Tidy both made-up services' }),
+      made(RECAPPED.anotherSession, { why: 'You asked it to add a made-up route.', now: 'Its sub-agents are drafting the route and its tests.', next: "pitwall-test-api's made-up health route to land first.", waitingOn: 'another session', title: 'Add a made-up route' }),
+      made(RECAPPED.ci, { why: 'You asked it to make the made-up retry worker back off.', now: 'It pushed the backoff to its branch.', next: 'The made-up CI run on its branch to finish.', waitingOn: 'CI', title: 'Back off the made-up retry worker' }),
+      made(RECAPPED.done, { why: 'You asked it to run the made-up migration.', now: 'The made-up migration ran, and every table checks out.', next: 'Nothing is left to do.', waitingOn: 'nothing', title: 'Run the made-up migration' }),
       made(RECAPPED.claudeCode, { why: '', now: 'The made-up index rebuild is half done; it runs until the last shard is in.', next: '', waitingOn: 'nothing', title: '', source: 'claude-code' }),
     ];
   }
@@ -449,7 +456,10 @@ export class World {
     if (session.name === NAMES.waiting) {
       return { ...base, why: 'You asked it to update the made-up getting started guide.', now: 'It rewrote the install steps and wants to run the made-up docs build.', next: 'Answer its permission prompt to run the made-up docs build.', waitingOn: 'you', title: 'Update the getting started guide' };
     }
-    return { ...base, why: `You asked it to tidy the made-up export job, in ${session.name}.`, now: 'The made-up export job retries three times now, with backoff.', next: '', waitingOn: 'nothing', title: 'Tidy the made-up export job' };
+    if (session.ended) {
+      return { ...base, why: 'You asked it to tidy the made-up release notes.', now: 'It tidied the made-up release notes, and the session ended before you said whether to publish them.', next: 'Say whether to publish the made-up release notes.', waitingOn: 'you', title: 'Tidy the made-up release notes' };
+    }
+    return { ...base, why: `You asked it to tidy the made-up export job, in ${session.name}.`, now: 'The made-up export job retries three times now, with backoff.', next: 'Nothing is left to do.', waitingOn: 'nothing', title: 'Tidy the made-up export job' };
   }
 
   /**
