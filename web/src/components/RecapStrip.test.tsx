@@ -419,6 +419,25 @@ describe('Refresh', () => {
     expect(refreshButton()?.getAttribute('aria-busy')).toBeNull();
   });
 
+  it('stays busy while the new recap is fetched, so it never sits idle beside the old one', async () => {
+    const recap = full();
+    const server = fakeApi({ recap });
+    const view = renderStrip({ session: target(recap) }, server.api);
+    await settle();
+    fireEvent.click(refreshButton()!);
+    await settle();
+    let answer: (result: ApiResult) => void = () => {};
+    server.setRecap(new Promise<ApiResult>((resolve) => (answer = resolve)));
+    const next = full({ at: minutesAgo(0.2), now: 'It marked #42 ready.' });
+    view.update({ session: target(next) });
+    await settle();
+    expect(refreshButton()?.getAttribute('aria-busy')).toBe('true');
+    answer(ok(next));
+    await settle();
+    expect(refreshButton()?.getAttribute('aria-busy')).toBeNull();
+    expect(lines()).toContainEqual(['Now', 'It marked #42 ready.']);
+  });
+
   it('stops being busy after RECAP_WAIT_MS with no new recap', async () => {
     const recap = full();
     const server = fakeApi({ recap });
