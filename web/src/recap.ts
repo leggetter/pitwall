@@ -16,9 +16,9 @@
 // - **No strip** with recaps off (no `recaps` on the snapshot, or a 409), for an ended session, which
 //   pitwall doesn't recap, and for one the server says it doesn't recap (a 404), such as its own.
 // - **Refresh** POSTs recapRefreshPath(), and is busy until the snapshot's `recap.at` changes and the
-//   new recap is fetched, or for
-//   RECAP_WAIT_MS, or until a call fails, which the app strip then says. Off, saying why, while the
-//   day's budget is spent. Its other results are toasts, as Refresh for the PR list has them.
+//   new recap is fetched, or for RECAP_WAIT_MS, or until a call fails, which the app strip then says.
+//   Off, saying why, while the day's budget is spent. Its other results are toasts, as Refresh for
+//   the PR list has them.
 //
 // Only one thing is stored: whether the strip is collapsed, a boolean, per viewer (D14).
 
