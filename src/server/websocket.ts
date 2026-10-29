@@ -4,11 +4,14 @@
 // upgrade, in server.ts.
 //
 // After a valid proof the server sends { type: 'authenticated', apiKey },
-// then the snapshot. There are no client messages after auth, so anything an
-// authenticated client sends is ignored.
+// then the snapshot. Right after the client's first snapshot, the latest PR
+// list as a 'prs' message (M4, W93), and then each new one the PR poller
+// makes, on its own timer, never with the session poll. There are no client
+// messages after auth, so anything an authenticated client sends is ignored.
 import type { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
-import type { IndexSnapshot, ServerMessage } from '../shared/protocol.js';
+import type { PrSource } from '../prs/index.js';
+import type { IndexSnapshot, PullRequestList, ServerMessage } from '../shared/protocol.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, startHandshake, type HandshakeSlots } from './handshake.js';
 
 export { DEFAULT_AUTH_TIMEOUT_MS };
@@ -28,10 +31,15 @@ export interface ClientContext {
   onAuthenticated?: () => void;
   /** The server's pending-handshake count, shared with ATTACH_PATH. */
   slots?: HandshakeSlots;
+  /** Your open PRs (M4), sent after the first snapshot. The server always passes one, prsOff() for --no-prs; without it, no 'prs' is sent. */
+  prs?: PrSource;
 }
 
 export function handleClient(ws: WebSocket, context: ClientContext): void {
   let unsubscribe: (() => void) | undefined;
+  // The PR poller's, from this client's first snapshot on.
+  let unsubscribePrs: (() => void) | undefined;
+  let prsStarted = false;
 
   // What the last snapshot sent to this client held, without generatedAt.
   // Kept per client, so one that joined late is compared with what it got.
@@ -46,11 +54,29 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
     }
     ws.send(serialiseSnapshot(snapshot));
     lastSent = content;
+    if (!prsStarted) startPrs();
+  };
+
+  const sendPrs = (list: PullRequestList) => {
+    if (ws.readyState !== ws.OPEN) return;
+    ws.send(serialisePrs(list));
+  };
+
+  // Right after the first snapshot. Reading the list and subscribing happen in
+  // the same tick, so no list is missed or sent twice.
+  const startPrs = () => {
+    prsStarted = true;
+    const prs = context.prs;
+    if (prs === undefined) return;
+    sendPrs(prs.latest());
+    unsubscribePrs = prs.subscribe(sendPrs);
   };
 
   ws.on('close', () => {
     unsubscribe?.();
     unsubscribe = undefined;
+    unsubscribePrs?.();
+    unsubscribePrs = undefined;
   });
 
   startHandshake(ws, {
@@ -96,6 +122,19 @@ export function serialiseSnapshot(snapshot: IndexSnapshot): string {
     const message: ServerMessage = { type: 'snapshot', snapshot };
     serialised = JSON.stringify(message);
     snapshotMessages.set(snapshot, serialised);
+  }
+  return serialised;
+}
+
+const prsMessages = new WeakMap<PullRequestList, string>();
+
+/** The 'prs' message. The poller makes a new list object for every change, so each is serialised once for every client. */
+export function serialisePrs(prs: PullRequestList): string {
+  let serialised = prsMessages.get(prs);
+  if (serialised === undefined) {
+    const message: ServerMessage = { type: 'prs', prs };
+    serialised = JSON.stringify(message);
+    prsMessages.set(prs, serialised);
   }
   return serialised;
 }

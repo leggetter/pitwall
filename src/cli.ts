@@ -23,10 +23,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startIndexer } from './index/index.js';
+import { createPrPoller, prsOff } from './prs/index.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
-import { DEFAULT_POLL_INTERVAL_MS } from './shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
 export const INTERVAL_MIN_SECONDS = 1;
@@ -39,7 +40,7 @@ export const INTERVAL_MAX_SECONDS = 300;
  */
 export const TOKEN_MIN_DIFFERENT = 8;
 
-export const USAGE = `Usage: pitwall [root...] [--port <n>] [--interval <seconds>] [--no-open]
+export const USAGE = `Usage: pitwall [root...] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the current directory.
@@ -52,6 +53,10 @@ Options:
   --interval <seconds>  How often to poll claude agents, in whole seconds
                         from ${INTERVAL_MIN_SECONDS} to ${INTERVAL_MAX_SECONDS}. Default ${DEFAULT_POLL_INTERVAL_MS / 1000}.
   --no-open             Don't open the browser.
+  --no-prs              Don't list your open pull requests, and never run gh.
+                        Without it, pitwall runs gh api graphql at start, every
+                        ${PRS_POLL_INTERVAL_MS / 60_000} minutes and on Refresh, for your open PRs on
+                        github.com. gh must be installed and logged in.
   -h, --help            Show this help.
   -v, --version         Show the version.
 
@@ -125,6 +130,8 @@ export type CliCommand =
       /** From `--interval <seconds>`. Undefined means the indexer's default. */
       intervalMs?: number;
       open: boolean;
+      /** False with `--no-prs`: pitwall never runs gh. */
+      prs: boolean;
     };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
@@ -138,6 +145,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         port: { type: 'string' },
         interval: { type: 'string' },
         'no-open': { type: 'boolean' },
+        'no-prs': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -155,6 +163,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     ...(values.port === undefined ? {} : { port: parsePort(values.port) }),
     ...(values.interval === undefined ? {} : { intervalMs: parseInterval(values.interval) * 1000 }),
     open: !values['no-open'] && env.PITWALL_NO_OPEN !== '1',
+    prs: !values['no-prs'],
   };
 }
 
@@ -494,6 +503,8 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       webRoot: resolveWebRoot(),
       // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.
       pitwallHome: pitwallHome(),
+      // Your open PRs (M4), which the server starts fetching once it's listening. With --no-prs, never gh.
+      prs: command.prs ? createPrPoller() : prsOff(),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {

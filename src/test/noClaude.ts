@@ -2,16 +2,29 @@
 // `npm test` never starts Claude Code, whatever is on PATH (W31). Loaded
 // before every server test file (vitest.config.ts).
 //
+// It refuses `gh` the same way (M4, W93), so no test reaches GitHub with the
+// user's own login: the PR poller runs `gh api graphql`, and a test that left
+// the real runFile in place would run it.
+//
 // It wraps child_process's spawn, spawnSync, execFile, execFileSync, exec and
 // execSync, and node-pty's spawn, for test code and the code under test alike.
-// A call that would run `claude` throws, and the test that made it fails even
-// when the code under test catches the error. That covers a test file's
-// module level too: the file fails to load. With PITWALL_LIVE=1, as the live
-// checks run, everything goes through as before.
+// A call that would run `claude` or `gh` throws, and the test that made it
+// fails even when the code under test catches the error. That covers a test
+// file's module level too: the file fails to load. With PITWALL_LIVE=1, as the
+// live checks run, everything goes through as before.
 //
 // It can't see a process that a child process starts in turn: a test that
 // runs a script which spawns claude must sit behind PITWALL_LIVE itself, as
 // relay.live.test.ts does.
+//
+// For gh there's a second layer, which can (W93's review). Without
+// PITWALL_LIVE=1, a gh that refuses goes first on this process's PATH, so any
+// process a test starts, at any depth, that runs `gh` by name finds it, unless
+// the test deliberately puts its own fake first, as cli.test.ts does for the
+// CLI it runs. It writes down each call and exits 1, and the test, or the file,
+// fails if it was reached. GH_CONFIG_DIR points at an empty folder, and
+// GH_TOKEN, GITHUB_TOKEN and their Enterprise forms are removed, so even a gh
+// found some other way has no login.
 //
 // It also refuses to open an editor (W72), with or without PITWALL_LIVE: no
 // test, live or not, opens VS Code or Cursor. That's `code`, `cursor` or
@@ -32,7 +45,9 @@
 // allowSignalsTo(). The test's own pid isn't one of its children, so it's
 // refused too. Signal 0 only asks whether a process is there.
 import childProcess from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, afterEach } from 'vitest';
@@ -48,6 +63,8 @@ interface GuardState {
   spawned: Set<number>;
   /** Pids a test said it may signal (allowSignalsTo()), such as a process its own child started. */
   allowed: Set<number>;
+  /** The refusing gh first on PATH: its folder, and the file it writes each call to. Absent with PITWALL_LIVE=1. */
+  ghStandIn?: { bin: string; calls: string };
 }
 
 const STATE = Symbol.for('pitwall.noClaude');
@@ -56,8 +73,11 @@ state.spawned ??= new Set();
 state.allowed ??= new Set();
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
-/** `claude` as a command in a shell command line: on its own, or as the last part of a path. */
-const CLAUDE_IN_COMMAND = /(?:^|[\s;&|()`'"/])claude(?=$|[\s;&|()`'"])/;
+/** The programs a test may run only with PITWALL_LIVE=1. */
+type LiveOnly = 'claude' | 'gh';
+const LIVE_ONLY: ReadonlySet<string> = new Set<LiveOnly>(['claude', 'gh']);
+/** `claude` or `gh` as a command in a shell command line: on its own, or as the last part of a path. */
+const LIVE_ONLY_IN_COMMAND = /(?:^|[\s;&|()`'"/])(claude|gh)(?=$|[\s;&|()`'"])/;
 /** The editors' commands (W72). */
 const EDITORS = new Set(['code', 'cursor', 'code-insiders']);
 /** A short-flag group of `open`'s that names an app: `-a`, `-b`, or one with either in it, such as `-na`. Not `--args`. */
@@ -103,8 +123,16 @@ function isLive(): boolean {
   return process.env.PITWALL_LIVE === '1';
 }
 
-function isClaude(file: unknown): boolean {
-  return typeof file === 'string' && path.basename(file) === 'claude';
+/** `claude` or `gh`, by any path, when `file` is one. */
+function liveOnly(file: unknown): LiveOnly | undefined {
+  if (typeof file !== 'string') return undefined;
+  const name = path.basename(file);
+  return LIVE_ONLY.has(name) ? (name as LiveOnly) : undefined;
+}
+
+/** The first live-only program named as a command in a shell command line. */
+function liveOnlyInCommand(command: string): LiveOnly | undefined {
+  return LIVE_ONLY_IN_COMMAND.exec(command)?.[1] as LiveOnly | undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -157,29 +185,41 @@ function commandOpensEditor([command]: unknown[]): boolean {
   return typeof command === 'string' && EDITOR_IN_COMMAND.test(command);
 }
 
-/** For spawn, spawnSync, execFile and execFileSync: `(file, args?, options?)`. */
-function fileRunsClaude([file, second, third]: unknown[]): boolean {
-  if (typeof file !== 'string') return false;
+/** For spawn, spawnSync, execFile and execFileSync: `(file, args?, options?)`. Which live-only program it runs, if one. */
+function fileRunsLiveOnly([file, second, third]: unknown[]): LiveOnly | undefined {
+  if (typeof file !== 'string') return undefined;
   const args = Array.isArray(second) ? second.filter((arg): arg is string => typeof arg === 'string') : [];
   const options = Array.isArray(second) ? third : second;
-  if (isRecord(options) && options.shell) return CLAUDE_IN_COMMAND.test([file, ...args].join(' '));
-  if (isClaude(file)) return true;
-  return SHELLS.has(path.basename(file)) && args.some((arg) => CLAUDE_IN_COMMAND.test(arg));
+  if (isRecord(options) && options.shell) return liveOnlyInCommand([file, ...args].join(' '));
+  const direct = liveOnly(file);
+  if (direct !== undefined) return direct;
+  if (!SHELLS.has(path.basename(file))) return undefined;
+  for (const arg of args) {
+    const found = liveOnlyInCommand(arg);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }
 
 /** For exec and execSync: `(command, options?)`, always through a shell. */
-function commandRunsClaude([command]: unknown[]): boolean {
-  return typeof command === 'string' && CLAUDE_IN_COMMAND.test(command);
+function commandRunsLiveOnly([command]: unknown[]): LiveOnly | undefined {
+  return typeof command === 'string' ? liveOnlyInCommand(command) : undefined;
 }
 
-function refuse(api: string, what: 'claude' | 'editor' | 'signal'): never {
-  const message =
-    what === 'claude'
-      ? `pitwall tests: ${api}() would run claude without PITWALL_LIVE=1. ` +
-        'Pass a fake runner or spawner, or put the test behind PITWALL_LIVE like the live checks.'
-      : what === 'editor'
-        ? `pitwall tests: ${api}() would open an editor. Pass a fake runFile and the editors found (ServerInternals.editors).`
-        : `pitwall tests: ${api}() would signal a process this test didn't start without PITWALL_LIVE=1. Pass a fake signaller (ServerInternals.end), or name a process your child started with allowSignalsTo().`;
+const REFUSALS: Readonly<Record<LiveOnly | 'editor' | 'signal', (api: string) => string>> = {
+  claude: (api) =>
+    `pitwall tests: ${api}() would run claude without PITWALL_LIVE=1. ` +
+    'Pass a fake runner or spawner, or put the test behind PITWALL_LIVE like the live checks.',
+  gh: (api) =>
+    `pitwall tests: ${api}() would run gh without PITWALL_LIVE=1. ` +
+    "Pass a fake fetch or runFile (createPrPoller()'s options), or leave ServerOptions.prs out, which is off.",
+  editor: (api) => `pitwall tests: ${api}() would open an editor. Pass a fake runFile and the editors found (ServerInternals.editors).`,
+  signal: (api) =>
+    `pitwall tests: ${api}() would signal a process this test didn't start without PITWALL_LIVE=1. Pass a fake signaller (ServerInternals.end), or name a process your child started with allowSignalsTo().`,
+};
+
+function refuse(api: string, what: LiveOnly | 'editor' | 'signal'): never {
+  const message = REFUSALS[what](api);
   state.refusals.push(message);
   throw new Error(message);
 }
@@ -187,12 +227,15 @@ function refuse(api: string, what: 'claude' | 'editor' | 'signal'): never {
 function guarded(
   api: string,
   original: AnyFunction,
-  runsClaude: (args: unknown[]) => boolean,
+  runsLiveOnly: (args: unknown[]) => LiveOnly | undefined,
   opensAnEditor: (args: unknown[]) => boolean = () => false,
   remembers = false,
 ): AnyFunction {
   return function (this: unknown, ...args: unknown[]) {
-    if (!isLive() && runsClaude(args)) refuse(api, 'claude');
+    if (!isLive()) {
+      const program = runsLiveOnly(args);
+      if (program !== undefined) refuse(api, program);
+    }
     if (opensAnEditor(args)) refuse(api, 'editor');
     const result = original.apply(this, args);
     // A running child, which a test may signal: not spawnSync's or execSync's, which have exited by now.
@@ -203,21 +246,21 @@ function guarded(
 
 function install(): void {
   const target = childProcess as unknown as Record<string, AnyFunction>;
-  const apis: [string, (args: unknown[]) => boolean, (args: unknown[]) => boolean][] = [
-    ['spawn', fileRunsClaude, fileOpensEditor],
-    ['spawnSync', fileRunsClaude, fileOpensEditor],
-    ['execFile', fileRunsClaude, fileOpensEditor],
-    ['execFileSync', fileRunsClaude, fileOpensEditor],
-    ['exec', commandRunsClaude, commandOpensEditor],
-    ['execSync', commandRunsClaude, commandOpensEditor],
+  const apis: [string, (args: unknown[]) => LiveOnly | undefined, (args: unknown[]) => boolean][] = [
+    ['spawn', fileRunsLiveOnly, fileOpensEditor],
+    ['spawnSync', fileRunsLiveOnly, fileOpensEditor],
+    ['execFile', fileRunsLiveOnly, fileOpensEditor],
+    ['execFileSync', fileRunsLiveOnly, fileOpensEditor],
+    ['exec', commandRunsLiveOnly, commandOpensEditor],
+    ['execSync', commandRunsLiveOnly, commandOpensEditor],
   ];
-  for (const [api, runsClaude, opensAnEditor] of apis) {
+  for (const [api, runsLiveOnly, opensAnEditor] of apis) {
     const original = target[api] as AnyFunction & { [promisify.custom]?: AnyFunction };
     const remembers = api === 'spawn' || api === 'execFile' || api === 'exec';
-    const wrapped = guarded(api, original, runsClaude, opensAnEditor, remembers) as AnyFunction & { [promisify.custom]?: AnyFunction };
+    const wrapped = guarded(api, original, runsLiveOnly, opensAnEditor, remembers) as AnyFunction & { [promisify.custom]?: AnyFunction };
     // exec and execFile resolve to { stdout, stderr } when promisified, through their own custom form.
     const custom = original[promisify.custom];
-    if (custom !== undefined) wrapped[promisify.custom] = guarded(api, custom, runsClaude, opensAnEditor, remembers);
+    if (custom !== undefined) wrapped[promisify.custom] = guarded(api, custom, runsLiveOnly, opensAnEditor, remembers);
     target[api] = wrapped;
   }
   // So `import { spawn } from 'node:child_process'` sees the wrapped functions too.
@@ -232,15 +275,85 @@ function install(): void {
 
   try {
     const pty = createRequire(import.meta.url)('node-pty') as { spawn: AnyFunction };
-    pty.spawn = guarded('node-pty spawn', pty.spawn, ([file]) => isClaude(file), undefined, true);
+    pty.spawn = guarded('node-pty spawn', pty.spawn, ([file]) => liveOnly(file), undefined, true);
   } catch {
     // Without node-pty, nothing can start a PTY through it either.
   }
 }
 
+/** Variables that would give gh a login without its config folder. */
+const GH_TOKEN_VARIABLES = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'] as const;
+
+/** A single-quoted shell word, for a path written into the stand-in. */
+function shellQuoted(text: string): string {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The second layer for gh: a refusing gh first on PATH, an empty GH_CONFIG_DIR and no token
+ * variables, for every process this test process starts. Removed when the process exits.
+ */
+function installGhStandIn(): void {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-gh-guard-'));
+  const bin = path.join(dir, 'bin');
+  const config = path.join(dir, 'gh-config');
+  const calls = path.join(dir, 'gh-calls');
+  mkdirSync(bin);
+  mkdirSync(config);
+  writeFileSync(calls, '');
+  writeFileSync(
+    path.join(bin, 'gh'),
+    [
+      '#!/bin/sh',
+      "# pitwall's test guard (src/test/noClaude.ts): a process a test started ran gh without PITWALL_LIVE=1.",
+      `printf 'gh %s %s (pid %s, parent %s)\\n' "$1" "$2" "$$" "$PPID" >> ${shellQuoted(calls)}`,
+      "echo 'pitwall tests: gh was run without PITWALL_LIVE=1. Put a fake gh first on its PATH, as cli.test.ts does.' >&2",
+      'exit 1',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ''}`;
+  process.env.GH_CONFIG_DIR = config;
+  for (const name of GH_TOKEN_VARIABLES) delete process.env[name];
+  state.ghStandIn = { bin, calls };
+  process.once('exit', () => rmSync(dir, { recursive: true, force: true }));
+}
+
 if (!state.installed) {
   install();
+  if (!isLive()) installGhStandIn();
   state.installed = true;
+}
+
+/** Where the refusing gh is, for the guard's own tests. Undefined with PITWALL_LIVE=1. */
+export function ghStandIn(): { bin: string; calls: string } | undefined {
+  return state.ghStandIn;
+}
+
+/** The calls the refusing gh has written down since the last call, which the guard's own tests use. */
+export function takeGhCalls(): string[] {
+  const standIn = state.ghStandIn;
+  if (standIn === undefined) return [];
+  let text = '';
+  try {
+    text = readFileSync(standIn.calls, 'utf8');
+    writeFileSync(standIn.calls, '');
+  } catch {
+    // Removed at exit.
+  }
+  return text.split('\n').filter(Boolean);
+}
+
+/** Fails the test, or the file, in which a process a test started reached the refusing gh. */
+export function failOnGhCalls(): void {
+  const calls = takeGhCalls();
+  if (calls.length > 0) {
+    throw new Error(
+      `pitwall tests: a process a test started ran gh without PITWALL_LIVE=1, ${calls.length} ${calls.length === 1 ? 'time' : 'times'}. ` +
+        `Put a fake gh first on its PATH, as cli.test.ts does.\n${calls.join('\n')}`,
+    );
+  }
 }
 
 /** Fails the test that made a refused call, even when the code under test caught the error. */
@@ -251,3 +364,5 @@ export function failOnRefusals(): void {
 
 afterEach(failOnRefusals);
 afterAll(failOnRefusals);
+afterEach(failOnGhCalls);
+afterAll(failOnGhCalls);
