@@ -1,5 +1,6 @@
 // The worked-in scanner (W34, spike 004): which repos under the configured roots each session worked
-// in, beyond the one it started in, from the tool calls in its transcript and its sub-agents'.
+// in, beyond the one it started in, from the tool calls in its transcript and its sub-agents'. The
+// same pass finds each session's PR links (M4, W94, prLinks.ts), so no transcript is read twice.
 //
 // The rule: a repo counts when the session changed it, or when at least 5% of its tool calls touched
 // it, over the whole of its main transcript and every sub-agent transcript beside it. toolCalls.ts
@@ -8,37 +9,63 @@
 // configured root, and repos that no longer exist. A repo under any root counts, whichever root the
 // session is under.
 //
-// The poll never waits on it. The index calls track() with the sessions it lists and reads
-// workedIn() synchronously. The first sight of a session queues a full scan of its files, one at a
-// time, a chunk at a time, yielding to the event loop between chunks; after that, each poll stats
-// the known files, lists the `subagents` directory and reads only what was appended. One worker runs
-// the queue, and sessions that have been scanned go before ones that haven't, so a long first scan
-// holds up no one else's small update for more than a file.
+// PR links: prLinks.ts says what links a session to a PR. 'opened' comes from the successful
+// result of a call that creates a PR, and 'pushed' from the result of a push, failed or not, in any
+// of the session's files: the call is matched to its result by its tool_use id, and only the ids of
+// those calls are kept while their results are awaited. 'prompted' and 'mentioned' come from the
+// main transcript only, since a sub-agent's prompts are its parent's. The newest of each link is
+// kept per file, and the session's are merged from its files, newest first, at most PR_LINKS_MAX.
 //
-// Memory: files are read in 1 MiB chunks into one buffer, never whole. Only lines that contain
-// `"type":"tool_use"` are parsed. What's kept, in memory only, never on disk, because paths and repo
-// names from transcripts are session content:
-// - per file: { dev, ino, offset, carry }, and its calls per repo, so a file that shrank or was
-//   replaced is rescanned from 0 without counting it twice;
-// - per session: the call total and per-repo counts (summed from its files), and the result;
+// The poll never waits on it. The index calls track() with the sessions it lists and reads
+// workedIn() and prLinks() synchronously. The first sight of a session queues a full scan of its
+// files, one at a time, a chunk at a time, yielding to the event loop between chunks; after that,
+// each poll stats the known files, lists the `subagents` directory and reads only what was appended.
+// One worker runs the queue, and sessions that have been scanned go before ones that haven't, so a
+// long first scan holds up no one else's small update for more than a file.
+//
+// Memory: files are read in 1 MiB chunks into one buffer, never whole. Only lines that could matter
+// are parsed: a tool call, `"type":"tool_use"`; a tool's result, `"type":"tool_result"`, only when
+// it holds the id of a call the file waits on; and, in the main transcript, any other line with both
+// `github.com/` and `/pull/`. One scan of a line tells a call from a result. What's kept, in memory
+// only, never on disk, because paths, repo names and branches from transcripts are session content:
+// - per file: { dev, ino, offset, carry }, its calls per repo, and its PR links, so a file that
+//   shrank or was replaced is rescanned from 0 without counting anything twice; and the calls whose
+//   results it awaits, at most 32, each for at most 10,000 lines;
+// - per session: the call total and per-repo counts (summed from its files), and the results;
 // - per directory: its repo, found by walking up to the nearest `.git` and resolving only there,
 //   with createGroupResolver (runFile, the scrubbed environment, a TTL); and each repo's GitHub
 //   remotes, read with `git config --get-regexp`, which neither touches the index nor runs hooks.
 // At most 2 git processes run at once, and none on the poll's path: the scanner has its own resolver.
 //
 // Fails soft: a missing or unreadable transcript, or anything that goes wrong scanning one, leaves
-// that session's workedIn() undefined, retried after 30 s. A git failure for one directory leaves it
-// counting as no repo. Nothing here throws to the index.
+// that session's workedIn() and prLinks() undefined, retried after 30 s. A git failure for one
+// directory leaves it counting as no repo. Nothing here throws to the index.
 
 import { open, readdir, realpath as fsRealpath, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { WorkedIn } from '../shared/protocol.js';
+import { PR_LINKS_MAX, type PrLink, type PrLinkKind, type WorkedIn } from '../shared/protocol.js';
 import { runFile, RunError, type RunFile } from './exec.js';
 import { createGroupResolver, gitEnvironment } from './grouping.js';
 import { isRecord } from './guards.js';
+import {
+  addLink,
+  linkingCall,
+  mayNamePr,
+  newestLinks,
+  openedByGh,
+  openedByMcp,
+  prUrlsIn,
+  pruneLinks,
+  pushedIn,
+  toPrLink,
+  type FoundLink,
+  type LinkingCall,
+  type PrRef,
+} from './prLinks.js';
 import { isWithin, matchRoot } from './roots.js';
 import { placesOf, slugsIn, type CallPlaces } from './toolCalls.js';
+import { assistantTextOf, promptTextOf } from './transcripts.js';
 
 /** The share of a session's tool calls that makes a repo count, in percent (spike 004). */
 export const WORKED_IN_PERCENT = 5;
@@ -67,6 +94,12 @@ export interface WorkedInScanner {
   track(sessions: readonly TrackedSession[], roots: readonly string[]): void;
   /** The repos a session worked in, newest touch first, as of its last scan. Undefined until it has been scanned, and after a failure. */
   workedIn(sessionId: string): readonly RepoWorkedIn[] | undefined;
+  /**
+   * The session's PR links (SessionSummary.prLinks, prLinks.ts), newest first, at most
+   * PR_LINKS_MAX, as of its last scan. Empty when it has none; undefined until it has been
+   * scanned, and after a failure.
+   */
+  prLinks(sessionId: string): readonly PrLink[] | undefined;
   /** Resolves once nothing is queued or running. For tests and the benchmark. */
   settled(): Promise<void>;
   /** What the scanner has done so far. */
@@ -119,7 +152,23 @@ export interface WorkedInScannerOptions {
   timeoutMs?: number;
 }
 
-const MARK = Buffer.from('"type":"tool_use"');
+/**
+ * `"type":"tool_use"` and `"type":"tool_result"` share this start, so one scan of a line finds
+ * either. A result's comes before its output, near the start of the line, so the long lines, which
+ * are mostly results, are cheap to tell apart.
+ */
+const TOOL_MARK = Buffer.from('"type":"tool_');
+const USE_TAIL = Buffer.from('use"');
+const RESULT_TAIL = Buffer.from('result"');
+/** Both on a line of the main transcript, which may then have a PR URL in a prompt or in Claude's text. */
+const GITHUB_MARK = Buffer.from('github.com/');
+const PULL_MARK = Buffer.from('/pull/');
+/** The most calls one file waits on for a result. Past this, the oldest is dropped. */
+const MAX_PENDING = 32;
+/** Lines read in a file after a call before its result is no longer waited for: one that never came, as after a crash. */
+const MAX_WAIT_LINES = 10_000;
+/** A file's links past this are pruned to what the result could keep (pruneLinks()). */
+const MAX_FILE_LINKS = 4 * PR_LINKS_MAX;
 const NEWLINE = 0x0a;
 /** A cache past this many entries is emptied, so a pathological transcript can't grow one without end. */
 const MAX_CACHE_ENTRIES = 100_000;
@@ -144,7 +193,17 @@ interface Count {
   lastAt: number;
 }
 
+/** A call whose result can link the session to a PR, waiting for that result. */
+interface Pending extends LinkingCall {
+  /** The call's time, epoch ms, for a result without one; 0 when it had none. */
+  at: number;
+  /** FileState.lines when the call was read. */
+  line: number;
+}
+
 interface FileState {
+  /** The session's main transcript, rather than a sub-agent's: only there do prompts and Claude's text link. */
+  main: boolean;
   dev: number;
   ino: number;
   /** Bytes read so far, including the carry. */
@@ -158,6 +217,12 @@ interface FileState {
   calls: number;
   /** Calls per repo key. */
   repos: Map<string, Count>;
+  /** The calls that can link, by tool_use id, oldest first, until their results are read. */
+  pending: Map<string, Pending>;
+  /** Lines read, for how long a call is waited on. */
+  lines: number;
+  /** This file's PR links, the newest of each (linkKey()). */
+  links: Map<string, FoundLink>;
 }
 
 interface SessionState {
@@ -166,6 +231,8 @@ interface SessionState {
   files: Map<string, FileState>;
   /** Set once a scan has finished. */
   result: RepoWorkedIn[] | undefined;
+  /** Set with `result`: every file's links, merged, newest first and capped. */
+  links: PrLink[] | undefined;
   /** After a failure: not tried again before this. */
   retryAt?: number;
 }
@@ -224,6 +291,32 @@ function createLimiter(max: number): <T>(fn: () => Promise<T>) => Promise<T> {
 }
 
 const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * Whether a line's first `"type":"tool_use"` or `"type":"tool_result"` is a call or a result. A
+ * call's comes first in an assistant entry, and a result's in a user entry; only those are read.
+ */
+function toolMark(line: Buffer): 'use' | 'result' | undefined {
+  for (let at = line.indexOf(TOOL_MARK); at !== -1; at = line.indexOf(TOOL_MARK, at + 1)) {
+    const tail = at + TOOL_MARK.length;
+    if (startsAt(line, USE_TAIL, tail)) return 'use';
+    if (startsAt(line, RESULT_TAIL, tail)) return 'result';
+  }
+  return undefined;
+}
+
+function startsAt(line: Buffer, bytes: Buffer, at: number): boolean {
+  return at + bytes.length <= line.length && line.compare(bytes, 0, bytes.length, at, at + bytes.length) === 0;
+}
+
+/** A tool result's text: its string content, or its text blocks joined, as an MCP tool's are. */
+function resultText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+  return parts.length > 0 ? parts.join('\n') : undefined;
+}
 
 function isGone(err: unknown): boolean {
   const code = isRecord(err) ? err.code : undefined;
@@ -442,7 +535,10 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
 
   // --- Reading -------------------------------------------------------------------------------------
 
-  /** Splits a chunk into lines, finishing the carried one first, and returns the tool calls in them. */
+  /**
+   * Splits a chunk into lines, finishing the carried one first, and returns the tool calls in them.
+   * The PR links in them go straight into the file's links.
+   */
   function consume(file: FileState, chunk: Buffer): RawCall[] {
     const calls: RawCall[] = [];
     let newline = chunk.indexOf(NEWLINE);
@@ -454,13 +550,13 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
       file.skip = false;
     } else {
       const first = file.carryBytes > 0 ? Buffer.concat([...file.carry, chunk.subarray(0, newline)]) : chunk.subarray(0, newline);
-      take(first, calls);
+      take(file, first, calls);
     }
     file.carry = [];
     file.carryBytes = 0;
     let pos = newline + 1;
     for (newline = chunk.indexOf(NEWLINE, pos); newline !== -1; newline = chunk.indexOf(NEWLINE, pos)) {
-      take(chunk.subarray(pos, newline), calls);
+      take(file, chunk.subarray(pos, newline), calls);
       pos = newline + 1;
     }
     if (pos < chunk.length) carry(file, chunk.subarray(pos));
@@ -480,24 +576,104 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
     file.carryBytes += bytes.length;
   }
 
-  /** The tool calls on one line: only a line that names `"type":"tool_use"` is parsed. */
-  function take(line: Buffer, calls: RawCall[]): void {
-    if (line.indexOf(MARK) === -1) return;
+  /**
+   * The tool calls and PR links on one line. Only a line that could hold one is parsed: a tool call;
+   * a tool's result that holds the id of a call the file waits on; and, in the main transcript, any
+   * other line that holds both `github.com/` and `/pull/`.
+   */
+  function take(file: FileState, line: Buffer, calls: RawCall[]): void {
+    file.lines++;
+    const mark = toolMark(line);
+    if (mark === 'result') {
+      if (!awaits(file, line)) return;
+    } else if (mark === undefined && (!file.main || line.indexOf(GITHUB_MARK) === -1 || line.indexOf(PULL_MARK) === -1)) {
+      return;
+    }
     let entry: unknown;
     try {
       entry = JSON.parse(line.toString('utf8'));
     } catch {
       return;
     }
-    if (!isRecord(entry) || entry.type !== 'assistant' || !isRecord(entry.message)) return;
+    if (!isRecord(entry) || !isRecord(entry.message)) return;
     const content = entry.message.content;
-    if (!Array.isArray(content)) return;
-    const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
-    for (const block of content) {
-      if (isRecord(block) && block.type === 'tool_use' && typeof block.name === 'string') {
-        calls.push({ name: block.name, input: block.input, cwd: entry.cwd, at: Number.isFinite(at) ? at : 0 });
+    const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+    const at = Number.isFinite(ms) ? ms : 0;
+    if (entry.type === 'assistant') {
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (isRecord(block) && block.type === 'tool_use' && typeof block.name === 'string') {
+            calls.push({ name: block.name, input: block.input, cwd: entry.cwd, at });
+            if (typeof block.id === 'string') {
+              const linking = linkingCall(block.name, block.input);
+              if (linking !== undefined) wait(file, block.id, { ...linking, at });
+            }
+          }
+        }
       }
+      // Claude's own text: assistantTextOf() leaves out tool calls, thinking and sidechains.
+      const text = file.main ? assistantTextOf(entry)?.text : undefined;
+      if (text !== undefined && mayNamePr(text)) for (const pr of prUrlsIn(text)) link(file, 'mentioned', pr, at);
+      return;
     }
+    if (entry.type !== 'user') return;
+    if (Array.isArray(content) && file.pending.size > 0) {
+      for (const block of content) if (isRecord(block) && block.type === 'tool_result') settle(file, block, at);
+    }
+    // A prompt you typed, by lastUserPrompt's rule: no cross-session messages, meta lines or tool results.
+    const prompt = file.main ? promptTextOf(entry) : undefined;
+    if (prompt !== undefined && mayNamePr(prompt)) for (const pr of prUrlsIn(prompt)) link(file, 'prompted', pr, at);
+  }
+
+  /** True when a line holds the id of a call the file waits on, after dropping those waited on too long. */
+  function awaits(file: FileState, line: Buffer): boolean {
+    // Oldest first, so the stale ones are at the front.
+    for (const [id, pending] of file.pending) {
+      if (file.lines - pending.line <= MAX_WAIT_LINES) break;
+      file.pending.delete(id);
+    }
+    for (const id of file.pending.keys()) if (line.indexOf(id) !== -1) return true;
+    return false;
+  }
+
+  function wait(file: FileState, id: string, pending: Omit<Pending, 'line'>): void {
+    file.pending.delete(id);
+    file.pending.set(id, { ...pending, line: file.lines });
+    if (file.pending.size > MAX_PENDING) {
+      const oldest = file.pending.keys().next();
+      if (oldest.done !== true) file.pending.delete(oldest.value);
+    }
+  }
+
+  /** A tool's result: the links the result of a call the file waits on makes. */
+  function settle(file: FileState, block: Record<string, unknown>, lineAt: number): void {
+    const id = block.tool_use_id;
+    if (typeof id !== 'string') return;
+    const pending = file.pending.get(id);
+    if (pending === undefined) return;
+    file.pending.delete(id);
+    const output = resultText(block.content);
+    if (output === undefined) return;
+    const at = lineAt || pending.at;
+    // Only a success opens one: a failed gh pr create prints the URL of the PR that already exists.
+    if (pending.opens !== undefined && block.is_error !== true) {
+      for (const pr of pending.opens === 'gh' ? openedByGh(output) : openedByMcp(output)) link(file, 'opened', pr, at);
+    }
+    // A failed push counts too, as in `git push && npm test`: git marks each ref, and pushedIn() skips the rejected ones.
+    if (pending.pushes === true) {
+      for (const { repo, branch } of pushedIn(output)) add(file, { kind: 'pushed', repo, branch, at });
+    }
+  }
+
+  function link(file: FileState, kind: Exclude<PrLinkKind, 'pushed'>, pr: PrRef, at: number): void {
+    add(file, { kind, repo: pr.repo, number: pr.number, at });
+  }
+
+  function add(file: FileState, found: FoundLink): void {
+    // A link with no time can't be placed among the rest.
+    if (found.at <= 0) return;
+    addLink(file.links, found);
+    if (file.links.size > MAX_FILE_LINKS) pruneLinks(file.links);
   }
 
   /**
@@ -553,7 +729,7 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
       if (!info.isFile()) throw new Error('not a file');
       let known = state.files.get(file);
       if (known === undefined || known.dev !== info.dev || known.ino !== info.ino || info.size < known.offset) {
-        known = { dev: info.dev, ino: info.ino, offset: 0, carry: [], carryBytes: 0, skip: false, calls: 0, repos: new Map() };
+        known = { main: file === state.main, dev: info.dev, ino: info.ino, offset: 0, carry: [], carryBytes: 0, skip: false, calls: 0, repos: new Map(), pending: new Map(), lines: 0, links: new Map() };
         state.files.set(file, known);
       }
       const end = info.size;
@@ -603,11 +779,13 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
       const result = await resultOf(state);
       if (!alive()) return;
       state.result = result;
+      state.links = linksOf(state);
       counters.scans++;
     } catch {
       if (!alive()) return;
       state.files.clear();
       state.result = undefined;
+      state.links = undefined;
       state.retryAt = now() + retryMs;
     }
   }
@@ -637,6 +815,13 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
       .filter((_, index) => there[index])
       .sort(([ka, a], [kb, b]) => b.lastAt - a.lastAt || (ka < kb ? -1 : ka > kb ? 1 : 0))
       .map(([key, count]) => ({ key, root: count.root, calls: count.calls, changes: count.changes, lastAt: new Date(count.lastAt).toISOString() }));
+  }
+
+  /** Every file's links, the newest of each, newest first and capped (newestLinks()). */
+  function linksOf(state: SessionState): PrLink[] {
+    const merged = new Map<string, FoundLink>();
+    for (const file of state.files.values()) for (const found of file.links.values()) addLink(merged, found);
+    return newestLinks(merged.values()).map(toPrLink);
   }
 
   // --- The queue -----------------------------------------------------------------------------------
@@ -673,7 +858,7 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
           }
           let state = sessions.get(session.sessionId);
           if (state === undefined || state.main !== session.file) {
-            state = { main: session.file, startKey: session.startKey, files: new Map(), result: undefined };
+            state = { main: session.file, startKey: session.startKey, files: new Map(), result: undefined, links: undefined };
             sessions.set(session.sessionId, state);
           }
           state.startKey = session.startKey;
@@ -691,6 +876,9 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
     workedIn(sessionId) {
       const state = sessions.get(sessionId);
       return state?.result?.filter((repo) => repo.key !== state.startKey);
+    },
+    prLinks(sessionId) {
+      return sessions.get(sessionId)?.links;
     },
     async settled() {
       while (running !== undefined) await running;

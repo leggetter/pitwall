@@ -7,8 +7,11 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PrSource } from './prs/index.js';
 
-const seen = vi.hoisted(() => ({ calls: [] as { what: string; env: NodeJS.ProcessEnv; roots?: string[]; relayName?: string }[] }));
+const seen = vi.hoisted(() => ({
+  calls: [] as { what: string; env: NodeJS.ProcessEnv; roots?: string[]; relayName?: string; prs?: PrSource }[],
+}));
 
 vi.mock('./index/index.js', () => ({
   startIndexer: vi.fn((options: { roots: string[]; relayName?: string }) => {
@@ -25,8 +28,8 @@ vi.mock('./server/index.js', async (importOriginal) => {
       seen.calls.push({ what: 'relay', env: { ...process.env } });
       return { isRelay: () => false, exchange: () => undefined, close: async () => {} };
     }),
-    startServer: vi.fn(async () => {
-      seen.calls.push({ what: 'server', env: { ...process.env } });
+    startServer: vi.fn(async (options: { prs?: PrSource }) => {
+      seen.calls.push({ what: 'server', env: { ...process.env }, ...(options.prs ? { prs: options.prs } : {}) });
       return { url: 'http://127.0.0.1:45170', port: 45170, close: async () => {} };
     }),
   };
@@ -171,6 +174,20 @@ describe('main(): startup', () => {
       process.env.PITWALL_OPEN_MARKER = join(tmpdir(), `pitwall-test-marker-${process.pid}`);
       expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
       expect(errors).not.toHaveBeenCalled();
+    });
+
+    it('gives the server a PR poller it has not started, and with --no-prs one that is off (M4, W93)', async () => {
+      expect(await main(['--no-open', '--port', '0', tmpdir()])).toBe(0);
+      const poller = seen.calls.at(-1)?.prs;
+      expect(poller).toBeDefined();
+      // The server starts it once listening; until then nothing has run gh.
+      expect(poller?.latest()).toEqual({ source: { ok: true }, refreshing: false, prs: [] });
+      poller?.stop();
+
+      expect(await main(['--no-open', '--no-prs', '--port', '0', tmpdir()])).toBe(0);
+      const off = seen.calls.at(-1)?.prs;
+      expect(off?.latest().source).toEqual({ ok: false, reason: 'off', error: 'Pull requests are off: pitwall was started with --no-prs.' });
+      expect(off?.refresh()).toEqual({ kind: 'off' });
     });
 
     it('says nothing about the port when --port picked it', async () => {

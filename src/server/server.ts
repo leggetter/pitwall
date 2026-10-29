@@ -7,6 +7,9 @@
 //                               the apiKey, not the token, and an Origin, else 403
 //   GET /api/directories        then directories.ts: the directories under the snapshot's roots
 //   GET /api/editors            then editors.ts: the editors found at startup
+//   GET /api/prs                then prs.ts: your open PRs, the latest list the poller has (M4);
+//                               POST /api/prs/refresh asks it for a fetch, at most one every 15 s,
+//                               else 429, and 409 with --no-prs
 //   POST /api/attachments       then attachments.ts: the one body that isn't JSON, the file's bytes
 //                               with its own Content-Type, at most 10 MiB, its type checked; DELETE
 //                               /api/attachments/:id removes one no spawn has used
@@ -41,6 +44,7 @@ import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
+import { prsOff } from '../prs/index.js';
 import {
   ATTACH_PATH,
   CONVERSATION_STALE_STATUS,
@@ -58,6 +62,7 @@ import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
+import { registerPrs } from './prs.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import {
@@ -184,11 +189,15 @@ export async function startServerWithInternals(
   const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
   // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
-  // The directory list (W70), then the input routes: attachments (W79), spawn, stop and remove (W12),
-  // resume (W66), the editors and open in an editor (W72), whose detection starts here, end session
-  // (W90), which never ends the relay, the relay (W11), then any a test adds.
+  // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close().
+  const prs = options.prs ?? prsOff();
+  // The directory list (W70), your open PRs and Refresh (M4), then the input routes: attachments
+  // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
+  // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
+  // test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
+    registerPrs(app, prs);
     registerAttachments(app, attachments);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
@@ -245,7 +254,7 @@ export async function startServerWithInternals(
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
-      handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots }),
+      handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs }),
     );
   });
 
@@ -260,12 +269,16 @@ export async function startServerWithInternals(
   headers = Object.entries(securityHeaders(port));
   // At startup, for anything an earlier run left, then on a timer.
   attachments.start();
+  // The first fetch of your open PRs, now that there's a server to show them.
+  prs.start();
 
   let closed: Promise<void> | undefined;
   return {
     url: `http://${LOOPBACK_HOST}:${port}`,
     port,
     close() {
+      // No more fetches, and no more 'prs' messages to clients that are closing.
+      prs.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
           closing = true;

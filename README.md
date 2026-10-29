@@ -56,10 +56,11 @@ node dist/cli.js ~/code
 
 - **It reads, and changes nothing:**
   - `claude agents --json --all`, every 5 seconds, for the list of sessions.
-  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you and which repos it worked in.
+  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you, which repos it worked in, and the pull requests it opened, pushed to, was given in a prompt or named in Claude's replies.
   - To find ended sessions, the start and end of every transcript in `~/.claude/projects/` changed in the last 30 days, whatever its directory, kept in memory. Only those under your roots are listed.
   - `ps` for when a session's process started, and, before End session, its command name and the parent pids, never a command line; `claude --version` before its relay starts; and `/Applications` and `~/Applications` for VS Code and Cursor.
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
+  - `gh api graphql` on github.com, with your GitHub login, at start, every 3 minutes and on Refresh, for your open pull requests. `--no-prs` turns it off, and pitwall then never runs `gh`.
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked. The session sees it as a message from another session, so a message can't approve a permission prompt.
   - **Attach** to a background session, in a terminal in the page. Opening a running one's view attaches to it by default, since that's where it takes input. One that has finished asks first, because attaching restarts it.
@@ -91,7 +92,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 From the clone, after `npm run build`:
 
 ```
-node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
+node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
 ```
 
 `npm start -- [root...]`, with the same options, runs the same thing.
@@ -102,6 +103,7 @@ node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
 | `--port <n>` | The port on 127.0.0.1. A busy default falls back to a free port; a port you give fails if it's busy. `0` always picks a free one | 4517 |
 | `--interval <seconds>` | How often to poll `claude agents`, in whole seconds from 1 to 300 | 5 |
 | `--no-open` | Don't open the browser. `PITWALL_NO_OPEN=1` does the same | Opens it |
+| `--no-prs` | Don't list your open pull requests, so pitwall never runs `gh`. Without it, pitwall runs `gh api graphql` at start, every 3 minutes and on Refresh, for your open PRs on github.com; `gh` must be installed and logged in | Lists them |
 | `-h`, `--help` | Show the help, with every option and variable | |
 | `-v`, `--version` | Show the version | |
 
@@ -129,6 +131,7 @@ flowchart TB
     server["Server, on 127.0.0.1: HTTP and WebSocket"]
     pty["node-pty: claude attach id"]
     relay["Relay: pitwall-relay"]
+    prs["PR poller"]
   end
 
   subgraph machine["On your machine"]
@@ -137,6 +140,8 @@ flowchart TB
     interactive["Interactive sessions, in your terminals"]
     editor["VS Code or Cursor"]
   end
+
+  github["github.com, through gh api graphql"]
 
   page ~~~ index
   page <-->|"HTTP and WebSocket, with the token"| server
@@ -148,10 +153,13 @@ flowchart TB
   server -->|"your message"| relay
   relay -->|"SendMessage, through the gate"| interactive
   server -->|opens| editor
+  prs -->|"every 3 min, and on Refresh"| github
+  prs -->|"your open PRs"| server
 ```
 
 - **The index** turns what it reads into a snapshot of the sessions under your roots: each one grouped by repo, with read-only `git`, and whether it needs you. The server pushes a snapshot to the page only when something changed.
 - **A conversation** comes over HTTP, a page at a time, and only when you open the session.
+- **The PR poller** runs one `gh api graphql` search for your open pull requests on its own timer, never with the session poll, so `gh` keeps your GitHub token and pitwall never reads it. The server pushes the list to the page when it changes.
 - **The terminal in the page** is xterm.js, on its own WebSocket, connected to a pseudo-terminal (PTY) that runs `claude attach <id>`. So you get Claude Code's whole interface, permission prompts included.
 - **The relay** exists because the documented way to message an interactive session is Claude Code's cross-session messaging, which only a Claude session can use. So pitwall runs a headless one, `claude -p` named `pitwall-relay`, with `SendMessage` as its only tool, and a gate hook that lets it send only the message you wrote ([D8](docs/decisions.md#d8---messages-to-interactive-sessions-go-through-one-headless-relay-session)).
 

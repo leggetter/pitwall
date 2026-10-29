@@ -1111,7 +1111,9 @@ export interface PullRequestSummary {
   /**
    * The head branch, and the repo it's in as lowercase `owner/name`: a fork's,
    * for a PR from a fork. What a 'pushed' PrLink is compared with. Absent when
-   * that repo no longer exists.
+   * that repo no longer exists, and when the branch's name is empty, over 255
+   * characters, or has a control or bidi control character, so a branch is
+   * always one pitwall can compare and show as it is.
    */
   head?: { repo: string; branch: string };
   checks: PullRequestChecks;
