@@ -1,22 +1,26 @@
-// One fetch (fetch.ts), with a fake runFile: no test here runs gh.
+// One fetch (fetch.ts), with a fake runFile: no test here runs gh. Each search is its own call
+// (W101), so most tests here fetch the author search alone, as W93's single search was.
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { RunError, type RunFile, type RunOptions } from '../index/exec.js';
-import { PR_RELATIONS, PRS_FETCH_TIMEOUT_MS, PRS_MAX } from '../shared/protocol.js';
-import { checkRun, prNode, reviewRequests, rollup, searchPage, searchResponse, VIEWER } from '../test/prs.js';
+import { PR_RELATIONS, PRS_FETCH_TIMEOUT_MS, PRS_MAX, type PullRequestRelation } from '../shared/protocol.js';
+import { checkRun, prNode, reviewRequests, rollup, searchPage, VIEWER } from '../test/prs.js';
 import {
   exitError,
   FETCH_ERRORS,
   fetchPullRequests,
+  fetchSearch,
   ghArgs,
   ghEnvironment,
   isWellFormedCursor,
-  PRS_ALIASES,
+  mergeSearches,
   PRS_PAGE_MAX_BYTES,
-  PRS_QUERY,
+  PRS_QUERIES,
   PRS_SEARCHES,
-  prsQuery,
 } from './fetch.js';
+import { parsePullRequest } from './parse.js';
+
+const authored = (options: Parameters<typeof fetchSearch>[1]) => fetchSearch('authored', options);
 
 interface Call {
   file: string;
@@ -58,85 +62,67 @@ function fields(args: readonly string[]): Record<string, string> {
   return result;
 }
 
+/** The search a call ran, from its `-f q=` field. */
+const relationOf = (args: readonly string[]): PullRequestRelation | undefined => PR_RELATIONS.find((relation) => fields(args).q === PRS_SEARCHES[relation]);
+
 describe('fetchPullRequests: the command', () => {
-  it('runs gh api graphql on github.com once, with the query and the three searches as -f string fields, never -F', async () => {
-    const { runFile, calls } = fakeRunFile([searchPage([])]);
+  it('runs gh api graphql on github.com once per search, with its query and its search as -f string fields, never -F', async () => {
+    const { runFile, calls } = fakeRunFile([searchPage([]), searchPage([]), searchPage([])]);
     await fetchPullRequests({ runFile });
-    expect(calls).toHaveLength(1);
-    const [call] = calls;
-    expect(call?.file).toBe('gh');
-    expect(call?.args.slice(0, 4)).toEqual(['api', 'graphql', '--hostname', 'github.com']);
-    expect(call?.args).not.toContain('-F');
-    expect(call?.args.filter((arg) => arg.startsWith('-'))).toEqual(['--hostname', '-f', '-f', '-f', '-f']);
-    expect(fields(call!.args)).toEqual({
-      query: PRS_QUERY,
-      authored: PRS_SEARCHES.authored,
-      reviewRequested: PRS_SEARCHES['review-requested'],
-      mentioned: PRS_SEARCHES.mentioned,
-    });
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      expect(call.file).toBe('gh');
+      expect(call.args.slice(0, 4)).toEqual(['api', 'graphql', '--hostname', 'github.com']);
+      expect(call.args).not.toContain('-F');
+      expect(call.args.filter((arg) => arg.startsWith('-'))).toEqual(['--hostname', '-f', '-f']);
+    }
+    expect(calls.map((call) => fields(call.args))).toEqual(PR_RELATIONS.map((relation) => ({ query: PRS_QUERIES[relation], q: PRS_SEARCHES[relation] })));
   });
 
-  it('searches open PRs in repos that aren’t archived, newest update first: yours, those that want your review, and those that mention you but aren’t yours (W101)', () => {
+  it('searches open PRs in repos that aren’t archived, newest update first: yours, those that want your review, and those that mention you, neither of those yours (W101)', () => {
     expect(PRS_SEARCHES).toEqual({
       authored: 'is:pr is:open author:@me archived:false sort:updated-desc',
-      'review-requested': 'is:pr is:open review-requested:@me archived:false sort:updated-desc',
+      'review-requested': 'is:pr is:open review-requested:@me -author:@me archived:false sort:updated-desc',
       mentioned: 'is:pr is:open mentions:@me -author:@me archived:false sort:updated-desc',
     });
-    // Each search under its alias, its text in a variable of the same name, and its cursor in <alias>After.
+  });
+
+  it('asks for every field the contract needs, in every search, and who was asked only in the review-requested one', () => {
     for (const relation of PR_RELATIONS) {
-      const alias = PRS_ALIASES[relation];
-      expect(PRS_QUERY).toContain(`${alias}: search(query: $${alias}, type: ISSUE, first: 100, after: $${alias}After)`);
-      expect(PRS_QUERY).toContain(`$${alias}: String!, `.slice(0, -2));
-      expect(PRS_QUERY).toContain(`$${alias}After: String`);
+      for (const field of [
+        'url',
+        'number',
+        'title',
+        'isDraft',
+        'createdAt',
+        'updatedAt',
+        'headRefName',
+        'headRepository { nameWithOwner }',
+        'repository { nameWithOwner }',
+        'reviewDecision',
+        'mergeable',
+        'commits(last: 1)',
+        'statusCheckRollup',
+        'contexts(first: 100)',
+        '... on CheckRun { name status conclusion }',
+        '... on StatusContext { context state }',
+        'pageInfo { hasNextPage endCursor }',
+        'issueCount',
+        'search(query: $q, type: ISSUE, first: 100, after: $after)',
+      ]) {
+        expect(PRS_QUERIES[relation], `${relation}: ${field}`).toContain(field);
+      }
+      const reviews = relation === 'review-requested';
+      for (const field of ['viewer { login }', 'reviewRequests(first: 100)', '... on User { login }', '... on Team { combinedSlug }']) {
+        expect(PRS_QUERIES[relation].includes(field), `${relation}: ${field}`).toBe(reviews);
+      }
     }
-  });
-
-  it('asks for every field the contract needs', () => {
-    for (const field of [
-      'url',
-      'number',
-      'title',
-      'isDraft',
-      'createdAt',
-      'updatedAt',
-      'headRefName',
-      'headRepository { nameWithOwner }',
-      'repository { nameWithOwner }',
-      'reviewDecision',
-      'mergeable',
-      'commits(last: 1)',
-      'statusCheckRollup',
-      'contexts(first: 100)',
-      '... on CheckRun { name status conclusion }',
-      '... on StatusContext { context state }',
-      'pageInfo { hasNextPage endCursor }',
-      'issueCount',
-      'first: 100',
-      'viewer { login }',
-      'reviewRequests(first: 100)',
-      '... on User { login }',
-      '... on Team { combinedSlug }',
-    ]) {
-      expect(PRS_QUERY, field).toContain(field);
-    }
-    // Every search reads the same fields; only the review-requested one asks who was requested.
-    expect(PRS_QUERY.match(/\.\.\.pr\b/g)).toHaveLength(3);
-    expect(PRS_QUERY.match(/reviewRequests\(/g)).toHaveLength(1);
-  });
-
-  it('builds a query from constants only, for the searches given, in their order', () => {
-    expect(prsQuery(['mentioned', 'authored'])).toBe(prsQuery(['authored', 'mentioned']));
-    const page2 = prsQuery(['mentioned']);
-    expect(page2).toContain('mentioned: search(');
-    expect(page2).not.toContain('authored: search(');
-    expect(page2).not.toContain('reviewRequests(');
-    expect(page2.startsWith('query($mentioned: String!, $mentionedAfter: String) {')).toBe(true);
   });
 
   it('runs in the temp directory, with a timeout of PRS_FETCH_TIMEOUT_MS, a cap on stdout, and an environment that never prompts', async () => {
     const env = { PATH: '/usr/bin', HOME: '/home/demo', GH_FORCE_TTY: '1', CLICOLOR_FORCE: '1', GH_TOKEN: 'kept-for-gh' };
     const { runFile, calls } = fakeRunFile([searchPage([])]);
-    await fetchPullRequests({ runFile, env, monotonicNow: () => 1000 });
+    await authored({ runFile, env, monotonicNow: () => 1000 });
     const options = calls[0]!.options;
     expect(options.timeoutMs).toBe(PRS_FETCH_TIMEOUT_MS);
     expect(options.maxStdoutBytes).toBe(PRS_PAGE_MAX_BYTES);
@@ -146,24 +132,13 @@ describe('fetchPullRequests: the command', () => {
 
   it('passes the gh it was given', async () => {
     const { runFile, calls } = fakeRunFile([searchPage([])]);
-    await fetchPullRequests({ runFile, ghBin: '/opt/demo/bin/gh' });
+    await authored({ runFile, ghBin: '/opt/demo/bin/gh' });
     expect(calls[0]?.file).toBe('/opt/demo/bin/gh');
   });
 
-  it('builds page 2 with only the searches that have one, each with -f <alias>After=<cursor>', () => {
-    expect(fields(ghArgs([{ relation: 'authored', after: 'Y3Vyc29yOjEwMA==' }]))).toEqual({
-      query: prsQuery(['authored']),
-      authored: PRS_SEARCHES.authored,
-      authoredAfter: 'Y3Vyc29yOjEwMA==',
-    });
-    expect(fields(ghArgs([{ relation: 'mentioned', after: 'bQ==' }, { relation: 'review-requested', after: 'cg==' }]))).toEqual({
-      query: prsQuery(['review-requested', 'mentioned']),
-      reviewRequested: PRS_SEARCHES['review-requested'],
-      reviewRequestedAfter: 'cg==',
-      mentioned: PRS_SEARCHES.mentioned,
-      mentionedAfter: 'bQ==',
-    });
-    expect(ghArgs().some((arg) => /^[a-zA-Z]+After=/.test(arg))).toBe(false);
+  it('builds page 2 with -f after=<cursor> only', () => {
+    expect(fields(ghArgs('mentioned', 'Y3Vyc29yOjEwMA=='))).toEqual({ query: PRS_QUERIES.mentioned, q: PRS_SEARCHES.mentioned, after: 'Y3Vyc29yOjEwMA==' });
+    expect(ghArgs('authored').some((arg) => arg.startsWith('after='))).toBe(false);
   });
 
   it('copies the environment rather than changing it', () => {
@@ -173,7 +148,7 @@ describe('fetchPullRequests: the command', () => {
   });
 });
 
-describe('fetchPullRequests: the list', () => {
+describe('fetchSearch: one search, the author one', () => {
   it('sorts the PRs by updatedAt, newest first', async () => {
     const nodes = [
       prNode({ number: 1, updatedAt: '2026-10-01T00:00:00Z' }),
@@ -181,14 +156,14 @@ describe('fetchPullRequests: the list', () => {
       prNode({ number: 3, updatedAt: '2026-10-02T00:00:00Z' }),
     ];
     const { runFile } = fakeRunFile([searchPage(nodes)]);
-    const result = await fetchPullRequests({ runFile });
+    const result = await authored({ runFile });
     expect(result.ok && result.prs.map((pr) => pr.number)).toEqual([2, 3, 1]);
     expect(result).toMatchObject({ ok: true, truncated: false });
   });
 
   it('keeps what it can read and drops the rest', async () => {
     const { runFile } = fakeRunFile([searchPage([prNode({ number: 1 }), { not: 'a pr' }, prNode({ number: 2, url: 'https://evil.example/pull/2' })])]);
-    const result = await fetchPullRequests({ runFile });
+    const result = await authored({ runFile });
     expect(result.ok && result.prs.map((pr) => pr.number)).toEqual([1]);
   });
 
@@ -197,13 +172,13 @@ describe('fetchPullRequests: the list', () => {
     const changed = [{ pullRequest: { url: 'https://github.com/example/demo-app/pull/1' } }, prNode({ number: '1' }), {}];
     for (const stdout of [searchPage(changed), searchPage([], { total: 3 }), searchPage(changed, { total: 0 })]) {
       const { runFile } = fakeRunFile([stdout]);
-      expect(await fetchPullRequests({ runFile }), stdout.slice(0, 80)).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
+      expect(await authored({ runFile }), stdout.slice(0, 80)).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
     }
   });
 
   it('is an empty list, not a failure, when GitHub found none', async () => {
     const { runFile } = fakeRunFile([searchPage([], { total: 0 })]);
-    expect(await fetchPullRequests({ runFile })).toEqual({ ok: true, prs: [], truncated: false });
+    expect(await authored({ runFile })).toEqual({ ok: true, prs: [], truncated: false });
   });
 
   it('keeps page 2’s PRs when every one on page 1 was dropped', async () => {
@@ -211,7 +186,7 @@ describe('fetchPullRequests: the list', () => {
       searchPage([{}, {}], { total: 3, hasNextPage: true, endCursor: 'abc' }),
       searchPage([prNode({ number: 3 })], { total: 3 }),
     ]);
-    const result = await fetchPullRequests({ runFile });
+    const result = await authored({ runFile });
     expect(result.ok && result.prs.map((pr) => pr.number)).toEqual([3]);
   });
 
@@ -220,9 +195,9 @@ describe('fetchPullRequests: the list', () => {
     // A PR updated between the two pages can show up on both.
     const page2 = searchPage([...prs(50, 101), prNode({ number: 100, updatedAt: '2026-10-28T00:00:00Z' })], { total: 150 });
     const { runFile, calls } = fakeRunFile([page1, page2]);
-    const result = await fetchPullRequests({ runFile });
+    const result = await authored({ runFile });
     expect(calls).toHaveLength(2);
-    expect(fields(calls[1]!.args)).toEqual({ query: prsQuery(['authored']), authored: PRS_SEARCHES.authored, authoredAfter: 'Y3Vyc29yOjEwMA==' });
+    expect(fields(calls[1]!.args).after).toBe('Y3Vyc29yOjEwMA==');
     expect(result).toMatchObject({ ok: true, truncated: false });
     if (!result.ok) return;
     expect(result.prs).toHaveLength(150);
@@ -234,7 +209,7 @@ describe('fetchPullRequests: the list', () => {
     const page1 = searchPage(prs(100, 1), { total: 230, hasNextPage: true, endCursor: 'Y3Vyc29yOjEwMA==' });
     const page2 = searchPage(prs(100, 101), { total: 230, hasNextPage: true, endCursor: 'Y3Vyc29yOjIwMA==' });
     const { runFile, calls } = fakeRunFile([page1, page2]);
-    const result = await fetchPullRequests({ runFile });
+    const result = await authored({ runFile });
     expect(calls).toHaveLength(2);
     expect(result).toMatchObject({ ok: true, truncated: true });
     expect(result.ok && result.prs).toHaveLength(PRS_MAX);
@@ -245,19 +220,19 @@ describe('fetchPullRequests: the list', () => {
       searchPage(prs(100, 1), { total: 201, hasNextPage: true, endCursor: 'abc' }),
       searchPage(prs(100, 101), { total: 201, hasNextPage: false }),
     ]);
-    expect(await fetchPullRequests({ runFile })).toMatchObject({ ok: true, truncated: true });
+    expect(await authored({ runFile })).toMatchObject({ ok: true, truncated: true });
   });
 
   it("doesn't pass on a cursor of the wrong shape: page 1 alone, truncated", async () => {
     for (const endCursor of ['@/etc/passwd', 'a b', '', 'x'.repeat(257), 'cursor\n', '-F', 'é']) {
       const { runFile, calls } = fakeRunFile([searchPage(prs(100), { total: 150, hasNextPage: true, endCursor })]);
-      const result = await fetchPullRequests({ runFile });
+      const result = await authored({ runFile });
       expect(calls, endCursor).toHaveLength(1);
       expect(result, endCursor).toMatchObject({ ok: true, truncated: true });
     }
     // No cursor at all, though GitHub said there's more.
     const { runFile, calls } = fakeRunFile([searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: null })]);
-    expect(await fetchPullRequests({ runFile })).toMatchObject({ ok: true, truncated: true });
+    expect(await authored({ runFile })).toMatchObject({ ok: true, truncated: true });
     expect(calls).toHaveLength(1);
   });
 
@@ -268,7 +243,7 @@ describe('fetchPullRequests: the list', () => {
 
   it('fetches a single page when GitHub says there is no next one', async () => {
     const { runFile, calls } = fakeRunFile([searchPage(prs(3), { hasNextPage: false, endCursor: 'abc' })]);
-    expect(await fetchPullRequests({ runFile })).toMatchObject({ ok: true, truncated: false });
+    expect(await authored({ runFile })).toMatchObject({ ok: true, truncated: false });
     expect(calls).toHaveLength(1);
   });
 
@@ -277,16 +252,16 @@ describe('fetchPullRequests: the list', () => {
     const page1 = searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: 'abc' });
     const { runFile, calls } = fakeRunFile([page1, searchPage(prs(50, 101))], (call) => {
       // Page 1 takes 20 s.
-      if (call.args.every((arg) => !arg.startsWith('authoredAfter='))) clock += 20_000;
+      if (call.args.every((arg) => !arg.startsWith('after='))) clock += 20_000;
     });
-    expect(await fetchPullRequests({ runFile, monotonicNow: () => clock })).toMatchObject({ ok: true });
+    expect(await authored({ runFile, monotonicNow: () => clock })).toMatchObject({ ok: true });
     expect(calls.map((call) => call.options.timeoutMs)).toEqual([30_000, 10_000]);
 
     clock = 0;
     const slow = fakeRunFile([page1, searchPage([])], () => {
       clock += 30_000;
     });
-    expect(await fetchPullRequests({ runFile: slow.runFile, monotonicNow: () => clock })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
+    expect(await authored({ runFile: slow.runFile, monotonicNow: () => clock })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
     expect(slow.calls).toHaveLength(1);
   });
 
@@ -297,7 +272,7 @@ describe('fetchPullRequests: the list', () => {
     Date.now = () => realNow() + ++jumps * 60 * 60_000;
     try {
       const { runFile, calls } = fakeRunFile([searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: 'abc' }), searchPage(prs(50, 101))]);
-      expect(await fetchPullRequests({ runFile })).toMatchObject({ ok: true });
+      expect(await authored({ runFile })).toMatchObject({ ok: true });
       expect(calls).toHaveLength(2);
       expect(calls[1]!.options.timeoutMs).toBeGreaterThan(PRS_FETCH_TIMEOUT_MS - 5000);
       expect(calls[1]!.options.timeoutMs).toBeLessThanOrEqual(PRS_FETCH_TIMEOUT_MS);
@@ -308,136 +283,24 @@ describe('fetchPullRequests: the list', () => {
 
   it('fails the whole fetch when page 2 fails, rather than give a list it knows is short', async () => {
     const { runFile } = fakeRunFile([searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: 'abc' }), new RunError('timeout', 'timed out after 30s')]);
-    expect(await fetchPullRequests({ runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
+    expect(await authored({ runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
     const unreadable = fakeRunFile([searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: 'abc' }), 'not json']);
-    expect(await fetchPullRequests({ runFile: unreadable.runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
+    expect(await authored({ runFile: unreadable.runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
   });
 
   it('reads failing checks through to the list', async () => {
     const { runFile } = fakeRunFile([searchPage([prNode({ checks: rollup('FAILURE', [checkRun('lint', 'FAILURE')]) })])]);
-    const result = await fetchPullRequests({ runFile });
+    const result = await authored({ runFile });
     expect(result.ok && result.prs[0]).toMatchObject({ checks: 'failing', failingChecks: ['lint'] });
   });
 });
 
-describe('fetchPullRequests: three searches (W101)', () => {
-  const at = (minutes: number) => new Date(Date.UTC(2026, 9, 20) + minutes * 60_000).toISOString().replace('.000', '');
-  const node = (repo: string, number: number, minutes: number, extra: Record<string, unknown> = {}) => prNode({ repo, number, updatedAt: at(minutes), ...extra });
-
-  it('gives each PR the relation of the search that found it, newest update first across them', async () => {
-    const { runFile } = fakeRunFile([
-      searchResponse({
-        authored: { nodes: [node('example/demo-app', 1, 10)] },
-        reviewRequested: { nodes: [node('example/event-relay', 2, 30, { reviewRequests: reviewRequests({ user: VIEWER }) })] },
-        mentioned: { nodes: [node('example/api-server', 3, 20)] },
-      }),
-    ]);
-    const result = await fetchPullRequests({ runFile });
-    expect(result.ok && result.prs.map((pr) => [pr.number, pr.relation, pr.reviewRequest])).toEqual([
-      [2, 'review-requested', { via: 'direct' }],
-      [3, 'mentioned', undefined],
-      [1, 'authored', undefined],
-    ]);
-  });
-
-  it('lists a PR that more than one search found once: yours before review requested, review requested before mentioned', async () => {
-    const both = node('example/demo-app', 7, 10, { reviewRequests: reviewRequests({ team: 'example/reviewers' }) });
-    const { runFile } = fakeRunFile([
-      searchResponse({
-        authored: { nodes: [node('example/demo-app', 1, 5)] },
-        reviewRequested: { nodes: [both, node('example/demo-app', 1, 5)] },
-        mentioned: { nodes: [node('example/demo-app', 7, 10), node('example/demo-app', 1, 5), node('example/demo-app', 9, 1)] },
-      }),
-    ]);
-    const result = await fetchPullRequests({ runFile });
-    expect(result.ok && result.prs.map((pr) => [pr.number, pr.relation])).toEqual([
-      [7, 'review-requested'],
-      [1, 'authored'],
-      [9, 'mentioned'],
-    ]);
-    expect(result.ok && result.prs.find((pr) => pr.number === 7)?.reviewRequest).toEqual({ via: 'team', team: 'example/reviewers' });
-  });
-
-  it(`keeps ${PRS_MAX} of each search, so one with many can't crowd another out, and says truncated`, async () => {
-    const authored = Array.from({ length: 100 }, (_, i) => node('example/demo-app', i + 1, 1000 + i));
-    const { runFile, calls } = fakeRunFile([
-      searchResponse({
-        authored: { nodes: authored, total: 250, hasNextPage: true, endCursor: 'YQ==' },
-        mentioned: { nodes: [node('example/api-server', 5, 1)] },
-      }),
-      searchResponse({ authored: { nodes: Array.from({ length: 100 }, (_, i) => node('example/demo-app', i + 101, 900 - i)), total: 250, hasNextPage: true, endCursor: 'Yg==' } }),
-    ]);
-    const result = await fetchPullRequests({ runFile });
-    expect(calls).toHaveLength(2);
-    expect(result).toMatchObject({ ok: true, truncated: true });
-    if (!result.ok) return;
-    expect(result.prs.filter((pr) => pr.relation === 'authored')).toHaveLength(PRS_MAX);
-    expect(result.prs.filter((pr) => pr.relation === 'mentioned').map((pr) => pr.number)).toEqual([5]);
-  });
-
-  it('fetches page 2 in one more call, of only the searches that have one, each with its own cursor', async () => {
-    const many = (repo: string, from: number) => Array.from({ length: 100 }, (_, i) => node(repo, from + i, from + i));
-    const { runFile, calls } = fakeRunFile([
-      searchResponse({
-        authored: { nodes: [node('example/demo-app', 1, 1)] },
-        reviewRequested: { nodes: many('example/event-relay', 1), total: 120, hasNextPage: true, endCursor: 'cmV2aWV3' },
-        mentioned: { nodes: many('example/api-server', 1), total: 130, hasNextPage: true, endCursor: 'bWVudGlvbg==' },
-      }),
-      searchResponse({
-        reviewRequested: { nodes: Array.from({ length: 20 }, (_, i) => node('example/event-relay', 101 + i, 200 + i)), total: 120 },
-        mentioned: { nodes: Array.from({ length: 30 }, (_, i) => node('example/api-server', 101 + i, 200 + i)), total: 130 },
-      }),
-    ]);
-    const result = await fetchPullRequests({ runFile });
-    expect(calls).toHaveLength(2);
-    expect(fields(calls[1]!.args)).toEqual({
-      query: prsQuery(['review-requested', 'mentioned']),
-      reviewRequested: PRS_SEARCHES['review-requested'],
-      reviewRequestedAfter: 'cmV2aWV3',
-      mentioned: PRS_SEARCHES.mentioned,
-      mentionedAfter: 'bWVudGlvbg==',
-    });
-    expect(result).toMatchObject({ ok: true, truncated: false });
-    expect(result.ok && result.prs).toHaveLength(1 + 120 + 130);
-  });
-
-  it('reads whether your review was asked of you or of a team, from your login', async () => {
-    const requested = (number: number, requests: Record<string, unknown> | null) => node('example/demo-app', number, number, { reviewRequests: requests });
-    const { runFile } = fakeRunFile([
-      searchResponse({
-        reviewRequested: {
-          nodes: [
-            requested(1, reviewRequests({ user: 'someone-else' }, { user: VIEWER.toUpperCase() }, { team: 'example/reviewers' })),
-            requested(2, reviewRequests({ user: 'someone-else' }, { team: 'example/reviewers' })),
-            requested(3, reviewRequests({ team: 'example/reviewers' }, { team: 'example/docs-team' })),
-            requested(4, null),
-          ],
-        },
-      }),
-    ]);
-    const result = await fetchPullRequests({ runFile });
-    expect(result.ok && Object.fromEntries(result.prs.map((pr) => [pr.number, pr.reviewRequest ?? null]))).toEqual({
-      1: { via: 'direct' },
-      2: { via: 'team', team: 'example/reviewers' },
-      3: { via: 'team' },
-      4: null,
-    });
-  });
-
-  it('fails as unreadable when every search found PRs and every one was dropped, but not when only one search’s were', async () => {
-    const { runFile } = fakeRunFile([searchResponse({ authored: { nodes: [{}] }, reviewRequested: { nodes: [{}] }, mentioned: { nodes: [{}] } })]);
-    expect(await fetchPullRequests({ runFile })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
-    const some = fakeRunFile([searchResponse({ authored: { nodes: [node('example/demo-app', 1, 1)] }, mentioned: { nodes: [{}] } })]);
-    expect(await fetchPullRequests({ runFile: some.runFile })).toMatchObject({ ok: true, prs: [{ number: 1 }] });
-  });
-});
-
-describe('fetchPullRequests: errors', () => {
+describe('fetchSearch: errors', () => {
   const failWith = async (error: unknown) => {
     const runFile: RunFile = async () => {
       throw error;
     };
-    return fetchPullRequests({ runFile });
+    return authored({ runFile });
   };
 
   it("says gh-missing when there's no gh on PATH", async () => {
@@ -472,12 +335,145 @@ describe('fetchPullRequests: errors', () => {
   });
 
   it("says error for an answer it can't read, without quoting it", async () => {
-    const missing = JSON.parse(searchPage([])) as { data: Record<string, unknown> };
-    delete missing.data.mentioned;
-    for (const stdout of ['', '<html>rate limited</html>', '{"errors":[{"message":"pitwall-test-said-by-github"}]}', '{"data":{"search":null}}', JSON.stringify(missing)]) {
+    for (const stdout of ['', '<html>rate limited</html>', '{"errors":[{"message":"pitwall-test-said-by-github"}]}', '{"data":{"search":null}}']) {
       const { runFile } = fakeRunFile([stdout]);
-      const result = await fetchPullRequests({ runFile });
+      const result = await authored({ runFile });
       expect(result, stdout).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
     }
+  });
+});
+
+describe('fetchPullRequests: three searches, one call each (W101)', () => {
+  const at = (minutes: number) => new Date(Date.UTC(2026, 9, 20) + minutes * 60_000).toISOString().replace('.000', '');
+  const node = (repo: string, number: number, minutes: number, extra: Record<string, unknown> = {}) => prNode({ repo, number, updatedAt: at(minutes), ...extra });
+
+  /** A runFile that answers each search with `answers[relation]`, in turn: stdout, or an error to reject with. */
+  function bySearch(answers: Partial<Record<PullRequestRelation, (string | Error)[]>>, onCall?: (call: Call) => void) {
+    const calls: Call[] = [];
+    const runFile: RunFile = async (file, args, options) => {
+      const call = { file, args, options };
+      calls.push(call);
+      onCall?.(call);
+      const relation = relationOf(args);
+      const answer = relation === undefined ? undefined : answers[relation]?.shift();
+      if (answer === undefined) return searchPage([]);
+      if (answer instanceof Error) throw answer;
+      return answer;
+    };
+    return { runFile, calls };
+  }
+
+  it('starts all three at once, rather than one after another', async () => {
+    const started: PullRequestRelation[] = [];
+    const waiting: (() => void)[] = [];
+    const runFile: RunFile = (_file, args) => {
+      started.push(relationOf(args)!);
+      return new Promise((resolve) => waiting.push(() => resolve(searchPage([]))));
+    };
+    const fetch = fetchPullRequests({ runFile });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(started).toEqual([...PR_RELATIONS]);
+    for (const resolve of waiting) resolve();
+    expect(Object.keys(await fetch)).toEqual([...PR_RELATIONS]);
+  });
+
+  it('gives each search its PRs, with its relation, and the review-requested one whether it asked you or a team', async () => {
+    const { runFile } = bySearch({
+      authored: [searchPage([node('example/demo-app', 1, 10)])],
+      'review-requested': [searchPage([node('example/event-relay', 2, 30, { reviewRequests: reviewRequests({ user: VIEWER }) }), node('example/event-relay', 3, 20, { reviewRequests: reviewRequests({ team: 'example/reviewers' }) })])],
+      mentioned: [searchPage([node('example/api-server', 4, 20)], { viewer: null })],
+    });
+    const result = await fetchPullRequests({ runFile });
+    expect(Object.fromEntries(PR_RELATIONS.map((relation) => [relation, result[relation].ok && result[relation].prs.map((pr) => [pr.number, pr.relation, pr.reviewRequest ?? null])]))).toEqual({
+      authored: [[1, 'authored', null]],
+      'review-requested': [
+        [2, 'review-requested', { via: 'direct' }],
+        [3, 'review-requested', { via: 'team', team: 'example/reviewers' }],
+      ],
+      mentioned: [[4, 'mentioned', null]],
+    });
+  });
+
+  it('fails one search alone: the others keep their PRs', async () => {
+    const { runFile } = bySearch({
+      authored: [searchPage([node('example/demo-app', 1, 10)])],
+      'review-requested': [new RunError('exit', 'exited with code 1', 1)],
+      mentioned: ['not json'],
+    });
+    const result = await fetchPullRequests({ runFile });
+    expect(result.authored).toMatchObject({ ok: true, prs: [{ number: 1 }] });
+    expect(result['review-requested']).toEqual({ ok: false, reason: 'error', error: exitError(1) });
+    expect(result.mentioned).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
+  });
+
+  it('gives each search its own deadline, so a slow one times out alone', async () => {
+    let clock = 0;
+    const page1 = searchPage(Array.from({ length: 100 }, (_, i) => node('example/demo-app', i + 1, i)), { total: 150, hasNextPage: true, endCursor: 'YQ==' });
+    const { runFile, calls } = bySearch({ mentioned: [page1, searchPage([])], authored: [searchPage([node('example/demo-app', 500, 1)])] }, (call) => {
+      // The mention search's page 1 takes the whole timeout.
+      if (relationOf(call.args) === 'mentioned' && !call.args.some((arg) => arg.startsWith('after='))) clock += PRS_FETCH_TIMEOUT_MS;
+    });
+    const result = await fetchPullRequests({ runFile, monotonicNow: () => clock });
+    expect(result.mentioned).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
+    expect(result.authored).toMatchObject({ ok: true, prs: [{ number: 500 }] });
+    expect(calls.filter((call) => relationOf(call.args) === 'mentioned')).toHaveLength(1);
+  });
+
+  it('fetches page 2 only for a search that has one, with its own cursor', async () => {
+    const many = Array.from({ length: 100 }, (_, i) => node('example/event-relay', i + 1, i));
+    const { runFile, calls } = bySearch({
+      'review-requested': [searchPage(many, { total: 120, hasNextPage: true, endCursor: 'cmV2aWV3' }), searchPage(Array.from({ length: 20 }, (_, i) => node('example/event-relay', 101 + i, 200 + i)), { total: 120 })],
+    });
+    const result = await fetchPullRequests({ runFile });
+    expect(calls).toHaveLength(4);
+    expect(calls.filter((call) => call.args.some((arg) => arg.startsWith('after=')))).toEqual([expect.objectContaining({ args: ghArgs('review-requested', 'cmV2aWV3') })]);
+    expect(result['review-requested']).toMatchObject({ ok: true, truncated: false });
+    expect(result['review-requested'].ok && result['review-requested'].prs).toHaveLength(120);
+  });
+
+  it(`keeps ${PRS_MAX} of each search, so one with many can't crowd another out`, async () => {
+    const page = (from: number, next: boolean) => searchPage(Array.from({ length: 100 }, (_, i) => node('example/demo-app', from + i, 1000 - from - i)), { total: 250, hasNextPage: next, endCursor: 'Yg==' });
+    const { runFile } = bySearch({ authored: [page(1, true), page(101, true)], mentioned: [searchPage([node('example/api-server', 5, 1)])] });
+    const result = await fetchPullRequests({ runFile });
+    expect(result.authored).toMatchObject({ ok: true, truncated: true });
+    expect(result.authored.ok && result.authored.prs).toHaveLength(PRS_MAX);
+    expect(result.mentioned).toMatchObject({ ok: true, truncated: false, prs: [{ number: 5 }] });
+  });
+
+  it("leaves out a review-requested PR whose own requests have moved on from you, as GitHub's index lags a review, and doesn't take that for a change in shape", async () => {
+    const reviewed = node('example/demo-app', 7, 5, { reviewRequests: reviewRequests() });
+    const someoneElse = node('example/demo-app', 8, 6, { reviewRequests: reviewRequests({ user: 'someone-else' }) });
+    const still = node('example/demo-app', 9, 4, { reviewRequests: reviewRequests({ user: VIEWER }) });
+    const { runFile } = bySearch({ 'review-requested': [searchPage([reviewed, someoneElse, still])] });
+    expect((await fetchPullRequests({ runFile }))['review-requested']).toEqual({ ok: true, prs: [parsePullRequest(still, 'review-requested', VIEWER)], truncated: false });
+    // Every one moved on: an empty list, not unreadable, so the last list doesn't stay.
+    const all = bySearch({ 'review-requested': [searchPage([reviewed, someoneElse], { total: 2 })] });
+    expect((await fetchPullRequests({ runFile: all.runFile }))['review-requested']).toEqual({ ok: true, prs: [], truncated: false });
+    // One that can't be read is still a change in shape.
+    const broken = bySearch({ 'review-requested': [searchPage([reviewed, { changed: true }])] });
+    expect((await fetchPullRequests({ runFile: broken.runFile }))['review-requested']).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
+  });
+});
+
+describe('mergeSearches (W101)', () => {
+  const at = (minutes: number) => new Date(Date.UTC(2026, 9, 20) + minutes * 60_000).toISOString().replace('.000', '');
+  const pr = (number: number, minutes: number, relation: PullRequestRelation) => parsePullRequest(prNode({ number, updatedAt: at(minutes) }), relation)!;
+
+  it('lists a PR more than one search found once: yours before review requested, review requested before mentioned, newest update first', () => {
+    const merged = mergeSearches({
+      mentioned: [pr(7, 10, 'mentioned'), pr(1, 5, 'mentioned'), pr(9, 1, 'mentioned')],
+      'review-requested': [pr(7, 10, 'review-requested'), pr(1, 5, 'review-requested')],
+      authored: [pr(1, 5, 'authored')],
+    });
+    expect(merged.map((each) => [each.number, each.relation])).toEqual([
+      [7, 'review-requested'],
+      [1, 'authored'],
+      [9, 'mentioned'],
+    ]);
+  });
+
+  it('adds nothing for a search not given', () => {
+    expect(mergeSearches({ mentioned: [pr(1, 1, 'mentioned')] }).map((each) => each.relation)).toEqual(['mentioned']);
+    expect(mergeSearches({})).toEqual([]);
   });
 });

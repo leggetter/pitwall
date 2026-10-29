@@ -38,6 +38,15 @@
   border-bottom: 1px solid var(--pw-border);
 }
 
+/* One line per search that failed while the others worked (W101). */
+.pr-stale-search {
+  margin: 0;
+}
+
+.pr-stale-search + .pr-stale-search {
+  margin-top: var(--pw-space-1);
+}
+
 .pr-repos {
   margin: 0;
   padding: 0;

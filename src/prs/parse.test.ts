@@ -1,7 +1,7 @@
 // Reading the search's answer (parse.ts), with made-up PRs only (src/test/prs.ts).
 import { describe, expect, it } from 'vitest';
 import { PR_FAILING_CHECKS_MAX, PR_RELATIONS, PR_TITLE_MAX, prNeedsAttention, type PullRequestSummary } from '../shared/protocol.js';
-import { checkRun, prNode, reviewRequests, rollup, searchPage, searchResponse, statusContext, VIEWER } from '../test/prs.js';
+import { checkRun, prNode, reviewRequests, rollup, searchPage, statusContext, VIEWER } from '../test/prs.js';
 import { byUpdatedNewestFirst, cleanText, isPullRequestUrl, parsePullRequest, parseSearchResponse, reviewRequestOf } from './parse.js';
 
 const parse = (overrides: Record<string, unknown> = {}) => parsePullRequest(prNode(overrides));
@@ -125,7 +125,7 @@ describe('parsePullRequest', () => {
       expect(pr?.checks).toBe('none');
       expect(pr).not.toHaveProperty('review');
       // Read from GitHub's JSON as the fetch reads it, where `"__proto__"` is a plain string too.
-      const page = parseSearchResponse(searchPage([prNode({ mergeable: name, reviewDecision: name, checks: rollup(name) })]), ['authored'])?.authored;
+      const page = parseSearchResponse(searchPage([prNode({ mergeable: name, reviewDecision: name, checks: rollup(name) })]));
       expect(page?.prs).toEqual([pr]);
       // And sent on as JSON with every field the contract needs.
       expect(JSON.parse(JSON.stringify(pr))).toEqual(pr);
@@ -272,78 +272,59 @@ describe('text cleaning', () => {
 });
 
 describe('parseSearchResponse', () => {
-  it("reads each search's nodes, total and page info by its alias, dropping malformed nodes", () => {
-    const pages = parseSearchResponse(
+  it('reads the nodes, the total and the page info, dropping malformed nodes', () => {
+    const page = parseSearchResponse(
       searchPage([prNode({ number: 1 }), { junk: true }, {}, prNode({ number: 2, url: 'https://evil.example/' })], {
         total: 150,
         hasNextPage: true,
         endCursor: 'Y3Vyc29yOjEwMA==',
       }),
-      PR_RELATIONS,
     );
-    expect(pages?.authored?.prs.map((pr) => pr.number)).toEqual([1]);
-    // What GitHub returned, before any was dropped.
-    expect(pages?.authored).toMatchObject({ nodes: 4, total: 150, hasNextPage: true, endCursor: 'Y3Vyc29yOjEwMA==' });
-    expect(pages?.['review-requested']).toEqual({ prs: [], nodes: 0, total: 0, hasNextPage: false });
-    expect(pages?.mentioned).toEqual({ prs: [], nodes: 0, total: 0, hasNextPage: false });
+    expect(page?.prs.map((pr) => pr.number)).toEqual([1]);
+    // What GitHub returned, before any was dropped, and none of it left out on purpose.
+    expect(page).toMatchObject({ nodes: 4, skipped: 0, total: 150, hasNextPage: true, endCursor: 'Y3Vyc29yOjEwMA==' });
   });
 
-  it('gives each PR its search’s relation', () => {
-    const pages = parseSearchResponse(
-      searchResponse({ authored: { nodes: [prNode({ number: 1 })] }, reviewRequested: { nodes: [prNode({ number: 2 })] }, mentioned: { nodes: [prNode({ number: 3 })] } }),
-      PR_RELATIONS,
-    );
-    expect(PR_RELATIONS.map((relation) => pages?.[relation]?.prs.map((pr) => [pr.number, pr.relation]))).toEqual([[[1, 'authored']], [[2, 'review-requested']], [[3, 'mentioned']]]);
-  });
-
-  it('reads only the searches asked for, as on page 2, and ignores the others', () => {
-    const pages = parseSearchResponse(searchResponse({ mentioned: { nodes: [prNode({ number: 3 })] } }), ['mentioned']);
-    expect(Object.keys(pages ?? {})).toEqual(['mentioned']);
+  it('gives each PR the relation of its search', () => {
+    for (const relation of PR_RELATIONS) expect(parseSearchResponse(searchPage([prNode()]), relation)?.prs[0]?.relation, relation).toBe(relation);
   });
 
   it('reads a last page: no next page, and no cursor', () => {
-    const page = parseSearchResponse(searchPage([prNode()]), ['authored'])?.authored;
+    const page = parseSearchResponse(searchPage([prNode()]));
     expect(page).toMatchObject({ total: 1, hasNextPage: false });
     expect(page).not.toHaveProperty('endCursor');
   });
 
-  it('is undefined for an answer without every search asked for', () => {
-    const without = (alias: string) => {
-      const json = JSON.parse(searchPage([])) as { data: Record<string, unknown> };
-      json.data[alias] = null;
-      return JSON.stringify(json);
-    };
-    for (const stdout of [
-      '',
-      'not json',
-      'null',
-      '[]',
-      '{}',
-      '{"data":null}',
-      '{"data":{"search":null}}',
-      '{"data":{"authored":{"nodes":{}}}}',
-      '{"errors":[{"message":"x"}]}',
-      without('authored'),
-      without('reviewRequested'),
-      without('mentioned'),
-    ]) {
-      expect(parseSearchResponse(stdout, PR_RELATIONS), stdout).toBeUndefined();
+  it('is undefined for an answer that is not a search page', () => {
+    for (const stdout of ['', 'not json', 'null', '[]', '{}', '{"data":null}', '{"data":{"search":null}}', '{"data":{"search":{"nodes":{}}}}', '{"errors":[{"message":"x"}]}']) {
+      expect(parseSearchResponse(stdout), stdout).toBeUndefined();
     }
   });
 
   it('ignores a total or page info of the wrong shape', () => {
-    const page = parseSearchResponse(JSON.stringify({ data: { authored: { issueCount: 'many', pageInfo: { hasNextPage: 'yes', endCursor: 42 }, nodes: [] } } }), ['authored']);
-    expect(page?.authored).toEqual({ prs: [], nodes: 0, hasNextPage: false });
+    const page = parseSearchResponse(JSON.stringify({ data: { search: { issueCount: 'many', pageInfo: { hasNextPage: 'yes', endCursor: 42 }, nodes: [] } } }));
+    expect(page).toEqual({ prs: [], nodes: 0, skipped: 0, hasNextPage: false });
   });
 
   it("reads the viewer's login for review requests, and none from a login of the wrong shape", () => {
     const node = prNode({ reviewRequests: reviewRequests({ user: VIEWER }, { team: 'example/reviewers' }) });
-    const read = (viewer: unknown) => parseSearchResponse(searchResponse({ reviewRequested: { nodes: [node] } }, viewer), ['review-requested'])?.['review-requested']?.prs[0]?.reviewRequest;
+    const read = (viewer: unknown) => parseSearchResponse(searchPage([node], { viewer }), 'review-requested')?.prs[0]?.reviewRequest;
     expect(read(VIEWER)).toEqual({ via: 'direct' });
     // Not you by name, as far as pitwall can tell, so the team.
     expect(read('someone-else')).toEqual({ via: 'team', team: 'example/reviewers' });
     // A login pitwall can't read can't rule out you by name, so it says neither.
     for (const viewer of [null, 42, '', 'has space', '-leading', 'a/b']) expect(read(viewer), String(viewer)).toBeUndefined();
+  });
+
+  it("leaves out, and counts, a review-requested PR whose own requests name neither you nor a team, as GitHub's index lags a review", () => {
+    const page = parseSearchResponse(
+      searchPage([prNode({ number: 1, reviewRequests: reviewRequests() }), prNode({ number: 2, reviewRequests: reviewRequests({ user: 'someone-else' }) }), prNode({ number: 3, reviewRequests: reviewRequests({ user: VIEWER }) })]),
+      'review-requested',
+    );
+    expect(page?.prs.map((pr) => pr.number)).toEqual([3]);
+    expect(page).toMatchObject({ nodes: 3, skipped: 2 });
+    // Only the review-requested search reads review requests.
+    expect(parseSearchResponse(searchPage([prNode({ number: 1, reviewRequests: reviewRequests() })]), 'mentioned')?.prs).toHaveLength(1);
   });
 });
 
@@ -365,18 +346,22 @@ describe('reviewRequestOf (W101)', () => {
     }
   });
 
-  it('is undefined when nothing says: no requests, none readable, or only others and Bots', () => {
-    for (const requests of [undefined, null, {}, { nodes: null }, reviewRequests(), { nodes: [null, 'junk', { requestedReviewer: null }] }, reviewRequests({ user: 'someone-else' }, { __typename: 'Bot', login: VIEWER }, { __typename: 'Mannequin', login: VIEWER })]) {
-      expect(reviewRequestOf(requests, VIEWER), JSON.stringify(requests)).toBeUndefined();
+  it("is 'none' when your login and every request can be read, and none is you or a team: no requests, others, Bots", () => {
+    for (const requests of [reviewRequests(), reviewRequests({ user: 'someone-else' }, { __typename: 'Bot', login: VIEWER }, { __typename: 'Mannequin', login: VIEWER })]) {
+      expect(reviewRequestOf(requests, VIEWER), JSON.stringify(requests)).toBe('none');
     }
   });
 
-  it('can’t say direct or team without your login, unless no team was asked', () => {
+  it('is undefined when it can’t say: no list, a request it can’t read, or no login of yours', () => {
+    for (const requests of [undefined, null, {}, { nodes: null }, { nodes: [null] }, { nodes: ['junk'] }, { nodes: [{ requestedReviewer: null }] }, reviewRequests({ user: 'someone-else' }, { requestedReviewer: {} } as never)]) {
+      expect(reviewRequestOf(requests, VIEWER), JSON.stringify(requests)).toBeUndefined();
+    }
     expect(reviewRequestOf(reviewRequests({ user: VIEWER }, { team: 'example/reviewers' }), undefined)).toBeUndefined();
+    expect(reviewRequestOf(reviewRequests(), undefined)).toBeUndefined();
   });
 
-  it("reads __typename as GitHub's own, so a prototype name is nothing", () => {
-    expect(reviewRequestOf({ nodes: [{ requestedReviewer: { __typename: 'constructor', login: VIEWER } }] }, VIEWER)).toBeUndefined();
+  it("reads __typename as GitHub's own, so a prototype name is nothing of yours", () => {
+    expect(reviewRequestOf({ nodes: [{ requestedReviewer: { __typename: 'constructor', login: VIEWER } }] }, VIEWER)).toBe('none');
   });
 });
 

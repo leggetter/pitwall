@@ -2,13 +2,15 @@
 // nothing here runs gh or waits in real time.
 import { describe, expect, it } from 'vitest';
 import { PRS_POLL_INTERVAL_MS, PRS_REFRESH_MIN_MS, type PullRequestList, type PullRequestSummary } from '../shared/protocol.js';
-import { fakeClock, fakeFetch, flush, prNode, searchPage } from '../test/prs.js';
-import { FETCH_ERRORS, type FetchResult } from './fetch.js';
+import { fakeClock, fakeFetch, fetched, fetchFailed, flush, prNode, searchPage } from '../test/prs.js';
+import { FETCH_ERRORS, PRS_SEARCHES, type FetchResult } from './fetch.js';
 import { parsePullRequest } from './parse.js';
 import { createPrPoller, prsOff, PRS_OFF_ERROR } from './poller.js';
 
 const pr = (number: number, overrides: Record<string, unknown> = {}): PullRequestSummary => parsePullRequest(prNode({ number, ...overrides }))!;
-const ok = (prs: PullRequestSummary[], truncated = false): FetchResult => ({ ok: true, prs, truncated });
+const ok = (prs: PullRequestSummary[], truncated = false): FetchResult => fetched(prs, truncated);
+/** Each search's state after a fetch in which every one worked, at `at`. */
+const allWorked = (at: string) => ({ authored: { fetchedAt: at }, 'review-requested': { fetchedAt: at }, mentioned: { fetchedAt: at } });
 
 function setup() {
   const clock = fakeClock();
@@ -63,7 +65,7 @@ describe('createPrPoller: timing', () => {
   it('keeps polling after a failure', async () => {
     const { clock, fetch, poller } = setup();
     poller.start();
-    await fetch.finish({ ok: false, reason: 'error', error: 'pitwall-test failure' });
+    await fetch.finish(fetchFailed('error', 'pitwall-test failure'));
     clock.advance(PRS_POLL_INTERVAL_MS);
     expect(fetch.calls()).toBe(2);
   });
@@ -220,9 +222,10 @@ describe('createPrPoller: the list', () => {
     poller.start();
     clock.advance(8500);
     await fetch.finish(ok([pr(1)]));
-    expect(poller.latest()).toEqual({ fetchedAt: '2026-10-28T12:00:08.500Z', source: { ok: true }, refreshing: false, prs: [pr(1)] });
+    const searches = allWorked('2026-10-28T12:00:08.500Z');
+    expect(poller.latest()).toEqual({ fetchedAt: '2026-10-28T12:00:08.500Z', source: { ok: true }, refreshing: false, searches, prs: [pr(1)] });
     clock.advance(PRS_POLL_INTERVAL_MS);
-    expect(poller.latest()).toEqual({ fetchedAt: '2026-10-28T12:00:08.500Z', source: { ok: true }, refreshing: true, prs: [pr(1)] });
+    expect(poller.latest()).toEqual({ fetchedAt: '2026-10-28T12:00:08.500Z', source: { ok: true }, refreshing: true, searches, prs: [pr(1)] });
   });
 
   it('marks a truncated list, and drops the mark when the next one is whole', async () => {
@@ -241,11 +244,14 @@ describe('createPrPoller: the list', () => {
     await fetch.finish(ok([pr(1), pr(2)], true));
     const good = poller.latest();
     clock.advance(PRS_POLL_INTERVAL_MS);
-    await fetch.finish({ ok: false, reason: 'gh-auth', error: "gh isn't logged in to github.com. Run gh auth login, then Refresh." });
+    const auth = "gh isn't logged in to github.com. Run gh auth login, then Refresh.";
+    await fetch.finish(fetchFailed('gh-auth', auth));
+    const failed = { fetchedAt: good.fetchedAt, failed: { reason: 'gh-auth', error: auth } };
     expect(poller.latest()).toEqual({
       fetchedAt: good.fetchedAt,
-      source: { ok: false, reason: 'gh-auth', error: "gh isn't logged in to github.com. Run gh auth login, then Refresh." },
+      source: { ok: false, reason: 'gh-auth', error: auth },
       refreshing: false,
+      searches: { authored: failed, 'review-requested': failed, mentioned: failed },
       prs: good.prs,
       truncated: true,
     });
@@ -257,8 +263,14 @@ describe('createPrPoller: the list', () => {
   it('fails before any fetch worked with an empty list and no fetchedAt', async () => {
     const { fetch, poller } = setup();
     poller.start();
-    await fetch.finish({ ok: false, reason: 'gh-missing', error: 'pitwall-test missing' });
-    expect(poller.latest()).toEqual({ source: { ok: false, reason: 'gh-missing', error: 'pitwall-test missing' }, refreshing: false, prs: [] });
+    await fetch.finish(fetchFailed('gh-missing', 'pitwall-test missing'));
+    const failed = { failed: { reason: 'gh-missing', error: 'pitwall-test missing' } };
+    expect(poller.latest()).toEqual({
+      source: { ok: false, reason: 'gh-missing', error: 'pitwall-test missing' },
+      refreshing: false,
+      searches: { authored: failed, 'review-requested': failed, mentioned: failed },
+      prs: [],
+    });
   });
 
   it('tells listeners only when the content changes: refreshing on and off, a new fetchedAt, a new source', async () => {
@@ -273,7 +285,7 @@ describe('createPrPoller: the list', () => {
     poller.refresh();
     expect(seen).toHaveLength(3);
     // The same failure twice in a row still turns refreshing off each time, and nothing more.
-    const failure: FetchResult = { ok: false, reason: 'error', error: 'pitwall-test failure' };
+    const failure: FetchResult = fetchFailed('error', 'pitwall-test failure');
     await fetch.finish(failure);
     expect(seen).toHaveLength(4);
     clock.advance(PRS_POLL_INTERVAL_MS);
@@ -299,12 +311,87 @@ describe('createPrPoller: the list', () => {
   });
 });
 
-describe('createPrPoller: with the real fetch and a fake runFile', () => {
-  it('keeps the last good list when every PR in the next answer is dropped, as after a change in its shape', async () => {
+describe('createPrPoller: each search on its own (W101)', () => {
+  const failure = (error: string) => ({ ok: false as const, reason: 'error' as const, error });
+
+  it('keeps a failed search’s last good PRs, marked with when they’re from, and takes the others’ new ones', async () => {
+    const { clock, fetch, poller } = setup();
+    poller.start();
+    const mine = pr(1);
+    const askedPr = { ...pr(2), relation: 'review-requested' as const, reviewRequest: { via: 'direct' as const } };
+    const mention = { ...pr(3), relation: 'mentioned' as const };
+    await fetch.finish(ok([mine, askedPr, mention]));
+    const first = poller.latest().fetchedAt!;
+    clock.advance(PRS_POLL_INTERVAL_MS);
+    const mineNow = pr(4);
+    await fetch.finish({ authored: { ok: true, prs: [mineNow], truncated: false }, 'review-requested': failure('pitwall-test slow'), mentioned: { ok: true, prs: [], truncated: false } });
+    const latest = poller.latest();
+    expect(latest.source).toEqual({ ok: true });
+    expect(latest.fetchedAt).not.toBe(first);
+    // Yours are new, the mention has gone, and the review request is the last good one: updated at the same time, so by URL.
+    expect(latest.prs.map((each) => [each.number, each.relation])).toEqual([
+      [2, 'review-requested'],
+      [4, 'authored'],
+    ]);
+    expect(latest.searches).toEqual({
+      authored: { fetchedAt: latest.fetchedAt },
+      'review-requested': { fetchedAt: first, failed: { reason: 'error', error: 'pitwall-test slow' } },
+      mentioned: { fetchedAt: latest.fetchedAt },
+    });
+    // Once it works again, it's new too, and nothing is marked.
+    clock.advance(PRS_POLL_INTERVAL_MS);
+    await fetch.finish(ok([mineNow]));
+    expect(poller.latest().prs.map((each) => each.number)).toEqual([4]);
+    expect(Object.values(poller.latest().searches ?? {}).some((each) => each.failed !== undefined)).toBe(false);
+  });
+
+  it('marks a search that has never worked as failed with no fetchedAt, and lists the others', async () => {
+    const { fetch, poller } = setup();
+    poller.start();
+    await fetch.finish({ authored: { ok: true, prs: [pr(1)], truncated: false }, 'review-requested': { ok: true, prs: [], truncated: false }, mentioned: failure('pitwall-test failed') });
+    expect(poller.latest()).toMatchObject({ source: { ok: true }, prs: [pr(1)] });
+    expect(poller.latest().searches?.mentioned).toEqual({ failed: { reason: 'error', error: 'pitwall-test failed' } });
+  });
+
+  it('dedupes across the searches as their results merge: yours first, then review requested, then mentioned', async () => {
+    const { fetch, poller } = setup();
+    poller.start();
+    const both = pr(5);
+    await fetch.finish({
+      authored: { ok: true, prs: [], truncated: false },
+      'review-requested': { ok: true, prs: [{ ...both, relation: 'review-requested' }], truncated: false },
+      mentioned: { ok: true, prs: [{ ...both, relation: 'mentioned' }], truncated: false },
+    });
+    expect(poller.latest().prs.map((each) => each.relation)).toEqual(['review-requested']);
+  });
+
+  it('treats a fetch that throws, or a search missing from its result, as failed', async () => {
     const clock = fakeClock();
-    const answers = [searchPage([prNode({ number: 1 }), prNode({ number: 2 })]), searchPage([{ changed: true }, { changed: true }])];
+    const results: (() => Promise<FetchResult>)[] = [
+      async () => ({ authored: { ok: true, prs: [pr(1)], truncated: false } }) as unknown as FetchResult,
+      async () => {
+        throw new Error('pitwall-test boom');
+      },
+    ];
+    const poller = createPrPoller({ fetch: () => results.shift()!(), now: clock.now, monotonicNow: clock.monotonic, timers: clock.timers });
+    poller.start();
+    await flush();
+    expect(poller.latest()).toMatchObject({ source: { ok: true }, prs: [pr(1)] });
+    expect(poller.latest().searches?.mentioned?.failed?.reason).toBe('error');
+    clock.advance(PRS_POLL_INTERVAL_MS);
+    await flush();
+    expect(poller.latest()).toMatchObject({ source: { ok: false, reason: 'error' }, prs: [pr(1)] });
+    expect(JSON.stringify(poller.latest())).not.toContain('pitwall-test boom');
+    poller.stop();
+  });
+});
+
+describe('createPrPoller: with the real fetch and a fake runFile', () => {
+  it('keeps a search’s last good PRs when every PR in its next answer is dropped, as after a change in its shape, and the others go on', async () => {
+    const clock = fakeClock();
+    const authored = [searchPage([prNode({ number: 1 }), prNode({ number: 2 })]), searchPage([{ changed: true }, { changed: true }])];
     const poller = createPrPoller({
-      runFile: async () => answers.shift() ?? '',
+      runFile: async (_file, args) => (args.includes(`q=${PRS_SEARCHES.authored}`) ? (authored.shift() ?? '') : searchPage([])),
       now: clock.now,
       monotonicNow: clock.monotonic,
       timers: clock.timers,
@@ -312,10 +399,13 @@ describe('createPrPoller: with the real fetch and a fake runFile', () => {
     poller.start();
     await flush();
     const good = poller.latest();
-    expect(good.prs.map((pr) => pr.number)).toEqual([1, 2]);
+    expect(good.prs.map((each) => each.number)).toEqual([1, 2]);
     clock.advance(PRS_POLL_INTERVAL_MS);
     await flush();
-    expect(poller.latest()).toEqual({ ...good, source: { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable } });
+    const latest = poller.latest();
+    expect(latest.source).toEqual({ ok: true });
+    expect(latest.prs).toEqual(good.prs);
+    expect(latest.searches?.authored).toEqual({ fetchedAt: good.fetchedAt, failed: { reason: 'error', error: FETCH_ERRORS.unreadable } });
     poller.stop();
   });
 });

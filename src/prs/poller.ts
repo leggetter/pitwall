@@ -5,7 +5,10 @@
 //   refresh      starts a fetch now, unless the latest started less than PRS_REFRESH_MIN_MS ago,
 //                when it says how many seconds to wait (429 and Retry-After). It pushes the next
 //                poll back: that comes PRS_POLL_INTERVAL_MS after the refresh's fetch ends
-//   on failure   the last good list stays, with its fetchedAt; `source` says what went wrong
+//   on failure   each search on its own (W101): one that failed keeps its last good PRs, and
+//                `searches` says it failed and when it last worked, while the others' are new.
+//                When every one failed, the whole last list stays, with its fetchedAt, and `source`
+//                says what went wrong
 //   listeners    told only when the list's content changes, `refreshing` included, so every fetch
 //                tells them twice: when it starts and when it ends
 //   timers       injected with the clocks, for tests; the real ones don't keep the process alive.
@@ -16,8 +19,16 @@
 //
 // Never logs: a title from a private repo is as sensitive as session data.
 import { runFile as realRunFile, type RunFile } from '../index/exec.js';
-import { PRS_POLL_INTERVAL_MS, PRS_REFRESH_MIN_MS, type PullRequestList } from '../shared/protocol.js';
-import { fetchPullRequests, type FetchResult } from './fetch.js';
+import {
+  PR_RELATIONS,
+  PRS_POLL_INTERVAL_MS,
+  PRS_REFRESH_MIN_MS,
+  type PullRequestList,
+  type PullRequestRelation,
+  type PullRequestSearchState,
+  type PullRequestSummary,
+} from '../shared/protocol.js';
+import { fetchPullRequests, mergeSearches, type FetchResult, type SearchResult } from './fetch.js';
 
 /** What a refresh did, for POST PRS_REFRESH_PATH. */
 export type PrRefreshResult =
@@ -79,6 +90,9 @@ const realTimers: PrTimers = {
   },
 };
 
+/** A search's result when the fetch itself failed, as an injected one can by throwing. */
+const FETCH_FAILED: SearchResult = { ok: false, reason: 'error', error: "pitwall couldn't fetch your pull requests. Refresh to try again." };
+
 /** What the list says with `--no-prs`. */
 export const PRS_OFF_ERROR = 'Pull requests are off: pitwall was started with --no-prs.';
 
@@ -117,6 +131,8 @@ export function createPrPoller(options: PrPollerOptions = {}): PrSource {
   let stopped = false;
   /** When the latest fetch started, by monotonicNow. */
   let lastStartedAt: number | undefined;
+  /** Each search's last good result, and when it was fetched, by wall time. */
+  const good = new Map<PullRequestRelation, { prs: PullRequestSummary[]; truncated: boolean; fetchedAt: string }>();
   let timer: unknown;
 
   const update = (next: PullRequestList) => {
@@ -143,21 +159,38 @@ export function createPrPoller(options: PrPollerOptions = {}): PrSource {
     fetching = true;
     lastStartedAt = monotonicNow();
     update({ ...list, refreshing: true });
-    let result: FetchResult;
+    let result: Partial<FetchResult> | undefined;
     try {
       result = await fetch();
     } catch {
       // fetchPullRequests never throws; an injected fetch might.
-      result = { ok: false, reason: 'error', error: "pitwall couldn't fetch your pull requests. Refresh to try again." };
+      result = undefined;
     }
     fetching = false;
     if (stopped) return;
-    if (result.ok) {
-      const next: PullRequestList = { fetchedAt: new Date(now()).toISOString(), source: { ok: true }, refreshing: false, prs: result.prs };
-      if (result.truncated) next.truncated = true;
+    const at = new Date(now()).toISOString();
+    const searches: Partial<Record<PullRequestRelation, PullRequestSearchState>> = {};
+    let failure: Extract<SearchResult, { ok: false }> | undefined;
+    let worked = false;
+    for (const relation of PR_RELATIONS) {
+      const each = result?.[relation] ?? FETCH_FAILED;
+      if (each.ok) {
+        worked = true;
+        good.set(relation, { prs: each.prs, truncated: each.truncated, fetchedAt: at });
+        searches[relation] = { fetchedAt: at };
+      } else {
+        failure ??= each;
+        const kept = good.get(relation);
+        searches[relation] = { ...(kept ? { fetchedAt: kept.fetchedAt } : {}), failed: { reason: each.reason, error: each.error } };
+      }
+    }
+    if (worked) {
+      const prs = mergeSearches(Object.fromEntries([...good].map(([relation, { prs }]) => [relation, prs])));
+      const next: PullRequestList = { fetchedAt: at, source: { ok: true }, refreshing: false, searches, prs };
+      if ([...good.values()].some(({ truncated }) => truncated)) next.truncated = true;
       update(next);
-    } else {
-      update({ ...list, source: { ok: false, reason: result.reason, error: result.error }, refreshing: false });
+    } else if (failure !== undefined) {
+      update({ ...list, source: { ok: false, reason: failure.reason, error: failure.error }, refreshing: false, searches });
     }
     timer = timers.setTimeout(() => {
       timer = undefined;

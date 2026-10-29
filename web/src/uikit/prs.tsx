@@ -208,7 +208,7 @@ export function PullRequestSpecimens() {
       <Specimen title="Mentioned, on, and none" note="One chip on, and none of its kind: what's missing, how one gets here, and Clear filters." frame="short">
         <LivePrList prs={list({ prs: [FAILING, REVIEW] })} relations={['mentioned']} />
       </Specimen>
-      <Specimen title="Review requested, on, and none" note="Once you've reviewed one, GitHub removes the request, and it leaves at the next fetch." frame="short">
+      <Specimen title="Review requested, on, and none" note="Once you've reviewed one asked of you, GitHub removes the request, and it leaves at the next fetch." frame="short">
         <LivePrList prs={list({ prs: [FAILING, MENTION] })} relations={['review-requested']} />
       </Specimen>
       <Specimen title="A heading collapsed" note="Its count and its badge stay in sight. The page remembers it by a hash of the repo." frame="short">
@@ -231,6 +231,22 @@ export function PullRequestSpecimens() {
       </Specimen>
       <Specimen title="A failed fetch, with the last list" note="The list kept, under a warning that says what failed and when the list is from." frame="view">
         <LivePrList prs={list({ fetchedAt: ago(125), source: { ok: false, reason: 'error', error: 'gh took longer than 30 seconds.' } })} />
+      </Specimen>
+      <Specimen
+        title="A search failed, the others worked"
+        note="Each search is its own call (W101's review): the list is kept, a failed search's PRs are its last good ones, and the notice names each one with when it's from, or that it isn't listed."
+        frame="short"
+      >
+        <LivePrList
+          prs={list({
+            prs: PRS.filter((each) => each.relation !== 'mentioned'),
+            searches: {
+              authored: { fetchedAt },
+              'review-requested': { fetchedAt: ago(125), failed: { reason: 'error', error: 'GitHub ended the request after 10 seconds.' } },
+              mentioned: { failed: { reason: 'error', error: 'gh api failed with exit code 1.' } },
+            },
+          })}
+        />
       </Specimen>
       <Specimen title="No open pull requests" frame="short">
         <LivePrList prs={list({ prs: [] })} />

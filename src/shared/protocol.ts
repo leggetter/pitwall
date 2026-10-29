@@ -1065,10 +1065,9 @@ export function openInEditorPath(sessionId: string): string {
 
 // ---------------------------------------------------------------------------
 // M4: your open pull requests. Read-only and separate from the session index:
-// its own poller runs one `gh api graphql` call every PRS_POLL_INTERVAL_MS,
-// with its three searches as aliases (W101), with no shell, so GitHub's token
-// stays inside gh. PR titles from private repos are as sensitive as session
-// data.
+// its own poller runs its three searches (W101), one `gh api graphql` call
+// each, every PRS_POLL_INTERVAL_MS, with no shell, so GitHub's token stays
+// inside gh. PR titles from private repos are as sensitive as session data.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1105,8 +1104,11 @@ export type PullRequestReview = 'approved' | 'changes-requested' | 'review-requi
  *
  * - 'authored': you opened it (`author:@me`).
  * - 'review-requested': your review is requested, of you or of a team you're on
- *   (`review-requested:@me`, which GitHub's docs say includes a team's requests). GitHub removes the
- *   request once you've reviewed, so the PR leaves the next fetch's list.
+ *   (`review-requested:@me -author:@me`; GitHub's docs say it includes a team's requests). They also
+ *   say a requested person leaves the results once they've reviewed, so a PR asked of you leaves
+ *   the next fetch's list. For a team's, that isn't documented; likely, the team's request is met by
+ *   a member's review on its behalf (PullRequestReview.onBehalfOf). pitwall also leaves out one
+ *   whose own requests no longer name you or a team, as GitHub's search index lags behind a review.
  * - 'mentioned': it @-mentions you (`mentions:@me`), and you didn't open it (`-author:@me`) and
  *   aren't asked to review it.
  *
@@ -1189,8 +1191,8 @@ export interface PullRequestSummary {
  * True for a PR that needs you, which the Pull requests item counts:
  *
  * - One you opened with failing checks, merge conflicts or changes requested, drafts included.
- * - One whose review is requested of you, or of a team you're on (W101): it waits on you until you
- *   review it, when GitHub removes the request and the next fetch drops it.
+ * - One whose review is requested of you, or of a team you're on (W101): it waits on you until the
+ *   request is met, when the next fetch drops it (PullRequestRelation).
  *
  * One that only mentions you never does, and neither do another author's failing checks or
  * conflicts: they're theirs to fix.
@@ -1215,19 +1217,39 @@ export type PullRequestSource =
   | { ok: true }
   | { ok: false; reason: 'off' | 'gh-missing' | 'gh-auth' | 'error'; error: string };
 
+/**
+ * One search's part of the list (W101; PullRequestList.searches). Each search is its own call, so
+ * one can fail while the others work; its PRs are then the last it found, from `fetchedAt`.
+ */
+export interface PullRequestSearchState {
+  /** ISO 8601: when this search last worked. Absent until it has. */
+  fetchedAt?: string;
+  /** Set when its latest try failed: why, in pitwall's words, never gh's output. */
+  failed?: { reason: 'gh-missing' | 'gh-auth' | 'error'; error: string };
+}
+
 /** Your open pull requests: GET PRS_PATH, and the 'prs' WebSocket message. */
 export interface PullRequestList {
-  /** ISO 8601: when the newest fetch that worked finished. Absent until one has. */
+  /** ISO 8601: when the newest fetch in which any search worked finished. Absent until one has. */
   fetchedAt?: string;
+  /**
+   * Whether the latest fetch worked: ok when any of its searches did, so a list exists, even if
+   * another failed, which `searches` says. Not ok, with why, only when every one failed.
+   */
   source: PullRequestSource;
+  /**
+   * Each search's part (W101), by relation, once a fetch has finished: when it last worked and
+   * whether its latest try failed. Absent before the first fetch and with `--no-prs`.
+   */
+  searches?: Partial<Record<PullRequestRelation, PullRequestSearchState>>;
   /** True while a fetch is running. */
   refreshing: boolean;
   /**
    * Your open PRs on github.com, in repos that aren't archived: those you
    * opened, those whose review is requested of you, and those that mention
    * you (PullRequestRelation), each once, newest updatedAt first. At most
-   * PRS_MAX from each search, so at most PRS_LIST_MAX. After a fetch fails,
-   * the last good list stays, with its fetchedAt. Empty before the first
+   * PRS_MAX from each search, so at most PRS_LIST_MAX. After a search fails,
+   * its last good PRs stay, from its own fetchedAt in `searches`. Empty before the first
    * fetch that worked. The web UI shows those updated in the last
    * PRS_SHOWN_DAYS, and the rest behind Show older.
    */
@@ -1261,7 +1283,10 @@ export const PRS_POLL_INTERVAL_MS = 3 * 60 * 1000;
  */
 export const PRS_REFRESH_MIN_MS = 60 * 1000;
 
-/** A fetch that takes longer fails with reason 'error'. It took 8.5 s on 2026-10-28, for 50 PRs. */
+/**
+ * A search that takes longer, both its pages, fails with reason 'error'. The author search took
+ * 8.5 s on 2026-10-28, for 50 PRs. GitHub itself ends a single request after 10 s.
+ */
 export const PRS_FETCH_TIMEOUT_MS = 30 * 1000;
 
 /** The most PRs one search keeps: two pages of GitHub's search. */

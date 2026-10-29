@@ -7,7 +7,7 @@
 // by them, their empty states and the PR view's sentence (W101); each source state; a ?pr= link; and
 // `j` and `k`. Made-up PRs only (fixtures.ts, PRS).
 
-import { NAMES, PR_TEAM, PRS, PRS_ERRORS, type PrsState } from '../fixtures.js';
+import { NAMES, PR_TEAM, PRS, PRS_ERRORS, PRS_SEARCH_ERRORS, type PrsState } from '../fixtures.js';
 import type { PageRecords } from '../page.js';
 import type { Part } from '../runner.js';
 import { chooseInRepoList, focused, listHeading, openRepoList, repoItem, repoLabels, row, toasts } from './_dom.js';
@@ -297,6 +297,16 @@ const part: Part = {
       t.expect((await page.evaluate<string>(`${LIST}.querySelector('.pr-stale').textContent`)).endsWith('This list is from 2h ago.'), 'when the list is from');
       t.expectEqual((await page.evaluate<string[]>(prRows)).length, ALL_ROWS.length, 'the last list kept');
       await t.shot('stale');
+      // W101's review: one search that failed while another worked is named, with when its PRs are from.
+      await switchTo('partial', 'the notice naming each search', `${LIST}?.querySelectorAll('.pr-stale-search').length === 2`);
+      t.expectEqual(await page.evaluate(`${LIST}.querySelector('.pr-stale .inline-alert-title')?.textContent`), "Couldn't refresh part of your pull requests", 'its title');
+      t.expectEqual(
+        await page.evaluate(`[...${LIST}.querySelectorAll('.pr-stale-search')].map((p) => p.textContent)`),
+        [`The pull requests that ask your review are from 2h ago. ${PRS_SEARCH_ERRORS['review-requested']}`, `The pull requests that mention you aren't listed. ${PRS_SEARCH_ERRORS.mentioned}`],
+        'each failed search, and when its PRs are from',
+      );
+      t.expectEqual(await page.evaluate(prRows), ALL_ROWS.filter((key) => key !== PRS.mentioned), 'yours new, the review requests kept, no mention');
+      await t.shot('partial');
       // Off, as after a restart with --no-prs: no item, so All sessions takes Pull requests' place.
       await switchTo('off', 'All sessions in its place', `${listHeading} === 'All sessions'`);
       t.expectEqual(await page.evaluate('location.search'), '?view=all', 'the URL replaced');
@@ -324,7 +334,7 @@ const part: Part = {
       }
       await page.click('Review requested', chip('Review requested'));
       await page.waitFor('the empty state', `${emptyTitle} === 'No reviews requested'`);
-      t.expect((await page.evaluate<string>(`${LIST}.querySelector('.empty-state-sentence').textContent`)).includes("until you've reviewed them"), 'says how they come and go');
+      t.expect((await page.evaluate<string>(`${LIST}.querySelector('.empty-state-sentence').textContent`)).includes("One asked of you leaves once you've reviewed it."), 'says how they come and go');
       await t.shot('no-reviews');
       // The 429's info toast, from two steps back, covers the empty state in a short window: dismissed, as you would.
       while (await page.evaluate<boolean>(`!!document.querySelector('.toasts .toast:not(.leaving) .toast-dismiss')`)) {

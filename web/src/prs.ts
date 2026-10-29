@@ -28,6 +28,7 @@ import {
   type PullRequestRelation,
   type PullRequestReview,
   type PullRequestReviewRequest,
+  type PullRequestSearchState,
   type PullRequestSource,
   type PullRequestSummary,
   type SessionSummary,
@@ -152,6 +153,31 @@ function parseReviewRequest(value: unknown): PullRequestReviewRequest | undefine
   return match && match[2] !== '.' && match[2] !== '..' ? { via: 'team', team: team as string } : { via: 'team' };
 }
 
+/** A failure's reasons, without 'off', which is the whole list's, never one search's. */
+const SEARCH_REASONS = ['gh-missing', 'gh-auth', 'error'] as const;
+
+/**
+ * Each search's part of the list (W101), read defensively: a relation this page doesn't know is left
+ * out, and so is a time that isn't one; a reason it doesn't know is an error.
+ */
+function parseSearches(value: unknown): Partial<Record<PullRequestRelation, PullRequestSearchState>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const searches: Partial<Record<PullRequestRelation, PullRequestSearchState>> = {};
+  for (const relation of PR_RELATIONS) {
+    const each = Object.hasOwn(value, relation) ? value[relation] : undefined;
+    if (!isRecord(each)) continue;
+    const state: PullRequestSearchState = {};
+    if (isTime(each.fetchedAt)) state.fetchedAt = each.fetchedAt;
+    const { failed } = each;
+    if (isRecord(failed) && typeof failed.error === 'string') {
+      const reason = (SEARCH_REASONS as readonly unknown[]).includes(failed.reason) ? (failed.reason as (typeof SEARCH_REASONS)[number]) : 'error';
+      state.failed = { reason, error: failed.error.slice(0, 500) };
+    }
+    searches[relation] = state;
+  }
+  return searches;
+}
+
 /**
  * The 'prs' message's list, or undefined when it isn't the contract's shape: no source, no
  * `refreshing`, or `prs` that isn't a list. A PR in it that isn't the contract's shape is left out,
@@ -172,6 +198,8 @@ export function parsePullRequestList(value: unknown): PullRequestList | undefine
   }
   const list: PullRequestList = { source, refreshing: value.refreshing, prs };
   if (isTime(value.fetchedAt)) list.fetchedAt = value.fetchedAt;
+  const searches = parseSearches(value.searches);
+  if (searches) list.searches = searches;
   if (value.truncated === true) list.truncated = true;
   return list;
 }
@@ -296,6 +324,17 @@ export const RELATION_CHIPS: Readonly<Record<PullRequestRelation, string>> = {
 export function filterPrsByRelation(prs: readonly PullRequestSummary[], relations: ReadonlySet<PullRequestRelation>): PullRequestSummary[] {
   return relations.size === 0 ? [...prs] : prs.filter((pr) => relations.has(pr.relation));
 }
+
+/**
+ * What each search finds, as the PR list's notice and empty states name it when that search fails
+ * (W101): "Your own pull requests", "The pull requests that ask your review", "The pull requests
+ * that mention you".
+ */
+export const SEARCH_NAMES: Readonly<Record<PullRequestRelation, string>> = {
+  authored: 'Your own pull requests',
+  'review-requested': 'The pull requests that ask your review',
+  mentioned: 'The pull requests that mention you',
+};
 
 /**
  * How the PR is yours, in a sentence, for the PR view (W101), or undefined for one you opened, which
@@ -446,6 +485,14 @@ export const olderPrsText = (count: number, shown: boolean) =>
 /** The line after it, which describes it. */
 export const OLDER_PRS_NOTE = `Updated more than ${PRS_SHOWN_DAYS} days ago`;
 
+/** A search whose latest try failed while another worked (W101): why, and when its PRs are from, if it ever worked. */
+export interface PrSearchFailure {
+  relation: PullRequestRelation;
+  reason: 'gh-missing' | 'gh-auth' | 'error';
+  error: string;
+  fetchedAt?: string;
+}
+
 /**
  * What the PR list's body shows (docs/design-system.md, 4: Pull requests, States):
  * - 'loading': no 'prs' message yet, or the first fetch hasn't finished and nothing has failed.
@@ -453,18 +500,27 @@ export const OLDER_PRS_NOTE = `Updated more than ${PRS_SHOWN_DAYS} days ago`;
  * - 'failed': the latest fetch failed and none has worked yet, so there's no list: gh missing, gh not
  *   logged in, or anything else, each with how to fix it.
  * - 'list': a list, from the latest fetch, or, with `stale`, from the last one that worked, which
- *   the latest fetch couldn't replace.
+ *   the latest fetch couldn't replace. With `failed`, the latest fetch worked for some searches and
+ *   not others (W101): each failed one's PRs are its last good ones, from its own fetchedAt.
  */
 export type PrListState =
   | { kind: 'loading' }
   | { kind: 'off' }
   | { kind: 'failed'; reason: 'gh-missing' | 'gh-auth' | 'error'; error: string }
-  | { kind: 'list'; fetchedAt: string; stale?: { reason: 'gh-missing' | 'gh-auth' | 'error'; error: string } };
+  | { kind: 'list'; fetchedAt: string; stale?: { reason: 'gh-missing' | 'gh-auth' | 'error'; error: string }; failed?: PrSearchFailure[] };
 
 export function prListState(list: PullRequestList | undefined): PrListState {
   if (!list) return { kind: 'loading' };
   const { source, fetchedAt } = list;
-  if (source.ok) return fetchedAt === undefined ? { kind: 'loading' } : { kind: 'list', fetchedAt };
+  if (source.ok) {
+    if (fetchedAt === undefined) return { kind: 'loading' };
+    const failed = PR_RELATIONS.flatMap((relation): PrSearchFailure[] => {
+      const each = list.searches?.[relation];
+      if (!each?.failed) return [];
+      return [{ relation, ...each.failed, ...(each.fetchedAt === undefined ? {} : { fetchedAt: each.fetchedAt }) }];
+    });
+    return failed.length > 0 ? { kind: 'list', fetchedAt, failed } : { kind: 'list', fetchedAt };
+  }
   const { reason, error } = source;
   if (reason === 'off') return { kind: 'off' };
   return fetchedAt === undefined ? { kind: 'failed', reason, error } : { kind: 'list', fetchedAt, stale: { reason, error } };

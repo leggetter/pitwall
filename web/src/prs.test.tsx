@@ -227,6 +227,30 @@ describe('how a PR is yours (W101)', () => {
   });
 });
 
+describe("each search's part of the list (W101's review)", () => {
+  it('reads each search’s state, leaving out what isn’t the shape', () => {
+    const searches = {
+      authored: { fetchedAt: minutesAgo(1) },
+      'review-requested': { fetchedAt: minutesAgo(120), failed: { reason: 'error' as const, error: 'Made up: slow.' } },
+      mentioned: { failed: { reason: 'gh-auth' as const, error: 'Made up: not logged in.' } },
+    };
+    expect(parsePullRequestList(JSON.parse(JSON.stringify(prList([], { searches }))))?.searches).toEqual(searches);
+    const odd = parsePullRequestList({ ...prList([]), searches: { authored: { fetchedAt: 'yesterday', failed: { reason: 'off', error: 'x'.repeat(600) } }, assigned: { fetchedAt: minutesAgo(1) }, mentioned: 'junk' } });
+    expect(odd?.searches).toEqual({ authored: { failed: { reason: 'error', error: 'x'.repeat(500) } } });
+    expect(parsePullRequestList({ ...prList([]), searches: 'junk' })).not.toHaveProperty('searches');
+  });
+
+  it('says which searches failed while another worked, and when each is from', () => {
+    const at = minutesAgo(2);
+    expect(prListState(prList([], { fetchedAt: at, searches: { authored: { fetchedAt: at }, mentioned: { failed: { reason: 'error', error: 'Made up.' } } } }))).toEqual({
+      kind: 'list',
+      fetchedAt: at,
+      failed: [{ relation: 'mentioned', reason: 'error', error: 'Made up.' }],
+    });
+    expect(prListState(prList([], { fetchedAt: at, searches: { authored: { fetchedAt: at } } }))).toEqual({ kind: 'list', fetchedAt: at });
+  });
+});
+
 describe('githubPrUrl', () => {
   it("is the PR's own https://github.com address, and nothing else", () => {
     const base = { repo: 'example/demo-app', number: 42 };
