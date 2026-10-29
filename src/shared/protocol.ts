@@ -605,6 +605,16 @@ export interface ConversationEntry {
   questions?: AskedQuestion[];
   /** True when `text` was cut to the limit. */
   truncated?: boolean;
+  /**
+   * True on an entry written while a turn ran, so it never began one (W102):
+   * what arrived mid-turn, a prompt typed while Claude worked, a message from
+   * another session or a sub-agent, or a task notification (W99's
+   * `queued_command` attachments); a compaction summary; and Claude Code's own
+   * API error notice. The web UI's working line counts a turn's time from the
+   * newest 'user', 'cross-session' or 'notice' entry without it, before
+   * Claude's entries since.
+   */
+  midTurn?: true;
 }
 
 /**
@@ -620,6 +630,17 @@ export interface ConversationPage {
    * the page reaches the start of the transcript.
    */
   before?: string;
+  /**
+   * On the newest page only (W102): true when Claude Code's mark that a turn
+   * ended, a `turn_duration` system entry (spike 007, finding 4), is newer than
+   * every entry that runs a turn: Claude's entries, a tool's result, a prompt
+   * or a message from another session; false when one of those is newer, as
+   * always for an older Claude Code, which writes no such mark. Absent when
+   * the page has neither, as for an empty transcript. The web UI
+   * hides its working line when it's true, whatever Claude Code's status says,
+   * which a plugin's monitor can keep at busy (spike 007, finding 6).
+   */
+  turnEnded?: boolean;
 }
 
 /** The status a conversation request gets for a cursor made for another version of the transcript. */
