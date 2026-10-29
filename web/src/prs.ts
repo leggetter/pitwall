@@ -38,8 +38,14 @@ const REPO = /^[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9._-]{1,100}$/;
 /** A PR's own address on github.com, and nothing more: no query, no fragment, no other host. */
 const GITHUB_PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})\/pull\/([1-9][0-9]{0,9})$/;
 
-/** The most characters of a check's name, or a branch's, that the page keeps. */
+/** The most characters of a check's name that the page keeps. */
 const NAME_MAX = 200;
+
+/** The longest head branch the contract keeps: a longer one, as an empty one, means no head (PullRequestSummary.head). */
+const BRANCH_MAX = 255;
+
+/** C0 and C1 controls and the bidi controls, which a head branch never has (PullRequestSummary.head). */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 const CHECKS: readonly PullRequestChecks[] = ['passing', 'failing', 'pending', 'none'];
 const REVIEWS: readonly PullRequestReview[] = ['approved', 'changes-requested', 'review-required'];
@@ -90,9 +96,11 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
     checks: checks as PullRequestChecks,
     mergeable: mergeable as PullRequestMergeable,
   };
-  // A head that isn't the contract's shape is left out, as for a PR whose head repo has gone.
-  if (isRecord(head) && typeof head.repo === 'string' && REPO.test(head.repo) && typeof head.branch === 'string' && head.branch !== '') {
-    pr.head = { repo: head.repo, branch: head.branch.slice(0, NAME_MAX) };
+  // A head that isn't the contract's shape is left out, as the server leaves out one whose repo has
+  // gone, or whose branch is empty, over 255 characters, or has a control or bidi control character.
+  if (isRecord(head) && typeof head.repo === 'string' && REPO.test(head.repo) && typeof head.branch === 'string') {
+    const { branch } = head;
+    if (branch !== '' && branch.length <= BRANCH_MAX && !CONTROL.test(branch)) pr.head = { repo: head.repo, branch };
   }
   if (review !== undefined) pr.review = review as PullRequestReview;
   if (pr.checks === 'failing' && Array.isArray(failingChecks)) {

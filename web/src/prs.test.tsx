@@ -103,10 +103,14 @@ describe('parsePullRequestList', () => {
     expect([passing?.failingChecks, passing?.failingCount]).toEqual([undefined, undefined]);
   });
 
-  it('leaves out a head that is not the shape, as for a PR whose head repo has gone', () => {
-    const [parsed] = parsePullRequestList({ ...prList([]), prs: [{ ...pr({ number: 1 }), head: { repo: 'Not A Repo', branch: 'x' } }] })?.prs ?? [];
-    expect(parsed).toBeDefined();
-    expect(parsed?.head).toBeUndefined();
+  it('leaves out a head that is not the shape: no repo, or a branch empty, over 255 characters, or with a control or bidi control', () => {
+    for (const head of [{ repo: 'Not A Repo', branch: 'x' }, { repo: 'example/demo-app', branch: '' }, { repo: 'example/demo-app', branch: 'b'.repeat(256) }, { repo: 'example/demo-app', branch: 'fix\u202Eevil' }, { repo: 'example/demo-app', branch: 'fix\nx' }]) {
+      const [parsed] = parsePullRequestList({ ...prList([]), prs: [{ ...pr({ number: 1 }), head }] })?.prs ?? [];
+      expect(parsed, JSON.stringify(head)).toBeDefined();
+      expect(parsed?.head, JSON.stringify(head)).toBeUndefined();
+    }
+    const [long] = parsePullRequestList({ ...prList([]), prs: [{ ...pr({ number: 1 }), head: { repo: 'example/demo-app', branch: 'b'.repeat(255) } }] })?.prs ?? [];
+    expect(long?.head?.branch).toHaveLength(255);
   });
 
   it('keeps each reason a fetch failed for', () => {

@@ -352,7 +352,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   }
 
   /**
-   * Refresh the PR list (W95), as the contract has it: no body is read; 409 with pull requests off;
+   * Refresh the PR list (W95), as the contract and W93's route (src/server/prs.ts) have it, in its
+   * words: no body is read; 409 with pull requests off;
    * 429 with Retry-After within PRS_REFRESH_MIN_MS of the latest fetch's start; otherwise 200, and the
    * list as a 'prs' message, refreshing, then fetched a moment later.
    */
@@ -361,12 +362,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const answer = world.refreshPrs(protocol.PRS_REFRESH_MIN_MS);
     if (answer.result === 'off') {
       records.refreshes.push(409);
-      return json(res, 409, { ok: false, error: 'Pull requests are off: pitwall was started with --no-prs.' } satisfies ActionResult);
+      return json(res, 409, { ok: false, error: 'Pull requests are off: pitwall was started with --no-prs, so it never runs gh.' } satisfies ActionResult);
     }
     if (answer.result === 'soon') {
       records.refreshes.push(429);
       res.setHeader('Retry-After', String(answer.seconds));
-      return json(res, 429, { ok: false, error: `pitwall fetched your pull requests moments ago. Try again in ${answer.seconds}s.` } satisfies ActionResult);
+      return json(res, 429, { ok: false, error: `Your pull requests were fetched moments ago. Try again in ${answer.seconds} ${answer.seconds === 1 ? 'second' : 'seconds'}.` } satisfies ActionResult);
     }
     records.refreshes.push(200);
     json(res, 200, { ok: true } satisfies ActionResult);
