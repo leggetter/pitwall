@@ -15,9 +15,12 @@ import { statusBadge } from './sessions.js';
  * old. 2 s keeps a new step within about two seconds, while the timer ticks every second on its own.
  * The server reads a page backwards from the end of the transcript, until 50 entries or 8 MiB: on
  * the 12 largest transcripts on the Mac it was measured on (40 to 172 MiB), 0.5 to 5.8 MiB and 2 to
- * 25 ms a page, so one open view of a working session costs the server at most about 1.3% of a core
- * (25 ms every 2 s), and mostly under 0.2%.
- * One request at a time: the next waits until the last has answered.
+ * 25 ms a page, plus a listing of the session's `subagents/` folder for their names (labelsOf() in
+ * src/index/index.ts), a meta file read only for a sub-agent not seen before: at most 0.6 ms for the
+ * largest such folder there, 144 files. So one open view of a working session costs the
+ * server at most about 1.3% of a core (25 ms every 2 s), and mostly under 0.2%. A poll never starts
+ * while a fetch of the newest page is out, and waits 2 s from the last answer; a move of the activity
+ * time can still fetch beside one, as before, and only the latest answer counts.
  */
 export const WORKING_POLL_MS = 2_000;
 
@@ -121,10 +124,17 @@ function shownPath(path: string, cwd: string): string {
   return path.startsWith(base) && path.length > base.length ? path.slice(base.length) : shortenHome(path);
 }
 
-/** On one line, without control characters, at most STEP_MAX characters. */
+/**
+ * On one line, without control characters, at most STEP_MAX characters, ending in "…" when cut. The
+ * cut never splits a surrogate pair, as the index's truncate() has it (src/index/text.ts).
+ */
 function oneLine(text: string): string {
   const line = plainText(text).replace(/\s+/g, ' ').trim();
-  return line.length <= STEP_MAX ? line : `${line.slice(0, STEP_MAX - 1).trimEnd()}…`;
+  if (line.length <= STEP_MAX) return line;
+  let cut = STEP_MAX - 1;
+  const code = line.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return `${line.slice(0, cut).trimEnd()}…`;
 }
 
 /**

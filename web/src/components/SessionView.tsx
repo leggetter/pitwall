@@ -504,7 +504,9 @@ export function SessionView({
   // The working line at the end of the conversation, and what its status region says (W102).
   const mode = turnMode(session, listed, conversation.state.turnEnded);
   const canAttachHere = background && !terminalOff;
-  const { entries: conversationEntries, before: earlierCursor } = conversation.state;
+  // From the newest page, the one waiting behind Jump to latest while there is one, which `turnEnded` is from too.
+  const newestPage = conversation.state.ahead ?? conversation.state;
+  const { entries: conversationEntries, before: earlierCursor } = newestPage;
   const working = useMemo(
     () => workingLineState(mode, session, canAttachHere, conversationEntries, earlierCursor !== undefined),
     [mode, session, canAttachHere, conversationEntries, earlierCursor],

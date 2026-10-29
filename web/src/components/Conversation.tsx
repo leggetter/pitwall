@@ -128,6 +128,11 @@ interface ConversationState {
   attempts: { newest: number; earlier: number };
   /** Whether the newest page last fetched said its newest turn has ended (ConversationPage.turnEnded, W102). */
   turnEnded?: boolean;
+  /**
+   * The newest page, while it waits behind "Jump to latest" (`gap`): the working line takes its step
+   * and time from it, as it takes `turnEnded`, so all three are from the same page (W102).
+   */
+  ahead?: ConversationPage;
 }
 
 /** Fetches one page of the session's conversation: the newest, or the one before `before`. Never rejects. */
@@ -355,7 +360,7 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
           const joined = mergeNewest(waiting.entries, result.page.entries);
           const next: ConversationPage = joined === undefined ? result.page : { ...waiting, entries: joined };
           waitingPage.current = next;
-          commit({ ...settled, unseen: current.unseen + countAdded(waiting.entries, next.entries), gap: true });
+          commit({ ...settled, unseen: current.unseen + countAdded(waiting.entries, next.entries), gap: true, ahead: next });
           return;
         }
         const merged = fresh ? undefined : mergeNewest(current.entries, result.page.entries);
@@ -363,7 +368,7 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
           // More arrived than a page holds while the reader was scrolled up: their place and what's shown
           // stay, and the newest page waits behind "Jump to latest", counted as at least what it holds.
           waitingPage.current = result.page;
-          commit({ ...settled, unseen: current.unseen + countAdded(current.entries, result.page.entries), gap: true });
+          commit({ ...settled, unseen: current.unseen + countAdded(current.entries, result.page.entries), gap: true, ahead: result.page });
           return;
         }
         if (merged === undefined) {

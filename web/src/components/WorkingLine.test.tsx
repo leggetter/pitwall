@@ -152,6 +152,27 @@ describe('Working line: while the session works', () => {
   });
 });
 
+describe('Working line: with more than a page waiting behind Jump to latest', () => {
+  it('takes its step and time from that newest page, as it takes the turn’s end', async () => {
+    // A laid-out page, as happy-dom has none: the reader can be scrolled up.
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2_000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(500);
+    const server = fakeServer({ entries: [you(600), call(590, 'Bash: npm test')] });
+    const view = renderView(server, WORKING);
+    await flush();
+    expect(view.step()).toBe('Running Bash: npm test');
+    const body = view.container.querySelector<HTMLElement>('.session-view-body')!;
+    body.scrollTop = 100;
+    fireEvent.scroll(body);
+    // More arrived than a page holds: the newest page meets nothing shown, so it waits behind the bar.
+    server.newest({ entries: [you(30), call(20, `Edit: ${CWD}/src/app.ts`)], turnEnded: false });
+    await pass(WORKING_POLL_MS);
+    expect(view.container.querySelector('.jump-latest-button')?.textContent).toContain('2+ new');
+    expect(view.status()).toBe('Working · 32s');
+    expect(view.step()).toBe('Editing src/app.ts');
+  });
+});
+
 describe('Working line: waiting on you', () => {
   it('says what for, and where to answer, with no time and no spinner: an interactive session in its terminal', async () => {
     const view = renderView(fakeServer({ entries: [you(60), call(50, 'Bash: rm -rf build')] }), { status: 'waiting', waitingFor: 'permission prompt' });
