@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { RunError, oneLine, runFile } from './exec.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { absoluteSearchPath, RunError, oneLine, runFile } from './exec.js';
 
 // Real child processes, using this Node binary as the program.
 const node = process.execPath;
@@ -70,7 +71,8 @@ describe('runFile', () => {
       const seen = JSON.parse(await runFile(node, ['-e', 'process.stdout.write(JSON.stringify(process.env))'], { timeoutMs: 10_000 })) as Record<string, string>;
       expect(seen.CLAUDECODE).toBeUndefined();
       expect(seen.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
-      expect(seen.PATH).toBe(process.env.PATH);
+      // Only its absolute directories: this Mac's has a literal `~/.dotnet/tools`, which is relative.
+      expect(seen.PATH).toBe(absoluteSearchPath(process.env.PATH ?? ''));
     } finally {
       for (const [name, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[name];
@@ -99,6 +101,52 @@ describe('runFile', () => {
     const err = await failure(runFile('pitwall-test-no-such-binary', [], { timeoutMs: 10_000 }));
     expect(err.reason).toBe('not-found');
     expect(err.message).toBe('pitwall-test-no-such-binary was not found');
+  });
+
+  // W96's finding (W98): an empty or relative PATH entry finds a bare command in the working
+  // directory, where on Linux's shared /tmp another user could have planted it. A made-up program.
+  describe.skipIf(process.platform === 'win32')('a bare command planted in the working directory', () => {
+    const PLANTED = 'pitwall-test-planted';
+    let dir: string;
+
+    beforeAll(async () => {
+      dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-planted-'));
+      await writeFile(path.join(dir, PLANTED), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+      await mkdir(path.join(dir, 'bin'));
+      await writeFile(path.join(dir, 'bin', PLANTED), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+    });
+
+    afterAll(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    /** Each PATH, and the directory under `dir` it finds the planted program in, without the filter. */
+    const entries = (): [string, string][] => [
+      ['.', '.'],
+      ['/usr/bin::/bin', 'an empty entry'],
+      [':/usr/bin', 'a leading :'],
+      ['/usr/bin:', 'a trailing :'],
+      ['bin', 'a relative directory'],
+      ['', 'an empty PATH'],
+    ];
+
+    it('is found there without the filter: the hazard is real on this platform', () => {
+      for (const [PATH, what] of entries()) {
+        const result = spawnSync(PLANTED, [], { cwd: dir, env: { PATH }, encoding: 'utf8' });
+        expect(result.stdout, what).toBe('planted\n');
+      }
+    });
+
+    it('is not found through any of them, since runFile keeps only the absolute directories', async () => {
+      for (const [PATH, what] of entries()) {
+        const err = await failure(runFile(PLANTED, [], { cwd: dir, env: { PATH }, timeoutMs: 10_000 }));
+        expect(err.reason, what).toBe('not-found');
+      }
+    });
+
+    it('is still found through an absolute entry, so the program itself runs', async () => {
+      expect(await runFile(PLANTED, [], { cwd: dir, env: { PATH: `.:${path.join(dir, 'bin')}:` }, timeoutMs: 10_000 })).toBe('planted\n');
+    });
   });
 
   it('kills the child and rejects on timeout', async () => {
