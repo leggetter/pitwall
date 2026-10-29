@@ -1,15 +1,17 @@
 // Your open pull requests in the web UI (M4, W95; prs.ts): the 'prs' message read defensively, the
 // PR's link checked, the list's states, the 90-day window, the repo headings and their order, the
 // filter, the attention count, which sessions a PR is linked to and a session's most urgent PR, the
-// state badges and the session row's badge. Made-up PRs and sessions only.
+// state badges and the session row's badge; and how a PR is yours, its chips, badges and sentence
+// (W101). Made-up PRs, sessions and teams only.
 
 import { describe, expect, it } from 'vitest';
-import { PR_FAILING_CHECKS_MAX, PR_TITLE_MAX, PRS_MAX, type PullRequestSummary } from '../../src/shared/protocol.js';
+import { PR_FAILING_CHECKS_MAX, PR_TITLE_MAX, PRS_LIST_MAX, type PullRequestSummary } from '../../src/shared/protocol.js';
 import { parseServerMessage } from './connection.js';
 import {
   comparePrs,
   countPrAttention,
   filterPrs,
+  filterPrsByRelation,
   githubPrUrl,
   groupPrs,
   isOlderPr,
@@ -22,6 +24,7 @@ import {
   prListState,
   prsBySession,
   prsFor,
+  prRelationText,
   prsOff,
   prStateBadges,
   sessionPrBadge,
@@ -102,9 +105,9 @@ describe('parsePullRequestList', () => {
     }
   });
 
-  it('keeps one PR per repo and number, at most PRS_MAX', () => {
-    const many = Array.from({ length: PRS_MAX + 5 }, (_, index) => pr({ number: index + 1 }));
-    expect(parsePullRequestList(prList([pr({ number: 1 }), ...many]))?.prs).toHaveLength(PRS_MAX);
+  it('keeps one PR per repo and number, at most PRS_LIST_MAX, three searches of PRS_MAX', () => {
+    const many = Array.from({ length: PRS_LIST_MAX + 5 }, (_, index) => pr({ number: index + 1 }));
+    expect(parsePullRequestList(prList([pr({ number: 1 }), ...many]))?.prs).toHaveLength(PRS_LIST_MAX);
     expect(parsePullRequestList(prList([pr({ number: 1, title: 'first' }), pr({ number: 1, title: 'second' })]))?.prs.map((each) => each.title)).toEqual(['first']);
   });
 
@@ -149,6 +152,78 @@ describe('parsePullRequestList', () => {
     expect(parseServerMessage(JSON.stringify({ type: 'prs', prs: { prs: [] } }))).toBeUndefined();
     expect(parseServerMessage(JSON.stringify({ type: 'prs' }))).toBeUndefined();
     expect(parseServerMessage('{"type":"prs","prs":')).toBeUndefined();
+  });
+});
+
+describe('how a PR is yours (W101)', () => {
+  const review = pr({ number: 7, relation: 'review-requested', reviewRequest: { via: 'direct' } });
+  const teamReview = pr({ number: 8, relation: 'review-requested', reviewRequest: { via: 'team', team: 'example/reviewers' }, checks: 'failing', mergeable: 'conflicts' });
+  const mention = pr({ number: 9, relation: 'mentioned', checks: 'failing', review: 'changes-requested' });
+
+  it('reads the relation and the review request, and leaves out a PR whose relation it does not know', () => {
+    const list = prList([pr({ number: 1 }), review, teamReview, mention, pr({ number: 10, relation: 'review-requested', reviewRequest: { via: 'team' } })]);
+    expect(parsePullRequestList(JSON.parse(JSON.stringify(list)))).toEqual(list);
+    for (const relation of [undefined, 'assigned', 'constructor', 7]) {
+      const bad = { ...pr({ number: 2 }), relation };
+      expect(parsePullRequestList(prList([bad as PullRequestSummary]))?.prs, String(relation)).toEqual([]);
+    }
+  });
+
+  it("keeps a review request only on a review-requested PR, and only in the contract's shape, without a team it can't name", () => {
+    const read = (each: unknown) => parsePullRequestList({ ...prList([]), prs: [each] })?.prs[0];
+    expect(read({ ...mention, reviewRequest: { via: 'direct' } })).not.toHaveProperty('reviewRequest');
+    expect(read({ ...review, reviewRequest: { via: 'someone' } })).not.toHaveProperty('reviewRequest');
+    expect(read({ ...review, reviewRequest: 'direct' })).not.toHaveProperty('reviewRequest');
+    for (const team of ['reviewers', 'example/', 'example/..', 'example/re viewers', 'example/‮x', 42]) {
+      expect(read({ ...review, reviewRequest: { via: 'team', team } })?.reviewRequest, String(team)).toEqual({ via: 'team' });
+    }
+  });
+
+  it('counts a review request as needing you, never a mention, nor another author’s failing checks or conflicts', () => {
+    expect(countPrAttention([review, teamReview, mention])).toBe(2);
+    expect(countPrAttention([pr({ number: 1, checks: 'failing' }), mention])).toBe(1);
+  });
+
+  it('puts Review requested or Mentioned first in its badges; another author’s failures keep their looks without needing you', () => {
+    const states = (each: PullRequestSummary) => prStateBadges(each).map((badge) => [badge.label, badge.look, badge.attention]);
+    expect(states(review)).toEqual([['Review requested', 'subtle-warning', true]]);
+    expect(states(teamReview)).toEqual([
+      ['Review requested', 'subtle-warning', true],
+      ['Checks failing', 'subtle-danger', false],
+      ['Conflicts', 'subtle-danger', false],
+    ]);
+    expect(states(mention)).toEqual([
+      ['Mentioned', 'subtle-neutral', false],
+      ['Checks failing', 'subtle-danger', false],
+      ['Changes requested', 'subtle-warning', false],
+    ]);
+    // A team's request says whose in its hint; one of you needs none.
+    expect(prStateBadges(teamReview)[0]?.hint).toBe('Your review is requested through example/reviewers.');
+    expect(prStateBadges(review)[0]?.hint).toBeUndefined();
+  });
+
+  it('says how it is yours in a sentence, and nothing for one you opened', () => {
+    expect(prRelationText(review)).toBe('Your review is requested.');
+    expect(prRelationText(teamReview)).toBe('Your review is requested through example/reviewers.');
+    expect(prRelationText({ relation: 'review-requested', reviewRequest: { via: 'team' } })).toBe("Your review is requested through a team you're on.");
+    expect(prRelationText({ relation: 'review-requested' })).toBe('Your review is requested.');
+    expect(prRelationText(mention)).toBe("You're mentioned in it.");
+    expect(prRelationText(pr({ number: 1 }))).toBeUndefined();
+  });
+
+  it('filters by the chips, which combine as OR, with none on as All', () => {
+    const mine = pr({ number: 1 });
+    const all = [mine, review, teamReview, mention];
+    expect(filterPrsByRelation(all, new Set())).toEqual(all);
+    expect(filterPrsByRelation(all, new Set(['review-requested']))).toEqual([review, teamReview]);
+    expect(filterPrsByRelation(all, new Set(['authored', 'mentioned']))).toEqual([mine, mention]);
+    expect(filterPrsByRelation(all, new Set(['authored', 'review-requested', 'mentioned']))).toEqual(all);
+  });
+
+  it('sorts a review request among the PRs that need attention', () => {
+    const quiet = pr({ number: 1 }, 5);
+    const asked = { ...review, updatedAt: minutesAgo(50) };
+    expect(groupPrs([quiet, asked]).flatMap((each) => each.prs.map((p) => p.number))).toEqual([7, 1]);
   });
 });
 

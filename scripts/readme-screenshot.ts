@@ -90,6 +90,7 @@ const pullRequest = (repo: string, number: number, title: string, minutes: numbe
   head: { repo: `example/${repo}`, branch: `fix-${number}` },
   checks: 'passing',
   mergeable: 'clean',
+  relation: 'authored',
   ...extra,
 });
 const prList = (): PullRequestList => ({

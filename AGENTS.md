@@ -66,8 +66,9 @@ docs/spikes/             spike write-ups, one file per spike, with a script besi
 src/shared/protocol.ts   the contract between the index, the server and the web UI
 src/index/               the session index. Entry point index.ts: startIndexer()
 src/server/              the local HTTP and WebSocket server. Entry point index.ts: startServer()
-src/prs/                 your open pull requests (M4): one gh api graphql search, read defensively, on
-                         its own poller. Entry point index.ts: createPrPoller(), prsOff() for --no-prs
+src/prs/                 your open pull requests (M4): one gh api graphql call, with three searches, yours,
+                         those that ask your review and those that mention you (W101), read defensively,
+                         on its own poller. Entry point index.ts: createPrPoller(), prsOff() for --no-prs
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/test/                test helpers shared across test files, such as the v3 proof, made-up PRs, and
                          noClaude.ts, which fails any server test that would run `claude` or `gh` without

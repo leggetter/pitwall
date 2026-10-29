@@ -230,7 +230,7 @@ export function withoutSubagents(fetch: FetchLike): FetchLike {
 
 /**
  * A made-up open pull request (M4, W95), in `example/demo-app` unless the overrides say otherwise,
- * passing and mergeable, updated `minutes` ago. The URL follows the repo and number, as the server
+ * yours, passing and mergeable, updated `minutes` ago. The URL follows the repo and number, as the server
  * keeps only such PRs.
  */
 export function pr(overrides: Partial<PullRequestSummary> & { number: number }, minutes = 60): PullRequestSummary {
@@ -246,6 +246,7 @@ export function pr(overrides: Partial<PullRequestSummary> & { number: number }, 
     head: { repo: repoLabel.toLowerCase(), branch: `made-up/branch-${overrides.number}` },
     checks: 'passing',
     mergeable: 'clean',
+    relation: 'authored',
     ...overrides,
   };
   for (const key of Object.keys(merged) as (keyof PullRequestSummary)[]) {

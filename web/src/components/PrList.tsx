@@ -1,26 +1,30 @@
 // The PR list (M4, W95; docs/design-system.md, 4: Pull requests): your open pull requests, in the
-// session list's column while the repo list's Pull requests is selected. The page alerts, then a
-// header that stays put, with "Pull requests", "12 open · 2 need attention", the filter field, when
-// the list was fetched and Refresh; then one heading per repo, each collapsible and remembered
-// (prRepos.ts), its PRs under it, those that need attention first; then Show older, for the PRs
-// last updated more than PRS_SHOWN_DAYS ago. Before the first fetch, skeleton rows; with pull
-// requests off, gh missing or not logged in, or a fetch that failed with no list, an empty state
-// that says how to fix it; with a fetch that failed after one worked, the last list, under a notice
-// saying when it's from.
+// session list's column while the repo list's Pull requests is selected: yours, those whose review
+// is requested of you and those that mention you (W101). The page alerts, then a header that stays
+// put, with "Pull requests", "12 open · 2 need attention", the filter field, the chips Yours, Review
+// requested and Mentioned, when the list was fetched, Clear filters while a filter is on, and
+// Refresh; then one heading per repo, each collapsible and remembered (prRepos.ts), its PRs under
+// it, those that need attention first; then Show older, for the PRs last updated more than
+// PRS_SHOWN_DAYS ago. Before the first fetch, skeleton rows; with pull requests off, gh missing or
+// not logged in, or a fetch that failed with no list, an empty state that says how to fix it; with a
+// fetch that failed after one worked, the last list, under a notice saying when it's from; with a
+// chip on and none of its kind, an empty state that says what's missing (W101).
 //
-// A row is two lines, as a session row is: its title, in <bdi>, its state badges and when it was
-// updated; then its number and the sessions strongly linked to it, two named and "+n".
+// A row is two lines, as a session row is: its title, in <bdi>, its state badges, Review requested
+// or Mentioned first on one that isn't yours, and when it was updated; then its number and the
+// sessions strongly linked to it, two named and "+n".
 // Its title is a button that opens the PR view, and so is a click anywhere on the row that isn't a
 // control. While the pointer is over the list or focus is inside it, a fetch that would reorder the
 // repos or their rows waits until both have left, as the session list waits for a snapshot.
 
 import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from 'react';
-import { PRS_MAX, PRS_SHOWN_DAYS, type PullRequestList, type PullRequestSummary, type SessionSummary } from '../../../src/shared/protocol.js';
+import { PR_RELATIONS, PRS_MAX, PRS_SHOWN_DAYS, type PullRequestList, type PullRequestRelation, type PullRequestSummary, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import type { PrRefresh } from '../prRefresh.js';
 import {
   countPrAttention,
   filterPrs,
+  filterPrsByRelation,
   groupPrs,
   listNow,
   needAttention,
@@ -29,6 +33,7 @@ import {
   openCount,
   prKey,
   prListState,
+  RELATION_CHIPS,
   sessionsFor,
   splitPrs,
   type LinkedSession,
@@ -39,7 +44,7 @@ import { filterNeedle, holdOrder } from '../sessions.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
 import { EmptyState } from './EmptyState.js';
-import { FilterField } from './Filters.js';
+import { ClearFilters, FilterChips, FilterField } from './Filters.js';
 import { Highlight, HighlightContext } from './Highlight.js';
 import { Icon } from './Icon.js';
 import { PrStateBadges } from './PrBadges.js';
@@ -62,6 +67,16 @@ export const REFRESH_LABEL = 'Refresh pull requests';
 export const REFRESH_BUSY = 'Fetching your pull requests from GitHub…';
 export const REFRESH_OFF = 'pitwall fetches your pull requests at most once a minute, so Refresh is off for a moment.';
 
+/** The empty state for one chip on with none of its kind (W101): what's missing, and how one gets here. */
+export const NO_RELATION: Readonly<Record<PullRequestRelation, { title: string; sentence: string }>> = {
+  authored: { title: 'No open pull requests of yours', sentence: 'Pull requests you open on github.com show here, with their checks, reviews and the sessions that worked on them.' },
+  'review-requested': {
+    title: 'No reviews requested',
+    sentence: "Open pull requests that ask your review, or a team's you're on, show here until you've reviewed them.",
+  },
+  mentioned: { title: 'No mentions', sentence: "Open pull requests that mention you show here, when they aren't yours and don't ask your review." },
+};
+
 /** How many linked sessions a row names before "+n". */
 const NAMED_SESSIONS = 2;
 
@@ -79,6 +94,9 @@ export interface PrListProps {
   sessions: readonly SessionSummary[];
   filter: string;
   onFilter: (text: string) => void;
+  /** The chips that are on (W101): Yours, Review requested and Mentioned. None is All. */
+  relations: ReadonlySet<PullRequestRelation>;
+  onRelations: (relations: ReadonlySet<PullRequestRelation>) => void;
   /** The filter field, for the `/` shortcut. */
   fieldRef?: RefObject<HTMLInputElement | null>;
   /** Show older: the PRs updated more than PRS_SHOWN_DAYS ago are listed too. */
@@ -315,6 +333,8 @@ export function PrList({
   sessions,
   filter,
   onFilter,
+  relations,
+  onRelations,
   fieldRef,
   showOlder,
   onToggleOlder,
@@ -339,15 +359,18 @@ export function PrList({
   const all = useMemo(() => list?.prs ?? [], [list]);
   const { recent, older } = useMemo(() => splitPrs(all, now), [all, now]);
   const listed = showOlder ? all : recent;
-  const shown = useMemo(() => filterPrs(listed, filter), [listed, filter]);
-  const olderShown = useMemo(() => filterPrs(older, filter).length, [older, filter]);
+  // The chips first, then the text, as the session list filters.
+  const ofRelations = useMemo(() => filterPrsByRelation(listed, relations), [listed, relations]);
+  const shown = useMemo(() => filterPrs(ofRelations, filter), [ofRelations, filter]);
+  const olderOfRelations = useMemo(() => filterPrsByRelation(older, relations), [older, relations]);
+  const olderShown = useMemo(() => filterPrs(olderOfRelations, filter).length, [olderOfRelations, filter]);
   const groups = useMemo(() => groupPrs(shown), [shown]);
   // Each PR's strongly linked sessions, for its row.
   const linked = useMemo(() => new Map(all.map((pr) => [prKey(pr), sessionsFor(pr, sessions).strong])), [all, sessions]);
 
   const [pointerInside, setPointerInside] = useState(false);
   const [focusInside, setFocusInside] = useState(false);
-  const heldGroups = useHeldPrOrder(groups, pointerInside || focusInside, `${filter}|${showOlder}`);
+  const heldGroups = useHeldPrOrder(groups, pointerInside || focusInside, `${filter}|${showOlder}|${PR_RELATIONS.filter((relation) => relations.has(relation)).join(',')}`);
 
   // A focused row that a fetch takes away, as one merged or closed is, takes focus with it, and no
   // blur says so: focus goes to the row that took its place, or the one before, or the heading.
@@ -381,7 +404,15 @@ export function PrList({
   const hasList = state.kind === 'list';
   const total = listed.length;
   const attention = countPrAttention(listed);
-  const filtering = filter.trim() !== '';
+  const hasText = filter.trim() !== '';
+  const filtering = hasText || relations.size > 0;
+  // Clear filters, from its button or an empty state's: the text and the chips, and focus in the field, since the button goes.
+  const clearFilters = () => {
+    onFilter('');
+    onRelations(new Set());
+    fieldRef?.current?.focus();
+  };
+  const [onlyRelation] = relations.size === 1 ? relations : [];
 
   const olderButton = (
     <Button size="sm" aria-describedby={olderNoteId} onClick={onToggleOlder} data-older-prs-toggle="">
@@ -444,15 +475,36 @@ export function PrList({
       />
     );
   } else if (all.length === 0) {
-    body = <EmptyState icon="success" title="No open pull requests" sentence="Pull requests you open on github.com show here, with their checks, reviews and the sessions that worked on them." />;
-  } else if (total === 0) {
-    // Every open PR is older than the window.
+    body = (
+      <EmptyState
+        icon="success"
+        title="No open pull requests"
+        sentence="Pull requests you open, that ask your review or that mention you on github.com show here, with their checks, reviews and the sessions that worked on them."
+      />
+    );
+  } else if (ofRelations.length === 0 && !hasText && onlyRelation !== undefined && olderShown === 0) {
+    // One chip on, and none of its kind, older ones included.
+    body = (
+      <EmptyState
+        icon="success"
+        title={NO_RELATION[onlyRelation].title}
+        sentence={NO_RELATION[onlyRelation].sentence}
+        actions={<Button onClick={clearFilters}>Clear filters</Button>}
+      />
+    );
+  } else if (total === 0 || (ofRelations.length === 0 && !hasText && olderShown > 0)) {
+    // Every open PR, or every one the chips find, is older than the window.
     body = (
       <EmptyState
         icon="success"
         title={`No pull requests updated in the last ${PRS_SHOWN_DAYS} days`}
-        sentence="Your older open pull requests are behind Show older."
-        actions={olderButton}
+        sentence={total === 0 ? 'Your older open pull requests are behind Show older.' : 'The older ones these filters find are behind Show older.'}
+        actions={
+          <>
+            {total > 0 && <Button onClick={clearFilters}>Clear filters</Button>}
+            {olderButton}
+          </>
+        }
       />
     );
   } else if (shown.length === 0) {
@@ -460,17 +512,14 @@ export function PrList({
       <EmptyState
         icon="search"
         title="No pull requests match"
-        sentence={`Nothing in Pull requests matches "${filter.trim()}".`}
+        sentence={
+          hasText
+            ? `Nothing in Pull requests matches "${filter.trim()}"${relations.size > 0 ? ' with these filters' : ''}.`
+            : 'Nothing in Pull requests matches these filters.'
+        }
         actions={
           <>
-            <Button
-              onClick={() => {
-                onFilter('');
-                fieldRef?.current?.focus();
-              }}
-            >
-              Clear filter
-            </Button>
+            <Button onClick={clearFilters}>{relations.size > 0 ? 'Clear filters' : 'Clear filter'}</Button>
             {/* What the filter finds is all older PRs. */}
             {!showOlder && olderShown > 0 && olderButton}
           </>
@@ -484,7 +533,7 @@ export function PrList({
           <RepoSection
             key={group.repo}
             group={group}
-            // A filter that finds something in a collapsed repo shows it.
+            // A filter, the text or a chip, that finds something in a collapsed repo shows it.
             collapsed={collapsed.has(group.repo) && !filtering}
             onToggle={() => onToggleRepo(group.repo)}
             linked={linked}
@@ -503,7 +552,7 @@ export function PrList({
         )}
         {list?.truncated && (
           <li className="pr-truncated">
-            GitHub found more than {PRS_MAX}, so the {PRS_MAX} updated most recently are listed.
+            GitHub found more than {PRS_MAX} pull requests for one of its searches, so the {PRS_MAX} of them updated most recently are listed.
           </li>
         )}
       </ul>
@@ -552,6 +601,7 @@ export function PrList({
         {hasList && all.length > 0 && (
           <form className="filter-controls pr-filter" role="search" onSubmit={(event) => event.preventDefault()}>
             <FilterField value={filter} onChange={onFilter} inputRef={fieldRef} label={PR_FILTER_LABEL} placeholder={PR_FILTER_PLACEHOLDER} />
+            <FilterChips chips={relations} onChange={onRelations} options={PR_RELATIONS} labels={RELATION_CHIPS} />
           </form>
         )}
         {state.kind !== 'off' && (
@@ -565,7 +615,11 @@ export function PrList({
                 'Not fetched yet'
               )}
             </span>
-            <PrRefreshButton refresh={refresh} refreshing={refreshing} />
+            <span className="pr-list-actions">
+              {/* Here, not after the chips: the three chips and it don't fit one line of a 360 px list, and its kept room would be a blank line. */}
+              {hasList && all.length > 0 && filtering && <ClearFilters on onClear={clearFilters} />}
+              <PrRefreshButton refresh={refresh} refreshing={refreshing} />
+            </span>
           </div>
         )}
       </div>

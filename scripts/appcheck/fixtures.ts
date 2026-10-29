@@ -117,7 +117,8 @@ const MINUTE = 60_000;
 
 /**
  * Your made-up open pull requests (W95), by role, as their keys (`owner/name/number`). The recent
- * ones are in three repos, updated in the last 90 days; two older ones are behind Show older.
+ * ones are in three repos, updated in the last 90 days; two older ones are behind Show older. Three
+ * aren't yours (W101): two ask your review, of you and of a made-up team, and one mentions you.
  */
 export const PRS = {
   /** example/demo-app #51: checks failing, three named and five in all. pitwall-test-api opened it, pitwall-test-docs named it in a reply. */
@@ -134,17 +135,28 @@ export const PRS = {
   older: 'example/docs-site/7',
   /** example/event-relay #41, updated 200 days ago: checks failing, which no count includes until Show older. */
   olderFailing: 'example/event-relay/41',
+  /** example/demo-app #57, 40 minutes ago: your review requested, of you by name. It needs attention. No session. */
+  review: 'example/demo-app/57',
+  /** example/event-relay #618, 2 hours ago: your review requested through example/reviewers, with its author's failing checks. It needs attention. */
+  teamReview: 'example/event-relay/618',
+  /** example/api-server #23, 5 hours ago: it mentions you; not yours, and your review isn't asked. It never needs attention. */
+  mentioned: 'example/api-server/23',
 } as const;
 
+/** The made-up team example/event-relay #618 asks a review of (W101). */
+export const PR_TEAM = 'example/reviewers';
+
 /**
- * What the PR source says (W95), for the steps that check each state: 'ok', the list; 'loading',
- * before the first fetch has finished; 'off', `--no-prs`; 'gh-missing', 'gh-auth' and 'error', a fetch
- * that failed with no list; 'stale', one that failed after a list, which is kept, two hours old.
+ * What the PR source says (W95), for the steps that check each state: 'ok', the list; 'mine', the
+ * list with only your own PRs, as once you've reviewed each one asked and nothing mentions you
+ * (W101); 'loading', before the first fetch has finished; 'off', `--no-prs`; 'gh-missing', 'gh-auth'
+ * and 'error', a fetch that failed with no list; 'stale', one that failed after a list, which is
+ * kept, two hours old.
  */
-export type PrsState = 'ok' | 'loading' | 'off' | 'gh-missing' | 'gh-auth' | 'error' | 'stale';
+export type PrsState = 'ok' | 'mine' | 'loading' | 'off' | 'gh-missing' | 'gh-auth' | 'error' | 'stale';
 
 /** The error each failed state says, in pitwall's made-up words. */
-export const PRS_ERRORS: Readonly<Record<Exclude<PrsState, 'ok' | 'loading'>, string>> = {
+export const PRS_ERRORS: Readonly<Record<Exclude<PrsState, 'ok' | 'mine' | 'loading'>, string>> = {
   off: 'Pull requests are off: pitwall was started with --no-prs.',
   'gh-missing': "gh isn't on pitwall's PATH.",
   'gh-auth': "gh isn't logged in to github.com.",
@@ -244,6 +256,9 @@ export class World {
   prList(): PullRequestList {
     const refreshing = this.#prsRefreshing || this.#prs === 'loading';
     if (this.#prs === 'ok') return { fetchedAt: new Date(this.#prsFetchedAt).toISOString(), source: { ok: true }, refreshing, prs: this.#pullRequests() };
+    if (this.#prs === 'mine') {
+      return { fetchedAt: new Date(this.#prsFetchedAt).toISOString(), source: { ok: true }, refreshing, prs: this.#pullRequests().filter((pr) => pr.relation === 'authored') };
+    }
     if (this.#prs === 'loading') return { source: { ok: true }, refreshing, prs: [] };
     const reason = this.#prs === 'stale' ? 'error' : this.#prs;
     const source = { ok: false as const, reason, error: PRS_ERRORS[this.#prs] };
@@ -556,6 +571,7 @@ export class World {
         head: { repo, branch: `pitwall-test/${name}-${number}` },
         checks: 'passing',
         mergeable: 'clean',
+        relation: 'authored',
         ...extra,
       };
     };
@@ -568,7 +584,17 @@ export class World {
       make(PRS.draft, 4 * day, { title: 'Document the made-up retry headers', draft: true, checks: 'pending', mergeable: 'unknown' }),
       make(PRS.older, 120 * day, { title: 'Move the made-up guide to its own page', review: 'review-required' }),
       make(PRS.olderFailing, 200 * day, { title: 'A made-up old experiment with queues', checks: 'failing', failingChecks: ['build'] }),
-    ];
+      make(PRS.review, 40, { title: 'Add a made-up retry budget', review: 'review-required', relation: 'review-requested', reviewRequest: { via: 'direct' } }),
+      make(PRS.teamReview, 2 * 60, {
+        title: 'Rename the made-up delivery states',
+        checks: 'failing',
+        failingChecks: ['lint'],
+        review: 'review-required',
+        relation: 'review-requested',
+        reviewRequest: { via: 'team', team: PR_TEAM },
+      }),
+      make(PRS.mentioned, 5 * 60, { title: 'Ask about the made-up rate limit headers', review: 'review-required', relation: 'mentioned' }),
+    ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }
 
   /** A session's link to one of PRS (W95): by repo and number, or for 'pushed', by its head branch. */

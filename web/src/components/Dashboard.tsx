@@ -96,7 +96,7 @@
 // PR, and its view's header links to each one.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
+import type { PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import { useBackgroundTab } from '../backgroundTab.js';
 import type { ConnectionView } from '../connection.js';
 import { focusGesture, type FocusGesture } from '../focusGesture.js';
@@ -444,6 +444,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Each session's strongly linked open PRs, most urgent first, for its row's badge and its view's links.
   const linkedPrs = useMemo(() => prsBySession(everyListed, allPrs), [everyListed, allPrs]);
   const [prFilter, setPrFilter] = useState('');
+  // The PR list's chips (W101): the page's, none on at each load, never stored, as the filter's text.
+  const [prRelations, setPrRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set());
   // Show older for PRs: off at each load, and never stored, as the ended sessions' is.
   const [showOlderPrs, setShowOlderPrs] = useState(false);
   const prRepos = usePrRepos(storage);
@@ -1611,6 +1613,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             sessions={everyListed}
             filter={prFilter}
             onFilter={setPrFilter}
+            relations={prRelations}
+            onRelations={setPrRelations}
             fieldRef={filterField}
             showOlder={showOlderPrs}
             onToggleOlder={toggleOlderPrs}

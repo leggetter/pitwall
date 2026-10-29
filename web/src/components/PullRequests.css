@@ -7,13 +7,21 @@
  * `.session-badges.pr-badges` does.
  */
 
-/* The header's line 3: when the list was fetched, at the left, and Refresh at the right, which never moves as the time ticks. */
+/* The header's line 3: when the list was fetched, at the left, and Clear filters and Refresh at the right, which never move as the time ticks. */
 .pr-list-fetched {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--pw-space-2);
   min-height: var(--pw-control-sm);
+}
+
+/* Clear filters, while a filter is on, then Refresh: at the right, so Refresh never moves as Clear filters comes and goes (W101). */
+.pr-list-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-1);
 }
 
 .pr-list-updated {
@@ -220,6 +228,14 @@
   color: var(--pw-text-muted);
   font-weight: var(--pw-weight-medium);
   white-space: nowrap;
+}
+
+/* How a PR you didn't open is yours (W101): "Your review is requested." or "You're mentioned in it.", under the badges. */
+.pr-view-relation {
+  margin: 0;
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
 }
 
 .pr-view-section + .pr-view-section {
