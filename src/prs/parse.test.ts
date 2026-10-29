@@ -114,6 +114,23 @@ describe('parsePullRequest', () => {
     expect(parse({ mergeable: 'SOMETHING_NEW' })?.mergeable).toBe('unknown');
   });
 
+  // W96's finding (W98): plain-object maps read these as functions, or as Object.prototype, and the page dropped the PR.
+  it.each(['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf'])(
+    'reads %s, a name on Object.prototype, as a value pitwall does not know in every enum, and keeps the PR',
+    (name) => {
+      const pr = parse({ mergeable: name, reviewDecision: name, checks: rollup(name) });
+      expect(pr).toBeDefined();
+      expect(pr?.mergeable).toBe('unknown');
+      expect(pr?.checks).toBe('none');
+      expect(pr).not.toHaveProperty('review');
+      // Read from GitHub's JSON as the fetch reads it, where `"__proto__"` is a plain string too.
+      const page = parseSearchPage(searchPage([prNode({ mergeable: name, reviewDecision: name, checks: rollup(name) })]));
+      expect(page?.prs).toEqual([pr]);
+      // And sent on as JSON with every field the contract needs.
+      expect(JSON.parse(JSON.stringify(pr))).toEqual(pr);
+    },
+  );
+
   it('feeds prNeedsAttention: failing checks, conflicts or changes requested, drafts included', () => {
     expect(prNeedsAttention(parse({ checks: rollup('FAILURE') })!)).toBe(true);
     expect(prNeedsAttention(parse({ mergeable: 'CONFLICTING' })!)).toBe(true);

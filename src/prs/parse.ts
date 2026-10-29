@@ -10,7 +10,8 @@
 //                 index's helper): terminal escapes, C0, DEL, C1 and the bidi controls removed, at
 //                 most PR_TITLE_MAX characters
 //   enums         an unknown value from GitHub is left out (review), or reads as GitHub not knowing
-//                 (mergeable 'unknown', checks 'none'), rather than dropping the PR
+//                 (mergeable 'unknown', checks 'none'), rather than dropping the PR. Only the maps'
+//                 own keys are known, so `constructor` or `__proto__` is unknown too (enumValue())
 //   head          its repo and branch, or absent when the head repo is gone, or either is malformed
 //
 // Nothing here logs: a title from a private repo is as sensitive as session data.
@@ -76,6 +77,15 @@ const FAILED_CONCLUSIONS: ReadonlySet<string> = new Set(['FAILURE', 'TIMED_OUT',
 /** A commit status's states that count as failing. */
 const FAILED_STATES: ReadonlySet<string> = new Set(['FAILURE', 'ERROR']);
 
+/**
+ * What `map` gives GitHub's enum `value`, or undefined for any other value. Only the map's own
+ * keys count, so a value named like one of Object.prototype's properties, such as `constructor`,
+ * `__proto__` or `toString`, reads as unknown rather than as a function or the prototype (W98).
+ */
+function enumValue<T>(map: Readonly<Record<string, T>>, value: unknown): T | undefined {
+  return typeof value === 'string' && Object.hasOwn(map, value) ? map[value] : undefined;
+}
+
 /** A JSON page of the search, or undefined when it isn't one: not JSON, or without `data.search.nodes`. */
 export function parseSearchPage(stdout: string): SearchPage | undefined {
   let json: unknown;
@@ -121,12 +131,12 @@ export function parsePullRequest(node: unknown): PullRequestSummary | undefined 
     createdAt,
     updatedAt,
     checks: 'none',
-    mergeable: (typeof node.mergeable === 'string' ? MERGEABLE[node.mergeable] : undefined) ?? 'unknown',
+    mergeable: enumValue(MERGEABLE, node.mergeable) ?? 'unknown',
   };
   const head = headOf(node);
   if (head !== undefined) pr.head = head;
   Object.assign(pr, checksOf(node.commits));
-  const review = typeof node.reviewDecision === 'string' ? REVIEWS[node.reviewDecision] : undefined;
+  const review = enumValue(REVIEWS, node.reviewDecision);
   if (review !== undefined) pr.review = review;
   return pr;
 }
@@ -179,7 +189,7 @@ function checksOf(commits: unknown): Pick<PullRequestSummary, 'checks' | 'failin
   const commit = isRecord(last) ? last.commit : undefined;
   const rollup = isRecord(commit) ? commit.statusCheckRollup : undefined;
   if (!isRecord(rollup)) return { checks: 'none' };
-  const checks = (typeof rollup.state === 'string' ? CHECKS[rollup.state] : undefined) ?? 'none';
+  const checks = enumValue(CHECKS, rollup.state) ?? 'none';
   if (checks !== 'failing') return { checks };
   const names = failingNames(rollup.contexts);
   if (names.length === 0) return { checks };
