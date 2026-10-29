@@ -15,6 +15,7 @@ import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { RelayBox } from '../components/RelayBox.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
 import { ToastProvider, useToast } from '../components/Toast.js';
+import { WorkingLine } from '../components/WorkingLine.js';
 import { COPIED, COPY_FAILED, useCopy } from '../copy.js';
 import { DraftStorageContext, type StoredDraft } from '../drafts.js';
 import { EditorsContext } from '../editors.js';
@@ -38,6 +39,8 @@ import {
   session,
   TO_PITWALL_CONVERSATION,
   TO_PITWALL_EXCHANGE,
+  WAITING_CONVERSATION,
+  WORKING_CONVERSATION,
   VIEW_BACKGROUND,
   VIEW_BACKGROUND_DONE,
   VIEW_INTERACTIVE,
@@ -730,6 +733,30 @@ const LINKS_ASK_STUB: StubOptions = { entries: LINKS_THAT_ASK };
 const TO_PITWALL = session('conversation-to-pitwall', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
 const TO_PITWALL_NARROW = session('conversation-to-pitwall-narrow', { title: 'Export retries', relay: TO_PITWALL_EXCHANGE });
 const TO_PITWALL_STUB: StubOptions = { entries: TO_PITWALL_CONVERSATION };
+// W102: the working line at the end of the conversation.
+const WORKING_VIEW = background('conversation-working', { state: 'working' });
+const WORKING_NARROW = background('conversation-working-narrow', { state: 'working' });
+/** The running turn with a long command still out, for the narrow window. */
+const WORKING_LONG_STEP: ConversationEntry[] = [
+  ...WORKING_CONVERSATION.slice(0, -1),
+  { kind: 'tool', at: ago(0.5), toolName: 'Bash', text: 'Bash: npx vitest run src/export --reporter=verbose --testNamePattern="retries a failed batch three times with backoff"' },
+];
+const WAITING_VIEW = session('conversation-waiting', { title: 'Export retries', status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } });
+/** Each line the working line can show, by itself, as the conversation has it at its end. */
+const WORKING_LINES: Array<{ label: string; line: Parameters<typeof WorkingLine>[0]['line']; steady?: boolean }> = [
+  { label: 'A command', line: { mode: 'working', since: ago(2.24), step: 'Running Bash: npm test -- export' } },
+  { label: 'Editing a file, from the session’s directory', line: { mode: 'working', since: ago(0.75), step: 'Editing src/export/job.ts' } },
+  { label: 'Sub-agents', line: { mode: 'working', since: ago(14), step: 'Waiting for 2 sub-agents' } },
+  { label: 'An MCP tool', line: { mode: 'working', since: ago(0.2), step: 'Calling github create_pull_request' } },
+  { label: 'No call out', line: { mode: 'working', since: ago(0.1), step: 'Thinking' } },
+  {
+    label: 'A long step, cut to one line, and a turn that began before the entries shown',
+    line: { mode: 'working', since: ago(12.5), atLeast: true, step: 'Running Bash: npx vitest run src/export --reporter=verbose --testNamePattern="retries a failed batch three times with backoff" …' },
+  },
+  { label: 'Reduced motion: a steady dot, nothing spins', line: { mode: 'working', since: ago(2.24), step: 'Running Bash: npm test -- export' }, steady: true },
+  { label: 'Waiting on you, interactive', line: { mode: 'waiting', text: 'Waiting for you: permission prompt', where: 'Answer it in its terminal.' } },
+  { label: 'Waiting on you, in the background', line: { mode: 'waiting', text: 'Waiting for you: input needed', where: 'Answer it in its Terminal tab.' } },
+];
 const QUESTIONS = session('conversation-questions', { title: 'Export retries' });
 const QUESTIONS_NARROW = session('conversation-questions-narrow', { title: 'Export retries' });
 const QUESTIONS_STUB: StubOptions = { entries: QUESTION_CONVERSATION };
@@ -843,6 +870,39 @@ export function Conversations() {
         <Stubbed>
           <SessionView session={CONVERSATION_ALL} listed onClose={noop} />
         </Stubbed>
+      </Specimen>
+      <Specimen
+        title="The working line, while it works"
+        note="After the newest entry, while the session works (W102): the spinner, 'Working' and how long the turn has run, counted from the prompt that began it, not the one typed mid-turn; then the step, the newest call still waiting on its result, here an edit, from the session's directory. The newest page is fetched every 2 s while it shows. A status region says 'Claude is working' as a turn starts and 'Finished' as it ends, once each."
+        frame="view"
+      >
+        <Stubbed options={{ entries: WORKING_CONVERSATION }}>
+          <SessionView session={WORKING_VIEW} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen
+        title="The working line, waiting on you"
+        note="A permission prompt on screen: what it waits for, as Claude Code says, and where to answer, with no time and no spinner. The header's note says the same, at the top."
+        frame="view"
+      >
+        <Stubbed options={{ entries: WAITING_CONVERSATION }}>
+          <SessionView session={WAITING_VIEW} listed onClose={noop} />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="The working line, at 375 px" note="A long command: the step stays on one line, cut with an ellipsis, the whole of it in a tooltip on hover." frame="view" width={375}>
+        <Stubbed options={{ entries: WORKING_LONG_STEP }}>
+          <SessionView session={WORKING_NARROW} listed onClose={noop} compact />
+        </Stubbed>
+      </Specimen>
+      <Specimen title="The working line, each step" note="Each phrase the step can be, the time 'at least' when the turn began before the entries shown, the steady dot under reduced motion, and both waiting lines.">
+        <div className="uikit-stack">
+          {WORKING_LINES.map(({ label, line, steady }) => (
+            <div key={label}>
+              <p className="uikit-meta">{label}</p>
+              <WorkingLine line={line} {...(steady === true ? { steady } : {})} />
+            </div>
+          ))}
+        </div>
       </Specimen>
       <Specimen
         title="Markdown in messages"

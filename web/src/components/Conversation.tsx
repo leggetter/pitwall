@@ -10,6 +10,10 @@
 // - The newest page is fetched when the view opens, and again whenever the session's activity time
 //   moves; it's merged onto the end without duplicating an entry (conversation.ts). Older pages come
 //   from "Load earlier", and the reader's place holds as they arrive above it.
+// - While the session works and its Conversation tab is shown, the newest page is fetched every 2 s
+//   too (WORKING_POLL_MS, W102), one request at a time, and not while the browser tab is hidden. At
+//   the end, after the newest entry, the working line says what it's doing, or that it waits on you
+//   (WorkingLine.tsx).
 // - At the bottom, new entries keep it there. Scrolled up, the place is kept, and "n new · Jump to
 //   latest" sticks to the bottom of the body until the reader gets there by any means. Each batch
 //   that adds to the count is announced once, as "n new", never the entries' text.
@@ -72,7 +76,9 @@ import { Markdown } from './Markdown.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 import { useWaiting } from './Waiting.js';
+import { WorkingAnnouncer, WorkingLine } from './WorkingLine.js';
 import { subagentName } from '../subagents.js';
+import type { WorkingLineState } from '../working.js';
 
 /**
  * - `loading`: the first page hasn't arrived.
@@ -120,6 +126,8 @@ interface ConversationState {
    * by its count, so a failure that says the same as the last one is a new alert, and announced again.
    */
   attempts: { newest: number; earlier: number };
+  /** Whether the newest page last fetched said its newest turn has ended (ConversationPage.turnEnded, W102). */
+  turnEnded?: boolean;
 }
 
 /** Fetches one page of the session's conversation: the newest, or the one before `before`. Never rejects. */
@@ -159,6 +167,12 @@ function withBefore(state: ConversationState, before: string | undefined): Conve
   return before === undefined ? rest : { ...rest, before };
 }
 
+/** `state` with what the newest page said of its turn's end, or without it when it said nothing. */
+function withTurnEnded(state: ConversationState, turnEnded: boolean | undefined): ConversationState {
+  const { turnEnded: _old, ...rest } = state;
+  return turnEnded === undefined ? rest : { ...rest, turnEnded };
+}
+
 /** `state` with `failure` set to `failure`, or without one. */
 function withFailure(state: ConversationState, key: 'failure' | 'earlierFailure', failure: LoadFailure | undefined): ConversationState {
   const { [key]: _old, ...rest } = state;
@@ -189,6 +203,19 @@ export interface ConversationController {
   jumpToLatest: () => void;
   /** Shown again after being hidden: back to the bottom if the reader was there, or else to the place they left. */
   restorePlace: () => void;
+  /** What's at the end grew or shrank without new entries, as the working line does: stay at the bottom if there. */
+  follow: () => void;
+}
+
+export interface ConversationOptions {
+  /**
+   * Fetches the newest page this often, in ms, as well as when the activity time moves, while it's
+   * set and the browser tab isn't hidden, until a newest page says its turn has ended
+   * (ConversationPage.turnEnded): the session view sets it while Claude Code says the session works
+   * and its Conversation tab is shown (WORKING_POLL_MS, W102), which a plugin's monitor can say of an
+   * idle session (spike 007, finding 6). The next fetch waits for the last one's answer.
+   */
+  pollMs?: number | undefined;
 }
 
 /**
@@ -196,7 +223,8 @@ export interface ConversationController {
  * activity time moves, and older pages on request. It follows new entries only while the reader is at
  * the bottom, and counts those that arrive while they aren't.
  */
-export function useConversation(lastActivityAt: string | undefined, loader: PageLoader | undefined): ConversationController {
+export function useConversation(lastActivityAt: string | undefined, loader: PageLoader | undefined, options: ConversationOptions = {}): ConversationController {
+  const { pollMs } = options;
   const [state, setState] = useState<ConversationState>(() => ({
     status: loader ? 'loading' : 'unavailable',
     entries: [],
@@ -217,6 +245,8 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
   const epoch = useRef(0);
   // Only the latest request for the newest page counts.
   const newestRequest = useRef(0);
+  // How many requests for the newest page are out, so a poll never adds one while another is (W102).
+  const newestOut = useRef(0);
   const alive = useRef(true);
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -256,8 +286,8 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     leaveBar();
     epoch.current += 1;
     scrollIntent.current = { kind: 'bottom' };
-    const { attempts } = stateRef.current;
-    commit(withBefore({ status: 'ready', entries: waiting.entries, earlier: 'idle', reloaded: false, unseen: 0, gap: false, retrying: false, attempts }, waiting.before));
+    const { attempts, turnEnded } = stateRef.current;
+    commit(withTurnEnded(withBefore({ status: 'ready', entries: waiting.entries, earlier: 'idle', reloaded: false, unseen: 0, gap: false, retrying: false, attempts }, waiting.before), turnEnded));
     return true;
   }, [commit, leaveBar]);
 
@@ -304,12 +334,19 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     async (options: { replace: boolean; reloaded?: boolean }) => {
       if (!loader) return;
       const request = ++newestRequest.current;
-      const result = await loader();
+      newestOut.current += 1;
+      let result: ConversationResult;
+      try {
+        result = await loader();
+      } finally {
+        newestOut.current -= 1;
+      }
       if (!alive.current || request !== newestRequest.current) return;
       const current = stateRef.current;
       if (result.kind === 'ok') {
         if (current.failure !== undefined) keepFocus();
-        const settled = withFailure({ ...current, retrying: false }, 'failure', undefined);
+        const { turnEnded } = result.page;
+        const settled = withTurnEnded(withFailure({ ...current, retrying: false }, 'failure', undefined), turnEnded);
         const fresh = options.replace || current.status !== 'ready';
         if (fresh) waitingPage.current = undefined;
         const waiting = waitingPage.current;
@@ -334,18 +371,21 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
           // After a stale cursor, the reader was at the top, pressing Load earlier: they stay there, under the notice.
           scrollIntent.current = { kind: options.reloaded === true ? 'top' : 'bottom' };
           commit(
-            withBefore(
-              {
-                status: 'ready',
-                entries: result.page.entries,
-                earlier: 'idle',
-                reloaded: options.reloaded === true,
-                unseen: 0,
-                gap: false,
-                retrying: false,
-                attempts: current.attempts,
-              },
-              result.page.before,
+            withTurnEnded(
+              withBefore(
+                {
+                  status: 'ready',
+                  entries: result.page.entries,
+                  earlier: 'idle',
+                  reloaded: options.reloaded === true,
+                  unseen: 0,
+                  gap: false,
+                  retrying: false,
+                  attempts: current.attempts,
+                },
+                result.page.before,
+              ),
+              turnEnded,
             ),
           );
         } else if (atBottom.current) {
@@ -424,6 +464,44 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     void loadNewest({ replace: false });
   }, [loadNewest, lastActivityAt]);
 
+  // While it's asked for (pollMs, W102): the newest page again every pollMs, counted from the last
+  // answer, and only once one has come in. Never a second request while one is out, and none while the
+  // browser tab is hidden: it goes again as soon as the tab is shown. Not once the newest page says the
+  // turn has ended: the next move of the activity time fetches it again, and says if another began.
+  const polling = pollMs !== undefined && state.turnEnded !== true ? pollMs : undefined;
+  useEffect(() => {
+    if (polling === undefined || !loader || typeof document === 'undefined') return undefined;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const hidden = () => document.visibilityState === 'hidden';
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = hidden() ? undefined : setTimeout(() => void tick(), polling);
+    };
+    const tick = async () => {
+      timer = undefined;
+      if (stopped || hidden()) return;
+      if (newestOut.current === 0 && stateRef.current.status === 'ready') await loadNewest({ replace: false });
+      if (!stopped) schedule();
+    };
+    const onVisibility = () => {
+      if (stopped) return;
+      if (hidden()) {
+        clearTimeout(timer);
+        timer = undefined;
+      } else if (timer === undefined) {
+        void tick();
+      }
+    };
+    schedule();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [polling, loader, loadNewest]);
+
   // Follow new entries only when already at the bottom; keep the place when older ones arrive above.
   // A notice or an alert at the end, at the bottom, is followed the same way.
   useLayoutEffect(() => {
@@ -495,7 +573,14 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     sync();
   }, [sync]);
 
-  return { state, loadEarlier, retry, scroller, onScroll: sync, onInput: endJump, sync, jumpToLatest, restorePlace };
+  const follow = useCallback(() => {
+    const element = scroller.current;
+    if (!element || isHidden(element) || !atBottom.current) return;
+    element.scrollTop = element.scrollHeight;
+    place.current = element.scrollTop;
+  }, []);
+
+  return { state, loadEarlier, retry, scroller, onScroll: sync, onInput: endJump, sync, jumpToLatest, restorePlace, follow };
 }
 
 /** "n tool calls", "1 error", "n errors". */
@@ -853,11 +938,19 @@ export interface ConversationPanelProps {
    * messaged it, the session or the sub-agent that started it (W77).
    */
   userSpeaker?: ReactNode;
+  /**
+   * The working line at the end, after the newest entry, and its announcements (W102), for the
+   * session's own conversation: while it's `idle` there's no line, but the status region is there, to
+   * say "Finished". None for a sub-agent's transcript.
+   */
+  working?: WorkingLineState | undefined;
+  /** Whether the working line's announcements may speak: once the first page has come back, while the session's listed. */
+  workingReady?: boolean;
 }
 
 /** The Conversation tab's panel: the body that scrolls, which is also a Tab stop so the keyboard can scroll it. */
-export function ConversationPanel({ conversation, id, labelledBy, hidden, role = 'tabpanel', emptyLine, missingLine, userSpeaker }: ConversationPanelProps) {
-  const { state, loadEarlier, retry, scroller, onScroll, onInput, sync, jumpToLatest, restorePlace } = conversation;
+export function ConversationPanel({ conversation, id, labelledBy, hidden, role = 'tabpanel', emptyLine, missingLine, userSpeaker, working, workingReady = false }: ConversationPanelProps) {
+  const { state, loadEarlier, retry, scroller, onScroll, onInput, sync, jumpToLatest, restorePlace, follow } = conversation;
   const rows = useMemo(() => conversationRows(state.entries), [state.entries]);
   // The calls of the folds that are open (conversation.ts: foldOpen). Every fold starts closed.
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
@@ -880,9 +973,16 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden, role =
   }, [open, sync]);
 
   const { entries } = state;
+  // The working line, once a page is in (W102). It comes and goes, and a waiting line's text can wrap
+  // to another line, without new entries: at the bottom, the conversation stays there.
+  const line = working !== undefined && working.mode !== 'idle' && state.status === 'ready' ? working : undefined;
+  const lineShape = line === undefined ? '' : line.mode === 'waiting' ? `waiting\u0000${line.text}\u0000${line.where ?? ''}` : 'working';
+  useLayoutEffect(() => {
+    follow();
+  }, [lineShape, follow]);
   // The first page: "Loading the conversation…" after --pw-delay-spinner, and what's slow after --pw-delay-long.
   const waiting = useWaiting(scroller, state.status === 'loading');
-  const line = statusLine(state, waiting.shown, { empty: emptyLine, missing: missingLine });
+  const status = statusLine(state, waiting.shown, { empty: emptyLine, missing: missingLine });
   return (
     <div
       className="session-view-body"
@@ -944,6 +1044,7 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden, role =
           )}
         </ol>
       )}
+      {line !== undefined && <WorkingLine line={line} />}
       {entries.length > 0 && state.failure !== undefined && (
         // At the end, where new entries would have come: what's shown is kept.
         <Alert
@@ -962,7 +1063,7 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden, role =
         </Alert>
       )}
       <div className="conversation-status" role="status">
-        {line !== undefined && <p className="status-line">{line}</p>}
+        {status !== undefined && <p className="status-line">{status}</p>}
         {state.status === 'loading' && waiting.long && <p className="status-line">Still waiting for the transcript…</p>}
       </div>
       {state.unseen > 0 && (
@@ -980,6 +1081,8 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden, role =
       <p className="visually-hidden" role="status">
         {state.unseen > 0 ? `${state.unseen}${state.gap ? '+' : ''} new` : ''}
       </p>
+      {/* "Claude is working", "Finished" or the waiting text, once each (W102). */}
+      {working !== undefined && <WorkingAnnouncer line={working} ready={workingReady} />}
     </div>
   );
 }

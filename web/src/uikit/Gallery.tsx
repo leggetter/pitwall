@@ -63,7 +63,7 @@ const SECTIONS: Section[] = [
     id: 'conversation',
     title: 'Conversation',
     intro:
-      "The session view's Conversation tab: every kind of entry, markdown in messages (every element, cut short in a code block, what shows as text, narrow, links in code, and Copy), messages to pitwall, questions asked in a dialog (answered, multi-select, typed, with notes, and dismissed), folded tool calls closed and open, Load earlier idle and busy, Jump to latest, and its errors and notices: Load earlier failed, the transcript changed, a refresh failed, each Try again idle and busy, and the transcript gone.",
+      "The session view's Conversation tab: every kind of entry, the working line while it works and waits on you, and each of its steps (W102), markdown in messages (every element, cut short in a code block, what shows as text, narrow, links in code, and Copy), messages to pitwall, questions asked in a dialog (answered, multi-select, typed, with notes, and dismissed), folded tool calls closed and open, Load earlier idle and busy, Jump to latest, and its errors and notices: Load earlier failed, the transcript changed, a refresh failed, each Try again idle and busy, and the transcript gone.",
     Content: Conversations,
   },
   {

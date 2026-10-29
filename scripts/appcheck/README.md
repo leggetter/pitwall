@@ -16,7 +16,7 @@ npm run appcheck -- --out scratch/appcheck
   - `<dir>/shots/<part>/` holds each part's named screenshots.
   - `<dir>/failures/<part>/` holds a screenshot of the page as each failed step left it.
 - **Exit code:** 0 when every step passed, 1 when any failed, 2 when it couldn't run, such as with no build or no Chrome.
-- **Time:** about 9 minutes for a full run, 16 parts in 160 cases and about 1,380 steps, on the Mac it was written on (W95). One part at one size takes seconds.
+- **Time:** about 10 minutes for a full run, 17 parts in 170 cases and about 1,460 steps, on the Mac it was written on (W102). One part at one size takes seconds.
 
 ## Running part of it
 
@@ -104,11 +104,13 @@ Behind those it answers from `fixtures.ts`:
 
 - your made-up open pull requests (W95), `PRS` in `fixtures.ts`, in made-up repos and public-looking ones with invented titles, covering every state, two of them older than 90 days, and some sessions' links to them of each kind, and three that aren't yours (W101): one asking your review by name, one asking it of a made-up team, `PR_TEAM`, and one that mentions you. `GET PRS_PATH`, the `'prs'` message right after the first snapshot, and `POST PRS_REFRESH_PATH`, recorded in `refreshes`, which answers as W93's route does, in its order: 409 with pull requests off, 200 while a fetch runs, 429 with `Retry-After` within a minute (`PRS_REFRESH_MIN_MS`, W100) of the latest fetch's start, and otherwise 200, sending the list refreshing, then fetched 700 ms later. `t.fresh({ prs })`, or `world.setPrs()` then `broadcastPrs()`, puts the source in a state: `ok`, `mine`, the list with only your own, as once you've reviewed each one asked, `partial`, your own search worked and the other two failed, one kept from two hours ago and one never listed, `loading`, `off`, `gh-missing`, `gh-auth`, `error`, or `stale`, a failed fetch that keeps a list two hours old.
 
+- a running turn (W102): `running`'s conversation ends with a command still out, after a prompt typed mid-turn, and its newest page says its turn hasn't ended, so its Conversation tab has the working line; `world.endTurn()` ends it, as the index's next poll would list it: done, its activity moved, its page with the command's result, Claude's reply and the turn's end.
+
 - a session's sub-agents and each one's transcript (W77): `inApi` has five, in `SUBAGENTS`, two running, one of them started by the other, then done, failed and stopped ones, and its conversation names them; every other session has none. `drafting`'s transcript has a page behind Load earlier, and a cursor the fake server doesn't know gets 410.
 
 It records what the page sent, such as attaches, keys typed into a terminal, the sizes it gave each attached session, spawns and the files they named, uploads and the status each got, uploads removed, relayed messages, resumes, opens in an editor, ends and refreshes of the PR list, for parts to check through `t.server.records`.
 
-**A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session. `t.fresh({ forcedColors: true })` emulates forced colours, as a Windows contrast theme sets them, until the next fresh page, and `t.fresh({ labels: { [key]: label } })` gives groups other names, such as a longer one for a heading.
+**A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session. Every fresh page asks for reduced motion; `t.fresh({ motion: true })` leaves motion on, as for the working line's spinner (W102), until the next fresh page. `t.fresh({ forcedColors: true })` emulates forced colours, as a Windows contrast theme sets them, until the next fresh page, and `t.fresh({ labels: { [key]: label } })` gives groups other names, such as a longer one for a heading.
 
 **What every step checks,** on top of its own checks:
 

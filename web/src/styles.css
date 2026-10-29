@@ -2731,6 +2731,71 @@ mark.match {
   margin: var(--pw-space-3) 0 0;
 }
 
+/*
+ * The working line (W102, section 4: Conversation): after the newest entry, while the session works
+ * or waits on you, 12 px below the list. A 16 px column for what shows it: the spinner, the steady
+ * status dot in its place under reduced motion, or the warning icon while it waits on you. Then
+ * "Working · 2m 14s" in body text, 500, its time subtle in tabular numbers so it doesn't jitter as it
+ * ticks, and under it the step, meta, muted, on one line with an ellipsis, or where to answer.
+ */
+.working-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pw-space-2);
+  min-width: 0;
+  margin-top: var(--pw-space-3);
+}
+
+.working-indicator {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--pw-icon-sm);
+  height: var(--pw-leading-m);
+  color: var(--pw-info-fg);
+}
+
+.working-line.waiting .working-indicator {
+  color: var(--pw-warning-fg);
+}
+
+.working-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.working-status {
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+.working-time {
+  color: var(--pw-text-subtle);
+  font-weight: var(--pw-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.working-step,
+.working-where {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.working-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-where {
+  overflow-wrap: anywhere;
+}
+
 /* The Sub-agents tab's count, "(6)": a space's width after the label, in tabular numbers. */
 .session-tab-count {
   margin-inline-start: calc(-1 * var(--pw-space-0-5));
