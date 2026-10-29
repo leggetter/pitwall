@@ -57,6 +57,9 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   // The filter bar's Clear filters (W91): a funnel struck through, filters off. Not cancel, which is the
   // field's own Clear text, beside it while there's text.
   'clear-filters': 'filter_alt_off',
+  // The filter bar's Sort (W106's review): a menu button, as Clear filters is an icon button, so the
+  // chips, Has PR among them, and Sort share a line in a 440 px list.
+  sort: 'sort',
   add: 'add',
   copy: 'content_copy',
   copied: 'check',

@@ -12,9 +12,10 @@
 //   listed there; 'not-cloned' under a group of its own, `owner/name`, under the root that claims the
 //   owner, marked as not cloned; 'unclaimed', or no place at all, isn't listed, only counted, so the
 //   Pull requests view can say how many are hidden.
-// - A PR row last updated more than PRS_SHOWN_DAYS ago is left out too, until the Pull requests
-//   view's Show older is on, as W95's list had it, so a long-forgotten PR doesn't sit in Needs you.
-//   A PR a session owns is never left out: its session is the work.
+// - A PR row last updated more than PRS_SHOWN_DAYS ago is left out too, so a long-forgotten PR
+//   doesn't sit in Needs you. The Pull requests view's Show older lists them among its own rows
+//   (olderPrRows()), and only there: they never count in Needs you or anywhere else. A PR a session
+//   owns is never left out: its session is the work.
 // - Finished: a finished session that owns an open PR isn't finished work, so it stays in the main
 //   list, not in Finished, until the PR closes, and older ended ones like it stay in the window.
 // - Needs you: a session's row needs you when the session does (needsAttention()) or when a PR it
@@ -80,30 +81,28 @@ export interface Work {
   placed: readonly PlacedPr[];
   /** The open PRs no session owns and no root claims ('unclaimed', or no place): counted, never listed. */
   hidden: readonly PullRequestSummary[];
-  /** How many PRs that would be rows are left out as older than PRS_SHOWN_DAYS, while Show older is off. */
-  older: number;
+  /** The PRs that would be rows but are older than PRS_SHOWN_DAYS: left out, but for the Pull requests view's Show older. */
+  older: readonly PlacedPr[];
 }
 
-export const NO_WORK: Work = { ownerOf: new Map(), owned: new Map(), placed: [], hidden: [], older: 0 };
+export const NO_WORK: Work = { ownerOf: new Map(), owned: new Map(), placed: [], hidden: [], older: [] };
 
 export interface WorkOptions {
   /** "Now" for the PR rows' window: the list's own fetchedAt (listNow()). A `now` that isn't a time hides nothing. */
   now?: number;
-  /** Show older, in the Pull requests view: PR rows older than PRS_SHOWN_DAYS are listed too. */
-  showOlder?: boolean;
 }
 
 /**
  * Which session owns each open PR, and where each PR no session owns is listed (see the top of this
  * file). `sessions` is every session in the snapshot, each once, finished and ended ones included.
  */
-export function composeWork(sessions: readonly SessionSummary[], prs: readonly PullRequestSummary[], { now = Number.NaN, showOlder = false }: WorkOptions = {}): Work {
+export function composeWork(sessions: readonly SessionSummary[], prs: readonly PullRequestSummary[], { now = Number.NaN }: WorkOptions = {}): Work {
   if (prs.length === 0) return NO_WORK;
   const ownerOf = new Map<string, SessionSummary>();
   const owned = new Map<string, PullRequestSummary[]>();
   const placed: PlacedPr[] = [];
   const hidden: PullRequestSummary[] = [];
-  let older = 0;
+  const older: PlacedPr[] = [];
   // Only sessions with a strong link can own one, and few have any: the rest are left out of each search.
   const linked = sessions.filter((session) => session.prLinks !== undefined && session.prLinks.some((link) => link.kind !== 'mentioned'));
   for (const pr of [...prs].sort(comparePrs)) {
@@ -118,15 +117,11 @@ export function composeWork(sessions: readonly SessionSummary[], prs: readonly P
       hidden.push(pr);
       continue;
     }
-    if (!showOlder && isOlderPr(pr, now)) {
-      older += 1;
-      continue;
-    }
-    placed.push(
+    const at: PlacedPr =
       place.kind === 'cloned'
         ? { pr, root: place.root, key: place.key, label: place.label, cloned: true }
-        : { pr, root: place.root, key: notClonedKey(pr.repo), label: pr.repoLabel, cloned: false },
-    );
+        : { pr, root: place.root, key: notClonedKey(pr.repo), label: pr.repoLabel, cloned: false };
+    (isOlderPr(pr, now) ? older : placed).push(at);
   }
   return { ownerOf, owned, placed, hidden, older };
 }
@@ -235,6 +230,23 @@ export function allDone(group: ListGroup, work: Work): boolean {
 export interface ListedPr {
   pr: PullRequestSummary;
   group: ListGroup;
+  /** Older than PRS_SHOWN_DAYS, listed by the Pull requests view's Show older: it never needs you. */
+  older?: true;
+}
+
+/**
+ * The older PR rows the Pull requests view's Show older lists, under the root tab's `root` when
+ * there's one, each under its group as the groups have it, or one built for it that the repo list
+ * never shows. They're the view's alone: they never need you, and nothing else counts them.
+ */
+export function olderPrRows(groups: readonly ListGroup[], work: Work, root?: string): ListedPr[] {
+  return work.older
+    .filter((each) => root === undefined || each.root === root)
+    .map(({ pr, root: at, key, label, cloned }) => ({
+      pr,
+      group: groups.find((group) => groupId(group) === groupId({ root: at, key })) ?? { key, label, kind: 'git', root: at, sessions: [], ...(cloned ? {} : { notCloned: true as const }) },
+      older: true as const,
+    }));
 }
 
 /** A row of the session list: a session's, or a PR's. */
@@ -253,7 +265,8 @@ export type WorkScope = Exclude<Scope, { kind: 'group' }> | { kind: 'group'; gro
 
 /** Whether a row needs you (sessionNeedsYou(), prNeedsAttention()). */
 export function rowNeedsYou(row: ListRow, notNeeded: NotNeeded | undefined, work: Work): boolean {
-  return isPrRow(row) ? prNeedsAttention(row.pr) : sessionNeedsYou(row.session, notNeeded, work);
+  if (isPrRow(row)) return row.older !== true && prNeedsAttention(row.pr);
+  return sessionNeedsYou(row.session, notNeeded, work);
 }
 
 /** A row's activity: its session's, or when its PR was last updated. */
@@ -271,14 +284,20 @@ const compareKeys = (a: ListRow, b: ListRow) => {
 /**
  * How the rows of a list sort, sessions and PRs together, as sessionOrder() sorts sessions alone:
  * Urgency, the rows that need you first, whatever the reason, a PR's included, then busy sessions,
- * then the most recently active, a PR row by its update, with stale sessions after those; Recent by
+ * then the most recently active, a PR row by its update, with stale sessions after those, unless a
+ * PR one owns needs you, which puts it with the rows that need you; Recent by
  * activity alone; Name by a session's name or a PR's title. A list with no PR rows and no owned PRs
  * sorts exactly as sessionOrder() does.
  */
 export function rowOrder(order: SortOrder, notNeeded: NotNeeded | undefined, work: Work): (a: ListRow, b: ListRow) => number {
   if (order === 'name') return (a, b) => compareLabels(rowName(a), rowName(b)) || compareKeys(a, b);
   if (order === 'recent') return (a, b) => rowActivity(b) - rowActivity(a) || compareKeys(a, b);
-  const bucket = (row: ListRow) => (isPrRow(row) ? 0 : isDone(row.session, work) ? 2 : row.session.stale ? 1 : 0);
+  // A row that needs you is with the rest, whatever its session's state: a stale job whose PR's CI
+  // fails needs you through the PR, so it sorts with the rows that need you, not after the calm ones.
+  const bucket = (row: ListRow) => {
+    if (isPrRow(row) || rowNeedsYou(row, notNeeded, work)) return 0;
+    return isDone(row.session, work) ? 2 : row.session.stale ? 1 : 0;
+  };
   const rank = (row: ListRow) => {
     if (rowNeedsYou(row, notNeeded, work)) return 0;
     return !isPrRow(row) && row.session.status === 'busy' ? 1 : 2;

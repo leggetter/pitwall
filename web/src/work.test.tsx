@@ -23,11 +23,13 @@ import {
   listWork,
   matchesRelations,
   notClonedKey,
+  olderPrRows,
   ownerIds,
   ownsPr,
   prNeeding,
   prRowCounts,
   rowKey,
+  rowNeedsYou,
   rowOrder,
   sessionNeedsYou,
   withPrRows,
@@ -148,13 +150,19 @@ describe('where a PR no session owns is listed', () => {
     expect(hiddenOwners(work)).toEqual(['other-org', 'third']);
   });
 
-  it('leaves out one not updated in PRS_SHOWN_DAYS, until Show older', () => {
-    expect(work.older).toBe(1);
-    const shown = composeWork([worker], prs, { now: NOW, showOlder: true });
-    expect(shown.older).toBe(0);
-    expect(withPrRows([demo], shown)[0]?.prs?.map((each) => each.number)).toEqual([2, 8]);
-    // A now that isn't a time, as before the first fetch, hides nothing.
-    expect(composeWork([worker], prs).older).toBe(0);
+  it('leaves out one not updated in PRS_SHOWN_DAYS, which Show older lists in the Pull requests view alone, never needing you', () => {
+    expect(work.older.map(({ pr: each }) => each.number)).toEqual([8]);
+    expect(groups.flatMap((each) => each.prs ?? []).map((each) => each.number)).not.toContain(8);
+    const shown = olderPrRows(groups, work);
+    expect(shown.map(({ pr: each, group: at, older }) => [each.number, at.key, older])).toEqual([[8, DEMO, true]]);
+    const failingOld = { ...pr({ number: 9, checks: 'failing' }, 200 * DAY), place: notCloned };
+    const withFailing = composeWork([worker], [...prs, failingOld], { now: NOW });
+    const [olderRow] = olderPrRows(groups, withFailing).filter(({ pr: each }) => each.number === 9);
+    expect([olderRow?.group.notCloned, rowNeedsYou(olderRow!, undefined, withFailing)]).toEqual([true, false]);
+    expect(countNeeds(withPrRows([demo], withFailing), undefined, withFailing)).toBe(countNeeds(groups, undefined, work));
+    // Under another root's tab, none; and a now that isn't a time, as before the first fetch, hides nothing.
+    expect(olderPrRows(groups, work, '/Users/example/oss')).toEqual([]);
+    expect(composeWork([worker], prs).older).toEqual([]);
   });
 
   it('goes with its group into Main repo’s groups too, where the group is the mode’s', () => {
@@ -231,6 +239,18 @@ describe('how the rows sort and filter', () => {
     expect(named([...rows].sort(rowOrder('recent', undefined, work)))).toEqual(['stale', '#4', 'idle', 'busy', '#3']);
     expect(named([...rows].sort(rowOrder('name', undefined, work)))).toEqual(['#3', 'busy', 'idle', 'stale', '#4']);
     expect(rowKey(rows[0]!)).toBe(`pr:${prKey(failing)}`);
+  });
+
+  it('sorts a stale session whose PR needs you with the rows that need you, not after the calm ones', () => {
+    const failingPr = pr({ number: 90, checks: 'failing' }, 5);
+    const calm = session({ name: 'calm', lastActivityAt: minutesAgo(1) });
+    const staleOwner = session({ name: 'stale-owner', kind: 'background', shortId: 'b7', status: undefined, state: 'blocked', stale: true, needsYou: undefined, lastActivityAt: minutesAgo(8 * DAY), prLinks: [prLink('opened', failingPr)] });
+    const owned = composeWork([calm, staleOwner], [failingPr]);
+    const group0 = group({ key: DEMO, sessions: [calm, staleOwner] });
+    expect(sessionNeedsYou(staleOwner, undefined, owned)).toBe(true);
+    expect(named(listWork([group0], { kind: 'all' }, 'urgency', undefined, undefined, owned).current)).toEqual(['stale-owner', 'calm']);
+    // Without the PR it's stale and calm: after the others, as before.
+    expect(named(listWork([group0], { kind: 'all' }, 'urgency', undefined, undefined, composeWork([calm, staleOwner], [])).current)).toEqual(['calm', 'stale-owner']);
   });
 
   it('keeps PR rows out of a kind chip, and Has PR keeps the rows with a PR', () => {

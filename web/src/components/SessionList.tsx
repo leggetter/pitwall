@@ -383,6 +383,7 @@ export function SessionList({
                   isOpen={prKey(row.pr) === openPrKey}
                   onOpen={onOpenPr}
                   onStep={onStepPr}
+                  older={row.older === true}
                 />
               ) : (
                 <SessionRow

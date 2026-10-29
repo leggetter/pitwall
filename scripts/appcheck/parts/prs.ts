@@ -101,13 +101,13 @@ const part: Part = {
       t.expectEqual(await page.evaluate(rows), ALL_ROWS, 'the rows');
       t.expectEqual(await page.evaluate(summary), '10 sessions4 need you', 'the summary');
       // Each session's most urgent PR it owns; #48 is pitwall-test-nightly-export's since it pushed to it, after pitwall-test-review opened it.
-      t.expectEqual(await page.evaluate(prBadgeOf(NAMES.waiting)), 'Pull request #51 CI failing, needs attention', `${NAMES.waiting}'s`);
-      t.expectEqual(await page.evaluate(prBadgeOf(NAMES.asked)), 'Pull request #612 conflicts, needs attention', `${NAMES.asked}'s: #48 is no longer its`);
+      t.expectEqual(await page.evaluate(prBadgeOf(NAMES.waiting)), 'Pull request #51, CI failing, needs attention', `${NAMES.waiting}'s`);
+      t.expectEqual(await page.evaluate(prBadgeOf(NAMES.asked)), 'Pull request #612, conflicts, needs attention', `${NAMES.asked}'s: #48 is no longer its`);
       t.expectEqual(await page.evaluate(prBadgeOf(NAMES.running)), 'Pull request #48', `${NAMES.running}'s, neutral`);
       await t.shot('list');
     });
 
-    await t.step("a PR row is two lines: its number and title, then its group, why it needs you, when it was updated and 'No session yet'", async () => {
+    await t.step("a PR row is two lines: its number, title, badges and when it was updated, then its group, why it needs you and 'No session listed'", async () => {
       const shape = await page.evaluate<{ title: string; badges: string[]; line2: string; lines: number[]; attention: boolean; inside: boolean }>(`(() => {
         const li = ${prRow(PRS.teamReview)};
         const box = li.getBoundingClientRect();
@@ -124,7 +124,8 @@ const part: Part = {
       })()`);
       t.expectEqual(shape.title, '#618 Rename the made-up delivery states', 'line 1: its number and title');
       t.expectEqual(shape.badges, ['Review requested', 'Checks failing'], 'its badges');
-      t.expect(/^event-relay · Your review is requested · Updated .+ ago · No session yet$/.test(shape.line2), 'line 2', shape.line2);
+      t.expectEqual(shape.line2, 'event-relay · Your review is requested · No session listed', 'line 2');
+      t.expect(await page.evaluate<boolean>(`${prRow(PRS.teamReview)}.querySelector('.session-line > time.activity')?.textContent.endsWith(' ago') === true`), 'when it was updated, in the time slot');
       t.expectEqual(shape.lines, [1, 1], 'one line each');
       t.expect(shape.attention && shape.inside, 'it needs you, and its end is whole, inside the row', shape);
       t.expect((await page.evaluate<string>(`${prRow(PRS.notCloned)}.querySelector('.pr-what').textContent`)).endsWith(' · Not cloned'), "a not-cloned repo's row says so");
@@ -141,7 +142,11 @@ const part: Part = {
       await page.click('Show 2 older pull requests', button(LIST, 'Show 2 older pull requests'));
       await page.waitFor('the older PRs', `${prRows}.includes(${q(PRS.older)}) && ${prRows}.includes(${q(PRS.olderFailing)})`);
       t.expectEqual(await page.evaluate(focused), 'Hide older pull requests', 'focus on the same button');
-      t.expectEqual(await page.evaluate(summary), '12 sessions5 need you', "counted while shown, #41's failing checks among them");
+      // Listed here alone: #41's failing checks are in no need-you count, and it has no bar.
+      t.expectEqual(await page.evaluate(summary), '12 sessions4 need you', 'listed while shown, never needing you');
+      t.expect(!(await page.evaluate<boolean>(`${prRow(PRS.olderFailing)}.classList.contains('attention')`)), 'no bar on #41');
+      t.expectEqual(await page.evaluate('document.title'), '(5) pitwall', 'the page title counts no more');
+      t.expect(!(await page.evaluate<string[]>(repoLabels)).includes('example/docs-site'), 'no repo for them in the repo list');
       await t.shot('older');
       await page.click('Hide older pull requests', button(LIST, 'Hide older pull requests'));
       await page.waitFor('the older PRs to go', `!${prRows}.includes(${q(PRS.older)})`);
@@ -315,6 +320,9 @@ const part: Part = {
       await page.settle(150);
       t.expect((await page.evaluate<string[]>(rows)).includes(NAMES.asked), '#612 still needs you, so it stays');
       t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Not needed now · #612 has merge conflicts', 'line 2 says why');
+      t.expect(await page.evaluate<boolean>(`${toasts}.includes(${q(`Marked ${NAMES.asked} not needed now. It stays in Needs you while #612 needs you.`)})`), 'the toast says it stays, and why');
+      const colours = await page.evaluate<{ reason: string; muted: string }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { reason: getComputedStyle(li.querySelector('.pr-reason')).color, muted: getComputedStyle(li.querySelector('.session-not-needed')).color }; })()`);
+      t.expect(colours.reason !== colours.muted, "the PR's reason isn't muted: it still holds", colours);
       await t.shot('marked-with-pr');
       await page.click(`the toggle on ${NAMES.asked} again`, toggle);
       await page.waitFor('the mark gone', `${toggle}?.getAttribute('aria-pressed') === 'false'`);

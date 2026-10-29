@@ -14,6 +14,7 @@ import { createShortcutsStore, ShortcutsStoreContext, type ShortcutsStore } from
 import { SORT_KEY } from '../sort.js';
 import { STARRED_CAP, STARRED_KEY } from '../starred.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
+import { chooseSort } from '../test/sort.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard, NO_STARRED, starredText } from './Dashboard.js';
 import type { TerminalHandle } from './Terminal.js';
@@ -267,9 +268,9 @@ describe('the Starred view', () => {
     choose('Starred');
     // Urgency: what needs you first, then the most recently active.
     expect(rowNames()).toEqual(['alpha', 'beta', 'delta', 'epsilon']);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Sort' }), { target: { value: 'name' } });
+    chooseSort('Name');
     expect(rowNames()).toEqual(['alpha', 'beta', 'delta', 'epsilon']);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Sort' }), { target: { value: 'recent' } });
+    chooseSort('Recent');
     expect(rowNames()).toEqual(['beta', 'delta', 'epsilon', 'alpha']);
   });
 

@@ -29,7 +29,7 @@ export interface LinkedPr {
 export const sessionPrsCount = (owned: readonly unknown[], linked: readonly unknown[]): number => owned.length + linked.length;
 
 /** The second section's note: why these aren't the session's own. */
-export const LINKED_NOTE = 'It worked on these too, but another session acted on each one since, so each is listed with that session.';
+export const LINKED_NOTE = 'It worked on these too, but another session acted on each one, so each is listed with that session.';
 
 /** The panel with no open PR, as after the last one closed. */
 export const NO_SESSION_PRS = { title: 'No open pull requests', sentence: "The pull requests this session worked on have closed, or aren't among yours on github.com any more." } as const;

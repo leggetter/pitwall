@@ -85,17 +85,11 @@
 }
 
 /*
- * "#128 CI failing" on a session row (W106): when line 1 has no room, this badge gives way first,
- * its label ending in an ellipsis, as any badge's does, down to about its number, before the status
- * badge does. Its tooltip, and the session view, have it all.
+ * A session marked not needed now mutes what it needs (styles.css), but not why a PR it owns needs
+ * you (W106): that still holds, and keeps the row in Needs you.
  */
-.session-badges > .badge.pr-badge {
-  flex: 0 1000 auto;
-  min-width: 4.5em;
-}
-
-.pr-badge-state {
-  font-weight: inherit;
+.session.not-needed .session-what .asked.pr-reason {
+  color: var(--pw-text);
 }
 
 /* "Not cloned" after a not-cloned repo's name in the session list's heading (W106). */

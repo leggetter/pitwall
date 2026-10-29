@@ -4,13 +4,16 @@
 //
 // 1. "#128" and its title, in <bdi>, a button that opens the PR view in the third column, as ?pr=;
 //    then its badges, Review requested or Mentioned first on one that isn't yours (W101), then its
-//    own states; then the time's slot, kept empty so the badges line up with the session rows'; then
-//    the slot where a session row has its star, for W107's actions (New session, Clone and start).
+//    own states; then when it was updated, in the time's fixed slot, as a session row has its last
+//    activity there; then the slot where a session row has its star, for W107's actions (New
+//    session, Clone and start).
 // 2. Its group's label in the views that list every group; then why it needs you, "CI is failing",
-//    or else how it's yours, "Yours"; when it was updated; and, never cut, "No session yet", or "Not
-//    cloned" for a repo with no clone under the root.
+//    or else how it's yours, "Yours"; and, never cut, "No session listed", which is true whether or
+//    not a session worked on it that pitwall no longer lists, or "Not cloned" for a repo with no clone
+//    under the root.
 //
-// It needs you when its PR needs attention (prNeedsAttention()), and then it has a session row's bar.
+// It needs you when its PR needs attention (prNeedsAttention()), and then it has a session row's bar;
+// never one older than PRS_SHOWN_DAYS, which only the Pull requests view's Show older lists.
 // A click anywhere on the row that isn't a control opens it, as on a session row.
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
@@ -28,8 +31,8 @@ import './PullRequests.css';
 /** The id of the PR view, which every PR row's title controls. */
 export const PR_VIEW_ID = 'pr-view';
 
-/** The end of a PR row's line 2: no session owns it yet, or its repo has no clone under the root. */
-export const NO_SESSION_YET = 'No session yet';
+/** The end of a PR row's line 2: no listed session owns it, or its repo has no clone under the root. */
+export const NO_SESSION = 'No session listed';
 export const NOT_CLONED = 'Not cloned';
 
 /** Clicks on these inside a row do their own thing, rather than opening the PR. */
@@ -48,16 +51,18 @@ export interface PrRowProps {
   onStep?: ((key: string, by: 1 | -1) => void) | undefined;
   /** W107's actions, in the slot at the end of line 1 where a session row has its star. */
   actions?: ReactNode;
+  /** Older than PRS_SHOWN_DAYS, listed by the Pull requests view's Show older: it never needs you. */
+  older?: boolean;
 }
 
-export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, onStep, actions }: PrRowProps) {
+export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, onStep, actions, older = false }: PrRowProps) {
   const key = prKey(pr);
   const title = plainText(pr.title);
-  const attention = prNeedsAttention(pr);
+  const attention = !older && prNeedsAttention(pr);
   const reason = prReason(pr);
   const label = showGroup ? plainText(groupLabel(group)) : undefined;
   const what = reason ?? RELATION_PHRASES[pr.relation];
-  const end = group.notCloned ? NOT_CLONED : NO_SESSION_YET;
+  const end = group.notCloned ? NOT_CLONED : NO_SESSION;
   const openFromRow = (event: MouseEvent<HTMLLIElement>) => {
     if (!onOpen) return;
     if (event.target instanceof Element && event.target.closest(OWN_CLICK)) return;
@@ -112,8 +117,8 @@ export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, on
         <span className="session-badges pr-badges">
           <PrStateBadges pr={pr} />
         </span>
-        {/* The time's slot, kept, so the badges line up with the session rows'; line 2 says when it was updated. */}
-        <span className="activity" aria-hidden="true" />
+        {/* When it was updated, in the time's fixed slot, so the badges line up with the session rows'. */}
+        <Timestamp className="activity" at={pr.updatedAt} />
         <span className="pr-row-actions">{actions}</span>
       </div>
       <p className="session-what pr-what">
@@ -129,10 +134,6 @@ export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, on
             </>
           )}
           <span className={reason === undefined ? 'pr-relation' : 'asked pr-reason'}>{what}</span>
-          <span className="session-what-sep" aria-hidden="true">
-            {' · '}
-          </span>
-          <Timestamp className="pr-row-updated" at={pr.updatedAt} prefix="Updated " />
         </span>
         {/* Quiet, and never cut, as a session row's sub-agents count is. */}
         <span className="pr-row-end">
