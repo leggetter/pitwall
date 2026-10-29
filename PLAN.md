@@ -469,6 +469,14 @@ Show top-level sessions talking to each other beside the Sub-agents tab, which k
 - **#99's lean:** "To *name*" entries and links to the other session in the conversation, and a Peers tab after Sub-agents; a view across sessions with M5, as the supervisor's audit trail; and "waiting on a peer" as one of M6's "blocked on someone else" reasons. A graph and agent teams wait.
 - **Pitwall only reads:** it never calls `ListAgents` or `SendMessage` for this.
 
+### Later: chatting with a session, and sessions pitwall hosts ([#108](https://github.com/leggetter/pitwall/issues/108))
+
+Phil, 2026-10-29: the Terminal tab takes input, so why can't a more chat-like view? A lean yes to both parts, but not a priority: after M5.
+
+- **A composer for background sessions:** a message box in the Conversation tab that sends your prompt as typed by you, through Claude Code's own way to send a prompt to a running background session, `claude --resume <id> "<prompt>"` in a short-lived terminal (spike 003, candidate B), rather than typing into the attached terminal. It would share M5's chat panel. Permission prompts and menus stay in the Terminal tab.
+- **Sessions pitwall hosts:** headless `claude -p` sessions with stream-json, as the supervisor runs (spike 009), with pitwall's own chat UI and approval cards. They'd stop with pitwall and be resumed by id, and wouldn't be background sessions in agent view.
+- **Interactive sessions stay relay-only** (D2, D8): pitwall has no other way into a terminal it doesn't own.
+
 ## M4 work breakdown
 
 Same way of working as M3.1, on `m4/integration`: W93 to W95 are built in parallel against W92's contract, each reviewed by a sub-agent before the coordinator merges it. W100 and W101 came from Phil's try-out on 2026-10-29, and are built in one PR.
@@ -849,6 +857,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [ ] M6: triage
 - [x] What arrives mid-turn, missing from the conversation: messages, sub-agent reports, task notices and prompts I typed while Claude worked (found in #99's research; W99, merged in [#100](https://github.com/leggetter/pitwall/pull/100))
 - [ ] Peers, sessions talking to each other: undecided ([#99](https://github.com/leggetter/pitwall/issues/99))
+- [ ] Chatting with a session from the Conversation tab, and sessions pitwall hosts: later, after M5 ([#108](https://github.com/leggetter/pitwall/issues/108))
 
 ---
 
