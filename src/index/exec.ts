@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 
 export interface RunOptions {
@@ -88,18 +89,46 @@ const DROPPED_NAMES: ReadonlySet<string> = new Set([
 /**
  * PATH with only its absolute directories, in their order, or undefined when
  * none is left (W96's finding, W98). An empty entry (`a::b`, or a leading or
- * trailing `:`), a relative one (`.`, `bin`, a `~/bin` no shell expanded) and
- * an empty PATH all make a bare command, such as `claude`, `gh` or `git`,
- * resolve in the child's working directory: Node's spawn and node-pty's execvp
- * search PATH as the shell does. pitwall runs gh from the temp directory,
- * which on Linux every local user can write to, so another user could plant
- * `/tmp/gh` there. A PATH with nothing left is left out rather than set
- * empty: without one, the child searches the system's default, `/usr/bin:/bin`
- * on macOS, never the working directory.
+ * trailing `:`), a relative one (`.`, `bin`) and an empty PATH all make a bare
+ * command, such as `claude`, `gh` or `git`, resolve in the child's working
+ * directory: Node's spawn and node-pty's execvp search PATH as the shell does.
+ * pitwall runs gh from the temp directory, which on Linux every local user can
+ * write to, so another user could plant `/tmp/gh` there. A PATH with nothing
+ * left is left out rather than set empty: without one, the child searches the
+ * system's default, `/usr/bin:/bin` on macOS, never the working directory.
+ *
+ * An entry that is `~`, or starts with `~/`, is the user's home directory
+ * (`home`, default os.homedir()) and the rest, kept in its place, as bash's
+ * own command search reads it: a literal `~/.dotnet/tools`, which the .NET
+ * SDK's `/etc/paths.d/dotnet-cli-tools` puts on a Mac's PATH, keeps working in
+ * the sessions pitwall starts (coordinator, 2026-10-29). Node and execvp never expand it,
+ * so unexpanded it would mean `<cwd>/~/.dotnet/tools`. `~user/...` isn't
+ * expanded, and is dropped like any other relative entry, as is a `~` entry
+ * when the home directory isn't absolute or can't be found.
  */
-export function absoluteSearchPath(value: string): string | undefined {
-  const kept = value.split(path.delimiter).filter((entry) => path.isAbsolute(entry));
+export function absoluteSearchPath(value: string, home?: string): string | undefined {
+  let homeDir = home;
+  const expanded = (entry: string): string => {
+    if (entry !== '~' && !entry.startsWith('~/')) return entry;
+    homeDir ??= homeDirectory();
+    // Without a home directory, the entry stays relative, and is dropped.
+    if (homeDir === '') return entry;
+    return entry === '~' ? homeDir : homeDir.replace(/\/+$/, '') + entry.slice(1);
+  };
+  const kept = value
+    .split(path.delimiter)
+    .map(expanded)
+    .filter((entry) => path.isAbsolute(entry));
   return kept.length > 0 ? kept.join(path.delimiter) : undefined;
+}
+
+/** os.homedir(), or '' when it can't say: it throws when there's no HOME and no user database entry. */
+function homeDirectory(): string {
+  try {
+    return os.homedir();
+  } catch {
+    return '';
+  }
 }
 
 /**
