@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PR_LINKS_MAX } from '../shared/protocol.js';
 import { RunError, type RunFile } from './exec.js';
+import { addLink, newestLinks, toPrLink, type FoundLink } from './prLinks.js';
 import { createWorkedInScanner, type ScannerFs, type WorkedInScanner, type WorkedInScannerOptions } from './workedIn.js';
 
 // Every transcript, path and repo here is made up.
@@ -651,14 +652,18 @@ describe('createWorkedInScanner', () => {
       expect(await links()).toEqual([{ kind: 'pushed', repo: 'example/demo-app', branch: 'feature/one', lastAt: time(8) }]);
     });
 
-    it('ignores a failed result, and a call whose result never came', async () => {
+    it("opens nothing from a failed result, nor from a call whose result never came, but takes a failed push's accepted refs", async () => {
       const exists = `a pull request for branch "feature/one" into branch "main" already exists:\n${APP}/pull/12\n`;
       const mcp = use('mcp__github__create_pull_request', { owner: 'example', repo: 'demo-app' }, 5);
       const interrupted = use('Bash', { command: 'gh pr create --fill' }, 7);
+      const rejected = [`To ${APP}.git`, ' ! [rejected]        main -> main (fetch first)', ' ! [rejected]        feature/two -> feature/two (atomic push failed)', "error: failed to push some refs to 'https://github.com/example/demo-app.git'", ''].join('\n');
       await writeFile(
         main,
-        ran('gh pr create --fill', `Exit code 1\n${exists}`, 1, { error: true }) +
-          ran('git push -u origin feature/one', `Exit code 1\n${pushedNew('feature/one')}`, 3, { error: true }) +
+        // The push went through and gh failed, as the PR already exists: pushed, not opened.
+        ran('git push -u origin feature/one && gh pr create --fill', `Exit code 1\n${pushedNew('feature/one')}${exists}`, 1, { error: true }) +
+          // The push went through and the tests after it failed.
+          ran('git push origin feature/three && npm test', `Exit code 1\n${pushedNew('feature/three')}made-up test failure\n`, 3, { error: true }) +
+          ran('git push --atomic origin main feature/two', `Exit code 1\n${rejected}`, 11, { error: true }) +
           mcp.line +
           result(mcp.id, [{ type: 'text', text: `${APP}/pull/13` }], 6, { error: true }) +
           interrupted.line +
@@ -666,7 +671,46 @@ describe('createWorkedInScanner', () => {
           use('Bash', { command: 'gh pr create --fill' }, 9).line +
           typed('a made-up prompt', 10),
       );
-      expect(await links()).toEqual([]);
+      expect(await links()).toEqual([
+        { kind: 'pushed', repo: 'example/demo-app', branch: 'feature/three', lastAt: time(4) },
+        { kind: 'pushed', repo: 'example/demo-app', branch: 'feature/one', lastAt: time(2) },
+      ]);
+    });
+
+    it('drops a link with no time, but gives a result without one its call’s time', async () => {
+      const create = use('Bash', { command: 'gh pr create --fill' }, 1);
+      const untimed = use('Bash', { command: 'gh pr create --fill' }, 3);
+      const noTime = (line: string) => `${JSON.stringify({ ...JSON.parse(line), timestamp: undefined })}\n`;
+      await writeFile(
+        main,
+        noTime(typed(`${APP}/pull/5`, 0)) +
+          `${JSON.stringify({ type: 'assistant', timestamp: 'not a time', message: { id: 'm-untimed', content: [{ type: 'text', text: `${APP}/pull/6` }] } })}\n` +
+          create.line +
+          noTime(result(create.id, ghCreated(12), 2)) +
+          noTime(untimed.line) +
+          noTime(result(untimed.id, ghCreated(13), 4)),
+      );
+      expect(await links()).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(1) }]);
+    });
+
+    it('prunes a file past 80 links to what the result keeps, and keeps what merging them whole would', async () => {
+      const lines: string[] = [];
+      const found = new Map<string, FoundLink>();
+      // 300 lines with times out of order and repeats, some newer than when they were pruned.
+      for (let i = 0; i < 300; i++) {
+        const minute = (i * 37) % 211;
+        const number = ((i * 13) % 140) + 1;
+        if (i % 3 === 0) {
+          lines.push(said(`${API}/pull/${number}`, minute));
+          addLink(found, { kind: 'mentioned', repo: 'example/demo-api', number, at: AT + minute * 60_000 });
+        } else {
+          lines.push(typed(`${APP}/pull/${number}`, minute));
+          addLink(found, { kind: 'prompted', repo: 'example/demo-app', number, at: AT + minute * 60_000 });
+        }
+      }
+      expect(found.size).toBeGreaterThan(80);
+      await writeFile(main, lines.join(''));
+      expect(await links()).toEqual(newestLinks(found.values()).map(toPrLink));
     });
 
     it('stops waiting on a call after 10,000 lines without its result', async () => {

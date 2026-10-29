@@ -182,31 +182,34 @@ function commandWords(all: readonly string[]): string[] {
 
 /** What a Bash command runs that can link a session to a pull request (prLinks.ts, W94). */
 export interface PrCommands {
-  /** A `git push`, but not `--dry-run` or `-n`, which push nothing. */
+  /** A `git push`, but not `--dry-run` or `-n`, alone or in a cluster such as `-nu`, which push nothing. */
   push: boolean;
-  /** A `gh pr create`. */
+  /** A `gh pr create`, or `gh pr new`, its alias. */
   prCreate: boolean;
 }
+
+/** git push's dry run: `--dry-run`, or `-n` alone or among other short flags. */
+const DRY_RUN = /^(?:--dry-run|-[A-Za-z]*n[A-Za-z]*)$/;
 
 /**
  * Whether a Bash command runs `git push` or `gh pr create`, by the lexer parseShell() uses, so a
  * here-document's body, a quoted message or a comment that names one doesn't count. A command
  * over MAX_SHELL_COMMAND runs neither, as it names nothing for parseShell(), and one that doesn't
- * contain `push` or `create` isn't lexed at all.
+ * contain `push`, `create` or `new` isn't lexed at all.
  */
 export function prCommandsOf(command: string): PrCommands {
   const found: PrCommands = { push: false, prCreate: false };
-  if (command.length > MAX_SHELL_COMMAND || (!command.includes('push') && !command.includes('create'))) return found;
+  if (command.length > MAX_SHELL_COMMAND || (!command.includes('push') && !command.includes('create') && !command.includes('new'))) return found;
   for (const all of lexShell(stripHeredocs(command))) {
     const words = commandWords(all);
     if (words[0] === 'gh') {
-      if (words[1] === 'pr' && words[2] === 'create') found.prCreate = true;
+      if (words[1] === 'pr' && (words[2] === 'create' || words[2] === 'new')) found.prCreate = true;
       continue;
     }
     if (words[0] !== 'git') continue;
     let j = 1;
     while (j < words.length && (words[j] ?? '').startsWith('-')) j += GIT_VALUE_OPTIONS.has(words[j] ?? '') ? 2 : 1;
-    if (words[j] === 'push' && !words.slice(j + 1).some((word) => word === '--dry-run' || word === '-n')) found.push = true;
+    if (words[j] === 'push' && !words.slice(j + 1).some((word) => DRY_RUN.test(word))) found.push = true;
   }
   return found;
 }
