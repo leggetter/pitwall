@@ -626,6 +626,26 @@ describe('createWorkedInScanner', () => {
       expect(await links()).toEqual([]);
     });
 
+    it('prompted: a PR URL in a prompt you typed while Claude worked, not in a message or task notice that arrived then (W99)', async () => {
+      /** What arrived mid-turn: a queued_command attachment, with no user entry. */
+      const queued = (prompt: unknown, minute: number, attachment: Record<string, unknown>) =>
+        `${JSON.stringify({ type: 'attachment', timestamp: time(minute), attachment: { type: 'queued_command', prompt, commandMode: 'prompt', ...attachment } })}\n`;
+      await writeFile(
+        main,
+        [
+          queued(`also look at ${APP}/pull/14`, 1, { origin: { kind: 'human' }, humanTurn: true }),
+          queued([{ type: 'text', text: `and ${API}/pull/4` }, { type: 'image', source: {} }], 2, { origin: { kind: 'human' } }),
+          queued(`<cross-session-message from="uds:/tmp/made-up.sock">${APP}/pull/1</cross-session-message>`, 3, { isMeta: true, origin: { kind: 'peer' } }),
+          queued(`<task-notification>${APP}/pull/2</task-notification>`, 3, { commandMode: 'task-notification', origin: { kind: 'task-notification' } }),
+          queued(`${APP}/pull/3`, 3, { commandMode: 'bash', origin: { kind: 'human' } }),
+        ].join(''),
+      );
+      expect(await links()).toEqual([
+        { kind: 'prompted', repo: 'example/demo-api', number: 4, lastAt: time(2) },
+        { kind: 'prompted', repo: 'example/demo-app', number: 14, lastAt: time(1) },
+      ]);
+    });
+
     it("mentioned: a PR URL in Claude's own text, newest of each, not in its thinking or tool input", async () => {
       const view = use('Bash', { command: `gh pr view ${APP}/pull/20` }, 3);
       const thinking = `${JSON.stringify({ type: 'assistant', timestamp: time(4), message: { id: 'm-think', content: [{ type: 'thinking', thinking: `${APP}/pull/21` }] } })}\n`;

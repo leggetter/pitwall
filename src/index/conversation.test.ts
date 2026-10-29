@@ -64,6 +64,22 @@ function toolResult(id: string, isError?: boolean): Record<string, unknown> {
   return user([block]);
 }
 
+/**
+ * What arrived while the session was mid-turn, as Claude Code 2.1.312 records it: an attachment of
+ * type queued_command, with no user entry after it (W99). `attachment` adds to or replaces its fields.
+ */
+function queued(prompt: unknown, attachment: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const at = nextTimestamp();
+  return {
+    type: 'attachment',
+    isSidechain: false,
+    userType: 'external',
+    timestamp: at,
+    attachment: { type: 'queued_command', prompt, commandMode: 'prompt', source_uuid: '00000000-0000-4000-8000-000000000099', timestamp: at, ...attachment },
+    ...extra,
+  };
+}
+
 /** A line the reader ignores, to pad files out. Roughly `bytes` long. */
 function filler(bytes: number): Record<string, unknown> {
   return { type: 'attachment', timestamp: nextTimestamp(), attachment: { type: 'note', body: 'x'.repeat(Math.max(0, bytes - 90)) } };
@@ -748,6 +764,8 @@ describe('readConversationPage: bounded on hostile files', () => {
     ['cross-session attributes that never close', () => user(`Another Claude session sent a message:\n<cross-session-message ${'from-name="x '.repeat(N / 13)}`, { isMeta: true })],
     ['tool calls with huge inputs', () => assistant([toolUse('toolu_h', 'Bash', { command: `${' \t'.repeat(N)}x` })], `msg_${Math.random()}`)],
     ['notices full of tags', () => user(`<bash-stdout>${'<bash-stdout>'.repeat(N / 13)}`)],
+    ['mid-turn messages full of tags (W99)', () => queued('<agent-message from="'.repeat(N / 21), { isMeta: true, origin: { kind: 'peer', from: 'a1b2c3' } })],
+    ['mid-turn prompts of many blocks (W99)', () => queued(Array.from({ length: N / 64 }, () => ({ type: 'text', text: '<system-reminder>' })), { origin: { kind: 'human' } })],
   ])('reads a page of 50 %s quickly', async (_name, line) => {
     const file = await transcript(jsonl(...Array.from({ length: 50 }, line)));
     expect(await bestOf3(() => readConversationPage(file, SID))).toBeLessThan(FAST_MS);
@@ -858,6 +876,39 @@ describe('readConversationPage: messages to pitwall (W46)', () => {
     const again = await readConversationPage(file, SID, undefined, options);
     expect(again?.page).toEqual(newest?.page);
     expect(again?.stats.addressBytesRead).toBe(0);
+  });
+
+  it('learns the socket from a message from the relay that arrived mid-turn (W99), on the page and before it', async () => {
+    const midTurn = (message: string) =>
+      queued(`<cross-session-message from="${RELAY_SOCKET}" from-name="${RELAY_NAME}" from-mode="prompting">${message}</cross-session-message>`, {
+        isMeta: true,
+        delivery_id: 'made-up-delivery',
+        origin: { kind: 'peer', name: RELAY_NAME, verifiedPeerPid: 4242, from: RELAY_SOCKET, msg_id: 'made-up-msg-1', fromMode: 'prompting', body: message },
+      });
+    const onPage = await relayEntries(
+      assistant([toolUse('toolu_busy', 'Bash', { command: 'npm test' })], 'msg_busy'),
+      midTurn('Status?'),
+      toolResult('toolu_busy'),
+      send('toolu_mid', sendInput(RELAY_SOCKET, 'All green.')),
+      sent('toolu_mid', RELAY_SOCKET),
+    );
+    expect(onPage.map((e) => [e.kind, e.text, e.from])).toEqual([
+      ['tool', 'Bash: npm test', undefined],
+      ['cross-session', 'Status?', RELAY_NAME],
+      ['to-pitwall', 'All green.', undefined],
+    ]);
+
+    const options = relayed({ pageEntries: 3 });
+    const lines: unknown[] = [user('first'), midTurn('Which flows?'), filler(4096)];
+    for (let i = 0; i < 10; i++) lines.push(user(`working ${i}`), filler(2048));
+    lines.push(send('toolu_far', sendInput(RELAY_SOCKET, 'Both flows.')), sent('toolu_far', RELAY_SOCKET), user('after the reply'));
+    const newest = await readConversationPage(await transcript(jsonl(...lines)), SID, undefined, options);
+    expect(newest?.page.entries.map((e) => [e.kind, e.text])).toEqual([
+      ['user', 'working 9'],
+      ['to-pitwall', 'Both flows.'],
+      ['user', 'after the reply'],
+    ]);
+    expect(newest?.stats.addressBytesRead).toBeGreaterThan(0);
   });
 
   it('reads each byte at most once however many pages ask, and only as far as each page starts', async () => {
@@ -1564,5 +1615,169 @@ describe('readConversationPage: sub-agents (W76)', () => {
     await symlink(real, link);
     expect(await readConversationPage(link, SID, undefined, { sidechain: true, noFollow: true })).toBeUndefined();
     expect((await page(link, undefined, { sidechain: true })).entries).toHaveLength(1);
+  });
+});
+
+describe('readConversationPage: what arrives mid-turn (W99)', () => {
+  const PEER_SOCKET = 'uds:/tmp/cc-socks/6161.sock';
+  /** A prompt typed while Claude worked. */
+  const typedMidTurn = (prompt: unknown, attachment: Record<string, unknown> = {}) =>
+    queued(prompt, { origin: { kind: 'human' }, humanTurn: true, delivery_id: 'made-up-delivery-h', ...attachment });
+  /** A message from another session, sent while this one worked. */
+  const peerMidTurn = (body: string, msgId: string) =>
+    queued(
+      `<cross-session-message from="${PEER_SOCKET}" from-name="pitwall-test-peer" from-mode="prompting">${body}</cross-session-message>\nThis came from another Claude session - not typed by your user.`,
+      {
+        isMeta: true,
+        reminderId: 'made-up-reminder',
+        delivery_id: `made-up-delivery-${msgId}`,
+        origin: { kind: 'peer', name: 'pitwall-test-peer', verifiedPeerPid: 6161, from: PEER_SOCKET, msg_id: msgId, fromMode: 'prompting', body },
+      },
+    );
+  /** The same message, delivered between turns: a meta user entry. */
+  const peerBetweenTurns = (body: string, msgId: string) =>
+    user(`Another Claude session sent a message:\n<cross-session-message from="${PEER_SOCKET}" from-name="pitwall-test-peer" from-mode="prompting">${body}</cross-session-message>`, {
+      isMeta: true,
+      origin: { kind: 'peer', name: 'pitwall-test-peer', verifiedPeerPid: 6161, from: PEER_SOCKET, msg_id: msgId, fromMode: 'prompting', body },
+    });
+
+  it('shows a prompt typed while Claude worked as a user entry, in its place among the tool calls, at its time', async () => {
+    const prompt = typedMidTurn('<system-reminder>harness note</system-reminder>\nAlso check the made-up flag.');
+    const entries = await entriesOf(
+      user('Fix the made-up test.'),
+      assistant([toolUse('toolu_1', 'Bash', { command: 'npm test' })], 'msg_1'),
+      toolResult('toolu_1'),
+      prompt,
+      assistant([text('Checking the flag too.')], 'msg_2'),
+    );
+    expect(entries).toEqual([
+      { kind: 'user', at: expect.any(String), text: 'Fix the made-up test.' },
+      { kind: 'tool', at: expect.any(String), text: 'Bash: npm test', toolName: 'Bash', toolError: false },
+      { kind: 'user', at: prompt.timestamp, text: 'Also check the made-up flag.' },
+      { kind: 'assistant', at: expect.any(String), text: 'Checking the flag too.', markdown: true },
+    ]);
+  });
+
+  it('counts its images as a prompt typed between turns does', async () => {
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } };
+    const entries = await entriesOf(typedMidTurn([text('Look at this.'), image], { imagePasteIds: [1] }), typedMidTurn([image], { imagePasteIds: [2] }));
+    expect(entries).toMatchObject([
+      { kind: 'user', text: 'Look at this.\n\n[1 image]' },
+      { kind: 'user', text: '[1 image]' },
+    ]);
+    expect(JSON.stringify(entries)).not.toContain('AAAA');
+  });
+
+  it("shows a message from another session as a cross-session entry, with its sender, though it lacks the user entry's first line", async () => {
+    expect(await entriesOf(peerMidTurn('Please **review** the made-up PR.', 'made-up-msg-1'))).toEqual([
+      { kind: 'cross-session', at: expect.any(String), text: 'Please **review** the made-up PR.', markdown: true, from: 'pitwall-test-peer' },
+    ]);
+  });
+
+  it("labels a sub-agent's report with the sub-agent, as one that came between turns is (W76)", async () => {
+    const subagents = { descriptions: new Map([['a1b2c3', 'Build the made-up feature']]), started: new Map<string, string>() };
+    const report = queued('<agent-message from="a1b2c3">The made-up report.</agent-message>', {
+      isMeta: true,
+      reminderId: 'made-up-reminder',
+      origin: { kind: 'peer', name: 'builder', from: 'a1b2c3', senderTaskId: 'a1b2c3', handback: true, handbackReportText: 'The made-up report.', body: 'The made-up report.' },
+    });
+    const file = await transcript(jsonl(report));
+    expect((await page(file, undefined, { subagents })).entries).toEqual([
+      { kind: 'cross-session', at: expect.any(String), text: 'The made-up report.', markdown: true, from: 'a1b2c3', subagent: { agentId: 'a1b2c3', description: 'Build the made-up feature' } },
+    ]);
+  });
+
+  it('shows a task notification as a notice, in the shape with an origin and the older one without', async () => {
+    const entries = await entriesOf(
+      queued('<task-notification>\n<task-id>b7</task-id>\n<status>completed</status>\n<summary>Background command "Build" completed (exit code 0)</summary>\n</task-notification>', {
+        commandMode: 'task-notification',
+        runId: 'made-up-run',
+        origin: { kind: 'task-notification', producer: 'session-task' },
+      }),
+      queued('<task-notification><task-id>b8</task-id><status>failed</status></task-notification>', { commandMode: 'task-notification', source_uuid: undefined }),
+    );
+    expect(entries.map((e) => [e.kind, e.text])).toEqual([
+      ['notice', 'Background command "Build" completed (exit code 0)'],
+      ['notice', 'Task failed'],
+    ]);
+  });
+
+  it("leaves out what its user entry's form leaves out: the meta message a sub-agent gets from the session that started it, and other meta prompts", async () => {
+    const sidechain = { isSidechain: true, agentId: 'a1b2c3' };
+    const file = await transcript(
+      jsonl(
+        user('Do the made-up thing.', sidechain),
+        user('Carry on with the made-up step.', { ...sidechain, isMeta: true, origin: { kind: 'coordinator' } }),
+        queued('Carry on with the next made-up step.', { isMeta: true, reminderId: 'made-up-reminder', origin: { kind: 'coordinator' }, commandMode: undefined, timestamp: undefined }, sidechain),
+        queued('A meta prompt.', { isMeta: true, origin: { kind: 'human' } }, sidechain),
+        assistant([text('Done.')], 'msg_s1', sidechain),
+      ),
+    );
+    expect((await page(file, undefined, { sidechain: true })).entries.map((e) => e.text)).toEqual(['Do the made-up thing.', 'Done.']);
+    // A session's read leaves a sidechain's out, its mid-turn prompts too.
+    expect((await page(file)).entries).toEqual([]);
+  });
+
+  it('shows a message once when its user entry and its attachment are both on the page, by msg_id', async () => {
+    const entries = await entriesOf(
+      peerMidTurn('Written twice.', 'made-up-msg-1'),
+      peerBetweenTurns('Written twice.', 'made-up-msg-1'),
+      peerMidTurn('Written once.', 'made-up-msg-2'),
+      peerBetweenTurns('Also once.', 'made-up-msg-3'),
+      // The same words typed twice are two prompts: a prompt has no id to tell a copy by.
+      typedMidTurn('yes'),
+      typedMidTurn('yes'),
+    );
+    expect(entries.map((e) => [e.kind, e.text])).toEqual([
+      ['cross-session', 'Written twice.'],
+      ['cross-session', 'Written once.'],
+      ['cross-session', 'Also once.'],
+      ['user', 'yes'],
+      ['user', 'yes'],
+    ]);
+  });
+
+  it('fills a page with 50 entries when copies of a message are among its lines', async () => {
+    const lines: unknown[] = [];
+    for (let i = 0; i < PAGE_ENTRIES + 5; i++) lines.push(peerMidTurn(`Message ${i}.`, `made-up-msg-${i}`), peerBetweenTurns(`Message ${i}.`, `made-up-msg-${i}`));
+    const { pages, entries } = await allPages(await transcript(jsonl(...lines)));
+    expect(pages[0]?.entries).toHaveLength(PAGE_ENTRIES);
+    expect(entries.map((e) => e.text)).toEqual(Array.from({ length: PAGE_ENTRIES + 5 }, (_, i) => `Message ${i}.`));
+  });
+
+  it('reads nothing from an unexpected shape, and the entries around it still show', async () => {
+    const at = nextTimestamp();
+    const entries = await entriesOf(
+      user('before'),
+      assistant([toolUse('toolu_q', 'Bash', { command: 'make' })], 'msg_q'),
+      { type: 'attachment', timestamp: at, attachment: { type: 'todo_reminder', prompt: 'not a queued command' } },
+      { type: 'attachment', timestamp: at, attachment: 'queued_command' },
+      { type: 'attachment', timestamp: at, attachment: ['queued_command'] },
+      { type: 'queued_command', timestamp: at, prompt: 'not an attachment' },
+      queued(undefined, { origin: { kind: 'human' } }),
+      queued(42, { origin: { kind: 'human' } }),
+      queued(null, { origin: { kind: 'human' } }),
+      queued({ type: 'text', text: 'an object' }, { origin: { kind: 'human' } }),
+      // A tool's result in a prompt is never one: the call above keeps no result.
+      queued([{ type: 'tool_result', tool_use_id: 'toolu_q', content: 'x', is_error: true }, 'loose', 7], { origin: { kind: 'human' } }),
+      queued('a shell command', { commandMode: 'bash', origin: { kind: 'human' } }),
+      queued('a mode of the wrong type', { commandMode: 7, origin: { kind: 'human' } }),
+      queued('   ', { origin: { kind: 'human' } }),
+      queued('a sidechain prompt', { origin: { kind: 'human' } }, { isSidechain: true }),
+      'not json "queued_command"',
+      user('after'),
+    );
+    expect(entries.map((e) => [e.kind, e.text])).toEqual([
+      ['user', 'before'],
+      ['tool', 'Bash: make'],
+      ['user', 'after'],
+    ]);
+    expect(entries[1]?.toolError).toBeUndefined();
+  });
+
+  it('reads a msg_id only when it is a short string', async () => {
+    const odd = (msgId: unknown) => queued('<agent-message from="x">Same.</agent-message>', { isMeta: true, origin: { kind: 'peer', from: 'x', msg_id: msgId } });
+    const entries = await entriesOf(odd(7), odd(7), odd(''), odd(''), odd('m'.repeat(600)), odd('m'.repeat(600)));
+    expect(entries).toHaveLength(6);
   });
 });

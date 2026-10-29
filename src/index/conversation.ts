@@ -26,6 +26,15 @@
 // page. When a page boundary falls between them, the result is on the newer
 // page: its cursor carries the result line's place in the file, and the older
 // page reads that one line again once it meets the call.
+//
+// What arrives while the session is mid-turn, a prompt typed meanwhile, a message
+// from another session or a sub-agent, or a task notification, Claude Code
+// records only as a `queued_command` attachment (W99). Each is read as the user
+// entry it stands for (queuedEntryOf(), in transcripts.ts), so it becomes what
+// that entry would, and a message from the relay that came mid-turn says where
+// the relay's messages come from as one that came between turns does. A message
+// from a session names its `msg_id` in either form, so a page that met both would
+// show it once; Claude Code wasn't seen writing both for any of these.
 
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -34,7 +43,7 @@ import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shar
 import { isRecord } from './guards.js';
 import type { SubagentLabels } from './subagents.js';
 import { cap, truncate } from './text.js';
-import { stripSystemReminders } from './transcripts.js';
+import { queuedEntryOf, stripSystemReminders } from './transcripts.js';
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -676,8 +685,11 @@ type Item =
   /** `to`: a SendMessage call's recipient, trimmed, with or without a message, to find a sub-agent by (W76). */
   | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined; send?: SendCall; ask?: AskCall; to?: string }
   | { kind: 'result'; id: string; state: ResultState; answers?: DialogAnswers }
-  /** `peer`: who a message from a peer came from, as its `origin.from` says: a sub-agent's id for its report (W76). */
-  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string };
+  /**
+   * `peer`: who a message from a peer came from, as its `origin.from` says: a sub-agent's id for its report (W76).
+   * `msgId`: its `origin.msg_id`, the same in the user entry and the mid-turn attachment that can stand for it (W99).
+   */
+  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string; msgId?: string };
 
 /** A SendMessage call on the page whose result, if it has one yet, didn't fail, and where its line starts. */
 interface SendDraft extends SendCall {
@@ -722,6 +734,8 @@ class PageBuilder {
   private readonly drafts: Draft[] = [];
   /** The addresses the relay's messages on this page came from, each with the offset of the earliest such line. */
   private readonly relayFrom = new Map<string, number>();
+  /** The `msg_id`s of the messages from peers on this page, so one written twice shows once (W99). At most a page's entries. */
+  private readonly msgIds = new Set<string>();
 
   constructor(
     readonly pending: Map<string, Pending>,
@@ -752,6 +766,7 @@ class PageBuilder {
       const item = items[i] as Item;
       if (item.kind === 'result') continue;
       if (item.kind === 'text' && joins(oldest, item.messageId)) continue;
+      if (item.kind === 'entry' && item.msgId !== undefined && this.msgIds.has(item.msgId)) continue;
       added++;
       oldest = { assistant: item.kind === 'text', messageId: item.kind === 'text' ? item.messageId : undefined };
     }
@@ -823,6 +838,11 @@ class PageBuilder {
         const address = this.relayName === undefined ? undefined : relayAddress(item.sender, this.relayName);
         if (address !== undefined) this.relayFrom.set(address, Math.min(offset, this.relayFrom.get(address) ?? offset));
         if (this.full()) return;
+        // Already on the page, from the newer of its two forms.
+        if (item.msgId !== undefined) {
+          if (this.msgIds.has(item.msgId)) return;
+          this.msgIds.add(item.msgId);
+        }
         const subagent = item.entry.kind === 'cross-session' ? this.subagentOf(item.peer) ?? this.subagentOf(item.entry.from) : undefined;
         this.drafts.push({ kind: 'entry', entry: subagent === undefined ? item.entry : { ...item.entry, subagent } });
         return;
@@ -1029,8 +1049,9 @@ function questionWithinBudget(entry: ConversationEntry, questions: AskedQuestion
 export function itemsOfLine(line: string, sidechain = false): Item[] {
   // Cheap pre-filter: every line this reads names one of these. Not "system":
   // Claude Code's internal api-request lines carry a system prompt, and they
-  // can be most of a transcript's bytes.
-  if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"local_command"')) return [];
+  // can be most of a transcript's bytes. Nor "attachment": Claude Code writes
+  // many kinds, and only a queued_command's is read (W99).
+  if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"local_command"') && !line.includes('"queued_command"')) return [];
   let entry: unknown;
   try {
     entry = JSON.parse(line);
@@ -1046,6 +1067,11 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
       return userItems(entry, at);
     case 'system':
       return systemItems(entry, at);
+    case 'attachment': {
+      // What arrived mid-turn, as the user entry it stands for (W99).
+      const queued = queuedEntryOf(entry);
+      return queued === undefined ? [] : userItems(queued, at);
+    }
     default:
       return [];
   }
@@ -1241,6 +1267,9 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
     // Who it came from, as Claude Code recorded it: a sub-agent's id for its report (W76).
     const from = origin === 'peer' && isRecord(entry.origin) ? entry.origin.from : undefined;
     if (item.kind === 'entry' && typeof from === 'string' && from.length <= ADDRESS_MAX) item.peer = from;
+    // Which message it is, a session's to this one (W99).
+    const msgId = origin === 'peer' && isRecord(entry.origin) ? entry.origin.msg_id : undefined;
+    if (item.kind === 'entry' && typeof msgId === 'string' && msgId !== '' && msgId.length <= ADDRESS_MAX) item.msgId = msgId;
     return [item];
   }
   if (entry.isMeta === true) return [];
