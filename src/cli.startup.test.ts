@@ -272,7 +272,7 @@ describe('main(): startup', () => {
       const file = await config('{ "roots": ["work"] }');
       expect(await main(['--no-open', '--port', '0'], { cwd: () => dir })).toBe(1);
       expect(errors.mock.calls).toEqual([
-        [`pitwall: ${file}: "roots[0]" must be an absolute path or start with ~/, not "work"\nRun pitwall --help for usage.`],
+        [`pitwall: ${file}: "roots[0]" must be an absolute path, ~, or a path starting with ~/\nRun pitwall --help for usage.`],
       ]);
       expect(seen.calls).toEqual([]);
     });

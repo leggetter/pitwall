@@ -113,7 +113,7 @@ node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>]
 
 ### Configuration
 
-pitwall reads `~/.pitwall/config.json` when it's there, or `config.json` in `PITWALL_HOME` when that's set, or the file `--config <path>` names. With no file, every setting is its default. It's JSON, with `//` and `/* */` comments and trailing commas allowed. For now it holds the roots, and each root's GitHub owners:
+With `--config <path>`, pitwall reads that file, which must exist. Without it, pitwall reads `config.json` in `~/.pitwall`, or in `PITWALL_HOME` when that's set, if it's there; with no file, every setting is its default. It's JSON, with `//` and `/* */` comments and trailing commas allowed. For now it holds the roots, and each root's GitHub owners:
 
 ```jsonc
 {
@@ -130,7 +130,7 @@ pitwall reads `~/.pitwall/config.json` when it's there, or `config.json` in `PIT
 - **`github.owners`:** whose pull requests a root lists for repos it has no clone of: a list of GitHub users and organizations, `"all"` for every owner no other root lists, or `"none"` for pull requests in its own clones only. Without it, each owner goes to the root with the most clones from it. An owner can be listed for one root only, and only one root can have `"all"`. It takes effect with M4's redesign, which lists pull requests under their roots, still being built.
 - **Precedence:** a flag, then an environment variable, then the file, then the default. Roots you give as arguments replace the file's, not add to them, but each still keeps its `github` settings when it's the same directory as a root in the file, by its real path, so `pitwall ~/work` alone keeps `~/work`'s owners.
 - **Mistakes:** a bad value stops pitwall with a message naming the key and the file, as a bad flag does. An unknown key is a warning, so an older pitwall can read a newer file.
-- **Security** ([D24](docs/decisions.md#d24---a-config-file-beside-the-flags)): the file decides which directories pitwall reads, so on macOS and Linux it must be yours and not writable by group or others, or pitwall refuses it. It never holds the token: a key named like one is an error, since `PITWALL_TOKEN` comes from the environment only. Nothing in it can turn off the token, the `Host` and `Origin` checks or listening on 127.0.0.1 alone, and pitwall reads no config file from inside a repo.
+- **Security** ([D24](docs/decisions.md#d24---a-config-file-beside-the-flags)): the file decides which directories pitwall reads, so on macOS and Linux it must be yours and not writable by group or others, or pitwall refuses it. It never holds a token: a key named like one, or a GitHub token anywhere in it, is an error, since `PITWALL_TOKEN` comes from the environment only and GitHub's stays in `gh`. No message quotes a value from the file. Nothing in it can turn off the token, the `Host` and `Origin` checks or listening on 127.0.0.1 alone, and pitwall reads no config file from inside a repo.
 
 ### In the page
 

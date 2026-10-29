@@ -8,9 +8,10 @@
 // gets its `github` settings when its real path is a configured root's.
 //
 // Security (D24):
-// - It never holds the token. A key named like one, anywhere in the file, is an
-//   error: PITWALL_TOKEN comes from the environment only, since a token in a
-//   file lasts longer and travels further.
+// - It never holds the token. A key named like one, or a GitHub token, anywhere
+//   in the file, is an error: PITWALL_TOKEN comes from the environment only,
+//   since a token in a file lasts longer and travels further. No message quotes
+//   a value from the file, only its key, and a root's real path.
 // - It decides which directories pitwall reads and which sessions it lists, so
 //   on POSIX it must be the current user's and not writable by group or others.
 //   That's checked with fstat on the file once it's open, never stat-then-open,
@@ -19,7 +20,7 @@
 //   the host, the token, or the Host and Origin checks.
 // - There are no per-repo config files: a file inside a repo could change what
 //   pitwall does from code you haven't reviewed.
-import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync, type Stats } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, type Stats } from 'node:fs';
 import os from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { type DirCheckContext, pitwallHome } from './server/launch.js';
@@ -31,7 +32,12 @@ export const CONFIG_FILE_NAME = 'config.json';
 /** The biggest config file pitwall reads. A real one is a few hundred bytes. */
 export const CONFIG_MAX_BYTES = 1024 * 1024;
 
-/** A problem with the config file. Printed with a `pitwall:` prefix, exit 1, as a bad flag is. */
+/**
+ * A problem with the config file. The CLI prints it as it prints a UsageError,
+ * with a `pitwall:` prefix, and exits 1. It's a class of its own, not cli.ts's
+ * UsageError, only because importing that here would make cli.ts and this
+ * module import each other.
+ */
 export class ConfigError extends Error {
   override name = 'ConfigError';
 }
@@ -45,7 +51,10 @@ export interface ConfiguredRoot {
   key: string;
   /** Absolute, with a leading `~` expanded. */
   path: string;
-  /** Its real path, or `path` when that can't be resolved, as the index resolves roots. */
+  /**
+   * Its real path, as the index resolves roots, with the case on disk (realpathSync.native, as
+   * fs.promises.realpath is), or `path` when it can't be resolved.
+   */
   real: string;
   /** From `github.owners`: lowercase and deduped. Absent: inferred from the root's clones. */
   owners?: ConfiguredOwners;
@@ -73,6 +82,7 @@ export interface LoadConfigOptions {
   home?: string;
   /** The platform and uid the permission check uses. Default this process's. */
   context?: DirCheckContext;
+  /** Default realpathSync.native, which, as the index's fs.promises.realpath, gives the case on disk. */
   realpath?: (path: string) => string;
 }
 
@@ -108,10 +118,11 @@ export function loadConfig(options: LoadConfigOptions): LoadedConfig {
     const stats = fstatSync(fd);
     const problem = configFileProblem(file, stats, options.context);
     if (problem !== undefined) throw new ConfigError(problem);
-    if (stats.size > CONFIG_MAX_BYTES) {
-      throw new ConfigError(`${file} is ${stats.size} bytes, more than a config file needs (at most ${CONFIG_MAX_BYTES})`);
-    }
-    text = readFileSync(fd, 'utf8');
+    // The size first, then while reading, which stops at the cap: a file can grow after fstat,
+    // and some, such as Linux's /proc files, say they're empty.
+    const bytes = stats.size > CONFIG_MAX_BYTES ? undefined : readCapped(fd, CONFIG_MAX_BYTES);
+    if (bytes === undefined) throw new ConfigError(`the config file ${file} is over ${CONFIG_MAX_BYTES} bytes, far more than a config file needs`);
+    text = bytes.toString('utf8');
   } catch (error) {
     if (error instanceof ConfigError) throw error;
     throw new ConfigError(`couldn't read the config file ${file} (${(error as Error).message})`);
@@ -119,6 +130,18 @@ export function loadConfig(options: LoadConfigOptions): LoadedConfig {
     closeSync(fd);
   }
   return { file, found: true, ...parseConfig(text, file, options) };
+}
+
+/** What's in `fd` from where it is, or undefined when it holds more than `max` bytes. Reads at most `max + 1`. */
+export function readCapped(fd: number, max: number): Buffer | undefined {
+  const buffer = Buffer.alloc(max + 1);
+  let total = 0;
+  while (total < buffer.length) {
+    const read = readSync(fd, buffer, total, buffer.length - total, null);
+    if (read === 0) return buffer.subarray(0, total);
+    total += read;
+  }
+  return undefined;
 }
 
 /**
@@ -155,17 +178,33 @@ export function parseConfig(
   file: string,
   options: Pick<LoadConfigOptions, 'home' | 'realpath'> = {},
 ): { roots?: ConfiguredRoot[]; warnings: string[] } {
+  const invalid = (at: number) =>
+    new ConfigError(`${file} isn't valid JSON${at === -1 ? '' : ` at ${lineAndColumn(text, at)}`}. Comments and trailing commas are allowed.`);
+  let stripped: string;
+  try {
+    stripped = stripJsonComments(text);
+  } catch (error) {
+    if (error instanceof UnendingComment) throw new ConfigError(`${file}: the /* comment at ${lineAndColumn(text, error.at)} never ends`);
+    throw error;
+  }
   let value: unknown;
   try {
-    value = JSON.parse(stripJsonComments(text));
-  } catch (error) {
-    throw new ConfigError(`${file} isn't valid JSON (comments and trailing commas are allowed): ${(error as Error).message}`);
+    value = JSON.parse(stripped);
+  } catch {
+    // Not V8's own message, which quotes the text around the error, and so perhaps a secret (D24).
+    throw invalid(jsonErrorAt(stripped));
   }
   if (!isPlainObject(value)) throw new ConfigError(`${file} must hold a JSON object, such as { "roots": ["~/code"] }`);
-  const token = tokenKey(value);
-  if (token !== undefined) {
+  const token = tokenIn(value);
+  if (token?.kind === 'named') {
     throw new ConfigError(
-      `${file}: the key ${quote(token)} is named like a token, and pitwall never reads one from a file: PITWALL_TOKEN comes from the environment only. Remove it from the file.`,
+      `${file}: the key ${quote(token.key)} is named like a token, and pitwall never reads one from a file: PITWALL_TOKEN comes from the environment only. Remove it from the file.`,
+    );
+  }
+  if (token !== undefined) {
+    const where = token.kind === 'value' ? quote(token.key) : token.key === '' ? 'a key at the top level' : `a key in ${quote(token.key)}`;
+    throw new ConfigError(
+      `${file}: ${where} looks like a GitHub token, and pitwall never reads one from a file: gh keeps GitHub's token, and PITWALL_TOKEN comes from the environment only. Remove it from the file.`,
     );
   }
   const warnings: string[] = [];
@@ -181,8 +220,10 @@ export function parseConfig(
   if (list.length === 0) return fail('roots', 'is empty. List at least one root, or leave "roots" out to watch the current directory.');
 
   const home = options.home ?? os.homedir();
-  const realpath = options.realpath ?? realpathSync;
+  const realpath = options.realpath ?? realpathSync.native;
   const roots: ConfiguredRoot[] = [];
+  // Each real path's key, so a root listed twice is found without searching the list each time.
+  const keyOf = new Map<string, string>();
   list.forEach((entry: unknown, i) => {
     const key = `roots[${i}]`;
     let given: unknown;
@@ -197,12 +238,14 @@ export function parseConfig(
       given = entry.path;
       if (Object.hasOwn(entry, 'github')) owners = parseGithub(entry.github, `${key}.github`, unknown, fail);
     } else {
-      fail(key, `must be a path or { "path": ... }, not ${describe(entry)}`);
+      fail(key, `must be a path or { "path": ... }, not ${typeOf(entry)}`);
     }
     const path = rootPath(given, pathKey, home, fail);
     const real = realpathOr(path, realpath);
-    const same = roots.find((root) => root.real === real);
-    if (same !== undefined) fail(key, `is the same directory as ${quote(same.key)} (${real}). List each root once.`);
+    const same = keyOf.get(real);
+    // The real path in full, JSON-quoted: it's a path, not a value from the file as written.
+    if (same !== undefined) fail(key, `is the same directory as ${quote(same)}, ${JSON.stringify(real)}. List each root once.`);
+    keyOf.set(real, key);
     roots.push({ key, path, real, ...(owners === undefined ? {} : { owners }) });
   });
   checkOwnersOnce(roots, fail);
@@ -216,23 +259,26 @@ function parseGithub(
   unknown: (key: string) => void,
   fail: (key: string, message: string) => never,
 ): ConfiguredOwners | undefined {
-  if (!isPlainObject(value)) return fail(key, `must be an object, such as { "owners": ["example-co"] }, not ${describe(value)}`);
+  if (!isPlainObject(value)) return fail(key, `must be an object, such as { "owners": ["example-co"] }, not ${typeOf(value)}`);
   for (const name of Object.keys(value)) if (name !== 'owners') unknown(`${key}.${name}`);
   if (!Object.hasOwn(value, 'owners')) return undefined;
   const owners = value.owners;
   const ownersKey = `${key}.owners`;
   if (owners === 'all' || owners === 'none') return owners;
-  if (!Array.isArray(owners)) return fail(ownersKey, `must be a list of GitHub owners, "all" or "none", not ${describe(owners)}`);
+  if (!Array.isArray(owners)) return fail(ownersKey, `must be a list of GitHub owners, "all" or "none", not ${typeOf(owners)}`);
   if (owners.length === 0) return fail(ownersKey, 'is empty. Use "none" for this root\'s own clones only.');
-  const seen: string[] = [];
+  const seen = new Set<string>();
   owners.forEach((owner: unknown, i) => {
-    if (typeof owner !== 'string' || !OWNER.test(owner)) {
-      fail(`${ownersKey}[${i}]`, `must be a GitHub user or organization name, such as "example-co", not ${describe(owner)}`);
+    const ownerKey = `${ownersKey}[${i}]`;
+    if (typeof owner !== 'string') return fail(ownerKey, `must be a GitHub user or organization name, such as "example-co", not ${typeOf(owner)}`);
+    // Never quoted: a token pasted here would otherwise be printed, and would pass OWNER.
+    if (GITHUB_TOKEN_PREFIX.test(owner)) return fail(ownerKey, 'looks like a GitHub token, not an owner. Remove it from the file.');
+    if (!OWNER.test(owner)) {
+      return fail(ownerKey, 'must be a GitHub user or organization name: letters, digits, - and _, starting with a letter or digit, at most 100 characters');
     }
-    const lower = owner.toLowerCase();
-    if (!seen.includes(lower)) seen.push(lower);
+    seen.add(owner.toLowerCase());
   });
-  return seen;
+  return [...seen];
 }
 
 /** A listed owner may belong to one root only, and only one root may take 'all'. */
@@ -256,9 +302,10 @@ function checkOwnersOnce(roots: readonly ConfiguredRoot[], fail: (key: string, m
 
 /** A root's path: absolute, `~`, or starting with `~/`, made absolute with `~` expanded. */
 function rootPath(value: unknown, key: string, home: string, fail: (key: string, message: string) => never): string {
-  if (typeof value !== 'string' || value === '') return fail(key, `must be a path, not ${describe(value)}`);
+  if (typeof value !== 'string') return fail(key, `must be a path, not ${typeOf(value)}`);
+  if (value === '') return fail(key, 'must be a path, not an empty string');
   const expanded = expandHome(value, home);
-  if (!isAbsolute(expanded)) return fail(key, `must be an absolute path or start with ~/, not ${quote(value)}`);
+  if (!isAbsolute(expanded)) return fail(key, 'must be an absolute path, ~, or a path starting with ~/');
   return resolve(expanded);
 }
 
@@ -289,29 +336,39 @@ function realpathOr(path: string, realpath: (path: string) => string): string {
 export function ownersByRoot(
   config: Pick<LoadedConfig, 'roots'>,
   roots: readonly string[],
-  realpath: (path: string) => string = realpathSync,
+  realpath: (path: string) => string = realpathSync.native,
 ): Map<string, ConfiguredOwners> {
+  const configured = new Map<string, ConfiguredOwners>();
+  for (const entry of config.roots ?? []) if (entry.owners !== undefined) configured.set(entry.real, entry.owners);
   const map = new Map<string, ConfiguredOwners>();
   for (const root of roots) {
     const real = realpathOr(resolve(root), realpath);
-    const configured = config.roots?.find((entry) => entry.real === real);
-    if (configured?.owners !== undefined && !map.has(real)) map.set(real, configured.owners);
+    const owners = configured.get(real);
+    if (owners !== undefined && !map.has(real)) map.set(real, owners);
   }
   return map;
+}
+
+/** A `/*` comment that never ends, `at` its offset. */
+export class UnendingComment extends Error {
+  override name = 'UnendingComment';
+  constructor(readonly at: number) {
+    super('a /* comment never ends');
+  }
 }
 
 /**
  * The text with its `//` and `/* *\/` comments, and trailing commas before a
  * `]` or `}`, each replaced by spaces, outside strings only, so JSON.parse
- * reads the rest. Line breaks are kept and nothing moves, so JSON.parse's line
- * and column still point into the file as written. A comma straight after `[`,
- * `{` or another comma is left for JSON.parse to refuse. Throws ConfigError for
- * a `/*` that never ends.
+ * reads the rest. Line breaks are kept and nothing moves, so an offset in the
+ * result, such as jsonErrorAt()'s, is the same in the file as written. A comma
+ * straight after `[`, `{` or another comma is left for JSON.parse to refuse.
+ * Throws UnendingComment for a `/*` that never ends.
  */
 export function stripJsonComments(text: string): string {
   const out = text.split('');
   // A byte order mark, which JSON.parse refuses.
-  if (out[0] === '﻿') out[0] = ' ';
+  if (out[0] === '\uFEFF') out[0] = ' ';
   const blank = (from: number, to: number) => {
     for (let j = from; j < to; j++) if (out[j] !== '\n' && out[j] !== '\r') out[j] = ' ';
   };
@@ -332,10 +389,10 @@ export function stripJsonComments(text: string): string {
       i = j;
     } else if (c === '/' && text[i + 1] === '*') {
       const end = text.indexOf('*/', i + 2);
-      if (end === -1) throw new ConfigError('a /* comment never ends');
+      if (end === -1) throw new UnendingComment(i);
       blank(i, end + 2);
       i = end + 2;
-    } else if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '﻿') {
+    } else if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\uFEFF') {
       i++;
     } else {
       if ((c === ']' || c === '}') && comma !== -1) out[comma] = ' ';
@@ -348,21 +405,28 @@ export function stripJsonComments(text: string): string {
 }
 
 /**
- * The first key, anywhere in `value`, named like a token: `token`, or one
- * ending in it, ignoring case, `-`, `_` and `.` (`PITWALL_TOKEN`,
- * `githubToken`, `api-token`). Walked without recursion, so a deeply nested
- * file can't overflow the stack.
+ * The first token found anywhere in `value`, and where:
+ *
+ * - 'named': a key named like one, `token` or ending in it, ignoring case, `-`, `_` and `.`
+ *   (`PITWALL_TOKEN`, `githubToken`, `api-token`); `key` is that key's path.
+ * - 'value': a string that holds a GitHub token (GITHUB_TOKEN); `key` is its path.
+ * - 'key': a key that is one; `key` is the path of the object it's in, since the key itself
+ *   mustn't be printed.
+ *
+ * Walked without recursion, so a deeply nested file can't overflow the stack.
  */
-function tokenKey(value: unknown): string | undefined {
+function tokenIn(value: unknown): { kind: 'named' | 'value' | 'key'; key: string } | undefined {
   const stack: { value: unknown; key: string }[] = [{ value, key: '' }];
   while (stack.length > 0) {
     const { value: node, key } = stack.pop()!;
+    if (typeof node === 'string' && GITHUB_TOKEN.test(node)) return { kind: 'value', key };
     if (Array.isArray(node)) {
       node.forEach((item: unknown, i) => stack.push({ value: item, key: `${key}[${i}]` }));
     } else if (isPlainObject(node)) {
       for (const [name, item] of Object.entries(node)) {
+        if (GITHUB_TOKEN.test(name)) return { kind: 'key', key };
         const path = key === '' ? name : `${key}.${name}`;
-        if (/token$/.test(name.toLowerCase().replace(/[-_.]/g, ''))) return path;
+        if (/token$/.test(name.toLowerCase().replace(/[-_.]/g, ''))) return { kind: 'named', key: path };
         stack.push({ value: item, key: path });
       }
     }
@@ -370,22 +434,136 @@ function tokenKey(value: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Where JSON.parse first fails in `text`, as an offset, or -1 when it doesn't.
+ * Only for the message, which gives a line and column instead of V8's own,
+ * since that quotes the text around the error (D24). Iterative, so deep
+ * nesting can't overflow the stack. An error at the end is `text.length`.
+ */
+export function jsonErrorAt(text: string): number {
+  const open: string[] = [];
+  let i = 0;
+  const space = () => {
+    while (text[i] === ' ' || text[i] === '\t' || text[i] === '\n' || text[i] === '\r') i++;
+  };
+  // From the opening quote; true past the closing one.
+  const string = (): boolean => {
+    for (i++; i < text.length; i++) {
+      const c = text[i]!;
+      if (c === '"') {
+        i++;
+        return true;
+      }
+      if (c < ' ') return false;
+      if (c === '\\') {
+        const escape = text[i + 1];
+        if (escape === 'u' && /^[0-9A-Fa-f]{4}$/.test(text.slice(i + 2, i + 6))) i += 5;
+        else if (escape !== undefined && '"\\/bfnrt'.includes(escape)) i++;
+        else {
+          // At the character after the backslash, as V8 has it.
+          i++;
+          return false;
+        }
+      }
+    }
+    return false;
+  };
+  let state: 'value' | 'key' | 'after' = 'value';
+  for (;;) {
+    space();
+    if (state === 'value') {
+      const c = text[i];
+      if (c === '{' || c === '[') {
+        i++;
+        space();
+        if (text[i] === (c === '{' ? '}' : ']')) {
+          i++;
+          state = 'after';
+        } else {
+          open.push(c);
+          state = c === '{' ? 'key' : 'value';
+        }
+      } else if (c === '"') {
+        if (!string()) return i;
+        state = 'after';
+      } else if (c === '-' || (c !== undefined && c >= '0' && c <= '9')) {
+        NUMBER.lastIndex = i;
+        // A lone minus sign's error is after it, as V8 has it.
+        if (!NUMBER.test(text)) return c === '-' ? i + 1 : i;
+        i = NUMBER.lastIndex;
+        state = 'after';
+      } else {
+        const word = ['true', 'false', 'null'].find((literal) => text.startsWith(literal, i));
+        if (word === undefined) return i;
+        i += word.length;
+        state = 'after';
+      }
+    } else if (state === 'key') {
+      if (text[i] !== '"' || !string()) return i;
+      space();
+      if (text[i] !== ':') return i;
+      i++;
+      state = 'value';
+    } else {
+      const top = open.at(-1);
+      if (top === undefined) return i < text.length ? i : -1;
+      if (text[i] === ',') {
+        i++;
+        state = top === '{' ? 'key' : 'value';
+      } else if (text[i] === (top === '{' ? '}' : ']')) {
+        i++;
+        open.pop();
+      } else {
+        return i;
+      }
+    }
+  }
+}
+
+/** `offset` in `text` as "line 3, column 19", both from 1. */
+function lineAndColumn(text: string, offset: number): string {
+  let line = 1;
+  let start = 0;
+  for (let i = text.indexOf('\n'); i !== -1 && i < offset; i = text.indexOf('\n', i + 1)) {
+    line++;
+    start = i + 1;
+  }
+  return `line ${line}, column ${offset - start + 1}`;
+}
+
+/** A JSON number, from where lastIndex says. */
+const NUMBER = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
+
+/**
+ * GitHub's token formats (classic, OAuth, user-to-server, server-to-server, refresh and
+ * fine-grained), anywhere in a string, from a prefix and at least 20 more characters.
+ */
+const GITHUB_TOKEN = /(?:^|[^A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
+
+/** An owner starting like a GitHub token. No GitHub user or org name has a `_`, and an Enterprise Managed User's ends in its shortcode. */
+const GITHUB_TOKEN_PREFIX = /^(?:gh[pousr]_|github_pat_)/i;
+
 const OWNER = new RegExp(`^${GITHUB_OWNER_PATTERN}$`);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** A key or value from the file, for a message: JSON-quoted, so control characters are escaped, and cut short. */
+/**
+ * A key from the file, for a message: JSON-quoted, so control characters are escaped, and cut
+ * short. Never a value from the file (D24).
+ */
 function quote(value: string): string {
   const text = JSON.stringify(value);
   return text.length > 80 ? `${text.slice(0, 77)}..."` : text;
 }
 
-function describe(value: unknown): string {
-  if (typeof value === 'string') return quote(value);
+/** A value's type, for a message, never its text (D24). */
+function typeOf(value: unknown): string {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'a list';
   if (typeof value === 'object') return 'an object';
-  return `${typeof value === 'number' ? 'the number' : typeof value} ${String(value)}`;
+  if (typeof value === 'string') return 'a string';
+  if (typeof value === 'number') return 'a number';
+  return 'true or false';
 }
