@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { allowSignalsTo } from '../test/noClaude.js';
 import { absoluteSearchPath, RunError, oneLine, runFile } from './exec.js';
 
 // Real child processes, using this Node binary as the program.
@@ -267,6 +268,79 @@ describe('runFile', () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 10_000);
+
+  describe.skipIf(process.platform === 'win32')('with processGroup, what ignores SIGTERM in the group gets SIGKILL, though the child itself exited on the SIGTERM (W108)', () => {
+    // The child exits on SIGTERM, as gh does; the grandchild it started ignores it, as a git might.
+    // The grandchild writes its pid once its handler is on, and gives up by itself after 20 s.
+    const script = [
+      'const { spawn } = require("node:child_process");',
+      'spawn(process.execPath, ["-e", "process.on(\\"SIGTERM\\", () => {}); require(\\"node:fs\\").writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => process.exit(0), 20000); setInterval(() => {}, 1000);", process.argv[1]], { stdio: "ignore" });',
+      'setInterval(() => {}, 1000);',
+    ].join(' ');
+
+    async function grandchildOf(pidFile: string): Promise<number> {
+      for (let tries = 0; tries < 200; tries++) {
+        const pid = Number(await readFile(pidFile, 'utf8').catch(() => ''));
+        if (pid > 0) return pid;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error('the grandchild never started');
+    }
+
+    const kill = (pid: number | undefined) => {
+      if (pid === undefined) return;
+      try {
+        // A process the test's own child started, which the test guard never saw: named so it may go.
+        allowSignalsTo(pid);
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Gone, as it should be.
+      }
+    };
+
+    it('after a timeout', async () => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-exec-'));
+      const pidFile = path.join(dir, 'pid');
+      let grandchild: number | undefined;
+      try {
+        const run = failure(runFile(node, ['-e', script, pidFile], { timeoutMs: 2_000, processGroup: true }));
+        grandchild = await grandchildOf(pidFile);
+        const err = await run;
+        expect(err.reason).toBe('timeout');
+        // The child has gone on the SIGTERM, and the grandchild ignored it: the reviewer's probe.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(isRunning(grandchild)).toBe(true);
+        // The SIGKILL, 2 s after the SIGTERM, reaches it though its group's leader has gone.
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        expect(isRunning(grandchild)).toBe(false);
+      } finally {
+        kill(grandchild);
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 15_000);
+
+    it('after an abort, which rejects only once nothing in the group is left', async () => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-exec-'));
+      const pidFile = path.join(dir, 'pid');
+      let grandchild: number | undefined;
+      try {
+        const controller = new AbortController();
+        const run = failure(runFile(node, ['-e', script, pidFile], { timeoutMs: 60_000, processGroup: true, signal: controller.signal }));
+        grandchild = await grandchildOf(pidFile);
+        const started = Date.now();
+        controller.abort();
+        const err = await run;
+        expect(err.reason).toBe('aborted');
+        // Not at the child's exit, a moment after the SIGTERM, but once the SIGKILL had removed the grandchild.
+        expect(isRunning(grandchild)).toBe(false);
+        expect(Date.now() - started).toBeGreaterThanOrEqual(1_900);
+        expect(Date.now() - started).toBeLessThan(2_600);
+      } finally {
+        kill(grandchild);
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 15_000);
+  });
 
   it('runs nothing with a signal that has already aborted', async () => {
     const controller = new AbortController();

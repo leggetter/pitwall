@@ -15,7 +15,7 @@ import { spawnPty } from '../server/pty.js';
 // Read before this file loads the guard itself, so it shows the setup file did.
 const installedBySetup =
   (globalThis as Record<symbol, { installed?: boolean } | undefined>)[Symbol.for('pitwall.noClaude')]?.installed === true;
-const { allowSignalsTo, failOnGhCalls, failOnRefusals, GH_NO_LOGIN, ghStandIn, takeGhCalls, takeRefusals } = await import('./noClaude.js');
+const { allowSignalsTo, failOnGhCalls, failOnRefusals, GH_NO_LOGIN, ghStandIn, GROUP_GRACE_MS, takeGhCalls, takeRefusals } = await import('./noClaude.js');
 
 const CLAUDE = '/nonexistent/pitwall-test/claude';
 const REFUSED = /would run claude without PITWALL_LIVE=1/;
@@ -316,6 +316,32 @@ describe('the no-claude guard', () => {
       try {
         allowSignalsTo(other);
         process.kill(other, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }
+  });
+
+  it("lets a test signal what's left of its own child's group for a while after that child exits, as runFile's SIGKILL does (W108), but not a group it never started", async () => {
+    // A leader in a group of its own that exits at once, leaving a sleep in its group, as gh leaves a git.
+    const leader = spawn('/bin/sh', ['-c', 'sleep 30 >/dev/null 2>&1 & echo $!'], { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+    const pid = leader.pid as number;
+    const left = await new Promise<number>((resolve) => leader.stdout.once('data', (data: Buffer) => resolve(Number(String(data).trim()))));
+    await new Promise((resolve) => (leader.exitCode === null ? leader.once('exit', resolve) : resolve(undefined)));
+    // And a child in its parent's group, which has exited: its pid names no group of its own.
+    const plain = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await new Promise((resolve) => plain.once('exit', resolve));
+    try {
+      expect(process.kill(-pid, 0)).toBe(true);
+      expect(process.kill(-pid, 'SIGKILL')).toBe(true);
+      expect(takeRefusals()).toEqual([]);
+      expect(() => process.kill(-(plain.pid as number), 'SIGKILL')).toThrow(SIGNAL_REFUSED);
+      expect(takeRefusals()).toHaveLength(1);
+      expect(GROUP_GRACE_MS).toBe(10_000);
+    } finally {
+      try {
+        allowSignalsTo(left);
+        process.kill(left, 'SIGKILL');
       } catch {
         // Already gone.
       }

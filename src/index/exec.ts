@@ -18,9 +18,11 @@ export interface RunOptions {
    */
   processGroup?: boolean;
   /**
-   * Stops the child, with `processGroup` its whole group, with SIGTERM, then SIGKILL 2 s later, and
-   * rejects with reason 'aborted' once it has exited, or 2.5 s after the SIGTERM at most, so a caller
-   * can then remove what it wrote: a clone when the server closes (W107). Already aborted, nothing runs.
+   * Stops the child, with `processGroup` its whole group, with SIGTERM, then SIGKILL 2 s later to
+   * whatever of it is still there, and rejects with reason 'aborted' once it has exited and, with
+   * `processGroup`, nothing in its group is left, or 2.5 s after the SIGTERM at most, so a caller can
+   * then remove what it wrote: a clone when the server closes (W107, W108's finding). Already
+   * aborted, nothing runs.
    */
   signal?: AbortSignal;
 }
@@ -215,7 +217,9 @@ export function childEnvironment(env: NodeJS.ProcessEnv, token?: string): Record
  *
  * On timeout the child gets SIGTERM (SIGKILL 2 seconds later if it's still
  * running) and the promise rejects straight away, without waiting for stdout
- * to close.
+ * to close. With `processGroup` both go to its whole group, and the SIGKILL
+ * goes while anything in the group is left, not only while the child runs:
+ * gh exits on the SIGTERM, but a git it started may ignore it (W108's finding).
  */
 export const runFile: RunFile = (file, args, options) =>
   new Promise<string>((resolve, reject) => {
@@ -256,6 +260,44 @@ export const runFile: RunFile = (file, args, options) =>
 
     const running = () => child.exitCode === null && child.signalCode === null;
 
+    /**
+     * With `processGroup`, whether anything is left in the child's group, gh or a git it started,
+     * by `kill(-pid, 0)`. The group's id is the child's pid, which POSIX never reuses while the
+     * group lasts, so a group that's still there is this one. Only asked within 2.5 s of the
+     * SIGTERM, so a group that ended and a new one under the same pid, which takes the pid space
+     * wrapping round and a new process making itself a group leader, isn't a real risk.
+     */
+    const groupLeft = () => {
+      if (!group || child.pid === undefined) return false;
+      try {
+        process.kill(-child.pid, 0);
+        return true;
+      } catch {
+        // ESRCH: the group has gone. EPERM: what's left isn't this user's to signal anyway.
+        return false;
+      }
+    };
+    /** What a signal would still reach: the child while it runs, and with `processGroup` anything left in its group. */
+    const anyLeft = () => running() || groupLeft();
+
+    let stopping = false;
+    /**
+     * SIGTERM now, to the child or its whole group, and SIGKILL 2 s later to whatever of it is still
+     * there, so nothing is left behind on every poll by a process that ignores SIGTERM. Once.
+     */
+    const stop = () => {
+      if (stopping || !anyLeft()) return;
+      stopping = true;
+      send('SIGTERM');
+      const force = setTimeout(() => {
+        if (anyLeft()) send('SIGKILL');
+      }, 2000);
+      force.unref();
+      // Without a group only the child is signalled, so its exit ends the need. With one, what it
+      // started can outlive it: gh exits on the SIGTERM while its git ignores it (W108's finding).
+      if (!group) child.once('exit', () => clearTimeout(force));
+    };
+
     const finish = (result: RunError | undefined, stdout?: string) => {
       if (settled) return;
       settled = true;
@@ -264,16 +306,7 @@ export const runFile: RunFile = (file, args, options) =>
       // Aborted, it says so, whatever the child did as it stopped.
       const error = aborted ?? result;
       if (error) {
-        // Only while the child runs, whose pid then still names its group, so a reused pid is never signalled.
-        if (running()) {
-          send('SIGTERM');
-          // Don't leave a process behind on every poll if it ignores SIGTERM.
-          const force = setTimeout(() => {
-            if (running()) send('SIGKILL');
-          }, 2000);
-          force.unref();
-          child.once('exit', () => clearTimeout(force));
-        }
+        stop();
         child.stdout?.destroy();
         reject(error);
       } else {
@@ -281,52 +314,64 @@ export const runFile: RunFile = (file, args, options) =>
       }
     };
 
+    /**
+     * What the child does, which settles the run, unless the caller has aborted it and something is
+     * left in its group: then abort() settles it, once the group has gone.
+     */
+    const settleBy = (result: RunError | undefined, stdout?: string) => {
+      if (aborted && groupLeft()) return;
+      finish(result, stdout);
+    };
+
     const timer = setTimeout(() => {
       finish(new RunError('timeout', `timed out after ${formatSeconds(options.timeoutMs)}`));
     }, options.timeoutMs);
 
-    // Stopped by the caller: SIGTERM now, SIGKILL 2 s later, and the rejection once it has exited.
+    // Stopped by the caller: SIGTERM now, SIGKILL 2 s later, and the rejection once the child has
+    // exited and, with a group, nothing in it is left, or 2.5 s after the SIGTERM at most.
     function abort() {
       if (settled || aborted) return;
       aborted = new RunError('aborted', 'was stopped');
       clearTimeout(timer);
-      if (!running()) {
+      if (!anyLeft()) {
         finish(aborted);
         return;
       }
-      send('SIGTERM');
-      const force = setTimeout(() => {
-        if (running()) send('SIGKILL');
-      }, 2000);
+      stop();
       const giveUp = setTimeout(() => finish(aborted), 2500);
-      force.unref();
       giveUp.unref();
-      child.once('exit', () => {
-        clearTimeout(force);
+      const whenGone = () => {
+        if (settled) return;
+        if (groupLeft()) {
+          setTimeout(whenGone, 50).unref();
+          return;
+        }
         clearTimeout(giveUp);
         finish(aborted);
-      });
+      };
+      if (running()) child.once('exit', whenGone);
+      else whenGone();
     }
     options.signal?.addEventListener('abort', abort, { once: true });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > maxBytes) {
-        finish(new RunError('too-large', `printed more than ${maxBytes} bytes`));
+        settleBy(new RunError('too-large', `printed more than ${maxBytes} bytes`));
         return;
       }
       chunks.push(chunk);
     });
 
     child.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') finish(new RunError('not-found', `${file} was not found`));
-      else finish(new RunError('spawn', oneLine(err.message)));
+      if (err.code === 'ENOENT') settleBy(new RunError('not-found', `${file} was not found`));
+      else settleBy(new RunError('spawn', oneLine(err.message)));
     });
 
     child.on('close', (code, signal) => {
-      if (code === 0) finish(undefined, Buffer.concat(chunks).toString('utf8'));
-      else if (code !== null) finish(new RunError('exit', `exited with code ${code}`, code));
-      else finish(new RunError('signal', `was killed by ${signal ?? 'a signal'}`));
+      if (code === 0) settleBy(undefined, Buffer.concat(chunks).toString('utf8'));
+      else if (code !== null) settleBy(new RunError('exit', `exited with code ${code}`, code));
+      else settleBy(new RunError('signal', `was killed by ${signal ?? 'a signal'}`));
     });
   });
 

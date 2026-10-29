@@ -21,7 +21,7 @@ import {
   type ServerMessage,
 } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
-import { cloneArgs, ownTempDir, planClone, unsafeName, type CloneFs, type CloneOptions } from './clone.js';
+import { cloneArgs, holdsHome, homeRefusal, ownTempDir, planClone, unsafeName, type CloneFs, type CloneOptions } from './clone.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
 
@@ -316,6 +316,63 @@ describe('POST CLONE_PATH: the target', () => {
     const res = await clone(started);
     expect([res.status, errorOf(res)]).toEqual([409, expect.stringMatching(/isn't a directory at its own path/)]);
     expect(await rootEntries()).toEqual([]);
+  });
+});
+
+describe('POST CLONE_PATH: never into your home folder or above it (W108)', () => {
+  it('answers 409, saying why, for a root that is your home folder, or holds it, and runs nothing', async () => {
+    // A made-up home folder: the root itself, then a folder inside the root, which the root holds.
+    for (const home of [root, join(root, 'someone')]) {
+      await mkdir(home, { recursive: true });
+      const gh = fakeGh();
+      const started = await start({ clone: { runFile: gh, home } });
+      const res = await clone(started);
+      expect(res.status).toBe(409);
+      expect(errorOf(res)).toBe(homeRefusal(root, home));
+      const opening = home === root ? "pitwall doesn't clone into your home folder: " : `pitwall doesn't clone into ${root}, which holds your home folder: `;
+      expect(errorOf(res).startsWith(opening)).toBe(true);
+      expect(errorOf(res)).toMatch(/~\/bin, which some shells' profiles put on PATH, or ~\/Applications, where pitwall looks for editors/);
+      expect(gh.calls).toEqual([]);
+      await started.server.close();
+    }
+  });
+
+  it('compares real paths: a home folder given through a symlink to the root is the root', async () => {
+    const link = join(tmp, `home-link-${n}`);
+    await symlink(root, link);
+    const gh = fakeGh();
+    const res = await clone(await start({ clone: { runFile: gh, home: link } }));
+    expect([res.status, errorOf(res)]).toEqual([409, homeRefusal(root, root)]);
+    expect(gh.calls).toEqual([]);
+  });
+
+  it('clones into a root beside the home folder, or inside it', async () => {
+    // A made-up home folder beside the root, then one that holds it, as ~ holds ~/code.
+    for (const home of [other, tmp]) {
+      const gh = fakeGh();
+      const res = await clone(await start({ clone: { runFile: gh, home } }));
+      expect(res.status).toBe(201);
+      expect(gh.calls).toHaveLength(1);
+      await rm(join(root, 'Demo-App'), { recursive: true, force: true });
+    }
+  });
+
+  it('clones nothing when it can’t tell where your home folder is', async () => {
+    const gh = fakeGh();
+    const res = await clone(await start({ clone: { runFile: gh, home: 'not-absolute' } }));
+    expect([res.status, errorOf(res)]).toEqual([409, "pitwall can't tell where your home folder is, so it doesn't clone: it never clones into your home folder or a folder above it."]);
+    expect(gh.calls).toEqual([]);
+  });
+
+  it('holdsHome is true for the home folder and the folders above it, by path segment, and false for the rest', () => {
+    expect(holdsHome('/home/someone', '/home/someone')).toBe(true);
+    expect(holdsHome('/home', '/home/someone')).toBe(true);
+    expect(holdsHome('/', '/home/someone')).toBe(true);
+    expect(holdsHome('/home/someone/code', '/home/someone')).toBe(false);
+    expect(holdsHome('/home/some', '/home/someone')).toBe(false);
+    expect(holdsHome('/home/someone-else', '/home/someone')).toBe(false);
+    expect(holdsHome('/srv', '/home/someone')).toBe(false);
+    expect(holdsHome('/home/..someone', '/home/..someone/x')).toBe(true);
   });
 });
 

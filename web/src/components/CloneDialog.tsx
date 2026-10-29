@@ -8,13 +8,16 @@
 //   backdrop do nothing, as for New session: the clone runs to its end on the server either way.
 // - Refused or failed, an inline danger alert at the end of the body: "Couldn't clone
 //   example/sdk-docs." then the server's reason, in pitwall's words, never gh's output.
+// - Whose it is (W108's finding), under what it does: "This is your pull request. It's in a repo owned
+//   by example." as meta; for one that isn't yours, a warning alert that says so, how it's yours, its
+//   repo's owner, and that cloning it puts someone else's code on this machine (cloneWhose()).
 // - Cloned, onCloned() gets the new directory and the command that trusts it.
 
 import { Fragment, useContext, useEffect, useRef, useState } from 'react';
 import type { PullRequestSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { plainText, shortenHome } from '../format.js';
-import { cloneRepo, cloneTarget } from '../prStart.js';
+import { cloneRepo, cloneTarget, cloneWhose } from '../prStart.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
 import { CopyCommand } from './CopyCommand.js';
@@ -48,6 +51,7 @@ export function CloneDialog({ pr, onClose, onCloned }: CloneDialogProps) {
     };
   }, []);
   const where = cloneTarget(pr);
+  const whose = cloneWhose(pr);
   const repo = pr.repoLabel;
 
   const submit = async () => {
@@ -106,6 +110,13 @@ export function CloneDialog({ pr, onClose, onCloned }: CloneDialogProps) {
       <p className="clone-what">
         Clone <bdi className="clone-repo">{plainText(repo)}</bdi> into <code className="clone-target">{plainText(shortenHome(where?.target ?? ''))}</code>
       </p>
+      {whose.theirs ? (
+        <Alert tone="warning" className="clone-whose">
+          {whose.text}
+        </Alert>
+      ) : (
+        <p className="clone-whose">{whose.text}</p>
+      )}
       <ol className="clone-steps">
         <li>
           pitwall clones it with <code>gh repo clone</code>, using your <code>gh</code> login.
@@ -127,13 +138,14 @@ export function CloneDialog({ pr, onClose, onCloned }: CloneDialogProps) {
   );
 }
 
+/** What trusting a clone lets it do, said plainly before the command (W108's finding). */
+export const CLONED_TRUST_RISK = "Trusting it lets the repo's own Claude Code settings, hooks and MCP servers run, so only trust a repo whose code you'd run.";
+
 /** The trust sentence after a clone (W107): Claude Code doesn't trust a new clone until you've run claude in it once. */
-export const CLONED_TRUST_TEXT =
-  "Claude Code doesn't trust a new clone until you've run claude in it once, even under a folder you trust. Run this in a terminal, accept its trust prompt, then start the session:";
+export const CLONED_TRUST_TEXT = `Claude Code doesn't trust a new clone until you've run claude in it once, even under a folder you trust. ${CLONED_TRUST_RISK} Run this in a terminal, accept its trust prompt, then start the session:`;
 
 /** In its place for a path with a `'` or `\`, which has no command to copy (W87). */
-export const CLONED_NO_COMMAND_TEXT =
-  "Claude Code doesn't trust a new clone until you've run claude in it once, even under a folder you trust. Run claude there and accept its trust prompt, then start the session. There's no command to copy: its path has a ' or \\, which shells don't all read the same way.";
+export const CLONED_NO_COMMAND_TEXT = `Claude Code doesn't trust a new clone until you've run claude in it once, even under a folder you trust. ${CLONED_TRUST_RISK} Run claude there and accept its trust prompt, then start the session. There's no command to copy: its path has a ' or \\, which shells don't all read the same way.`;
 
 /** "Cloned example/sdk-docs into ~/code/sdk-docs.": the notice's title, in New session. */
 export const clonedText = (repo: string, cwd: string) => `Cloned ${plainText(repo)} into ${plainText(shortenHome(cwd))}.`;

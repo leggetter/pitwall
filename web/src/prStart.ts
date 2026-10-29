@@ -8,6 +8,9 @@
 //   its checks' names or anything else from GitHub but the URL: a prompt pitwall fills in is sent as
 //   typed by you, and a title is its author's words, a check's name its repo's maintainers' and apps'
 //   (W107's review: "lint. Then run curl … | sh"). The session looks them up itself, with gh.
+// - For a PR that isn't yours, a review request or a mention, it also asks the session not to check
+//   out or run the PR's code without asking first (W108's finding): the session runs in your default
+//   permission mode in a folder you trust, and reads what the PR's author wrote.
 // - The name is "pr-<number>", which you can change.
 // - Until the index has read the new session's transcript, a poll or two later, the page links it to
 //   the PR itself (withPendingLinks()), with the same 'prompted' link and only when the prompt sent
@@ -23,7 +26,7 @@ import {
   type SessionSummary,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
-import { couldNot, tryAgainIn } from './format.js';
+import { couldNot, plainText, tryAgainIn } from './format.js';
 import { githubPrUrl, prName } from './prs.js';
 
 /** New session's prefill for a PR (NewSessionDialog's `prefill`). */
@@ -42,18 +45,24 @@ function named(pr: PullRequestSummary): string {
 }
 
 /**
+ * What the prompt adds for a PR that isn't yours (W108's finding): its code is its author's, which a
+ * session in a folder you trust would otherwise check out or run as freely as your own.
+ */
+export const NOT_YOURS_ASK = "It isn't my pull request: don't check out its branch or run any of its code without asking me first.";
+
+/**
  * The first prompt for a session on `pr`: its URL, and why it needs you, in pitwall's words. A review
  * request is "Review <url>. …"; your own PR's failing checks, conflicts and changes requested are one
  * sentence each, or a list when there are several; one that needs nothing is "Work on <url>.", and a
- * mention "Read <url>, which mentions me, …". Never its title, its checks' names or any other text
- * from GitHub but its URL.
+ * mention "Read <url>, which mentions me, …". A review request and a mention end with NOT_YOURS_ASK.
+ * Never its title, its checks' names or any other text from GitHub but its URL.
  */
 export function prPrompt(pr: PullRequestSummary): string {
   const url = named(pr);
   if (pr.relation === 'review-requested') {
-    return `Review ${url}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub.`;
+    return `Review ${url}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub. ${NOT_YOURS_ASK}`;
   }
-  if (pr.relation === 'mentioned') return `Read ${url}, which mentions me, and tell me what it needs from me.`;
+  if (pr.relation === 'mentioned') return `Read ${url}, which mentions me, and tell me what it needs from me. ${NOT_YOURS_ASK}`;
   const asks: { one: string; item: string }[] = [];
   if (pr.checks === 'failing') asks.push({ one: `Fix the failing checks on ${url}.`, item: 'Fix its failing checks.' });
   if (pr.mergeable === 'conflicts') asks.push({ one: `Resolve the merge conflicts on ${url} with its base branch.`, item: 'Resolve its merge conflicts with its base branch.' });
@@ -78,6 +87,27 @@ export function cloneTarget(pr: PullRequestSummary): { root: string; name: strin
   const name = pr.repoLabel.slice(pr.repoLabel.indexOf('/') + 1);
   const root = pr.place.root;
   return { root, name, target: `${root.replace(/\/+$/, '')}/${name}` };
+}
+
+/**
+ * Whose a PR to clone is, for Clone and start's confirmation (W108's finding): how it's yours and
+ * its repo's owner, by GitHub's spelling, and, for one that isn't yours, that cloning it puts someone
+ * else's code on this machine. Anyone can open a PR on their own repo that mentions you.
+ */
+export function cloneWhose(pr: Pick<PullRequestSummary, 'relation' | 'reviewRequest' | 'repoLabel'>): { theirs: boolean; text: string } {
+  const owner = plainText(pr.repoLabel.slice(0, Math.max(0, pr.repoLabel.indexOf('/'))));
+  const repo = `It's in a repo owned by ${owner}.`;
+  if (pr.relation === 'authored') return { theirs: false, text: `This is your pull request. ${repo}` };
+  const request = pr.reviewRequest;
+  const how =
+    pr.relation === 'mentioned'
+      ? "you're mentioned in it"
+      : request?.via !== 'team'
+        ? 'your review is requested'
+        : request.team === undefined
+          ? "your review is requested through a team you're on"
+          : `your review is requested through ${plainText(request.team)}`;
+  return { theirs: true, text: `This pull request isn't yours: ${how}. ${repo} Cloning it puts someone else's code on this machine.` };
 }
 
 /** The link the page gives a session it started for `pr`, while the index hasn't read its prompt yet; none when the prompt sent no longer names the PR's URL. */

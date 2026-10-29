@@ -1,8 +1,9 @@
 // Starting a session for a pull request (W107; docs/design-system.md, 4: Pull requests): a PR row's
 // action in a cloned repo, New session prefilled in its clone, started, and the PR row going into the
 // new session's at once; Clone and start for a repo that isn't cloned, its confirmation, the made-up
-// clone, New session in the new folder with how to trust it, and the repo list then listing the clone;
-// a clone that fails; the PR view's own action; the row's action reached with Tab, which shows it; and
+// clone, New session in the new folder with how to trust it and what trusting it lets the repo do, and
+// the repo list then listing the clone; whose the PR is, and the warning for one that isn't yours
+// (W108); a clone that fails; the PR view's own action; the row's action reached with Tab, which shows it; and
 // Resume on the row of an ended session that owns an open PR. Made-up PRs only (fixtures.ts, PRS);
 // the fake server clones nothing.
 
@@ -82,6 +83,8 @@ const part: Part = {
       await page.click('Clone and start for #9', startOf(PRS.notCloned));
       await page.waitFor('the confirmation', `${dialogName} === 'Clone and start a session'`);
       t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.clone-what')?.textContent`), 'Clone example/sdk-docs into ~/code/sdk-docs', 'what it does');
+      t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.clone-whose')?.textContent`), "This is your pull request. It's in a repo owned by example.", 'whose it is (W108)');
+      t.expect(!(await page.evaluate<boolean>(`!!${DIALOG}.querySelector('.clone-whose.inline-alert')`)), 'yours: no warning');
       t.expectEqual(server.records.clones, [], 'nothing yet');
       await t.shot('clone-confirm');
       await page.click('Clone', dialogButton('Clone'));
@@ -94,6 +97,10 @@ const part: Part = {
       t.expectEqual(await page.evaluate(directory), SDK_DOCS, 'the new clone, chosen');
       t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.cloned-notice .inline-alert-title')?.textContent`), 'Cloned example/sdk-docs into ~/code/sdk-docs.', 'what was cloned');
       t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.cloned-notice .command-chip')?.textContent`), `cd ${SDK_DOCS} && claude`, 'the command that trusts it');
+      t.expect(
+        (await page.evaluate<string>(`${DIALOG}.querySelector('.cloned-notice')?.textContent ?? ''`)).includes("Trusting it lets the repo's own Claude Code settings, hooks and MCP servers run, so only trust a repo whose code you'd run."),
+        'what trusting it lets the repo do (W108)',
+      );
       t.expectEqual(await page.evaluate(`${field('Name')}?.value`), 'pr-9', 'the name');
       await t.shot('cloned');
       await page.click('Cancel', dialogButton('Cancel'));
@@ -105,6 +112,28 @@ const part: Part = {
         await page.key('Escape');
         await page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
       }
+    });
+
+    await t.step("for a pull request that isn't yours, a warning says so, who owns its repo, and that cloning puts someone else's code on this machine (W108)", async () => {
+      await fresh();
+      server.world.listAs(PRS.notCloned, 'mentioned');
+      server.broadcastPrs();
+      await page.waitFor('#9 listed as mentioning you', `${prRow(PRS.notCloned)}?.textContent.includes('Mentions you') === true`, 5000);
+      await page.click('Clone and start for #9', startOf(PRS.notCloned));
+      await page.waitFor('the confirmation', `${dialogName} === 'Clone and start a session'`);
+      const whose = `${DIALOG}.querySelector('.clone-whose')`;
+      t.expect(await page.evaluate<boolean>(`!!${whose}?.matches('.inline-alert.warning')`), 'a warning alert');
+      t.expectEqual(
+        await page.evaluate(`${whose}?.textContent`),
+        "This pull request isn't yours: you're mentioned in it. It's in a repo owned by example. Cloning it puts someone else's code on this machine.",
+        'whose it is',
+      );
+      // Above the fold of the dialog's body, under what it does, so it's read before Clone.
+      t.expect(await page.evaluate<boolean>(`${whose}.getBoundingClientRect().top < ${DIALOG}.querySelector('.clone-steps').getBoundingClientRect().top`), 'before the steps');
+      await t.shot('clone-not-yours');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.clones, [], 'nothing cloned');
     });
 
     await t.step("a clone that fails says why in pitwall's words, and the confirmation stays", async () => {
