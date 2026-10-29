@@ -199,7 +199,7 @@ export function addLink(links: Map<string, FoundLink>, link: FoundLink): void {
   if (known === undefined || link.at > known.at) links.set(key, link);
 }
 
-const KIND_ORDER: Readonly<Record<PrLinkKind, number>> = { opened: 0, pushed: 1, prompted: 2, mentioned: 3 };
+const KIND_ORDER: Readonly<Record<PrLinkKind, number>> = { opened: 0, pushed: 1, linked: 2, prompted: 3, mentioned: 4 };
 
 /** Newest first; ties by kind, repo, then number or branch, so the order never flips between scans. */
 function newestFirst(a: FoundLink, b: FoundLink): number {

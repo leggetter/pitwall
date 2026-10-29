@@ -212,16 +212,23 @@ export interface SessionSummary {
  * - 'pushed': the session pushed a branch, by `git push`'s output, which
  *   names the repo and the branch. It matches the PR whose head is that branch
  *   in that repo.
+ * - 'linked': Claude Code linked the session to it itself, with a `pr-link`
+ *   transcript entry (M4 redesign, W104). The entry is internal, read behind
+ *   the transcript adapter; what makes one is documented (agent view, "Pull
+ *   request status"): `gh pr create`, a `gh` edit, comment, close or ready on
+ *   it, and a push or `gh pr checkout` that Claude Code matches to it. A
+ *   sub-agent's link is written in its parent's transcript. Claude Code
+ *   writes the current PR's entry again and again, so `lastAt` is the newest.
  * - 'prompted': its URL is in a prompt you typed. Messages from other
  *   sessions don't count, as for SessionSummary.lastUserPrompt.
  * - 'mentioned': its URL is in Claude's own text in a reply. Tool input and
  *   output never count.
  *
- * The first three are strong (prLinkIsStrong()): the session row's PR badge,
- * the session view's PR links and the PR row's sessions use only those. The
- * PR view lists 'mentioned' ones apart, as "Mentioned in".
+ * All but 'mentioned' are strong (prLinkIsStrong()): only those can make a
+ * session a PR's owner (prOwner()). The PR view lists 'mentioned' ones apart,
+ * as "Mentioned in".
  */
-export type PrLinkKind = 'opened' | 'pushed' | 'prompted' | 'mentioned';
+export type PrLinkKind = 'opened' | 'pushed' | 'linked' | 'prompted' | 'mentioned';
 
 /** One link from a session to a pull request (SessionSummary.prLinks). */
 export interface PrLink {
@@ -239,12 +246,59 @@ export interface PrLink {
   lastAt: string;
 }
 
-/** The most PR links one session carries (SessionSummary.prLinks). */
+/**
+ * The most 'mentioned' links one session carries (SessionSummary.prLinks), newest first. Strong
+ * links have their own, higher cap, PR_LINKS_STRONG_MAX: with one cap of 20 for all of them, 10 of
+ * Phil's sessions lost older strong links, and only 187 of 324 real pairs were kept (2026-10-29).
+ */
 export const PR_LINKS_MAX = 20;
+
+/** The most strong links one session carries (prLinkIsStrong()), newest first. */
+export const PR_LINKS_STRONG_MAX = 200;
 
 /** True for the kinds that say a session worked on the PR (PrLinkKind). */
 export function prLinkIsStrong(link: PrLink): boolean {
   return link.kind !== 'mentioned';
+}
+
+/**
+ * How strongly a link makes its session a PR's owner (prOwner()): 2 for 'opened', 'pushed' and
+ * 'linked', which say the session acted on it; 1 for 'prompted', which owns only when no session
+ * acted on it; 0 for 'mentioned', which never owns.
+ */
+export function prLinkRank(link: PrLink): 0 | 1 | 2 {
+  if (link.kind === 'mentioned') return 0;
+  return link.kind === 'prompted' ? 1 : 2;
+}
+
+/**
+ * The session that owns `pr` (M4 redesign, W104; Phil, 2026-10-29: "if a session has worked on a
+ * pull request, the pull request should not be shown and should effectively be part of an agent
+ * session"). Of the sessions with a link that matches it (prLinkMatches()), the one whose best
+ * matching link has the highest prLinkRank(), then the newest `lastAt`, then the smallest
+ * sessionId, so the answer is stable. So another session acting on the PR later takes it over.
+ * Undefined when no session has a strong link to it. An ended session keeps its PR: the PR's work
+ * isn't finished while it's open, so that session stays out of Finished (Phil, 2026-10-29).
+ */
+export function prOwner<T extends { sessionId: string; prLinks?: PrLink[] | undefined }>(
+  pr: PullRequestSummary,
+  sessions: readonly T[],
+): T | undefined {
+  let best: { session: T; rank: number; at: number } | undefined;
+  for (const session of sessions) {
+    for (const link of session.prLinks ?? []) {
+      const rank = prLinkRank(link);
+      if (rank === 0 || !prLinkMatches(link, pr)) continue;
+      const parsed = Date.parse(link.lastAt);
+      const at = Number.isFinite(parsed) ? parsed : 0;
+      const better =
+        best === undefined ||
+        rank > best.rank ||
+        (rank === best.rank && (at > best.at || (at === best.at && session.sessionId < best.session.sessionId)));
+      if (better) best = { session, rank, at };
+    }
+  }
+  return best?.session;
 }
 
 /** True when `link` points at `pr`: by repo and number, or for 'pushed', by the PR's head. */
@@ -1185,6 +1239,46 @@ export interface PullRequestSummary {
    * review requests don't say, as when none of them could be read.
    */
   reviewRequest?: PullRequestReviewRequest;
+  /**
+   * Where the PR is listed when no session owns it (prOwner()), from the server, which knows every
+   * repo under the roots and the config file (M4 redesign, W104). Absent from a server that
+   * doesn't place PRs, which the web UI treats as 'unclaimed'.
+   */
+  place?: PullRequestPlace;
+}
+
+/**
+ * Where a PR with no owning session is listed (PullRequestSummary.place):
+ *
+ * - 'cloned': a git repo under a root has a GitHub remote, any of its remotes, for the PR's repo,
+ *   or failing that for its head's repo (a fork's clone). `key` is that repo's top-level directory,
+ *   the SessionGroup.key its group has or would have, and `label` its label as SessionGroup.label
+ *   is or would be. With several clones: the one whose directory is named like the repo, then
+ *   the one whose `origin` points at it, then the first by path.
+ * - 'not-cloned': no clone, and `root` claims the repo's owner (RootOwners). The web UI lists the
+ *   repo under that root as not cloned, `owner/name`, with its PRs.
+ * - 'unclaimed': no root claims it. Not listed, but counted, so the UI can say how many are hidden
+ *   and how to show them.
+ */
+export type PullRequestPlace =
+  | { kind: 'cloned'; root: string; key: string; label: string }
+  | { kind: 'not-cloned'; root: string }
+  | { kind: 'unclaimed' };
+
+/**
+ * Which GitHub owners (orgs or users) a root claims, for PRs in repos it has no clone of
+ * (PullRequestPlace 'not-cloned'). Owners are lowercase.
+ *
+ * - From the config file's `github.owners` for that root (source 'config'): a list, 'all' for any
+ *   owner no other root lists, or 'none' for its clones only. A listed owner wins over 'all'.
+ * - Otherwise (source 'clones'): each owner goes to the root with the most clones whose remotes
+ *   point at it, the first root given winning a tie (Phil, 2026-10-29).
+ */
+export interface RootOwners {
+  /** An absolute, real-path root, as IndexSnapshot.roots has it. */
+  root: string;
+  owners: string[] | 'all' | 'none';
+  source: 'config' | 'clones';
 }
 
 /**
@@ -1256,6 +1350,8 @@ export interface PullRequestList {
   prs: PullRequestSummary[];
   /** True when GitHub found more than PRS_MAX for any one search, and the rest of it were left out. */
   truncated?: true;
+  /** Which owners each root claims (RootOwners), so the UI can explain where a PR is and why one is hidden. */
+  roots?: RootOwners[];
 }
 
 /** GET: the latest PullRequestList, with the same authorization as SNAPSHOT_PATH. */

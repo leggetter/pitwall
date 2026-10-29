@@ -42,6 +42,7 @@ export const COPY_LINK = 'Copy link';
 export const LINK_KINDS: Readonly<Record<PrLinkKind, string>> = {
   opened: 'Opened it',
   pushed: 'Pushed its branch',
+  linked: 'Linked by Claude Code',
   prompted: 'Given it in a prompt',
   mentioned: 'Named it in a reply',
 };
