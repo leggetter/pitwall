@@ -1261,7 +1261,8 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   const unreminded = stripSystemReminders(raw ?? '');
   const text = unreminded.trim();
   const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
-  if (text.startsWith(CROSS_SESSION_PREFIX) || origin === 'peer') {
+  // A message from another session, whatever else says so: never the user's prompt (W99).
+  if (text.startsWith(CROSS_SESSION_PREFIX) || origin === 'peer' || startsWithCrossSessionTag(text)) {
     if (text === '') return [];
     const item = crossSession(text, at);
     // Who it came from, as Claude Code recorded it: a sub-agent's id for its report (W76).
@@ -1372,6 +1373,11 @@ function crossSession(text: string, at: string | undefined): Item {
   if (sender !== '') entry.from = sender;
   if (address === undefined) return { kind: 'entry', entry };
   return { kind: 'entry', entry, sender: name === undefined ? { address } : { name, address } };
+}
+
+/** True when `text` opens with one of the tags a message from another session is wrapped in. */
+function startsWithCrossSessionTag(text: string): boolean {
+  return CROSS_SESSION_TAGS.some((tag) => text.startsWith(`<${tag}`) && /^[\s>]/.test(text.charAt(tag.length + 1)));
 }
 
 function notice(text: string, at: string | undefined): Item {

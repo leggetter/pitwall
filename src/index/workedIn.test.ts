@@ -638,6 +638,14 @@ describe('createWorkedInScanner', () => {
           queued(`<cross-session-message from="uds:/tmp/made-up.sock">${APP}/pull/1</cross-session-message>`, 3, { isMeta: true, origin: { kind: 'peer' } }),
           queued(`<task-notification>${APP}/pull/2</task-notification>`, 3, { commandMode: 'task-notification', origin: { kind: 'task-notification' } }),
           queued(`${APP}/pull/3`, 3, { commandMode: 'bash', origin: { kind: 'human' } }),
+          // Nothing whose origin doesn't say a human typed it, and no wrapped message even when it does.
+          queued(`${APP}/pull/5`, 3, {}),
+          queued(`${APP}/pull/6`, 3, { origin: 'human' }),
+          queued(`${APP}/pull/7`, 3, { origin: { kind: 'made-up-kind' } }),
+          queued(`${APP}/pull/8`, 3, { origin: { kind: 'coordinator' }, commandMode: undefined }),
+          `${JSON.stringify({ type: 'attachment', isMeta: true, timestamp: time(3), attachment: { type: 'queued_command', prompt: `${APP}/pull/9`, commandMode: 'prompt', origin: { kind: 'human' } } })}\n`,
+          queued(`<agent-message from="a1b2c3">${APP}/pull/10</agent-message>`, 3, { origin: { kind: 'human' } }),
+          queued(`<cross-session-message from="x">${APP}/pull/11</cross-session-message>`, 3, { origin: { kind: 'human' } }),
         ].join(''),
       );
       expect(await links()).toEqual([

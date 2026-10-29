@@ -104,6 +104,9 @@ describe('userPromptOf', () => {
     expect(userPromptOf(user('Another Claude session sent a message: hello'))).toBeUndefined();
     expect(userPromptOf(user('before <cross-session-message from="x">hi</cross-session-message>'))).toBeUndefined();
     expect(userPromptOf(user([text('<cross-session-message from="x">hi</cross-session-message>')]))).toBeUndefined();
+    // Newer versions' tag too (W99).
+    expect(userPromptOf(user('<agent-message from="a1b2c3">hi</agent-message>'))).toBeUndefined();
+    expect(userPromptOf(user([text('before <agent-message from="x">hi</agent-message>')]))).toBeUndefined();
   });
 
   it('does not exclude a prompt whose only cross-session mention is inside a system reminder', () => {
@@ -476,6 +479,30 @@ describe('applyEntry: what arrives mid-turn (W99)', () => {
     ]) {
       expect(fieldsOf(user('kept'), entry).userPrompt, JSON.stringify(entry).slice(0, 120)).toBe('kept');
     }
+  });
+
+  it("never reads a message from another session as the user's prompt, whatever the attachment's origin and meta say", () => {
+    for (const body of ['<cross-session-message from="uds:/tmp/cc-socks/7.sock" from-name="pitwall-test-peer">Wrapped.</cross-session-message>', '<agent-message from="a1b2c3">Wrapped too.</agent-message>']) {
+      for (const entry of [
+        queued(body),
+        queued(body, { commandMode: undefined }),
+        queued(body, { commandMode: 'task-notification' }),
+        queued(body, { origin: 'human' }),
+        queued(body, { origin: {} }),
+        queued(body, { origin: { kind: 'made-up-kind' } }),
+        queued(body, { origin: { kind: 'coordinator' }, commandMode: undefined }),
+        queued(body, { origin: { kind: 'human' } }, { isMeta: true }),
+        queued(body, { origin: { kind: 'human' } }),
+      ]) {
+        const fields = fieldsOf(user('kept'), entry);
+        expect(fields.userPrompt, JSON.stringify(entry.attachment).slice(0, 160)).toBe('kept');
+      }
+    }
+  });
+
+  it('reads no prompt from one with no origin, or with meta on its entry rather than its attachment', () => {
+    expect(fieldsOf(user('kept'), queued('No origin.')).userPrompt).toBe('kept');
+    expect(fieldsOf(user('kept'), { ...typedMidTurn('Meta on the entry.'), isMeta: true }).userPrompt).toBe('kept');
   });
 
   it('reads queued_command lines through the pre-filter, which a line without "user" in it would not pass otherwise', () => {

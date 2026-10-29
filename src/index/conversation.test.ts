@@ -1775,6 +1775,42 @@ describe('readConversationPage: what arrives mid-turn (W99)', () => {
     expect(entries[1]?.toolError).toBeUndefined();
   });
 
+  it("never shows a message from another session as the user's prompt, whatever the attachment's origin and meta say", async () => {
+    const shapes = (body: string) => [
+      queued(body),
+      queued(body, { commandMode: undefined }),
+      queued(body, { origin: 'human' }),
+      queued(body, { origin: {} }),
+      queued(body, { origin: { kind: 'made-up-kind' } }),
+      queued(body, { origin: { kind: 'coordinator' }, commandMode: undefined }),
+      // These two say a human typed it; the wrapper says otherwise, and wins, as in a user entry.
+      queued(body, { origin: { kind: 'human' } }, { isMeta: true }),
+      queued(body, { origin: { kind: 'human' } }),
+    ];
+    const entries = await entriesOf(
+      ...shapes('<cross-session-message from="uds:/tmp/cc-socks/7.sock" from-name="pitwall-test-peer">Wrapped.</cross-session-message>'),
+      ...shapes('<agent-message from="a1b2c3">Wrapped too.</agent-message>'),
+      // A user entry with no first line or origin, either tag.
+      user('<agent-message from="a1b2c3">In a user entry.</agent-message>'),
+      user('<cross-session-message from="x">In a user entry too.</cross-session-message>'),
+      // A prompt that only starts like a tag is still a prompt.
+      user('<agent-messages> is not a tag'),
+    );
+    expect(entries.map((e) => [e.kind, e.text])).toEqual([
+      ['cross-session', 'Wrapped.'],
+      ['cross-session', 'Wrapped.'],
+      ['cross-session', 'Wrapped too.'],
+      ['cross-session', 'Wrapped too.'],
+      ['cross-session', 'In a user entry.'],
+      ['cross-session', 'In a user entry too.'],
+      ['user', '<agent-messages> is not a tag'],
+    ]);
+  });
+
+  it('reads a task notification with no origin and no tag as a notice, never a prompt', async () => {
+    expect(await entriesOf(queued('Not tagged.', { commandMode: 'task-notification' }))).toMatchObject([{ kind: 'notice', text: 'Task notification' }]);
+  });
+
   it('reads a msg_id only when it is a short string', async () => {
     const odd = (msgId: unknown) => queued('<agent-message from="x">Same.</agent-message>', { isMeta: true, origin: { kind: 'peer', from: 'x', msg_id: msgId } });
     const entries = await entriesOf(odd(7), odd(7), odd(''), odd(''), odd('m'.repeat(600)), odd('m'.repeat(600)));
