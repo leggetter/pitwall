@@ -1,27 +1,29 @@
-// Pull requests (M4, W95; docs/design-system.md, 4: Pull requests): the repo list's item and its
-// count; the PR list's repo headings, collapsed and remembered through a reload, its rows and their
-// badges, Show older and the filter; the PR view, with its details, its sessions, Open on GitHub,
-// which leaves for the PR's own page, and Copy link; a session opened from it and the PR from the
-// session's header, with the back button; the session rows' badges; Refresh, its spinner, its minute
-// (W100) and a 429; the PRs that ask your review or mention you, their badges, the chips that filter
-// by them, their empty states and the PR view's sentence (W101); each source state; a ?pr= link; and
-// `j` and `k`. Made-up PRs only (fixtures.ts, PRS).
+// Pull requests (M4, W95, W106; docs/design-system.md, 4: Pull requests): a row is a piece of work. The
+// repo list's Pull requests item and its count, Needs you with the PR rows that need you, a cloned repo
+// with only PR rows and one that isn't cloned; the Pull requests view, its rows, sessions' and PRs'
+// alike, the session rows' badges for the PRs they own, a PR row's two lines, the badges' line, the
+// hidden line and its link, Show older, the filter and W101's chips; the PR view, its details, its
+// sessions with the one that owns it first, Open on GitHub, which leaves for the PR's own page, and
+// Copy link; a session opened from it and the PR from the session's header, with the back button; the
+// session view's Pull requests tab; Has PR; Refresh, its spinner, its minute (W100) and a 429; each
+// source state; a ?pr= link; and `j` and `k` through session and PR rows. Made-up PRs only
+// (fixtures.ts, PRS).
 
 import { NAMES, PR_TEAM, PRS, PRS_ERRORS, PRS_SEARCH_ERRORS, type PrsState } from '../fixtures.js';
 import type { PageRecords } from '../page.js';
 import type { Part } from '../runner.js';
-import { chooseInRepoList, focused, listHeading, openRepoList, repoItem, repoLabels, row, toasts } from './_dom.js';
+import { chooseInRepoList, focused, listHeading, openFromRow, openRepoList, repoItem, repoLabels, row, toasts, VIEW, viewTabButton } from './_dom.js';
 
 const q = JSON.stringify;
 const LIST = `document.querySelector('main.pr-list')`;
-const READY = `!!document.querySelector('main.pr-list [data-open-pr], main.pr-list .empty-state, main.pr-list .list-waiting')`;
-/** The PR rows shown, by key, without those under a collapsed heading. */
-const prRows = `[...(${LIST}?.querySelectorAll('[data-open-pr]') ?? [])].filter((b) => !b.closest('[hidden]')).map((b) => b.dataset.openPr)`;
-const prRow = (key: string) => `${LIST}?.querySelector(${q(`li[data-pr="${key}"]`)})`;
-const prTitle = (key: string) => `${LIST}?.querySelector(${q(`[data-open-pr="${key}"]`)})`;
-const headings = `[...(${LIST}?.querySelectorAll('.pr-repo-label') ?? [])].map((el) => el.textContent)`;
-const repoToggle = (repo: string) => `${LIST}?.querySelector(${q(`li[data-pr-repo="${repo}"] .pr-repo-toggle`)})`;
-const summary = `${LIST}?.querySelector('.summary')?.textContent`;
+const MAIN = `document.querySelector('main.session-list')`;
+const READY = `!!document.querySelector('main.pr-list [data-open-pr], main.pr-list [data-open-session], main.pr-list .empty-state, main.pr-list .list-waiting')`;
+/** Every row shown in the list, a session's by its name, a PR's as "#n", in order. */
+const rows = `[...(${MAIN}?.querySelectorAll('[data-open-session], [data-open-pr]') ?? [])].filter((b) => !b.closest('[hidden]')).map((b) => b.dataset.openPr !== undefined ? '#' + b.dataset.openPr.split('/').pop() : b.textContent.trim())`;
+const prRows = `[...(${MAIN}?.querySelectorAll('[data-open-pr]') ?? [])].filter((b) => !b.closest('[hidden]')).map((b) => b.dataset.openPr)`;
+const prRow = (key: string) => `${MAIN}?.querySelector(${q(`li[data-pr="${key}"]`)})`;
+const prTitle = (key: string) => `${MAIN}?.querySelector(${q(`[data-open-pr="${key}"]`)})`;
+const summary = `${MAIN}?.querySelector('.summary')?.textContent`;
 const FIELD = `${LIST}?.querySelector('input[type="search"]')`;
 const REFRESH = `${LIST}?.querySelector('[data-pr-refresh]')`;
 const PR_VIEW = `document.getElementById('pr-view')`;
@@ -29,25 +31,35 @@ const prViewTitle = `${PR_VIEW}?.querySelector('h2 bdi')?.textContent`;
 const SESSION_VIEW = `document.getElementById('session-view')`;
 const sessionViewName = `${SESSION_VIEW}?.querySelector('.session-view-name')?.textContent`;
 const button = (scope: string, label: string) => `[...(${scope}?.querySelectorAll('button') ?? [])].find((b) => (b.getAttribute('aria-label') ?? b.textContent.trim()) === ${q(label)})`;
-const emptyTitle = `${LIST}?.querySelector('.empty-state-title')?.textContent`;
-const chip = (label: string) => `[...(${LIST}?.querySelectorAll('.filter-chips .chip') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
+const emptyTitle = `${MAIN}?.querySelector('.empty-state-title')?.textContent`;
+const chip = (label: string) => `[...(${MAIN}?.querySelectorAll('.filter-chips .chip') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
 const badgesOf = (key: string) => `[...${prRow(key)}.querySelectorAll('.badge')].map((b) => b.textContent)`;
-/** Every PR in the last 90 days, in the list's order: by repo, those that need attention first in each. */
-const ALL_ROWS = [PRS.failing, PRS.review, PRS.approved, PRS.conflicts, PRS.teamReview, PRS.draft, PRS.quiet, PRS.mentioned];
-const STORE = 'pitwall.pr-repos.v1';
+const prBadgeOf = (name: string) => `${row(name)}?.closest('li').querySelector('.pr-badge')?.textContent ?? null`;
+const n = (key: string) => `#${key.split('/').pop()}`;
+/**
+ * Every row with an open PR (W106): those that need you first, by activity, the sessions that own one
+ * and the PR rows no session owns; then the rest. Not the two older than 90 days, behind Show older.
+ */
+const ALL_ROWS = [NAMES.waiting, NAMES.asked, n(PRS.review), n(PRS.teamReview), NAMES.running, NAMES.fromRoot, n(PRS.notCloned), n(PRS.mentioned), NAMES.endedPr, n(PRS.draft)];
+const HIDDEN_LINE = '2 pull requests are hidden: no root claims other-org or third-org. How to show them';
 
 const part: Part = {
   name: 'prs',
-  title: "Pull requests: the repo list's item, the PR list, its headings, rows, Show older, filter and chips, the PR view, links both ways, the session badges, Refresh and each source state",
+  title: "Pull requests: rows of work, the repo list's counts, repos with only PR rows and not cloned, the Pull requests view, the PR view, links both ways, the session view's tab, Has PR, Refresh and each source state",
   async run(t) {
     const { page, server } = t;
     const records = () => page.records() as Promise<PageRecords>;
-    // Ready once the PR list shows rows, an empty state or its skeletons, or for another view, its sessions.
+    // Ready once the Pull requests view shows rows, an empty state or its skeletons, or for another view, its sessions.
     const freshList = (search = '?view=prs', state?: PrsState) => t.fresh({ search, ...(search.startsWith('?view=prs') ? { ready: READY } : {}), ...(state ? { prs: state } : {}) });
     /** Closes the open view, as Close or Back does. */
     const closeView = async () => {
       await page.key('Escape');
       await page.waitFor('the view to close', `!${PR_VIEW} && !${SESSION_VIEW}`);
+    };
+    const closeDrawer = async () => {
+      if (t.layout !== 'drawer') return;
+      await page.key('Escape');
+      await page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
     };
     const switchTo = async (state: PrsState, what: string, ready: string) => {
       server.world.setPrs(state);
@@ -55,85 +67,106 @@ const part: Part = {
       await page.waitFor(what, ready);
     };
 
-    await t.step('the repo list has Pull requests under Starred, with how many need attention in subtle danger', async () => {
+    await t.step('the repo list counts PR rows, Needs you and Pull requests count what needs you through a PR, and lists repos with only PR rows', async () => {
       await freshList('?view=all');
       await openRepoList(t);
       t.expectEqual((await page.evaluate<string[]>(repoLabels)).slice(0, 4), ['Needs you', 'All sessions', 'Starred', 'Pull requests'], 'the views, in order');
-      const badge = await page.evaluate<{ text: string; danger: boolean } | null>(`(() => { const b = ${repoItem('Pull requests')}?.querySelector('.badge'); return b ? { text: b.textContent, danger: b.classList.contains('badge-subtle-danger') } : null; })()`);
-      // #51's failing checks, #612's conflicts, and the reviews #57 and #618 ask; not #41's, which is
-      // older than 90 days, nor #618's failing checks, which are its author's, nor #23, a mention.
-      t.expectEqual(badge, { text: '4 need attention', danger: true }, 'its badge');
+      const badge = await page.evaluate<{ text: string; solid: boolean } | null>(`(() => { const b = ${repoItem('Pull requests')}?.querySelector('.badge'); return b ? { text: b.textContent, solid: b.classList.contains('badge-attention') } : null; })()`);
+      // #51 (pitwall-test-docs's) and #612 (pitwall-test-review's), and #57 and #618, which ask your review.
+      t.expectEqual(badge, { text: '4 need you', solid: true }, "Pull requests' badge: the rows that need you through a PR");
+      t.expectEqual(await page.evaluate(`${repoItem('Needs you')}?.querySelector('.badge')?.textContent`), '5 need you', 'Needs you counts the PR rows that need you');
+      const notCloned = await page.evaluate<{ text: string; marked: boolean; count: string } | null>(`(() => {
+        const a = ${repoItem('example/sdk-docs')};
+        return a ? { text: a.textContent, marked: a.classList.contains('not-cloned'), count: a.querySelector('.repo-item-count')?.textContent ?? '' } : null;
+      })()`);
+      t.expectEqual(notCloned, { text: 'example/sdk-docs, not cloned1 session', marked: true, count: '1 session' }, 'a repo that isn’t cloned, for its PR row');
+      t.expectEqual(await page.evaluate(`${repoItem('event-relay')}?.querySelector('.badge')?.textContent`), '1 needs you', 'a cloned repo with no session, for its PR rows: #618 needs you');
+      t.expectEqual(await page.evaluate(`document.title`), '(5) pitwall', 'the page title counts them too');
       await t.shot('repo-list');
+      await closeDrawer();
     });
 
-    await t.step('it lists the PRs under a heading per repo, the newest first, those that need attention first in each', async () => {
+    await t.step('a repo that isn’t cloned lists its PR row, says so in its heading, and has no Hide', async () => {
+      await chooseInRepoList(t, 'example/sdk-docs');
+      t.expectEqual(await page.evaluate(rows), [n(PRS.notCloned)], 'its PR row');
+      t.expectEqual(await page.evaluate(`${MAIN}.querySelector('.session-list-not-cloned')?.textContent`), 'Not cloned', 'its heading says so');
+      t.expect(!(await page.evaluate<boolean>(`!!${MAIN}.querySelector('.session-list-end button')`)), 'no Hide from repo list');
+      t.expect(!(await page.evaluate<string>(`localStorage.getItem('pitwall.view.v1') ?? ''`)).includes('sdk-docs'), "its name isn't stored");
+      await t.shot('not-cloned');
+    });
+
+    await t.step('Pull requests lists every row with an open PR, those that need you first, sessions and PR rows alike', async () => {
       await chooseInRepoList(t, 'Pull requests');
-      await page.waitFor('the rows', `${prRows}.length > 0`);
       t.expect((await page.evaluate<string>('location.search')).startsWith('?view=prs'), 'the URL says so');
-      t.expectEqual(await page.evaluate(headings), ['example/demo-app', 'example/event-relay', 'example/api-server'], 'the headings, by their newest update');
-      t.expectEqual(await page.evaluate(prRows), ALL_ROWS, 'the rows');
-      t.expectEqual(await page.evaluate(summary), '8 open4 need attention', 'the summary');
-      const failing = await page.evaluate<{ badges: string[]; line2: string; inside: boolean }>(`(() => {
-        const li = ${prRow(PRS.failing)};
-        const box = li.getBoundingClientRect();
-        const time = li.querySelector('.activity').getBoundingClientRect();
-        return { badges: [...li.querySelectorAll('.badge')].map((b) => b.textContent), line2: li.querySelector('.pr-what').textContent, inside: time.right <= box.right + 0.5 && time.left >= box.left };
-      })()`);
-      t.expectEqual(failing.badges, ['Checks failing'], "#51's badge");
-      t.expect(failing.line2.startsWith('#51') && failing.line2.includes(NAMES.conversation) && !failing.line2.includes(NAMES.waiting), "its line 2: its number, and the session that opened it, not the one that only named it", failing.line2);
-      t.expect(failing.inside, 'its time inside the row');
-      t.expectEqual(await page.evaluate(`[...${prRow(PRS.conflicts)}.querySelectorAll('.badge')].map((b) => b.textContent)`), ['Conflicts', 'Changes requested'], "#612's badges");
-      t.expectEqual(await page.evaluate(`[...${prRow(PRS.draft)}.querySelectorAll('.badge')].map((b) => b.textContent)`), ['Draft', 'Checks pending'], "#605's badges");
+      t.expectEqual(await page.evaluate(rows), ALL_ROWS, 'the rows');
+      t.expectEqual(await page.evaluate(summary), '10 sessions4 need you', 'the summary');
+      // Each session's most urgent PR it owns; #48 is pitwall-test-nightly-export's since it pushed to it, after pitwall-test-review opened it.
+      t.expectEqual(await page.evaluate(prBadgeOf(NAMES.waiting)), 'Pull request #51 CI failing, needs attention', `${NAMES.waiting}'s`);
+      t.expectEqual(await page.evaluate(prBadgeOf(NAMES.asked)), 'Pull request #612 conflicts, needs attention', `${NAMES.asked}'s: #48 is no longer its`);
+      t.expectEqual(await page.evaluate(prBadgeOf(NAMES.running)), 'Pull request #48', `${NAMES.running}'s, neutral`);
       await t.shot('list');
     });
 
-    await t.step('a heading collapses, with its counts in sight, and stays collapsed through a reload, by a hash of its name', async () => {
-      await page.click('the example/event-relay heading', repoToggle('example/event-relay'));
-      t.expectEqual(await page.evaluate(`${repoToggle('example/event-relay')}.getAttribute('aria-expanded')`), 'false', 'collapsed');
-      t.expectEqual(await page.evaluate(prRows), [PRS.failing, PRS.review, PRS.approved, PRS.quiet, PRS.mentioned], 'its rows hidden');
-      t.expect((await page.evaluate<string>(`${repoToggle('example/event-relay')}.textContent`)).includes('2 need attention'), 'its badge still there');
-      const stored = await page.evaluate<string>(`localStorage.getItem(${q(STORE)}) ?? ''`);
-      t.expect(/^\{"v":1,"collapsed":\["[0-9a-f]{16}"\]\}$/.test(stored) && !stored.includes('event-relay'), 'kept as a hash, never the name', stored);
-      await t.shot('collapsed');
-      await page.reload();
-      await page.waitFor('the list after the reload', `${prRows}.length > 0`);
-      t.expectEqual(await page.evaluate(`${repoToggle('example/event-relay')}.getAttribute('aria-expanded')`), 'false', 'still collapsed');
-      await page.click('the heading again', repoToggle('example/event-relay'));
-      t.expectEqual(await page.evaluate(prRows), ALL_ROWS, 'expanded again');
+    await t.step("a PR row is two lines: its number and title, then its group, why it needs you, when it was updated and 'No session yet'", async () => {
+      const shape = await page.evaluate<{ title: string; badges: string[]; line2: string; lines: number[]; attention: boolean; inside: boolean }>(`(() => {
+        const li = ${prRow(PRS.teamReview)};
+        const box = li.getBoundingClientRect();
+        const end = li.querySelector('.pr-row-end').getBoundingClientRect();
+        const lineOf = (el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight));
+        return {
+          title: li.querySelector('h3 button').textContent,
+          badges: [...li.querySelectorAll('.badge')].map((b) => b.textContent),
+          line2: li.querySelector('.pr-what').textContent,
+          lines: [lineOf(li.querySelector('.session-name')), lineOf(li.querySelector('.pr-what'))],
+          attention: li.dataset.attention === 'true',
+          inside: end.right <= box.right + 0.5,
+        };
+      })()`);
+      t.expectEqual(shape.title, '#618 Rename the made-up delivery states', 'line 1: its number and title');
+      t.expectEqual(shape.badges, ['Review requested', 'Checks failing'], 'its badges');
+      t.expect(/^event-relay · Your review is requested · Updated .+ ago · No session yet$/.test(shape.line2), 'line 2', shape.line2);
+      t.expectEqual(shape.lines, [1, 1], 'one line each');
+      t.expect(shape.attention && shape.inside, 'it needs you, and its end is whole, inside the row', shape);
+      t.expect((await page.evaluate<string>(`${prRow(PRS.notCloned)}.querySelector('.pr-what').textContent`)).endsWith(' · Not cloned'), "a not-cloned repo's row says so");
+      // The badges line up with the session rows', against the time's slot, which a PR row keeps empty.
+      const edges = await page.evaluate<number[]>(`[...${MAIN}.querySelectorAll('li.session')].filter((li) => !li.closest('[hidden]') && li.querySelector('.session-badges .badge')).map((li) => Math.round(li.querySelector('.session-badges').getBoundingClientRect().right))`);
+      t.expect(new Set(edges).size === 1, "every row's badges end at the same x", edges);
+      await t.shot('pr-row');
     });
 
-    await t.step('Show older lists the PRs updated more than 90 days ago, and keeps focus as Hide older', async () => {
-      const show = button(LIST, 'Show 2 older pull requests');
-      await page.click('Show 2 older pull requests', show);
-      await page.waitFor('the older PRs', `${prRows}.includes(${q(PRS.older)})`);
-      t.expect((await page.evaluate<string[]>(prRows)).includes(PRS.olderFailing), 'both of them');
-      t.expectEqual(await page.evaluate(summary), '10 open5 need attention', 'counted while shown');
+    await t.step('the foot says how many PRs no root claims, with a link to the README, and Show older lists the older PR rows, keeping focus', async () => {
+      t.expectEqual(await page.evaluate(`${LIST}.querySelector('.pr-hidden')?.textContent`), HIDDEN_LINE, 'the hidden line');
+      const link = await page.evaluate<{ href: string; target: string; rel: string }>(`(() => { const a = ${LIST}.querySelector('.pr-hidden a'); return { href: a.getAttribute('href'), target: a.target, rel: a.rel }; })()`);
+      t.expectEqual(link, { href: 'https://github.com/leggetter/pitwall#configuration', target: '_blank', rel: 'noopener noreferrer' }, 'its link');
+      await page.click('Show 2 older pull requests', button(LIST, 'Show 2 older pull requests'));
+      await page.waitFor('the older PRs', `${prRows}.includes(${q(PRS.older)}) && ${prRows}.includes(${q(PRS.olderFailing)})`);
       t.expectEqual(await page.evaluate(focused), 'Hide older pull requests', 'focus on the same button');
+      t.expectEqual(await page.evaluate(summary), '12 sessions5 need you', "counted while shown, #41's failing checks among them");
       await t.shot('older');
       await page.click('Hide older pull requests', button(LIST, 'Hide older pull requests'));
       await page.waitFor('the older PRs to go', `!${prRows}.includes(${q(PRS.older)})`);
     });
 
-    await t.step('the filter finds a PR by its number and its branch, and says when nothing matches', async () => {
+    await t.step('the filter finds a session by a PR it owns and a PR row by its number or title, and says when nothing matches', async () => {
       await page.click('the filter field', FIELD);
       await page.type('#612');
-      await page.waitFor('one row', `${prRows}.length === 1`);
-      t.expectEqual(await page.evaluate(prRows), [PRS.conflicts], 'by its number');
-      t.expectEqual(await page.evaluate(`${prRow(PRS.conflicts)}.querySelector('mark')?.textContent`), '#612', 'highlighted');
+      await page.waitFor('one row', `${rows}.length === 1`);
+      t.expectEqual(await page.evaluate(rows), [NAMES.asked], 'the session that owns #612');
       await page.key('Escape');
-      await page.type('api-server-19');
-      await page.waitFor('one row', `${prRows}.length === 1`);
-      t.expectEqual(await page.evaluate(prRows), [PRS.quiet], 'by its branch');
+      await page.type('retry budget');
+      await page.waitFor('one row', `${rows}.length === 1`);
+      t.expectEqual(await page.evaluate(rows), [n(PRS.review)], 'a PR row by its title');
+      t.expectEqual(await page.evaluate(`${prRow(PRS.review)}.querySelector('mark')?.textContent`), 'retry budget', 'highlighted');
       await page.key('Escape');
       await page.type('nothing like it');
-      await page.waitFor('the empty state', `${emptyTitle} === 'No pull requests match'`);
+      await page.waitFor('the empty state', `${emptyTitle} === 'No sessions match'`);
       await t.shot('no-match');
       await page.click('Clear filter', button(LIST, 'Clear filter'));
-      await page.waitFor('every row', `${prRows}.length === ${ALL_ROWS.length}`);
+      await page.waitFor('every row', `${rows}.length === ${ALL_ROWS.length}`);
       t.expectEqual(await page.evaluate('document.activeElement?.type'), 'search', 'focus in the field');
     });
 
-    await t.step('a PR that asks your review or mentions you says so first among its badges, a team’s naming the team (W101)', async () => {
+    await t.step('a PR row that asks your review or mentions you says so first among its badges, a team’s naming the team (W101)', async () => {
       t.expectEqual(await page.evaluate(badgesOf(PRS.review)), ['Review requested'], "#57's badge");
       t.expectEqual(await page.evaluate(badgesOf(PRS.teamReview)), ['Review requested', 'Checks failing'], "#618's: its review, then its author's failing checks");
       t.expectEqual(await page.evaluate(badgesOf(PRS.mentioned)), ['Mentioned'], "#23's");
@@ -146,67 +179,59 @@ const part: Part = {
       await t.shot('relations');
     });
 
-    await t.step('the chips Yours, Review requested and Mentioned filter the list, combine as OR, move nothing in the header, and Clear filters clears them', async () => {
+    await t.step('the chips Yours, Review requested and Mentioned filter the rows, combine as OR, move nothing in the header, and Clear filters clears them', async () => {
       t.expectEqual(await page.evaluate(`[...${LIST}.querySelectorAll('.filter-chips .chip')].map((b) => b.textContent)`), ['Yours', 'Review requested', 'Mentioned'], 'the chips');
-      // On one line, from a 375 px window up, and with no Clear filters, or its room, until a filter is on.
       t.expectEqual(await page.evaluate(`new Set([...${LIST}.querySelectorAll('.filter-chips .chip')].map((b) => Math.round(b.getBoundingClientRect().top))).size`), 1, 'the chips on one line');
-      t.expect(!(await page.evaluate<boolean>(`!!${LIST}.querySelector('[data-clear-filters], .filter-clear-room')`)), 'no Clear filters yet');
       const head = `${LIST}.querySelector('.session-list-head').getBoundingClientRect().height`;
       const before = await page.evaluate<number>(head);
       await page.click('Review requested', chip('Review requested'));
-      await page.waitFor('the review requests', `${prRows}.length === 2`);
-      t.expectEqual(await page.evaluate(prRows), [PRS.review, PRS.teamReview], 'only those that ask your review');
-      t.expectEqual(await page.evaluate(`${chip('Review requested')}.getAttribute('aria-pressed')`), 'true', 'pressed');
-      t.expectEqual(await page.evaluate(summary), '2 of 8 open4 need attention', 'the summary says what it hides');
+      await page.waitFor('the review requests', `${rows}.length === 2`);
+      t.expectEqual(await page.evaluate(rows), [n(PRS.review), n(PRS.teamReview)], 'only those that ask your review');
+      t.expectEqual(await page.evaluate(summary), '2 of 10 sessions4 need you', 'the summary says what it hides');
       t.expectEqual(await page.evaluate<number>(head), before, 'the header as tall');
-      const line3 = await page.evaluate<{ clear: number; refresh: number; top: boolean }>(`(() => {
+      const line = await page.evaluate<{ clear: number; refresh: number; top: boolean }>(`(() => {
         const clear = ${LIST}.querySelector('.pr-list-fetched [data-clear-filters]').getBoundingClientRect();
         const refresh = ${REFRESH}.getBoundingClientRect();
         return { clear: Math.round(clear.right), refresh: Math.round(refresh.left), top: Math.abs(clear.top - refresh.top) < 1 };
       })()`);
-      t.expect(line3.top && line3.clear <= line3.refresh, 'Clear filters just before Refresh, on line 3', line3);
+      t.expect(line.top && line.clear <= line.refresh, 'Clear filters just before Refresh', line);
       await t.shot('chip-review');
       await page.click('Mentioned', chip('Mentioned'));
-      await page.waitFor('the mention too', `${prRows}.length === 3`);
-      t.expectEqual(await page.evaluate(prRows), [PRS.review, PRS.teamReview, PRS.mentioned], 'review requests or mentions');
-      t.expect(!(await page.evaluate<boolean>(`!!${LIST}.querySelector('.filter-chips [data-clear-filters]')`)), 'Clear filters is not after the chips');
+      await page.waitFor('the mention too', `${rows}.length === 3`);
+      t.expectEqual(await page.evaluate(rows), [n(PRS.review), n(PRS.teamReview), n(PRS.mentioned)], 'review requests or mentions');
       await page.click('Clear filters', `${LIST}.querySelector('.pr-list-fetched [data-clear-filters]')`);
-      await page.waitFor('every row', `${prRows}.length === ${ALL_ROWS.length}`);
-      t.expectEqual(await page.evaluate(`${LIST}.querySelectorAll('.filter-chips .chip[aria-pressed="true"]').length`), 0, 'no chip on');
+      await page.waitFor('every row', `${rows}.length === ${ALL_ROWS.length}`);
       t.expectEqual(await page.evaluate('document.activeElement?.type'), 'search', 'focus in the field');
     });
 
-    await t.step("the PR view says your review is requested, through the team, or that you're mentioned (W101)", async () => {
+    await t.step("a PR row opens its PR view, which says your review is requested through the team (W101)", async () => {
       await page.click('#618', prTitle(PRS.teamReview));
       await page.waitFor('its view', `${prViewTitle} === 'Rename the made-up delivery states'`);
+      t.expectEqual(await page.evaluate('location.search'), `?view=prs&pr=${PRS.teamReview}`, 'the URL');
+      t.expectEqual(await page.evaluate(`${prRow(PRS.teamReview)}.classList.contains('open')`), true, 'its row marked open');
+      t.expectEqual(await page.evaluate(focused), 'the view heading', 'focus on its heading');
       t.expectEqual(await page.evaluate(`${PR_VIEW}.querySelector('.pr-view-relation')?.textContent`), `Your review is requested through ${PR_TEAM}.`, 'through the team');
-      t.expectEqual(await page.evaluate(`${PR_VIEW}.querySelector('.pr-view-detail:first-child dd')?.textContent`), 'Failinglint', 'its checks as they are');
+      t.expectEqual(await page.evaluate(`${PR_VIEW}.querySelector('.pr-view-none')?.textContent ?? ''`) !== '', true, 'no session has worked on it');
       await t.shot('view-team-review');
-      await closeView();
-      await page.click('#23', prTitle(PRS.mentioned));
-      await page.waitFor('its view', `${prViewTitle} === 'Ask about the made-up rate limit headers'`);
-      t.expectEqual(await page.evaluate(`${PR_VIEW}.querySelector('.pr-view-relation')?.textContent`), "You're mentioned in it.", 'a mention');
-      await closeView();
-      await page.click('#51', prTitle(PRS.failing));
-      await page.waitFor('its view', `${prViewTitle} === 'Add a made-up health route'`);
-      t.expect(!(await page.evaluate<boolean>(`!!${PR_VIEW}.querySelector('.pr-view-relation')`)), 'nothing for one of yours');
       await closeView();
     });
 
-    await t.step("a PR opens in the session view's place: its details, its sessions, Open on GitHub and Copy link", async () => {
-      await page.click('#51', prTitle(PRS.failing));
+    await t.step("a session's header links to the PRs it owns; the PR view lists its sessions, the owner first, with Open on GitHub and Copy link", async () => {
+      await openFromRow(t, NAMES.waiting);
+      t.expectEqual(await page.evaluate(`[...${SESSION_VIEW}.querySelectorAll('[data-pr-link]')].map((b) => b.getAttribute('aria-label'))`), ['Pull request example/demo-app #51'], 'its PR link');
+      await page.click('#51', `${SESSION_VIEW}.querySelector(${q(`[data-pr-link="${PRS.failing}"]`)})`);
       await page.waitFor('its view', `${prViewTitle} === 'Add a made-up health route'`);
       t.expectEqual(await page.evaluate('location.search'), `?view=prs&pr=${PRS.failing}`, 'the URL');
-      t.expectEqual(await page.evaluate(`${prRow(PRS.failing)}.classList.contains('open')`), true, 'its row marked open');
-      t.expectEqual(await page.evaluate(focused), 'the view heading', 'focus on its heading');
-      const view = await page.evaluate<{ details: Record<string, string>; sessions: string[]; mentioned: string[]; link: { href: string; target: string; rel: string } | null; copy: boolean; back: string | null }>(`(() => {
+      const view = await page.evaluate<{ details: Record<string, string>; sessions: string[]; why: string[]; mentioned: string[]; link: { href: string; target: string; rel: string } | null; copy: boolean; back: string | null }>(`(() => {
         const view = ${PR_VIEW};
         const sections = [...view.querySelectorAll('.pr-view-section')];
-        const names = (title) => [...(sections.find((s) => s.querySelector('h3').textContent === title)?.querySelectorAll('.pr-view-session-open') ?? [])].map((b) => b.textContent);
+        const section = (title) => sections.find((s) => s.querySelector('h3').textContent === title);
+        const names = (title) => [...(section(title)?.querySelectorAll('.pr-view-session-open') ?? [])].map((b) => b.textContent);
         const a = view.querySelector('a.pr-view-github');
         return {
           details: Object.fromEntries([...view.querySelectorAll('.pr-view-detail')].map((d) => [d.querySelector('dt').textContent, d.querySelector('dd').textContent])),
           sessions: names('Sessions'),
+          why: [...(section('Sessions')?.querySelectorAll('.pr-view-session-why') ?? [])].map((s) => s.textContent),
           mentioned: names('Mentioned in'),
           link: a ? { href: a.getAttribute('href'), target: a.target, rel: a.rel } : null,
           copy: !!view.querySelector('button[aria-label="Copy link"]'),
@@ -214,9 +239,9 @@ const part: Part = {
         };
       })()`);
       t.expectEqual(view.details.Checks, 'Failingtest (22.x)linte2e (chrome)+2 more', 'the failing checks, and how many more');
-      t.expectEqual(view.details.Review, 'Review required', 'the review');
-      t.expectEqual(view.sessions, [NAMES.conversation], 'the session that opened it');
-      t.expectEqual(view.mentioned, [NAMES.waiting], 'and the one that named it');
+      t.expectEqual(view.sessions, [NAMES.waiting, NAMES.conversation], 'the session that owns it first, then the one that opened it');
+      t.expectEqual(view.why, ['Pushed its branch · Its session', 'Opened it'], 'why each is linked, and which owns it');
+      t.expectEqual(view.mentioned, [NAMES.asked], 'and the one that named it');
       t.expectEqual(view.link, { href: 'https://github.com/example/demo-app/pull/51', target: '_blank', rel: 'noopener noreferrer' }, 'Open on GitHub');
       t.expect(view.copy, 'Copy link');
       t.expectEqual(view.back, t.compact ? 'Back to pull requests' : null, 'Back at 600 px and narrower');
@@ -228,35 +253,76 @@ const part: Part = {
       t.expectEqual((await records()).clicks.at(-1), { href: 'https://github.com/example/demo-app/pull/51', target: '_blank', rel: 'noopener noreferrer', prevented: false }, 'pitwall let it open');
     });
 
-    await t.step("a session from the PR view opens in its place, and its header links back to the PR, with the back button", async () => {
+    await t.step('a session from the PR view opens in its place, with the back button between them', async () => {
       await page.click(NAMES.conversation, `${PR_VIEW}.querySelector(${q(`[data-open-linked-session="${server.world.byName(NAMES.conversation).sessionId}"]`)})`);
       await page.waitFor('its view', `${sessionViewName} === ${q(NAMES.conversation)}`);
       t.expect(!(await page.evaluate<boolean>(`!!${PR_VIEW}`)), 'in the PR view’s place');
       t.expectEqual(await page.evaluate('location.search'), `?view=prs&session=${server.world.byName(NAMES.conversation).sessionId}`, 'the URL');
-      t.expectEqual(await page.evaluate(`${SESSION_VIEW}.querySelector('.session-view-back')?.textContent ?? null`), t.compact ? 'Back to pull requests' : null, 'Back over the PR list');
-      t.expectEqual(await page.evaluate(`[...${SESSION_VIEW}.querySelectorAll('[data-pr-link]')].map((b) => b.getAttribute('aria-label'))`), ['Pull request example/demo-app #51'], 'its PR link');
-      await t.shot('session-links');
-      await page.click('#51', `${SESSION_VIEW}.querySelector(${q(`[data-pr-link="${PRS.failing}"]`)})`);
-      await page.waitFor('the PR view', `${prViewTitle} === 'Add a made-up health route'`);
-      await page.evaluate('history.back()');
-      await page.waitFor('the session view again', `${sessionViewName} === ${q(NAMES.conversation)}`);
+      // It opened #51, but pitwall-test-docs pushed to it since: no link in its header, and its tab lists it.
+      t.expectEqual(await page.evaluate(`${SESSION_VIEW}.querySelectorAll('[data-pr-link]').length`), 0, 'no PR link: it owns none');
       await page.evaluate('history.back()');
       await page.waitFor('the PR view again', `${prViewTitle} === 'Add a made-up health route'`);
+      await page.evaluate('history.forward()');
+      await page.waitFor('the session view again', `${sessionViewName} === ${q(NAMES.conversation)}`);
       await closeView();
     });
 
-    await t.step('the session rows have badges for their most urgent strongly linked open PR, those that need attention in danger', async () => {
+    await t.step("the session view's Pull requests tab lists the PRs it owns, with their details, then those another session owns", async () => {
+      await openFromRow(t, NAMES.asked);
+      await page.click('Pull requests (2)', viewTabButton('Pull requests (2)'));
+      await page.waitFor('the panel', `!!${VIEW}?.querySelector('.session-prs:not([hidden]) .session-pr')`);
+      const panel = await page.evaluate<{ headings: string[]; titles: string[]; owner: string; checks: string; github: string | null }>(`(() => {
+        const panel = ${VIEW}.querySelector('.session-prs');
+        return {
+          headings: [...panel.querySelectorAll('h3')].map((h) => h.textContent),
+          titles: [...panel.querySelectorAll('.session-pr-open')].map((b) => b.textContent),
+          owner: panel.querySelector('.session-pr-owner')?.textContent ?? '',
+          checks: panel.querySelector('.session-pr .pr-view-detail dd')?.textContent ?? '',
+          github: panel.querySelector('.session-pr a.pr-view-github')?.getAttribute('href') ?? null,
+        };
+      })()`);
+      t.expectEqual(panel.headings, ['Its pull requests', 'Also worked on'], 'its own, then the others');
+      t.expectEqual(panel.titles, ['#612 Retry made-up deliveries with backoff', '#48 Tidy the made-up export job'], 'each by its number and title');
+      t.expectEqual(panel.owner, `Listed with ${NAMES.running}.`, 'which session #48 is listed with');
+      t.expectEqual(panel.checks, 'Passing', "#612's checks");
+      t.expectEqual(panel.github, 'https://github.com/example/event-relay/pull/612', 'Open on GitHub');
+      t.expect(await page.evaluate(`!${VIEW}.querySelector('.session-view-foot')?.hidden`), 'the message box stays: it is the session’s');
+      await t.shot('session-tab');
+      await page.click('#612', `${VIEW}.querySelector(${q(`[data-open-session-pr="${PRS.conflicts}"]`)})`);
+      await page.waitFor('its PR view', `${prViewTitle} === 'Retry made-up deliveries with backoff'`);
+      await closeView();
+    });
+
+    await t.step('Has PR keeps the rows with an open PR in any list, and a kind chip keeps PR rows out', async () => {
       await chooseInRepoList(t, 'All sessions');
-      const badge = (name: string) => `(() => { const b = ${row(name)}?.closest('li').querySelector('.pr-badge'); return b ? { text: b.textContent, danger: b.classList.contains('badge-subtle-danger') } : null; })()`;
-      t.expectEqual(await page.evaluate(badge(NAMES.asked)), { text: 'Pull request #612, needs attention+1, and 1 more', danger: true }, `${NAMES.asked}'s: #612, and one more`);
-      t.expectEqual(await page.evaluate(badge(NAMES.running)), { text: 'Pull request #48', danger: false }, `${NAMES.running}'s, neutral`);
-      t.expectEqual(await page.evaluate(badge(NAMES.waiting)), null, `${NAMES.waiting} only named one, so none`);
-      await t.shot('session-badges');
+      await page.click('Has PR', chip('Has PR'));
+      await page.waitFor('the rows with a PR', `${rows}.length === ${ALL_ROWS.length}`);
+      t.expectEqual([...(await page.evaluate<string[]>(rows))].sort(), [...ALL_ROWS].sort(), 'the rows with an open PR, as Pull requests lists them');
+      await page.click('Interactive', chip('Interactive'));
+      await page.waitFor('the interactive ones', `${rows}.length === 4`);
+      t.expectEqual(await page.evaluate(rows), [NAMES.waiting, NAMES.asked, NAMES.fromRoot, NAMES.endedPr], 'interactive sessions with an open PR, the ended one among them');
+      await t.shot('has-pr');
+      await page.click('Clear filters', `${MAIN}.querySelector('.filter-chips [data-clear-filters]')`);
+      await page.waitFor('the filters to clear', `!${MAIN}.querySelector('.filter-chips .chip[aria-pressed="true"]')`);
+    });
+
+    await t.step('Needs you lists the PR rows that need you, with the sessions; one marked not needed now stays while its PR needs you, and says why', async () => {
+      await chooseInRepoList(t, 'Needs you');
+      t.expectEqual(await page.evaluate(rows), [NAMES.waiting, NAMES.asked, NAMES.prompting, n(PRS.review), n(PRS.teamReview)], 'the sessions, then the PR rows, by activity');
+      const toggle = `${row(NAMES.asked)}?.closest('li').querySelector('[data-not-needed-session]')`;
+      await page.click(`the toggle on ${NAMES.asked}`, toggle);
+      await page.waitFor('it marked', `${toggle}?.getAttribute('aria-pressed') === 'true'`);
+      await page.settle(150);
+      t.expect((await page.evaluate<string[]>(rows)).includes(NAMES.asked), '#612 still needs you, so it stays');
+      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Not needed now · #612 has merge conflicts', 'line 2 says why');
+      await t.shot('marked-with-pr');
+      await page.click(`the toggle on ${NAMES.asked} again`, toggle);
+      await page.waitFor('the mark gone', `${toggle}?.getAttribute('aria-pressed') === 'false'`);
     });
 
     await t.step('Refresh fetches once, with its spinner, then is off for a minute', async () => {
       await chooseInRepoList(t, 'Pull requests');
-      await page.waitFor('the rows', `${prRows}.length > 0`);
+      await page.waitFor('the rows', `${rows}.length > 0`);
       server.clearRecords();
       await page.click('Refresh', REFRESH);
       await page.waitFor('the spinner', `${REFRESH}?.getAttribute('aria-busy') === 'true'`);
@@ -273,7 +339,7 @@ const part: Part = {
     await t.step('a refresh within a minute of the last fetch gets an info toast with when, not an error', async () => {
       // A reload forgets the page's own minute; the server's is still running.
       await page.reload();
-      await page.waitFor('the list after the reload', `${prRows}.length > 0`);
+      await page.waitFor('the list after the reload', `${rows}.length > 0`);
       t.allow(/\/api\/prs\/refresh/, 'the 429 the step brings about');
       await page.click('Refresh', REFRESH);
       await page.waitFor('the toast', `${toasts}.some((text) => /^pitwall checked GitHub moments ago\\. Refresh again in \\d+ seconds?\\.$/.test(text))`);
@@ -282,7 +348,7 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`${REFRESH}.getAttribute('aria-disabled')`), 'true', 'off until then');
     });
 
-    await t.step('each source state says what it is and how to fix it, off gives way to All sessions, and an ok fetch brings the list back', async () => {
+    await t.step('each source state says what it is and how to fix it, off gives way to All sessions, and an ok fetch brings the rows back', async () => {
       await switchTo('loading', 'the skeletons', `!!${LIST}?.querySelector('.skeleton-rows')`);
       await t.shot('loading');
       await switchTo('gh-missing', 'gh missing', `${emptyTitle} === "gh isn't installed"`);
@@ -295,7 +361,7 @@ const part: Part = {
       await t.shot('error');
       await switchTo('stale', 'the notice', `!!${LIST}?.querySelector('.pr-stale .inline-alert')`);
       t.expect((await page.evaluate<string>(`${LIST}.querySelector('.pr-stale').textContent`)).endsWith('This list is from 2h ago.'), 'when the list is from');
-      t.expectEqual((await page.evaluate<string[]>(prRows)).length, ALL_ROWS.length, 'the last list kept');
+      t.expectEqual((await page.evaluate<string[]>(rows)).length, ALL_ROWS.length, 'the last list kept');
       await t.shot('stale');
       // W101's review: one search that failed while another worked is named, with when its PRs are from.
       await switchTo('partial', 'the notice naming each search', `${LIST}?.querySelectorAll('.pr-stale-search').length === 2`);
@@ -305,7 +371,7 @@ const part: Part = {
         [`The pull requests that ask your review are from 2h ago. ${PRS_SEARCH_ERRORS['review-requested']}`, `The pull requests that mention you aren't listed. ${PRS_SEARCH_ERRORS.mentioned}`],
         'each failed search, and when its PRs are from',
       );
-      t.expectEqual(await page.evaluate(prRows), ALL_ROWS.filter((key) => key !== PRS.mentioned), 'yours new, the review requests kept, no mention');
+      t.expectEqual(await page.evaluate(rows), ALL_ROWS.filter((each) => each !== n(PRS.mentioned)), 'yours new, the review requests kept, no mention');
       await t.shot('partial');
       // Off, as after a restart with --no-prs: no item, so All sessions takes Pull requests' place.
       await switchTo('off', 'All sessions in its place', `${listHeading} === 'All sessions'`);
@@ -313,25 +379,20 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.view.v1')`), 'view=all', 'and remembered');
       await openRepoList(t);
       t.expect(!(await page.evaluate<string[]>(repoLabels)).includes('Pull requests'), 'no item in the repo list');
-      if (t.layout === 'drawer') {
-        await page.key('Escape');
-        await page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
-      }
+      t.expect(!(await page.evaluate<string[]>(repoLabels)).includes('example/sdk-docs'), 'and no repo for PR rows alone');
+      await closeDrawer();
       await t.shot('off');
       server.world.setPrs('ok');
       server.broadcastPrs();
       await chooseInRepoList(t, 'Pull requests');
-      await page.waitFor('the list', `${prRows}.length === ${ALL_ROWS.length}`);
+      await page.waitFor('the rows', `${rows}.length === ${ALL_ROWS.length}`);
     });
 
-    await t.step("once you've reviewed each one asked, they leave the list and the count, and a chip with none of its kind says so (W101)", async () => {
-      await switchTo('mine', 'only yours', `${prRows}.length === 5`);
+    await t.step("once you've reviewed each one asked, they leave the rows and the counts, and a chip with none of its kind says so (W101)", async () => {
+      await switchTo('mine', 'only yours', `${rows}.length === ${ALL_ROWS.length - 3}`);
       await openRepoList(t);
-      t.expectEqual(await page.evaluate(`${repoItem('Pull requests')}?.querySelector('.badge')?.textContent`), '2 need attention', 'the count without them');
-      if (t.layout === 'drawer') {
-        await page.key('Escape');
-        await page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
-      }
+      t.expectEqual(await page.evaluate(`${repoItem('Pull requests')}?.querySelector('.badge')?.textContent`), '2 need you', 'the count without them');
+      await closeDrawer();
       await page.click('Review requested', chip('Review requested'));
       await page.waitFor('the empty state', `${emptyTitle} === 'No reviews requested'`);
       t.expect((await page.evaluate<string>(`${LIST}.querySelector('.empty-state-sentence').textContent`)).includes("One asked of you leaves once you've reviewed it."), 'says how they come and go');
@@ -342,10 +403,10 @@ const part: Part = {
         await page.settle(100);
       }
       await page.click('Clear filters', button(`${LIST}.querySelector('.empty-state')`, 'Clear filters'));
-      await page.waitFor('the rows', `${prRows}.length === 5`);
+      await page.waitFor('the rows', `${rows}.length === ${ALL_ROWS.length - 3}`);
       server.world.setPrs('ok');
       server.broadcastPrs();
-      await page.waitFor('the list', `${prRows}.length === ${ALL_ROWS.length}`);
+      await page.waitFor('the rows', `${rows}.length === ${ALL_ROWS.length}`);
     });
 
     await t.step("a ?pr= link opens that PR's view as the page loads, a restart's first list doesn't call it gone, and one that isn't open says so", async () => {
@@ -362,20 +423,23 @@ const part: Part = {
       await t.shot('unlisted');
     });
 
-    await t.step('j and k step through the PR list, and show each PR once its view is open', async () => {
+    await t.step("j and k step through session and PR rows alike, and show each in the view once one's open", async () => {
       await freshList();
       await page.key('j');
-      t.expectEqual(await page.evaluate('document.activeElement?.dataset.openPr ?? null'), PRS.failing, 'j: the first row');
+      t.expectEqual(await page.evaluate('document.activeElement?.textContent'), NAMES.waiting, 'j: the first row');
       await page.key('j');
-      t.expectEqual(await page.evaluate('document.activeElement?.dataset.openPr ?? null'), PRS.review, 'j: the next');
+      await page.key('j');
+      t.expectEqual(await page.evaluate('document.activeElement?.dataset.openPr ?? null'), PRS.review, 'j: on to a PR row');
       await page.key('Enter');
       await page.waitFor('its view', `${prViewTitle} === 'Add a made-up retry budget'`);
       t.expectEqual(await page.evaluate(`${PR_VIEW}.querySelector('.pr-view-relation')?.textContent`), 'Your review is requested.', 'of you');
       await page.key('j');
-      await page.waitFor('the next PR', `${prViewTitle} === 'Tidy the made-up export job'`);
-      t.expectEqual(await page.evaluate('location.search'), `?view=prs&pr=${PRS.approved}`, 'replacing the URL');
+      await page.waitFor('the next PR', `${prViewTitle} === 'Rename the made-up delivery states'`);
+      t.expectEqual(await page.evaluate('location.search'), `?view=prs&pr=${PRS.teamReview}`, 'replacing the URL');
       await page.key('k');
-      await page.waitFor('the one before', `${prViewTitle} === 'Add a made-up retry budget'`);
+      await page.key('k');
+      await page.waitFor('the session before', `${sessionViewName} === ${q(NAMES.asked)}`);
+      t.expectEqual(await page.evaluate('location.search'), `?view=prs&session=${server.world.byName(NAMES.asked).sessionId}`, 'a session in the PR’s place');
     });
   },
 };

@@ -1,14 +1,15 @@
 // Your open pull requests in the web UI (M4, W95; docs/design-system.md, 4: Pull requests): reading
-// the 'prs' message defensively, and what the screen derives from the list. Which sessions a PR is
-// linked to, a session's most urgent PR, the repo headings and their order, the 90-day window, the
-// filter and its chips, the attention count, the state badges, how a PR is yours (W101), and the
-// PR's link. All pure, so they're easy to test.
+// the 'prs' message defensively, where the server placed each one and which owners each root claims
+// (W106), and what the screen derives from one PR: the sessions linked to it, the 90-day window, the
+// filter and its chips, the attention count, the state badges, how a PR is yours (W101), why it needs
+// you, and the PR's link. All pure, so they're easy to test. Which session owns a PR, and where a PR
+// with none is listed, is work.ts's (W106).
 //
 // The index finds each session's links without knowing which PRs are open (SessionSummary.prLinks),
 // and the page matches them against the list with prLinkMatches() (src/shared/protocol.ts), so a link
-// to a PR that isn't one of your open ones shows nothing. Opened, pushed and prompted links are strong:
-// the session row's badge, the session view's links and the PR row's sessions use only those. A
-// mentioned one, Claude naming the PR in a reply, shows only in the PR view, under Mentioned in.
+// to a PR that isn't one of your open ones shows nothing. Every kind but mentioned is strong, and only
+// a strong link can make a session a PR's owner (prOwner()). A mentioned one, Claude naming the PR in
+// a reply, shows only in the PR view, under Mentioned in.
 
 import {
   GITHUB_OWNER_PATTERN,
@@ -25,12 +26,14 @@ import {
   type PullRequestChecks,
   type PullRequestList,
   type PullRequestMergeable,
+  type PullRequestPlace,
   type PullRequestRelation,
   type PullRequestReview,
   type PullRequestReviewRequest,
   type PullRequestSearchState,
   type PullRequestSource,
   type PullRequestSummary,
+  type RootOwners,
   type SessionSummary,
 } from '../../src/shared/protocol.js';
 import { plainText } from './format.js';
@@ -93,10 +96,50 @@ function parseSource(value: unknown): PullRequestSource | undefined {
   return { ok: false, reason, error: value.error.slice(0, 500) };
 }
 
+/** The longest root, repo key or label a place may name: a path, as the snapshot's are. */
+const PATH_MAX = 4096;
+
+const isPath = (value: unknown): value is string => typeof value === 'string' && value !== '' && value.length <= PATH_MAX;
+
+/**
+ * Where the server placed a PR with no owning session (W104, W106), or undefined when it isn't the
+ * contract's shape, which the page treats as 'unclaimed', as it does a server that doesn't place PRs.
+ */
+export function parsePlace(value: unknown): PullRequestPlace | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.kind === 'unclaimed') return { kind: 'unclaimed' };
+  if (value.kind === 'not-cloned') return isPath(value.root) ? { kind: 'not-cloned', root: value.root } : undefined;
+  if (value.kind !== 'cloned' || !isPath(value.root) || !isPath(value.key) || !isPath(value.label)) return undefined;
+  return { kind: 'cloned', root: value.root, key: value.key, label: value.label };
+}
+
+/** A lowercase GitHub owner, as RootOwners.owners holds them. */
+const OWNER = new RegExp(`^(${GITHUB_OWNER_PATTERN})$`);
+
+/** The most roots, and owners of one root, the page keeps from a list: far more than anyone configures. */
+const ROOTS_MAX = 64;
+const OWNERS_MAX = 500;
+
+/** Which owners each root claims (W104, W106), read defensively: an entry that isn't the shape is left out, and so is an owner that isn't one. */
+export function parseRootOwners(value: unknown): RootOwners[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const roots: RootOwners[] = [];
+  for (const each of value.slice(0, ROOTS_MAX)) {
+    if (!isRecord(each) || !isPath(each.root) || (each.source !== 'config' && each.source !== 'clones')) continue;
+    const { owners } = each;
+    if (owners === 'all' || owners === 'none') roots.push({ root: each.root, owners, source: each.source });
+    else if (Array.isArray(owners)) {
+      const kept = owners.filter((owner): owner is string => typeof owner === 'string' && OWNER.test(owner) && owner === owner.toLowerCase()).slice(0, OWNERS_MAX);
+      roots.push({ root: each.root, owners: [...new Set(kept)], source: each.source });
+    }
+  }
+  return roots;
+}
+
 /** One PR from the 'prs' message, or undefined when it isn't the contract's shape. */
 export function parsePullRequest(value: unknown): PullRequestSummary | undefined {
   if (!isRecord(value)) return undefined;
-  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable, relation, reviewRequest } = value;
+  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable, relation, reviewRequest, place } = value;
   if (typeof repo !== 'string' || !isRepoKey(repo)) return undefined;
   if (typeof repoLabel !== 'string' || repoLabel.toLowerCase() !== repo) return undefined;
   if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) return undefined;
@@ -137,6 +180,8 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
     const request = parseReviewRequest(reviewRequest);
     if (request) pr.reviewRequest = request;
   }
+  const placed = parsePlace(place);
+  if (placed) pr.place = placed;
   return pr;
 }
 
@@ -201,6 +246,8 @@ export function parsePullRequestList(value: unknown): PullRequestList | undefine
   const searches = parseSearches(value.searches);
   if (searches) list.searches = searches;
   if (value.truncated === true) list.truncated = true;
+  const roots = parseRootOwners(value.roots);
+  if (roots) list.roots = roots;
   return list;
 }
 
@@ -236,14 +283,6 @@ export function isOlderPr(pr: Pick<PullRequestSummary, 'updatedAt'>, now: number
   return !Number.isNaN(updated) && updated < now - PRS_SHOWN_DAYS * DAY_MS;
 }
 
-/** The PRs updated in the last PRS_SHOWN_DAYS, and the older ones, each in the order given. */
-export function splitPrs(prs: readonly PullRequestSummary[], now: number): { recent: PullRequestSummary[]; older: PullRequestSummary[] } {
-  const recent: PullRequestSummary[] = [];
-  const older: PullRequestSummary[] = [];
-  for (const pr of prs) (isOlderPr(pr, now) ? older : recent).push(pr);
-  return { recent, older };
-}
-
 /**
  * How many of `prs` need you (prNeedsAttention()): your own with failing checks, conflicts or changes
  * requested, and those whose review is requested of you (W101).
@@ -257,40 +296,14 @@ const time = (iso: string) => {
   return Number.isNaN(at) ? 0 : at;
 };
 
-/** Within a repo: the PRs that need attention first, then the newest updated, then the highest number. */
+/** When a PR was last updated, in ms; 0 when that doesn't parse. */
+export const prUpdatedMs = (pr: Pick<PullRequestSummary, 'updatedAt'>): number => time(pr.updatedAt);
+
+/** The most urgent first: the PRs that need attention, then the newest updated, then the highest number. */
 export function comparePrs(a: PullRequestSummary, b: PullRequestSummary): number {
   const attention = Number(prNeedsAttention(b)) - Number(prNeedsAttention(a));
   if (attention !== 0) return attention;
   return time(b.updatedAt) - time(a.updatedAt) || b.number - a.number;
-}
-
-/** One repo's heading in the PR list, and its PRs, in comparePrs() order. */
-export interface PrRepo {
-  /** Lowercase `owner/name`, as PullRequestSummary.repo. */
-  repo: string;
-  /** `owner/name` as GitHub spells it, from its newest PR. */
-  label: string;
-  prs: PullRequestSummary[];
-  /** How many of them need attention. */
-  attention: number;
-}
-
-/**
- * The PRs under one heading per repo, the headings ordered by their newest updatedAt, so the repo you
- * worked in last is first, ties by label. Within each, comparePrs().
- */
-export function groupPrs(prs: readonly PullRequestSummary[]): PrRepo[] {
-  const byRepo = new Map<string, PullRequestSummary[]>();
-  for (const pr of prs) byRepo.set(pr.repo, [...(byRepo.get(pr.repo) ?? []), pr]);
-  const newest = (list: readonly PullRequestSummary[]) => Math.max(...list.map((pr) => time(pr.updatedAt)));
-  return [...byRepo.entries()]
-    .map(([repo, list]) => {
-      const sorted = [...list].sort(comparePrs);
-      const latest = [...list].sort((a, b) => time(b.updatedAt) - time(a.updatedAt))[0];
-      return { repo, label: latest?.repoLabel ?? repo, prs: sorted, attention: countPrAttention(sorted), newest: newest(list) };
-    })
-    .sort((a, b) => b.newest - a.newest || a.repo.localeCompare(b.repo))
-    .map(({ newest: _newest, ...group }) => group);
 }
 
 /**
@@ -383,28 +396,13 @@ export function sessionsFor(pr: PullRequestSummary, sessions: readonly SessionSu
 }
 
 /**
- * The open PRs a session is strongly linked to, most urgent first: those that need attention, then by
- * the session's newest strong link to each. The first is its row's badge.
+ * The open PRs a session is strongly linked to (prLinkIsStrong()), whether or not it owns them, most
+ * urgent first (comparePrs()): its view's Pull requests tab lists the ones it doesn't own after the
+ * ones it does (W106).
  */
-export function prsFor(session: SessionSummary, prs: readonly PullRequestSummary[]): PullRequestSummary[] {
+export function strongPrsOf(session: SessionSummary, prs: readonly PullRequestSummary[]): PullRequestSummary[] {
   if (!session.prLinks?.some(prLinkIsStrong)) return [];
-  const linked = prs.flatMap((pr) => {
-    const newest = linksTo(session, pr).find(prLinkIsStrong);
-    return newest ? [{ pr, at: time(newest.lastAt) }] : [];
-  });
-  return linked.sort((a, b) => Number(prNeedsAttention(b.pr)) - Number(prNeedsAttention(a.pr)) || b.at - a.at).map(({ pr }) => pr);
-}
-
-/** prsFor() for every session, by its id, leaving out those with none. */
-export function prsBySession(sessions: readonly SessionSummary[], prs: readonly PullRequestSummary[]): Map<string, PullRequestSummary[]> {
-  const bySession = new Map<string, PullRequestSummary[]>();
-  if (prs.length === 0) return bySession;
-  for (const session of sessions) {
-    if (bySession.has(session.sessionId)) continue;
-    const linked = prsFor(session, prs);
-    if (linked.length > 0) bySession.set(session.sessionId, linked);
-  }
-  return bySession;
+  return prs.filter((pr) => linksTo(session, pr).some(prLinkIsStrong)).sort(comparePrs);
 }
 
 /** One of a PR's state badges (docs/design-system.md, 4: Pull requests). */
@@ -448,25 +446,66 @@ export function prStateBadges(pr: PullRequestSummary): PrStateBadge[] {
   return badges;
 }
 
-/** What the session row's PR badge shows: its most urgent strongly linked open PR, and how many more. */
+/**
+ * The session row's PR badge's state (W106): the most urgent of the PR's highlighted states, short,
+ * after its number, "#128 CI failing", or undefined for one that needs nothing.
+ */
+const BADGE_STATES: Readonly<Partial<Record<PrStateBadge['state'], string>>> = {
+  'review-requested': 'review requested',
+  failing: 'CI failing',
+  conflicts: 'conflicts',
+  'changes-requested': 'changes requested',
+};
+
+/** What the session row's PR badge shows: the most urgent open PR the session owns, its state, and how many more it owns. */
 export interface SessionPrBadge {
   pr: PullRequestSummary;
+  /** Its most urgent highlighted state, short: "CI failing", "conflicts". None for a PR that needs nothing. */
+  state?: string;
   more: number;
   attention: boolean;
   /** Its hover-only tooltip: each PR, by repo and number, its title, and its highlighted states. */
   hint: string;
 }
 
-/** The session row's PR badge, from prsFor()'s list, or undefined when it has none. */
-export function sessionPrBadge(linked: readonly PullRequestSummary[] | undefined): SessionPrBadge | undefined {
-  const [first] = linked ?? [];
-  if (!linked || !first) return undefined;
+/**
+ * The session row's PR badge, from the PRs it owns (work.ts), most urgent first, or undefined when it
+ * owns none (W106). A session strongly linked to a PR that another session owns has no badge for it.
+ */
+export function sessionPrBadge(owned: readonly PullRequestSummary[] | undefined): SessionPrBadge | undefined {
+  const [first] = owned ?? [];
+  if (!owned || !first) return undefined;
   const line = (pr: PullRequestSummary) => {
     const states = prStateBadges(pr).filter((badge) => badge.attention);
     return `${prName(pr)}: ${plainText(pr.title)}${states.length > 0 ? ` (${states.map((badge) => badge.label.toLowerCase()).join(', ')})` : ''}`;
   };
-  return { pr: first, more: linked.length - 1, attention: prNeedsAttention(first), hint: linked.map(line).join('\n') };
+  const urgent = prStateBadges(first).find((badge) => badge.attention && prNeedsAttention(first));
+  const state = urgent === undefined ? undefined : BADGE_STATES[urgent.state];
+  return { pr: first, ...(state === undefined ? {} : { state }), more: owned.length - 1, attention: prNeedsAttention(first), hint: owned.map(line).join('\n') };
 }
+
+/**
+ * Why a PR needs you, in a sentence, for line 2 of a row (W106), or undefined when it doesn't
+ * (prNeedsAttention()): "Your review is requested", "CI is failing", "It has merge conflicts" or
+ * "Changes are requested", in that order, as its badges are. With `number`, it names the PR, as a
+ * session row's line 2 does: "CI is failing on #128".
+ */
+export function prReason(pr: PullRequestSummary, number = false): string | undefined {
+  if (!prNeedsAttention(pr)) return undefined;
+  const on = number ? ` on #${pr.number}` : '';
+  if (pr.relation === 'review-requested') return `Your review is requested${on}`;
+  if (pr.checks === 'failing') return `CI is failing${on}`;
+  if (pr.mergeable === 'conflicts') return number ? `#${pr.number} has merge conflicts` : 'It has merge conflicts';
+  if (pr.review === 'changes-requested') return `Changes are requested${on}`;
+  return undefined;
+}
+
+/** How a PR is yours, in a word or two, for a PR row's line 2 while it needs nothing (W106): "Yours", "Mentions you". */
+export const RELATION_PHRASES: Readonly<Record<PullRequestRelation, string>> = {
+  authored: 'Yours',
+  'review-requested': 'Asks your review',
+  mentioned: 'Mentions you',
+};
 
 /** "1 open", "12 open", or "3 of 12 open" while the filter hides some. */
 export function openCount(shown: number, total: number): string {

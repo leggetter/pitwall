@@ -1,14 +1,11 @@
 // The open pull request in the URL (openPr.ts, W95): ?pr=, kept alongside the selection, taking the
 // place of ?session= and the other way round, pushed on open and close, replaced on a move, and
-// followed on popstate; and the collapsed repo headings (prRepos.ts), kept as hashes, never names.
+// followed on popstate.
 
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import type { StorageSource } from './groupState.js';
-import { fnv1a64 } from './notNeeded.js';
 import { parsePr, useOpenPr, withPr } from './openPr.js';
 import { withSession } from './openSession.js';
-import { PR_REPOS_CAP, PR_REPOS_KEY, readCollapsedRepos, usePrRepos, writeCollapsedRepos } from './prRepos.js';
 import { withSelection } from './selection.js';
 import { fakeHistory } from './test/history.js';
 
@@ -59,50 +56,5 @@ describe('useOpenPr', () => {
     history.back();
     expect(result.current.key).toBeUndefined();
     expect(history.location.hash).toBe('#rest');
-  });
-});
-
-/** localStorage-like storage for the test. */
-function memory(initial: Record<string, string> = {}) {
-  const items = new Map(Object.entries(initial));
-  const source: StorageSource = () => ({ getItem: (name) => items.get(name) ?? null, setItem: (name, value) => void items.set(name, value) });
-  return { items, source };
-}
-
-describe('the collapsed repo headings', () => {
-  it('are kept as hashes of the repos, never their names, and read back', () => {
-    const { items, source } = memory();
-    const { result } = renderHook(() => usePrRepos(source));
-    expect(result.current.isCollapsed('example/secret-thing')).toBe(false);
-    act(() => result.current.toggle('example/secret-thing'));
-    expect(result.current.isCollapsed('example/secret-thing')).toBe(true);
-    const raw = items.get(PR_REPOS_KEY) ?? '';
-    expect(raw).not.toContain('secret');
-    expect(JSON.parse(raw)).toEqual({ v: 1, collapsed: [fnv1a64('example/secret-thing')] });
-    // After a reload.
-    expect(renderHook(() => usePrRepos(source)).result.current.isCollapsed('example/secret-thing')).toBe(true);
-    act(() => result.current.toggle('example/secret-thing'));
-    expect(JSON.parse(items.get(PR_REPOS_KEY) ?? '')).toEqual({ v: 1, collapsed: [] });
-  });
-
-  it('start expanded when storage is missing, throws or holds something else, and keep at most the cap', () => {
-    const throwing: StorageSource = () => {
-      throw new Error('blocked');
-    };
-    expect(readCollapsedRepos(throwing)).toEqual([]);
-    expect(readCollapsedRepos(() => null)).toEqual([]);
-    for (const raw of ['nope', '[]', '{"v":2,"collapsed":[]}', '{"v":1,"collapsed":"x"}']) expect(readCollapsedRepos(memory({ [PR_REPOS_KEY]: raw }).source), raw).toEqual([]);
-    const hash = fnv1a64('example/demo-app');
-    expect(readCollapsedRepos(memory({ [PR_REPOS_KEY]: JSON.stringify({ v: 1, collapsed: ['example/demo-app', 7, hash, hash] }) }).source)).toEqual([hash]);
-    const { items, source } = memory();
-    writeCollapsedRepos(
-      Array.from({ length: PR_REPOS_CAP + 3 }, (_, index) => fnv1a64(`example/repo-${index}`)),
-      source,
-    );
-    expect(JSON.parse(items.get(PR_REPOS_KEY) ?? '').collapsed).toHaveLength(PR_REPOS_CAP);
-    // A throwing store still works for the page's life.
-    const { result } = renderHook(() => usePrRepos(throwing));
-    act(() => result.current.toggle('example/demo-app'));
-    expect(result.current.isCollapsed('example/demo-app')).toBe(true);
   });
 });

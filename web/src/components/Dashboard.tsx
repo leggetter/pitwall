@@ -83,20 +83,43 @@
 // page, in the selection's Finished section and its empty states, never stored. The session view finds
 // a session among all of them, so one that's hidden still shows in a view that's open, or a URL's.
 //
-// Pull requests (M4, W95), under Starred in the repo list, lists your open PRs in the session list's
-// column (PrList.tsx), from the connection's latest 'prs' message, and opens one in the session view's
-// place (PrView.tsx), as ?pr= (openPr.ts). The third column shows one thing: a PR opened takes the
-// place of the open session, and a session opened takes the place of the open PR, each in one pushed
-// history entry, so the back button goes back to the other. Neither changes the selection, as opening
-// a session never has: a PR's view opens over the session list from a session's link, and a session's
-// view over the PR list from the PR's Sessions. The PR list's filter, Show older and Refresh are the
-// page's, whatever the root tab, since PRs aren't under a root; its collapsed repos are remembered
-// (prRepos.ts). `j` and `k`, and ↑ and ↓ on a row or in the view's header, step through the PR list
-// as they do the session list. Each session row has a badge for its most urgent strongly linked open
-// PR, and its view's header links to each one.
+// Pull requests (M4, W95, W106): a row is a piece of work, a session, an open PR, or both (work.ts).
+// From the connection's latest 'prs' message and every session in the snapshot, each open PR's owner
+// is the session that acted on it last (prOwner()); its row carries the PR, wherever the session is
+// listed. A PR no session owns is a row of its own (PrRow.tsx), under the group the server placed it
+// in: a cloned repo's, built when no session is listed there, or a not-cloned repo's under the root
+// that claims its owner. Those no root claims are only counted. The groups carry their PR rows from
+// here on, so the repo list, the views, their counts, the root tabs' badges and the page title count
+// them, and Needs you counts a row that needs you through a PR. A finished session that owns an open
+// PR isn't finished work: it's listed with the rest, and stays in the ended sessions' window.
+//
+// Pull requests, under Starred in the repo list, is the session list showing every row with an open
+// PR (PrList.tsx has its filters, notices and foot). A PR opens in the session view's place
+// (PrView.tsx), as ?pr= (openPr.ts). The third column shows one thing: a PR opened takes the place of
+// the open session, and a session opened takes the place of the open PR, each in one pushed history
+// entry, so the back button goes back to the other. Neither changes the selection, as opening a
+// session never has. Its filter, chips, Show older and Refresh are the page's, whatever the root tab.
+// `j` and `k`, and ↑ and ↓ on a row or in a view's header, step through the rows as shown, sessions'
+// and PRs' alike, and show each in the view while one is open.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
+import {
+  composeWork,
+  countNeeds,
+  countRows,
+  filterRows,
+  hiddenOwners,
+  listWork,
+  matchesRelations,
+  ownerIds,
+  prRowCounts,
+  prRowKey,
+  rowNeedsYou,
+  withPrRows,
+  type ListGroup,
+  type WorkScope,
+} from '../work.js';
 import { useBackgroundTab } from '../backgroundTab.js';
 import type { ConnectionView } from '../connection.js';
 import { focusGesture, type FocusGesture } from '../focusGesture.js';
@@ -110,8 +133,7 @@ import { useNotNeeded } from '../notNeeded.js';
 import { useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
 import { usePrRefresh } from '../prRefresh.js';
-import { usePrRepos } from '../prRepos.js';
-import { countPrAttention, listNow, prKey, prListState, prsBySession, prsOff, sessionsFor, splitPrs } from '../prs.js';
+import { listNow, prKey, prListState, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
@@ -133,12 +155,10 @@ import {
   type Selection,
 } from '../selection.js';
 import {
-  countAttention,
-  filterListed,
+  FILTER_CHIPS,
   filterNeedle,
   groupLabel,
   isOlderEnded,
-  listScope,
   needsAttention,
   NO_FILTERS,
   noMatchText,
@@ -163,7 +183,7 @@ import { HideButton } from './HideButton.js';
 import { HighlightContext } from './Highlight.js';
 import { closeMenus } from './Menu.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
-import { PrList } from './PrList.js';
+import { NO_RELATION, PrListFilters, PrListFoot, PrNotices, prSourceBody, RefreshAction } from './PrList.js';
 import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
 import { PreferencesDialog } from './Preferences.js';
 import { RepoDrawer } from './RepoDrawer.js';
@@ -181,6 +201,9 @@ import { SkeletonRows, useWaiting, WaitingStatus } from './Waiting.js';
  * pressed with nothing focused belongs to a dashboard only when it's the only one.
  */
 let dashboards = 0;
+
+/** The session list's chips without Has PR, while there's no list of pull requests (W106). */
+const KIND_CHIPS = FILTER_CHIPS.filter((chip) => chip !== 'has-pr');
 
 /** The empty state's sentence for a selected group that has left the snapshot, a root's own included (4: Empty states). */
 export const GROUP_GONE = 'Its sessions are no longer listed under these roots.';
@@ -299,18 +322,37 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const [showOlder, setShowOlder] = useState(false);
   // "Now" for the ended sessions' window: the snapshot's own time, so what's hidden changes only with a snapshot.
   const endedNow = snapshot ? Date.parse(snapshot.generatedAt) : Number.NaN;
-  // The snapshot's groups without the older ended sessions, unless Show older is on: what everything below lists and counts.
+  // Your open pull requests (W95), the page's whatever the root tab: the latest 'prs' message's list.
+  const prList = view.prs;
+  const allPrs = useMemo(() => prList?.prs ?? [], [prList]);
+  // The PR rows' 90-day window, from the list's own time, so what's hidden changes only with a fetch.
+  const prNow = listNow(prList, Number.NaN);
+  // Show older for PR rows: off at each load, and never stored, as the ended sessions' is.
+  const [showOlderPrs, setShowOlderPrs] = useState(false);
+  // Which session owns each open PR, over every session in the snapshot, and where each PR no session
+  // owns is listed (W106). Off, the list has no PRs, so nothing is owned or placed.
+  const snapshotSessions = useMemo(() => sessionsIn(startGroups ?? []), [startGroups]);
+  const work = useMemo(() => composeWork(snapshotSessions, allPrs, { now: prNow, showOlder: showOlderPrs }), [snapshotSessions, allPrs, prNow, showOlderPrs]);
+  const owners = useMemo(() => ownerIds(work), [work]);
+  // The snapshot's groups without the older ended sessions, unless Show older is on: what everything
+  // below lists and counts. An ended session that owns an open PR stays (W106).
   const windowedGroups = useMemo(
-    () => (startGroups === undefined || showOlder ? startGroups : withoutOlderEnded(startGroups, endedNow)),
-    [startGroups, showOlder, endedNow],
+    () => (startGroups === undefined || showOlder ? startGroups : withoutOlderEnded(startGroups, endedNow, owners)),
+    [startGroups, showOlder, endedNow, owners],
   );
-  const grouped = useMemo(() => groupSessions(windowedGroups ?? [], groupBy), [windowedGroups, groupBy]);
+  // Grouped for the mode, then with each placed PR under its group (W106).
+  const grouped = useMemo(() => {
+    const byMode = groupSessions(windowedGroups ?? [], groupBy);
+    return { groups: withPrRows(byMode.groups, work), home: byMode.home };
+  }, [windowedGroups, groupBy, work]);
   // Every session, the older ended ones too: for the session view, and for Show older's counts.
-  const groupedAll = useMemo(
-    () => (windowedGroups === startGroups ? grouped : groupSessions(startGroups ?? [], groupBy)),
-    [windowedGroups, startGroups, grouped, groupBy],
-  );
-  const anyOlder = useMemo(() => (startGroups ?? []).some((group) => group.sessions.some((session) => isOlderEnded(session, endedNow))), [startGroups, endedNow]);
+  const groupedAll = useMemo(() => {
+    if (windowedGroups === startGroups) return grouped;
+    const byMode = groupSessions(startGroups ?? [], groupBy);
+    return { groups: withPrRows(byMode.groups, work), home: byMode.home };
+  }, [windowedGroups, startGroups, grouped, groupBy, work]);
+  const older = (session: SessionSummary) => isOlderEnded(session, endedNow) && !owners.has(session.sessionId);
+  const anyOlder = useMemo(() => (startGroups ?? []).some((group) => group.sessions.some(older)), [startGroups, endedNow, owners]);
   // The New session dialog's directories are the repo list's groups', so not a group of older ended sessions alone.
   const dialogSnapshot = useMemo(() => (snapshot && windowedGroups ? { roots: snapshot.roots, groups: windowedGroups } : undefined), [snapshot, windowedGroups]);
   const viewSnapshot = useMemo(() => (snapshot ? { roots: snapshot.roots, groups: grouped.groups } : undefined), [snapshot, grouped]);
@@ -319,7 +361,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Each root tab's own filter; with one root, the one filter.
   const [filtersByTab, setFiltersByTab] = useState<ReadonlyMap<string, Filters>>(() => new Map());
   const filterKey = tab ?? '';
-  const filters = filtersByTab.get(filterKey) ?? NO_FILTERS;
+  // Has PR is a chip only while there's a list of pull requests (W106): not before the server sends
+  // one, as a pitwall from before M4 never does, nor with pull requests off, when it would only empty
+  // the list. A filter it was on for drops it then.
+  const hasPrChip = view.prs !== undefined && !prsOff(view.prs);
+  const tabFilters = filtersByTab.get(filterKey) ?? NO_FILTERS;
+  const filters = useMemo(
+    () => (hasPrChip || !tabFilters.chips.has('has-pr') ? tabFilters : { ...tabFilters, chips: new Set([...tabFilters.chips].filter((chip) => chip !== 'has-pr')) }),
+    [hasPrChip, tabFilters],
+  );
   const setFilters = useCallback((next: Filters) => setFiltersByTab((current) => new Map(current).set(filterKey, next)), [filterKey]);
   // Urgency, Recent or Name, for every selection.
   const [sort, setSort] = useSort(storage);
@@ -378,11 +428,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // under its root.
   const groups = grouped.groups;
   const roots = snapshot?.roots ?? [];
-  const shownGroups = useMemo(() => tabGroups(groups, tab), [groups, tab]);
+  const shownGroups: readonly ListGroup[] = useMemo(() => tabGroups(groups, tab), [groups, tab]);
   // Each session once, whichever groups and root tabs list it. Every root's, for the open session and
   // the document title; the open tab's, for the lists.
   const everySession = useMemo(() => sessionsIn(groups), [groups]);
-  const allSessions = useMemo(() => (tab === undefined ? everySession : sessionsIn(shownGroups)), [tab, everySession, shownGroups]);
+  // How many rows the open tab lists: its sessions, and its PR rows (W106).
+  const tabRows = useMemo(() => countRows(shownGroups), [shownGroups]);
   // The sessions marked not needed now (W88), every root's, whether or not they're in the snapshot.
   // Each snapshot drops those it lists as needing something else now; never those it doesn't list.
   const notNeeded = useNotNeeded(storage);
@@ -391,7 +442,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   useEffect(() => {
     if (startGroups) prune(sessionsIn(startGroups));
   }, [startGroups, prune]);
-  const attention = countAttention(everySession, marks);
+  // Every root's rows that need you, a PR's included (W106): the page title's count.
+  const attention = countNeeds(groups, marks, work);
   const selectedGroup = findGroup(groups, selection);
   // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
   // The repo list shows the open tab's.
@@ -400,23 +452,34 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const selectedHidden = 'view' in selection ? undefined : hidden.find(selection.repo, selection.root);
   // The starred sessions' ids, every root's, whether or not they're in the snapshot (W53).
   const starred = useStarred(storage);
-  const scope = scopeFor(shownGroups, selection, starred.set);
+  // Pull requests lists every row with an open PR (W106); the group a selection names is one of these groups, PR rows and all.
+  const scopeOf = (from: readonly ListGroup[]): WorkScope | undefined => (prsSelected ? { kind: 'prs' } : (scopeFor(from, selection, starred.set) as WorkScope | undefined));
+  const scope = scopeOf(shownGroups);
   const listed = useMemo(
-    () => (scope ? listScope(shownGroups, scope, sort, grouped.home, marks) : { current: [], finished: [] }),
-    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, marks],
+    () => (scope ? listWork(shownGroups, scope, sort, grouped.home, marks, work) : { current: [], finished: [] }),
+    [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, marks, work],
   );
-  const current = useMemo(() => filterListed(listed.current, filters), [listed, filters]);
-  const finished = useMemo(() => filterListed(listed.finished, filters), [listed, filters]);
+  const [prFilter, setPrFilter] = useState('');
+  // The Pull requests view's chips (W101): the page's, none on at each load, never stored, as the filter's text.
+  const [prRelations, setPrRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set());
+  // The Pull requests view's text and chips, or the session list's filters (W106).
+  const prFilters = useMemo<Filters>(() => ({ text: prFilter, chips: new Set() }), [prFilter]);
+  const current = useMemo(
+    () => (prsSelected ? filterRows(listed.current, prFilters, work).filter((row) => matchesRelations(row, prRelations, work)) : filterRows(listed.current, filters, work)),
+    [listed, filters, prsSelected, prFilters, prRelations, work],
+  );
+  const finished = useMemo(() => filterRows(listed.finished, filters, work), [listed, filters, work]);
   // The selection's ended sessions older than ENDED_SHOWN_DAYS (W67), as the filters show them, with
-  // Show older on or off: how many its button says, and whether the selection has one at all.
+  // Show older on or off: how many its button says, and whether the selection has one at all. Never
+  // one that owns an open PR, which isn't finished work (W106).
   const olderCount = useMemo(() => {
-    if (!anyOlder) return 0;
+    if (!anyOlder || prsSelected) return 0;
     const every = tabGroups(groupedAll.groups, tab);
-    const everyScope = scopeFor(every, selection, starred.set);
+    const everyScope = scopeOf(every);
     if (!everyScope) return 0;
-    const older = listScope(every, everyScope, sort, groupedAll.home).finished.filter(({ session }) => isOlderEnded(session, endedNow));
-    return filterListed(older, filters).length;
-  }, [anyOlder, groupedAll, tab, selection, starred.set, sort, endedNow, filters]);
+    const old = listWork(every, everyScope, sort, groupedAll.home, undefined, work).finished.filter(({ session }) => older(session));
+    return filterRows(old, filters, work).length;
+  }, [anyOlder, prsSelected, groupedAll, tab, selection, starred.set, sort, endedNow, filters, work, owners]);
   // Every session pitwall lists, the older ended ones too, each once: the session view shows one
   // wherever it's listed, so Hide older never says an open one is no longer listed.
   const everyListed = useMemo(() => (groupedAll === grouped ? everySession : sessionsIn(groupedAll.groups)), [groupedAll, grouped, everySession]);
@@ -430,26 +493,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const listedOpen = openId === undefined ? undefined : listedSession(openId);
   const shownOpen = listedOpen ?? (openId === undefined ? undefined : known.current.get(openId));
 
-  // Your open pull requests (W95), the page's whatever the root tab: the latest 'prs' message's list.
-  const prList = view.prs;
-  const allPrs = useMemo(() => prList?.prs ?? [], [prList]);
-  // The 90-day window, from the list's own time, so what's hidden changes only with a fetch.
-  const prNow = listNow(prList, Number.NaN);
-  const recentPrs = useMemo(() => splitPrs(allPrs, prNow).recent, [allPrs, prNow]);
-  // The repo list's item, once the server has sent a list, unless pull requests are off.
+  // The repo list's Pull requests item, once the server has sent a list, unless pull requests are
+  // off: the open tab's rows with an open PR, and those that need you through one (W106).
+  const tabPrCounts = useMemo(() => prRowCounts(shownGroups, work), [shownGroups, work]);
   const repoListPrs =
     prList === undefined || prsOff(prList)
       ? undefined
-      : { attention: countPrAttention(recentPrs), count: prList.fetchedAt === undefined || recentPrs.length === 0 ? undefined : recentPrs.length };
-  // Each session's strongly linked open PRs, most urgent first, for its row's badge and its view's links.
-  const linkedPrs = useMemo(() => prsBySession(everyListed, allPrs), [everyListed, allPrs]);
-  const [prFilter, setPrFilter] = useState('');
-  // The PR list's chips (W101): the page's, none on at each load, never stored, as the filter's text.
-  const [prRelations, setPrRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set());
-  // Show older for PRs: off at each load, and never stored, as the ended sessions' is.
-  const [showOlderPrs, setShowOlderPrs] = useState(false);
-  const prRepos = usePrRepos(storage);
-  const collapsedRepos = useMemo(() => new Set(allPrs.map((pr) => pr.repo).filter(prRepos.isCollapsed)), [allPrs, prRepos.isCollapsed]);
+      : { attention: tabPrCounts.attention, count: prList.fetchedAt === undefined || tabPrCounts.count === 0 ? undefined : tabPrCounts.count };
   const prRefresh = usePrRefresh(toasts.show);
   // What the page last knew of each PR, for one that leaves the list while it's open, merged or closed.
   const knownPrs = useRef(new Map<string, PullRequestSummary>());
@@ -476,6 +526,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     writeStoredSelection(instead, storage);
     followSelection();
   }, [prsSelected, prsOffNow, tab, navigation, storage, followSelection]);
+  // Pull requests before the first fetch: the list's skeletons after --pw-delay-spinner.
+  const prsWaiting = useWaiting(app, prsSelected && prState.kind === 'loading');
   // A ?pr= before the list says what it is: the view's skeletons after --pw-delay-spinner.
   const prWaiting = useWaiting(app, prOpen !== undefined && shownPr === undefined && prState.kind === 'loading');
 
@@ -626,17 +678,40 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
    */
   const focusList = () => (overlaid ? viewHeading.current : listHeading.current)?.focus();
 
-  /** The session list's row buttons, in the order shown, without those in a collapsed Finished section. */
+  /**
+   * The list's row buttons, a session's name or a PR row's title (W106), in the order shown, without
+   * those in a collapsed Finished section.
+   */
   const rowButtons = useCallback(
-    () => [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-open-session]') ?? [])].filter((button) => !button.closest('[hidden]')),
+    () => [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-open-session], .session-list [data-open-pr]') ?? [])].filter((button) => !button.closest('[hidden]')),
     [],
   );
+  /** The row a button opens, as rowKey() names it: a session's id, or `pr:` and a PR's key. */
+  const rowIdOf = (button: HTMLElement | undefined): string | undefined =>
+    button === undefined ? undefined : (button.dataset.openSession ?? (button.dataset.openPr === undefined ? undefined : prRowKey(button.dataset.openPr)));
   const rowButton = (sessionId: string) => rowButtons().find((button) => button.dataset.openSession === sessionId);
-  /** The row `by` rows from `sessionId`'s in the list as shown, stopping at either end. */
-  const rowFrom = (sessionId: string, by: 1 | -1) => {
+  const prRowButton = (key: string) => rowButtons().find((button) => button.dataset.openPr === key);
+  /** The row whose view is open: its session's, or its PR's. */
+  const openRow = openId ?? (prOpen === undefined ? undefined : prRowKey(prOpen));
+  /** The row `by` rows from `id`'s in the list as shown, stopping at either end. */
+  const rowFrom = (id: string, by: 1 | -1) => {
     const buttons = rowButtons();
-    const at = buttons.findIndex((button) => button.dataset.openSession === sessionId);
+    const at = buttons.findIndex((button) => rowIdOf(button) === id);
     return at < 0 ? undefined : buttons[at + by];
+  };
+  /**
+   * Shows a row in the third column, replacing the history entry, as a step does: a session's view,
+   * or a PR's (W106). With `focus`, its heading takes focus, or for a session the conversation.
+   */
+  const showRow = (id: string, focus?: 'heading' | 'conversation') => {
+    if (id.startsWith('pr:')) {
+      const key = id.slice('pr:'.length);
+      if (focus) focusPrView.current = key;
+      showPr(key, 'replace');
+      return;
+    }
+    if (focus) focusView.current = { id, on: focus };
+    stepTo(id);
   };
 
   // The click or Enter on a row that opened the open session's view (W57, focusGesture.ts): a terminal
@@ -663,34 +738,35 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     [openId, opened.open],
   );
 
-  // ↑ and ↓ on a row: focus moves to the next or previous row, and stays in the list. With the view
-  // open, it shows that session too, replacing the history entry. Nothing while the message box has a
-  // draft, which changing session would lose, or while a Stop or Remove runs, as `j` and `k` do (6.2).
-  const stepFromRow = (sessionId: string, by: 1 | -1) => {
+  // ↑ and ↓ on a row's name or a PR row's title: focus moves to the next or previous row, and stays in
+  // the list. With a view open, it shows that row too, replacing the history entry. Nothing while the
+  // message box has a draft, which changing session would lose, or while a Stop or Remove runs, as `j`
+  // and `k` do (6.2).
+  const stepFromRow = (id: string, by: 1 | -1) => {
     if (openId !== undefined && holding()) return;
-    const next = rowFrom(sessionId, by);
-    const id = next?.dataset.openSession;
-    if (!next || id === undefined) return;
+    const next = rowFrom(id, by);
+    const nextId = rowIdOf(next);
+    if (!next || nextId === undefined) return;
     next.focus();
-    if (openId !== undefined) stepTo(id);
+    if (openRow !== undefined) showRow(nextId);
   };
 
-  // ↑ and ↓ in the view's header: the next or previous session, with focus on its heading. Nothing
-  // while the message box has a draft or a Stop or Remove runs, as on a row.
+  // ↑ and ↓ in a view's header, a session's or a PR's: the next or previous row, with focus on its
+  // view's heading. Nothing while the message box has a draft or a Stop or Remove runs, as on a row.
   const stepFromView = (by: 1 | -1) => {
-    if (openId === undefined || holding()) return;
-    const next = rowFrom(openId, by);
-    const id = next?.dataset.openSession;
-    if (!next || id === undefined) return;
+    if (openRow === undefined || holding()) return;
+    const next = rowFrom(openRow, by);
+    const nextId = rowIdOf(next);
+    if (!next || nextId === undefined) return;
     next.scrollIntoView?.({ block: 'nearest' });
-    focusView.current = { id, on: 'heading' };
-    stepTo(id);
+    showRow(nextId, 'heading');
   };
 
-  // `j` and `k`: the next or previous session in the list as shown, from the focused row, or else the
-  // open session, or else the first row. With the view closed, focus moves to that row. With it open,
-  // the view shows that session too: focus stays in the list if it was there, stays in the
-  // conversation if it was there, and otherwise goes to the view's heading, as ↑ and ↓ in its header do.
+  // `j` and `k`: the next or previous row in the list as shown, a session's or a PR's, from the
+  // focused row, or else the open one, or else the first row. With no view open, focus moves to that
+  // row. With one open, it shows that row too: focus stays in the list if it was there, stays in the
+  // conversation if it was there and the next is a session, and otherwise goes to the view's heading,
+  // as ↑ and ↓ in its header do.
   const stepByKey = (root: HTMLElement, by: 1 | -1): boolean => {
     const buttons = rowButtons();
     const active = document.activeElement;
@@ -699,17 +775,17 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const onRow =
       active instanceof HTMLElement && active.closest('.session-list') !== null
         ? buttons.includes(active)
-          ? active.dataset.openSession
-          : buttons.find((button) => toggleOf !== undefined && button.dataset.openSession === toggleOf)?.dataset.openSession
+          ? rowIdOf(active)
+          : rowIdOf(buttons.find((button) => toggleOf !== undefined && button.dataset.openSession === toggleOf))
         : undefined;
-    const from = onRow ?? openId;
-    const at = from === undefined ? -1 : buttons.findIndex((button) => button.dataset.openSession === from);
-    // A session open that the list doesn't show, filtered out or in a collapsed Finished section, has no next.
+    const from = onRow ?? openRow;
+    const at = from === undefined ? -1 : buttons.findIndex((button) => rowIdOf(button) === from);
+    // A row open that the list doesn't show, filtered out or in a collapsed Finished section, has no next.
     if (from !== undefined && at < 0) return false;
     const next = from === undefined ? buttons[0] : buttons[at + by];
-    const id = next?.dataset.openSession;
+    const id = rowIdOf(next);
     if (!next || id === undefined) return false;
-    if (openId === undefined) {
+    if (openRow === undefined) {
       closeMenus(root);
       next.focus();
       return true;
@@ -720,11 +796,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     closeMenus(root);
     if (inList) {
       next.focus();
+      showRow(id);
     } else {
       next.scrollIntoView?.({ block: 'nearest' });
-      focusView.current = { id, on: inConversation ? 'conversation' : 'heading' };
+      showRow(id, inConversation ? 'conversation' : 'heading');
     }
-    stepTo(id);
     return true;
   };
 
@@ -780,11 +856,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     focusPrView.current = undefined;
     viewHeading.current?.focus();
   });
-  const prRowButtons = useCallback(
-    () => [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-open-pr]') ?? [])].filter((button) => !button.closest('[hidden]')),
-    [],
-  );
-  const prRowButton = (key: string) => prRowButtons().find((button) => button.dataset.openPr === key);
   /** Opens a PR's view in the third column, in place of an open session's, so ?session= follows. */
   const showPr = (key: string, mode: 'push' | 'replace') => {
     prUrl.open(key, mode);
@@ -834,54 +905,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return () => cancelAnimationFrame(frame);
   }, [prOpen, openId, layout, tab]);
 
-  /** The PR row `by` rows from `key`'s in the list as shown, stopping at either end. */
-  const prRowFrom = (key: string, by: 1 | -1) => {
-    const buttons = prRowButtons();
-    const at = buttons.findIndex((button) => button.dataset.openPr === key);
-    return at < 0 ? undefined : buttons[at + by];
-  };
-  // ↑ and ↓ on a PR row: focus moves to the next or previous row; with the PR view open, it shows that PR too.
-  const stepFromPrRow = (key: string, by: 1 | -1) => {
-    const next = prRowFrom(key, by);
-    const id = next?.dataset.openPr;
-    if (!next || id === undefined) return;
-    next.focus();
-    if (prOpen !== undefined) showPr(id, 'replace');
-  };
-  // ↑ and ↓ in the PR view's header: the next or previous PR, with focus on its heading.
-  const stepFromPrView = (by: 1 | -1) => {
-    if (prOpen === undefined) return;
-    const next = prRowFrom(prOpen, by);
-    const id = next?.dataset.openPr;
-    if (!next || id === undefined) return;
-    next.scrollIntoView?.({ block: 'nearest' });
-    focusPrView.current = id;
-    showPr(id, 'replace');
-  };
-  // `j` and `k` in the PR list, as in the session list: from the focused row, or else the open PR, or else the first row.
-  const stepPrByKey = (root: HTMLElement, by: 1 | -1): boolean => {
-    const buttons = prRowButtons();
-    const active = document.activeElement;
-    const onRow = active instanceof HTMLElement && buttons.includes(active) ? active.dataset.openPr : undefined;
-    const from = onRow ?? prOpen;
-    const at = from === undefined ? -1 : buttons.findIndex((button) => button.dataset.openPr === from);
-    if (from !== undefined && at < 0) return false;
-    const next = from === undefined ? buttons[0] : buttons[at + by];
-    const id = next?.dataset.openPr;
-    if (!next || id === undefined) return false;
-    closeMenus(root);
-    if (prOpen === undefined) {
-      next.focus();
-      return true;
-    }
-    if (active instanceof Element && active.closest('.session-list') !== null) next.focus();
-    else {
-      next.scrollIntoView?.({ block: 'nearest' });
-      focusPrView.current = id;
-    }
-    showPr(id, 'replace');
-    return true;
-  };
   // A session from the PR view's Sessions: its view takes the PR's place, with focus on its heading.
   // No focus gesture (W57): its terminal, if it opens on one, leaves focus where it is.
   const openSessionFromPr = (sessionId: string) => {
@@ -1066,9 +1089,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     filter: focusFilter,
     'new-session': openNewSession,
     shortcuts: openShortcuts,
-    // In the PR list, through its rows; nothing while a session's view is open over it, or a PR's over the session list.
-    next: (root) => (prsSelected ? openId === undefined && stepPrByKey(root, 1) : prOpen === undefined && stepByKey(root, 1)),
-    previous: (root) => (prsSelected ? openId === undefined && stepPrByKey(root, -1) : prOpen === undefined && stepByKey(root, -1)),
+    // Through the rows as shown, sessions' and PRs' alike (W106).
+    next: (root) => stepByKey(root, 1),
+    previous: (root) => stepByKey(root, -1),
     star: starOpen,
   };
 
@@ -1247,7 +1270,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const heading: SessionListHeading =
     'view' in selection
       ? { label: name }
-      : { label: name, kind: selectedGroup?.kind ?? selectedHidden?.kind };
+      : { label: name, kind: selectedGroup?.kind ?? selectedHidden?.kind, notCloned: selectedGroup?.notCloned === true };
   // A group's Hide from repo list, or Show in repo list once it's hidden, whether or not it's in the snapshot.
   const unhide = (group: HiddenGroup) => {
     hidden.unhide(group);
@@ -1267,7 +1290,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         }}
       />
     );
-  } else if (selectedGroup) {
+  } else if (selectedGroup && !selectedGroup.notCloned) {
+    // A repo that isn't cloned is listed only while it has PR rows, and its name stays out of storage (W106): it has no Hide.
     const group = selectedGroup;
     headingAction = (
       <HideButton
@@ -1283,9 +1307,34 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const shown = current.length + finished.length;
   // No summary where it would only repeat the empty state below it: "0 sessions · Nothing needs you"
   // over no sessions at all, or "Nothing needs you" over Needs you's own "Nothing needs you right now",
-  // or over Starred's "No starred sessions".
+  // or over Starred's "No starred sessions", or Pull requests' "No open pull requests", or its states
+  // before there's a list.
+  const prsListed = prState.kind === 'list';
   const summarised =
-    snapshot !== undefined && scope !== undefined && allSessions.length > 0 && !((scope.kind === 'needs-you' || scope.kind === 'starred') && total === 0);
+    snapshot !== undefined &&
+    scope !== undefined &&
+    tabRows > 0 &&
+    !((scope.kind === 'needs-you' || scope.kind === 'starred' || scope.kind === 'prs') && total === 0) &&
+    (scope.kind !== 'prs' || prsListed);
+  const summaryAttention = listed.current.filter((row) => rowNeedsYou(row, marks, work)).length;
+  // The Pull requests view's Clear filters: its text and its chips, and focus in its field, since the button goes.
+  const clearPrFilters = () => {
+    setPrFilter('');
+    setPrRelations(new Set());
+    filterField.current?.focus();
+  };
+  const olderPrsNoteId = useId();
+  const prsFoot = (
+    <PrListFoot
+      list={prList}
+      older={work.older}
+      showOlder={showOlderPrs}
+      onToggleOlder={toggleOlderPrs}
+      hidden={work.hidden.length}
+      hiddenOwners={hiddenOwners(work)}
+      olderNoteId={olderPrsNoteId}
+    />
+  );
   // The empty states' actions take their button away, so focus goes where the reader carries on: the
   // filter field after a filter action, the session list's heading otherwise.
   const focusField = () => filterField.current?.focus();
@@ -1302,14 +1351,67 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   // What takes the rows' place, if anything (4: Empty states).
   let empty: ReactNode;
-  if (!snapshot) {
+  const sourceBody = prsSelected ? prSourceBody(prState, { refresh: prRefresh, refreshing: prList?.refreshing ?? false, waiting: prsWaiting, onShowAll: () => select(viewIn('all', tab)) }) : undefined;
+  const [onlyRelation] = prRelations.size === 1 ? prRelations : [];
+  // A search that has failed every time (W101's review): with its chip on alone, not none of its kind, but none known.
+  const unlistedSearch = onlyRelation === undefined || prState.kind !== 'list' ? undefined : prState.failed?.find((each) => each.relation === onlyRelation && each.fetchedAt === undefined);
+  if (sourceBody !== undefined) {
+    // Pull requests, before its first list, off, or failed with none (W95).
+    empty = sourceBody;
+  } else if (prsSelected && snapshot && total === 0) {
+    empty = (
+      <EmptyState
+        icon="success"
+        title="No open pull requests"
+        sentence="Pull requests you open, that ask your review or that mention you on github.com show here, with the sessions that worked on them."
+        actions={
+          (work.older > 0 || work.hidden.length > 0) && (
+            <div className="pr-empty-foot">
+              {prsFoot}
+            </div>
+          )
+        }
+      />
+    );
+  } else if (prsSelected && snapshot && shown === 0 && prFilter.trim() === '' && unlistedSearch !== undefined && onlyRelation !== undefined) {
+    empty = (
+      <EmptyState
+        icon="warning"
+        title={`Couldn't list ${SEARCH_NAMES[onlyRelation].charAt(0).toLowerCase()}${SEARCH_NAMES[onlyRelation].slice(1)}`}
+        sentence={
+          <>
+            <Detail>{plainText(unlistedSearch.error)}</Detail> Refresh to try again.
+          </>
+        }
+        actions={
+          <>
+            <Button onClick={clearPrFilters}>Clear filters</Button>
+            <RefreshAction refresh={prRefresh} refreshing={prList?.refreshing ?? false} />
+          </>
+        }
+      />
+    );
+  } else if (prsSelected && snapshot && shown === 0 && prFilter.trim() === '' && onlyRelation !== undefined) {
+    // One chip on, and none of its kind (W101).
+    empty = <EmptyState icon="success" title={NO_RELATION[onlyRelation].title} sentence={NO_RELATION[onlyRelation].sentence} actions={<Button onClick={clearPrFilters}>Clear filters</Button>} />;
+  } else if (prsSelected && snapshot && shown === 0) {
+    const text = prFilter.trim();
+    empty = (
+      <EmptyState
+        icon="search"
+        title="No sessions match"
+        sentence={text === '' ? 'Nothing in Pull requests matches these filters.' : `Nothing in Pull requests matches "${text}"${prRelations.size > 0 ? ' with these filters' : ''}.`}
+        actions={<Button onClick={clearPrFilters}>{prRelations.size > 0 ? 'Clear filters' : 'Clear filter'}</Button>}
+      />
+    );
+  } else if (!snapshot) {
     empty = (
       <div className="list-waiting">
         {waiting.shown && <SkeletonRows />}
         <WaitingStatus waiting={waiting} label="Loading sessions" slow={slow} />
       </div>
     );
-  } else if (allSessions.length === 0) {
+  } else if (tabRows === 0) {
     empty = (
       <EmptyState
         icon="terminal"
@@ -1417,6 +1519,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       starred={starred.set}
       notNeeded={marks}
       prs={repoListPrs}
+      work={work}
     />
   );
 
@@ -1462,7 +1565,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       terminalFocus={terminalFocus}
       polledAt={updatedAt}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
-      prs={{ linked: linkedPrs.get(session.sessionId) ?? [], onOpen: (pr) => openPrView(prKey(pr)) }}
+      prs={{
+        owned: work.owned.get(session.sessionId) ?? [],
+        // The open PRs it's strongly linked to that another session owns (W106): listed with that session.
+        linked: strongPrsOf(session, allPrs)
+          .filter((pr) => work.ownerOf.get(prKey(pr))?.sessionId !== session.sessionId)
+          .map((pr) => ({ pr, owner: work.ownerOf.get(prKey(pr)) })),
+        onOpen: (pr) => openPrView(prKey(pr)),
+      }}
     />
   );
   let sessionView: ReactNode;
@@ -1502,13 +1612,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         pr={shownPr}
         missing={prMissing}
         sessions={sessionsFor(shownPr, everyListed)}
+        ownerId={work.ownerOf.get(prOpen)?.sessionId}
         notNeeded={marks}
         onOpenSession={openSessionFromPr}
         onClose={closePr}
         layout={viewLayout}
         compact={compact}
         headingRef={viewHeading}
-        onStep={stepFromPrView}
+        onStep={stepFromView}
         animate={animate}
         backLabel={prsSelected ? 'Back to pull requests' : 'Back to sessions'}
       />
@@ -1552,8 +1663,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   } else if (layout === 'three-columns') {
     // With nothing open, the column stays, so the layout doesn't jump.
     sessionView = prsSelected ? (
-      <section key="nothing-open" className="session-view-empty" aria-label="Pull request">
-        <EmptyState icon="info" title="Select a pull request" sentence="Its checks, review, branch and the sessions that worked on it open here." />
+      <section key="nothing-open" className="session-view-empty" aria-label="Session">
+        <EmptyState icon="info" title="Select a session or pull request" sentence="A session's conversation and terminal, or a pull request's checks, review and sessions, open here." />
       </section>
     ) : (
       <section key="nothing-open" className="session-view-empty" aria-label="Session">
@@ -1598,61 +1709,53 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         tabs={
           tab === undefined
             ? undefined
-            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, marks) })), active: tab, onSelect: switchTab, panelId, tabId }
+            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, marks, work) })), active: tab, onSelect: switchTab, panelId, tabId }
         }
       />
 
       {/* With root tabs, the columns are the open tab's panel, named by it. */}
       <div className="columns" {...(tab === undefined ? {} : { role: 'tabpanel', id: panelId, 'aria-labelledby': tabId(tab) })}>
         {layout !== 'drawer' && repoList('list')}
-        {prsSelected ? (
-          <PrList
-            alerts={hasAlerts ? alerts : undefined}
-            headingRef={listHeading}
-            list={prList}
-            sessions={everyListed}
-            filter={prFilter}
-            onFilter={setPrFilter}
-            relations={prRelations}
-            onRelations={setPrRelations}
-            fieldRef={filterField}
-            showOlder={showOlderPrs}
-            onToggleOlder={toggleOlderPrs}
-            collapsed={collapsedRepos}
-            onToggleRepo={prRepos.toggle}
-            openPrKey={prOpen}
-            onOpen={openPrView}
-            onStep={stepFromPrRow}
-            refresh={prRefresh}
-            inert={overlaid}
-            onShowAll={() => {
-              select(viewIn('all', tab));
-              listHeading.current?.focus();
-            }}
-          />
-        ) : (
-        <HighlightContext.Provider value={filterNeedle(filters.text)}>
+        {/* The Pull requests view is the session list too, with its own filters, notices and foot (W106). */}
+        <HighlightContext.Provider value={filterNeedle(prsSelected ? prFilter : filters.text)}>
           <SessionList
             alerts={hasAlerts ? alerts : undefined}
             heading={heading}
             headingRef={listHeading}
             headingAction={headingAction}
-            summary={summarised ? { total, shown, attention: countAttention(listed.current.map(({ session }) => session), marks) } : undefined}
+            summary={summarised ? { total, shown, attention: summaryAttention } : undefined}
             filters={
-              allSessions.length > 0 && (
-                <FilterControls filters={filters} onChange={setFilters} fieldRef={filterField}>
-                  <SortSelect value={sort} onChange={setSort} />
-                </FilterControls>
+              prsSelected ? (
+                <PrListFilters
+                  list={prList}
+                  hasRows={total > 0}
+                  filter={prFilter}
+                  onFilter={setPrFilter}
+                  relations={prRelations}
+                  onRelations={setPrRelations}
+                  fieldRef={filterField}
+                  refresh={prRefresh}
+                  onClear={clearPrFilters}
+                />
+              ) : (
+                tabRows > 0 && (
+                  <FilterControls filters={filters} onChange={setFilters} fieldRef={filterField} options={hasPrChip ? FILTER_CHIPS : KIND_CHIPS}>
+                    <SortSelect value={sort} onChange={setSort} />
+                  </FilterControls>
+                )
               )
             }
+            notices={prsSelected ? <PrNotices list={prList} /> : undefined}
+            foot={prsSelected ? prsFoot : undefined}
+            className={prsSelected ? 'pr-list' : undefined}
             current={current}
             finished={finished}
             empty={empty}
             finishedCollapsed={!(finishedId !== undefined && (finishedOpen.get(finishedId) ?? false))}
             onToggleFinished={toggleFinished}
             showGroup={scope !== undefined && scope.kind !== 'group'}
-            holdOrder={sort !== 'name'}
-            orderKey={`${selectionHref(selection)}|${sort}`}
+            holdOrder={prsSelected || sort !== 'name'}
+            orderKey={`${selectionHref(selection)}|${prsSelected ? 'urgency' : sort}|${showOlderPrs}`}
             onOpen={openSession}
             onStep={stepFromRow}
             openSessionId={openId}
@@ -1662,10 +1765,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             onNotNeeded={(changed, on) => setNotNeeded(changed, on, 'row')}
             inert={overlaid}
             older={olderCount > 0 ? { count: olderCount, shown: showOlder, onToggle: toggleOlder } : undefined}
-            prs={linkedPrs}
+            owned={work.owned}
+            onOpenPr={openPrView}
+            onStepPr={(key, by) => stepFromRow(prRowKey(key), by)}
+            openPrKey={prOpen}
           />
         </HighlightContext.Provider>
-        )}
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
         <div className="session-pane">
           {layout === 'three-columns' && <Divider store={panelWidth} />}

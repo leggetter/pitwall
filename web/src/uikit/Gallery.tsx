@@ -77,7 +77,7 @@ const SECTIONS: Section[] = [
     id: 'pull-requests',
     title: 'Pull requests',
     intro:
-      "M4 (W95): the repo list's Pull requests item and its badge; PrList in each state, its headings, rows and badges, collapsed, Show older, the filter, Refresh busy and off, before the first fetch, off, gh missing and not logged in, and a failed fetch with and without a list; PrView with its details and sessions, and its other states; the session rows' PR badges, the session view's PR links, and the page with a PR open.",
+      "M4 (W95, W106): a row is a piece of work. The repo list's counts, with a cloned repo of PR rows alone and one that isn't cloned; session rows with the PRs they own and PR rows with none; the Pull requests view in each state, with its hidden line; PrView with its details and sessions, and its other states; the session view's PR links and its Pull requests tab; and the page with a PR open.",
     Content: PullRequestSpecimens,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },

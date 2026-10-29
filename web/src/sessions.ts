@@ -209,12 +209,15 @@ export function isOlderEnded(session: SessionSummary, now: number): boolean {
 
 /**
  * The groups without their older ended sessions, leaving out a group that then has none, as the
- * snapshot leaves out an empty group. The same array when there are none to take out.
+ * snapshot leaves out an empty group. The same array when there are none to take out. The sessions
+ * in `keep` stay, however old: those that own an open pull request (W106, work.ts), whose work isn't
+ * finished while it's open.
  */
-export function withoutOlderEnded(groups: SessionGroup[], now: number): SessionGroup[] {
-  if (!groups.some((group) => group.sessions.some((session) => isOlderEnded(session, now)))) return groups;
+export function withoutOlderEnded(groups: SessionGroup[], now: number, keep?: ReadonlySet<string>): SessionGroup[] {
+  const older = (session: SessionSummary) => isOlderEnded(session, now) && !(keep?.has(session.sessionId) ?? false);
+  if (!groups.some((group) => group.sessions.some(older))) return groups;
   return groups.flatMap((group) => {
-    const sessions = group.sessions.filter((session) => !isOlderEnded(session, now));
+    const sessions = group.sessions.filter((session) => !older(session));
     if (sessions.length === group.sessions.length) return [group];
     return sessions.length === 0 ? [] : [{ ...group, sessions }];
   });
@@ -232,12 +235,14 @@ export function groupId(group: Pick<SessionGroup, 'root' | 'key'>): string {
 
 /**
  * The filter chips (docs/design-system.md, Filter chips): Interactive and Background, one for each
- * kind of session. Chips of one kind combine as OR, so with both on, or neither, every kind shows.
+ * kind of session, and Has PR (W106), for the rows with an open pull request. Chips of one kind
+ * combine as OR, so with both kinds on, or neither, every kind shows; Has PR narrows whatever the
+ * kinds show, so Interactive and Has PR is the interactive sessions with an open PR.
  */
-export type FilterChip = SessionKind;
+export type FilterChip = SessionKind | 'has-pr';
 
 /** The chips in their order on screen. */
-export const FILTER_CHIPS: readonly FilterChip[] = ['interactive', 'background'];
+export const FILTER_CHIPS: readonly FilterChip[] = ['interactive', 'background', 'has-pr'];
 
 export interface Filters {
   /**
@@ -262,9 +267,14 @@ export function filterNeedle(text: string): string {
   return text.trim().toLowerCase();
 }
 
-/** Whether a session passes the chips that are on: any of them, or all sessions when none is. */
-export function matchesChips(session: SessionSummary, chips: ReadonlySet<FilterChip>): boolean {
-  return chips.size === 0 || chips.has(session.kind);
+/**
+ * Whether a session passes the chips that are on: any of the kind chips, or every kind when none is;
+ * and, with Has PR on (W106), only while it owns an open pull request (`hasPr`).
+ */
+export function matchesChips(session: SessionSummary, chips: ReadonlySet<FilterChip>, hasPr = false): boolean {
+  if (chips.has('has-pr') && !hasPr) return false;
+  const kinds = chips.size - (chips.has('has-pr') ? 1 : 0);
+  return kinds === 0 || chips.has(session.kind);
 }
 
 // The repo list (docs/design-system.md, 3: Repo list).
@@ -383,7 +393,7 @@ export function workedInLabels(session: SessionSummary, roots: readonly string[]
 }
 
 /** When a session was last active, or started, in ms; 0 when neither parses. */
-function activityMs(session: SessionSummary): number {
+export function activityMs(session: SessionSummary): number {
   const ms = Date.parse(session.lastActivityAt ?? session.startedAt);
   return Number.isFinite(ms) ? ms : 0;
 }
@@ -438,6 +448,11 @@ export function compareNames(a: SessionSummary, b: SessionSummary): number {
   return LABEL_ORDER.compare(a.name, b.name) || compareIds(a, b);
 }
 
+/** Two labels in the repo list's order: case-insensitively, with numbers compared as numbers. */
+export function compareLabels(a: string, b: string): number {
+  return LABEL_ORDER.compare(a, b);
+}
+
 /**
  * How an order sorts a selection's unfinished sessions, and its finished ones. Finished sessions
  * follow the setting too, except that Urgency orders them by activity alone: none of them needs you.
@@ -483,7 +498,7 @@ export function listScope(
 }
 
 /** Each session in the groups once, with its home group, or the first group that lists it. */
-function listedOnce(groups: readonly SessionGroup[], home: ReadonlyMap<string, SessionGroup> | undefined): Listed[] {
+export function listedOnce(groups: readonly SessionGroup[], home: ReadonlyMap<string, SessionGroup> | undefined): Listed[] {
   const seen = new Set<string>();
   const listed: Listed[] = [];
   for (const group of groups) {
@@ -521,10 +536,10 @@ export function holdOrder(shown: readonly string[], next: readonly string[]): st
  * title and cwd, its group's label, and the label of every repo it worked in (W39), so typing a
  * repo's name in All sessions finds each session that started there or worked there.
  */
-export function filterListed(listed: readonly Listed[], filters: Filters): Listed[] {
+export function filterListed(listed: readonly Listed[], filters: Filters, hasPr?: (session: SessionSummary) => boolean): Listed[] {
   const needle = filterNeedle(filters.text);
   return listed.filter(({ session, group }) => {
-    if (!matchesChips(session, filters.chips)) return false;
+    if (!matchesChips(session, filters.chips, hasPr?.(session) ?? false)) return false;
     if (needle === '') return true;
     return (
       groupLabel(group).toLowerCase().includes(needle) ||

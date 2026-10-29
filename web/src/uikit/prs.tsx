@@ -1,24 +1,24 @@
-// Pull requests (M4, W95; docs/design-system.md, 4: Pull requests): the real RepoList, PrList,
-// PrView, SessionRow and SessionView, with made-up PRs in public-looking repos and invented titles,
-// in each state: the repo list's item and its badge, the list with its headings, rows and badges, a
-// heading collapsed, Show older, the filter matching nothing, its chips (W101) on and finding none,
-// before the first fetch, off, gh missing
-// and not logged in, a failed fetch with and without a list, Refresh busy and off; the PR view with
+// Pull requests (M4, W95, W106; docs/design-system.md, 4: Pull requests): the real RepoList,
+// SessionList's rows, PrRow, PrView, SessionView and the Dashboard, with made-up PRs in public-looking
+// repos and invented titles. A row is a piece of work (W106): the repo list's counts, with a cloned
+// repo of PR rows alone and one that isn't cloned; session rows with the PRs they own and PR rows with
+// none; the Pull requests view in each state, with its hidden line and Show older; the PR view with
 // its details and sessions, a review requested of you or a team and a mention (W101), and its other
-// states; the session row's badge; the session view's links;
-// and the whole page with a PR open. Refresh here asks nothing: its stub does nothing.
+// states; the session view's links and its Pull requests tab; and the whole page with a PR open.
+// Refresh here asks nothing: the page's stubbed API answers nothing.
 
 import { useState } from 'react';
-import type { PullRequestList, PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
+import type { PullRequestList, PullRequestPlace, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import { Dashboard } from '../components/Dashboard.js';
-import { PrList } from '../components/PrList.js';
+import { PrRow } from '../components/PrRow.js';
 import { PrView, UnlistedPrView, WaitingPrView } from '../components/PrView.js';
 import { RepoList } from '../components/RepoList.js';
+import { SessionPrsPanel } from '../components/SessionPrs.js';
 import { SessionRow } from '../components/SessionRow.js';
 import { SessionView } from '../components/SessionView.js';
-import type { PrRefresh } from '../prRefresh.js';
-import { prKey, prsFor, sessionPrBadge, sessionsFor } from '../prs.js';
-import { ALL_SESSIONS, memoryNavigation, viewIn, type Selection } from '../selection.js';
+import { prKey, sessionsFor, strongPrsOf } from '../prs.js';
+import { ALL_SESSIONS, memoryNavigation, type Selection } from '../selection.js';
+import { composeWork, prRowCounts, withPrRows } from '../work.js';
 import { ago, APP_DIR, background, endedSession, group, JOBS_DIR, ROOT, session, snapshot } from './fixtures.js';
 import { Specimen } from './kit.js';
 import { memoryStorage } from './stubs.js';
@@ -26,6 +26,8 @@ import { Stubbed } from './views.js';
 
 const noop = () => {};
 const DAY = 24 * 60;
+const APP = { kind: 'cloned', root: ROOT, key: APP_DIR, label: 'pitwall-test-app' } as const satisfies PullRequestPlace;
+const ELSEWHERE = { kind: 'not-cloned', root: ROOT } as const satisfies PullRequestPlace;
 
 /** A made-up PR, in a public-looking repo, with an invented title: yours, passing and mergeable unless `extra` says otherwise. */
 function pr(repoLabel: string, number: number, title: string, minutes: number, extra: Partial<PullRequestSummary> = {}): PullRequestSummary {
@@ -56,20 +58,23 @@ const FAILING = pr('example/demo-app', 51, 'Add a made-up health route', 25, {
 const CONFLICTS = pr('example/event-relay', 612, 'Retry made-up deliveries with backoff, and say so in the delivery log', 70, { mergeable: 'conflicts', review: 'changes-requested' });
 const QUIET = pr('example/api-server', 19, 'Add a made-up rate limit to the API', 3 * 60);
 const APPROVED = pr('example/demo-app', 48, 'Tidy the made-up export job', 9 * 60, { review: 'approved' });
-const DRAFT = pr('example/event-relay', 605, 'Document the made-up retry headers', 4 * DAY, { draft: true, checks: 'pending', mergeable: 'unknown' });
-const OLDER = pr('example/docs-site', 7, 'Move the made-up guide to its own page', 120 * DAY, { review: 'review-required' });
+const DRAFT = pr('example/event-relay', 605, 'Document the made-up retry headers', 4 * DAY, { draft: true, checks: 'pending', mergeable: 'unknown', place: ELSEWHERE });
+const OLDER = pr('example/docs-site', 7, 'Move the made-up guide to its own page', 120 * DAY, { review: 'review-required', place: APP });
 const FORK = pr('example/event-relay', 590, 'Fix a made-up typo in the README', 6 * DAY, { head: { repo: 'pitwall-test/event-relay', branch: 'fix-typo' }, review: 'approved' });
 // Not yours (W101): your review asked of you, and of a team you're on, with another author's failing checks; and a mention.
-const REVIEW = pr('example/demo-app', 57, 'Add a made-up retry budget', 40, { relation: 'review-requested', reviewRequest: { via: 'direct' }, review: 'review-required' });
+const REVIEW = pr('example/demo-app', 57, 'Add a made-up retry budget', 40, { relation: 'review-requested', reviewRequest: { via: 'direct' }, review: 'review-required', place: APP });
 const TEAM_REVIEW = pr('example/event-relay', 618, 'Rename the made-up delivery states', 2 * 60, {
   relation: 'review-requested',
   reviewRequest: { via: 'team', team: 'example/reviewers' },
   checks: 'failing',
   failingChecks: ['lint'],
   review: 'review-required',
+  place: ELSEWHERE,
 });
-const MENTION = pr('example/api-server', 23, 'Ask about the made-up rate limit headers', 5 * 60, { relation: 'mentioned', review: 'review-required' });
-const PRS = [FAILING, CONFLICTS, QUIET, APPROVED, DRAFT, OLDER, REVIEW, TEAM_REVIEW, MENTION];
+const MENTION = pr('example/api-server', 23, 'Ask about the made-up rate limit headers', 5 * 60, { relation: 'mentioned', review: 'review-required', place: APP });
+// No root claims its owner (W106): counted, never listed.
+const UNCLAIMED = pr('other-org/tool', 3, 'A made-up fix elsewhere', 6 * 60, { place: { kind: 'unclaimed' } });
+const PRS = [FAILING, CONFLICTS, QUIET, APPROVED, DRAFT, OLDER, REVIEW, TEAM_REVIEW, MENTION, UNCLAIMED];
 
 const link = (kind: 'opened' | 'pushed' | 'prompted' | 'mentioned', target: PullRequestSummary, minutes: number) =>
   kind === 'pushed'
@@ -78,82 +83,39 @@ const link = (kind: 'opened' | 'pushed' | 'prompted' | 'mentioned', target: Pull
 
 const OPENER = session('health-route', { title: 'Add a made-up health route', prLinks: [link('opened', FAILING, 26)] });
 const REVIEWER = session('retry-review', { title: 'Answer the made-up review', needsYou: { reason: 'asked' }, askedYou: { reason: 'question', excerpt: 'Should I rebase onto main now?' }, prLinks: [link('opened', CONFLICTS, 70), link('opened', APPROVED, 9 * 60)] });
-const PUSHER = background('export-job', { cwd: JOBS_DIR, state: 'working', prLinks: [link('pushed', APPROVED, 9 * 60)] });
+// It pushed #48's branch after the reviewer opened it, so it owns #48 (W106).
+const PUSHER = background('export-job', { cwd: JOBS_DIR, state: 'working', prLinks: [link('pushed', APPROVED, 8 * 60)] });
 const MENTIONER = session('docs-pass', { status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' }, prLinks: [link('mentioned', FAILING, 20)] });
+// Ended, and given #19, which no session acted on: it owns it, so it's listed with the rest (W106).
 const ENDED = endedSession('rate-limit', { prLinks: [link('prompted', QUIET, 2 * DAY)] });
 const SESSIONS: SessionSummary[] = [OPENER, REVIEWER, PUSHER, MENTIONER, ENDED];
 
 const fetchedAt = ago(2);
 const list = (overrides: Partial<PullRequestList> = {}): PullRequestList => ({ fetchedAt, source: { ok: true }, refreshing: false, prs: PRS, ...overrides });
 
-const IDLE: PrRefresh = { refresh: noop, sending: false, offUntil: 0 };
-/** Refresh off for an hour, as it is for a minute after a refresh (W100). */
-const OFF: PrRefresh = { refresh: noop, sending: false, offUntil: Date.now() + 3600_000 };
-
-/** The PR list as the session list's column shows it, with state of its own: its filter, Show older, collapsed repos and the open PR. */
-function LivePrList({
-  prs,
-  refresh = IDLE,
-  filter: startFilter = '',
-  older = false,
-  collapsed: startCollapsed = [],
-  relations: startRelations = [],
-}: {
-  prs: PullRequestList | undefined;
-  refresh?: PrRefresh;
-  filter?: string;
-  older?: boolean;
-  collapsed?: string[];
-  relations?: PullRequestRelation[];
-}) {
-  const [filter, setFilter] = useState(startFilter);
-  const [relations, setRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set(startRelations));
-  const [showOlder, setShowOlder] = useState(older);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set(startCollapsed));
-  const [open, setOpen] = useState<string>();
-  return (
-    <PrList
-      list={prs}
-      sessions={SESSIONS}
-      filter={filter}
-      onFilter={setFilter}
-      relations={relations}
-      onRelations={setRelations}
-      showOlder={showOlder}
-      onToggleOlder={() => setShowOlder(!showOlder)}
-      collapsed={collapsed}
-      onToggleRepo={(repo) =>
-        setCollapsed((current) => {
-          const next = new Set(current);
-          if (next.has(repo)) next.delete(repo);
-          else next.add(repo);
-          return next;
-        })
-      }
-      openPrKey={open}
-      onOpen={setOpen}
-      refresh={refresh}
-      onShowAll={noop}
-    />
-  );
-}
+const GROUPS = [group('pitwall-test-app', [OPENER, REVIEWER, MENTIONER, ENDED], { key: APP_DIR }), group('pitwall-test-jobs', [PUSHER], { key: JOBS_DIR })];
+const WORK = composeWork(SESSIONS, PRS, { now: Date.parse(fetchedAt) });
+const LISTED = withPrRows(GROUPS, WORK);
 
 /** The repo list with the Pull requests item, its own selection. */
 function LiveRepoList({ prs, start = ALL_SESSIONS }: { prs: { attention: number; count: number | undefined } | undefined; start?: Selection }) {
   const [selection, setSelection] = useState(start);
-  const groups = [group('pitwall-test-app', [OPENER, REVIEWER, MENTIONER], { key: APP_DIR }), group('pitwall-test-jobs', [PUSHER], { key: JOBS_DIR })];
-  return <RepoList groups={groups} roots={[ROOT]} selection={selection} onSelect={setSelection} prs={prs} />;
+  return <RepoList groups={LISTED} roots={[ROOT]} selection={selection} onSelect={setSelection} prs={prs} work={WORK} />;
 }
 
-/** Rows as the session list shows them, each with its PR badge. */
-function Rows({ sessions }: { sessions: SessionSummary[] }) {
-  const shown = group('pitwall-test-app', sessions, { key: APP_DIR });
+/** Rows as the session list shows them: sessions with the PRs they own, then PR rows with none (W106). */
+function Rows() {
+  const [shown] = GROUPS;
+  const placed = LISTED.flatMap((each) => (each.prs ?? []).map((one) => ({ pr: one, group: each })));
   return (
     <div className="session-list uikit-rows">
       <div className="session-list-body">
         <ul className="sessions">
-          {sessions.map((each) => (
-            <SessionRow key={each.sessionId} session={each} group={shown} pr={sessionPrBadge(prsFor(each, PRS))} onOpen={noop} />
+          {[REVIEWER, OPENER, PUSHER, MENTIONER, ENDED].map((each) => (
+            <SessionRow key={each.sessionId} session={each} group={shown!} showGroup owned={WORK.owned.get(each.sessionId)} onOpen={noop} />
+          ))}
+          {placed.map(({ pr: one, group: each }) => (
+            <PrRow key={prKey(one)} pr={one} group={each} showGroup onOpen={noop} />
           ))}
         </ul>
       </div>
@@ -161,83 +123,67 @@ function Rows({ sessions }: { sessions: SessionSummary[] }) {
   );
 }
 
-/** The whole page with Pull requests selected and a PR open, its own storage and address bar. */
-function Page({ search }: { search: string }) {
+/** The whole page, its own storage and address bar, with `prs` as the latest list. */
+function Page({ search, prs = list() }: { search: string; prs?: PullRequestList }) {
   const [own] = useState(() => ({ storage: memoryStorage(), navigation: memoryNavigation(search) }));
-  const snap = snapshot([group('pitwall-test-app', [OPENER, REVIEWER, MENTIONER, ENDED], { key: APP_DIR }), group('pitwall-test-jobs', [PUSHER], { key: JOBS_DIR })]);
   return (
     <Stubbed>
-      <Dashboard view={{ state: 'live', snapshot: snap, prs: list() }} storage={own.storage} navigation={own.navigation} />
+      <Dashboard view={{ state: 'live', snapshot: snapshot(GROUPS), prs }} storage={own.storage} navigation={own.navigation} />
     </Stubbed>
   );
 }
 
 const linked = (target: PullRequestSummary) => sessionsFor(target, SESSIONS);
 
+/** A session view's PRs: those it owns, and those it's strongly linked to that another session owns. */
+const sessionPrs = (each: SessionSummary) => ({
+  owned: WORK.owned.get(each.sessionId) ?? [],
+  linked: strongPrsOf(each, PRS)
+    .filter((one) => WORK.ownerOf.get(prKey(one))?.sessionId !== each.sessionId)
+    .map((one) => ({ pr: one, owner: WORK.ownerOf.get(prKey(one)) })),
+  onOpen: noop,
+});
+
 export function PullRequestSpecimens() {
   return (
     <>
       <Specimen
-        title="The repo list's item"
-        note="Pull requests, under Starred: a subtle danger badge with how many of the last 90 days' PRs need attention: your own with failing checks, conflicts or changes requested, and those that ask your review. Solid is for sessions that need you."
+        title="The repo list, with pull requests"
+        note="A row is a piece of work (W106): a group counts its sessions and the PRs no session owns placed under it, and Needs you counts a session that needs you through a PR it owns and a PR row that does. Pull requests, under Starred, counts the rows with an open PR, with a need-you badge while any need you through one. example/event-relay isn't cloned under the root, which claims its owner: its own icon, and 'not cloned' in its name and tooltip."
         width={240}
       >
-        <LiveRepoList prs={{ attention: 4, count: 8 }} />
-      </Specimen>
-      <Specimen title="Selected, nothing needing attention" note="How many there are, as Starred counts, while none needs attention." width={240}>
-        <LiveRepoList prs={{ attention: 0, count: 8 }} start={viewIn('prs', undefined)} />
+        <LiveRepoList prs={{ ...prRowCounts(LISTED, WORK) }} />
       </Specimen>
       <Specimen title="Before the first fetch" note="The item, with no count. It's there once the server has sent a list, and never while pull requests are off." width={240}>
         <LiveRepoList prs={{ attention: 0, count: undefined }} />
       </Specimen>
 
       <Specimen
-        title="The PR list"
-        note="One heading per repo, ordered by its newest update, each collapsible; in each, the PRs that need attention first. A row: its title in <bdi>, its state badges, Review requested or Mentioned first on one that isn't yours, then highlighted, then quieter, when it was updated, its number and the sessions strongly linked to it. Yours, Review requested and Mentioned are filter chips, which combine as OR; none on is All. Click a row to mark it open."
-        frame="view"
+        title="Rows"
+        note="Session rows carry the open PRs they own: the most urgent as a badge, '#51 CI failing', with +n for more, before the status badge; line 2 says why while a PR needs you and the session doesn't. A session that only named one, or whose PR another session took over, has none. An ended session that owns an open PR is listed with the rest, not muted. Then PR rows, for the PRs no session owns: '#57' and the title, the badges, then line 2: its group, why it needs you or how it's yours, when it was updated, and 'No session yet' or 'Not cloned'."
       >
-        <LivePrList prs={list()} />
+        <Rows />
       </Specimen>
+
       <Specimen
-        title="Review requested, on"
-        note="The PRs that ask your review, of you or of a team you're on (hover the badge), with Clear filters after the chips. Another author's failing checks keep their look but don't count."
-        frame="short"
+        title="The Pull requests view"
+        note="The session list, showing every row with an open PR across the root tab's groups, those that need you first. Yours, Review requested and Mentioned filter it, as OR. At its foot, Show older for PR rows not updated in 90 days, and how many PRs are hidden because no root claims their owner, with a link to the README's Configuration."
+        frame="page"
+        width={1440}
       >
-        <LivePrList prs={list()} relations={['review-requested']} />
+        <Page search="?view=prs" />
       </Specimen>
-      <Specimen title="Mentioned, on, and none" note="One chip on, and none of its kind: what's missing, how one gets here, and Clear filters." frame="short">
-        <LivePrList prs={list({ prs: [FAILING, REVIEW] })} relations={['mentioned']} />
-      </Specimen>
-      <Specimen title="Review requested, on, and none" note="Once you've reviewed one asked of you, GitHub removes the request, and it leaves at the next fetch." frame="short">
-        <LivePrList prs={list({ prs: [FAILING, MENTION] })} relations={['review-requested']} />
-      </Specimen>
-      <Specimen title="A heading collapsed" note="Its count and its badge stay in sight. The page remembers it by a hash of the repo." frame="short">
-        <LivePrList prs={list()} collapsed={['example/event-relay']} />
-      </Specimen>
-      <Specimen title="Show older, on" note="The PRs updated more than 90 days ago, listed and counted, with Hide older pull requests." frame="view">
-        <LivePrList prs={list()} older />
-      </Specimen>
-      <Specimen title="The filter, matching" note="Title, repo, number and branch. A filter that finds something under a collapsed heading shows it." frame="short">
-        <LivePrList prs={list()} filter="retry" collapsed={['example/event-relay']} />
-      </Specimen>
-      <Specimen title="The filter, matching nothing" frame="short">
-        <LivePrList prs={list()} filter="nothing like it" />
-      </Specimen>
-      <Specimen title="Refreshing" note="A fetch running, a poll's or a refresh's: Refresh's spinner, aria-busy." frame="short">
-        <LivePrList prs={list({ refreshing: true })} />
-      </Specimen>
-      <Specimen title="Refresh, off for a minute" note="After a refresh, or a 429, its tooltip says why. Hover it." frame="short">
-        <LivePrList prs={list()} refresh={OFF} />
-      </Specimen>
-      <Specimen title="A failed fetch, with the last list" note="The list kept, under a warning that says what failed and when the list is from." frame="view">
-        <LivePrList prs={list({ fetchedAt: ago(125), source: { ok: false, reason: 'error', error: 'gh took longer than 30 seconds.' } })} />
+      <Specimen title="A failed fetch, with the last list" note="The list kept, under a warning that says what failed and when the list is from." frame="page" width={1200}>
+        <Page search="?view=prs" prs={list({ fetchedAt: ago(125), source: { ok: false, reason: 'error', error: 'gh took longer than 30 seconds.' } })} />
       </Specimen>
       <Specimen
         title="A search failed, the others worked"
         note="Each search is its own call (W101's review): the list is kept, a failed search's PRs are its last good ones, and the notice names each one with when it's from, or that it isn't listed."
-        frame="short"
+        frame="page"
+        width={1200}
       >
-        <LivePrList
+        <Page
+          search="?view=prs"
           prs={list({
             prs: PRS.filter((each) => each.relation !== 'mentioned'),
             searches: {
@@ -248,26 +194,23 @@ export function PullRequestSpecimens() {
           })}
         />
       </Specimen>
-      <Specimen title="No open pull requests" frame="short">
-        <LivePrList prs={list({ prs: [] })} />
+      <Specimen title="No open pull requests" note="With the hidden line, when no root claims some." frame="page" width={1200}>
+        <Page search="?view=prs" prs={list({ prs: [UNCLAIMED] })} />
       </Specimen>
-      <Specimen title="Only older ones" note="Every open PR was updated more than 90 days ago." frame="short">
-        <LivePrList prs={list({ prs: [OLDER] })} />
+      <Specimen title="Before the first fetch" note="Skeleton rows after half a second, and Refresh busy." frame="page" width={1200} waited="shown">
+        <Page search="?view=prs" prs={list({ fetchedAt: undefined, refreshing: true, prs: [] })} />
       </Specimen>
-      <Specimen title="Before the first fetch" note="Skeleton rows after half a second, and Refresh busy." frame="short" waited="shown">
-        <LivePrList prs={list({ fetchedAt: undefined, refreshing: true, prs: [] })} />
+      <Specimen title="gh missing" frame="page" width={1200}>
+        <Page search="?view=prs" prs={list({ fetchedAt: undefined, source: { ok: false, reason: 'gh-missing', error: "gh isn't on pitwall's PATH." }, prs: [] })} />
       </Specimen>
-      <Specimen title="Off" note="pitwall was started with --no-prs. The repo list has no item, so only a URL gets here." frame="short">
-        <LivePrList prs={list({ fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' }, prs: [] })} />
+      <Specimen title="gh not logged in" frame="page" width={1200}>
+        <Page search="?view=prs" prs={list({ fetchedAt: undefined, source: { ok: false, reason: 'gh-auth', error: "gh isn't logged in to github.com." }, prs: [] })} />
       </Specimen>
-      <Specimen title="gh missing" frame="short">
-        <LivePrList prs={list({ fetchedAt: undefined, source: { ok: false, reason: 'gh-missing', error: "gh isn't on pitwall's PATH." }, prs: [] })} />
+      <Specimen title="A failed fetch, with no list" frame="page" width={1200}>
+        <Page search="?view=prs" prs={list({ fetchedAt: undefined, source: { ok: false, reason: 'error', error: 'gh took longer than 30 seconds.' }, prs: [] })} />
       </Specimen>
-      <Specimen title="gh not logged in" frame="short">
-        <LivePrList prs={list({ fetchedAt: undefined, source: { ok: false, reason: 'gh-auth', error: "gh isn't logged in to github.com." }, prs: [] })} />
-      </Specimen>
-      <Specimen title="A failed fetch, with no list" frame="short">
-        <LivePrList prs={list({ fetchedAt: undefined, source: { ok: false, reason: 'error', error: 'gh took longer than 30 seconds.' }, prs: [] })} />
+      <Specimen title="A repo that isn't cloned" note="Its PR rows, under the root that claims its owner, with 'Not cloned' in the heading and no Hide." frame="page" width={1200}>
+        <Page search="?repo=github.com/example/event-relay" />
       </Specimen>
 
       <Specimen
@@ -275,7 +218,7 @@ export function PullRequestSpecimens() {
         note="In the session view's place. Open on GitHub, a link to the PR's own page in a new tab, Copy link and Close; its repo, number and badges; its details, with the failing checks' names and how many more; then the sessions strongly linked to it, and Mentioned in, each opening that session."
         frame="view"
       >
-        <PrView pr={FAILING} sessions={linked(FAILING)} onOpenSession={noop} onClose={noop} />
+        <PrView pr={FAILING} sessions={linked(FAILING)} ownerId={WORK.ownerOf.get(prKey(FAILING))?.sessionId} onOpenSession={noop} onClose={noop} />
       </Specimen>
       <Specimen title="Your review requested, through a team" note="It says how it's yours under its badges: of you, or of a team you're on, named when it's the one team asked." frame="short">
         <PrView pr={TEAM_REVIEW} sessions={linked(TEAM_REVIEW)} onOpenSession={noop} onClose={noop} />
@@ -309,15 +252,22 @@ export function PullRequestSpecimens() {
       </Specimen>
 
       <Specimen
-        title="Session rows' PR badges"
-        note="Each row's most urgent strongly linked open PR, before its status badge, so the status badges still line up: subtle danger while it needs attention, neutral otherwise, with +n for more. Not a control: its tooltip names each. A session that only named one has none."
+        title="The session view's PR links and its Pull requests tab"
+        note="Under where it worked: each open PR it owns, most urgent first, with its highlighted states, each opening its PR view; and the Pull requests tab, after Sub-agents, while it owns one or is strongly linked to one."
+        frame="short"
       >
-        <Rows sessions={[REVIEWER, OPENER, PUSHER, MENTIONER, ENDED]} />
-      </Specimen>
-      <Specimen title="The session view's PR links" note="Under where it worked: each strongly linked open PR, most urgent first, with its highlighted states. Each opens its PR view." frame="short">
         <Stubbed>
-          <SessionView session={REVIEWER} listed onClose={noop} prs={{ linked: prsFor(REVIEWER, PRS), onOpen: noop }} />
+          <SessionView session={REVIEWER} listed onClose={noop} prs={sessionPrs(REVIEWER)} />
         </Stubbed>
+      </Specimen>
+      <Specimen
+        title="The Pull requests tab"
+        note="The open PRs the session owns, each with the PR view's details and Open on GitHub, then those it worked on that another session owns, saying which."
+        frame="view"
+      >
+        <div className="session-view">
+          <SessionPrsPanel {...sessionPrs(REVIEWER)} id="uikit-session-prs" labelledBy="uikit-session-prs" hidden={false} />
+        </div>
       </Specimen>
 
       <Specimen title="The page, with a PR open" note="Pull requests selected, and a PR's view in the third column." frame="page" width={1440}>

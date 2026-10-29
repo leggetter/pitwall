@@ -17,11 +17,16 @@
 // A session marked not needed now (W88, notNeeded.ts) counts in none of the need-you badges: Needs
 // you's, Starred's, the groups' and the Hidden section's. Each group still counts it among its sessions.
 //
-// Pull requests (M4, W95), under Starred, lists your open pull requests in the session list's place.
-// Its badge counts those updated in the last PRS_SHOWN_DAYS that need attention, failing checks,
-// conflicts or changes requested, in subtle danger: solid is for sessions that need you, and failing
-// checks are what it's mostly for. Otherwise how many of those there are, and nothing before the first
-// fetch. It's there once the server has sent a list, and never while pull requests are off.
+// Pull requests (M4, W95, W106), under Starred, lists every row with an open PR under the root: the
+// sessions that own one and the PRs no session owns. Its badge counts those that need you through a
+// PR, as Needs you counts them, in solid warning; otherwise how many rows it lists, and nothing before
+// the first fetch. It's there once the server has sent a list, and never while pull requests are off.
+//
+// A row is a piece of work (W106, work.ts), so a group counts its sessions and the PRs no session owns
+// listed under it, and Needs you and every need-you badge count a session that needs you for itself
+// or through a PR it owns, and a PR row that needs you. A repo with no clone under the root, whose
+// owner the root claims, is listed while it has PR rows, with its own icon and "not cloned" in its
+// name and its tooltip.
 //
 // With two or more roots, the list is the open root tab's (W38): the dashboard passes that root's
 // groups and hidden groups alone, so the views, their counts and the Hidden section are the root's
@@ -45,7 +50,8 @@ import { plainText } from '../format.js';
 import { absentGroup, sameGroup, type HiddenGroup } from '../hidden.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { groupSelection, sameSelection, selectionHref, VIEW_NAMES, viewIn, type Selection } from '../selection.js';
-import { allFinished, countAttention, groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
+import { groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
+import { allDone, countNeeds, countRows, NO_WORK, sessionNeedsYou, type ListGroup, type Work } from '../work.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { Tooltip } from './Tooltip.js';
@@ -56,31 +62,36 @@ interface Item {
   selection: Selection;
   label: string;
   kind?: SessionGroup['kind'];
+  /** A repo with no clone under the root (W106): its own icon, and "not cloned" in its name and tooltip. */
+  notCloned?: boolean;
   /** How many need you: a badge when there are any. */
   attention: number;
-  /** Pull requests' badge (W95): how many need attention, in subtle danger, in place of a need-you badge. */
-  prAttention?: number;
-  /** How many sessions, shown when nothing needs you; undefined shows nothing. */
+  /** How many rows, shown when nothing needs you; undefined shows nothing. */
   count: number | undefined;
-  /** Every session has finished. */
+  /** Every session has finished, and it has no open PR (W106). */
   muted: boolean;
 }
 
 /**
- * A group's item: its sessions, each once, as Group sessions by lists them (W42), and how many of them
- * need you, without those marked not needed now (W88).
+ * A group's item: its rows, each session once, as Group sessions by lists them (W42), and the PRs no
+ * session owns listed under it (W106), and how many of them need you, without what's marked not
+ * needed now (W88).
  */
-function groupItem(group: SessionGroup, roots: readonly string[], notNeeded: NotNeeded | undefined): Item {
+function groupItem(group: ListGroup, roots: readonly string[], notNeeded: NotNeeded | undefined, work: Work): Item {
   return {
     id: groupId(group),
     selection: groupSelection(group, roots),
     label: plainText(groupLabel(group)),
     kind: group.kind,
-    attention: countAttention(group.sessions, notNeeded),
-    count: group.sessions.length,
-    muted: allFinished(group),
+    ...(group.notCloned ? { notCloned: true } : {}),
+    attention: countNeeds([group], notNeeded, work),
+    count: countRows([group]),
+    muted: allDone(group, work),
   };
 }
+
+/** A not-cloned repo's tooltip, which says so whether or not its label is cut (W106). */
+export const notClonedHint = (label: string) => `${label}, not cloned under this root`;
 
 /** "Unhide pitwall-test-old": an Unhide button's name and tooltip, saying which group it unhides. */
 export const unhideLabel = (label: string) => `Unhide ${label}`;
@@ -95,8 +106,8 @@ export interface HiddenListProps {
 }
 
 export interface RepoListProps {
-  /** The snapshot's groups, or undefined before the first one, when only the views show. */
-  groups: readonly SessionGroup[] | undefined;
+  /** The snapshot's groups, with the PR rows placed under them (W106), or undefined before the first one, when only the views show. */
+  groups: readonly ListGroup[] | undefined;
   roots: readonly string[];
   selection: Selection;
   onSelect: (selection: Selection) => void;
@@ -115,44 +126,46 @@ export interface RepoListProps {
   /** The viewer's Not needed now marks (W88), which no need-you badge counts. Nothing is marked when it's undefined. */
   notNeeded?: NotNeeded | undefined;
   /**
-   * The Pull requests item, under Starred (W95): how many open PRs from the last PRS_SHOWN_DAYS need
-   * attention, and how many there are, undefined before the first fetch. No item when it's undefined,
-   * as before the server has sent a list, or with pull requests off.
+   * The Pull requests item, under Starred (W95, W106): how many of the root's rows with an open PR need
+   * you through one, and how many there are, undefined before the first fetch. No item when it's
+   * undefined, as before the server has sent a list, or with pull requests off.
    */
   prs?: { attention: number; count: number | undefined } | undefined;
+  /** Which session owns each open PR (W106, work.ts), for the need-you counts. None when it's undefined. */
+  work?: Work | undefined;
 }
 
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded, prs }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded, prs, work = NO_WORK }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session once, though in Every repo it worked in it may be in several groups (W42).
   const sessions = sessionsIn(groups ?? []);
   const starredSessions = starred ? sessions.filter((session) => starred.has(session.sessionId)) : [];
   const views: Item[] = [
-    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: VIEW_NAMES['needs-you'], attention: countAttention(sessions, notNeeded), count: undefined, muted: false },
+    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: VIEW_NAMES['needs-you'], attention: countNeeds(groups ?? [], notNeeded, work), count: undefined, muted: false },
     // The total, never a badge: Needs you, just above, has that.
-    { id: 'view:all', selection: viewIn('all', tab), label: VIEW_NAMES.all, attention: 0, count: groups ? sessions.length : undefined, muted: false },
+    { id: 'view:all', selection: viewIn('all', tab), label: VIEW_NAMES.all, attention: 0, count: groups ? countRows(groups) : undefined, muted: false },
     // As a group counts: its badge, or how many; nothing while none is starred.
     {
       id: 'view:starred',
       selection: viewIn('starred', tab),
       label: VIEW_NAMES.starred,
-      attention: countAttention(starredSessions, notNeeded),
+      attention: starredSessions.filter((session) => sessionNeedsYou(session, notNeeded, work)).length,
       count: groups && starredSessions.length > 0 ? starredSessions.length : undefined,
       muted: false,
     },
-    // Your open PRs (W95): the badge while any need attention, otherwise how many.
-    ...(prs ? [{ id: 'view:prs', selection: viewIn('prs', tab), label: VIEW_NAMES.prs, attention: 0, prAttention: prs.attention, count: prs.count, muted: false }] : []),
+    // Every row with an open PR (W106): the badge while any need you through one, otherwise how many.
+    ...(prs ? [{ id: 'view:prs', selection: viewIn('prs', tab), label: VIEW_NAMES.prs, attention: prs.attention, count: prs.count, muted: false }] : []),
   ];
   // Before the first snapshot there's nothing to hide yet.
   const hiddenGroups = groups ? (hidden?.groups ?? []) : [];
   const sections = repoListGroups(
     (groups ?? []).filter((group) => !hiddenGroups.some((entry) => sameGroup(entry, group))),
     roots,
-  ).map(({ root, groups: rootGroups }) => ({ root, entries: rootGroups.map((group) => groupItem(group, roots, notNeeded)) }));
+  ).map(({ root, groups: rootGroups }) => ({ root, entries: rootGroups.map((group) => groupItem(group, roots, notNeeded, work)) }));
   const items = [...views, ...sections.flatMap((section) => section.entries)];
 
   // The hidden groups as the snapshot has them, or with no sessions when it hasn't, in the list's order.
@@ -164,12 +177,12 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
     root,
     entries: rootGroups.flatMap((group) => {
       const listed = listedHidden.find(({ entry }) => sameGroup(entry, group));
-      return listed ? [{ item: groupItem(group, roots, notNeeded), entry: listed.entry, present: listed.group !== undefined }] : [];
+      return listed ? [{ item: groupItem(group, roots, notNeeded, work), entry: listed.entry, present: listed.group !== undefined }] : [];
     }),
   }));
   const hiddenEntries = hiddenSections.flatMap((section) => section.entries);
   // The hidden groups' sessions that need you, each once, so nothing that needs you is out of sight.
-  const hiddenAttention = countAttention(sessionsIn(listedHidden.flatMap(({ group }) => (group ? [group] : []))), notNeeded);
+  const hiddenAttention = countNeeds(listedHidden.flatMap(({ group }) => (group ? [group] : [])), notNeeded, work);
 
   // The one item in the Tab order: the last one focused, else the selection, else the first.
   const [focused, setFocused] = useState<string>();
@@ -261,10 +274,10 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
       </span>
     );
     // After the label, so the link's name starts with what it shows.
-    const kind = item.kind && <span className="visually-hidden">, {item.kind === 'git' ? 'git repo' : 'directory'}</span>;
+    const kind = item.kind && <span className="visually-hidden">, {item.notCloned ? 'not cloned' : item.kind === 'git' ? 'git repo' : 'directory'}</span>;
     return (
       <>
-        {item.kind && <Icon name={item.kind === 'git' ? 'repo' : 'directory'} className="repo-item-icon" />}
+        {item.kind && <Icon name={item.notCloned ? 'external' : item.kind === 'git' ? 'repo' : 'directory'} className="repo-item-icon" />}
         {absent ? (
           <span className="repo-item-text">
             {label}
@@ -282,20 +295,12 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
             {item.attention}
             <span className="visually-hidden"> {item.attention === 1 ? 'needs' : 'need'} you</span>
           </span>
-        ) : item.prAttention !== undefined && item.prAttention > 0 ? (
-          <span className="badge badge-subtle-danger">
-            {item.prAttention}
-            <span className="visually-hidden"> {item.prAttention === 1 ? 'needs' : 'need'} attention</span>
-          </span>
         ) : (
           !absent &&
           item.count !== undefined && (
             <span className="repo-item-count">
               {item.count}
-              <span className="visually-hidden">
-                {' '}
-                {item.prAttention !== undefined ? (item.count === 1 ? 'pull request' : 'pull requests') : item.count === 1 ? 'session' : 'sessions'}
-              </span>
+              <span className="visually-hidden"> {item.count === 1 ? 'session' : 'sessions'}</span>
             </span>
           )
         )}
@@ -305,11 +310,11 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
 
   const render = (item: Item) => {
     const isSelected = item.id === selected;
-    const className = ['repo-item', isSelected && 'selected', item.muted && 'finished'].filter(Boolean).join(' ');
+    const className = ['repo-item', isSelected && 'selected', item.muted && 'finished', item.notCloned && 'not-cloned'].filter(Boolean).join(' ');
     return (
       <li key={item.id}>
-        {/* The whole label, when the middle ellipsis has cut it: on hover, and on focus from ↓ and ↑. */}
-        <Tooltip content={item.label} relation="none" onlyIfCut>
+        {/* The whole label, when the middle ellipsis has cut it: on hover, and on focus from ↓ and ↑. A not-cloned repo's always says so. */}
+        <Tooltip content={item.notCloned ? notClonedHint(item.label) : item.label} relation="none" onlyIfCut={!item.notCloned}>
           <a
             className={className}
             href={selectionHref(item.selection)}

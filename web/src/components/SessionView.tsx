@@ -48,6 +48,11 @@
 // such an entry opens that sub-agent's transcript there. The footer goes while the tab is open: there's
 // no message box for a sub-agent.
 //
+// The Pull requests tab (W106, SessionPrs.tsx), after Sub-agents, lists the open PRs the session owns,
+// with what the PR view says of each, then those it's strongly linked to that another session owns.
+// It shows once the session owns one or is strongly linked to one, and stays, as Sub-agents does. The
+// header's PR links (W95) name the ones it owns.
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
@@ -81,6 +86,7 @@ import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
 import { SessionPrLinks } from './PrBadges.js';
+import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
@@ -380,10 +386,11 @@ export interface SessionViewProps {
   /** At 600 px and narrower, the button in Close's place: "Back to pull requests" while the PR list is under the view (W95). */
   backLabel?: string | undefined;
   /**
-   * The open pull requests the session is strongly linked to (M4, W95; prsFor() in prs.ts), most
-   * urgent first, and a way to open one's view: a line of the header, while it has any.
+   * The open pull requests the session owns (W106, work.ts), most urgent first, a line of the header
+   * while it has any (W95); those it's strongly linked to that another session owns; and a way to open
+   * one's view. The Pull requests tab lists both.
    */
-  prs?: { linked: readonly PullRequestSummary[]; onOpen: (pr: PullRequestSummary) => void } | undefined;
+  prs?: { owned: readonly PullRequestSummary[]; linked: readonly LinkedPr[]; onOpen: (pr: PullRequestSummary) => void } | undefined;
   /**
    * The newest poll's time, a snapshot's or a heartbeat's generatedAt: while its Sub-agents tab is open
    * and any of them run, the tab asks for the list again at this pace (W77). Left out, as in the
@@ -392,7 +399,7 @@ export interface SessionViewProps {
   polledAt?: string | undefined;
 }
 
-type Tab = 'conversation' | 'terminal' | 'subagents';
+type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
 
 /** A copy from the actions menu that the clipboard refused: the text isn't on screen, so the header shows it. */
 type Refused = { label: string; text: string };
@@ -432,6 +439,8 @@ export function SessionView({
     terminalPanel: useId(),
     subagentsTab: useId(),
     subagentsPanel: useId(),
+    prsTab: useId(),
+    prsPanel: useId(),
     typeHint: useId(),
   };
   const ownHeading = useRef<HTMLHeadingElement>(null);
@@ -441,6 +450,7 @@ export function SessionView({
   const conversationTab = useRef<HTMLButtonElement>(null);
   const terminalTab = useRef<HTMLButtonElement>(null);
   const subagentsTab = useRef<HTMLButtonElement>(null);
+  const prsTab = useRef<HTMLButtonElement>(null);
   const pathRef = useRef<HTMLSpanElement>(null);
   const fallbackRef = useRef<HTMLElement>(null);
   const alive = useRef(true);
@@ -585,6 +595,7 @@ export function SessionView({
       if (next === 'terminal') focusQuietly(terminalTab.current);
       // Safari doesn't give a clicked button focus, and the footer, which may have had it, goes with this tab.
       if (next === 'subagents') focusQuietly(subagentsTab.current);
+      if (next === 'prs') focusQuietly(prsTab.current);
     }
     // Switching to Conversation or Sub-agents unmounts the terminal, which detaches.
     if (next !== 'terminal') setAttachStatus(undefined);
@@ -683,7 +694,7 @@ export function SessionView({
   };
 
   // ← and → (and Home and End) move focus between the tabs; Enter or Space opens one, never focus alone (4: Tabs).
-  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => moveTabFocus(event, [conversationTab.current, terminalTab.current, subagentsTab.current]);
+  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => moveTabFocus(event, [conversationTab.current, terminalTab.current, subagentsTab.current, prsTab.current]);
 
   const onHeaderKey = (event: KeyboardEvent<HTMLElement>) => {
     if (!onStep || event.defaultPrevented || !plainKey(event)) return;
@@ -873,6 +884,14 @@ export function SessionView({
   }, [firstPage, subagentsOpen, ensureSubagents]);
   const subagentCount = subagentsCount(subagents.state);
 
+  // The Pull requests tab shows once the session owns an open PR or is strongly linked to one (W106). Then it stays, as Sub-agents does.
+  const ownedPrs = prs?.owned ?? [];
+  const linkedPrs = prs?.linked ?? [];
+  const hasPrs = ownedPrs.length > 0 || linkedPrs.length > 0;
+  const [prsRevealed, setPrsRevealed] = useState(false);
+  if (hasPrs && !prsRevealed) setPrsRevealed(true);
+  const prsShown = prs !== undefined && (prsRevealed || hasPrs);
+
   return (
     <Frame layout={layout} hidden={hidden} animate={animate} titleId={ids.title} onEscape={onEscape}>
       <header className="session-view-head" onKeyDown={onHeaderKey}>
@@ -976,7 +995,7 @@ export function SessionView({
             <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
           </p>
         )}
-        {prs && prs.linked.length > 0 && <SessionPrLinks linked={prs.linked} onOpen={prs.onOpen} />}
+        {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
         {refused && (
           <p className="session-view-copy-fallback">
             {refused.label}: <code ref={fallbackRef}>{plainText(refused.text)}</code>
@@ -1056,6 +1075,25 @@ export function SessionView({
             {subagentCount !== undefined && <span className="session-tab-count"> ({subagentCount})</span>}
           </button>
         )}
+        {/* Once the session owns an open PR or is strongly linked to one (W106). */}
+        {prsShown && (
+          <button
+            ref={prsTab}
+            type="button"
+            role="tab"
+            id={ids.prsTab}
+            className="session-tab"
+            aria-selected={tab === 'prs'}
+            aria-controls={ids.prsPanel}
+            tabIndex={tab === 'prs' ? 0 : -1}
+            onClick={() => openTab('prs')}
+            data-session-tab="prs"
+          >
+            <Icon name="repo" />
+            Pull requests
+            {hasPrs && <span className="session-tab-count"> ({sessionPrsCount(ownedPrs, linkedPrs)})</span>}
+          </button>
+        )}
       </div>
 
       <SubagentLinkContext.Provider value={subagentsShown ? openSubagent : undefined}>
@@ -1085,6 +1123,10 @@ export function SessionView({
           />
         )}
       </SubagentLinkContext.Provider>
+
+      {prsShown && prs && (
+        <SessionPrsPanel owned={ownedPrs} linked={linkedPrs} onOpen={prs.onOpen} id={ids.prsPanel} labelledBy={ids.prsTab} hidden={tab !== 'prs' || hidden} />
+      )}
 
       {!ended && (
         <div

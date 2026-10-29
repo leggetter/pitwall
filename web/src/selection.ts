@@ -99,7 +99,7 @@ export function rootedSelection(selection: Selection, snapshot: Pick<IndexSnapsh
 }
 
 /** The group a selection names, if it's in the snapshot. Without a root, the first group with the key. */
-export function findGroup(groups: readonly SessionGroup[], selection: Selection): SessionGroup | undefined {
+export function findGroup<T extends SessionGroup>(groups: readonly T[], selection: Selection): T | undefined {
   if ('view' in selection) return undefined;
   return groups.find((group) => group.key === selection.repo && (selection.root === undefined || group.root === selection.root));
 }
@@ -165,7 +165,13 @@ export function readStoredSelection(storage: StorageSource = browserStorage): Se
   }
 }
 
+/**
+ * Keeps the selection for a URL with none. Not a repo that isn't cloned (W106), whose key is its
+ * GitHub `owner/name` after `github.com/`, never a path: a private repo's name stays out of
+ * localStorage, as pitwall.pr-repos.v1 kept it out (D14). The URL still has it.
+ */
 export function writeStoredSelection(selection: Selection, storage: StorageSource = browserStorage): void {
+  if ('repo' in selection && selection.repo.startsWith('github.com/')) return;
   try {
     storage()?.setItem(VIEW_STATE_KEY, withSelection('', selection).slice(1));
   } catch {

@@ -1,6 +1,7 @@
 // The made-up world the fake server serves: sessions under /Users/example/code (and, for two root
 // tabs, /Users/example/oss), their conversations, and what spawn, the relay and resume change, and
-// your made-up open pull requests (M4, W95), with the sessions' links to them. Nothing here comes
+// your made-up open pull requests (M4, W95), with the sessions' links to them and where the server
+// placed each one (W106). Nothing here comes
 // from a real session, transcript or pull request: every name is pitwall-test-*, every path is under
 // /Users/example, every link goes to example.com or github.com/example, and the PRs are in made-up
 // repos or public ones, such as example/event-relay, with invented titles.
@@ -14,6 +15,7 @@ import type {
   IndexSnapshot,
   PrLink,
   PullRequestList,
+  PullRequestPlace,
   PullRequestSummary,
   RelayExchange,
   SessionGroup,
@@ -32,6 +34,8 @@ export const BLOG = `${OSS}/blog`;
 export const DOCS_SITE = `${CODE}/docs-site`;
 /** A directory no session has worked in, which New session's autocomplete offers (W70). */
 export const DEMO_APP_WEB = `${DEMO_APP}/web`;
+/** A cloned repo with no session (W106): the server places its PRs under it, so the page builds its group. */
+export const EVENT_RELAY = `${CODE}/event-relay`;
 
 /** The sessions parts use, by role. */
 export const NAMES = {
@@ -85,6 +89,11 @@ export const NAMES = {
   endedOld: 'pitwall-test-ended-old',
   /** Ended twenty days ago, alone in docs-site: the group is in the repo list only with Show older on. */
   endedOldOnly: 'pitwall-test-ended-old-docs',
+  /**
+   * Ended three days ago in api-server, having opened PRS.endedWork, which is still open (W106): its work
+   * isn't finished, so it's listed with the rest, not in Finished.
+   */
+  endedPr: 'pitwall-test-ended-pr',
 } as const;
 
 /** The short id the copy Claude Code starts in place of NAMES.endedCopy has. */
@@ -119,31 +128,44 @@ export const LINKS = {
 const MINUTE = 60_000;
 
 /**
- * Your made-up open pull requests (W95), by role, as their keys (`owner/name/number`). The recent
- * ones are in three repos, updated in the last 90 days; two older ones are behind Show older. Three
- * aren't yours (W101): two ask your review, of you and of a made-up team, and one mentions you.
+ * Your made-up open pull requests (W95), by role, as their keys (`owner/name/number`). Three aren't
+ * yours (W101): two ask your review, of you and of a made-up team, and one mentions you. Where each is
+ * listed (W106): a session owns six, which are listed with it; the rest are rows of their own, under
+ * demo-app, api-server, event-relay, which is cloned but has no session, and example/sdk-docs, which
+ * isn't cloned; two older ones are behind the Pull requests view's Show older; and no root claims two.
  */
 export const PRS = {
-  /** example/demo-app #51: checks failing, three named and five in all. pitwall-test-api opened it, pitwall-test-docs named it in a reply. */
+  /**
+   * example/demo-app #51: checks failing, three named and five in all. pitwall-test-api opened it, then
+   * pitwall-test-docs pushed its branch, so pitwall-test-docs owns it; pitwall-test-review named it in a reply.
+   */
   failing: 'example/demo-app/51',
-  /** example/demo-app #48: approved and passing. pitwall-test-nightly-export pushed its branch; pitwall-test-review opened it. */
+  /** example/demo-app #48: approved and passing. pitwall-test-review opened it; pitwall-test-nightly-export pushed its branch since, and owns it. */
   approved: 'example/demo-app/48',
-  /** example/event-relay #612: conflicts and changes requested. pitwall-test-review opened it, pitwall-test-in-api was given it in a prompt. */
+  /** example/event-relay #612: conflicts and changes requested. pitwall-test-review opened it and owns it; pitwall-test-in-api named it in a reply. */
   conflicts: 'example/event-relay/612',
-  /** example/event-relay #605: a draft, checks pending, GitHub still checking for conflicts. No session. */
+  /** example/event-relay #605: a draft, checks pending, GitHub still checking for conflicts. No session: a row under event-relay. */
   draft: 'example/event-relay/605',
-  /** example/api-server #19: passing, no review needed. pitwall-test-from-root pushed it; the ended pitwall-test-ended-notes was given it. */
+  /** example/api-server #19: passing, no review needed. pitwall-test-from-root pushed it and owns it; the ended pitwall-test-ended-notes was given it. */
   quiet: 'example/api-server/19',
-  /** example/docs-site #7, updated 120 days ago: review required. */
+  /** example/docs-site #7, updated 120 days ago: review required. Not cloned, and behind Show older. */
   older: 'example/docs-site/7',
-  /** example/event-relay #41, updated 200 days ago: checks failing, which no count includes until Show older. */
+  /** example/event-relay #41, updated 200 days ago: checks failing, which nothing counts until Show older. */
   olderFailing: 'example/event-relay/41',
-  /** example/demo-app #57, 40 minutes ago: your review requested, of you by name. It needs attention. No session. */
+  /** example/demo-app #57, 40 minutes ago: your review requested, of you by name. It needs you. No session: a row under demo-app. */
   review: 'example/demo-app/57',
-  /** example/event-relay #618, 2 hours ago: your review requested through example/reviewers, with its author's failing checks. It needs attention. */
+  /** example/event-relay #618, 2 hours ago: your review requested through example/reviewers, with its author's failing checks. It needs you. A row under event-relay. */
   teamReview: 'example/event-relay/618',
-  /** example/api-server #23, 5 hours ago: it mentions you; not yours, and your review isn't asked. It never needs attention. */
+  /** example/api-server #23, 5 hours ago: it mentions you; not yours, and your review isn't asked. It never needs you. A row under api-server. */
   mentioned: 'example/api-server/23',
+  /** example/sdk-docs #9, 3 hours ago: passing. The repo isn't cloned, and the root claims its owner: a row under example/sdk-docs, not cloned. */
+  notCloned: 'example/sdk-docs/9',
+  /** example/api-server #31, a day ago: passing. The ended pitwall-test-ended-pr opened it, and owns it. */
+  endedWork: 'example/api-server/31',
+  /** other-org/made-up-tool #4: no root claims its owner, so it's only counted. */
+  unclaimed: 'other-org/made-up-tool/4',
+  /** third-org/made-up-lib #2: placed nowhere, as by a server that doesn't place PRs, so it's only counted too. */
+  unplaced: 'third-org/made-up-lib/2',
 } as const;
 
 /** The made-up team example/event-relay #618 asks a review of (W101). */
@@ -271,9 +293,11 @@ export class World {
     const refreshing = this.#prsRefreshing || this.#prs === 'loading';
     const fetchedAt = new Date(this.#prsFetchedAt).toISOString();
     const worked = (at: string) => ({ authored: { fetchedAt: at }, 'review-requested': { fetchedAt: at }, mentioned: { fetchedAt: at } });
-    if (this.#prs === 'ok') return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests() };
+    // Which owners each root claims (W106): example for the code root, from its clones; none for the second.
+    const roots = [{ root: CODE, owners: ['example'], source: 'clones' as const }, ...(this.#roots === 2 ? [{ root: OSS, owners: 'none' as const, source: 'config' as const }] : [])];
+    if (this.#prs === 'ok') return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests(), roots };
     if (this.#prs === 'mine') {
-      return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests().filter((pr) => pr.relation === 'authored') };
+      return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests().filter((pr) => pr.relation === 'authored'), roots };
     }
     if (this.#prs === 'partial') {
       const searches = {
@@ -281,14 +305,14 @@ export class World {
         'review-requested': { fetchedAt: this.#ago(125), failed: { reason: 'error' as const, error: PRS_SEARCH_ERRORS['review-requested'] } },
         mentioned: { failed: { reason: 'error' as const, error: PRS_SEARCH_ERRORS.mentioned } },
       };
-      return { fetchedAt, source: { ok: true }, refreshing, searches, prs: this.#pullRequests().filter((pr) => pr.relation !== 'mentioned') };
+      return { fetchedAt, source: { ok: true }, refreshing, searches, prs: this.#pullRequests().filter((pr) => pr.relation !== 'mentioned'), roots };
     }
     if (this.#prs === 'loading') return { source: { ok: true }, refreshing, prs: [] };
     const reason = this.#prs === 'stale' ? 'error' : this.#prs;
     const source = { ok: false as const, reason, error: PRS_ERRORS[this.#prs] };
     if (this.#prs === 'stale') {
       const failed = { fetchedAt: this.#ago(125), failed: { reason: 'error' as const, error: source.error } };
-      return { fetchedAt: this.#ago(125), source, refreshing, searches: { authored: failed, 'review-requested': failed, mentioned: failed }, prs: this.#pullRequests() };
+      return { fetchedAt: this.#ago(125), source, refreshing, searches: { authored: failed, 'review-requested': failed, mentioned: failed }, prs: this.#pullRequests(), roots };
     }
     return { source, refreshing, prs: [] };
   }
@@ -562,23 +586,24 @@ export class World {
         waitingFor: 'permission prompt',
         needsYou: { reason: 'prompt' },
         lastUserPrompt: 'Update the made-up getting started guide.',
-        prLinks: [this.#link('mentioned', PRS.failing, 20)],
+        // It pushed #51's branch after pitwall-test-api opened it, so it owns #51 now (W106).
+        prLinks: [this.#link('pushed', PRS.failing, 20)],
       }),
       session(NAMES.asked, {
         title: 'Review the retry change',
         askedYou: { reason: 'question', excerpt: 'Should I retry the failed batch now, or wait for tonight?' },
         needsYou: { reason: 'asked' },
         relay: { sentAt: this.#ago(30), status: 'delivered', reply: { at: this.#ago(29), text: 'Thanks, looking at it now.' } },
-        prLinks: [this.#link('opened', PRS.conflicts, 70), this.#link('opened', PRS.approved, 9 * 60)],
+        prLinks: [this.#link('opened', PRS.conflicts, 70), this.#link('opened', PRS.approved, 9 * 60), this.#link('mentioned', PRS.failing, 15)],
       }),
       session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.', prLinks: [this.#link('opened', PRS.failing, 26)] }),
-      job(NAMES.running, { prLinks: [this.#link('pushed', PRS.approved, 9 * 60)] }),
+      job(NAMES.running, { prLinks: [this.#link('pushed', PRS.approved, 8 * 60)] }),
       job(NAMES.running2),
       job(NAMES.running3),
       job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } }),
       job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
       session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)], prLinks: [this.#link('pushed', PRS.quiet, 3 * 60)] }),
-      session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route', subagentsRunning: 2, prLinks: [this.#link('prompted', PRS.conflicts, 60)] }),
+      session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route', subagentsRunning: 2, prLinks: [this.#link('mentioned', PRS.conflicts, 60)] }),
       session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } }),
       ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes', prLinks: [this.#link('prompted', PRS.quiet, 2 * 24 * 60)] }),
       ended(NAMES.endedAsked, 1, { askedYou: { reason: 'question', excerpt: 'Should the made-up guide keep the old screenshots?' } }),
@@ -590,16 +615,27 @@ export class World {
       ended(NAMES.endedSlow, 4.75),
       ended(NAMES.endedOld, 10),
       ended(NAMES.endedOldOnly, 20, { cwd: DOCS_SITE }),
+      ended(NAMES.endedPr, 3, { cwd: API_SERVER, title: 'Add a made-up retry header', prLinks: [this.#link('opened', PRS.endedWork, 3 * 24 * 60)] }),
     ];
     return all;
   }
 
   /** The made-up open PRs, newest updated first, as the search returns them. */
   #pullRequests(): PullRequestSummary[] {
+    // Where the server places each one (W106): under its clone, or not cloned under the root that claims example.
+    const clones: Readonly<Record<string, string>> = { 'example/demo-app': DEMO_APP, 'example/api-server': API_SERVER, 'example/event-relay': EVENT_RELAY };
+    const placeOf = (repo: string): PullRequestPlace | undefined => {
+      const clone = clones[repo];
+      if (clone) return { kind: 'cloned', root: CODE, key: clone, label: clone.slice(CODE.length + 1) };
+      if (repo.startsWith('example/')) return { kind: 'not-cloned', root: CODE };
+      return repo.startsWith('other-org/') ? { kind: 'unclaimed' } : undefined;
+    };
     const make = (key: string, minutes: number, extra: Partial<PullRequestSummary>): PullRequestSummary => {
       const [owner = '', name = '', number = '0'] = key.split('/');
       const repo = `${owner}/${name}`;
+      const place = placeOf(repo);
       return {
+        ...(place ? { place } : {}),
         url: `https://github.com/${repo}/pull/${number}`,
         repo,
         repoLabel: repo,
@@ -634,6 +670,10 @@ export class World {
         reviewRequest: { via: 'team', team: PR_TEAM },
       }),
       make(PRS.mentioned, 5 * 60, { title: 'Ask about the made-up rate limit headers', review: 'review-required', relation: 'mentioned' }),
+      make(PRS.notCloned, 3 * 60, { title: 'Add a made-up example to the SDK docs' }),
+      make(PRS.endedWork, day, { title: 'Add a made-up retry header' }),
+      make(PRS.unclaimed, 6 * 60, { title: 'A made-up fix elsewhere' }),
+      make(PRS.unplaced, 7 * 60, { title: 'A made-up fix in another org' }),
     ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }
 
