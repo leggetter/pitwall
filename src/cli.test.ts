@@ -140,10 +140,11 @@ describe('parseCliArgs', () => {
     expect(USAGE).toContain('[--config <path>]');
     const help = USAGE.replace(/\s+/g, ' ');
     expect(help).toContain('--config <path> Read this config file instead of ~/.pitwall/config.json. It must exist.');
-    expect(help).toContain("pitwall reads config.json in ~/.pitwall, or in PITWALL_HOME when that's set, if it's there, or else the file --config names.");
+    expect(help).toContain("With --config, pitwall reads that file. Without it, pitwall reads config.json in ~/.pitwall, or in PITWALL_HOME when that's set, if it's there.");
+    expect(help).toContain('On macOS and Linux, the file must be yours, and not writable by group or others.');
     expect(help).toContain('{ "path": "~/work", "github": { "owners": ["example-co"] } }');
     expect(help).toContain("Roots given as arguments replace the file's, and each keeps its \"github\" settings when it's the same directory as one in the file.");
-    expect(help).toContain('It can\'t hold the token: PITWALL_TOKEN comes from the environment only.');
+    expect(help).toContain("It can't hold a token: PITWALL_TOKEN comes from the environment only, and GitHub's stays in gh.");
     expect(help).toContain('PITWALL_HOME Where config.json, launch files and attachments are, instead of ~/.pitwall.');
   });
 });

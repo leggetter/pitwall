@@ -66,9 +66,9 @@ Options:
   -v, --version         Show the version.
 
 Config file:
-  pitwall reads config.json in ~/.pitwall, or in PITWALL_HOME when that's
-  set, if it's there, or else the file --config names. It's JSON, with //
-  and /* */ comments and trailing commas allowed:
+  With --config, pitwall reads that file. Without it, pitwall reads
+  config.json in ~/.pitwall, or in PITWALL_HOME when that's set, if it's
+  there. It's JSON, with // and /* */ comments and trailing commas allowed:
 
     {
       "roots": [
@@ -89,9 +89,9 @@ Config file:
   A flag wins over an environment variable, which wins over the file. Roots
   given as arguments replace the file's, and each keeps its "github" settings
   when it's the same directory as one in the file. A bad value stops pitwall,
-  and an unknown key is a warning. The file must be yours, and not writable by
-  group or others. It can't hold the token: PITWALL_TOKEN comes from the
-  environment only.
+  and an unknown key is a warning. On macOS and Linux, the file must be yours,
+  and not writable by group or others. It can't hold a token: PITWALL_TOKEN
+  comes from the environment only, and GitHub's stays in gh.
 
 The browser is opened through a launch file in ~/.pitwall (mode 0600, in a
 0700 directory), so the token never appears in a command line. The file is
