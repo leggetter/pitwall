@@ -106,6 +106,20 @@ describe('detection, elsewhere', () => {
     expect(fs.seen.every((file) => file.startsWith('/'))).toBe(true);
   });
 
+  // W98's review: as every child's PATH is (childSearchPath()), so an editor detection lists is one a child would find.
+  it('expands a leading ~ in a PATH entry to the home directory, and drops ~user/... with the other relative entries', async () => {
+    const fs = fakeFs({ '/home/pitwall-test/.local/bin/code': 'exe', '~/bin/cursor': 'exe', '~other/bin/cursor': 'exe' });
+    const found = await detectEditors({ platform: 'linux', home: '/home/pitwall-test', path: '~/bin:~other/bin:~/.local/bin', fs });
+    expect(found).toEqual([{ id: 'vscode', label: 'VS Code', file: '/home/pitwall-test/.local/bin/code', args: [] }]);
+    expect(fs.seen.every((file) => file.startsWith('/home/pitwall-test/'))).toBe(true);
+  });
+
+  it('searches /usr/bin and /bin when no entry is absolute, as a child would', async () => {
+    const fs = fakeFs({ '/usr/bin/code': 'exe', './code': 'exe' });
+    expect(await detectEditors({ platform: 'linux', path: '.::bin', fs })).toEqual([{ id: 'vscode', label: 'VS Code', file: '/usr/bin/code', args: [] }]);
+    expect(fs.seen.every((file) => file.startsWith('/usr/bin/') || file.startsWith('/bin/'))).toBe(true);
+  });
+
   it('finds none with no PATH, and none on Windows, where the commands are .cmd scripts that need a shell', async () => {
     expect(await detectEditors({ platform: 'linux', path: undefined, fs: fakeFs({}) })).toEqual([]);
     expect(await detectEditors({ platform: 'linux', path: '', fs: fakeFs({}) })).toEqual([]);

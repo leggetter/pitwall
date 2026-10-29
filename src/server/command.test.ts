@@ -4,7 +4,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { absoluteSearchPath } from '../index/exec.js';
+import { absoluteSearchPath, childSearchPath, DEFAULT_SEARCH_PATH } from '../index/exec.js';
 import { childEnvironment, MAX_OUTPUT_BYTES, runCommand } from './command.js';
 import { allowSignalsTo } from '../test/noClaude.js';
 
@@ -220,18 +220,34 @@ describe('childEnvironment', () => {
       expect(absoluteSearchPath('~/bin:/usr/bin', '')).toBe('/usr/bin');
     });
 
+    // W98's review: a home directory with a `:` would split the entry in two, the second relative.
+    it('drops a ~ entry whose home directory has a : in it', () => {
+      expect(absoluteSearchPath('~/bin:/usr/bin:~', '/Users/a:b')).toBe('/usr/bin');
+      expect(childEnvironment({ PATH: '~/bin:/usr/bin', HOME: '/Users/a:bin' })).toEqual({ PATH: '/usr/bin', HOME: '/Users/a:bin' });
+    });
+
     it('is undefined when no absolute directory is left', () => {
       for (const value of ['', ':', '::', '.', 'a::b', 'bin:./x:']) expect(absoluteSearchPath(value), JSON.stringify(value)).toBeUndefined();
     });
 
-    it('gives a child PATH cut that way, and leaves PATH out, never empty, when nothing is left', () => {
-      expect(childEnvironment({ PATH: '.:/usr/bin::bin:/bin:', HOME: '/Users/example' })).toEqual({ PATH: '/usr/bin:/bin', HOME: '/Users/example' });
-      // `~` is this process's home directory, as os.homedir() gives it.
-      expect(childEnvironment({ PATH: '/usr/bin:~/.dotnet/tools:~other/bin' })).toEqual({ PATH: `/usr/bin:${homedir()}/.dotnet/tools` });
-      // An empty PATH searches the working directory; none searches the system's default.
-      expect(childEnvironment({ PATH: '.:', HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
-      expect(childEnvironment({ PATH: '', HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
+    it('gives a child PATH cut that way, and /usr/bin:/bin, never an empty PATH, when nothing is left', () => {
+      expect(childEnvironment({ PATH: '.:/usr/bin::bin:/opt/bin:', HOME: '/Users/example' })).toEqual({ PATH: '/usr/bin:/opt/bin', HOME: '/Users/example' });
+      // An empty PATH searches the working directory, and a bash further down would pick its own default, ending in `.` (W98's review).
+      expect(DEFAULT_SEARCH_PATH).toBe('/usr/bin:/bin');
+      expect(childEnvironment({ PATH: '.:', HOME: '/Users/example' })).toEqual({ PATH: DEFAULT_SEARCH_PATH, HOME: '/Users/example' });
+      expect(childEnvironment({ PATH: '', HOME: '/Users/example' })).toEqual({ PATH: DEFAULT_SEARCH_PATH, HOME: '/Users/example' });
+      expect(childSearchPath('bin::.')).toBe(DEFAULT_SEARCH_PATH);
+      expect(childSearchPath('/opt/bin:.')).toBe('/opt/bin');
+      // A PATH that isn't there stays out: the child then searches libuv's or execvp's own default.
       expect(childEnvironment({ HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
+    });
+
+    // W98's review: the child's own HOME, which is what its shells read `~` as.
+    it("reads ~ as the environment's own HOME when that's absolute, and as os.homedir() otherwise", () => {
+      expect(childEnvironment({ PATH: '~/bin:/usr/bin', HOME: '/Users/example' })).toEqual({ PATH: '/Users/example/bin:/usr/bin', HOME: '/Users/example' });
+      expect(childEnvironment({ PATH: '/usr/bin:~/.dotnet/tools:~other/bin' })).toEqual({ PATH: `/usr/bin:${homedir()}/.dotnet/tools` });
+      expect(childEnvironment({ PATH: '~/bin', HOME: 'relative-home' })).toEqual({ PATH: `${homedir()}/bin`, HOME: 'relative-home' });
+      expect(childEnvironment({ PATH: '~/bin', HOME: '' })).toEqual({ PATH: `${homedir()}/bin`, HOME: '' });
     });
 
     it('cuts PATH alone: other variables with paths in them, and a lowercase path, are kept as they are', () => {

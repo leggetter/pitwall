@@ -215,7 +215,7 @@ describe('the no-claude guard', () => {
         const seen = join(dir, 'seen');
         writeFileSync(
           gh,
-          `#!/bin/sh\nprintf '%s\\n' "GH_TOKEN=\${GH_TOKEN-unset}" "GH_ENTERPRISE_TOKEN=\${GH_ENTERPRISE_TOKEN-unset}" "GITHUB_TOKEN=\${GITHUB_TOKEN-unset}" "GH_CONFIG_DIR=\${GH_CONFIG_DIR-unset}" > '${seen}'\n`,
+          `#!/bin/sh\nprintf '%s\\n' "GH_TOKEN=\${GH_TOKEN-unset}" "GH_ENTERPRISE_TOKEN=\${GH_ENTERPRISE_TOKEN-unset}" "GITHUB_TOKEN=\${GITHUB_TOKEN-unset}" "GITHUB_ENTERPRISE_TOKEN=\${GITHUB_ENTERPRISE_TOKEN-unset}" "GH_CONFIG_DIR=\${GH_CONFIG_DIR-unset}" > '${seen}'\n`,
           { mode: 0o755 },
         );
         const status = spawnSync(process.execPath, ['-e', `process.exit(require('node:child_process').spawnSync(${JSON.stringify(gh)}, ['api', 'graphql'], { stdio: 'ignore' }).status ?? 99)`]).status;
@@ -224,6 +224,7 @@ describe('the no-claude guard', () => {
           `GH_TOKEN=${GH_NO_LOGIN}`,
           `GH_ENTERPRISE_TOKEN=${GH_NO_LOGIN}`,
           'GITHUB_TOKEN=unset',
+          'GITHUB_ENTERPRISE_TOKEN=unset',
           `GH_CONFIG_DIR=${process.env.GH_CONFIG_DIR}`,
           '',
         ]);

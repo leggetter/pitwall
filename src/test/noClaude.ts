@@ -292,9 +292,11 @@ function install(): void {
 const GH_TOKEN_VARIABLES = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'] as const;
 
 /**
- * What GH_TOKEN and GH_ENTERPRISE_TOKEN hold without PITWALL_LIVE=1: not a token GitHub knows. gh
- * reads GH_TOKEN for github.com and GH_ENTERPRISE_TOKEN for any other host before its config and
- * the keychain, so a gh run some other way than through the stand-in has no login there either.
+ * What GH_TOKEN and GH_ENTERPRISE_TOKEN hold without PITWALL_LIVE=1: not a token GitHub knows.
+ * go-gh, which gh reads its token through, takes GH_TOKEN, then GITHUB_TOKEN, for github.com,
+ * `*.ghe.com` and `github.localhost`, and GH_ENTERPRISE_TOKEN, then GITHUB_ENTERPRISE_TOKEN, only for
+ * any other host, an Enterprise Server's; either pair before its config and the keychain. So a gh
+ * run some other way than through the stand-in has no login for any host.
  */
 export const GH_NO_LOGIN = 'pitwall-test-no-login';
 
