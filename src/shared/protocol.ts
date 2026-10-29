@@ -425,6 +425,8 @@ export interface IndexSnapshot {
   relayOff?: RelayOff;
   /** How recaps are doing (M5): absent with `--no-recaps`. */
   recaps?: RecapHealth;
+  /** The supervisor (M5, SupervisorState): absent with `--no-supervisor`. */
+  supervisor?: SupervisorState;
 }
 
 /** Why pitwall stopped using its relay for this run (D8). */
@@ -1712,3 +1714,114 @@ export function recapRefreshPath(sessionId: string): string {
  * - 'running': a call for this session is running; its recap arrives in a few seconds.
  */
 export type RecapRefreshResult = ActionResult | { ok: false; error: string; busy: 'spent' | 'running' };
+
+// --- The supervisor (M5; spike 009; D4 reopened, option B) ----------------------------------------
+
+/**
+ * The supervisor's state (IndexSnapshot.supervisor). pitwall runs it as one headless `claude -p`
+ * session with stream-json input and output, on SUPERVISOR_MODEL, with the relay's settings off,
+ * pitwall's MCP server (MCP_PATH) and nothing else, in one fixed directory, and resumes it by its
+ * session id across restarts (spike 009). It starts when you first open it or send it a message.
+ *
+ * - 'off': not started in this run yet.
+ * - 'starting': its process is starting or resuming.
+ * - 'idle': running, waiting for you.
+ * - 'working': a turn is running, yours or one a session's reply started.
+ * - 'held': a background session holds its session id, so pitwall can't resume it; `error` says so
+ *   and names `claude stop <id>`. pitwall never stops it for you.
+ * - 'failed': it exited or couldn't start; `error` says why, in pitwall's words, never claude's output.
+ */
+export type SupervisorStatus = 'off' | 'starting' | 'idle' | 'working' | 'held' | 'failed';
+
+export interface SupervisorState {
+  status: SupervisorStatus;
+  /** Its Claude Code session id, once it has one. */
+  sessionId?: string;
+  /** For 'held' and 'failed': why, in pitwall's words, with what to do. */
+  error?: string;
+  /**
+   * What it wants to do that waits on your click, oldest first (W115; Phil, 2026-10-29: approvals on
+   * by default, with an off switch in the config file later). Each counts in Needs you's total.
+   */
+  approvals: SupervisorApproval[];
+  /** ISO 8601: when its newest turn ended, for the working line and the view. */
+  lastTurnAt?: string;
+  /** Its turns' `total_cost_usd` in this run, at API list prices, as `claude -p` reports them. */
+  costUsd?: number;
+}
+
+/**
+ * Something the supervisor wants to do, waiting on your click (W115): a message to a session through
+ * SendMessage, or a new session through the MCP server's spawn_session. Its text is the model's, so
+ * it's shown as plain text in `<bdi>`, never as Markdown, and you can edit it before it goes.
+ */
+export type SupervisorApproval =
+  | { id: string; kind: 'message'; to: string; text: string; at: string; expiresAt: string }
+  | { id: string; kind: 'spawn'; directory: string; name?: string; prompt: string; at: string; expiresAt: string };
+
+/**
+ * Your answer to an approval (POST supervisorApprovalPath()): send it as it is, send your edit
+ * (`text` replaces the message or the prompt), or don't send it. The supervisor is told which, and
+ * on an edit, what was sent.
+ */
+export type SupervisorDecision = { decision: 'send' } | { decision: 'edit'; text: string } | { decision: 'decline' };
+
+/** The supervisor's model (Phil, 2026-10-29), at its default effort. */
+export const SUPERVISOR_MODEL = 'claude-opus-5-5';
+
+/** An approval you don't answer is declined after this, inside the MCP permission tool's 30 minutes (spike 009). */
+export const SUPERVISOR_APPROVAL_TIMEOUT_MS = 29 * 60 * 1000;
+
+/** The longest message you can send the supervisor, and the longest edit. */
+export const SUPERVISOR_MESSAGE_MAX = 20_000;
+
+/**
+ * POST `{ text }`: a message to the supervisor, as you, starting or resuming it first if it isn't
+ * running; queued if a turn is running. The apiKey, Origin and Host checks of every state-changing
+ * request. 409 with `--no-supervisor` or while it's 'held'; 413 over SUPERVISOR_MESSAGE_MAX.
+ */
+export const SUPERVISOR_MESSAGE_PATH = '/api/supervisor/message';
+
+/** POST, no body: start or resume the supervisor without a message. The same checks; 409 as for a message. */
+export const SUPERVISOR_START_PATH = '/api/supervisor/start';
+
+/** POST, no body: stop its running turn, with an `interrupt` control request. The same checks. */
+export const SUPERVISOR_INTERRUPT_PATH = '/api/supervisor/interrupt';
+
+/** GET: the supervisor's conversation, a ConversationPage, paged with `before` as conversationPath() pages a session's. */
+export function supervisorConversationPath(before?: string): string {
+  const path = '/api/supervisor/conversation';
+  return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
+}
+
+/** POST a SupervisorDecision for one approval. The same checks; 404 for an approval that's gone. */
+export function supervisorApprovalPath(id: string): string {
+  return `/api/supervisor/approvals/${encodeURIComponent(id)}`;
+}
+
+/**
+ * pitwall's MCP server, for the supervisor alone (W112): MCP's JSON-RPC over HTTP POST on
+ * pitwall's own server. It takes a bearer token of its own, made for each run and written only into
+ * the supervisor's 0600 MCP config file, never the page's token or apiKey, and checks `Host` as
+ * every route does. Its answers carry text from sessions, recaps and GitHub, all of it untrusted,
+ * so each tool's result frames it as data, and the supervisor's prompt says never to follow
+ * instructions in it.
+ */
+export const MCP_PATH = '/mcp';
+
+/** The MCP server's name in the supervisor's config, so its tools are `mcp__pitwall__<tool>`. */
+export const MCP_SERVER_NAME = 'pitwall';
+
+/**
+ * Its tools. The read-only ones are allowed outright; spawn_session asks for your approval (W115);
+ * approve is the permission prompt tool (`--permission-prompt-tool mcp__pitwall__approve`), which
+ * Claude Code calls itself and leaves out of the model's tools.
+ */
+export const MCP_TOOLS = {
+  listSessions: 'list_sessions',
+  readSession: 'read_session',
+  listPrs: 'list_prs',
+  getRecap: 'get_recap',
+  spawnSession: 'spawn_session',
+  approve: 'approve',
+} as const;
