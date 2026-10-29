@@ -182,6 +182,8 @@ describe('createIndexer', () => {
       expect(await indexer.conversation('in')).toEqual({
         sessionId: 'in',
         entries: [{ kind: 'user', at: new Date(NOW).toISOString(), text: 'a prompt' }],
+        // Its prompt is the newest line, so a turn is running, as far as the page can tell (W102).
+        turnEnded: false,
       });
       // Outside the roots: the reader knows its file, but the index never serves it.
       expect(await indexer.conversation('out')).toBeUndefined();
@@ -1551,7 +1553,7 @@ describe('createIndexer with ended interactive sessions (W66)', () => {
       ended.found = [endedSession('ended', '/work/repo/b', 5, { file })];
       const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
       await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
-      expect(await indexer.conversation('ended')).toEqual({ sessionId: 'ended', entries: [{ kind: 'user', at: new Date(NOW).toISOString(), text: 'an old prompt' }] });
+      expect(await indexer.conversation('ended')).toEqual({ sessionId: 'ended', entries: [{ kind: 'user', at: new Date(NOW).toISOString(), text: 'an old prompt' }], turnEnded: false });
       indexer.stop();
     } finally {
       await rm(dir, { recursive: true, force: true });
