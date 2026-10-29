@@ -10,6 +10,8 @@
 // your made-up open pull requests (W95): GET PRS_PATH, the 'prs' message right after the first
 // snapshot and on each change, and POST PRS_REFRESH_PATH, with the contract's 409 and 429; and
 // recaps (W111), off unless a case turns them on: GET recapPath() and POST recapRefreshPath().
+// Clone and start (W107), POST CLONE_PATH, which clones nothing: the world places the repo's PRs under
+// a made-up clone a moment later, as discovery would.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
@@ -28,6 +30,7 @@ import { pathToFileURL } from 'node:url';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type {
   ActionResult,
+  CloneResult,
   AttachClientMessage,
   AttachmentResult,
   AttachmentType,
@@ -97,6 +100,8 @@ export interface Records {
   recapFetches: Array<{ name: string; status: number }>;
   /** Each POST asking for a new recap (W111), by the session's name and its status: 200, 404, 409 or 429. */
   recapRefreshes: Array<{ name: string; status: number }>;
+  /** Each Clone and start the server answered (W107): the repo the page sent, and the status it got. */
+  clones: Array<{ repo: unknown; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
@@ -114,10 +119,14 @@ const emptyRecords = (): Records => ({
   refreshes: [],
   recapFetches: [],
   recapRefreshes: [],
+  clones: [],
   uploads: [],
   deletes: [],
   requests: [],
 });
+
+/** How long a made-up clone takes, so Clone shows it's busy (W107). */
+const CLONE_MS = 600;
 
 /** How long a refresh's made-up fetch takes, so Refresh shows its spinner (W95). */
 const PRS_FETCH_MS = 700;
@@ -287,6 +296,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.EDITORS_PATH) return json(res, 200, EDITORS);
     if (method === 'GET' && url.pathname === protocol.PRS_PATH) return json(res, 200, world.prList() satisfies PullRequestList);
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
+    if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
     if (method === 'POST' && url.pathname === protocol.ATTACHMENTS_PATH) return upload(req, res);
     // An unused upload removed (W82): attachmentPath(id).
@@ -451,6 +461,33 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   }
 
   /**
+   * Clone and start (W107), with src/server/clone.ts's statuses and words: the page sends only the repo,
+   * and the world decides where. Cloned, it answers 201 with the new directory and the command that
+   * trusts it a moment later, and the PR list then places the repo's PRs under the made-up clone.
+   */
+  async function clone(req: IncomingMessage, res: ServerResponse) {
+    const answer = (status: number, body: CloneResult, repo: unknown) => {
+      records.clones.push({ repo, status });
+      json(res, status, body);
+    };
+    if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return answer(415, { ok: false, error: 'Send the request as application/json.' }, undefined);
+    const body = await readJson(req);
+    const repo = isRecord(body) ? body.repo : undefined;
+    if (!isRecord(body) || typeof repo !== 'string' || Object.keys(body).length !== 1) return answer(400, { ok: false, error: 'The repo must be owner/name, as GitHub names it.' }, repo);
+    const cloned = world.clone(repo);
+    if (cloned.result === 'missing') return answer(404, { ok: false, error: `${repo} isn't the repo of any of your open pull requests that pitwall lists.` }, repo);
+    if (cloned.result === 'placed') return answer(409, { ok: false, error: `${repo} is cloned already.` }, repo);
+    later(CLONE_MS, () => {
+      if (cloned.result !== 'cloned') {
+        answer(502, { ok: false, error: `gh couldn't clone ${repo} (exit code 1). Check that you can open it on GitHub and that gh auth status works, then try again.` }, repo);
+        return;
+      }
+      answer(201, { ok: true, cwd: cloned.cwd, hint: `cd ${cloned.cwd} && claude` }, repo);
+      broadcastPrs();
+    });
+  }
+
+  /**
    * Open in an editor (W72), with pitwall's own checks and words (src/server/editors.ts): JSON, `{ editor }`
    * alone with an editor in EDITORS, and a directory that's there. It records the open and opens nothing.
    */
@@ -489,7 +526,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
    */
   function resume(req: IncomingMessage, res: ServerResponse, sessionId: string) {
     const session = world.session(sessionId);
-    if (!session?.ended) return json(res, 409, { ok: false, error: 'Only an interactive session that has ended can be resumed from pitwall.' } satisfies ResumeResult);
+    // An ended session, or since W107 a background one that isn't running.
+    if (!session?.ended && !(session?.kind === 'background' && !session.alive)) {
+      return json(res, 409, { ok: false, error: "Only an interactive session that has ended, or a background session that isn't running, can be resumed from pitwall." } satisfies ResumeResult);
+    }
     if (session.cwdMissing) {
       return json(res, 409, { ok: false, error: `It started in ${session.cwd}, which no longer exists, and Claude Code resumes a session only from where it started.` } satisfies ResumeResult);
     }

@@ -199,3 +199,30 @@
   justify-content: flex-end;
   gap: var(--pw-space-2);
 }
+
+/* Clone and start's confirmation (W107, CloneDialog.tsx): what it does, then the two steps, then any failure. */
+
+.clone-what {
+  margin: 0;
+  font-weight: 500;
+}
+
+.clone-target {
+  overflow-wrap: anywhere;
+}
+
+.clone-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+  padding-left: var(--pw-space-5);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* New session's notice after a clone: the trust command under its sentence. */
+.cloned-notice .copy-command {
+  margin-top: var(--pw-space-2);
+}

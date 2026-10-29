@@ -16,8 +16,12 @@
 // in the server's words, and an error toast too, which outlives the footer: the next snapshot most
 // likely lists the session as running, which takes the footer away, and the copy keeps running. A
 // result that arrives after the view has gone is a toast naming the session, as Stop and Remove's is.
+//
+// Since W107 a background session that isn't running, stopped or finished, has Resume in background
+// too, through the same route, which wakes it under its own short id: its footer is this one, with
+// the background note in the ended note's place and no Copy command.
 
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { couldNot, plainText } from '../format.js';
@@ -103,7 +107,12 @@ export function resumeToast(name: string, outcome: ResumeOutcome): ToastInput | 
   }
 }
 
-/** Resume in background for `session`, an ended interactive session. */
+/** Whether a session isn't running in a way Resume in background brings back: ended (D17), or a background session with no process (W107). */
+export function isDormant(session: Pick<SessionSummary, 'ended' | 'kind' | 'alive'>): boolean {
+  return session.ended === true || (session.kind === 'background' && !session.alive);
+}
+
+/** Resume in background for `session`, an ended interactive session or a background one that isn't running. */
 export function useResume(session: SessionSummary): Resume {
   const api = useContext(ApiContext);
   const toast = useToast();
@@ -113,7 +122,9 @@ export function useResume(session: SessionSummary): Resume {
   const [failure, setFailure] = useState<ResumeFailure>();
   // Set on the press, not on the answer: the snapshot can list the session as running before the server answers.
   const pressed = useRef(false);
-  const { sessionId, name, ended } = session;
+  const { sessionId, name } = session;
+  // Until it's running again: the snapshot then lists it as a running background session.
+  const dormant = isDormant(session);
   const moveTo = useCallback((next: ResumePhase) => {
     phaseRef.current = next;
     setPhase(next);
@@ -134,7 +145,7 @@ export function useResume(session: SessionSummary): Resume {
   // Resumed: busy until the snapshot lists it as running, or RESUME_LISTED_MS has passed.
   useEffect(() => {
     if (phase !== 'waiting') return;
-    if (!ended) {
+    if (!dormant) {
       moveTo('idle');
       return;
     }
@@ -144,7 +155,7 @@ export function useResume(session: SessionSummary): Resume {
       moveTo('idle');
     }, RESUME_LISTED_MS);
     return () => clearTimeout(timer);
-  }, [phase, ended, moveTo]);
+  }, [phase, dormant, moveTo]);
 
   const run = useCallback(() => {
     if (phaseRef.current !== 'idle') return;
@@ -190,6 +201,8 @@ export interface EndedFooterProps {
   resume: Resume;
   /** Copies the command that resumes it in a terminal, or undefined when there's none (resumeCommand()). */
   onCopy: (() => void) | undefined;
+  /** In place of the ended note: a background session's, which resumes too (W107). */
+  note?: ReactNode;
   /**
    * Called as the footer goes with focus inside it, as when the snapshot lists the session as running
    * while Resume in background has focus: the view then says where focus goes, rather than the page.
@@ -201,7 +214,7 @@ export interface EndedFooterProps {
  * The note, then why the last resume didn't happen, then Copy command and Resume in background, at
  * the right, secondary then primary, as a dialog's footer has them. A missing directory leaves the note.
  */
-export function EndedFooter({ session, resume, onCopy, onFocusLeaving }: EndedFooterProps) {
+export function EndedFooter({ session, resume, onCopy, note, onFocusLeaving }: EndedFooterProps) {
   const gone = session.cwdMissing === true;
   const busy = resume.phase !== 'idle';
   const root = useRef<HTMLDivElement>(null);
@@ -216,7 +229,7 @@ export function EndedFooter({ session, resume, onCopy, onFocusLeaving }: EndedFo
   }, []);
   return (
     <div className="ended-foot" ref={root}>
-      <p className="session-view-note">{gone ? ENDED_GONE_NOTE : onCopy ? ENDED_NOTE : <NoCommandNote />}</p>
+      <p className="session-view-note">{gone ? ENDED_GONE_NOTE : (note ?? (onCopy ? ENDED_NOTE : <NoCommandNote />))}</p>
       {!gone && resume.failure && <ResumeAlert failure={resume.failure} />}
       {!gone && (
         <div className="ended-actions">

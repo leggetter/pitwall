@@ -1046,14 +1046,19 @@ export type ResumeResult =
  * background: `claude --resume <sessionId> --bg`, with no prompt, in the
  * session's own `cwd`, never a directory the request names. POST, no body.
  * It runs in the directory's real path as checked just before it starts, and
- * only for a session id that is a UUID (W73, W81).
+ * only for a session id that is a UUID (W73, W81). Since W107, a background
+ * session that isn't running, stopped or finished, too: the same command
+ * wakes it under its own short id ("note: woke session <id> with its saved
+ * options", checked live on Claude Code 2.1.312), so a stopped job that owns
+ * an open PR can be resumed from its row as an ended one can.
  *
- * - 404 when the snapshot doesn't list the session, and 409 when it isn't
- *   ended or its id isn't a UUID, when its directory no longer exists or
- *   now resolves elsewhere,
+ * - 404 when the snapshot doesn't list the session, and 409 when it's neither
+ *   ended nor a background session that isn't running, or its id isn't a
+ *   UUID, when its directory no longer exists or now resolves elsewhere,
  *   when a resume of it is already running, or when a fresh
  *   `claude agents --json` lists its session id in any row, as when its
- *   terminal is open again.
+ *   terminal is open again; for a background one, when that listing gives it
+ *   a process, an interactive row, or no row of its own.
  * - 429 with `Retry-After` past 4 stop, remove, resume or open commands at
  *   once, and, since it starts a long-lived session, past spawn's limit of
  *   sessions started in the last minute, which it shares (W81).
@@ -1467,6 +1472,66 @@ export const PR_TITLE_MAX = 300;
 
 /** The most failing checks' names kept per PR. */
 export const PR_FAILING_CHECKS_MAX = 5;
+
+// ---------------------------------------------------------------------------
+// W107: Clone and start, for a PR whose repo has no clone under the roots
+// (PullRequestPlace 'not-cloned'). Cloning is the server's: the page names the
+// repo, and the server decides the root and the directory (D25).
+// ---------------------------------------------------------------------------
+
+/** Body of a POST to CLONE_PATH (W107). */
+export interface CloneRequest {
+  /**
+   * The PR's repo, `owner/name`, as PullRequestSummary.repo has it. Nothing else: the server finds it
+   * among its current list's PRs placed 'not-cloned', and takes the root from that place and the
+   * directory's name from GitHub's spelling of the repo's name (`repoLabel`), never from the request.
+   */
+  repo: string;
+}
+
+export type CloneResult =
+  /**
+   * Cloned, at `cwd`, `<root>/<name>`, a real path under the root. Claude Code doesn't trust a new
+   * clone, a git repo nested in the root, until you've run `claude` in it once (W107's check, and
+   * Claude Code's docs, "Project allow rules and workspace trust"), so `hint` is the command that
+   * trusts it, for the user to run, as spawn's 422 has it; none for a path with a `'` or `\` (W87).
+   */
+  | { ok: true; cwd: string; hint?: string }
+  /** Nothing cloned, and nothing left behind. `error` is pitwall's own words, never gh's output. */
+  | { ok: false; error: string };
+
+/**
+ * Clone a not-cloned PR's repo into its root (W107, D25), answered with a CloneResult: `gh repo clone
+ * <owner>/<name> <temp dir> -- --quiet` through the index's runFile, with no shell, the scrubbed
+ * environment, `GH_PROMPT_DISABLED`, `GH_HOST=github.com` and `GIT_TERMINAL_PROMPT=0`, without the
+ * `GIT_*` variables that would redirect it, from a 0700 directory of pitwall's own, in a process
+ * group of its own with no terminal, into a fresh `.pitwall-clone-*` directory inside the root, then
+ * renamed into place only while `<root>/<name>` still doesn't exist. POST a CloneRequest, with the
+ * apiKey, `Host` and `Origin` checks of every state-changing request.
+ *
+ * - 201 with the new directory.
+ * - 400 for a body that isn't a CloneRequest, or a repo whose name isn't one pitwall clones: `.`,
+ *   `..`, one starting with `.`, or one GITHUB_REPO_NAME_PATTERN doesn't match. 413, 415 as for spawn.
+ * - 404 when no PR in the server's current list is in that repo.
+ * - 409 when pull requests are off; when its PRs aren't placed 'not-cloned', as once it's cloned or
+ *   when no root claims its owner; when that root isn't one of the snapshot's, or isn't a directory
+ *   at its own real path; when `<root>/<name>` exists, of any kind, or appears while it clones; or
+ *   when a clone of it is already running.
+ * - 429 with `Retry-After` while another clone runs, or past CLONE_RATE.
+ * - 502 when gh isn't installed, isn't logged in, or fails; 503 before the first snapshot, and while
+ *   pitwall shuts down, which stops a running clone's whole group; 504 past CLONE_TIMEOUT_MS. Each
+ *   removes the temp directory, and only that. At start, pitwall removes those a killed pitwall left.
+ */
+export const CLONE_PATH = '/api/prs/clone';
+
+/** How long a clone may take: 5 minutes. The temp directory is removed after. */
+export const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** The most clones started in a minute, so a stuck page can't fill a disk. One runs at a time. */
+export const CLONE_RATE = { max: 3, windowMs: 60 * 1000 } as const;
+
+/** The prefix of the temp directory a clone goes into, inside its root: hidden, so neither discovery nor New session's list reads it. */
+export const CLONE_TEMP_PREFIX = '.pitwall-clone-';
 
 // ---------------------------------------------------------------------------
 // Attach (W10, D3, D9): a WebSocket per attached background session, carrying

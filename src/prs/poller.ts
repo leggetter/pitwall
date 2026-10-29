@@ -56,6 +56,11 @@ export interface PrSource {
   /** Calls `listener` with each new list, after it changes. Returns the unsubscribe. */
   subscribe(listener: (list: PullRequestList) => void): () => void;
   refresh(): PrRefreshResult;
+  /**
+   * Finds the repos under the roots again, without fetching from GitHub, so a repo cloned just now is
+   * placed 'cloned' (W107's clone, placed.ts). Absent from a source that doesn't place PRs.
+   */
+  rediscover?(): void;
   /** Starts polling: a fetch now, unless one has already started. The server calls it once listening. */
   start(): void;
   /** Stops polling. The server calls it on close(). */

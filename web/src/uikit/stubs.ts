@@ -5,6 +5,7 @@
 
 import {
   ATTACHMENTS_PATH,
+  CLONE_PATH,
   DIRECTORIES_PATH,
   PROTOCOL_VERSION,
   SPAWN_PATH,
@@ -132,7 +133,16 @@ export interface StubOptions {
   recaps?: Readonly<Record<string, SessionRecap>>;
   recapFetch?: 'ok' | 'loading' | 'failed';
   recapRefresh?: 'ok' | 'sending' | 'spent' | 'off' | 'failed';
+  /**
+   * What Clone and start gets (W107), in the server's words (src/server/clone.ts). `cloned` answers
+   * with a made-up clone's directory and the command that trusts it; `cloning` never answers;
+   * `failed` is gh failing, a 502.
+   */
+  clone?: 'cloned' | 'cloning' | 'failed';
 }
+
+/** Where the stubbed Clone and start says it cloned the gallery's not-cloned repo (W107). */
+export const CLONED_DIR = '/Users/example/code/sdk-docs';
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
 /** Refresh's recapRefreshPath() (W111). */
@@ -148,6 +158,16 @@ export function stubApi(options: StubOptions = {}): ApiClient {
   let listed = 0;
   const answer = (method: 'GET' | 'POST', path: string, body?: unknown): Promise<ApiResult> => {
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
+    if (method === 'POST' && path === CLONE_PATH) {
+      const clone = options.clone ?? 'cloned';
+      if (clone === 'cloning') return forever();
+      if (clone === 'failed') {
+        return Promise.resolve(
+          failed(502, { ok: false, error: "gh couldn't clone example/sdk-docs (exit code 1). Check that you can open it on GitHub and that gh auth status works, then try again." }),
+        );
+      }
+      return Promise.resolve({ kind: 'ok', status: 201, body: { ok: true, cwd: CLONED_DIR, hint: `cd ${CLONED_DIR} && claude` } });
+    }
     if (method === 'GET' && path === DIRECTORIES_PATH) return directories(options.directories ?? 'ok');
     const agents = method === 'GET' ? SUBAGENTS_PATH.exec(path) : null;
     if (agents) {

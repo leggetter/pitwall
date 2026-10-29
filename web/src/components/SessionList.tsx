@@ -21,7 +21,7 @@ import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
 import { isPrRow, rowKey, type ListRow } from '../work.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
-import { PrRow } from './PrRow.js';
+import { PrRow, PrStartButton } from './PrRow.js';
 import { ScrollBox } from './ScrollBox.js';
 import { SessionRow } from './SessionRow.js';
 
@@ -104,6 +104,10 @@ export interface SessionListProps {
   onStepPr?: ((key: string, by: 1 | -1) => void) | undefined;
   /** The open PR's key, whose row is marked open. */
   openPrKey?: string | undefined;
+  /** Starts a session for a PR row's PR (W107): its row's action. PR rows have none without it. */
+  onStartPr?: ((pr: PullRequestSummary) => void) | undefined;
+  /** Offer Resume on the current rows of finished sessions that own an open PR (W107, RowResume.tsx). */
+  offerResume?: boolean;
 }
 
 /**
@@ -285,6 +289,8 @@ export function SessionList({
   onOpenPr,
   onStepPr,
   openPrKey,
+  onStartPr,
+  offerResume = false,
 }: SessionListProps) {
   const headingId = useId();
   const main = useRef<HTMLElement>(null);
@@ -384,6 +390,7 @@ export function SessionList({
                   onOpen={onOpenPr}
                   onStep={onStepPr}
                   older={row.older === true}
+                  actions={onStartPr && <PrStartButton pr={row.pr} onStart={onStartPr} />}
                 />
               ) : (
                 <SessionRow
@@ -399,6 +406,7 @@ export function SessionList({
                   notNeeded={notNeeded}
                   onNotNeeded={onNotNeeded}
                   owned={owned?.get(row.session.sessionId)}
+                  offerResume={offerResume}
                 />
               ),
             )}

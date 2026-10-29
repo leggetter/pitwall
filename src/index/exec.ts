@@ -10,6 +10,19 @@ export interface RunOptions {
   env?: NodeJS.ProcessEnv;
   /** Reject when stdout grows past this many bytes. Default 16 MiB. */
   maxStdoutBytes?: number;
+  /**
+   * POSIX: start the child in a session and process group of its own (spawn's `detached`, which calls
+   * setsid), so it has no controlling terminal and nothing it starts can prompt in the one pitwall
+   * runs in, as ssh would for a passphrase; and a failure, the timeout's included, signals the whole
+   * group, so what it started, such as gh's `git clone`, stops with it (W107). Ignored on Windows.
+   */
+  processGroup?: boolean;
+  /**
+   * Stops the child, with `processGroup` its whole group, with SIGTERM, then SIGKILL 2 s later, and
+   * rejects with reason 'aborted' once it has exited, or 2.5 s after the SIGTERM at most, so a caller
+   * can then remove what it wrote: a clone when the server closes (W107). Already aborted, nothing runs.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -19,7 +32,7 @@ export interface RunOptions {
  */
 export type RunFile = (file: string, args: readonly string[], options: RunOptions) => Promise<string>;
 
-export type RunErrorReason = 'not-found' | 'timeout' | 'exit' | 'signal' | 'too-large' | 'spawn';
+export type RunErrorReason = 'not-found' | 'timeout' | 'exit' | 'signal' | 'too-large' | 'spawn' | 'aborted';
 
 export class RunError extends Error {
   constructor(
@@ -207,9 +220,16 @@ export function childEnvironment(env: NodeJS.ProcessEnv, token?: string): Record
 export const runFile: RunFile = (file, args, options) =>
   new Promise<string>((resolve, reject) => {
     const maxBytes = options.maxStdoutBytes ?? DEFAULT_MAX_STDOUT;
+    const group = options.processGroup === true && process.platform !== 'win32';
     let settled = false;
     const chunks: Buffer[] = [];
     let bytes = 0;
+    if (options.signal?.aborted) {
+      reject(new RunError('aborted', 'was stopped before it started'));
+      return;
+    }
+    /** Set once the caller has aborted: whatever happens next, the run rejects with it. */
+    let aborted: RunError | undefined;
 
     const child = spawn(file, args, {
       cwd: options.cwd,
@@ -218,18 +238,38 @@ export const runFile: RunFile = (file, args, options) =>
       stdio: ['ignore', 'pipe', 'ignore'],
       shell: false,
       windowsHide: true,
+      detached: group,
     });
 
-    const finish = (error: RunError | undefined, stdout?: string) => {
+    /** Signals the child, or with `processGroup` its whole group, which may outlive it. */
+    const send = (name: NodeJS.Signals) => {
+      if (group && child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, name);
+        } catch {
+          // The group has gone.
+        }
+        return;
+      }
+      child.kill(name);
+    };
+
+    const running = () => child.exitCode === null && child.signalCode === null;
+
+    const finish = (result: RunError | undefined, stdout?: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
+      // Aborted, it says so, whatever the child did as it stopped.
+      const error = aborted ?? result;
       if (error) {
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill('SIGTERM');
+        // Only while the child runs, whose pid then still names its group, so a reused pid is never signalled.
+        if (running()) {
+          send('SIGTERM');
           // Don't leave a process behind on every poll if it ignores SIGTERM.
           const force = setTimeout(() => {
-            if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+            if (running()) send('SIGKILL');
           }, 2000);
           force.unref();
           child.once('exit', () => clearTimeout(force));
@@ -244,6 +284,30 @@ export const runFile: RunFile = (file, args, options) =>
     const timer = setTimeout(() => {
       finish(new RunError('timeout', `timed out after ${formatSeconds(options.timeoutMs)}`));
     }, options.timeoutMs);
+
+    // Stopped by the caller: SIGTERM now, SIGKILL 2 s later, and the rejection once it has exited.
+    function abort() {
+      if (settled || aborted) return;
+      aborted = new RunError('aborted', 'was stopped');
+      clearTimeout(timer);
+      if (!running()) {
+        finish(aborted);
+        return;
+      }
+      send('SIGTERM');
+      const force = setTimeout(() => {
+        if (running()) send('SIGKILL');
+      }, 2000);
+      const giveUp = setTimeout(() => finish(aborted), 2500);
+      force.unref();
+      giveUp.unref();
+      child.once('exit', () => {
+        clearTimeout(force);
+        clearTimeout(giveUp);
+        finish(aborted);
+      });
+    }
+    options.signal?.addEventListener('abort', abort, { once: true });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       bytes += chunk.length;

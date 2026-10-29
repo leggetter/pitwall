@@ -1864,7 +1864,8 @@ mark.match {
 }
 
 @media (hover: hover) {
-  .session-not-needed-toggle[aria-pressed='false'] {
+  .session-not-needed-toggle[aria-pressed='false'],
+  .session-row-resume:not([aria-busy='true']) {
     opacity: 0;
   }
 

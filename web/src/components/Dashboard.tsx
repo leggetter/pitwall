@@ -112,6 +112,7 @@ import {
   hiddenOwners,
   listWork,
   matchesRelations,
+  notClonedKey,
   olderPrRows,
   ownerIds,
   prNeeding,
@@ -136,7 +137,8 @@ import { useNotNeeded } from '../notNeeded.js';
 import { useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
 import { usePrRefresh } from '../prRefresh.js';
-import { listNow, prKey, prListState, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
+import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
+import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../prStart.js';
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
@@ -185,6 +187,7 @@ import { Header } from './Header.js';
 import { HideButton } from './HideButton.js';
 import { HighlightContext } from './Highlight.js';
 import { closeMenus } from './Menu.js';
+import { ClonedNotice, CloneDialog } from './CloneDialog.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
 import { NO_RELATION, PrListFilters, PrListFoot, PrNotices, prSourceBody, RefreshAction } from './PrList.js';
 import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
@@ -301,6 +304,19 @@ function useArrivedLive(keys: Record<string, string | undefined>, loaded: boolea
   return (name) => !(initial.current?.has(name) ?? false);
 }
 
+/**
+ * New session for a PR (W107): Clone and start's confirmation, for a repo that isn't cloned, then New
+ * session prefilled in `cwd`, the clone's directory, with how to trust a new clone when it is one.
+ */
+type PrStart = { pr: PullRequestSummary; step: 'clone' } | { pr: PullRequestSummary; step: 'new'; cwd: string; cloned?: { hint?: string } };
+
+/** New session's subtitle for a PR: which one it's for. */
+const prSubtitle = (pr: PullRequestSummary) => (
+  <>
+    Starts a background session for <bdi>{plainText(prName(pr))}</bdi> with <code>claude --bg</code>. Its prompt names the pull request, so the session owns it until another acts on it.
+  </>
+);
+
 export interface DashboardProps {
   view: ConnectionView;
   /** Where the selection and the Finished sections are remembered. Tests pass their own; localStorage otherwise. */
@@ -326,7 +342,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // When a terminal may take the keyboard (W57): after you open it here, or never, from Preferences
   // too. One hook, so the setting the dialog changes is the one the views read at each attach.
   const [terminalFocus, setTerminalFocus] = useTerminalFocus(storage);
-  const startGroups = snapshot?.groups;
+  // The sessions started for a PR (W107), by short id, each with the 'prompted' link the index will
+  // find in its first prompt a poll or two later: put on it now, so it owns the PR at once (prStart.ts).
+  const [pendingLinks, setPendingLinks] = useState<PendingLinks>(() => new Map());
+  const startGroups = useMemo(() => withPendingLinks(snapshot?.groups, pendingLinks), [snapshot?.groups, pendingLinks]);
   // Show older (W67): off at each load, and never stored (coordinator, W67).
   const [showOlder, setShowOlder] = useState(false);
   // "Now" for the ended sessions' window: the snapshot's own time, so what's hidden changes only with a snapshot.
@@ -571,6 +590,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const reposCovered = overlaid && overlayCoversRepos;
   // The New session dialog, and the session it started, selected once it's listed (W63).
   const [newSession, setNewSession] = useState(false);
+  // New session for a PR (W107): for a cloned repo, the dialog prefilled in its directory; for one
+  // that isn't, Clone and start's confirmation first, then the dialog in the new clone.
+  const [prStart, setPrStart] = useState<PrStart>();
+  const startPr = useCallback((pr: PullRequestSummary) => {
+    if (pr.place?.kind === 'cloned') setPrStart({ pr, step: 'new', cwd: pr.place.key });
+    else if (pr.place?.kind === 'not-cloned') setPrStart({ pr, step: 'clone' });
+  }, []);
   // Which open session views have a question open, a Stop or Remove confirmation or the terminal's
   // restart prompt: a started session doesn't replace them (W63). By session, as drafts are.
   const prompts = useRef(new Map<string, boolean>());
@@ -1631,6 +1657,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         sessions={sessionsFor(shownPr, everyListed)}
         ownerId={work.ownerOf.get(prOpen)?.sessionId}
         notNeeded={marks}
+        onStart={snapshot && prMissing === undefined && work.ownerOf.get(prOpen) === undefined ? startPr : undefined}
         onOpenSession={openSessionFromPr}
         onClose={closePr}
         layout={viewLayout}
@@ -1786,6 +1813,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             onOpenPr={openPrView}
             onStepPr={(key, by) => stepFromRow(prRowKey(key), by)}
             openPrKey={prOpen}
+            onStartPr={snapshot ? startPr : undefined}
+            offerResume
           />
         </HighlightContext.Provider>
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
@@ -1796,6 +1825,41 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       </div>
 
       {layout === 'drawer' && drawerOpen && <RepoDrawer onClose={closeDrawer}>{repoList('drawer')}</RepoDrawer>}
+
+      {prStart?.step === 'clone' && (
+        <CloneDialog
+          key={`clone:${prKey(prStart.pr)}`}
+          pr={prStart.pr}
+          onClose={() => setPrStart(undefined)}
+          onCloned={(cloned) => {
+            // From the repo's own not-cloned group, which goes once the clone is found: its clone's group instead.
+            const place = prStart.pr.place;
+            if ('repo' in selection && selection.repo === notClonedKey(prStart.pr.repo) && place?.kind === 'not-cloned') {
+              choose(groupSelection({ root: place.root, key: cloned.cwd }, roots));
+            }
+            setPrStart({ pr: prStart.pr, step: 'new', cwd: cloned.cwd, cloned: cloned.hint === undefined ? {} : { hint: cloned.hint } });
+          }}
+        />
+      )}
+
+      {prStart?.step === 'new' && snapshot && (
+        <NewSessionDialog
+          key={`pr:${prKey(prStart.pr)}:${prStart.cwd}`}
+          snapshot={dialogSnapshot ?? snapshot}
+          tab={tab}
+          prefill={prPrefill(prStart.pr, prStart.cwd)}
+          subtitle={prSubtitle(prStart.pr)}
+          notice={prStart.cloned && <ClonedNotice repo={prStart.pr.repoLabel} cwd={prStart.cwd} hint={prStart.cloned.hint} />}
+          onClose={() => setPrStart(undefined)}
+          onStarted={(session, request) => {
+            const link = pendingLink(prStart.pr, request.prompt, new Date().toISOString());
+            if (link) setPendingLinks((current) => new Map(current).set(session.shortId, link));
+            setPrStart(undefined);
+            started.wait(session);
+            toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
+          }}
+        />
+      )}
 
       {newSession && snapshot && (
         <NewSessionDialog

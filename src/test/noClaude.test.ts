@@ -298,6 +298,30 @@ describe('the no-claude guard', () => {
     }
   });
 
+  it("lets a test signal the process group of a child it started in one of its own, as runFile's processGroup does (W107), and refuses another group", async () => {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore', detached: true });
+    const exited = new Promise<NodeJS.Signals | null>((resolve) => child.once('exit', (_code, signal) => resolve(signal)));
+    const pid = child.pid as number;
+    // A sleep a shell starts in a group of its own (job control): a group whose leader the wrapper never saw.
+    const shell = spawn('/bin/sh', ['-c', 'set -m; sleep 30 >/dev/null 2>&1 & echo $!'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const other = await new Promise<number>((resolve) => shell.stdout.once('data', (data: Buffer) => resolve(Number(String(data).trim()))));
+    try {
+      expect(() => process.kill(-other, 'SIGTERM')).toThrow(SIGNAL_REFUSED);
+      expect(takeRefusals()).toHaveLength(1);
+      expect(process.kill(-pid, 'SIGTERM')).toBe(true);
+      expect(await exited).toBe('SIGTERM');
+      expect(takeRefusals()).toEqual([]);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      try {
+        allowSignalsTo(other);
+        process.kill(other, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }
+  });
+
   it('lets a test signal a child it started, while it runs, forgets it once it has exited, and lets anything through with PITWALL_LIVE=1', async () => {
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
     const exited = new Promise<NodeJS.Signals | null>((resolve) => child.once('exit', (_code, signal) => resolve(signal)));

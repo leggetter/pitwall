@@ -78,7 +78,7 @@ const SECTIONS: Section[] = [
     id: 'pull-requests',
     title: 'Pull requests',
     intro:
-      "M4 (W95, W106): a row is a piece of work. The repo list's counts, with a cloned repo of PR rows alone and one that isn't cloned; session rows with the PRs they own and PR rows with none; the Pull requests view in each state, with its hidden line; PrView with its details and sessions, and its other states; the session view's PR links and its Pull requests tab; and the page with a PR open.",
+      "M4 (W95, W106): a row is a piece of work. The repo list's counts, with a cloned repo of PR rows alone and one that isn't cloned; session rows with the PRs they own and PR rows with none; the Pull requests view in each state, with its hidden line; PrView with its details and sessions, and its other states; the session view's PR links and its Pull requests tab; and the page with a PR open. W107: a PR row's New session or Clone and start, Resume on an ended session's row, the PR view's action, Clone and start's confirmation, cloning and failing, and New session after a clone.",
     Content: PullRequestSpecimens,
   },
   {

@@ -281,6 +281,10 @@ export class World {
   #recapBudget = 200;
   /** When the latest made-up call failed, for RecapHealth.errorAt, with 'failing'. */
   #recapErrorAt = 0;
+  /** The repos Clone and start has cloned since the last reset (W107), by repo, with where. */
+  #cloned = new Map<string, string>();
+  /** Whether a clone fails, as gh does for a repo you can't see (W107). */
+  #cloneFails = false;
 
   constructor() {
     this.reset();
@@ -304,6 +308,8 @@ export class World {
     // Fetched two minutes ago, by the poll, so a refresh now is allowed.
     this.#prsFetchedAt = this.#now - 2 * MINUTE;
     this.#prsFetchStarted = this.#prsFetchedAt - 8_500;
+    this.#cloned = new Map();
+    this.#cloneFails = false;
     this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
     this.#recapsState = options.recaps ?? 'off';
     this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
@@ -496,6 +502,28 @@ export class World {
   }
 
   /** Until the next reset, the PR source says `state` (W95). The server sends the list to the page. */
+  /**
+   * Clone and start (W107), as src/server/clone.ts answers it: the repo of a PR placed 'not-cloned' is
+   * cloned to `<root>/<name>`, and its PRs are placed under the clone from then on, until the next
+   * reset; 'missing' for a repo with no PR in the list, 'placed' for one that isn't placed 'not-cloned',
+   * and 'failed' while failClones() is on. Nothing is written anywhere.
+   */
+  clone(repo: string): { result: 'cloned'; cwd: string; label: string } | { result: 'missing' | 'placed' | 'failed' } {
+    const prs = this.#pullRequests().filter((pr) => pr.repo === repo.toLowerCase());
+    if (prs.length === 0) return { result: 'missing' };
+    const pr = prs.find((each) => each.place?.kind === 'not-cloned');
+    if (pr?.place?.kind !== 'not-cloned') return { result: 'placed' };
+    if (this.#cloneFails) return { result: 'failed' };
+    const cwd = `${pr.place.root}/${pr.repoLabel.slice(pr.repoLabel.indexOf('/') + 1)}`;
+    this.#cloned.set(pr.repo, cwd);
+    return { result: 'cloned', cwd, label: pr.repoLabel };
+  }
+
+  /** Until the next reset, every clone fails, as gh does for a repo you can't see (W107). */
+  failClones(): void {
+    this.#cloneFails = true;
+  }
+
   setPrs(state: PrsState): void {
     this.#prs = state;
     this.#prsRefreshing = false;
@@ -649,7 +677,8 @@ export class World {
    * needs you until you prompt it (NeedsYou's 'restarted', W69).
    */
   resume(sessionId: string): { shortId: string; list: () => void } {
-    const shortId = sessionId.slice(0, 8);
+    // A background job wakes under its own short id (W107); an ended session takes its id's first 8.
+    const shortId = this.#sessions.get(sessionId)?.shortId ?? sessionId.slice(0, 8);
     return {
       shortId,
       list: () => {
@@ -801,7 +830,7 @@ export class World {
   /** The made-up open PRs, newest updated first, as the search returns them. */
   #pullRequests(): PullRequestSummary[] {
     // Where the server places each one (W106): under its clone, or not cloned under the root that claims example.
-    const clones: Readonly<Record<string, string>> = { 'example/demo-app': DEMO_APP, 'example/api-server': API_SERVER, 'example/event-relay': EVENT_RELAY };
+    const clones: Readonly<Record<string, string>> = { 'example/demo-app': DEMO_APP, 'example/api-server': API_SERVER, 'example/event-relay': EVENT_RELAY, ...Object.fromEntries(this.#cloned) };
     const placeOf = (repo: string): PullRequestPlace | undefined => {
       const clone = clones[repo];
       if (clone) return { kind: 'cloned', root: CODE, key: clone, label: clone.slice(CODE.length + 1) };
