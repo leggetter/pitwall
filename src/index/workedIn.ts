@@ -65,7 +65,7 @@ import {
 } from './prLinks.js';
 import { isWithin, matchRoot } from './roots.js';
 import { placesOf, slugsIn, type CallPlaces } from './toolCalls.js';
-import { assistantTextOf, promptTextOf } from './transcripts.js';
+import { assistantTextOf, promptTextOf, queuedEntryOf } from './transcripts.js';
 
 /** The share of a session's tool calls that makes a repo count, in percent (spike 004). */
 export const WORKED_IN_PERCENT = 5;
@@ -595,6 +595,8 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
     } catch {
       return;
     }
+    // A prompt typed mid-turn is an attachment that stands for a user entry (W99).
+    if (isRecord(entry) && entry.type === 'attachment') entry = queuedEntryOf(entry);
     if (!isRecord(entry) || !isRecord(entry.message)) return;
     const content = entry.message.content;
     const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;

@@ -450,6 +450,7 @@ export function applyLine(fields: Fields, line: string): void {
   if (
     !line.includes('"user"') &&
     !line.includes('"assistant"') &&
+    !line.includes('"queued_command"') &&
     !line.includes('"ai-title"') &&
     !line.includes('"custom-title"') &&
     !line.includes('"agent-name"') &&
@@ -469,6 +470,12 @@ export function applyLine(fields: Fields, line: string): void {
 
 export function applyEntry(fields: Fields, entry: unknown): void {
   if (!isRecord(entry)) return;
+  if (entry.type === 'attachment') {
+    // What arrived mid-turn counts as the user entry it stands for (W99): a prompt typed then is a prompt.
+    const queued = queuedEntryOf(entry);
+    if (queued !== undefined) applyEntry(fields, queued);
+    return;
+  }
   const type = entry.type;
   if (type === 'ai-title') {
     // No timestamp, and not activity: Claude Code writes these on its own.
@@ -624,7 +631,9 @@ export function userPromptOf(entry: Record<string, unknown>): string | undefined
  * summaries, sidechains, tool results, entries whose `origin.kind` marks them
  * as from another session or a task notification, and Claude Code's own
  * wrappers. `<system-reminder>` blocks are stripped first. The rule behind
- * lastUserPrompt, and behind the 'prompted' PR links (prLinks.ts, W94).
+ * lastUserPrompt, and behind the 'prompted' PR links (prLinks.ts, W94). A
+ * prompt typed mid-turn is read from the user entry its attachment stands for
+ * (queuedEntryOf(), W99).
  */
 export function promptTextOf(entry: Record<string, unknown>): string | undefined {
   if (entry.isMeta === true || entry.isCompactSummary === true || entry.isSidechain === true) return undefined;
@@ -642,6 +651,38 @@ export function promptTextOf(entry: Record<string, unknown>): string | undefined
   if (text === '' || text.includes('<cross-session-message')) return undefined;
   if (NOT_A_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix))) return undefined;
   return text;
+}
+
+/** The modes of a `queued_command` attachment that stand for a user entry: a prompt, or a task notification. */
+const QUEUED_MODES = new Set(['prompt', 'task-notification']);
+
+/**
+ * The user entry a `queued_command` attachment stands for, or undefined for any other entry (W99).
+ * Claude Code (v2.1.312) writes one, and no user entry, for what arrives while a session is mid-turn:
+ * a prompt the user typed meanwhile (`origin.kind: "human"`), a message from another session or a
+ * sub-agent's report (`peer`), a task notification (`task-notification`, or no `origin` in older
+ * versions) and, in a sub-agent's transcript, a message from the session that started it
+ * (`coordinator`, meta). Its `prompt` is the user entry's content, a string or text and image blocks,
+ * and its `origin` and `isMeta` are the user entry's, so read as one it becomes what that would: the
+ * readers' own rules then say whether it's a prompt, a message or a notice. Only text and image
+ * blocks are kept, so it's never a tool's result. A `commandMode` other than `prompt` or
+ * `task-notification`, unseen so far, gives undefined: a shell command's, say, wouldn't read as typed.
+ * Internal and undocumented.
+ */
+export function queuedEntryOf(entry: Record<string, unknown>): Record<string, unknown> | undefined {
+  const attachment = entry.attachment;
+  if (entry.type !== 'attachment' || !isRecord(attachment) || attachment.type !== 'queued_command') return undefined;
+  const mode = attachment.commandMode;
+  if (mode !== undefined && !(typeof mode === 'string' && QUEUED_MODES.has(mode))) return undefined;
+  const prompt = attachment.prompt;
+  const content =
+    typeof prompt === 'string' ? prompt : Array.isArray(prompt) ? prompt.filter((block) => isRecord(block) && (block.type === 'text' || block.type === 'image')) : undefined;
+  if (content === undefined) return undefined;
+  const user: Record<string, unknown> = { type: 'user', message: { role: 'user', content } };
+  for (const key of ['timestamp', 'isSidechain', 'sessionKind'] as const) if (entry[key] !== undefined) user[key] = entry[key];
+  if (attachment.isMeta !== undefined) user.isMeta = attachment.isMeta;
+  if (attachment.origin !== undefined) user.origin = attachment.origin;
+  return user;
 }
 
 /** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
