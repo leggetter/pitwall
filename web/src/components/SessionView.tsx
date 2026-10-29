@@ -70,6 +70,7 @@ import { replyInConversation } from '../relay.js';
 import { attachCommand, isNotNeeded, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
 import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
+import { turnMode, WORKING_POLL_MS, workingLineState } from '../working.js';
 import { Alert } from './Alert.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Button } from './Button.js';
@@ -459,7 +460,6 @@ export function SessionView({
     () => (api ? (before) => getConversation(api, sessionId, before, requests.current?.signal) : undefined),
     [api, sessionId],
   );
-  const conversation = useConversation(session.lastActivityAt, loader);
   const signal = useCallback(() => requests.current?.signal, []);
   const subagents = useSubagents(api, sessionId, signal);
   const actions = useSessionActions(session, onClose);
@@ -497,6 +497,18 @@ export function SessionView({
   useLayoutEffect(() => {
     if (chosen === undefined && !hidden) setChosen(openingTab());
   });
+  // The newest page every 2 s too while Claude Code says the session works and its Conversation tab is
+  // shown (W102), until that page says the turn has ended: so the working line's step keeps up.
+  const claudeSaysWorking = turnMode(session, listed, undefined) === 'working';
+  const conversation = useConversation(session.lastActivityAt, loader, { pollMs: claudeSaysWorking && tab === 'conversation' && !hidden ? WORKING_POLL_MS : undefined });
+  // The working line at the end of the conversation, and what its status region says (W102).
+  const mode = turnMode(session, listed, conversation.state.turnEnded);
+  const canAttachHere = background && !terminalOff;
+  const { entries: conversationEntries, before: earlierCursor } = conversation.state;
+  const working = useMemo(
+    () => workingLineState(mode, session, canAttachHere, conversationEntries, earlierCursor !== undefined),
+    [mode, session, canAttachHere, conversationEntries, earlierCursor],
+  );
   // Opened by stepping: its first terminal waits, and takes no focus. Opening a tab yourself ends that.
   const [quiet, setQuiet] = useState(stepped);
   const [attachStatus, setAttachStatus] = useState<AttachStatus>();
@@ -1046,7 +1058,14 @@ export function SessionView({
 
       <SubagentLinkContext.Provider value={subagentsShown ? openSubagent : undefined}>
         {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
-        <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation' || hidden} />
+        <ConversationPanel
+          conversation={conversation}
+          id={ids.conversationPanel}
+          labelledBy={ids.conversationTab}
+          hidden={tab !== 'conversation' || hidden}
+          working={working}
+          workingReady={listed && conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
+        />
         {subagentsShown && (
           <SubagentsPanel
             api={api}

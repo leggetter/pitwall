@@ -14,7 +14,7 @@ Claude Code has two kinds of session, and pitwall handles both. Interactive sess
 
 - **Lists every Claude Code session under a directory,** wherever it was started: Warp, Cursor or any other terminal. Sessions are grouped by git repo, with worktrees under the repo they belong to. Finished background sessions, and interactive sessions that ended recently, stay listed.
 - **Shows which sessions need you, and why:** a prompt on screen, a question it asked you, or what Claude Code says a background session needs.
-- **Opens a session** to read its conversation, and its sub-agents' in a tab of their own.
+- **Opens a session** to read its conversation, and its sub-agents' in a tab of their own. While it works, the conversation ends with what it's doing and for how long, such as "Working · 2m 14s, Running Bash: npm test", or what it's waiting on you for.
 - **Lets you steer it:** send an interactive session a message, or drive a background session in a terminal in the page, permission prompts and dialogs included.
 - **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, ends a running interactive session, leaving its terminal at the shell, and brings an ended interactive session back in the background.
 - **Opens a session's directory** in VS Code or Cursor.
@@ -180,7 +180,7 @@ flowchart TB
 ```
 
 - **The index** turns what it reads into a snapshot of the sessions under your roots: each one grouped by repo, with read-only `git`, and whether it needs you. The server pushes a snapshot to the page only when something changed.
-- **A conversation** comes over HTTP, a page at a time, and only when you open the session.
+- **A conversation** comes over HTTP, a page at a time, and only when you open the session. While the session works and its conversation is on screen, the newest page is fetched every 2 s, read backwards from the end of its transcript.
 - **The PR poller** runs three `gh api graphql` searches, one call each, for your open pull requests and those that ask your review or mention you, on its own timer, never with the session poll, so `gh` keeps your GitHub token and pitwall never reads it. The server pushes the list to the page when it changes.
 - **The terminal in the page** is xterm.js, on its own WebSocket, connected to a pseudo-terminal (PTY) that runs `claude attach <id>`. So you get Claude Code's whole interface, permission prompts included.
 - **The relay** exists because the documented way to message an interactive session is Claude Code's cross-session messaging, which only a Claude session can use. So pitwall runs a headless one, `claude -p` named `pitwall-relay`, with `SendMessage` as its only tool, and a gate hook that lets it send only the message you wrote ([D8](docs/decisions.md#d8---messages-to-interactive-sessions-go-through-one-headless-relay-session)).

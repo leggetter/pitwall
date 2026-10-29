@@ -41,7 +41,10 @@ export const NAMES = {
   asked: 'pitwall-test-review',
   /** Interactive and idle, with every kind of conversation entry and links: the message box's session. It has no sub-agents (W77). */
   conversation: 'pitwall-test-api',
-  /** Background and running: Terminal opens and attaches. */
+  /**
+   * Background and running: Terminal opens and attaches. Its turn is running, with a command still out,
+   * so its Conversation tab ends with the working line (W102), until `world.endTurn()`.
+   */
   running: 'pitwall-test-nightly-export',
   running2: 'pitwall-test-retry-worker',
   running3: 'pitwall-test-index-rebuild',
@@ -199,6 +202,8 @@ export class World {
   #nextSpawn = 0;
   /** NAMES.inApi has the most sub-agents a list carries, and more (manySubagents()). */
   #manySubagents = false;
+  /** The sessions whose running turn `endTurn()` has ended, until the next reset (W102). */
+  #turnsEnded = new Set<string>();
   /** What the PR source says, and whether a fetch is running (W95). */
   #prs: PrsState = 'ok';
   #prsRefreshing = false;
@@ -216,6 +221,7 @@ export class World {
     this.#labels = options.labels ?? {};
     this.#spawned = [];
     this.#manySubagents = false;
+    this.#turnsEnded = new Set();
     this.#prs = options.prs ?? 'ok';
     this.#prsRefreshing = false;
     // Fetched two minutes ago, by the poll, so a refresh now is allowed.
@@ -338,8 +344,21 @@ export class World {
   conversation(sessionId: string): ConversationPage | undefined {
     const session = this.#sessions.get(sessionId);
     if (!session) return undefined;
+    if (session.name === NAMES.running) return { sessionId, ...this.#working(sessionId) };
     const entries = session.name === NAMES.conversation ? this.#everyKind() : session.name === NAMES.inApi ? this.#namingSubagents() : this.#short(session);
     return { sessionId, entries };
+  }
+
+  /**
+   * Until the next reset, the session's running turn ends (W102), as the index lists it on its next
+   * poll: a background job is done, with its process still there, and its activity moves; its newest
+   * page has the command's result and Claude's reply, and says the turn has ended.
+   */
+  endTurn(sessionId: string): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    this.#turnsEnded.add(sessionId);
+    this.#sessions.set(sessionId, { ...session, state: 'done', lastActivityAt: new Date().toISOString() });
   }
 
   /** A listed session's sub-agents (W77): NAMES.inApi's, and none for the rest. */
@@ -646,6 +665,25 @@ export class World {
       { kind: 'tool', at: this.#ago(6), toolName: 'Agent', text: `Agent: ${SUBAGENTS.reading.description}`, subagent: SUBAGENTS.reading },
       { kind: 'tool', at: this.#ago(2), toolName: 'SendMessage', text: 'SendMessage', subagent: SUBAGENTS.reading },
     ];
+  }
+
+  /**
+   * NAMES.running's turn (W102): your prompt 3 minutes ago, a test run that failed, a prompt you typed
+   * mid-turn, which doesn't restart the turn's time, and a command still waiting on its result, as
+   * the server sends them, a call's `toolError` set once its result is in. After endTurn(), the
+   * command's result, Claude's reply, and the turn's end.
+   */
+  #working(sessionId: string): Pick<ConversationPage, 'entries' | 'turnEnded'> {
+    const entries: ConversationEntry[] = [
+      { kind: 'user', at: this.#ago(3.4), text: 'Run the made-up export tests and fix what fails.' },
+      { kind: 'assistant', at: this.#ago(3.3), markdown: true, text: "I'll run the export tests first." },
+      { kind: 'tool', at: this.#ago(3.2), toolName: 'Bash', text: 'Bash: npm test -- export', toolError: true },
+      { kind: 'user', at: this.#ago(1.5), text: 'Skip the slow ones for now.', midTurn: true },
+      { kind: 'tool', at: this.#ago(0.5), toolName: 'Bash', text: 'Bash: npm test -- export --skip-slow' },
+    ];
+    if (!this.#turnsEnded.has(sessionId)) return { entries, turnEnded: false };
+    const done = { ...entries[entries.length - 1], toolError: false } as ConversationEntry;
+    return { entries: [...entries.slice(0, -1), done, { kind: 'assistant', at: new Date().toISOString(), markdown: true, text: 'The made-up export tests pass now.' }], turnEnded: true };
   }
 
   #short(session: SessionSummary): ConversationEntry[] {

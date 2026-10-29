@@ -536,6 +536,29 @@ export const CONVERSATION: ConversationEntry[] = [
   { kind: 'assistant', at: ago(5), text: 'None.', markdown: true },
 ];
 
+/**
+ * A turn that's running (W102): your prompt, Claude's calls, a prompt you typed mid-turn, which doesn't
+ * restart the turn's time (W99), and an edit still waiting on its result, the step the working line shows.
+ */
+export const WORKING_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(9), text: 'What does the export job log when a batch fails?' },
+  { kind: 'assistant', at: ago(8.5), text: 'The error and the batch id, at `warn`.', markdown: true },
+  { kind: 'user', at: ago(3.4), text: 'Run the export tests and fix what fails.' },
+  { kind: 'assistant', at: ago(3.3), text: "I'll run the export tests first.", markdown: true },
+  { kind: 'tool', at: ago(3.2), toolName: 'Bash', text: 'Bash: npm test -- export', toolError: true },
+  { kind: 'user', at: ago(1.5), text: 'Skip the slow ones for now.', midTurn: true },
+  { kind: 'assistant', at: ago(1.4), text: 'Skipping them. The failure is in the retry: fixing it.', markdown: true },
+  { kind: 'tool', at: ago(1.2), toolName: 'Read', text: `Read: ${APP_DIR}/src/export/job.ts`, toolError: false },
+  { kind: 'tool', at: ago(0.5), toolName: 'Edit', text: `Edit: ${APP_DIR}/src/export/job.ts` },
+];
+
+/** Waiting on you (W102): the call Claude Code is asking you to allow, with no result. */
+export const WAITING_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(4), text: 'Clean the build folder, then run the export tests.' },
+  { kind: 'assistant', at: ago(3.8), text: "I'll clear the old build first.", markdown: true },
+  { kind: 'tool', at: ago(3.7), toolName: 'Bash', text: 'Bash: rm -rf build' },
+];
+
 /** What arrives after the conversation above, for "Jump to latest". */
 export const NEWER_CONVERSATION: ConversationEntry[] = [
   { kind: 'user', at: ago(3), text: 'Then open a pull request for it.' },
