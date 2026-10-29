@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
 import type { RecapChildEvents } from '../recaps/call.js';
+import { memoryBudget } from '../recaps/budget.js';
 import { createRecapEngine, type RecapEngine } from '../recaps/engine.js';
 import { recapPath, recapRefreshPath, SNAPSHOT_PATH, WS_PATH, type IndexSnapshot, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
@@ -94,6 +95,7 @@ function engineWithFakeClaude(options: { budget?: number } = {}) {
     prepareDir: (dir) => dir,
     claudeVersion: async () => '2.1.312 (Claude Code)',
     now: () => NOW,
+    budgetStore: memoryBudget(),
     log: () => undefined,
     ...(options.budget === undefined ? {} : { budget: options.budget }),
   });

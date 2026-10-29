@@ -67,9 +67,10 @@ Options:
                         Without it, once a session's turn has ended and it's
                         been idle ${RECAP_DEBOUNCE_MS / 60_000} minutes, and when you ask, pitwall sends
                         excerpts of its transcript to ${RECAP_MODEL}, with
-                        claude -p on your Claude login, at most ${RECAP_DAILY_BUDGET} calls a
-                        day, for a short recap: why it started, where it is
-                        and what's next.
+                        claude -p and whatever login or API key claude finds
+                        in pitwall's environment, at most ${RECAP_DAILY_BUDGET} calls a day,
+                        for a short recap: why it started, where it is and
+                        what's next.
   -h, --help            Show this help.
   -v, --version         Show the version.
 
@@ -554,7 +555,8 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   const relay = createRelayManager();
   // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and
   // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.
-  const recaps = command.recaps ? createRecapEngine({ relayName: RELAY_NAME }) : undefined;
+  // Your messages through the relay are yours in a recap's input, by their ids (W110's review).
+  const recaps = command.recaps ? createRecapEngine({ relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) } }) : undefined;
   const indexer = startIndexer({
     roots,
     intervalMs,

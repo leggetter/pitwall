@@ -62,11 +62,11 @@ node dist/cli.js ~/code
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
   - The git remotes of every repo under your roots, two levels down, and of every repo your sessions worked in, with `git config --local --no-includes --get-regexp`, at start, every 5 minutes, when the roots change and on Refresh, to place each pull request under the clone of its repo, or under the root whose GitHub owners cover it. It never fetches, pulls or changes a repo, and only with pull requests on.
   - `gh api graphql` on github.com, with your GitHub login, at start, every 3 minutes and on Refresh, at most once a minute: three searches, each in pages of 25, for your open pull requests, the open ones that ask your review, or a team's you're on, and the open ones that mention you. `--no-prs` turns it off, and pitwall then never runs `gh`.
-- **It sends excerpts of your sessions' transcripts to Anthropic, for recaps** ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)):
-  - **What:** for each recap, one `claude -p` call to Haiku 5.5 on your Claude login, the same login your sessions use, with no API key. It sends the session's first prompt, up to 1,500 characters; Claude Code's own short recap of it; parts of its compaction summary, up to 2,000 characters each; and its latest turns, up to 8,000 characters, one line each, where a tool call is Claude Code's one-line summary of it, such as `Bash: npm test`. An update sends the previous recap and the turns since instead. It gets back why the session started, where it is, what's next, what it's waiting on, and a title.
-  - **When:** once a running session's turn has ended and it's been idle 5 minutes since something new, and when you ask for one. At most 2 at a time and 200 a day, each about $0.001 at API list prices; on a Max plan they count against its usage limits instead.
-  - **How it's fenced:** the call has no tools, loads none of your settings, hooks, plugins, `CLAUDE.md` or MCP servers, saves no session, and runs in `~/.pitwall/recap/`, where nothing is written. Recaps are kept in memory only, so a restart makes them again.
-  - **What a recap can change:** what the page shows: the recap, the session's title, and Needs you, which a recap can add a session to but never take one out of. Text in a transcript can steer what a recap says, as with any summary, but a recap can't run or send anything.
+- **It sends excerpts of your sessions' transcripts to a model, Anthropic's by default, for recaps** ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)):
+  - **What:** for each recap, one `claude -p` call to Haiku 5.5, with whatever credentials and provider `claude` finds in pitwall's environment: your Claude login, as your sessions use, unless `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, or Bedrock's or Vertex's variables are set where you start pitwall, in which case they're used. It sends the session's first prompt, up to 1,500 characters; Claude Code's own short recap of it; parts of its compaction summary, up to 2,000 characters each; and its latest turns, up to 8,000 characters, one line each, where a tool call is Claude Code's one-line summary of it, such as `Bash: npm test`. An update sends the previous recap and the turns since instead. It gets back why the session started, where it is, what's next, what it's waiting on, and a title.
+  - **When:** once a running session's turn has ended and it's been idle 5 minutes since something new, and when you ask for one. At most 2 at a time and 200 a day, each about $0.001 at API list prices; on a Max plan they count against its usage limits instead. The day's count is kept in `~/.pitwall/recap-budget.json`, the day, the calls and their cost and nothing else, so a restart, or a second pitwall, shares it. `npm run dev` turns recaps off unless `PITWALL_DEV_RECAPS=1`.
+  - **How it's fenced:** the call has no tools, loads none of your settings, hooks, plugins, `CLAUDE.md` or MCP servers, saves no session, may write at most 4,096 tokens, and runs in `~/.pitwall/recap/`, where nothing is written. Recaps are kept in memory only, so a restart makes them again.
+  - **What a recap can change:** what the page shows: the recap, the session's title, and Needs you, which a recap can add a session to but never take one out of. Text in a transcript can steer what a recap says, as with any summary: at worst it chooses a session's title and, with Needs you, its line 2, up to 400 characters, shown as plain text. A recap can't run or send anything.
   - **`--no-recaps` turns them off,** and pitwall then never runs a recap call.
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked. The session sees it as a message from another session, so a message can't approve a permission prompt.
@@ -75,7 +75,7 @@ node dist/cli.js ~/code
   - **End** a running interactive session, after a confirmation, by sending its Claude Code process SIGTERM, never SIGKILL. Its terminal goes back to the shell, and its conversation is kept, but a reply in progress is lost. One that's still working asks again, naming what's running. pitwall never ends a relay, its own or another pitwall's, or a process it runs under.
   - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg`.
   - **Open** a session's directory in VS Code or Cursor.
-- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, the empty folder its recap calls run in, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
+- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, the empty folder its recap calls run in and the day's recap count, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
 
 ### Security, in brief
 
@@ -85,7 +85,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 - **A token:** every API request and the WebSocket need it. The page proves it holds the token over the WebSocket instead of sending it, and anything that changes state also needs a key that only that page gets.
 - **`Host` and `Origin` checks:** `Host` must be `127.0.0.1:<port>` on every request, against DNS rebinding. A WebSocket must come from pitwall's own page, an API request from another origin is refused, and there's no CORS.
 - **A strict Content Security Policy:** the page loads only pitwall's own files, and no other site can put it in a frame.
-- **Recaps leave your machine:** unless you start pitwall with `--no-recaps`, it sends excerpts of your sessions' transcripts to Anthropic's model on your Claude login, for each session's recap, as [above](#what-it-reads-and-what-it-does-only-when-you-ask). The call can't use a tool, and what comes back is only shown.
+- **Recaps leave your machine:** unless you start pitwall with `--no-recaps`, it sends excerpts of your sessions' transcripts to the model `claude` reaches from pitwall's environment, Anthropic's on your Claude login by default, for each session's recap, as [above](#what-it-reads-and-what-it-does-only-when-you-ask). The call can't use a tool, and what comes back is only shown.
 
 ### Caveats
 
@@ -113,7 +113,7 @@ node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>]
 | `--interval <seconds>` | How often to poll `claude agents`, in whole seconds from 1 to 300 | 5 |
 | `--no-open` | Don't open the browser. `PITWALL_NO_OPEN=1` does the same | Opens it |
 | `--no-prs` | Don't list your open pull requests, so pitwall never runs `gh`. Without it, pitwall runs `gh api graphql` at start, every 3 minutes and on Refresh, for your open PRs on github.com, and those that ask your review or mention you; `gh` must be installed and logged in | Lists them |
-| `--no-recaps` | Don't recap your sessions, so pitwall never runs a recap call. Without it, pitwall sends excerpts of a session's transcript to Haiku 5.5 with `claude -p` on your Claude login, once its turn has ended and it's been idle 5 minutes, and when you ask, at most 200 calls a day ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)) | Recaps them |
+| `--no-recaps` | Don't recap your sessions, so pitwall never runs a recap call. Without it, pitwall sends excerpts of a session's transcript to Haiku 5.5 with `claude -p`, on your Claude login unless pitwall's environment gives `claude` other credentials, once its turn has ended and it's been idle 5 minutes, and when you ask, at most 200 calls a day ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)) | Recaps them |
 | `-h`, `--help` | Show the help, with every option and variable | |
 | `-v`, `--version` | Show the version | |
 
@@ -174,7 +174,7 @@ flowchart TB
   end
 
   github["github.com, through gh api graphql"]
-  model["Anthropic's model, on your Claude login"]
+  model["Haiku 5.5, through claude's login"]
 
   page ~~~ index
   page <-->|"HTTP and WebSocket, with the token"| server

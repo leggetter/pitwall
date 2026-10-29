@@ -68,6 +68,10 @@ const DEFAULT_DEV_PORT = 4517;
 const PORT = devPort(process.env.PITWALL_DEV_PORT);
 const roots = process.argv.slice(2);
 const { token, fixed } = devToken();
+// Recaps are off in development unless PITWALL_DEV_RECAPS=1, from the environment or the .env read
+// above (W110's review): tsx watch restarts the CLI on every change, about 30 times an hour, and
+// each restart would recap every running session again.
+const recaps = process.env.PITWALL_DEV_RECAPS === '1';
 
 // With a fixed port, a busy one would make every restart fail. Check before starting.
 if (!(await portIsFree(PORT))) {
@@ -84,7 +88,7 @@ const children: ChildProcess[] = [
   // build as npm run build's: Vite's mode doesn't change NODE_ENV, so React stays its production build.
   // The build needs no PITWALL_* variable, and must not hold a fixed token (W48 F7).
   run('vite', ['build', '--watch', '--mode', 'development'], childEnvironment(process.env, token)),
-  run('tsx', ['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(PORT), ...roots], {
+  run('tsx', ['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(PORT), ...(recaps ? [] : ['--no-recaps']), ...roots], {
     ...process.env,
     PITWALL_TOKEN: token,
     PITWALL_OPEN_MARKER: join(markerDir, 'opened'),

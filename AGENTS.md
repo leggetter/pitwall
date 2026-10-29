@@ -42,7 +42,8 @@ npm run dev -- [root...] rebuild the web UI and restart the server on change. Us
                          (PITWALL_DEV_PORT overrides it), refuses to start if it's busy, and opens
                          the browser once, through the launch file, after the server listens.
                          One token per run, unless PITWALL_TOKEN is set in the environment or
-                         the repo's .env (see .env.example)
+                         the repo's .env (see .env.example). Passes --no-recaps unless
+                         PITWALL_DEV_RECAPS=1, since each restart would recap every session again
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5),
@@ -99,7 +100,8 @@ scripts/appcheck/        the app check: a fake server using pitwall's own securi
                          and one part per area in parts/; typechecked, not built, not in npm test
 LICENSE                  Apache-2.0 (D21, docs/decisions.md)
 THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
-.env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7); .env is gitignored
+.env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7), and PITWALL_DEV_RECAPS;
+                         .env is gitignored
 CLAUDE.md                imports this file for Claude Code
 tsconfig.json            server typecheck: src/ with tests, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests

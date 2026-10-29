@@ -538,6 +538,7 @@ describe('end session: the fresh listing’s guards', () => {
       alert: () => undefined,
       off: () => undefined,
       isRelay: (each) => each.pid === PID,
+      sentByRelay: () => false,
       close: async () => {},
     };
     const started = await start({ relay });

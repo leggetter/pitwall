@@ -697,6 +697,23 @@ describe('the relay: a message nobody asked for', () => {
   });
 });
 
+describe('the relay: the ids of what it sent (W110)', () => {
+  it("remembers the msg_id of each of your messages it sent, so a recap can tell yours from another session's", async () => {
+    const h = harness();
+    expect(h.relay.sentByRelay(MSG_ID)).toBe(false);
+    await expect(h.relay.send(TARGET, 'hello')).resolves.toEqual({ status: 'delivered' });
+    expect(h.relay.sentByRelay(MSG_ID)).toBe(true);
+    expect(h.relay.sentByRelay('ffffffff-0000-4000-8000-000000000000')).toBe(false);
+  });
+
+  it("doesn't remember one SendMessage said it couldn't send", async () => {
+    const h = harness();
+    h.behaviour = (request, child) => child.relay(request, { success: false, message: "No agent named 'x' is reachable." });
+    await expect(h.relay.send(TARGET, 'hello')).resolves.toMatchObject({ status: 'failed' });
+    expect(h.relay.sentByRelay(MSG_ID)).toBe(false);
+  });
+});
+
 describe('the relay: held and refused', () => {
   it('answers held when a notice with the same msg_id arrives within the grace period', async () => {
     const h = harness();
