@@ -48,13 +48,26 @@
 // it's directly in the root and named CLONE_TEMP_PREFIX + mkdtemp's suffix (ownTempDir()); and the
 // claimed target with rmdir, only while empty. On a timeout or a signal, the temp directory is
 // removed again a moment later, in case gh's git was still writing to it when it was stopped.
+//
+// Shutting down (close(), from the server's): gh and git run in a session of their own, so Ctrl-C or
+// closing pitwall's terminal never reaches them. close() aborts a clone that's running, which sends
+// its whole group SIGTERM (runFile's `signal`), waits for gh to exit, and removes the temp directory.
+// A pitwall killed outright can't, so start() sweeps, once, with the first snapshot's roots: a direct
+// child of a root, by its real path, named as ownTempDir() says, a real directory (lstat, never a
+// symlink) owned by this user, whose own time and its entries' are all older than CLONE_TIMEOUT_MS
+// and CLONE_SWEEP_MARGIN_MS, so another pitwall's clone in progress is left alone.
+//
+// gh runs in a 0700 directory of pitwall's own, a fresh `mkdtemp(<tmpdir>/pitwall-gh-)` removed after,
+// never the shared temp directory itself, and without the GIT_* variables that would put the clone
+// somewhere else (gitEnvironment(), with the GIT_CONFIG_* ones and GIT_TEMPLATE_DIR too).
 
-import { lstat, mkdir, mkdtemp, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { RunError, runFile as realRunFile, type RunFile } from '../index/exec.js';
+import { gitEnvironment } from '../index/grouping.js';
 import type { Indexer } from '../index/index.js';
 import { GH_EXIT_AUTH, ghEnvironment } from '../prs/fetch.js';
 import type { PrSource } from '../prs/index.js';
@@ -76,11 +89,18 @@ export const MAX_CLONE_BODY_BYTES = 4 * 1024;
 /** How long after a stopped clone the temp directory is removed again. */
 export const CLONE_SWEEP_AGAIN_MS = 10_000;
 
+/** How much older than CLONE_TIMEOUT_MS a temp directory must be before start() sweeps it. */
+export const CLONE_SWEEP_MARGIN_MS = 5 * 60_000;
+
+/** The prefix of the directory gh runs in, in the system's temp directory: pitwall's own, 0700. */
+export const GH_CWD_PREFIX = 'pitwall-gh-';
+
 const REPO = new RegExp(`^(${GITHUB_OWNER_PATTERN})/(${GITHUB_REPO_NAME_PATTERN})$`);
 const NAME = new RegExp(`^${GITHUB_REPO_NAME_PATTERN}$`);
 
 /** The file system calls a clone makes. Tests pass wrapped ones, as for the rename race. */
 export interface CloneFs {
+  readdir: typeof readdir;
   lstat: typeof lstat;
   stat: typeof stat;
   realpath: typeof realpath;
@@ -91,7 +111,7 @@ export interface CloneFs {
   rmdir: typeof rmdir;
 }
 
-const realFs: CloneFs = { lstat, stat, realpath, mkdtemp, mkdir, rename, rm, rmdir };
+const realFs: CloneFs = { readdir, lstat, stat, realpath, mkdtemp, mkdir, rename, rm, rmdir };
 
 export interface CloneOptions {
   /** Default the index's runFile. Tests pass a fake, so they never run gh. */
@@ -110,6 +130,10 @@ export interface CloneOptions {
   fs?: CloneFs;
   /** Schedules the second removal after a stopped clone. Default an unref'd setTimeout. */
   later?: (callback: () => void, ms: number) => void;
+  /** The user start()'s sweep removes temp directories of. Default process.getuid(); none, as on Windows, sweeps nothing. */
+  uid?: number | undefined;
+  /** The system's temp directory, where gh's own working directory goes. Default os.tmpdir(). */
+  tmpdir?: string;
 }
 
 /** What a clone will do, from a request that passed every check that needs no disk. */
@@ -178,7 +202,13 @@ export function cloneArgs(slug: string, dir: string): string[] {
  * username or password. gh's own `git_protocol`, https or ssh, still decides how it clones.
  */
 export function cloneEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...ghEnvironment(env), GH_HOST: 'github.com', GIT_TERMINAL_PROMPT: '0' };
+  const result: NodeJS.ProcessEnv = { ...gitEnvironment(ghEnvironment(env)), GH_HOST: 'github.com', GIT_TERMINAL_PROMPT: '0' };
+  // Configuration from the environment can redirect a repository too (core.worktree), and a template
+  // directory installs hooks into the new clone: the clone takes only the user's own config files.
+  for (const name of Object.keys(result)) {
+    if (name === 'GIT_TEMPLATE_DIR' || name === 'GIT_CONFIG_PARAMETERS' || name === 'GIT_CONFIG_COUNT' || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(name)) delete result[name];
+  }
+  return result;
 }
 
 /** Whether `dir` is a temp directory a clone makes: directly in `root`, named CLONE_TEMP_PREFIX and mkdtemp's six characters. */
@@ -187,8 +217,9 @@ export function ownTempDir(dir: string, root: string): boolean {
 }
 
 /** What a failed gh says, in pitwall's words (D25): never gh's output, which runFile never reads. */
-export function cloneFailure(error: unknown, slug: string, timeoutMs: number): { status: 502 | 504; error: string } {
+export function cloneFailure(error: unknown, slug: string, timeoutMs: number): { status: 502 | 503 | 504; error: string } {
   if (error instanceof RunError) {
+    if (error.reason === 'aborted') return { status: 503, error: `pitwall is shutting down, so it stopped the clone of ${slug} and removed what it had cloned.` };
     if (error.reason === 'not-found') return { status: 502, error: "gh, GitHub's CLI, isn't installed or isn't on pitwall's PATH. Install it from https://cli.github.com, run gh auth login, then try again." };
     if (error.reason === 'exit' && error.exitCode === GH_EXIT_AUTH) return { status: 502, error: "gh isn't logged in to github.com. Run gh auth login, then try again." };
     if (error.reason === 'timeout') return { status: 504, error: `The clone of ${slug} didn't finish within ${Math.round(timeoutMs / 60_000)} minutes, so pitwall stopped it and removed what it had cloned.` };
@@ -204,11 +235,21 @@ export function cloneFailure(error: unknown, slug: string, timeoutMs: number): {
 
 const code = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code;
 
+/** Clone and start's route, with what it does at the server's start and close. */
+export interface CloneRoute {
+  /** Adds POST CLONE_PATH. Call it after the /api/* checks and before the catch-all, as server.ts's routes do. */
+  register(app: Hono): void;
+  /** Once, with the first snapshot's roots: removes temp directories a pitwall that was killed left (see the top of this file). */
+  start(): void;
+  /** Stops a clone that's running, its whole group, removes its temp directory, and refuses new ones with 503. */
+  close(): Promise<void>;
+}
+
 /**
- * Adds POST CLONE_PATH. Call it after the /api/* checks and before the catch-all, as server.ts's
- * routes do. `prs` is the server's PR source, whose latest list decides what may be cloned.
+ * Clone and start's route. `prs` is the server's PR source, whose latest list decides what may be
+ * cloned; `indexer` gives the roots.
  */
-export function registerClone(app: Hono, indexer: Pick<Indexer, 'latest'>, prs: Pick<PrSource, 'latest' | 'rediscover'>, options: CloneOptions = {}): void {
+export function createCloneRoute(indexer: Pick<Indexer, 'latest'>, prs: Pick<PrSource, 'latest' | 'rediscover'>, options: CloneOptions = {}): CloneRoute {
   const run = options.runFile ?? realRunFile;
   const fs = options.fs ?? realFs;
   const timeoutMs = options.timeoutMs ?? CLONE_TIMEOUT_MS;
@@ -218,8 +259,16 @@ export function registerClone(app: Hono, indexer: Pick<Indexer, 'latest'>, prs: 
     ((callback: () => void, ms: number) => {
       setTimeout(callback, ms).unref();
     });
+  const now = options.now ?? Date.now;
+  const tmp = options.tmpdir ?? os.tmpdir();
   // One clone at a time, and which repo it is.
   let cloning: string | undefined;
+  // The clone running now: how to stop it, its temp directory, and when it has finished, cleaned up.
+  let active: { controller: AbortController; temp?: string; finished: Promise<void> } | undefined;
+  let closed = false;
+  let started = false;
+  let sweeping: Promise<void> = Promise.resolve();
+  let waiting: NodeJS.Timeout | undefined;
 
   const answer = (c: Context, result: CloneResult, status: 201 | 400 | 404 | 409 | 413 | 415 | 429 | 502 | 503 | 504) => {
     c.header('Cache-Control', 'no-store');
@@ -232,11 +281,64 @@ export function registerClone(app: Hono, indexer: Pick<Indexer, 'latest'>, prs: 
     try {
       await fs.rm(dir, { recursive: true, force: true });
     } catch {
-      // Left behind: hidden, so nothing lists it, and named so it's plainly pitwall's.
+      // Left behind: hidden, so nothing lists it, and named so it's plainly pitwall's. start() sweeps it later.
     }
   };
 
-  app.post(
+  /** gh's working directory, pitwall's own and empty: removed only when it's that. Never throws. */
+  const removeGhCwd = async (dir: string) => {
+    if (path.dirname(dir) !== tmp || !new RegExp(`^${GH_CWD_PREFIX}[A-Za-z0-9]{6}$`).test(path.basename(dir))) return;
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  };
+
+  /** The newest of a directory's own time and its entries', or undefined when it can't be read. */
+  const newestIn = async (dir: string, own: number): Promise<number | undefined> => {
+    let names: string[];
+    try {
+      names = await fs.readdir(dir);
+    } catch {
+      return undefined;
+    }
+    let newest = own;
+    for (const name of names) {
+      try {
+        newest = Math.max(newest, (await fs.lstat(path.join(dir, name))).mtimeMs);
+      } catch {
+        return undefined;
+      }
+    }
+    return newest;
+  };
+
+  /** Removes the temp directories a pitwall that was killed left in `roots` (see the top of this file). Never throws. */
+  const sweep = async (roots: readonly string[]) => {
+    const uid = 'uid' in options ? options.uid : process.getuid?.();
+    if (uid === undefined) return;
+    for (const root of roots) {
+      let names: string[];
+      try {
+        if ((await fs.realpath(root)) !== root) continue;
+        names = await fs.readdir(root);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        const dir = path.join(root, name);
+        if (!ownTempDir(dir, root) || dir === active?.temp) continue;
+        try {
+          const stats = await fs.lstat(dir);
+          if (stats.isSymbolicLink() || !stats.isDirectory() || stats.uid !== uid) continue;
+          const newest = await newestIn(dir, stats.mtimeMs);
+          if (newest === undefined || now() - newest < CLONE_TIMEOUT_MS + CLONE_SWEEP_MARGIN_MS) continue;
+          await fs.rm(dir, { recursive: true, force: true });
+        } catch {
+          // Left for the next start.
+        }
+      }
+    }
+  };
+
+  const register = (app: Hono) => app.post(
     CLONE_PATH,
     bodyLimit({ maxSize: MAX_CLONE_BODY_BYTES, onError: (c) => answer(c, { ok: false, error: 'The request is too large.' }, 413) }),
     async (c) => {
@@ -258,6 +360,7 @@ export function registerClone(app: Hono, indexer: Pick<Indexer, 'latest'>, prs: 
       const { slug, name, root, target } = planned.plan;
 
       // Synchronous from the plan to taking the one clone's place, so two requests can't both pass.
+      if (closed) return answer(c, { ok: false, error: 'pitwall is shutting down.' }, 503);
       if (cloning !== undefined) {
         c.header('Retry-After', '5');
         return cloning === slug.toLowerCase()
@@ -266,6 +369,10 @@ export function registerClone(app: Hono, indexer: Pick<Indexer, 'latest'>, prs: 
       }
       cloning = slug.toLowerCase();
       let temp: string | undefined;
+      let ghCwd: string | undefined;
+      let finish: () => void = () => {};
+      const current: NonNullable<typeof active> = { controller: new AbortController(), finished: new Promise<void>((resolve) => (finish = resolve)) };
+      active = current;
       try {
         // The root, as it is now: a directory at its own real path, so nothing redirects the clone.
         try {
@@ -289,14 +396,18 @@ export function registerClone(app: Hono, indexer: Pick<Indexer, 'latest'>, prs: 
           return answer(c, { ok: false, error: `pitwall clones at most ${rate.rate.max} repos a minute. Try again in ${taken.retryAfterSeconds}s.` }, 429);
         }
         temp = await fs.mkdtemp(path.join(root, CLONE_TEMP_PREFIX));
+        current.temp = temp;
         const into = path.join(temp, name);
+        // gh's working directory: its own, 0700 as mkdtemp makes it, not the shared temp directory.
+        ghCwd = await fs.mkdtemp(path.join(tmp, GH_CWD_PREFIX));
         try {
           await run(options.ghBin ?? 'gh', cloneArgs(slug, into), {
-            cwd: os.tmpdir(),
+            cwd: ghCwd,
             timeoutMs,
             env: cloneEnvironment(options.env ?? process.env),
             maxStdoutBytes: 1024 * 1024,
             processGroup: true,
+            signal: current.controller.signal,
           });
         } catch (error) {
           const failed = cloneFailure(error, slug, timeoutMs);
@@ -344,8 +455,39 @@ export function registerClone(app: Hono, indexer: Pick<Indexer, 'latest'>, prs: 
         return answer(c, { ok: false, error: `pitwall couldn't clone ${slug} into ${root}.` }, 502);
       } finally {
         if (temp !== undefined) await removeTemp(temp, root);
+        if (ghCwd !== undefined) await removeGhCwd(ghCwd);
         cloning = undefined;
+        active = undefined;
+        finish();
       }
     },
   );
+
+  return {
+    register,
+    start() {
+      if (started) return;
+      started = true;
+      // The first snapshot's roots, looked for once a second, so the index's listeners are its clients' alone.
+      const attempt = () => {
+        waiting = undefined;
+        if (closed) return;
+        const snapshot = indexer.latest();
+        if (snapshot) {
+          sweeping = sweep(snapshot.roots);
+          return;
+        }
+        waiting = setTimeout(attempt, 1000);
+        waiting.unref();
+      };
+      attempt();
+    },
+    async close() {
+      closed = true;
+      clearTimeout(waiting);
+      const running = active;
+      running?.controller.abort();
+      await Promise.all([running?.finished, sweeping]);
+    },
+  };
 }

@@ -1,10 +1,10 @@
 // Clone and start's route (W107, clone.ts), through the real HTTP server and its /api/* checks, with a
 // fake runFile, so no test runs gh, and a made-up root in a temp directory, so none touches a real one.
 // Made-up repos only.
-import { lstat, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import os, { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { RunError, type RunFile, type RunOptions } from '../index/exec.js';
@@ -112,11 +112,11 @@ interface Call {
 }
 
 /** A gh that makes a clone where it's told to: a directory with a `.git` and a file, as `gh repo clone` leaves. */
-function fakeGh(behave: (dir: string) => Promise<void> = makeClone) {
+function fakeGh(behave: (dir: string, options: RunOptions) => Promise<void> = makeClone) {
   const calls: Call[] = [];
   const run = vi.fn(async (file: string, args: readonly string[], options: RunOptions) => {
     calls.push({ file, args, options });
-    await behave(args[3] as string);
+    await behave(args[3] as string, options);
     return '';
   });
   return Object.assign(run as RunFile, { calls });
@@ -321,7 +321,11 @@ describe('POST CLONE_PATH: the target', () => {
 
 describe('POST CLONE_PATH: cloning', () => {
   it('runs gh repo clone with GitHub’s spelling into a temp directory in the root, then moves it into place', async () => {
-    const gh = fakeGh();
+    let cwdMode = 0;
+    const gh = fakeGh(async (dir, options) => {
+      cwdMode = (await stat(options.cwd as string)).mode & 0o777;
+      await makeClone(dir);
+    });
     const started = await start({ clone: { runFile: gh, env: { PATH: '/usr/bin', GH_FORCE_TTY: '1', CLICOLOR_FORCE: '1', HOME: '/Users/example', GH_HOST: 'ghe.example.com' } } });
     const res = await clone(started, { repo: 'example/demo-app' });
     const target = join(root, 'Demo-App');
@@ -333,7 +337,13 @@ describe('POST CLONE_PATH: cloning', () => {
     const into = call?.args[3] as string;
     expect(call?.args).toEqual(['repo', 'clone', 'Example/Demo-App', into, '--', '--quiet']);
     expect(ownTempDir(join(into, '..'), root)).toBe(true);
-    expect(call?.options).toMatchObject({ cwd: os.tmpdir(), processGroup: true, timeoutMs: 5 * 60_000 });
+    expect(call?.options).toMatchObject({ processGroup: true, timeoutMs: 5 * 60_000 });
+    expect(call?.options.signal).toBeInstanceOf(AbortSignal);
+    // gh ran in a 0700 directory of pitwall's own in the temp directory, removed after.
+    expect(join(call?.options.cwd as string, '..')).toBe(os.tmpdir());
+    expect(basename(call?.options.cwd as string)).toMatch(/^pitwall-gh-[A-Za-z0-9]{6}$/);
+    expect(cwdMode).toBe(0o700);
+    expect(await lstat(call?.options.cwd as string).then(() => true, () => false)).toBe(false);
     expect(call?.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_HOST: 'github.com', GIT_TERMINAL_PROMPT: '0' });
     // In place, and nothing else left in the root.
     expect((await lstat(join(target, '.git'))).isDirectory()).toBe(true);
@@ -440,6 +450,106 @@ describe('POST CLONE_PATH: cloning', () => {
     expect(limited.status).toBe(429);
     expect(limited.headers['retry-after']).toBe('40');
     expect(await temps()).toEqual([]);
+  });
+});
+
+describe('POST CLONE_PATH: git where it was asked, and shutting down', () => {
+  it('drops the GIT_* variables that would put the clone somewhere else, and keeps the rest', async () => {
+    const gh = fakeGh();
+    const redirects = {
+      GIT_DIR: '/x/.git',
+      GIT_WORK_TREE: '/x',
+      GIT_INDEX_FILE: '/x/index',
+      GIT_OBJECT_DIRECTORY: '/x/objects',
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: '/x/alt',
+      GIT_COMMON_DIR: '/x/common',
+      GIT_NAMESPACE: 'x',
+      GIT_CONFIG_PARAMETERS: "'core.worktree'='/x'",
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.worktree',
+      GIT_CONFIG_VALUE_0: '/x',
+      GIT_TEMPLATE_DIR: '/x/templates',
+    };
+    const started = await start({ clone: { runFile: gh, env: { PATH: '/usr/bin', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes', ...redirects } } });
+    expect((await clone(started)).status).toBe(201);
+    const env = gh.calls[0]?.options.env ?? {};
+    for (const name of Object.keys(redirects)) expect(env[name], name).toBeUndefined();
+    expect(env.GIT_SSH_COMMAND).toBe('ssh -o BatchMode=yes');
+  });
+
+  it('on close, stops a clone that is running and removes its temp directory', async () => {
+    let aborted = false;
+    const gh = fakeGh(async (dir, options) => {
+      await makeClone(dir);
+      await new Promise<void>((_resolve, reject) =>
+        options.signal?.addEventListener('abort', () => {
+          aborted = true;
+          reject(new RunError('aborted', 'was stopped'));
+        }),
+      );
+    });
+    const started = await start({ clone: { runFile: gh } });
+    const request = clone(started).catch(() => undefined);
+    await vi.waitFor(() => expect(gh.calls).toHaveLength(1));
+    expect(await temps()).toHaveLength(1);
+    await started.server.close();
+    expect(aborted).toBe(true);
+    expect(await rootEntries()).toEqual([]);
+    const res = await request;
+    // Answered 503 when the connection was still open, or closed with the server.
+    if (res) expect(res.status).toBe(503);
+  });
+});
+
+describe('the sweep at start (W107)', () => {
+  const later = Date.now() + 60 * 60_000;
+  /** A temp directory named as a clone's, with a clone inside it, `minutesOld` before `later`. */
+  const tempDir = async (name: string, minutesOld = 60, inside = minutesOld) => {
+    const dir = join(root, name);
+    await mkdir(join(dir, 'Demo-App'), { recursive: true });
+    const at = (minutes: number) => (later - minutes * 60_000) / 1000;
+    await utimes(join(dir, 'Demo-App'), at(inside), at(inside));
+    await utimes(dir, at(minutesOld), at(minutesOld));
+    return dir;
+  };
+
+  it('removes only a real temp directory of this user’s, directly in a root, older than the timeout and a margin', async () => {
+    await tempDir('.pitwall-clone-Stale1');
+    await tempDir('.pitwall-clone-Fresh1', 5);
+    // Its clone is still being written: left alone.
+    await tempDir('.pitwall-clone-Busy01', 60, 2);
+    await tempDir('.pitwall-clone-short');
+    await mkdir(join(root, 'sub'));
+    await tempDir('sub/.pitwall-clone-Deep01');
+    const target = join(other, 'kept');
+    await mkdir(target);
+    await symlink(target, join(root, '.pitwall-clone-Link01'));
+    await writeFile(join(root, '.pitwall-clone-File01'), 'not a directory');
+    const started = await start({ clone: { now: () => later } });
+    await started.server.close();
+    expect(await rootEntries()).toEqual(['.pitwall-clone-Busy01', '.pitwall-clone-File01', '.pitwall-clone-Fresh1', '.pitwall-clone-Link01', '.pitwall-clone-short', 'sub']);
+    expect(await readdir(join(root, 'sub'))).toEqual(['.pitwall-clone-Deep01']);
+    expect(await readdir(other)).toEqual(['kept']);
+  });
+
+  it('waits for the first snapshot’s roots, looking once a second', async () => {
+    await tempDir('.pitwall-clone-Stale3');
+    let roots: string[] | null = null;
+    const started = await start({ roots: () => roots, clone: { now: () => later } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await rootEntries()).toEqual(['.pitwall-clone-Stale3']);
+    roots = [root];
+    await vi.waitFor(async () => expect(await rootEntries()).toEqual([]), { timeout: 3000 });
+    await started.server.close();
+  });
+
+  it('removes nothing of another user’s, or with no user to compare, as on Windows', async () => {
+    await tempDir('.pitwall-clone-Stale2');
+    for (const uid of [(process.getuid?.() ?? 0) + 1, undefined]) {
+      const started = await start({ clone: { now: () => later, uid } });
+      await started.server.close();
+      expect(await rootEntries()).toEqual(['.pitwall-clone-Stale2']);
+    }
   });
 });
 

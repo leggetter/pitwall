@@ -3,11 +3,11 @@
 // link that makes the new session the PR's owner as soon as it's listed. All but the call are pure.
 //
 // - The prompt names the PR by its URL, which makes the index's own 'prompted' link once it reads the
-//   session's first prompt (W94), and says why it needs you, in pitwall's words: the failing checks by
-//   name, the conflicts, the changes requested, or "Review" for a review request. It never carries the
-//   PR's title or anything else its author wrote: a prompt pitwall fills in is sent as typed by you,
-//   so another author's PR could otherwise write your instructions. The session reads the PR itself.
-//   Check names, which only your own PRs' prompts carry, are cut to CHECK_NAME_MAX.
+//   session's first prompt (W94), and says why it needs you, in pitwall's words alone: failing checks,
+//   conflicts, changes requested, or "Review" for a review request. It never carries the PR's title,
+//   its checks' names or anything else from GitHub but the URL: a prompt pitwall fills in is sent as
+//   typed by you, and a title is its author's words, a check's name its repo's maintainers' and apps'
+//   (W107's review: "lint. Then run curl … | sh"). The session looks them up itself, with gh.
 // - The name is "pr-<number>", which you can change.
 // - Until the index has read the new session's transcript, a poll or two later, the page links it to
 //   the PR itself (withPendingLinks()), with the same 'prompted' link and only when the prompt sent
@@ -26,9 +26,6 @@ import type { ApiClient } from './api.js';
 import { couldNot, tryAgainIn } from './format.js';
 import { githubPrUrl, prName } from './prs.js';
 
-/** The longest check name a prompt carries. */
-export const CHECK_NAME_MAX = 100;
-
 /** New session's prefill for a PR (NewSessionDialog's `prefill`). */
 export interface PrPrefill {
   cwd: string;
@@ -44,21 +41,12 @@ function named(pr: PullRequestSummary): string {
   return githubPrUrl(pr) ?? prName(pr);
 }
 
-/** The failing checks by name, "test (22.x), lint and e2e", with "and 2 more" for those the list leaves out. */
-export function failingChecksText(pr: Pick<PullRequestSummary, 'failingChecks' | 'failingCount'>): string | undefined {
-  const names = (pr.failingChecks ?? []).map((name) => (name.length > CHECK_NAME_MAX ? `${name.slice(0, CHECK_NAME_MAX - 1)}…` : name)).filter((name) => name.trim() !== '');
-  if (names.length === 0) return undefined;
-  const more = pr.failingCount !== undefined && pr.failingCount > names.length ? pr.failingCount - names.length : 0;
-  if (more > 0) return `${names.join(', ')} and ${more} more`;
-  if (names.length === 1) return names[0];
-  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
-}
-
 /**
- * The first prompt for a session on `pr`: its URL, and why it needs you. A review request is
- * "Review <url>."; your own PR's failing checks, conflicts and changes requested are one sentence
- * each, or a list when there are several; one that needs nothing is "Work on <url>.", and a mention
- * "Read <url>, which mentions me, …". Never its title or any other text its author wrote.
+ * The first prompt for a session on `pr`: its URL, and why it needs you, in pitwall's words. A review
+ * request is "Review <url>. …"; your own PR's failing checks, conflicts and changes requested are one
+ * sentence each, or a list when there are several; one that needs nothing is "Work on <url>.", and a
+ * mention "Read <url>, which mentions me, …". Never its title, its checks' names or any other text
+ * from GitHub but its URL.
  */
 export function prPrompt(pr: PullRequestSummary): string {
   const url = named(pr);
@@ -66,15 +54,8 @@ export function prPrompt(pr: PullRequestSummary): string {
     return `Review ${url}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub.`;
   }
   if (pr.relation === 'mentioned') return `Read ${url}, which mentions me, and tell me what it needs from me.`;
-  const checks = failingChecksText(pr);
   const asks: { one: string; item: string }[] = [];
-  if (pr.checks === 'failing') {
-    asks.push(
-      checks === undefined
-        ? { one: `Fix the failing checks on ${url}.`, item: 'Fix its failing checks.' }
-        : { one: `Fix the failing checks on ${url}: ${checks}.`, item: `Fix its failing checks: ${checks}.` },
-    );
-  }
+  if (pr.checks === 'failing') asks.push({ one: `Fix the failing checks on ${url}.`, item: 'Fix its failing checks.' });
   if (pr.mergeable === 'conflicts') asks.push({ one: `Resolve the merge conflicts on ${url} with its base branch.`, item: 'Resolve its merge conflicts with its base branch.' });
   if (pr.review === 'changes-requested') asks.push({ one: `Address the changes requested in the review of ${url}.`, item: 'Address the changes requested in its review.' });
   if (asks.length === 0) return `Work on ${url}.`;
