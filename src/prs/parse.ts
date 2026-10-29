@@ -44,6 +44,11 @@ export interface SearchPage {
   prs: PullRequestSummary[];
   /** How many nodes GitHub returned, before any was dropped. */
   nodes: number;
+  /**
+   * The `url` of every node that has one as a string, kept or not, skipped ones included, in
+   * order: how fetch.ts tells that a later page repeated or missed a PR (W105).
+   */
+  urls: string[];
   /** How many of them were left out on purpose, as reviewed already, rather than as malformed. */
   skipped: number;
   /** How many PRs the search found in all (`issueCount`), when GitHub said. */
@@ -128,14 +133,16 @@ export function parseSearchResponse(stdout: string, relation: PullRequestRelatio
 export function parseSearchPage(search: unknown, relation: PullRequestRelation = 'authored', viewer?: string): SearchPage | undefined {
   if (!isRecord(search) || !Array.isArray(search.nodes)) return undefined;
   const prs: PullRequestSummary[] = [];
+  const urls: string[] = [];
   let skipped = 0;
   for (const node of search.nodes) {
+    if (isRecord(node) && typeof node.url === 'string') urls.push(node.url);
     const pr = readPullRequest(node, relation, viewer);
     if (pr === 'reviewed') skipped += 1;
     else if (pr !== undefined) prs.push(pr);
   }
   const pageInfo = isRecord(search.pageInfo) ? search.pageInfo : {};
-  const page: SearchPage = { prs, nodes: search.nodes.length, skipped, hasNextPage: pageInfo.hasNextPage === true };
+  const page: SearchPage = { prs, nodes: search.nodes.length, urls, skipped, hasNextPage: pageInfo.hasNextPage === true };
   if (typeof search.issueCount === 'number' && Number.isSafeInteger(search.issueCount) && search.issueCount >= 0) page.total = search.issueCount;
   if (typeof pageInfo.endCursor === 'string') page.endCursor = pageInfo.endCursor;
   return page;

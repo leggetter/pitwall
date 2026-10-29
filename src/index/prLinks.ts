@@ -198,12 +198,12 @@ export function linkingCall(name: string, input: unknown): LinkingCall | undefin
 }
 
 /**
- * The longest line read as a `pr-link` entry. Claude Code's were 208 to 264 bytes on 2026-10-29, in
- * 10,428 entries; a longer line isn't looked at, so the scanner's test for one stays tiny. With 4 KiB,
- * a full scan of 3.3 GiB of transcripts took 5 to 7% longer than without the test; with 1 KiB, within
- * the noise of 2%.
+ * How a line holding a `pr-link` entry starts: all 10,440 of Claude Code's on 2026-10-29 did, with
+ * `type` first, 206 to 264 bytes each. The scanner tests only a line's start, which costs the same
+ * whatever its length, so it never searches inside one. One with its keys in another order isn't
+ * read, and W94's links stand in for it.
  */
-export const PR_LINK_LINE_MAX = 1024;
+export const PR_LINK_PREFIX = '{"type":"pr-link"';
 
 /**
  * The link a `pr-link` entry makes, Claude Code's own (PrLinkKind 'linked'), or undefined for any

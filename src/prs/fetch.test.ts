@@ -11,6 +11,7 @@ import {
   fetchPullRequests,
   fetchSearch,
   ghArgs,
+  consistent,
   ghEnvironment,
   isWellFormedCursor,
   mergeSearches,
@@ -20,7 +21,10 @@ import {
   PRS_QUERIES,
   PRS_SEARCHES,
 } from './fetch.js';
-import { parsePullRequest } from './parse.js';
+import { parsePullRequest, parseSearchResponse } from './parse.js';
+
+/** A page's text, read as fetch.ts reads it. */
+const parseSearchPageText = (text: string) => parseSearchResponse(text)!;
 
 const authored = (options: Parameters<typeof fetchSearch>[1]) => fetchSearch('authored', options);
 
@@ -194,11 +198,11 @@ describe('fetchSearch: one search, the author one', () => {
 
   it('fetches page 2 with page 1’s cursor, and puts the two together, without duplicates', async () => {
     const page1 = searchPage(prs(100, 1), { total: 150, hasNextPage: true, endCursor: 'Y3Vyc29yOjEwMA==' });
-    // A PR updated between the two pages can show up on both.
+    // A PR updated between the two pages can show up on both, and then the search is fetched again, as alike.
     const page2 = searchPage([...prs(50, 101), prNode({ number: 100, updatedAt: '2026-10-28T00:00:00Z' })], { total: 150 });
-    const { runFile, calls } = fakeRunFile([page1, page2]);
+    const { runFile, calls } = fakeRunFile([page1, page2, page1, page2]);
     const result = await authored({ runFile });
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(4);
     expect(fields(calls[1]!.args).after).toBe('Y3Vyc29yOjEwMA==');
     expect(result).toMatchObject({ ok: true, truncated: false });
     if (!result.ok) return;
@@ -332,6 +336,82 @@ describe('fetchSearch: one search, the author one', () => {
     });
     expect(await authored({ runFile, monotonicNow: () => clock })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
     expect(calls.map((call) => call.options.timeoutMs)).toEqual([60_000, 36_000, 12_000]);
+  });
+
+  describe('a PR that moves while the pages are fetched (W105’s review)', () => {
+    /** 55 made-up PRs, newest update first, as GitHub orders them. */
+    const ordered = (nodes: Record<string, unknown>[]) => [...nodes].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    /** Pages of 25 of `nodes`, from `from`, each with its cursor, GitHub's offsets. */
+    const pagesOf = (nodes: Record<string, unknown>[], total = nodes.length) =>
+      [0, 25, 50].map((offset) => searchPage(nodes.slice(offset, offset + 25), { total, hasNextPage: offset + 25 < nodes.length, endCursor: Buffer.from(`cursor:${offset + 25}`).toString('base64') }));
+    const before = ordered(prs(55, 1));
+    // #15, updated after page 1 was read: now first, so every later page starts one place on.
+    const moved = ordered([...prs(55, 1).filter((pr) => pr.number !== 15), prNode({ number: 15, updatedAt: '2026-10-29T12:00:00Z' })]);
+
+    it('fetches the search again when a page repeats one PR and so misses another, and keeps the second pass', async () => {
+      const [first] = pagesOf(before);
+      const shifted = pagesOf(moved);
+      const { runFile, calls } = fakeRunFile([first!, shifted[1]!, shifted[2]!, ...shifted]);
+      const result = await authored({ runFile });
+      expect(calls).toHaveLength(6);
+      expect(calls.map((call) => fields(call.args).after)).toEqual([undefined, 'Y3Vyc29yOjI1', 'Y3Vyc29yOjUw', undefined, 'Y3Vyc29yOjI1', 'Y3Vyc29yOjUw']);
+      expect(result).toMatchObject({ ok: true, truncated: false });
+      expect(result.ok && result.prs).toHaveLength(55);
+      expect(result.ok && result.prs[0]).toMatchObject({ number: 15, updatedAt: '2026-10-29T12:00:00Z' });
+    });
+
+    it('fetches it again when a PR closed while it was paged, so one is missing from what GitHub counted', async () => {
+      const [first] = pagesOf(before);
+      // #50, on page 1, closed: every later page starts one place back, and #30 is never seen.
+      const closed = before.filter((pr) => pr.number !== 50);
+      const shifted = pagesOf(closed, 54);
+      const { runFile, calls } = fakeRunFile([first!, shifted[1]!, shifted[2]!, ...pagesOf(closed, 54)]);
+      const result = await authored({ runFile });
+      expect(calls).toHaveLength(6);
+      expect(result.ok && result.prs.map((pr) => pr.number)).toEqual(closed.map((pr) => pr.number));
+    });
+
+    it('fetches it once more only, and keeps the first pass when the second fails', async () => {
+      const [first] = pagesOf(before);
+      const shifted = pagesOf(moved);
+      const { runFile, calls } = fakeRunFile([first!, shifted[1]!, shifted[2]!, new RunError('timeout', 'timed out after 60s')]);
+      const result = await authored({ runFile });
+      expect(calls).toHaveLength(4);
+      expect(result).toMatchObject({ ok: true, truncated: false });
+      expect(result.ok && result.prs).toHaveLength(54);
+      // Moved again in the second pass: that's kept, with no third.
+      const again = fakeRunFile([first!, shifted[1]!, shifted[2]!, first!, shifted[1]!, shifted[2]!]);
+      expect((await authored({ runFile: again.runFile })).ok).toBe(true);
+      expect(again.calls).toHaveLength(6);
+    });
+
+    it('gives the second pass a deadline of its own', async () => {
+      let clock = 0;
+      const [first] = pagesOf(before);
+      const shifted = pagesOf(moved);
+      const { runFile, calls } = fakeRunFile([first!, shifted[1]!, shifted[2]!, ...shifted], () => {
+        clock += 15_000;
+      });
+      expect(await authored({ runFile, monotonicNow: () => clock })).toMatchObject({ ok: true });
+      expect(calls.map((call) => call.options.timeoutMs)).toEqual([60_000, 45_000, 30_000, 60_000, 45_000, 30_000]);
+    });
+
+    it('is consistent with no URL twice and as many as GitHub counted, or PRS_MAX past it', () => {
+      const page = (numbers: number[], options: { total?: number; hasNextPage?: boolean } = {}) => {
+        const parsed = parseSearchPageText(searchPage(numbers.map((number) => prNode({ number })), { hasNextPage: false, ...options }));
+        return parsed;
+      };
+      expect(consistent([page([1, 2], { total: 4, hasNextPage: true }), page([3, 4], { total: 4 })])).toBe(true);
+      expect(consistent([page([1, 2], { total: 4, hasNextPage: true }), page([2, 3], { total: 4 })])).toBe(false);
+      expect(consistent([page([1, 2], { total: 4, hasNextPage: true }), page([3], { total: 3 })])).toBe(false);
+      // Stopped at a cursor of the wrong shape: only repeats count.
+      expect(consistent([page([1, 2], { total: 9, hasNextPage: true })])).toBe(true);
+      // Past PRS_MAX: as many as PRS_MAX.
+      const full = Array.from({ length: PRS_MAX_PAGES }, (_, i) => page(Array.from({ length: PRS_PAGE_SIZE }, (_, j) => i * PRS_PAGE_SIZE + j + 1), { total: 500, hasNextPage: true }));
+      expect(consistent(full)).toBe(true);
+      // A node without a URL counts as its own.
+      expect(consistent([{ ...page([1], { total: 2 }), nodes: 2 }])).toBe(true);
+    });
   });
 
   it('reads failing checks through to the list', async () => {

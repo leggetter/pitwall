@@ -26,12 +26,12 @@
 // long first scan holds up no one else's small update for more than a file.
 //
 // Memory: files are read in 1 MiB chunks into one buffer, never whole. Only lines that could matter
-// are parsed: a `pr-link` entry, `"type":"pr-link"` in a line of at most PR_LINK_LINE_MAX bytes;
-// a tool call, `"type":"tool_use"`; a tool's result, `"type":"tool_result"`, only when it holds the
-// id of a call the file waits on; and, in the main transcript, any other line with both
-// `github.com/` and `/pull/`. One scan of a line tells a call from a result. Claude Code writes the
-// current PR's `pr-link` again and again, 1,895 times in one of Phil's transcripts, so its test is
-// one bounded search of a short line, and its parse a line of about 200 bytes. What's kept, in memory
+// are parsed: a `pr-link` entry, a line that starts `{"type":"pr-link"` (PR_LINK_PREFIX); a tool
+// call, `"type":"tool_use"`; a tool's result, `"type":"tool_result"`, only when it holds the id of a
+// call the file waits on; and, in the main transcript, any other line with both `github.com/` and
+// `/pull/`. One scan of a line tells a call from a result. Claude Code writes the current PR's
+// `pr-link` again and again, 1,895 times in one of Phil's transcripts, so its test is a comparison
+// of a line's first 17 bytes, and its parse a line of about 200 bytes. What's kept, in memory
 // only, never on disk, because paths, repo names and branches from transcripts are session content:
 // - per file: { dev, ino, offset, carry }, its calls per repo, and its PR links, so a file that
 //   shrank or was replaced is rescanned from 0 without counting anything twice; and the calls whose
@@ -64,7 +64,7 @@ import {
   prUrlsIn,
   pruneLinks,
   pushedIn,
-  PR_LINK_LINE_MAX,
+  PR_LINK_PREFIX,
   toPrLink,
   type FoundLink,
   type LinkingCall,
@@ -170,8 +170,8 @@ const RESULT_TAIL = Buffer.from('result"');
 /** Both on a line of the main transcript, which may then have a PR URL in a prompt or in Claude's text. */
 const GITHUB_MARK = Buffer.from('github.com/');
 const PULL_MARK = Buffer.from('/pull/');
-/** On a line of at most PR_LINK_LINE_MAX bytes: Claude Code's own `pr-link` entry, maybe. */
-const PR_LINK_MARK = Buffer.from('"type":"pr-link"');
+/** How a line holding Claude Code's own `pr-link` entry starts. */
+const PR_LINK_HEAD = Buffer.from(PR_LINK_PREFIX);
 /** The most calls one file waits on for a result. Past this, the oldest is dropped. */
 const MAX_PENDING = 32;
 /** Lines read in a file after a call before its result is no longer waited for: one that never came, as after a crash. */
@@ -589,13 +589,13 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
   }
 
   /**
-   * The tool calls and PR links on one line. Only a line that could hold one is parsed: a short one
-   * that names `"type":"pr-link"`; a tool call; a tool's result that holds the id of a call the file
+   * The tool calls and PR links on one line. Only a line that could hold one is parsed: one that
+   * starts `{"type":"pr-link"`; a tool call; a tool's result that holds the id of a call the file
    * waits on; and, in the main transcript, any other line that holds both `github.com/` and `/pull/`.
    */
   function take(file: FileState, line: Buffer, calls: RawCall[]): void {
     file.lines++;
-    if (line.length <= PR_LINK_LINE_MAX && line.indexOf(PR_LINK_MARK) !== -1 && claudeLink(file, line)) return;
+    if (startsAt(line, PR_LINK_HEAD, 0) && claudeLink(file, line)) return;
     const mark = toolMark(line);
     if (mark === 'result') {
       if (!awaits(file, line)) return;
@@ -641,9 +641,8 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
   }
 
   /**
-   * Claude Code's own link (W105), from a line that names `"type":"pr-link"`: true when the line is
-   * a `pr-link` entry, kept or not, so nothing else reads it; false for any other line, which could
-   * name it inside, say, a tool's result.
+   * Claude Code's own link (W105), from a line that starts `{"type":"pr-link"`: true when the line is
+   * a `pr-link` entry, kept or not, so nothing else reads it; false for one that isn't JSON.
    */
   function claudeLink(file: FileState, line: Buffer): boolean {
     let entry: unknown;

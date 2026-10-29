@@ -203,7 +203,7 @@ describe('createRepoDiscovery', () => {
     expect(discovery?.ready()).toBe(true);
   });
 
-  it('reads remotes with git config --no-includes --get-regexp, no shell, and without GIT_DIR and the like', async () => {
+  it('reads remotes with git config --local --no-includes --get-regexp, no shell, and without GIT_DIR and the like', async () => {
     const app = await repo(path.join(work, 'demo-app'));
     const git = fakeGit(new Map([[app, ['git@github.com:example/demo-app.git']]]));
     const saved = process.env.GIT_DIR;
@@ -215,7 +215,7 @@ describe('createRepoDiscovery', () => {
       else process.env.GIT_DIR = saved;
     }
     expect(git.calls).toHaveLength(1);
-    expect(git.calls[0]?.args).toEqual(['-C', app, 'config', '--no-includes', '--get-regexp', '^remote\\..*\\.url$']);
+    expect(git.calls[0]?.args).toEqual(['-C', app, 'config', '--local', '--no-includes', '--get-regexp', '^remote\\..*\\.url$']);
     expect(git.calls[0]?.options.env?.GIT_DIR).toBeUndefined();
     expect(git.calls[0]?.options.timeoutMs).toBe(5000);
   });
@@ -400,7 +400,7 @@ describe('createRepoDiscovery against real git repos', () => {
     }));
   }
 
-  it('reads each form of GitHub remote, leaves out an included file, a worktree goes to its repo, and changes nothing', async () => {
+  it("reads each form of GitHub remote, leaves out an included file and the environment's and global config's remotes, a worktree goes to its repo, and changes nothing", async () => {
     const root = path.join(dir, 'oss');
     const app = path.join(root, 'demo-app');
     await mkdir(app, { recursive: true });
@@ -415,10 +415,22 @@ describe('createRepoDiscovery against real git repos', () => {
     git(app, 'config', 'include.path', path.join(dir, 'included.gitconfig'));
     git(app, 'worktree', 'add', '-q', '-b', 'feature', path.join(root, 'demo-app-feature'));
     const before = await gitFiles(app);
-
-    discovery = createRepoDiscovery();
-    discovery.update([root], []);
-    await discovery.settled();
+    // Remotes from the environment's config and a global file, which aren't the repo's.
+    const globalFile = path.join(dir, 'global.gitconfig');
+    await writeFile(globalFile, '[remote "global"]\n\turl = https://github.com/example/global.git\n');
+    const env = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'remote.fake.url', GIT_CONFIG_VALUE_0: 'https://github.com/example/fake.git', GIT_CONFIG_GLOBAL: globalFile };
+    const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, env);
+    try {
+      discovery = createRepoDiscovery();
+      discovery.update([root], []);
+      await discovery.settled();
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
     expect(discovery.repos()).toEqual([
       {
         key: app,

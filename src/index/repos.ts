@@ -11,11 +11,13 @@
 //                 path for a `.git` directory, and for a `.git` file (a worktree or a submodule) what
 //                 createGroupResolver() resolves it to, `git rev-parse --git-common-dir`
 //   its root      the root its key is under, else the root it was found under or known with
-//   its remotes   `git -C <key> config --no-includes --get-regexp '^remote\..*\.url$'`, through runFile:
-//                 no shell, childEnvironment(), and gitEnvironment() so no GIT_DIR points it elsewhere
-//                 (D23). It reads the repo's config, never its index or objects, and runs no hooks;
-//                 `--no-includes` leaves out included files. Each URL is parsed by githubSlugOf(),
-//                 and a remote that isn't GitHub's is left out
+//   its remotes   `git -C <key> config --local --no-includes --get-regexp '^remote\..*\.url$'`, through
+//                 runFile: no shell, childEnvironment(), and gitEnvironment() so no GIT_DIR points it
+//                 elsewhere (D23). It reads the repo's own config file, never its index or objects,
+//                 and runs no hooks. `--local` leaves out the system, global and environment ones
+//                 (GIT_CONFIG_COUNT, `-c`), whose remotes aren't the repo's, and `--no-includes` the
+//                 files it includes. Each URL is parsed by githubSlugOf(), and a remote that isn't
+//                 GitHub's is left out
 //   cadence       a full discovery on the first update(), whenever the roots change, on refresh(),
 //                 and every refreshMs (5 minutes) after the last one ends; a repo the snapshot knows
 //                 that hasn't been read is read on the update() that names it. Never on the 5 s poll
@@ -252,7 +254,7 @@ export function createRepoDiscovery(options: RepoDiscoveryOptions = {}): RepoDis
   /** A repo's GitHub remotes. Never rejects. */
   async function readRemotes(key: string): Promise<RepoRemote[]> {
     try {
-      return parseRemotes(await run(gitBin, ['-C', key, 'config', '--no-includes', '--get-regexp', '^remote\\..*\\.url$'], { timeoutMs, env }));
+      return parseRemotes(await run(gitBin, ['-C', key, 'config', '--local', '--no-includes', '--get-regexp', '^remote\\..*\\.url$'], { timeoutMs, env }));
     } catch {
       // Exit 1: no remotes. Anything else, such as a repo that has gone or a timeout: none either.
       return [];

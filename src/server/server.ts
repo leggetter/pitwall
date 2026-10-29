@@ -33,6 +33,9 @@
 //                               session that resolveSession() finds
 //   static files                Host only. They are the public build output.
 //
+// The snapshot, on GET /api/snapshot and /ws, carries each session's PR links only to PRs in the
+// current list, and goes out again when the list changes that (snapshotLinks.ts, D14, W105).
+//
 // The token can read the API, for scripts. The apiKey, which only a client
 // that answered a challenge gets, can read it too, and is the only credential
 // for state-changing requests. Neither is ever logged. No response carries
@@ -63,6 +66,7 @@ import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { registerPrs } from './prs.js';
+import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import {
@@ -191,6 +195,8 @@ export async function startServerWithInternals(
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
   // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close().
   const prs = options.prs ?? prsOff();
+  // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
+  const snapshots = createSnapshotView(indexer, prs);
   // The directory list (W70), your open PRs and Refresh (M4), then the input routes: attachments
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
   // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
@@ -205,7 +211,7 @@ export async function startServerWithInternals(
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };
-  const app = createApp({ indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
+  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -254,7 +260,7 @@ export async function startServerWithInternals(
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
-      handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs }),
+      handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs }),
     );
   });
 
@@ -279,6 +285,7 @@ export async function startServerWithInternals(
     close() {
       // No more fetches, and no more 'prs' messages to clients that are closing.
       prs.stop();
+      snapshots.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
           closing = true;
@@ -303,6 +310,8 @@ function gateStatus(req: IncomingMessage, port: number | undefined): number | un
 }
 
 interface AppContext {
+  /** What GET SNAPSHOT_PATH answers: the index's snapshot with only the links to open PRs (snapshotLinks.ts). */
+  snapshots: SnapshotView;
   indexer: Indexer;
   token: string;
   apiKey: string;
@@ -311,7 +320,7 @@ interface AppContext {
   routes: ServerInternals['routes'];
 }
 
-function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
+function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
   const app = new Hono();
   // Conversation pages being read now.
   let conversationReads = 0;
@@ -332,7 +341,7 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
 
   app.get(SNAPSHOT_PATH, (c) => {
     c.header('Cache-Control', 'no-store');
-    const snapshot = indexer.latest();
+    const snapshot = snapshots.latest();
     if (!snapshot) return c.body(null, 503);
     return c.json(snapshot);
   });

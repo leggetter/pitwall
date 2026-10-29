@@ -16,11 +16,14 @@ import {
   PRS_POLL_INTERVAL_MS,
   PRS_REFRESH_MIN_MS,
   PRS_REFRESH_PATH,
+  SNAPSHOT_PATH,
   WS_PATH,
   type IndexSnapshot,
+  type PrLink,
   type PullRequestList,
   type PullRequestSummary,
   type ServerMessage,
+  type SessionSummary,
 } from '../shared/protocol.js';
 import { fakeClock, fakeFetch, fetched, fetchFailed, prNode } from '../test/prs.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
@@ -460,5 +463,45 @@ describe("the 'prs' message", () => {
     const sent = JSON.stringify(client.messages);
     expect(sent).not.toContain(TOKEN);
     expect(sent).not.toContain(client.apiKey);
+  });
+});
+
+describe('the snapshot carries only the links to open PRs (D14, W105’s review)', () => {
+  const AT = '2026-10-29T12:00:00.000Z';
+  const links: PrLink[] = [
+    { kind: 'opened', repo: 'example/demo-app', number: 1, lastAt: AT },
+    { kind: 'linked', repo: 'example/demo-app', number: 2, lastAt: AT },
+    { kind: 'mentioned', repo: 'example/closed-app', number: 7, lastAt: AT },
+  ];
+  const linked = (generatedAt = AT): IndexSnapshot => ({
+    ...snapshot(generatedAt),
+    groups: [{ key: '/tmp/pitwall-test-root/demo-app', label: 'demo-app', kind: 'git', root: '/tmp/pitwall-test-root', sessions: [{ sessionId: 's-1', prLinks: links } as unknown as SessionSummary] }],
+  });
+  const sent = (client: Client) => client.messages.flatMap((message) => (message.type === 'snapshot' ? [message.snapshot] : []));
+  const linksOf = (s: IndexSnapshot | undefined) => s?.groups[0]?.sessions[0]?.prLinks;
+
+  it('sends none before the first PR list, then the ones that match it, again when the list changes', async () => {
+    const indexer = fakeIndexer(linked());
+    const { server, fetch } = await start({ indexer });
+    const client = await authedClient(server.port);
+    await waitFor(() => client.messages.length >= 2);
+    expect(linksOf(sent(client)[0])).toBeUndefined();
+    await fetch.finish(ok([pr(1)]));
+    await waitFor(() => sent(client).length >= 2);
+    expect(linksOf(sent(client)[1])).toEqual([links[0]]);
+    // GET SNAPSHOT_PATH is the same.
+    const res = await request(server.port, SNAPSHOT_PATH, 'GET', { authorization: `Bearer ${TOKEN}` });
+    expect(linksOf(JSON.parse(res.body) as IndexSnapshot)).toEqual([links[0]]);
+    // A poll: the same cut, as a heartbeat. The index's own snapshot keeps every link.
+    indexer.push(linked('2026-10-29T12:00:05.000Z'));
+    await waitFor(() => client.messages.at(-1)?.type === 'heartbeat');
+    expect(linksOf(indexer.latest())).toEqual(links);
+  });
+
+  it('sends none with pull requests off', async () => {
+    const { server } = await start({ prs: 'none', indexer: fakeIndexer(linked()) });
+    const client = await authedClient(server.port);
+    await waitFor(() => client.messages.length >= 2);
+    expect(linksOf(sent(client)[0])).toBeUndefined();
   });
 });
