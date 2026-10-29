@@ -194,6 +194,7 @@ sequenceDiagram
 - **Now, pull requests beside sessions (M4):** your open pull requests, with CI and review state, grouped by repo. A pull request names the sessions that opened it, pushed to it or were given its link, and those sessions' rows get a badge.
 - **A supervisor (M5):** a background Claude Code session that pitwall starts and shows in its own panel, which you talk to instead of visiting each session. It lists, summarises, messages and starts sessions, and takes over from the relay. M5 also titles each session from its recent turns rather than its first prompt.
 - **Triage (M6):** urgency with reasons, from the index, the supervisor and M4's pull requests. The supervisor reads each idle session's latest turns to judge whether it really needs you. Triage tells "blocked on you" from "blocked on someone else", and pairs pull requests with sessions: "CI is failing on your PR, and the session that opened it is idle."
+- **Considering, undecided: agent conversations ([#99](https://github.com/leggetter/pitwall/issues/99)).** Sessions already message each other with Claude Code's cross-session messaging. pitwall could show who a session has talked to, and both sides of each exchange as one thread, apart from sub-agents. The supervisor's messages would show the same way, as its audit trail.
 
 The detail is in [`PLAN.md`](PLAN.md), and what's been decided in [`docs/decisions.md`](docs/decisions.md).
 
