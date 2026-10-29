@@ -257,7 +257,7 @@ describe('Markdown: too much formatting', () => {
   });
 });
 
-// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// Retried: CI's shared runners flaked on these after M4 added test files.
 // A slowdown to quadratic time fails every try; a busy moment passes on the next.
 describe('Markdown: bounded on hostile input', { retry: 2 }, () => {
   /** The CPU time a render takes, best of three, as the server's hostile tests measure. */
@@ -440,7 +440,7 @@ describe('Markdown: links in code (W37)', () => {
   });
 });
 
-// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// Retried: CI's shared runners flaked on these after M4 added test files.
 // A slowdown to quadratic time fails every try; a busy moment passes on the next.
 describe('Markdown: links in code, bounded on hostile input (W37)', { retry: 2 }, () => {
   function bestOf3(fn: () => void): number {

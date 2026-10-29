@@ -383,7 +383,7 @@ describe('nesting caps', () => {
   });
 });
 
-// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// Retried: CI's shared runners flaked on these after M4 added test files.
 // A slowdown to quadratic time fails every try; a busy moment passes on the next.
 describe('bounded on hostile input', { retry: 2 }, () => {
   /** The best of five runs, so a pause elsewhere doesn't count. */
@@ -630,7 +630,7 @@ describe('links in code (W37)', () => {
   });
 });
 
-// Retried on CI's shared runners, where other test files run alongside (M4 made these flake there).
+// Retried: CI's shared runners flaked on these after M4 added test files.
 // A slowdown to quadratic time fails every try; a busy moment passes on the next.
 describe('links in code, bounded on hostile input (W37)', { retry: 2 }, () => {
   function bestOf5(fn: () => unknown): number {
