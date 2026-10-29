@@ -301,9 +301,15 @@ describe('parseSearchResponse', () => {
     }
   });
 
+  it("keeps every node's URL, kept, skipped or malformed, for whether a later page repeated one (W105)", () => {
+    const page = parseSearchResponse(searchPage([prNode({ number: 1 }), { url: 'https://github.com/example/demo-app/pull/2', number: 'two' }, { number: 3 }, null, prNode({ number: 1 })]));
+    expect(page?.nodes).toBe(5);
+    expect(page?.urls).toEqual(['https://github.com/example/demo-app/pull/1', 'https://github.com/example/demo-app/pull/2', 'https://github.com/example/demo-app/pull/1']);
+  });
+
   it('ignores a total or page info of the wrong shape', () => {
     const page = parseSearchResponse(JSON.stringify({ data: { search: { issueCount: 'many', pageInfo: { hasNextPage: 'yes', endCursor: 42 }, nodes: [] } } }));
-    expect(page).toEqual({ prs: [], nodes: 0, skipped: 0, hasNextPage: false });
+    expect(page).toEqual({ prs: [], nodes: 0, urls: [], skipped: 0, hasNextPage: false });
   });
 
   it("reads the viewer's login for review requests, and none from a login of the wrong shape", () => {

@@ -832,14 +832,20 @@ describe('createWorkedInScanner', () => {
         expect(await links()).toEqual([]);
       });
 
-      it('looks for one only in a line of at most 1 KiB, and parses only the lines that name one', async () => {
-        const padded = `${JSON.stringify({ type: 'pr-link', sessionId: SESSION, prNumber: 30, prUrl: `${APP}/pull/30`, prRepository: 'example/demo-app', timestamp: time(1), pad: 'x'.repeat(1024) })}\n`;
-        await writeFile(main, padded + prLink(31, 2) + typed('a made-up prompt', 3).repeat(50) + said('a made-up reply', 4).repeat(50));
+      it('reads one by how its line starts, whatever its length, and parses only the lines that could link', async () => {
+        const long = `${JSON.stringify({ type: 'pr-link', sessionId: SESSION, prNumber: 30, prUrl: `${APP}/pull/30`, prRepository: 'example/demo-app', timestamp: time(1), more: 'x'.repeat(4096) })}\n`;
+        // Keys in another order: not read.
+        const reordered = `${JSON.stringify({ sessionId: SESSION, type: 'pr-link', prNumber: 32, prUrl: `${APP}/pull/32`, prRepository: 'example/demo-app', timestamp: time(3) })}\n`;
+        await writeFile(main, long + prLink(31, 2) + reordered + typed('a made-up prompt', 3).repeat(50) + said('a made-up reply', 4).repeat(50));
         const parse = vi.spyOn(JSON, 'parse');
         try {
-          expect(await links()).toEqual([{ kind: 'linked', repo: 'example/demo-app', number: 31, lastAt: time(2) }]);
-          // The long one, which also names a PR URL in the main transcript, once, by the old rule; the short one once.
-          expect(parse.mock.calls.filter(([text]) => String(text).includes('"pr-link"'))).toHaveLength(2);
+          expect(await links()).toEqual([
+            { kind: 'linked', repo: 'example/demo-app', number: 31, lastAt: time(2) },
+            { kind: 'linked', repo: 'example/demo-app', number: 30, lastAt: time(1) },
+          ]);
+          // Each once: the two that start like one as entries, and the reordered one, which names a
+          // PR URL in the main transcript, by W94's rule, which reads no link from it.
+          expect(parse.mock.calls.filter(([text]) => String(text).includes('"pr-link"'))).toHaveLength(3);
           expect(parse.mock.calls.filter(([text]) => String(text).includes('made-up'))).toHaveLength(0);
         } finally {
           parse.mockRestore();

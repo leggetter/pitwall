@@ -193,10 +193,11 @@ export interface SessionSummary {
    * replies, from its transcript and its sub-agents' (M4, W94). Newest first,
    * one per kind and PR (or pushed branch), at most PR_LINKS_STRONG_MAX strong
    * links and PR_LINKS_MAX mentioned ones. The index doesn't know which PRs are open
-   * or whose they are: the web UI matches these against PullRequestList with
-   * prLinkMatches(), so a link to a PR that isn't one of your open ones shows
-   * nothing. Absent until the session's transcripts have been scanned, when
-   * they can't be read, and when there are none.
+   * or whose they are, and keeps them all; the server sends only those that match
+   * a PR in the current PullRequestList (prLinkMatches()), and the snapshot again
+   * when the list changes that (D14, W105), so none is sent before the first fetch
+   * or with `--no-prs`. Absent until the session's transcripts have been scanned,
+   * when they can't be read, and when none is left.
    */
   prLinks?: PrLink[];
 }
@@ -1255,7 +1256,8 @@ export interface PullRequestSummary {
  *   or failing that for its head's repo (a fork's clone). `key` is that repo's top-level directory,
  *   the SessionGroup.key its group has or would have, and `label` its label as SessionGroup.label
  *   is or would be. With several clones: the one whose directory is named like the repo, then
- *   the one whose `origin` points at it, then the first by path.
+ *   the one whose `origin` points at it, then the one under the first root given, then the first
+ *   by path.
  * - 'not-cloned': no clone, and `root` claims the repo's owner (RootOwners). The web UI lists the
  *   repo under that root as not cloned, `owner/name`, with its PRs.
  * - 'unclaimed': no root claims it. Not listed, but counted, so the UI can say how many are hidden
@@ -1267,13 +1269,21 @@ export type PullRequestPlace =
   | { kind: 'unclaimed' };
 
 /**
- * Which GitHub owners (orgs or users) a root claims, for PRs in repos it has no clone of
- * (PullRequestPlace 'not-cloned'). Owners are lowercase.
+ * Which GitHub owners (orgs or users) a root claims, for PRs in repos no root has a clone of
+ * (PullRequestPlace 'not-cloned'). Owners are lowercase. An owner is claimed (Phil, 2026-10-29:
+ * each owner goes to the root with the most clones from it, and the config file overrides that;
+ * the rule as set in W105's review), ties always by the order the roots were given:
  *
- * - From the config file's `github.owners` for that root (source 'config'): a list, 'all' for any
- *   owner no other root lists, or 'none' for its clones only. A listed owner wins over 'all'.
- * - Otherwise (source 'clones'): each owner goes to the root with the most clones whose remotes
- *   point at it, the first root given winning a tie (Phil, 2026-10-29).
+ * 1. By the root whose configured list (`github.owners`) names it.
+ * 2. Otherwise, by the root with the most clones whose remotes point at it, counting every root's,
+ *    unless that root's config is 'none' or a list that doesn't name it: then by the next root by
+ *    clones that would claim it, one with no config or with 'all'.
+ * 3. Otherwise, by the first root configured 'all'. None claims it otherwise.
+ *
+ * `owners` is the config file's value for a root it configures (source 'config'): a list, 'all' or
+ * 'none'. For any other root (source 'clones'), the owners step 2 gives it. An owner step 2 gives a
+ * root configured 'all' is in no list, and step 3 reaches it, since the config file allows one root
+ * with 'all' (W103, D24).
  */
 export interface RootOwners {
   /** An absolute, real-path root, as IndexSnapshot.roots has it. */
@@ -1381,14 +1391,15 @@ export const PRS_POLL_INTERVAL_MS = 3 * 60 * 1000;
 export const PRS_REFRESH_MIN_MS = 60 * 1000;
 
 /**
- * A search that takes longer, all its pages, fails with reason 'error'. GitHub itself ends a single
+ * A pass of a search that takes longer, all its pages, fails with reason 'error'; a second pass,
+ * when the first's pages repeated or missed a PR, has its own (src/prs/fetch.ts). GitHub itself ends a single
  * request after 10 s. Since W105 a page holds 25 PRs: on 2026-10-29 the author search's 55 took
  * three pages, 3.7, 4.8 and 2.9 s, 11.4 s in all, so the 8 pages of PRS_MAX would take about 36 s,
  * more than the 30 s this was for one or two pages of 100.
  */
 export const PRS_FETCH_TIMEOUT_MS = 60 * 1000;
 
-/** The most PRs one search keeps: two pages of GitHub's search. */
+/** The most PRs one search keeps: 8 pages of 25 since W105 (src/prs/fetch.ts, PRS_PAGE_SIZE). */
 export const PRS_MAX = 200;
 
 /** The most PRs a list holds: PRS_MAX from each of the searches (PR_RELATIONS). */

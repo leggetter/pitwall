@@ -19,7 +19,16 @@
 //                 query and the searches are constants; the only value from outside is the next
 //                 page's cursor, from the page before's answer, and it's passed on only when it looks
 //                 like one
-//   time          PRS_FETCH_TIMEOUT_MS for each search, all its pages together
+//   time          PRS_FETCH_TIMEOUT_MS for each pass of a search, all its pages together
+//   moving PRs    GitHub's search cursors are offsets, so a PR that moves while a search is paged
+//                 shifts the rest: one updated moves to the top (`sort:updated-desc`), one opened
+//                 comes in at the top, one closed or merged leaves, and a later page then repeats one
+//                 PR and misses another, or misses one. So a search is consistent() only when its
+//                 nodes, skipped ones included, have no URL twice, and as many as GitHub's total, or
+//                 PRS_MAX when it found more; when it isn't, it's fetched again once, and that pass
+//                 is kept, or the first when it fails (W105's review). Not a sort that doesn't move,
+//                 such as `sort:created-desc`: closing still shifts it, and past PRS_MAX it would
+//                 leave out the oldest opened rather than the least recently updated
 //   each search   its PRs, at most PRS_MAX, newest update first. mergeSearches() then lists each PR
 //                 once, as the first relation in PR_RELATIONS that found it, so a PR that's yours
 //                 and mentions you is yours, and one that asks your review and mentions you asks it
@@ -231,50 +240,90 @@ export async function fetchPullRequests(options: FetchOptions): Promise<FetchRes
   return Object.fromEntries(PR_RELATIONS.map((relation, index) => [relation, results[index]!])) as Record<PullRequestRelation, SearchResult>;
 }
 
+/** One pass of a search: its pages, or why one failed. */
+type Pass = { ok: true; pages: SearchPage[] } | Extract<SearchResult, { ok: false }>;
+
+/**
+ * True when a pass's pages hold no PR twice and as many as they should: GitHub's total, from its
+ * first page, when the last page said there's no more, or PRS_MAX when the pass stopped there.
+ * Each node counts by its URL, skipped and malformed ones included; one without a URL counts as its
+ * own. A pass that stopped at a cursor of the wrong shape is checked for repeats only.
+ */
+export function consistent(pages: readonly SearchPage[]): boolean {
+  const nodes = pages.reduce((sum, page) => sum + page.nodes, 0);
+  const urls = pages.flatMap((page) => page.urls);
+  const unique = new Set(urls).size + (nodes - urls.length);
+  if (unique < nodes) return false;
+  const last = pages.at(-1);
+  const total = pages[0]?.total;
+  if (last === undefined || total === undefined) return true;
+  if (!last.hasNextPage) return unique >= total;
+  if (nodes >= PRS_MAX || pages.length >= PRS_MAX_PAGES) return unique >= Math.min(total, PRS_MAX);
+  return true;
+}
+
 /**
  * One search: page 1, then each next page while GitHub says there's more and a cursor of the right
- * shape, until it has returned PRS_MAX or PRS_MAX_PAGES pages, all within its own deadline. One page that fails fails the search,
- * rather than give a list it knows is short. Never throws.
+ * shape, until it has returned PRS_MAX or PRS_MAX_PAGES pages, all within PRS_FETCH_TIMEOUT_MS. One
+ * page that fails fails the pass, rather than give a list it knows is short. A pass that isn't
+ * consistent() is fetched again once, with a deadline of its own, and the second is kept, or the
+ * first when the second fails. Never throws.
  */
 export async function fetchSearch(relation: PullRequestRelation, options: FetchOptions): Promise<SearchResult> {
   const now = options.monotonicNow ?? (() => performance.now());
-  const deadline = now() + (options.timeoutMs ?? PRS_FETCH_TIMEOUT_MS);
   const env = ghEnvironment(options.env ?? process.env);
-  const page = async (after?: string): Promise<SearchPage | SearchResult> => {
-    const timeoutMs = deadline - now();
-    if (timeoutMs <= 0) return { ok: false, reason: 'error', error: FETCH_ERRORS.timeout };
-    let stdout: string;
-    try {
-      stdout = await options.runFile(options.ghBin ?? 'gh', ghArgs(relation, after), { cwd: os.tmpdir(), timeoutMs, env, maxStdoutBytes: PRS_PAGE_MAX_BYTES });
-    } catch (error) {
-      return failure(error);
+
+  const pass = async (): Promise<Pass> => {
+    const deadline = now() + (options.timeoutMs ?? PRS_FETCH_TIMEOUT_MS);
+    const page = async (after?: string): Promise<SearchPage | SearchResult> => {
+      const timeoutMs = deadline - now();
+      if (timeoutMs <= 0) return { ok: false, reason: 'error', error: FETCH_ERRORS.timeout };
+      let stdout: string;
+      try {
+        stdout = await options.runFile(options.ghBin ?? 'gh', ghArgs(relation, after), { cwd: os.tmpdir(), timeoutMs, env, maxStdoutBytes: PRS_PAGE_MAX_BYTES });
+      } catch (error) {
+        return failure(error);
+      }
+      return parseSearchResponse(stdout, relation) ?? { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
+    };
+    const first = await page();
+    if ('ok' in first) return first.ok ? { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable } : first;
+    const pages = [first];
+    let last = first;
+    let nodes = first.nodes;
+    while (last.hasNextPage && pages.length < PRS_MAX_PAGES && nodes < PRS_MAX && last.endCursor !== undefined && isWellFormedCursor(last.endCursor)) {
+      const next = await page(last.endCursor);
+      if ('ok' in next) return next.ok ? { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable } : next;
+      pages.push(next);
+      nodes += next.nodes;
+      last = next;
     }
-    return parseSearchResponse(stdout, relation) ?? { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
+    return { ok: true, pages };
   };
 
-  const first = await page();
-  if ('ok' in first) return first;
-  const pages = [first];
-  let last = first;
-  let nodes = first.nodes;
-  while (last.hasNextPage && pages.length < PRS_MAX_PAGES && nodes < PRS_MAX && last.endCursor !== undefined && isWellFormedCursor(last.endCursor)) {
-    const next = await page(last.endCursor);
-    if ('ok' in next) return next;
-    pages.push(next);
-    nodes += next.nodes;
-    last = next;
+  const first = await pass();
+  if (!first.ok) return first;
+  let pages = first.pages;
+  if (!consistent(pages)) {
+    const again = await pass();
+    if (again.ok) pages = again.pages;
   }
-  const more = last.hasNextPage;
+  return resultOf(pages);
+}
 
-  // By URL, since a PR updated between the two pages can move from one to the other.
+/** A pass's PRs, each once, newest update first, at most PRS_MAX, or unreadable when none of what GitHub found could be read. */
+function resultOf(pages: readonly SearchPage[]): SearchResult {
+  // By URL, since a PR that moves while the pages are fetched can be on two of them.
   const byUrl = new Map<string, PullRequestSummary>();
   for (const { prs } of pages) for (const pr of prs) if (!byUrl.has(pr.url)) byUrl.set(pr.url, pr);
   const prs = [...byUrl.values()].sort(byUpdatedNewestFirst);
-  const total = first.total ?? 0;
+  const first = pages[0];
+  const total = first?.total ?? 0;
   // What GitHub returned that wasn't left out on purpose, as already reviewed: none kept of it is a change in shape.
   const malformedOrKept = pages.reduce((sum, { nodes, skipped }) => sum + nodes - skipped, 0);
   const skipped = pages.reduce((sum, page) => sum + page.skipped, 0);
   if (prs.length === 0 && (malformedOrKept > 0 || (total > 0 && skipped === 0))) return { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
+  const more = pages.at(-1)?.hasNextPage === true;
   const truncated = more || total > PRS_MAX || prs.length > PRS_MAX;
   return { ok: true, prs: prs.slice(0, PRS_MAX), truncated };
 }

@@ -20,7 +20,8 @@ export { DEFAULT_AUTH_TIMEOUT_MS };
 export const MAX_PAYLOAD_BYTES = 1024;
 
 export interface ClientContext {
-  indexer: Indexer;
+  /** The snapshots to send: the server's view of the index, with only the links to open PRs (snapshotLinks.ts). */
+  indexer: Pick<Indexer, 'latest' | 'subscribe'>;
   token: string;
   /** The server's one allowed origin, which the proof is bound to. */
   origin: string;

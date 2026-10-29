@@ -7,11 +7,25 @@ import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PrSource } from './prs/index.js';
+import type { PrPollerOptions, PrSource } from './prs/index.js';
 
 const seen = vi.hoisted(() => ({
   calls: [] as { what: string; env: NodeJS.ProcessEnv; roots?: string[]; relayName?: string; prs?: PrSource }[],
+  /** What each createPrPoller() was given (W105). */
+  pollers: [] as PrPollerOptions[],
 }));
+
+// The real poller, with what it was given recorded.
+vi.mock('./prs/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./prs/index.js')>();
+  return {
+    ...actual,
+    createPrPoller: vi.fn((options: PrPollerOptions = {}) => {
+      seen.pollers.push(options);
+      return actual.createPrPoller(options);
+    }),
+  };
+});
 
 vi.mock('./index/index.js', () => ({
   startIndexer: vi.fn((options: { roots: string[]; relayName?: string }) => {
@@ -66,6 +80,7 @@ describe('main(): startup', () => {
 
   beforeEach(async () => {
     seen.calls.length = 0;
+    seen.pollers.length = 0;
     listeners = new Map(SIGNALS.map((signal) => [signal, process.listeners(signal)]));
     vi.spyOn(console, 'log').mockImplementation(() => {});
     pitwallHome = await mkdtemp(join(tmpdir(), 'pitwall-test-home-'));
@@ -240,6 +255,32 @@ describe('main(): startup', () => {
       expect(await main(['--no-open', '--port', '0'])).toBe(0);
       expect(seen.calls[1]?.roots).toEqual([join(dir, 'work'), join(dir, 'oss')]);
       expect(console.log).toHaveBeenCalledWith(`Using the config file ${file}`);
+    });
+
+    it("gives the PR poller each configured root's GitHub owners, by real path, and the index (W105)", async () => {
+      await config(`{ "roots": [
+        { "path": "${join(dir, 'work')}", "github": { "owners": ["Example-Org"] } },
+        { "path": "${join(dir, 'oss')}", "github": { "owners": "all" } },
+        "${join(dir, 'other')}",
+      ] }`);
+      await mkdir(join(dir, 'other'));
+      expect(await main(['--no-open', '--port', '0'])).toBe(0);
+      expect(seen.pollers).toHaveLength(1);
+      expect(seen.pollers[0]?.index).toBeDefined();
+      expect(seen.pollers[0]?.ownersByRoot).toEqual(
+        new Map<string, string[] | 'all' | 'none'>([
+          [join(dir, 'work'), ['example-org']],
+          [join(dir, 'oss'), 'all'],
+        ]),
+      );
+      seen.calls.at(-1)?.prs?.stop();
+      // Roots given as arguments keep a configured root's owners; any other root infers its own.
+      expect(await main(['--no-open', '--port', '0', 'oss', 'other'], { cwd: () => dir })).toBe(0);
+      expect(seen.pollers[1]?.ownersByRoot).toEqual(new Map([[join(dir, 'oss'), 'all']]));
+      seen.calls.at(-1)?.prs?.stop();
+      // With --no-prs, no poller at all.
+      expect(await main(['--no-open', '--port', '0', '--no-prs'])).toBe(0);
+      expect(seen.pollers).toHaveLength(2);
     });
 
     it("replaces the file's roots with the arguments", async () => {
