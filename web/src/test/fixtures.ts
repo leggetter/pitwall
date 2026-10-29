@@ -1,6 +1,16 @@
 // Made-up fixtures for the web UI tests. Nothing here comes from a real session.
 
-import { EDITORS_PATH, type IndexSnapshot, type NeedsYou, type SessionGroup, type SessionSummary, type SubagentList } from '../../../src/shared/protocol.js';
+import {
+  EDITORS_PATH,
+  type IndexSnapshot,
+  type NeedsYou,
+  type PrLink,
+  type PullRequestList,
+  type PullRequestSummary,
+  type SessionGroup,
+  type SessionSummary,
+  type SubagentList,
+} from '../../../src/shared/protocol.js';
 import type { FetchLike } from '../api.js';
 import type { SocketFactory, SocketLike } from '../connection.js';
 
@@ -216,4 +226,41 @@ export function withoutSubagents(fetch: FetchLike): FetchLike {
     const list: SubagentList = { sessionId: decodeURIComponent(match[1] ?? ''), subagents: [], truncated: false };
     return Promise.resolve(new Response(JSON.stringify(list), { status: 200 }));
   };
+}
+
+/**
+ * A made-up open pull request (M4, W95), in `example/demo-app` unless the overrides say otherwise,
+ * passing and mergeable, updated `minutes` ago. The URL follows the repo and number, as the server
+ * keeps only such PRs.
+ */
+export function pr(overrides: Partial<PullRequestSummary> & { number: number }, minutes = 60): PullRequestSummary {
+  const repoLabel = overrides.repoLabel ?? 'example/demo-app';
+  const merged: PullRequestSummary = {
+    url: `https://github.com/${repoLabel}/pull/${overrides.number}`,
+    repo: repoLabel.toLowerCase(),
+    repoLabel,
+    title: `A made-up change, number ${overrides.number}`,
+    draft: false,
+    createdAt: minutesAgo(minutes + 60 * 24),
+    updatedAt: minutesAgo(minutes),
+    head: { repo: repoLabel.toLowerCase(), branch: `made-up/branch-${overrides.number}` },
+    checks: 'passing',
+    mergeable: 'clean',
+    ...overrides,
+  };
+  for (const key of Object.keys(merged) as (keyof PullRequestSummary)[]) {
+    if (merged[key] === undefined) delete merged[key];
+  }
+  return merged;
+}
+
+/** A link from a session to a PR (SessionSummary.prLinks), made `minutes` ago. */
+export function prLink(kind: PrLink['kind'], target: Pick<PullRequestSummary, 'repo' | 'number' | 'head'>, minutes = 10): PrLink {
+  if (kind === 'pushed') return { kind, repo: target.head?.repo ?? target.repo, branch: target.head?.branch ?? 'main', lastAt: minutesAgo(minutes) };
+  return { kind, repo: target.repo, number: target.number, lastAt: minutesAgo(minutes) };
+}
+
+/** A 'prs' message's list: fetched just before NOW, with `prs`. */
+export function prList(prs: PullRequestSummary[], overrides: Partial<PullRequestList> = {}): PullRequestList {
+  return { fetchedAt: new Date(NOW - 2 * 60_000).toISOString(), source: { ok: true }, refreshing: false, prs, ...overrides };
 }

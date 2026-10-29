@@ -17,6 +17,12 @@
 // A session marked not needed now (W88, notNeeded.ts) counts in none of the need-you badges: Needs
 // you's, Starred's, the groups' and the Hidden section's. Each group still counts it among its sessions.
 //
+// Pull requests (M4, W95), under Starred, lists your open pull requests in the session list's place.
+// Its badge counts those updated in the last PRS_SHOWN_DAYS that need attention, failing checks,
+// conflicts or changes requested, in subtle danger: solid is for sessions that need you, and failing
+// checks are what it's mostly for. Otherwise how many of those there are, and nothing before the first
+// fetch. It's there once the server has sent a list, and never while pull requests are off.
+//
 // With two or more roots, the list is the open root tab's (W38): the dashboard passes that root's
 // groups and hidden groups alone, so the views, their counts and the Hidden section are the root's
 // too, and every link names the root, so the URL says which tab it opens.
@@ -52,6 +58,8 @@ interface Item {
   kind?: SessionGroup['kind'];
   /** How many need you: a badge when there are any. */
   attention: number;
+  /** Pull requests' badge (W95): how many need attention, in subtle danger, in place of a need-you badge. */
+  prAttention?: number;
   /** How many sessions, shown when nothing needs you; undefined shows nothing. */
   count: number | undefined;
   /** Every session has finished. */
@@ -106,12 +114,18 @@ export interface RepoListProps {
   starred?: ReadonlySet<string> | undefined;
   /** The viewer's Not needed now marks (W88), which no need-you badge counts. Nothing is marked when it's undefined. */
   notNeeded?: NotNeeded | undefined;
+  /**
+   * The Pull requests item, under Starred (W95): how many open PRs from the last PRS_SHOWN_DAYS need
+   * attention, and how many there are, undefined before the first fetch. No item when it's undefined,
+   * as before the server has sent a list, or with pull requests off.
+   */
+  prs?: { attention: number; count: number | undefined } | undefined;
 }
 
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded, prs }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session once, though in Every repo it worked in it may be in several groups (W42).
@@ -130,6 +144,8 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
       count: groups && starredSessions.length > 0 ? starredSessions.length : undefined,
       muted: false,
     },
+    // Your open PRs (W95): the badge while any need attention, otherwise how many.
+    ...(prs ? [{ id: 'view:prs', selection: viewIn('prs', tab), label: VIEW_NAMES.prs, attention: 0, prAttention: prs.attention, count: prs.count, muted: false }] : []),
   ];
   // Before the first snapshot there's nothing to hide yet.
   const hiddenGroups = groups ? (hidden?.groups ?? []) : [];
@@ -266,12 +282,20 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
             {item.attention}
             <span className="visually-hidden"> {item.attention === 1 ? 'needs' : 'need'} you</span>
           </span>
+        ) : item.prAttention !== undefined && item.prAttention > 0 ? (
+          <span className="badge badge-subtle-danger">
+            {item.prAttention}
+            <span className="visually-hidden"> {item.prAttention === 1 ? 'needs' : 'need'} attention</span>
+          </span>
         ) : (
           !absent &&
           item.count !== undefined && (
             <span className="repo-item-count">
               {item.count}
-              <span className="visually-hidden"> {item.count === 1 ? 'session' : 'sessions'}</span>
+              <span className="visually-hidden">
+                {' '}
+                {item.prAttention !== undefined ? (item.count === 1 ? 'pull request' : 'pull requests') : item.count === 1 ? 'session' : 'sessions'}
+              </span>
             </span>
           )
         )}

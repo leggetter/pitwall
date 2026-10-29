@@ -22,6 +22,7 @@ import { FilterSpecimens, Headers, RepoDrawers, RepoLists, SessionListHeads } fr
 import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard } from './stubs.js';
 import { Confirmations, Conversations, EndedViews, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import { SubagentViews } from './subagents.js';
+import { PullRequestSpecimens } from './prs.js';
 import './gallery.css';
 
 interface Section {
@@ -71,6 +72,13 @@ const SECTIONS: Section[] = [
     intro:
       "The session view's Sub-agents tab (W77): the list with each state and nested ones, a sub-agent's transcript, the conversation naming them with links to the tab, many, cut short, none, loading, failed (Try again idle and busy), a refresh that failed, and at 375 px. The session row's running count is under Session rows.",
     Content: SubagentViews,
+  },
+  {
+    id: 'pull-requests',
+    title: 'Pull requests',
+    intro:
+      "M4 (W95): the repo list's Pull requests item and its badge; PrList in each state, its headings, rows and badges, collapsed, Show older, the filter, Refresh busy and off, before the first fetch, off, gh missing and not logged in, and a failed fetch with and without a list; PrView with its details and sessions, and its other states; the session rows' PR badges, the session view's PR links, and the page with a PR open.",
+    Content: PullRequestSpecimens,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },

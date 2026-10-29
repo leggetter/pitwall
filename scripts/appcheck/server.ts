@@ -6,7 +6,9 @@
 // stop, remove, resume and end session (W90), which signals nothing, and a session's sub-agents and
 // their transcripts (W77), from the made-up
 // World in fixtures.ts, the editor list and open in an editor (W72), which opens nothing, and New
-// session's uploads (W82), with the contract's checks, keeping nothing of a file but its size.
+// session's uploads (W82), with the contract's checks, keeping nothing of a file but its size, and
+// your made-up open pull requests (W95): GET PRS_PATH, the 'prs' message right after the first
+// snapshot and on each change, and POST PRS_REFRESH_PATH, with the contract's 409 and 429.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
@@ -14,7 +16,7 @@
 //
 // What the page did is recorded in `records`, for the parts to check: attaches, keys and resizes sent
 // to an attached session, the sizes it gave each one, spawns, relayed messages, stops and removes,
-// resumes, opens in an editor, ends, uploads, and every request.
+// resumes, opens in an editor, ends, uploads, refreshes of the PR list, and every request.
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -34,6 +36,7 @@ import type {
   EditorList,
   EndSessionResult,
   IndexSnapshot,
+  PullRequestList,
   RelayResult,
   ResumeResult,
   SessionSummary,
@@ -85,11 +88,16 @@ export interface Records {
   opens: Array<{ name: string; editor: EditorId }>;
   /** Each End session the server answered (W90), by the session's name, whether it was sent with `whileWorking`, and its status. Nothing is signalled. */
   ends: Array<{ name: string; whileWorking: boolean; status: number }>;
+  /** Each refresh of the PR list the server answered (W95), by its status: 200, 409 or 429. */
+  refreshes: number[];
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], ends: [], uploads: [], deletes: [], requests: [] });
+const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], ends: [], refreshes: [], uploads: [], deletes: [], requests: [] });
+
+/** How long a refresh's made-up fetch takes, so Refresh shows its spinner (W95). */
+const PRS_FETCH_MS = 700;
 
 /** A name the contract's 400 refuses: a path separator, a control or a bidi control (ATTACHMENTS_PATH). */
 const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
@@ -168,6 +176,8 @@ export interface FakeServer {
   clearRecords(): void;
   /** Sends the snapshot to every authenticated index socket, as the index does after a poll that changed it. */
   broadcast(): void;
+  /** Sends the PR list to every authenticated index socket, as the PR poller does after a change (W95). */
+  broadcastPrs(): void;
   /**
    * The order a resume's answer and the snapshot that follows it arrive in (W67), for the steps that
    * check the other order; reset() puts both back to false. `listedFirst`: NAMES.ended is listed as
@@ -210,6 +220,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const message = JSON.stringify({ type: 'snapshot', snapshot: world.snapshot() });
     for (const ws of indexSockets) ws.send(message);
   };
+  const broadcastPrs = () => {
+    const message = JSON.stringify({ type: 'prs', prs: world.prList() satisfies PullRequestList });
+    for (const ws of indexSockets) ws.send(message);
+  };
 
   const server = createServer((req, res) => {
     for (const [name, value] of headers) res.setHeader(name, value);
@@ -247,6 +261,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.SNAPSHOT_PATH) return json(res, 200, world.snapshot() satisfies IndexSnapshot);
     if (method === 'GET' && url.pathname === protocol.DIRECTORIES_PATH) return json(res, 200, world.directories() satisfies DirectoryList);
     if (method === 'GET' && url.pathname === protocol.EDITORS_PATH) return json(res, 200, EDITORS);
+    if (method === 'GET' && url.pathname === protocol.PRS_PATH) return json(res, 200, world.prList() satisfies PullRequestList);
+    if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
     if (method === 'POST' && url.pathname === protocol.ATTACHMENTS_PATH) return upload(req, res);
     // An unused upload removed (W82): attachmentPath(id).
@@ -332,6 +348,32 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         world.end(sessionId);
         broadcast();
       });
+    });
+  }
+
+  /**
+   * Refresh the PR list (W95), as the contract has it: no body is read; 409 with pull requests off;
+   * 429 with Retry-After within PRS_REFRESH_MIN_MS of the latest fetch's start; otherwise 200, and the
+   * list as a 'prs' message, refreshing, then fetched a moment later.
+   */
+  async function refreshPrs(req: IncomingMessage, res: ServerResponse) {
+    await readJson(req);
+    const answer = world.refreshPrs(protocol.PRS_REFRESH_MIN_MS);
+    if (answer.result === 'off') {
+      records.refreshes.push(409);
+      return json(res, 409, { ok: false, error: 'Pull requests are off: pitwall was started with --no-prs.' } satisfies ActionResult);
+    }
+    if (answer.result === 'soon') {
+      records.refreshes.push(429);
+      res.setHeader('Retry-After', String(answer.seconds));
+      return json(res, 429, { ok: false, error: `pitwall fetched your pull requests moments ago. Try again in ${answer.seconds}s.` } satisfies ActionResult);
+    }
+    records.refreshes.push(200);
+    json(res, 200, { ok: true } satisfies ActionResult);
+    broadcastPrs();
+    later(PRS_FETCH_MS, () => {
+      answer.done();
+      broadcastPrs();
     });
   }
 
@@ -582,6 +624,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       () => {
         ws.send(JSON.stringify({ type: 'authenticated', apiKey }));
         ws.send(JSON.stringify({ type: 'snapshot', snapshot: world.snapshot() }));
+        // Right after the first snapshot, as the server sends it (W95).
+        ws.send(JSON.stringify({ type: 'prs', prs: world.prList() }));
         indexSockets.add(ws);
       },
       () => {},
@@ -661,6 +705,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       records = emptyRecords();
     },
     broadcast,
+    broadcastPrs,
     close() {
       closed ??= (async () => {
         for (const timer of timers) clearTimeout(timer);

@@ -362,6 +362,11 @@ Read-only, and separate from the session index. Requested by Phil on 2026-10-16,
   - **A PR's row:** its title, number, states, updated time, and the sessions strongly linked to it.
   - **The PR view,** in the session view's column: title, repo and number, Open on GitHub and Copy link; the checks, with the failing ones' names; review, mergeable and draft; created and updated; then Sessions, the strong links, and Mentioned in, each opening that session.
   - **Sessions:** a session's row gets a badge for its most urgent strongly linked open PR, such as "#123", with "+2" for more. The session view's header links to each one's PR view.
+  - **Built as W95** (the builder's calls where the design left room, for review; `docs/design-system.md`, 4: Pull requests):
+    - **One thing in the third column:** `?pr=` takes the place of `?session=` and the other way round, in one pushed history entry, and neither changes the selection, as opening a session never has. So a PR opened from a session's link shows over the session list, and a session opened from a PR's view over the PR list; Back goes between them.
+    - **Tone:** the counts and failing checks and conflicts are subtle danger, changes requested subtle warning. Solid stays for sessions that need you: PRs never count in Needs you, its badges or the page title, and their rows have no attention bar.
+    - **Storage:** the collapsed repo headings are kept as hashes of the repos (`pitwall.pr-repos.v1`, D14), never their names. Show older, the filter and the PR list's place are the page's, not stored, and the same in every root tab.
+    - **Not shown on a row:** the head branch, which the filter matches and the PR view shows.
 - **Contract** (coordinator, W92, in `src/shared/protocol.ts`): `PullRequestSummary`, `PullRequestList`, `PullRequestSource`, `prNeedsAttention()`, `PrLink`, `PrLinkKind`, `prLinkIsStrong()`, `prLinkMatches()`, `SessionSummary.prLinks`, the `prs` WebSocket message, `PRS_PATH`, `PRS_REFRESH_PATH`, and the `PRS_*` and `PR_*` constants.
 - **Security:**
   - **Routes:** `GET /api/prs` has the snapshot's token check. Refresh has the apiKey, Origin and Host checks of every state-changing request.
@@ -403,7 +408,7 @@ Same way of working as M3.1, on `m4/integration`: W93 to W95 are built in parall
 | W92 | M4's contract and design: the types and constants in `src/shared/protocol.ts`, the design in "M4 - My open pull requests", and these work items | coordinator, on `m4/integration` | S | Done 2026-10-28 |
 | W93 | The PR source and its routes: `src/prs/` runs the search with `gh api graphql`, reads the response defensively, and polls every 3 minutes and on Refresh; the server adds `GET /api/prs`, `POST /api/prs/refresh` and the `prs` message; the CLI adds `--no-prs`; and the test guard refuses `gh` without `PITWALL_LIVE=1` | `m4/prs-source` | M | Building |
 | W94 | PR links in the index: the worked-in scanner's pass also finds each session's `prLinks` (opened, pushed, prompted and mentioned), its sub-agents' included | `m4/pr-links` | M | Building |
-| W95 | Pull requests in the web UI: the repo list's item and count, the PR list and view, the session row's badge and the session view's links, the app check's part and its fake server's PRs, and the design system's sections | `m4/prs-web` | L | Building |
+| W95 | Pull requests in the web UI: the repo list's item and count, the PR list and view, the session row's badge and the session view's links, the app check's part and its fake server's PRs, and the design system's sections | `m4/prs-web` | L | In review: the 'prs' message read defensively, Pull requests under Starred with a subtle danger count, the PR list (repo headings collapsed and remembered as hashes, Show older, the filter, Refresh with its 15 s and 429, each source state), the PR view in the session view's place via `?pr=`, the session row's badge and the view's links, `j`/`k`, the `prs` app check part, the gallery's section and the design system's |
 | W96 | A security review of M4 before the merge into main, as M2 (W14), M3 (W48) and M3.1 (W85) had | - | M | After W93 to W95 |
 
 ## M3 work breakdown

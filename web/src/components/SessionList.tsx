@@ -9,9 +9,10 @@
 // added or removed apply at once, and every row updates in place.
 
 import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
-import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
+import { ENDED_SHOWN_DAYS, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
+import { sessionPrBadge } from '../prs.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
@@ -80,6 +81,8 @@ export interface SessionListProps {
    * ENDED_SHOWN_DAYS (W67). The section shows for it even when none of its rows is shown.
    */
   older?: OlderEnded | undefined;
+  /** Each session's strongly linked open PRs, most urgent first (prsBySession() in prs.ts), for its row's PR badge (W95). */
+  prs?: ReadonlyMap<string, readonly PullRequestSummary[]> | undefined;
 }
 
 /**
@@ -177,6 +180,7 @@ export interface FinishedSectionProps {
   onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /** Show older, after the rows, while the selection has older ended sessions (W67). */
   older?: OlderEnded | undefined;
+  prs?: ReadonlyMap<string, readonly PullRequestSummary[]> | undefined;
 }
 
 /**
@@ -184,7 +188,7 @@ export interface FinishedSectionProps {
  * selection has ended sessions older than ENDED_SHOWN_DAYS, Show older, which lists them, or Hide older
  * once they're listed. It's the same button with its other name, so focus stays on it.
  */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, notNeeded, onNotNeeded, older }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, notNeeded, onNotNeeded, older, prs }: FinishedSectionProps) {
   const listId = useId();
   const olderNoteId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
@@ -210,6 +214,7 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
             onStar={onStar}
             notNeeded={notNeeded}
             onNotNeeded={onNotNeeded}
+            pr={sessionPrBadge(prs?.get(session.sessionId))}
           />
         ))}
         {older && older.count > 0 && (
@@ -251,6 +256,7 @@ export function SessionList({
   onNotNeeded,
   inert = false,
   older,
+  prs,
 }: SessionListProps) {
   const headingId = useId();
   const main = useRef<HTMLElement>(null);
@@ -346,6 +352,7 @@ export function SessionList({
                 onStar={onStar}
                 notNeeded={notNeeded}
                 onNotNeeded={onNotNeeded}
+                pr={sessionPrBadge(prs?.get(session.sessionId))}
               />
             ))}
             {(shownFinished.length > 0 || (older !== undefined && older.count > 0)) && (
@@ -362,6 +369,7 @@ export function SessionList({
                 notNeeded={notNeeded}
                 onNotNeeded={onNotNeeded}
                 older={older}
+                prs={prs}
               />
             )}
           </ul>

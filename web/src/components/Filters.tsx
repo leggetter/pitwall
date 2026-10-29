@@ -18,6 +18,10 @@ export interface FilterFieldProps {
   value: string;
   onChange: (value: string) => void;
   inputRef?: RefObject<HTMLInputElement | null>;
+  /** Its visually hidden label: "Filter sessions", or the PR list's "Filter pull requests" (W95). */
+  label?: string;
+  /** Its placeholder: the session list's, or the PR list's (W95). */
+  placeholder?: string;
 }
 
 /**
@@ -28,7 +32,7 @@ export interface FilterFieldProps {
  * While the single-key shortcuts are on, a `/` key cap says how to get here, while the field is
  * empty and unfocused (CSS hides it on focus), and the field's aria-keyshortcuts says so too.
  */
-export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
+export function FilterField({ value, onChange, inputRef, label = 'Filter sessions', placeholder = 'Filter by session, title, repo or directory' }: FilterFieldProps) {
   const id = useId();
   const own = useRef<HTMLInputElement>(null);
   const input = inputRef ?? own;
@@ -48,7 +52,7 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
   return (
     <div className={shortcuts.on ? 'filter-field with-key' : 'filter-field'}>
       <label className="visually-hidden" htmlFor={id}>
-        Filter sessions
+        {label}
       </label>
       <Icon name="search" className="filter-field-icon" />
       <input
@@ -56,7 +60,7 @@ export function FilterField({ value, onChange, inputRef }: FilterFieldProps) {
         id={id}
         type="search"
         className="filter-input"
-        placeholder="Filter by session, title, repo or directory"
+        placeholder={placeholder}
         autoComplete="off"
         spellCheck={false}
         aria-keyshortcuts={shortcuts.on ? '/' : undefined}

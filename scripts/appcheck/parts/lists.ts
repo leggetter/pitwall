@@ -97,15 +97,15 @@ function moved(before: Boxes, after: Boxes): string[] {
 
 const part: Part = {
   name: 'lists',
-  title: 'The repo list (Needs you, All sessions, Starred, groups), root tabs, two-line rows, the filter and sort, and a filter bar that filtering never moves',
+  title: 'The repo list (Needs you, All sessions, Starred, Pull requests, groups), root tabs, two-line rows, the filter and sort, and a filter bar that filtering never moves',
   async run(t) {
     const { page } = t;
 
-    await t.step('the repo list: three views, then the groups', async () => {
+    await t.step('the repo list: four views, Pull requests last of them (W95), then the groups', async () => {
       await t.fresh({ search: '?view=all' });
       await openRepoList(t);
       const labels = await page.evaluate<string[]>(repoLabels);
-      t.expectEqual(labels, ['Needs you', 'All sessions', 'Starred', 'api-server', 'demo-app'], 'the items, in order');
+      t.expectEqual(labels, ['Needs you', 'All sessions', 'Starred', 'Pull requests', 'api-server', 'demo-app'], 'the items, in order');
       t.expectEqual(await page.evaluate(selectedRepo), 'All sessions', 'All sessions is selected');
       t.expectEqual(await page.evaluate(`${repoItem('Needs you')}.querySelector('.badge-attention')?.textContent`), '3 need you', "Needs you's badge");
       t.expectEqual(await page.evaluate(`${repoItem('demo-app')}.querySelector('.badge-attention')?.textContent`), '3 need you', "demo-app's badge: its sessions that need you");
@@ -348,7 +348,7 @@ const part: Part = {
       t.expect((await page.evaluate<string>('location.search')).includes(`root=${OSS}`), 'the URL names the root');
       t.expectEqual(await page.evaluate(rowNames), [NAMES.blog], "its sessions alone");
       await openRepoList(t);
-      t.expectEqual(await page.evaluate(repoLabels), ['Needs you', 'All sessions', 'Starred', 'blog'], "its repo list");
+      t.expectEqual(await page.evaluate(repoLabels), ['Needs you', 'All sessions', 'Starred', 'Pull requests', 'blog'], "its repo list, with the page's Pull requests");
       if (t.layout === 'drawer') await page.key('Escape');
     });
 

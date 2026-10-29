@@ -1,0 +1,338 @@
+/*
+ * Pull requests (M4, W95; docs/design-system.md, 4: Pull requests): the PR list in the session list's
+ * column, its rows, the PR view in the session view's place, the session row's PR badge and the
+ * session view's PR links. Built on the session list's, the session rows' and the session view's own
+ * rules (styles.css), with only what differs here, and only tokens. This file loads before
+ * styles.css, so a rule that changes one of its rules says more than it does, as
+ * `.session-badges.pr-badges` does.
+ */
+
+/* The header's line 3: when the list was fetched, at the left, and Refresh at the right, which never moves as the time ticks. */
+.pr-list-fetched {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pw-space-2);
+  min-height: var(--pw-control-sm);
+}
+
+.pr-list-updated {
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The notice over a list the latest fetch couldn't replace, with the alerts' own spacing. */
+.pr-stale {
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.pr-repos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The header has the line above the first repo. */
+.pr-repos > .pr-repo:first-child {
+  border-top: 0;
+}
+
+.pr-repo {
+  border-top: 1px solid var(--pw-border);
+}
+
+.pr-repo-heading {
+  margin: 0;
+  font: inherit;
+}
+
+/* A repo's heading: a toggle row, as the Finished section's is, with the repo's label and its counts. */
+.pr-repo-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  width: 100%;
+  min-width: 0;
+  padding: var(--pw-space-1-5) var(--pw-space-4);
+  border: 0;
+  background: var(--pw-surface-muted);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .pr-repo-toggle:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+/* Full width inside the scrolling list, which would clip the outer ring (2.10). */
+.pr-repo-toggle:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.pr-repo-toggle .chevron {
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.pr-repo-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.pr-repo-icon {
+  flex: none;
+  color: var(--pw-text-subtle);
+}
+
+.pr-repo-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The count and the badge, at the right, whole. */
+.pr-repo-count {
+  flex: none;
+  margin-left: auto;
+  color: var(--pw-text-subtle);
+  font-weight: var(--pw-weight-regular);
+}
+
+.pr-repo-toggle > .badge {
+  flex: none;
+}
+
+/* A PR row is a session row (.session in styles.css); its title is an <h4>, under its repo's <h3>. */
+.pr-title {
+  margin: 0;
+}
+
+.pr-title bdi {
+  unicode-bidi: isolate;
+}
+
+/*
+ * Its state badges, before the time: each gives way, with an ellipsis, rather than one pushing the
+ * time out of its slot, when a narrow list has several. The title keeps its 10em, as a name does.
+ */
+.session-badges.pr-badges {
+  overflow: hidden;
+}
+
+.session-badges.pr-badges > .badge {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Line 2: the number, whole, then the linked sessions, which give way with an ellipsis. */
+.pr-number {
+  flex: none;
+  color: var(--pw-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-sessions {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  text-overflow: ellipsis;
+  /* Its own flex item, which would drop the space before its " · ". */
+  white-space: pre;
+}
+
+/* "GitHub found more than 200…", quietly, at the list's foot. */
+.pr-truncated {
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* The session row's PR badge: "#42", then "+2", a little apart. */
+.pr-badge-more {
+  margin-left: var(--pw-space-1);
+  font-weight: var(--pw-weight-regular);
+}
+
+/* The session view's PR links, a line of its own under where it worked: meta text that wraps. */
+.session-view-prs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-view-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+}
+
+.pr-link {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The PR view: the session view's frame and header (styles.css), with its own body. Its title wraps,
+ * where a session's name gives way: it's what the view is about, and at 375 px Back to pull requests
+ * leaves it a few words. Line 1's buttons stay at its top.
+ */
+.pr-view .session-view-top {
+  align-items: flex-start;
+}
+
+.pr-view .session-view-title {
+  white-space: normal;
+}
+
+.pr-view .session-view-title .session-view-name {
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.pr-view-github {
+  text-decoration: none;
+}
+
+.pr-view-repo {
+  flex: none;
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-medium);
+  white-space: nowrap;
+}
+
+.pr-view-section + .pr-view-section {
+  margin-top: var(--pw-space-6);
+}
+
+.pr-view-heading {
+  margin: 0 0 var(--pw-space-2);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-m);
+}
+
+.pr-view-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+}
+
+/* A term and its value: the term in a column of its own, the value wrapping beside it. */
+.pr-view-detail {
+  display: grid;
+  grid-template-columns: 6em minmax(0, 1fr);
+  gap: var(--pw-space-4);
+}
+
+.pr-view-detail > dt {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-m);
+}
+
+.pr-view-detail > dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+/* Failing checks and conflicts, in the danger tone's text colour, as an error's count is. */
+.pr-view-bad {
+  color: var(--pw-danger-fg);
+  font-weight: var(--pw-weight-medium);
+}
+
+.pr-view-hint {
+  color: var(--pw-text-muted);
+}
+
+.pr-view-checks {
+  margin: var(--pw-space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pr-view-checks > li {
+  color: var(--pw-text);
+}
+
+.pr-view-more {
+  color: var(--pw-text-muted);
+}
+
+.pr-view-branch {
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-s);
+  font-variant-ligatures: none;
+}
+
+.pr-view-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A linked session: its name, which opens it, its status badge, its last activity and why it's linked, wrapping. */
+.pr-view-session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  min-width: 0;
+}
+
+.link-button.pr-view-session-open {
+  min-width: 0;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+/* A finished or ended session's, muted, as its row is. */
+.pr-view-session.finished .link-button.pr-view-session-open {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-regular);
+}
+
+.pr-view-session-activity,
+.pr-view-session-why,
+.pr-view-none {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.pr-view-none {
+  color: var(--pw-text-muted);
+}

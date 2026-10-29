@@ -18,11 +18,13 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
+import type { SessionPrBadge } from '../prs.js';
 import { groupLabel, isNotNeeded, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
 import { NotNeededButton } from './NotNeededButton.js';
+import { SessionPrBadgeView } from './PrBadges.js';
 import { StarButton } from './StarButton.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -126,9 +128,14 @@ export interface SessionRowProps {
   notNeeded?: NotNeeded | undefined;
   /** Marks it not needed now, or takes the mark away: its toggle, while it needs you, which there's none without. */
   onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  /**
+   * Its most urgent strongly linked open pull request (M4, W95; sessionPrBadge() in prs.ts): a badge
+   * before its status badge, "#42", with "+2" for more, in subtle danger while that PR needs attention.
+   */
+  pr?: SessionPrBadge | undefined;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, pr }: SessionRowProps) {
   // Marked not needed now (W88): it still needs you, by the index, but has no bar, its badge is outlined, and line 2 says so.
   const marked = isNotNeeded(session, notNeeded);
   const attention = needsAttention(session, notNeeded);
@@ -160,6 +167,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     .filter(Boolean)
     .join(' ');
   const badges = [
+    // First, so the status badges still line up down the list against the time's slot (W95).
+    pr && <SessionPrBadgeView key="pr" badge={pr} />,
     badge && <StatusBadge key="status" badge={badge} />,
     finished && session.askedYou && (
       <Badge key="asked" look="outline" hint={finishedAskedHint(session)}>
