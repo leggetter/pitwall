@@ -1207,8 +1207,12 @@ export const PRS_REFRESH_PATH = '/api/prs/refresh';
 /** How often the PR poller fetches: 3 minutes. Never tied to the session poll. */
 export const PRS_POLL_INTERVAL_MS = 3 * 60 * 1000;
 
-/** The shortest gap between the starts of two fetches that a refresh may cause. */
-export const PRS_REFRESH_MIN_MS = 15 * 1000;
+/**
+ * The shortest gap between the starts of two fetches that a refresh may cause: a minute (W100;
+ * Phil, 2026-10-29: "Every 15 seconds seems a bit excessive"). A fetch took about 8.5 s on
+ * 2026-10-28.
+ */
+export const PRS_REFRESH_MIN_MS = 60 * 1000;
 
 /** A fetch that takes longer fails with reason 'error'. It took 8.5 s on 2026-10-28, for 50 PRs. */
 export const PRS_FETCH_TIMEOUT_MS = 30 * 1000;

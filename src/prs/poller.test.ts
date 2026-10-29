@@ -150,8 +150,8 @@ describe('createPrPoller: refresh', () => {
     clock.advance(3000);
     await fetch.finish(ok([]));
     // 3 s after it started.
-    expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: 12 });
-    clock.advance(11_500);
+    expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: PRS_REFRESH_MIN_MS / 1000 - 3 });
+    clock.advance(PRS_REFRESH_MIN_MS - 3500);
     expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: 1 });
     clock.advance(499);
     expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: 1 });
@@ -167,7 +167,7 @@ describe('createPrPoller: refresh', () => {
     await fetch.finish(ok([]));
     // An hour on: on wall time alone, the gap would be long past.
     clock.jumpWall(60 * 60_000);
-    expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: 15 });
+    expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: PRS_REFRESH_MIN_MS / 1000 });
     // An hour back: on wall time alone, it would be an hour away.
     clock.jumpWall(-2 * 60 * 60_000);
     clock.advance(PRS_REFRESH_MIN_MS);
@@ -175,12 +175,16 @@ describe('createPrPoller: refresh', () => {
     expect(fetch.calls()).toBe(2);
   });
 
-  it('rounds the wait up: just after a start, the whole 15 seconds', async () => {
+  it('rounds the wait up: just after a start, the whole minute', async () => {
     const { clock, fetch, poller } = setup();
     poller.start();
     clock.advance(1);
     await fetch.finish(ok([]));
-    expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: 15 });
+    expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: 60 });
+  });
+
+  it('keeps Refresh to one fetch a minute (W100)', () => {
+    expect(PRS_REFRESH_MIN_MS).toBe(60_000);
   });
 
   it('pushes the next scheduled poll back to an interval after its own fetch ends', async () => {

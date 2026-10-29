@@ -8,7 +8,7 @@
 //   GET /api/directories        then directories.ts: the directories under the snapshot's roots
 //   GET /api/editors            then editors.ts: the editors found at startup
 //   GET /api/prs                then prs.ts: your open PRs, the latest list the poller has (M4);
-//                               POST /api/prs/refresh asks it for a fetch, at most one every 15 s,
+//                               POST /api/prs/refresh asks it for a fetch, at most one a minute,
 //                               else 429, and 409 with --no-prs
 //   POST /api/attachments       then attachments.ts: the one body that isn't JSON, the file's bytes
 //                               with its own Content-Type, at most 10 MiB, its type checked; DELETE

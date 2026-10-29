@@ -2,9 +2,9 @@
 // with the apiKey, as every state-changing request is sent. The list itself arrives as a 'prs'
 // message, refreshing and then fetched, so the answer only says whether a fetch started.
 //
-// - ok: a fetch started, or one was already running. Refresh is off for PRS_REFRESH_MIN_MS, 15 s, the
-//   server's own limit, so a second press can't be refused.
-// - 429: the latest fetch, a poll's or a refresh's, started less than 15 s ago. Off for the server's
+// - ok: a fetch started, or one was already running. Refresh is off for PRS_REFRESH_MIN_MS, a minute
+//   (W100), the server's own limit, so a second press can't be refused.
+// - 429: the latest fetch, a poll's or a refresh's, started less than a minute ago. Off for the server's
 //   Retry-After, with an info toast that says when it's on again: nothing failed.
 // - 409: pull requests are off (`--no-prs`). An info toast says so; the list says so too.
 // - Anything else: an error toast in couldNot()'s words, and Refresh is on again at once.

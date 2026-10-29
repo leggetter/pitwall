@@ -74,7 +74,7 @@ const fetchedAt = ago(2);
 const list = (overrides: Partial<PullRequestList> = {}): PullRequestList => ({ fetchedAt, source: { ok: true }, refreshing: false, prs: PRS, ...overrides });
 
 const IDLE: PrRefresh = { refresh: noop, sending: false, offUntil: 0 };
-/** Refresh off for an hour, as it is for 15 s after a refresh. */
+/** Refresh off for an hour, as it is for a minute after a refresh (W100). */
 const OFF: PrRefresh = { refresh: noop, sending: false, offUntil: Date.now() + 3600_000 };
 
 /** The PR list as the session list's column shows it, with state of its own: its filter, Show older, collapsed repos and the open PR. */
@@ -183,7 +183,7 @@ export function PullRequestSpecimens() {
       <Specimen title="Refreshing" note="A fetch running, a poll's or a refresh's: Refresh's spinner, aria-busy." frame="short">
         <LivePrList prs={list({ refreshing: true })} />
       </Specimen>
-      <Specimen title="Refresh, off for 15 s" note="After a refresh, or a 429, its tooltip says why. Hover it." frame="short">
+      <Specimen title="Refresh, off for a minute" note="After a refresh, or a 429, its tooltip says why. Hover it." frame="short">
         <LivePrList prs={list()} refresh={OFF} />
       </Specimen>
       <Specimen title="A failed fetch, with the last list" note="The list kept, under a warning that says what failed and when the list is from." frame="view">
