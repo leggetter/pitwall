@@ -48,8 +48,20 @@ const docs = make('quickstarts', 'Docs link check', 2, {
 });
 const starred = [
   job('mcp-events-bridge', 'Bridge release', 4, { state: 'blocked', needsYou: { reason: 'claude-code', text: 'May I push the branch and open the PR?' } }),
-  make('hookdeck-cli', 'CLI release prep', 7, { askedYou: { reason: 'question', excerpt: 'Tag the release now, or wait for the docs?' }, needsYou: { reason: 'asked' } }),
-  make('hookdeck-go-sdk', 'Fix a flaky test', 9, { status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' }, lastUserPrompt: 'Find out why the retry test fails one run in ten.' }),
+  make('hookdeck-cli', 'CLI release prep', 7, {
+    askedYou: { reason: 'question', excerpt: 'Tag the release now, or wait for the docs?' },
+    needsYou: { reason: 'asked' },
+    // It opened the made-up #312, below, so its row carries it (W106).
+    prLinks: [{ kind: 'opened', repo: 'example/hookdeck-cli', number: 312, lastAt: ago(91) }],
+  }),
+  make('hookdeck-go-sdk', 'Fix a flaky test', 9, {
+    status: 'waiting',
+    waitingFor: 'permission prompt',
+    needsYou: { reason: 'prompt' },
+    lastUserPrompt: 'Find out why the retry test fails one run in ten.',
+    // It pushed the made-up #57's branch, whose checks are failing, so its badge says so (W106).
+    prLinks: [{ kind: 'pushed', repo: 'example/hookdeck-go-sdk', branch: 'fix-57', lastAt: ago(13) }],
+  }),
   docs,
   job('outpost', 'Dependency updates', 16, { state: 'blocked', needsYou: { reason: 'claude-code', text: 'Merge the minor bumps, or review each one?' } }),
   make('hookdeck-typescript-sdk', 'Build fix', 25, {
@@ -76,8 +88,9 @@ const snapshot = (): IndexSnapshot => {
   return { generatedAt: new Date().toISOString(), roots: [ROOT], groups: groups.filter((g) => g.sessions.length > 0), source: { ok: true } };
 };
 
-// Made-up open pull requests (W95), in made-up repos under example/ named for the hero's: one with
-// failing checks, for the repo list's count, one Build fix opened, and one approved.
+// Made-up open pull requests (W95), in made-up repos under example/ named for the hero's, each placed
+// under its clone (W106): one with failing checks that Fix a flaky test pushed to, one Build fix
+// opened, one approved that CLI release prep opened, and one that asks your review, with no session.
 const pullRequest = (repo: string, number: number, title: string, minutes: number, extra: Partial<PullRequestSummary> = {}): PullRequestSummary => ({
   url: `https://github.com/example/${repo}/pull/${number}`,
   repo: `example/${repo}`,
@@ -91,6 +104,7 @@ const pullRequest = (repo: string, number: number, title: string, minutes: numbe
   checks: 'passing',
   mergeable: 'clean',
   relation: 'authored',
+  place: { kind: 'cloned', root: ROOT, key: `${ROOT}/${repo}`, label: repo },
   ...extra,
 });
 const prList = (): PullRequestList => ({
@@ -101,7 +115,9 @@ const prList = (): PullRequestList => ({
     pullRequest('hookdeck-go-sdk', 57, 'Make the retry test deterministic', 12, { checks: 'failing', failingChecks: ['test (1.23)'], review: 'review-required' }),
     pullRequest('hookdeck-typescript-sdk', 128, 'Fix the ESM build', 24, { checks: 'pending' }),
     pullRequest('hookdeck-cli', 312, 'Prepare the 1.4 release', 90, { review: 'approved' }),
+    pullRequest('outpost', 1043, 'Add a made-up delivery metric', 50, { relation: 'review-requested', reviewRequest: { via: 'direct' }, review: 'review-required' }),
   ],
+  roots: [{ root: ROOT, owners: ['example'], source: 'clones' }],
 });
 
 const conversation: ConversationEntry[] = [

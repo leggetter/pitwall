@@ -30,12 +30,13 @@ const EDGE_LABELS: Readonly<Record<string, string>> = {
 /** Clear filters, an icon button named by its tooltip (W91), so found by its name. */
 const CLEAR_FILTERS = `document.querySelector('.session-list .filter-chips button[aria-label="Clear filters"]')`;
 /**
- * How many lines the filter bar takes at each window, filtered or not (W75, W91): the field's, the
- * chips' with Clear filters, and Sort's where it doesn't fit beside them. The bar is 408 px wide at
- * 1,440 px, where the chips, Clear filters and Sort fit on one line now that Clear filters is a 24 px
- * icon. While it was the 88 px text button, its room left Sort a line of its own there: 3 lines.
+ * How many lines the filter bar takes at each window, filtered or not (W75, W91, W106): the field's,
+ * the chips' with Clear filters, and Sort's where it doesn't fit beside them. Since W106 there are
+ * three chips, Has PR the third: they and Clear filters take 327 px and Sort 131, so they fit on one
+ * line only in a session list about 502 px wide or more, as at 900 px. At 1,440 px, where the bar is
+ * 408 px, Sort has a line of its own, as it did before W91.
  */
-const BAR_LINES: Readonly<Record<string, number>> = { '375': 3, '375x540': 3, '900': 2, '1200': 3, '1440': 2 };
+const BAR_LINES: Readonly<Record<string, number>> = { '375': 3, '375x540': 3, '900': 2, '1200': 3, '1440': 3 };
 /**
  * The filter bar's lines, from the boxes of what's in it: the field, each chip, Clear filters or its
  * room, and Sort. A box that starts below the bottom of the line before starts a new one; Sort is
@@ -101,15 +102,18 @@ const part: Part = {
   async run(t) {
     const { page } = t;
 
-    await t.step('the repo list: four views, Pull requests last of them (W95), then the groups', async () => {
+    await t.step('the repo list: four views, Pull requests last of them (W95), then the groups, PR rows counted (W106)', async () => {
       await t.fresh({ search: '?view=all' });
       await openRepoList(t);
       const labels = await page.evaluate<string[]>(repoLabels);
-      t.expectEqual(labels, ['Needs you', 'All sessions', 'Starred', 'Pull requests', 'api-server', 'demo-app'], 'the items, in order');
+      // event-relay is cloned with no session, example/sdk-docs isn't cloned: each listed for its PR rows (W106).
+      t.expectEqual(labels, ['Needs you', 'All sessions', 'Starred', 'Pull requests', 'api-server', 'demo-app', 'event-relay', 'example/sdk-docs'], 'the items, in order');
       t.expectEqual(await page.evaluate(selectedRepo), 'All sessions', 'All sessions is selected');
-      t.expectEqual(await page.evaluate(`${repoItem('Needs you')}.querySelector('.badge-attention')?.textContent`), '3 need you', "Needs you's badge");
-      t.expectEqual(await page.evaluate(`${repoItem('demo-app')}.querySelector('.badge-attention')?.textContent`), '3 need you', "demo-app's badge: its sessions that need you");
-      t.expectEqual(await page.evaluate(`${repoItem('api-server')}.querySelector('.repo-item-count')?.textContent`), '2 sessions', "api-server's count");
+      // Three sessions, and the PR rows that ask your review, #57 and #618.
+      t.expectEqual(await page.evaluate(`${repoItem('Needs you')}.querySelector('.badge-attention')?.textContent`), '5 need you', "Needs you's badge");
+      t.expectEqual(await page.evaluate(`${repoItem('demo-app')}.querySelector('.badge-attention')?.textContent`), '4 need you', "demo-app's badge: its sessions that need you, and #57");
+      // pitwall-test-in-api, pitwall-test-from-root and the ended pitwall-test-ended-pr, and #23's row.
+      t.expectEqual(await page.evaluate(`${repoItem('api-server')}.querySelector('.repo-item-count')?.textContent`), '4 sessions', "api-server's count");
       await t.shot('repo-list');
     });
 
@@ -130,10 +134,11 @@ const part: Part = {
         const one = li.querySelector('.session-line'), two = li.querySelector('.session-what');
         return { name: li.querySelector('.session-name').textContent.trim(), height: Math.round(li.getBoundingClientRect().height), line1: Math.round(one.getBoundingClientRect().height / lineHeight(li.querySelector('.session-name'))), line2: two ? Math.round(two.getBoundingClientRect().height / lineHeight(two)) : 0, what: two?.textContent ?? '' };
       })`);
-      t.expect(rows.length === 9, 'nine unfinished sessions under ~/code', rows.length);
+      // Nine unfinished sessions, the ended one that owns an open PR (W106), and five PR rows.
+      t.expect(rows.length === 15, 'fifteen rows under ~/code', rows.length);
       const tall = rows.filter((each) => each.line1 > 1 || each.line2 !== 1);
       t.expect(tall.length === 0, 'every row is one line of name and status, and one of where and what', tall);
-      const where = rows.filter((each) => !/^(demo-app|api-server) · /.test(each.what));
+      const where = rows.filter((each) => !/^(demo-app|api-server|event-relay|example\/sdk-docs) · /.test(each.what));
       t.expect(where.length === 0, "line 2 starts with the row's group in All sessions", where);
       const asked = rows.find((each) => each.name === NAMES.asked);
       t.expect(asked?.what.includes('Asked: Should I retry'), 'a session that asked shows its question on line 2', asked);
@@ -174,12 +179,12 @@ const part: Part = {
       await page.type('export');
       await page.waitFor('the filter to apply', `${rowNames}.length === 1`);
       t.expectEqual(await page.evaluate(rowNames), [NAMES.running], 'only the session whose name matches');
-      t.expectEqual(await page.evaluate(SUMMARY), '1 of 18 sessions', 'the summary says what the filter hides');
+      t.expectEqual(await page.evaluate(SUMMARY), '1 of 24 sessions', 'the summary says what the filter hides');
       t.expect(await page.evaluate(`!!document.querySelector('.session-list .filter-clear')`), 'the field has a clear button');
       t.expectEqual(await page.evaluate(`document.querySelector('.session-list .filter-clear')?.getAttribute('aria-label')`), 'Clear text', "named Clear text, not one letter from Clear filters, which shows beside it (W91's review)");
       await page.key('Escape');
-      await page.waitFor('the filter to clear', `${FIELD}.value === '' && ${rowNames}.length === 9`);
-      t.expectEqual(await page.evaluate(SUMMARY), '18 sessions', 'the summary is whole again');
+      await page.waitFor('the filter to clear', `${FIELD}.value === '' && ${rowNames}.length === 10`);
+      t.expectEqual(await page.evaluate(SUMMARY), '24 sessions', 'the summary is whole again');
     });
 
     await t.step('the Background chip lists background sessions alone', async () => {
@@ -189,7 +194,7 @@ const part: Part = {
       t.expectEqual([...(await page.evaluate<string[]>(rowNames))].sort(), [...BACKGROUND].sort(), 'the running background sessions');
       await t.shot('chip-background');
       await page.click('Background', chip('Background'));
-      await page.waitFor('the chip to clear', `${rowNames}.length === 9`);
+      await page.waitFor('the chip to clear', `${rowNames}.length === 10`);
     });
 
     // W75: the field on a line of its own, then the chips, Clear filters and Sort, at every width, and
@@ -258,7 +263,7 @@ const part: Part = {
 
       // By keyboard: Tab from the chips reaches it, its tooltip opens on that focus, and Enter clears
       // the filters and puts focus in the field, since the button goes.
-      await page.evaluate(`${chip('Background')}.focus()`);
+      await page.evaluate(`${chip('Has PR')}.focus()`);
       await page.key('Tab');
       t.expect(await page.evaluate(`document.activeElement === ${CLEAR_FILTERS}`), 'Tab from the last chip reaches Clear filters', await page.evaluate(`document.activeElement?.outerHTML.slice(0, 80)`));
       const tip = await page.waitFor<{ text: string; hidden: string | null }>('its tooltip', `(() => { const tip = [...document.querySelectorAll('.tooltip')].find((el) => !el.hidden); return tip && { text: tip.textContent, hidden: tip.getAttribute('aria-hidden') }; })()`);
@@ -300,7 +305,8 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.sort.v1')`), 'name', 'stored');
       t.expectEqual(await page.evaluate(chooseOption(SORT, 'urgency')), 'urgency', 'Urgency again');
       await page.settle(50);
-      t.expectEqual((await page.evaluate<string[]>(rowNames)).slice(-1), [NAMES.inApi], 'urgency puts the least recent idle session last');
+      // The ended pitwall-test-ended-pr owns an open PR, so it's listed with the rest (W106), last, as the least recently active.
+      t.expectEqual((await page.evaluate<string[]>(rowNames)).slice(-1), [NAMES.endedPr], 'urgency puts the least recent session last');
     });
 
     await t.step('a star puts a session in Starred', async () => {
@@ -326,7 +332,11 @@ const part: Part = {
       await chooseInRepoList(t, 'api-server');
       t.expectEqual(await page.evaluate('location.search'), `?repo=${API_SERVER}`, 'the URL names the group');
       t.expectEqual(await page.evaluate(listHeading), 'api-server', 'the heading');
-      t.expectEqual([...(await page.evaluate<string[]>(rowNames))].sort(), [NAMES.fromRoot, NAMES.inApi].sort(), "its sessions, the one started in the root that worked in it most included (Main repo)");
+      t.expectEqual(
+        [...(await page.evaluate<string[]>(rowNames))].sort(),
+        [NAMES.fromRoot, NAMES.inApi, NAMES.endedPr].sort(),
+        'its sessions, the one started in the root that worked in it most included (Main repo), and the ended one that owns an open PR (W106)',
+      );
       t.expect(await page.evaluate(`!!document.querySelector('.session-list button[aria-label="Hide from repo list"]')`), 'a group has Hide from repo list');
     });
 

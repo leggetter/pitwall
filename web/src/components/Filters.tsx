@@ -1,7 +1,7 @@
 // Filtering the sessions (docs/design-system.md, section 4: Search and Filter chips): the filter
 // field, the filter chips and "Clear filters", together in role="search". Where they sit on the
-// page is the layout's business (section 3). The PR list uses the field, the chips, with its own,
-// and Clear filters too (W95, W101).
+// page is the layout's business (section 3). The Pull requests view uses the field, the chips, with
+// its own, and Clear filters too (W95, W101, W106). Has PR keeps the rows with an open PR (W106).
 
 import { useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { FILTER_CHIPS, filtering, NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
@@ -13,6 +13,7 @@ import { Tooltip } from './Tooltip.js';
 export const CHIP_LABELS: Readonly<Record<FilterChip, string>> = {
   interactive: 'Interactive',
   background: 'Background',
+  'has-pr': 'Has PR',
 };
 
 export interface FilterFieldProps {
@@ -160,6 +161,8 @@ export interface FilterControlsProps {
   children?: ReactNode;
   /** The filter field, for the `/` shortcut. */
   fieldRef?: RefObject<HTMLInputElement | null>;
+  /** The chips, in order: FILTER_CHIPS unless given, as without Has PR while pull requests are off (W106). */
+  options?: readonly FilterChip[];
 }
 
 /**
@@ -169,13 +172,13 @@ export interface FilterControlsProps {
  * Clear filters is an icon button at every width, named by its tooltip (W91), so the chips' line has
  * room for Sort in a 1,440 px window, where the text button's room cost the bar a line.
  */
-export function FilterControls({ filters, onChange, children, fieldRef }: FilterControlsProps) {
+export function FilterControls({ filters, onChange, children, fieldRef, options = FILTER_CHIPS }: FilterControlsProps) {
   const own = useRef<HTMLInputElement>(null);
   const field = fieldRef ?? own;
   return (
     <form className="filter-controls" role="search" onSubmit={(event) => event.preventDefault()}>
       <FilterField value={filters.text} onChange={(text) => onChange({ ...filters, text })} inputRef={field} />
-      <FilterChips chips={filters.chips} onChange={(chips) => onChange({ ...filters, chips })}>
+      <FilterChips chips={filters.chips} onChange={(chips) => onChange({ ...filters, chips })} options={options}>
         <ClearFilters
           on={filtering(filters)}
           onClear={() => {

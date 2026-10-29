@@ -4,8 +4,9 @@
 // Open on GitHub, Copy link and Close, then its repo and number and its state badges, then, for one
 // you didn't open, how it's yours (W101): your review requested, of you or a team, or a mention;
 // then its details, the checks with the failing ones' names, the review, whether it merges,
-// draft, its branch, and when it was opened and updated; then the sessions strongly linked to it, and
-// those that only mentioned it, each opening that session.
+// draft, its branch, and when it was opened and updated; then the sessions strongly linked to it, the
+// one that owns it first, as its session (W106), and those that only mentioned it, each opening that
+// session.
 //
 // Open on GitHub is a link that leaves pitwall, in a new tab, with noopener and noreferrer, and only
 // for the PR's own https://github.com/ address (githubPrUrl()); otherwise there's neither it nor Copy
@@ -28,14 +29,15 @@ import { CopyButton } from './CopyButton.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { PrStateBadges } from './PrBadges.js';
+import { OPEN_ON_GITHUB, PrDetails } from './PrDetails.js';
 import { PR_VIEW_ID } from './PrList.js';
 import { Frame, Top, type SessionViewLayout } from './SessionView.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 import { SkeletonHeading, SkeletonMeta, WaitingStatus, type Waiting } from './Waiting.js';
 
-/** Open on GitHub's name and tooltip, and Copy link's. */
-export const OPEN_ON_GITHUB = 'Open on GitHub';
+/** Copy link's name and tooltip; Open on GitHub's is PrDetails.tsx's. */
+export { OPEN_ON_GITHUB } from './PrDetails.js';
 export const COPY_LINK = 'Copy link';
 
 /** Why a session is linked to the PR, after its name (PrLinkKind). */
@@ -46,6 +48,9 @@ export const LINK_KINDS: Readonly<Record<PrLinkKind, string>> = {
   prompted: 'Given it in a prompt',
   mentioned: 'Named it in a reply',
 };
+
+/** After why the session that owns the PR is linked (W106): it acted on the PR last, so the PR is listed with it. */
+export const OWNS_IT = 'Its session';
 
 /** The Sessions section with none: how a session comes to be listed here. */
 export const NO_LINKED_SESSIONS = 'No session has opened it, pushed its branch or been given its link in a prompt, as far as pitwall can tell.';
@@ -68,25 +73,6 @@ export const PR_MISSING: Readonly<Record<PrMissing, string>> = {
 /** The alert once the PR has left a list fetched since it was open. */
 export const PR_GONE = PR_MISSING.gone;
 
-/** What GitHub's mergeable says, in words. 'unknown' is GitHub still working it out, as it often is just after a push. */
-const MERGEABLE: Readonly<Record<PullRequestSummary['mergeable'], string>> = {
-  clean: 'No conflicts',
-  conflicts: 'Conflicts with its base branch',
-  unknown: 'Checking for conflicts',
-};
-
-const REVIEW: Readonly<Record<NonNullable<PullRequestSummary['review']>, string>> = {
-  approved: 'Approved',
-  'changes-requested': 'Changes requested',
-  'review-required': 'Review required',
-};
-
-const CHECKS: Readonly<Record<Exclude<PullRequestSummary['checks'], 'failing'>, string>> = {
-  passing: 'Passing',
-  pending: 'Pending',
-  none: 'No checks',
-};
-
 /** Ignores keys with a modifier, and keys typed into a field. */
 function plainKey(event: KeyboardEvent): boolean {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
@@ -94,31 +80,8 @@ function plainKey(event: KeyboardEvent): boolean {
   return !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement);
 }
 
-/** The checks: "Failing:" and each failing check's name, then "+3 more" when more failed than are named. */
-function Checks({ pr }: { pr: PullRequestSummary }) {
-  if (pr.checks !== 'failing') return <>{CHECKS[pr.checks]}</>;
-  const names = pr.failingChecks ?? [];
-  const more = pr.failingCount !== undefined ? pr.failingCount - names.length : 0;
-  return (
-    <span className="pr-view-failing">
-      <span className="pr-view-bad">Failing</span>
-      {names.length > 0 && (
-        <ul className="pr-view-checks" aria-label="Failing checks">
-          {names.map((name, index) => (
-            // By place as well as name: two checks can share a name.
-            <li key={`${index}:${name}`}>
-              <bdi>{plainText(name)}</bdi>
-            </li>
-          ))}
-          {more > 0 && <li className="pr-view-more">+{more} more</li>}
-        </ul>
-      )}
-    </span>
-  );
-}
-
 /** One linked session: its name, a button that opens it, its status badge, its last activity, and why it's linked. */
-function LinkedRow({ linked, notNeeded, onOpen }: { linked: LinkedSession; notNeeded: NotNeeded | undefined; onOpen: (sessionId: string) => void }) {
+function LinkedRow({ linked, notNeeded, onOpen, owns = false }: { linked: LinkedSession; notNeeded: NotNeeded | undefined; onOpen: (sessionId: string) => void; owns?: boolean }) {
   const { session, link } = linked;
   return (
     <li className={session.finished ? 'pr-view-session finished' : 'pr-view-session'}>
@@ -127,7 +90,10 @@ function LinkedRow({ linked, notNeeded, onOpen }: { linked: LinkedSession; notNe
       </button>
       <StatusBadge badge={statusBadge(session, notNeeded)} />
       {session.lastActivityAt && <Timestamp className="pr-view-session-activity" at={session.lastActivityAt} prefix="Active " />}
-      <span className="pr-view-session-why">{LINK_KINDS[link.kind]}</span>
+      <span className="pr-view-session-why">
+        {LINK_KINDS[link.kind]}
+        {owns && <span className="pr-view-owner"> · {OWNS_IT}</span>}
+      </span>
     </li>
   );
 }
@@ -142,6 +108,8 @@ export interface PrViewProps {
   missing?: PrMissing | undefined;
   /** The sessions linked to it (sessionsFor() in prs.ts): strongly, and those that only mentioned it. */
   sessions: { strong: readonly LinkedSession[]; mentioned: readonly LinkedSession[] };
+  /** The session that owns it (W106, prOwner()), listed first under Sessions, as its session. */
+  ownerId?: string | undefined;
   /** The viewer's Not needed now marks (W88), for the sessions' status badges. */
   notNeeded?: NotNeeded | undefined;
   /** Opens a linked session's view, in this view's place. */
@@ -159,7 +127,7 @@ export interface PrViewProps {
   backLabel?: string | undefined;
 }
 
-export function PrView({ pr, missing, sessions, notNeeded, onOpenSession, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
+export function PrView({ pr, missing, sessions, ownerId, notNeeded, onOpenSession, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
   const ids = { title: useId(), details: useId(), sessions: useId(), mentioned: useId() };
   const title = plainText(pr.title);
   const url = githubPrUrl(pr);
@@ -169,37 +137,7 @@ export function PrView({ pr, missing, sessions, notNeeded, onOpenSession, onClos
     event.preventDefault();
     onStep(event.key === 'ArrowDown' ? 1 : -1);
   };
-  const fork = pr.head && pr.head.repo !== pr.repo ? pr.head.repo : undefined;
   const relation = prRelationText(pr);
-  const rows: [string, ReactNode][] = [
-    ['Checks', <Checks pr={pr} />],
-    ['Review', pr.review ? REVIEW[pr.review] : 'No review required'],
-    [
-      'Merge',
-      pr.mergeable === 'conflicts' ? <span className="pr-view-bad">{MERGEABLE.conflicts}</span> : pr.mergeable === 'unknown' ? (
-        <>
-          {MERGEABLE.unknown}
-          <span className="pr-view-hint">: GitHub works it out after a push, so the next fetch usually knows.</span>
-        </>
-      ) : (
-        MERGEABLE.clean
-      ),
-    ],
-    ['Draft', pr.draft ? 'Draft' : 'Ready for review'],
-    ...(pr.head
-      ? ([
-          [
-            'Branch',
-            <>
-              <bdi className="pr-view-branch">{plainText(pr.head.branch)}</bdi>
-              {fork && <span className="pr-view-hint">, from {plainText(fork)}</span>}
-            </>,
-          ],
-        ] as [string, ReactNode][])
-      : []),
-    ['Opened', <Timestamp at={pr.createdAt} />],
-    ['Updated', <Timestamp at={pr.updatedAt} />],
-  ];
 
   return (
     <Frame layout={layout} id={PR_VIEW_ID} className="pr-view" animate={animate} titleId={ids.title} onEscape={onClose}>
@@ -250,14 +188,7 @@ export function PrView({ pr, missing, sessions, notNeeded, onOpenSession, onClos
           <h3 className="pr-view-heading" id={ids.details}>
             Details
           </h3>
-          <dl className="pr-view-details">
-            {rows.map(([term, value]) => (
-              <div key={term} className="pr-view-detail">
-                <dt>{term}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-          </dl>
+          <PrDetails pr={pr} />
         </section>
         <section className="pr-view-section" aria-labelledby={ids.sessions}>
           <h3 className="pr-view-heading" id={ids.sessions}>
@@ -265,9 +196,11 @@ export function PrView({ pr, missing, sessions, notNeeded, onOpenSession, onClos
           </h3>
           {sessions.strong.length > 0 ? (
             <ul className="pr-view-sessions">
-              {sessions.strong.map((linked) => (
-                <LinkedRow key={linked.session.sessionId} linked={linked} notNeeded={notNeeded} onOpen={onOpenSession} />
-              ))}
+              {[...sessions.strong]
+                .sort((a, b) => Number(b.session.sessionId === ownerId) - Number(a.session.sessionId === ownerId))
+                .map((linked) => (
+                  <LinkedRow key={linked.session.sessionId} linked={linked} notNeeded={notNeeded} onOpen={onOpenSession} owns={linked.session.sessionId === ownerId} />
+                ))}
             </ul>
           ) : (
             <p className="pr-view-none">{NO_LINKED_SESSIONS}</p>

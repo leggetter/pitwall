@@ -1,6 +1,6 @@
 // A pull request's badges (docs/design-system.md, 4: Pull requests): its state badges, as the PR row
-// and the PR view show them, and the session row's PR badge, "#42", with "+2" for more, for the
-// session's most urgent strongly linked open PR (M4, W95). Badges aren't focusable, so a badge's
+// and the PR view show them, and the session row's PR badge, "#42 CI failing", with "+2" for more,
+// for the most urgent open PR the session owns (M4, W95, W106). Badges aren't focusable, so a badge's
 // tooltip is hover-only; what it says is in the DOM, or in the PR view, too.
 
 import type { PullRequestSummary } from '../../../src/shared/protocol.js';
@@ -23,14 +23,16 @@ export function PrStateBadges({ pr }: { pr: PullRequestSummary }) {
 }
 
 /**
- * The session row's PR badge: "#42", then "+2" when the session is strongly linked to more open PRs.
- * Subtle danger while the PR it names needs attention, subtle neutral otherwise. Not a control: its
- * tooltip, on hover, names each PR, and the session view links to each.
+ * The session row's PR badge (W106): "#42", with its most urgent state while it needs attention,
+ * "#42 CI failing", then "+2" when the session owns more open PRs. Subtle danger while the PR it
+ * names needs attention, subtle neutral otherwise. Not a control: its tooltip, on hover, names each
+ * PR, and the session view's Pull requests tab has them all.
  */
 export function SessionPrBadgeView({ badge }: { badge: SessionPrBadge }) {
   return (
     <Badge look={badge.attention ? 'subtle-danger' : 'subtle-neutral'} hint={badge.hint} className="pr-badge">
       <span className="visually-hidden">Pull request </span>#{badge.pr.number}
+      {badge.state !== undefined && <span className="pr-badge-state"> {badge.state}</span>}
       {badge.attention && <span className="visually-hidden">, needs attention</span>}
       {badge.more > 0 && (
         <>
@@ -48,10 +50,10 @@ export function SessionPrBadgeView({ badge }: { badge: SessionPrBadge }) {
 export const prLinkLabel = (pr: Pick<PullRequestSummary, 'repoLabel' | 'number'>) => `Pull request ${prName(pr)}`;
 
 /**
- * The session view's line of PR links (W95): "Pull requests", then each open PR the session is
- * strongly linked to, most urgent first, as "#42", a link button that opens its PR view, with its
- * highlighted states after it. Its name says the repo too, and its tooltip, which describes it, the
- * title. It wraps; nothing in it is cut.
+ * The session view's line of PR links (W95): "Pull requests", then each open PR the session owns
+ * (W106), most urgent first, as "#42", a link button that opens its PR view, with its highlighted
+ * states after it. Its name says the repo too, and its tooltip, which describes it, the title. It
+ * wraps; nothing in it is cut. The Pull requests tab has the rest.
  */
 export function SessionPrLinks({ linked, onOpen }: { linked: readonly PullRequestSummary[]; onOpen: (pr: PullRequestSummary) => void }) {
   return (

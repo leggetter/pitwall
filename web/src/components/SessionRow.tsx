@@ -7,6 +7,12 @@
 // replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
 // session view, one click away.
 //
+// A session is a piece of work (W106, work.ts): its row carries the open pull requests it owns, the
+// most urgent as a badge, "#128 CI failing", with "+2" for more. It needs you when the session does
+// or when one of those PRs needs attention, and then line 2 says why, "CI is failing on #128", unless
+// the session needs you itself, which comes first. A finished or ended session that owns an open PR
+// isn't finished work, so its row isn't muted; its badge still says Ended.
+//
 // Tooltips, on hover only, since none of them is on the name's button: the session's id and start
 // time on its name; the whole title and where it came from; Stale's and a finished Asked you's
 // explanations; the last activity's absolute time; and line 2 in full when it's cut short. The full
@@ -15,10 +21,10 @@
 // its line 2, each with an info button whose name is its explanation, so the keyboard reaches it.
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
-import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
+import { prNeedsAttention, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
-import type { SessionPrBadge } from '../prs.js';
+import { prReason, sessionPrBadge } from '../prs.js';
 import { groupLabel, isNotNeeded, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
@@ -129,21 +135,29 @@ export interface SessionRowProps {
   /** Marks it not needed now, or takes the mark away: its toggle, while it needs you, which there's none without. */
   onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /**
-   * Its most urgent strongly linked open pull request (M4, W95; sessionPrBadge() in prs.ts): a badge
-   * before its status badge, "#42", with "+2" for more, in subtle danger while that PR needs attention.
+   * The open pull requests it owns (W106, work.ts), most urgent first: a badge before its status
+   * badge for the first, "#128 CI failing", with "+2" for more, in subtle danger while that PR needs
+   * attention. One it's only linked to, or that another session has taken over, isn't here.
    */
-  pr?: SessionPrBadge | undefined;
+  owned?: readonly PullRequestSummary[] | undefined;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, pr }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, owned }: SessionRowProps) {
   // Marked not needed now (W88): it still needs you, by the index, but has no bar, its badge is outlined, and line 2 says so.
   const marked = isNotNeeded(session, notNeeded);
-  const attention = needsAttention(session, notNeeded);
-  const { finished } = session;
+  // It needs you itself, or a PR it owns does (W106).
+  const own = needsAttention(session, notNeeded);
+  const prNeed = owned?.find(prNeedsAttention);
+  const attention = own || prNeed !== undefined;
+  // An ended or finished session that owns an open PR isn't finished work (W106).
+  const finished = session.finished && (owned?.length ?? 0) === 0;
   const badge = rowStatusBadge(session, notNeeded);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
-  const wants = whatItWants(session);
+  const reason = !own && prNeed !== undefined ? prReason(prNeed, true) : undefined;
+  const wants: { content: ReactNode; hint?: string } | undefined =
+    reason !== undefined ? { content: <span className="asked pr-reason">{reason}</span>, hint: reason } : whatItWants(session);
+  const pr = sessionPrBadge(owned);
   // Line 2's label: the group's, in Needs you and All sessions.
   const label = showGroup ? plainText(groupLabel(group)) : undefined;
   // How many of its sub-agents are running, at the end of line 2, while any are (W77).
@@ -170,7 +184,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     // First, so the status badges still line up down the list against the time's slot (W95).
     pr && <SessionPrBadgeView key="pr" badge={pr} />,
     badge && <StatusBadge key="status" badge={badge} />,
-    finished && session.askedYou && (
+    session.finished && session.askedYou && (
       <Badge key="asked" look="outline" hint={finishedAskedHint(session)}>
         Asked you
       </Badge>
@@ -227,8 +241,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
       </p>
     </Tooltip>
   );
-  // While it needs you, or is marked not needed now (W88). Shown while it's marked, otherwise on hover and focus.
-  const toggle = onNotNeeded && (attention || marked) && (
+  // While it needs you itself, or is marked not needed now (W88): a mark is for what the session needs, never its PRs'. Shown while it's marked, otherwise on hover and focus.
+  const toggle = onNotNeeded && (own || marked) && (
     <NotNeededButton sessionId={session.sessionId} name={session.name} marked={marked} onChange={(on) => onNotNeeded(session, on)} className="session-not-needed-toggle" />
   );
 

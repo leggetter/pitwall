@@ -1,8 +1,8 @@
-// Your open pull requests in the web UI (M4, W95; prs.ts): the 'prs' message read defensively, the
-// PR's link checked, the list's states, the 90-day window, the repo headings and their order, the
-// filter, the attention count, which sessions a PR is linked to and a session's most urgent PR, the
-// state badges and the session row's badge; and how a PR is yours, its chips, badges and sentence
-// (W101). Made-up PRs, sessions and teams only.
+// Your open pull requests in the web UI (M4, W95; prs.ts): the 'prs' message read defensively, where
+// the server placed each one and which owners each root claims (W106), the PR's link checked, the
+// list's states, the 90-day window, the order, the filter, the attention count, which sessions a PR
+// is linked to, the state badges, the session row's badge and why a PR needs you (W106); and how a PR
+// is yours, its chips, badges and sentence (W101). Made-up PRs, sessions and teams only.
 
 import { describe, expect, it } from 'vitest';
 import { PR_FAILING_CHECKS_MAX, PR_TITLE_MAX, PRS_LIST_MAX, type PullRequestSummary } from '../../src/shared/protocol.js';
@@ -13,23 +13,24 @@ import {
   filterPrs,
   filterPrsByRelation,
   githubPrUrl,
-  groupPrs,
   isOlderPr,
   listNow,
   needAttention,
   olderPrsText,
   openCount,
+  parsePlace,
   parsePullRequestList,
+  parseRootOwners,
   prKey,
   prListState,
-  prsBySession,
-  prsFor,
+  prReason,
   prRelationText,
   prsOff,
   prStateBadges,
+  RELATION_PHRASES,
   sessionPrBadge,
   sessionsFor,
-  splitPrs,
+  strongPrsOf,
 } from './prs.js';
 import { minutesAgo, NOW, pr, prLink, prList, session } from './test/fixtures.js';
 
@@ -223,7 +224,7 @@ describe('how a PR is yours (W101)', () => {
   it('sorts a review request among the PRs that need attention', () => {
     const quiet = pr({ number: 1 }, 5);
     const asked = { ...review, updatedAt: minutesAgo(50) };
-    expect(groupPrs([quiet, asked]).flatMap((each) => each.prs.map((p) => p.number))).toEqual([7, 1]);
+    expect([quiet, asked].sort(comparePrs).map((each) => each.number)).toEqual([7, 1]);
   });
 });
 
@@ -295,11 +296,10 @@ describe('the 90-day window', () => {
     const older = pr({ number: 2 }, 91 * DAY);
     expect([isOlderPr(recent, NOW), isOlderPr(older, NOW)]).toEqual([false, true]);
     expect(isOlderPr(older, Number.NaN)).toBe(false);
-    expect(splitPrs([older, recent], NOW)).toEqual({ recent: [recent], older: [older] });
   });
 });
 
-describe('grouping, sorting and the attention count', () => {
+describe('sorting and the attention count', () => {
   const demoOld = pr({ number: 1 }, 300);
   const demoFailing = pr({ number: 2, checks: 'failing' }, 400);
   const demoNew = pr({ number: 3 }, 10);
@@ -311,13 +311,8 @@ describe('grouping, sorting and the attention count', () => {
     expect([demoOld, demoNew, demoFailing].sort(comparePrs).map((each) => each.number)).toEqual([2, 3, 1]);
   });
 
-  it('heads each repo once, ordered by its newest update, with its label as GitHub spells it', () => {
-    const groups = groupPrs([demoOld, relayReview, demoFailing, blog, relayConflict, demoNew]);
-    expect(groups.map((group) => [group.repo, group.label, group.prs.map((each) => each.number), group.attention])).toEqual([
-      ['example/blog', 'example/Blog', [4], 0],
-      ['example/demo-app', 'example/demo-app', [2, 3, 1], 1],
-      ['example/event-relay', 'example/event-relay', [9, 8], 2],
-    ]);
+  it('sorts across repos the same way', () => {
+    expect([demoOld, relayReview, demoFailing, blog, relayConflict, demoNew].sort(comparePrs).map((each) => each.number)).toEqual([9, 8, 2, 4, 3, 1]);
   });
 
   it('counts failing checks, conflicts and changes requested, drafts included', () => {
@@ -379,29 +374,90 @@ describe('sessions and PRs', () => {
     expect(sessionsFor(pr({ number: 5, head: undefined }), [pusher]).strong).toHaveLength(0);
   });
 
-  it("gives a session its strongly linked open PRs, the ones that need attention first, then the newest link's", () => {
+  it('gives a session the open PRs it has a strong link to, owned or not, the most urgent first (W106)', () => {
     const worker = session({ prLinks: [prLink('opened', quiet, 1), prLink('pushed', failing, 50), prLink('mentioned', other, 0)] });
-    expect(prsFor(worker, [quiet, failing, other]).map((each) => each.number)).toEqual([42, 7]);
-    const newest = session({ prLinks: [prLink('opened', quiet, 30), prLink('prompted', other, 2)] });
-    expect(prsFor(newest, [quiet, other]).map((each) => each.number)).toEqual([9, 7]);
+    expect(strongPrsOf(worker, [quiet, failing, other]).map((each) => each.number)).toEqual([42, 7]);
     // Only mentioned, or linked to a PR that isn't open: none.
-    expect(prsFor(session({ prLinks: [prLink('mentioned', quiet)] }), [quiet])).toEqual([]);
-    expect(prsFor(session({ prLinks: [prLink('opened', pr({ number: 99 }))] }), [quiet])).toEqual([]);
-    const map = prsBySession([worker, session({})], [quiet, failing, other]);
-    expect([...map.keys()]).toEqual([worker.sessionId]);
+    expect(strongPrsOf(session({ prLinks: [prLink('mentioned', quiet)] }), [quiet])).toEqual([]);
+    expect(strongPrsOf(session({ prLinks: [prLink('opened', pr({ number: 99 }))] }), [quiet])).toEqual([]);
   });
 
-  it("makes the row's badge from the most urgent one, with how many more, and each in its hint", () => {
+  it("makes the row's badge from the most urgent one it owns, its state short, with how many more, and each in its hint (W106)", () => {
     expect(sessionPrBadge(undefined)).toBeUndefined();
     expect(sessionPrBadge([])).toBeUndefined();
     const badge = sessionPrBadge([failing, quiet, other]);
-    expect([badge?.pr.number, badge?.more, badge?.attention]).toEqual([42, 2, true]);
+    expect([badge?.pr.number, badge?.state, badge?.more, badge?.attention]).toEqual([42, 'CI failing', 2, true]);
+    expect(sessionPrBadge([pr({ number: 3, mergeable: 'conflicts' })])?.state).toBe('conflicts');
+    expect(sessionPrBadge([pr({ number: 3, review: 'changes-requested' })])?.state).toBe('changes requested');
+    expect(sessionPrBadge([pr({ number: 3, relation: 'review-requested', checks: 'failing' })])?.state).toBe('review requested');
+    // Another author's failing checks are theirs to fix: no state, no attention.
+    expect(sessionPrBadge([pr({ number: 3, relation: 'mentioned', checks: 'failing' })])?.state).toBeUndefined();
+    expect(sessionPrBadge([quiet])?.state).toBeUndefined();
     expect(badge?.hint.split('\n')).toEqual([
       'example/demo-app #42: A made-up change, number 42 (checks failing)',
       'example/demo-app #7: A made-up change, number 7',
       'example/event-relay #9: A made-up change, number 9',
     ]);
     expect(sessionPrBadge([quiet])?.attention).toBe(false);
+  });
+});
+
+describe('why a PR needs you (W106)', () => {
+  it('says why in the badges’ order, with its number for a session row, and nothing when it needs nothing', () => {
+    expect(prReason(pr({ number: 128, checks: 'failing', mergeable: 'conflicts' }))).toBe('CI is failing');
+    expect(prReason(pr({ number: 128, checks: 'failing' }), true)).toBe('CI is failing on #128');
+    expect(prReason(pr({ number: 128, mergeable: 'conflicts' }), true)).toBe('#128 has merge conflicts');
+    expect(prReason(pr({ number: 128, mergeable: 'conflicts' }))).toBe('It has merge conflicts');
+    expect(prReason(pr({ number: 128, review: 'changes-requested' }), true)).toBe('Changes are requested on #128');
+    expect(prReason(pr({ number: 128, relation: 'review-requested', checks: 'failing' }), true)).toBe('Your review is requested on #128');
+    expect(prReason(pr({ number: 128 }))).toBeUndefined();
+    expect(prReason(pr({ number: 128, relation: 'mentioned', checks: 'failing' }))).toBeUndefined();
+    expect(RELATION_PHRASES).toEqual({ authored: 'Yours', 'review-requested': 'Asks your review', mentioned: 'Mentions you' });
+  });
+});
+
+describe('where the server placed a PR, and which owners each root claims (W104, W106)', () => {
+  it('reads each place, and leaves out one that is not the shape, which the page treats as unclaimed', () => {
+    expect(parsePlace({ kind: 'cloned', root: '/Users/example/code', key: '/Users/example/code/demo-app', label: 'demo-app' })).toEqual({
+      kind: 'cloned',
+      root: '/Users/example/code',
+      key: '/Users/example/code/demo-app',
+      label: 'demo-app',
+    });
+    expect(parsePlace({ kind: 'not-cloned', root: '/Users/example/code', extra: 1 })).toEqual({ kind: 'not-cloned', root: '/Users/example/code' });
+    expect(parsePlace({ kind: 'unclaimed' })).toEqual({ kind: 'unclaimed' });
+    for (const bad of [undefined, null, 'cloned', { kind: 'cloned', root: '/x' }, { kind: 'cloned', root: '/x', key: '', label: 'x' }, { kind: 'not-cloned' }, { kind: 'elsewhere' }, { kind: 'cloned', root: '/x', key: `/${'x'.repeat(5000)}`, label: 'x' }]) {
+      expect(parsePlace(bad), JSON.stringify(bad)?.slice(0, 60)).toBeUndefined();
+    }
+  });
+
+  it("keeps a PR's place, and drops one that isn't the shape with the PR kept", () => {
+    const place = { kind: 'not-cloned', root: '/Users/example/code' };
+    const list = parsePullRequestList({ ...prList([]), prs: [{ ...pr({ number: 1 }), place }, { ...pr({ number: 2 }), place: { kind: 'nowhere' } }] });
+    expect(list?.prs.map((each) => [each.number, each.place])).toEqual([
+      [1, place],
+      [2, undefined],
+    ]);
+  });
+
+  it('reads each root’s owners: a list of lowercase owners, all or none, from the config file or the clones', () => {
+    expect(
+      parseRootOwners([
+        { root: '/Users/example/code', owners: ['example', 'Upper', 'example', '-bad', 7], source: 'clones' },
+        { root: '/Users/example/oss', owners: 'all', source: 'config' },
+        { root: '/Users/example/other', owners: 'none', source: 'config' },
+        { root: '/Users/example/bad', owners: 'some', source: 'config' },
+        { root: '/Users/example/bad', owners: [], source: 'guess' },
+        'nope',
+      ]),
+    ).toEqual([
+      { root: '/Users/example/code', owners: ['example'], source: 'clones' },
+      { root: '/Users/example/oss', owners: 'all', source: 'config' },
+      { root: '/Users/example/other', owners: 'none', source: 'config' },
+    ]);
+    expect(parseRootOwners('nope')).toBeUndefined();
+    expect(parsePullRequestList({ ...prList([]), roots: [{ root: '/r', owners: 'all', source: 'config' }] })?.roots).toEqual([{ root: '/r', owners: 'all', source: 'config' }]);
+    expect(parsePullRequestList(prList([]))?.roots).toBeUndefined();
   });
 });
 

@@ -125,6 +125,7 @@ describe('the filter chips', () => {
     expect(group().getAllByRole('button').map((button) => [button.textContent, button.getAttribute('aria-pressed')])).toEqual([
       ['Interactive', 'false'],
       ['Background', 'false'],
+      ['Has PR', 'false'],
     ]);
   });
 

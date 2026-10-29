@@ -1,19 +1,20 @@
-// Pull requests in the web UI (M4, W95; docs/design-system.md, 4: Pull requests): the repo list's
-// item and its count, the PR list with its repo headings, collapsed and remembered, its rows, Show
-// older, the filter and each source state; Refresh and its answers; the session row's badge and the
-// session view's links; the PR view; and navigation both ways, with the back button and the keys.
-// W101's PRs that ask your review or mention you, their chips, badges and sentence. Made-up PRs,
-// repos, teams and sessions only.
+// Pull requests in the web UI (M4, W95, W106; docs/design-system.md, 4: Pull requests): a row is a
+// piece of work. The repo list's items and counts, Needs you through a PR, a cloned repo with only PR
+// rows and one that isn't cloned; a session row's badge for the PRs it owns, a later session taking
+// one over, its line 2, and an ended session that owns an open PR; a PR row's two lines; the Pull
+// requests view, its hidden line, Show older, the filter and each source state; Refresh and its
+// answers; the session view's Pull requests tab and its links; the PR view; Has PR; and navigation
+// both ways, with the back button and the keys, through session and PR rows alike. W101's PRs that ask
+// your review or mention you, their chips, badges and sentence. Made-up PRs, repos, teams and
+// sessions only.
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { PRS_MAX, PRS_REFRESH_MIN_MS, PRS_REFRESH_PATH, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
+import { PRS_MAX, PRS_REFRESH_MIN_MS, PRS_REFRESH_PATH, type IndexSnapshot, type PullRequestList, type PullRequestPlace, type PullRequestSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
-import { fnv1a64 } from '../notNeeded.js';
 import { PRS_OFF_TEXT, refreshFailedText, refreshSoonText } from '../prRefresh.js';
-import { PR_REPOS_KEY } from '../prRepos.js';
 import { prKey, sessionsFor } from '../prs.js';
 import { memoryNavigation, type NavigationEnv } from '../selection.js';
 import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
@@ -21,8 +22,9 @@ import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '.
 import { fakeHistory } from '../test/history.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
-import { NO_RELATION, PrList, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
-import { COPY_LINK, OPEN_ON_GITHUB, PR_MISSING, PrView } from './PrView.js';
+import { CONFIGURATION_URL, NO_RELATION, prSourceBody, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
+import { COPY_LINK, OPEN_ON_GITHUB, OWNS_IT, PR_MISSING, PrView } from './PrView.js';
+import { LINKED_NOTE } from './SessionPrs.js';
 import type { TerminalHandle } from './Terminal.js';
 
 class QuietTerminal implements TerminalHandle {
@@ -40,13 +42,21 @@ const ROOT = '/Users/example/code';
 const API_KEY = 'a'.repeat(43);
 const DAY = 60 * 24;
 
-// The made-up PRs: two in demo-app, two in event-relay, and one in blog older than the 90 days.
+const RELAY = `${ROOT}/event-relay`;
+const placed = (each: PullRequestSummary, place: PullRequestPlace): PullRequestSummary => ({ ...each, place });
+const cloned = (key: string, label: string): PullRequestPlace => ({ kind: 'cloned', root: ROOT, key, label });
+
+// The made-up PRs: alpha owns #42 and #43 in demo-app, beta #9 in event-relay; #8 in event-relay and
+// #5 in example/Docs-Site, which isn't cloned, have no session; #3, in blog, is older than the 90 days;
+// and no root claims other-org/tool's #6.
 const failing = pr({ number: 42, title: 'Fix the made-up export job', checks: 'failing', failingChecks: ['test (22.x)', 'lint'], failingCount: 4 }, 30);
 const approved = pr({ number: 43, review: 'approved' }, 200);
 const conflicts = pr({ number: 9, repoLabel: 'example/event-relay', mergeable: 'conflicts' }, 10);
-const draft = pr({ number: 8, repoLabel: 'example/event-relay', draft: true, checks: 'pending', mergeable: 'unknown' }, 300);
-const older = pr({ number: 3, repoLabel: 'example/blog', review: 'changes-requested' }, 100 * DAY);
-const PRS = [conflicts, failing, approved, draft, older];
+const draft = placed(pr({ number: 8, repoLabel: 'example/event-relay', title: 'Document the made-up retry headers', draft: true, checks: 'pending', mergeable: 'unknown' }, 300), cloned(RELAY, 'event-relay'));
+const docs = placed(pr({ number: 5, repoLabel: 'example/Docs-Site', title: 'Move the made-up guide' }, 60), { kind: 'not-cloned', root: ROOT });
+const older = placed(pr({ number: 3, repoLabel: 'example/blog', review: 'changes-requested' }, 100 * DAY), cloned(`${ROOT}/blog`, 'blog'));
+const unclaimed = placed(pr({ number: 6, repoLabel: 'other-org/tool' }, 70), { kind: 'unclaimed' });
+const PRS = [conflicts, failing, approved, draft, docs, older, unclaimed];
 
 /** The made-up sessions: alpha opened #42 and pushed #43's branch, beta pushed to #9, gamma named #42 in a reply, delta (finished) was given #42. */
 function sessions() {
@@ -103,8 +113,15 @@ const settle = () => act(async () => {});
 const main = () => screen.getByRole('main');
 const repoList = () => screen.getByRole('navigation', { name: 'Repos' });
 const prItem = () => [...repoList().querySelectorAll<HTMLAnchorElement>('a[data-repo-item]')].find((link) => link.querySelector('.repo-item-label')?.textContent === 'Pull requests');
-const repoHeadings = () => [...main().querySelectorAll('.pr-repo-label')].map((label) => label.textContent);
 const prRows = () => [...main().querySelectorAll<HTMLElement>('[data-open-pr]')].filter((button) => !button.closest('[hidden]')).map((button) => button.dataset.openPr);
+/** Every row shown, a session's by its name, a PR's as "#n", in order. */
+const rows = () =>
+  [...main().querySelectorAll<HTMLElement>('[data-open-session], [data-open-pr]')]
+    .filter((button) => !button.closest('[hidden]'))
+    .map((button) => (button.dataset.openPr !== undefined ? `#${button.dataset.openPr.split('/').pop()}` : button.textContent));
+const repoItem = (label: string) => [...repoList().querySelectorAll<HTMLAnchorElement>('a[data-repo-item]')].find((link) => link.querySelector('.repo-item-label')?.textContent === label);
+/** A session's row by its name, in a collapsed Finished section too. */
+const sessionRow = (name: string) => [...main().querySelectorAll<HTMLElement>('[data-open-session]')].find((button) => button.textContent === name)!.closest('li')!;
 const row = (number: number) => main().querySelector<HTMLElement>(`li[data-pr$="/${number}"]`)!;
 const prView = () => document.getElementById('pr-view') ?? undefined;
 const sessionView = () => document.getElementById('session-view') ?? undefined;
@@ -122,18 +139,25 @@ describe('the repo list', () => {
     expect(prItem()).toBeUndefined();
   });
 
-  it('counts failing checks and conflicts, not the older changes requested, in subtle danger', () => {
-    renderDashboard(prList(PRS), { search: '?view=all' });
+  it('counts the rows that need you through a PR in Needs you, the Pull requests item and the page title (W106)', () => {
+    const { again } = renderDashboard(null, { search: '?view=all' });
+    expect(repoItem('Needs you')?.querySelector('.badge')).toBeNull();
+    again(prList(PRS));
     const labels = [...repoList().querySelectorAll('a[data-repo-item] .repo-item-label')].map((label) => label.textContent);
     expect(labels.slice(0, 4)).toEqual(['Needs you', 'All sessions', 'Starred', 'Pull requests']);
+    // alpha, through #42's failing checks, and beta, through #9's conflicts.
+    expect(repoItem('Needs you')?.querySelector('.badge')?.textContent).toBe('2 need you');
     const badge = prItem()?.querySelector('.badge');
-    expect(badge?.textContent).toBe('2 need attention');
-    expect(badge?.classList.contains('badge-subtle-danger')).toBe(true);
+    expect(badge?.textContent).toBe('2 need you');
+    expect(badge?.classList.contains('badge-attention')).toBe(true);
+    expect(document.title).toBe('(2) pitwall');
+    // Every row: five sessions and the two PR rows, #8 and #5.
+    expect(repoItem('All sessions')?.querySelector('.repo-item-count')?.textContent).toBe('7 sessions');
   });
 
-  it('shows how many there are while none needs attention, and nothing before the first fetch', () => {
+  it('shows how many rows have a PR while none needs you, and nothing before the first fetch', () => {
     const { again } = renderDashboard(prList([approved, draft]), { search: '?view=all' });
-    expect(prItem()?.querySelector('.repo-item-count')?.textContent).toBe('2 pull requests');
+    expect(prItem()?.querySelector('.repo-item-count')?.textContent).toBe('2 sessions');
     again(prList([], { fetchedAt: undefined, refreshing: true }));
     expect(prItem()).toBeDefined();
     expect(prItem()?.querySelector('.repo-item-count, .badge')).toBeNull();
@@ -144,7 +168,34 @@ describe('the repo list', () => {
     expect(prItem()).toBeUndefined();
   });
 
-  it('selects the PR list in the session list column, with ?view=prs', async () => {
+  it('lists a cloned repo with only PR rows, and one that is not cloned, with its own icon and "not cloned" (W106)', () => {
+    const fresh = placed(pr({ number: 11, repoLabel: 'example/api-server' }, 20), cloned(`${ROOT}/api-server`, 'api-server'));
+    renderDashboard(prList([...PRS, fresh]), { search: '?view=all' });
+    expect(repoItem('api-server')?.querySelector('.repo-item-count')?.textContent).toBe('1 session');
+    const notCloned = repoItem('example/Docs-Site')!;
+    expect(notCloned.textContent).toBe('example/Docs-Site, not cloned1 session');
+    expect(notCloned.classList.contains('not-cloned')).toBe(true);
+    expect(notCloned.querySelector('.repo-item-icon')?.getAttribute('data-icon') ?? notCloned.querySelector('svg')?.outerHTML).toBeTruthy();
+    expect(new URL(notCloned.href).search).toBe('?repo=github.com/example/docs-site');
+    // Its repo goes once it has no PR row.
+    renderDashboard(prList([conflicts]), { search: '?view=all' });
+    expect(screen.getAllByRole('navigation', { name: 'Repos' }).at(-1)?.textContent).not.toContain('Docs-Site');
+  });
+
+  it('opens a not-cloned repo with its PR rows, says so in its heading, offers no Hide, and keeps its name out of storage', async () => {
+    const store = memory();
+    renderDashboard(prList(PRS), { search: '?view=all', storage: store.source });
+    fireEvent.click(repoItem('example/Docs-Site')!);
+    await settle();
+    const heading = within(main()).getByRole('heading', { level: 2 });
+    expect(heading.textContent).toBe('example/Docs-Site, not clonedNot cloned');
+    expect(rows()).toEqual(['#5']);
+    expect(main().querySelector('li[data-pr] .pr-row-end')?.textContent).toBe(' · Not cloned');
+    expect(within(main()).queryByRole('button', { name: /Hide from repo list/ })).toBeNull();
+    expect(store.items.get('pitwall.view.v1') ?? '').not.toContain('docs-site');
+  });
+
+  it('selects Pull requests in the session list column, with ?view=prs', async () => {
     const { navigation } = renderDashboard(prList(PRS), { search: '?view=all' });
     fireEvent.click(prItem()!);
     await settle();
@@ -154,61 +205,134 @@ describe('the repo list', () => {
   });
 });
 
-describe('the PR list', () => {
-  it('heads each repo by its newest update, the PRs that need attention first, with the summary', () => {
-    renderDashboard();
-    expect(summary()).toBe('4 open2 need attention');
-    expect(repoHeadings()).toEqual(['example/event-relay', 'example/demo-app']);
-    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/8', 'example/demo-app/42', 'example/demo-app/43']);
-    const heading = within(main()).getByRole('button', { name: /example\/demo-app/ });
-    expect(heading.textContent).toBe('example/demo-app2 open1 needs attention');
-    expect(heading.getAttribute('aria-expanded')).toBe('true');
+describe('rows', () => {
+  it("gives a session's row a badge for the most urgent open PR it owns, its state short, with how many more", () => {
+    renderDashboard(prList(PRS), { search: '?view=all' });
+    const badgeOf = (name: string) => sessionRow(name).querySelector('.pr-badge');
+    const alpha = badgeOf('alpha');
+    expect(alpha?.textContent).toBe('Pull request #42 CI failing, needs attention+1, and 1 more');
+    expect(alpha?.classList.contains('badge-subtle-danger')).toBe(true);
+    expect(badgeOf('beta')?.textContent).toBe('Pull request #9 conflicts, needs attention');
+    // Only mentioned, or a weaker link to a PR another session owns: no badge.
+    expect(badgeOf('gamma')).toBeNull();
+    expect(badgeOf('delta')).toBeNull();
+    expect(badgeOf('epsilon')).toBeNull();
+    // Not a control of its own.
+    expect(alpha?.closest('button')).toBeNull();
   });
 
-  it('gives each row its title in <bdi>, its badges, its number, and its strongly linked sessions', () => {
-    renderDashboard();
-    const fortyTwo = row(42);
-    expect(fortyTwo.querySelector('bdi')?.textContent).toBe('Fix the made-up export job');
-    expect([...fortyTwo.querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Checks failing']);
-    // alpha opened it and delta was given it; gamma only named it, so it isn't here.
-    expect(fortyTwo.querySelector('.pr-what')?.textContent).toBe('#42 · , sessions alpha, delta');
-    expect([...fortyTwo.querySelectorAll('.pr-sessions bdi')].map((bdi) => bdi.textContent)).toEqual(['alpha', 'delta']);
-    expect([...row(8).querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Draft', 'Checks pending']);
-    expect([...row(43).querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Approved']);
-    const many = sessionsFor(failing, [...Object.values(sessions()), session({ name: 'zeta', prLinks: [prLink('opened', failing)] })]).strong;
-    expect(many).toHaveLength(3);
+  it("says why on line 2 and has the bar while a PR it owns needs attention, and is neutral while it doesn't", () => {
+    const { again } = renderDashboard(prList(PRS), { search: '?view=all' });
+    expect(sessionRow('alpha').classList.contains('attention')).toBe(true);
+    expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · CI is failing on #42');
+    // Its Not needed now toggle is for what the session needs, not its PRs.
+    expect(sessionRow('alpha').querySelector('[data-not-needed-session]')).toBeNull();
+    again(prList([approved]));
+    const badge = sessionRow('alpha').querySelector('.pr-badge');
+    expect(badge?.textContent).toBe('Pull request #43');
+    expect(badge?.classList.contains('badge-subtle-neutral')).toBe(true);
+    expect(sessionRow('alpha').classList.contains('attention')).toBe(false);
+    expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · You: run the tests');
   });
 
-  it('names two sessions, then "+n"', () => {
-    const extra = ['zeta', 'eta', 'theta'].map((name) => session({ name, prLinks: [prLink('opened', approved)] }));
+  it('moves a PR to the session that acted on it later, which takes its badge over', () => {
     const base = snap();
-    const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: extra })] };
-    const storage = memory().source;
-    const navigation = memoryNavigation('?view=prs');
-    render(
-      <Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={navigation} storage={storage} />,
-    );
-    expect(row(43).querySelector('.pr-sessions')?.textContent).toMatch(/^ · , sessions (alpha|zeta|eta|theta), (alpha|zeta|eta|theta) \+2, and 2 more$/);
+    const zeta = session({ sessionId: 'pr-zeta', name: 'zeta', prLinks: [prLink('pushed', approved, 1)] });
+    const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [zeta] })] };
+    render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=all')} storage={memory().source} />);
+    expect(sessionRow('alpha').querySelector('.pr-badge')?.textContent).toBe('Pull request #42 CI failing, needs attention');
+    expect(sessionRow('zeta').querySelector('.pr-badge')?.textContent).toBe('Pull request #43');
   });
 
-  it('collapses a repo, and remembers it by a hash of its name, never the name', () => {
-    const store = memory();
-    const first = renderDashboard(prList(PRS), { storage: store.source });
-    const toggle = within(main()).getByRole('button', { name: /example\/event-relay/ });
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(prRows()).toEqual(['example/demo-app/42', 'example/demo-app/43']);
-    const raw = store.items.get(PR_REPOS_KEY) ?? '';
-    expect(raw).not.toContain('event-relay');
-    expect(JSON.parse(raw)).toEqual({ v: 1, collapsed: [fnv1a64('example/event-relay')] });
-    first.unmount();
-    // A reload: still collapsed, with its counts in sight.
-    renderDashboard(prList(PRS), { storage: store.source });
-    expect(within(main()).getByRole('button', { name: /example\/event-relay/ }).getAttribute('aria-expanded')).toBe('false');
-    expect(within(main()).getByRole('button', { name: /example\/event-relay/ }).textContent).toContain('1 needs attention');
+  it('keeps an ended session that owns an open PR in the list, not in Finished, until the PR closes', () => {
+    const open = pr({ number: 61, title: 'Tidy the made-up notes' }, 15);
+    const base = snap();
+    const omega = session({ sessionId: 'pr-omega', name: 'omega', ended: true, finished: true, alive: false, pid: undefined, status: undefined, prLinks: [prLink('opened', open, 60)] });
+    const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/notes`, label: 'notes', sessions: [omega] })] };
+    const ui = (list: PullRequestList) => <Dashboard view={{ state: 'live', snapshot: s, prs: list }} navigation={memoryNavigation('?view=all')} storage={memory().source} />;
+    const { rerender } = render(ui(prList([...PRS, open])));
+    const finishedRows = () => [...main().querySelectorAll('.finished-sessions [data-open-session]')].map((button) => button.textContent);
+    expect(finishedRows()).toEqual(['delta']);
+    expect(sessionRow('omega').closest('.finished-sessions')).toBeNull();
+    expect(sessionRow('omega').classList.contains('finished')).toBe(false);
+    expect(sessionRow('omega').querySelector('.badge[data-status]')?.textContent).toBe('Ended');
+    rerender(ui(prList(PRS)));
+    expect(finishedRows()).toEqual(['delta', 'omega']);
   });
 
-  it('lists the PRs older than 90 days behind Show older, which keeps focus as Hide older', async () => {
+  it('gives a PR with no session a row of two lines, under the repo the server placed it in', () => {
+    renderDashboard(prList(PRS), { search: '?view=all' });
+    const eight = row(8);
+    expect(eight.querySelector('h3 button')?.textContent).toBe('#8 Document the made-up retry headers');
+    expect([...eight.querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Draft', 'Checks pending']);
+    expect(eight.querySelector('.pr-what')?.textContent).toMatch(/^event-relay · Yours · Updated .+ ago · No session yet$/);
+    // The time's slot is kept empty, and the slot for W107's actions.
+    expect(eight.querySelector('.session-line > .activity')?.textContent).toBe('');
+    expect(eight.querySelector('.pr-row-actions')).not.toBeNull();
+    expect(eight.classList.contains('attention')).toBe(false);
+    // In its group's own list, line 2 has no label; one that needs you says why, with the bar.
+    const asked = placed(pr({ number: 77, repoLabel: 'example/event-relay', relation: 'review-requested' }, 20), cloned(RELAY, 'event-relay'));
+    renderDashboard(prList([asked]), { search: `?repo=${RELAY}` });
+    const seventySeven = screen.getAllByRole('main').at(-1)!.querySelector('li[data-pr$="/77"]')!;
+    expect(seventySeven.querySelector('.pr-what')?.textContent).toMatch(/^Your review is requested · Updated .+ ago · No session yet$/);
+    expect(seventySeven.classList.contains('attention')).toBe(true);
+  });
+
+  it('opens a PR row in the PR view, as ?pr=', async () => {
+    const { navigation } = renderDashboard(prList(PRS), { search: '?view=all' });
+    fireEvent.click(within(main()).getByRole('button', { name: '#8 Document the made-up retry headers' }));
+    await settle();
+    expect(navigation.location.search).toBe('?view=all&pr=example/event-relay/8');
+    expect(prView()?.querySelector('h2 bdi')?.textContent).toBe('Document the made-up retry headers');
+    expect(row(8).classList.contains('open')).toBe(true);
+  });
+
+  it('keeps only the rows with an open PR with Has PR, and no PR row with a kind chip (W106)', () => {
+    renderDashboard(prList(PRS), { search: '?view=all' });
+    fireEvent.click(within(main()).getByRole('button', { name: 'Has PR', pressed: false }));
+    expect(rows()).toEqual(['alpha', 'beta', '#5', '#8']);
+    fireEvent.click(within(main()).getByRole('button', { name: 'Interactive', pressed: false }));
+    expect(rows()).toEqual(['alpha', 'beta']);
+    fireEvent.click(within(main()).getByRole('button', { name: 'Has PR', pressed: true }));
+    expect(rows()).toEqual(['alpha', 'beta', 'epsilon', 'gamma']);
+  });
+});
+
+describe('Has PR, with no list of pull requests (W106)', () => {
+  const chipLabels = () => [...main().querySelectorAll('.filter-chips .chip')].map((chip) => chip.textContent);
+
+  it('is no chip before a list comes or with pull requests off, and a filter it was on for drops it', () => {
+    const { again } = renderDashboard(null, { search: '?view=all' });
+    expect(chipLabels()).toEqual(['Interactive', 'Background']);
+    again(prList(PRS));
+    expect(chipLabels()).toEqual(['Interactive', 'Background', 'Has PR']);
+    fireEvent.click(within(main()).getByRole('button', { name: 'Has PR', pressed: false }));
+    expect(rows()).toEqual(['alpha', 'beta', '#5', '#8']);
+    again(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } }));
+    expect(chipLabels()).toEqual(['Interactive', 'Background']);
+    expect(rows()).toEqual(['alpha', 'beta', 'epsilon', 'gamma']);
+  });
+});
+
+describe('the Pull requests view', () => {
+  it('lists every row with an open PR, the sessions that own one and the PR rows, those that need you first, with the summary', () => {
+    renderDashboard();
+    expect(rows()).toEqual(['alpha', 'beta', '#5', '#8']);
+    expect(summary()).toBe('4 sessions2 need you');
+    // Line 2 names each row's group, as the other views do.
+    expect(row(5).querySelector('.pr-what')?.textContent).toMatch(/^example\/Docs-Site · Yours · Updated .+ ago · Not cloned$/);
+  });
+
+  it('says how many PRs are hidden because no root claims their owner, with a link to the README’s Configuration', () => {
+    renderDashboard();
+    const line = main().querySelector('.pr-hidden')!;
+    expect(line.textContent).toBe('1 pull request is hidden: no root claims other-org. How to show them');
+    const link = within(line as HTMLElement).getByRole('link', { name: 'How to show them' });
+    expect([link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')]).toEqual([CONFIGURATION_URL, '_blank', 'noopener noreferrer']);
+    expect(CONFIGURATION_URL).toBe('https://github.com/leggetter/pitwall#configuration');
+  });
+
+  it('lists the PR rows older than 90 days behind Show older, which keeps focus as Hide older', async () => {
     renderDashboard();
     expect(prRows()).not.toContain('example/blog/3');
     const show = within(main()).getByRole('button', { name: 'Show 1 older pull request' });
@@ -216,33 +340,36 @@ describe('the PR list', () => {
     fireEvent.click(show);
     await settle();
     expect(prRows()).toContain('example/blog/3');
-    expect(summary()).toBe('5 open3 need attention');
+    expect(summary()).toBe('5 sessions3 need you');
     expect(document.activeElement?.textContent).toBe('Hide older pull requests');
+    // It's a row everywhere while it's shown: blog is in the repo list.
+    expect(repoItem('blog')).toBeDefined();
   });
 
-  it('has Show older as the empty state when every PR is older', () => {
-    renderDashboard(prList([older]));
-    expect(screen.getByText('No pull requests updated in the last 90 days')).toBeDefined();
-    fireEvent.click(within(main()).getByRole('button', { name: 'Show 1 older pull request' }));
-    expect(prRows()).toEqual(['example/blog/3']);
+  it('says when no row has an open PR, with the hidden line', () => {
+    renderDashboard(prList([unclaimed]));
+    expect(screen.getByText('No open pull requests')).toBeDefined();
+    expect(main().querySelector('.empty-state .pr-hidden')?.textContent).toContain('1 pull request is hidden');
   });
 
-  it('filters by title, repo, number and branch, and says when nothing matches', () => {
+  it('filters by session, title, repo, number and branch, and says when nothing matches', () => {
     renderDashboard();
     const field = within(main()).getByRole('searchbox', { name: 'Filter pull requests' });
-    expect(field.getAttribute('placeholder')).toBe('Filter by title, repo, number or branch');
+    expect(field.getAttribute('placeholder')).toBe('Filter by session, title, repo or number');
     fireEvent.change(field, { target: { value: 'event-relay' } });
-    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/8']);
-    expect(summary()).toBe('2 of 4 open2 need attention');
+    expect(rows()).toEqual(['beta', '#8']);
+    expect(summary()).toBe('2 of 4 sessions2 need you');
+    // A session by a PR it owns.
     fireEvent.change(field, { target: { value: 'export' } });
-    expect(prRows()).toEqual(['example/demo-app/42']);
-    expect(row(42).querySelector('mark')?.textContent).toBe('export');
-    fireEvent.change(field, { target: { value: 'branch-43' } });
-    expect(prRows()).toEqual(['example/demo-app/43']);
+    expect(rows()).toEqual(['alpha']);
+    fireEvent.change(field, { target: { value: 'branch-8' } });
+    expect(rows()).toEqual(['#8']);
+    fireEvent.change(field, { target: { value: '#5' } });
+    expect(row(5).querySelector('mark')?.textContent).toBe('#5');
     fireEvent.change(field, { target: { value: 'nothing like it' } });
-    expect(screen.getByText('No pull requests match')).toBeDefined();
+    expect(screen.getByText('No sessions match')).toBeDefined();
     fireEvent.click(within(main()).getByRole('button', { name: 'Clear filter' }));
-    expect(prRows()).toHaveLength(4);
+    expect(rows()).toHaveLength(4);
     expect(document.activeElement).toBe(field);
   });
 
@@ -282,22 +409,7 @@ describe('each source state', () => {
   it('says pull requests are off, with Show all sessions, in the list itself', () => {
     const onShowAll = vi.fn();
     const refresh = { refresh: () => {}, sending: false, offUntil: 0 };
-    render(
-      <PrList
-        list={prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } })}
-        sessions={[]}
-        filter=""
-        onFilter={() => {}}
-        relations={new Set()}
-        onRelations={() => {}}
-        showOlder={false}
-        onToggleOlder={() => {}}
-        collapsed={new Set()}
-        onToggleRepo={() => {}}
-        refresh={refresh}
-        onShowAll={onShowAll}
-      />,
-    );
+    render(<>{prSourceBody({ kind: 'off' }, { refresh, refreshing: false, waiting: { shown: false, long: false }, onShowAll })}</>);
     expect(screen.getByText('Pull requests are off')).toBeDefined();
     expect(screen.queryByRole('button', { name: REFRESH_LABEL })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
@@ -323,7 +435,7 @@ describe('each source state', () => {
     const notice = main().querySelector('.pr-stale .inline-alert');
     expect(notice?.querySelector('.inline-alert-title')?.textContent).toBe("Couldn't refresh your pull requests");
     expect(notice?.querySelector('.inline-alert-body')?.textContent).toMatch(/^No network\. This list is from 2h ago\.$/);
-    expect(prRows()).toHaveLength(4);
+    expect(rows()).toHaveLength(4);
   });
 });
 
@@ -409,72 +521,50 @@ describe('Refresh', () => {
 });
 
 describe('sessions and PRs', () => {
-  it("gives a session's row a badge for its most urgent strongly linked open PR, with how many more", () => {
-    renderDashboard(prList(PRS), { search: '?view=all' });
-    const badgeOf = (name: string) => within(main()).getByRole('button', { name }).closest('li')?.querySelector('.pr-badge');
-    const alpha = badgeOf('alpha');
-    expect(alpha?.textContent).toBe('Pull request #42, needs attention+1, and 1 more');
-    expect(alpha?.classList.contains('badge-subtle-danger')).toBe(true);
-    expect(badgeOf('beta')?.textContent).toBe('Pull request #9, needs attention');
-    // Only mentioned: no badge.
-    expect(badgeOf('gamma')).toBeNull();
-    expect(badgeOf('epsilon')).toBeNull();
-    // Not a control of its own.
-    expect(alpha?.closest('button')).toBeNull();
-  });
-
-  it("is neutral while that PR doesn't need attention", () => {
-    renderDashboard(prList([approved]), { search: '?view=all' });
-    const badge = within(main()).getByRole('button', { name: 'alpha' }).closest('li')?.querySelector('.pr-badge');
-    expect(badge?.textContent).toBe('Pull request #43');
-    expect(badge?.classList.contains('badge-subtle-neutral')).toBe(true);
-  });
-
-  it("opens a PR from its row, a session from the PR's view, and the PR from the session's header, with back and forward", async () => {
+  it("opens a session from the list, the PR from its header, a session from the PR's view, with back and forward", async () => {
     const history = fakeHistory('?view=prs');
     renderDashboard(prList(PRS), { navigation: history.navigation });
-    fireEvent.click(within(main()).getByRole('button', { name: 'Fix the made-up export job' }));
+    fireEvent.click(within(main()).getByRole('button', { name: 'alpha' }));
+    await settle();
+    expect(history.location.search).toBe('?view=prs&session=pr-alpha');
+    // Its header links to each open PR it owns, most urgent first.
+    const links = within(sessionView()!).getAllByRole('button', { name: /^Pull request / });
+    expect(links.map((link) => link.getAttribute('aria-label'))).toEqual(['Pull request example/demo-app #42', 'Pull request example/demo-app #43']);
+    fireEvent.click(links[0]!);
     await settle();
     expect(history.location.search).toBe('?view=prs&pr=example/demo-app/42');
     const view = prView()!;
     expect(view.getAttribute('aria-labelledby') && document.getElementById(view.getAttribute('aria-labelledby')!)?.textContent).toBe('Fix the made-up export job');
     expect(document.activeElement).toBe(view.querySelector('h2'));
-    expect(row(42).classList.contains('open')).toBe(true);
-    // Its sessions: strongly linked, then mentioned, each with why.
+    // Its sessions: the one that owns it first, as its session, then the others strongly linked, then mentioned, each with why.
     const sections = [...view.querySelectorAll('.pr-view-section')].map((section) => [section.querySelector('h3')?.textContent, [...section.querySelectorAll('.pr-view-session')].map((li) => li.textContent)]);
     expect(sections.slice(1)).toEqual([
-      ['Sessions', [expect.stringMatching(/^alphaIdleActive .+Opened it$/), expect.stringMatching(/^deltaDone(Active .+)?Given it in a prompt$/)]],
+      ['Sessions', [expect.stringMatching(new RegExp(`^alphaIdleActive .+Opened it · ${OWNS_IT}$`)), expect.stringMatching(/^deltaDone(Active .+)?Given it in a prompt$/)]],
       ['Mentioned in', [expect.stringMatching(/^gammaIdleActive .+Named it in a reply$/)]],
     ]);
 
-    fireEvent.click(within(view).getByRole('button', { name: 'alpha' }));
+    fireEvent.click(within(view).getByRole('button', { name: 'delta' }));
     await settle();
-    expect(history.location.search).toBe('?view=prs&session=pr-alpha');
+    expect(history.location.search).toBe('?view=prs&session=pr-delta');
     expect(prView()).toBeUndefined();
-    expect(sessionView()?.querySelector('.session-view-name')?.textContent).toBe('alpha');
-    // Its header links to each strongly linked open PR, most urgent first.
-    const links = within(sessionView()!).getAllByRole('button', { name: /^Pull request / });
-    expect(links.map((link) => link.getAttribute('aria-label'))).toEqual(['Pull request example/demo-app #42', 'Pull request example/demo-app #43']);
-    fireEvent.click(links[1]!);
-    await settle();
-    expect(history.location.search).toBe('?view=prs&pr=example/demo-app/43');
-    expect(sessionView()).toBeUndefined();
+    expect(sessionView()?.querySelector('.session-view-name')?.textContent).toBe('delta');
+    // It owns nothing, so its header has no links.
+    expect(within(sessionView()!).queryAllByRole('button', { name: /^Pull request / })).toEqual([]);
 
     history.back();
     await settle();
-    expect(sessionView()?.querySelector('.session-view-name')?.textContent).toBe('alpha');
-    expect(prView()).toBeUndefined();
+    expect(prView()?.querySelector('bdi')?.textContent).toBe('Fix the made-up export job');
     history.back();
     await settle();
-    expect(prView()?.querySelector('bdi')?.textContent).toBe('Fix the made-up export job');
+    expect(sessionView()?.querySelector('.session-view-name')?.textContent).toBe('alpha');
     history.forward();
     await settle();
-    expect(sessionView()).toBeDefined();
+    expect(prView()).toBeDefined();
   });
 
   it('closes the PR view with Escape, with focus back on its row', async () => {
     renderDashboard();
-    const title = within(main()).getByRole('button', { name: 'Fix the made-up export job' });
+    const title = within(main()).getByRole('button', { name: '#8 Document the made-up retry headers' });
     fireEvent.click(title);
     await settle();
     expect(prView()).toBeDefined();
@@ -487,21 +577,26 @@ describe('sessions and PRs', () => {
     expect(document.activeElement).toBe(title);
   });
 
-  it('steps through the PR list with j and k, and ↓ and ↑ on a row', async () => {
+  it("steps through session and PR rows alike with j and k, and ↓ and ↑ on a row, showing each in the view while one's open", async () => {
     const { navigation } = renderDashboard();
     press('j', document.body);
-    expect(document.activeElement?.getAttribute('data-open-pr')).toBe('example/event-relay/9');
+    expect(document.activeElement?.getAttribute('data-open-session')).toBe('pr-alpha');
     press('ArrowDown');
-    expect(document.activeElement?.getAttribute('data-open-pr')).toBe('example/event-relay/8');
+    expect(document.activeElement?.getAttribute('data-open-session')).toBe('pr-beta');
+    press('ArrowDown');
+    expect(document.activeElement?.getAttribute('data-open-pr')).toBe('example/docs-site/5');
     fireEvent.click(document.activeElement!);
     await settle();
-    expect(navigation.location.search).toBe('?view=prs&pr=example/event-relay/8');
+    expect(navigation.location.search).toBe('?view=prs&pr=example/docs-site/5');
     press('j', document.body);
     await settle();
-    expect(navigation.location.search).toBe('?view=prs&pr=example/demo-app/42');
+    expect(navigation.location.search).toBe('?view=prs&pr=example/event-relay/8');
     press('k', document.body);
     await settle();
-    expect(navigation.location.search).toBe('?view=prs&pr=example/event-relay/8');
+    press('k', document.body);
+    await settle();
+    expect(navigation.location.search).toBe('?view=prs&session=pr-beta');
+    expect(sessionView()?.querySelector('.session-view-name')?.textContent).toBe('beta');
   });
 
   it('says a ?pr= that is not one of your open PRs is not listed, and waits for the first list', () => {
@@ -538,19 +633,24 @@ describe('sessions and PRs', () => {
 });
 
 describe('PRs that ask your review or mention you (W101)', () => {
-  // #77 asks your review, #78 a team's you're on, with its author's failing checks; #79 mentions you, with failures that are its author's.
-  const review = pr({ number: 77, title: 'Add a made-up retry budget', relation: 'review-requested', reviewRequest: { via: 'direct' } }, 20);
-  const teamReview = pr({ number: 78, repoLabel: 'example/event-relay', relation: 'review-requested', reviewRequest: { via: 'team', team: 'example/reviewers' }, checks: 'failing', failingChecks: ['lint'] }, 50);
-  const mention = pr({ number: 79, relation: 'mentioned', checks: 'failing', mergeable: 'conflicts' }, 40);
+  // #77 asks your review, #78 a team's you're on, with its author's failing checks; #79 mentions you, with failures that are its author's. No session owns them.
+  const demo = cloned(`${ROOT}/demo-app`, 'demo-app');
+  const review = placed(pr({ number: 77, title: 'Add a made-up retry budget', relation: 'review-requested', reviewRequest: { via: 'direct' } }, 20), demo);
+  const teamReview = placed(
+    pr({ number: 78, repoLabel: 'example/event-relay', relation: 'review-requested', reviewRequest: { via: 'team', team: 'example/reviewers' }, checks: 'failing', failingChecks: ['lint'] }, 50),
+    cloned(RELAY, 'event-relay'),
+  );
+  const mention = placed(pr({ number: 79, relation: 'mentioned', checks: 'failing', mergeable: 'conflicts' }, 40), demo);
   const ALL = [...PRS, review, teamReview, mention];
   const chip = (label: string) => within(main()).getByRole('button', { name: label, pressed: false });
   const badges = (number: number) => [...row(number).querySelectorAll('.badge')].map((badge) => badge.textContent);
 
-  it('counts a review request among those that need attention, and a mention not, in the repo list and the summary', () => {
+  it('counts a review request among those that need you, and a mention not, in the repo list and the summary', () => {
     renderDashboard(prList(ALL), { search: '?view=all' });
-    expect(prItem()?.querySelector('.badge')?.textContent).toBe('4 need attention');
+    expect(prItem()?.querySelector('.badge')?.textContent).toBe('4 need you');
+    expect(repoItem('Needs you')?.querySelector('.badge')?.textContent).toBe('4 need you');
     fireEvent.click(prItem()!);
-    expect(summary()).toBe('7 open4 need attention');
+    expect(summary()).toBe('7 sessions4 need you');
   });
 
   it('marks a row Review requested or Mentioned, first among its badges, and sorts a review request with those that need attention', () => {
@@ -563,8 +663,8 @@ describe('PRs that ask your review or mention you (W101)', () => {
     // A team's request names the team in its hover tooltip.
     expect(row(78).querySelector('.pr-state-review-requested')?.classList.contains('has-hint')).toBe(true);
     expect(row(77).querySelector('.pr-state-review-requested')?.classList.contains('has-hint')).toBe(false);
-    // demo-app: #77 and #42 need attention, the newest first, then #79 and #43, which don't.
-    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/78', 'example/event-relay/8', 'example/demo-app/77', 'example/demo-app/42', 'example/demo-app/79', 'example/demo-app/43']);
+    // Those that need you first, the newest first, then the rest.
+    expect(rows()).toEqual(['alpha', 'beta', '#77', '#78', '#79', '#5', '#8']);
   });
 
   it('has the chips Yours, Review requested and Mentioned, which combine as OR, and Clear filters clears them and the text', () => {
@@ -577,35 +677,26 @@ describe('PRs that ask your review or mention you (W101)', () => {
     expect(clear()).toBeNull();
     fireEvent.click(chip('Review requested'));
     expect(within(main()).getByRole('button', { name: 'Review requested', pressed: true })).toBeDefined();
-    // The headings follow what's shown: #77 is newer than #78.
-    expect(prRows()).toEqual(['example/demo-app/77', 'example/event-relay/78']);
-    expect(summary()).toBe('2 of 7 open4 need attention');
+    expect(rows()).toEqual(['#77', '#78']);
+    expect(summary()).toBe('2 of 7 sessions4 need you');
     fireEvent.click(chip('Mentioned'));
-    expect(prRows()).toEqual(['example/demo-app/77', 'example/demo-app/79', 'example/event-relay/78']);
+    expect(rows()).toEqual(['#77', '#78', '#79']);
     fireEvent.click(chip('Yours'));
-    expect(prRows()).toHaveLength(7);
+    expect(rows()).toHaveLength(7);
     fireEvent.click(within(main()).getByRole('button', { name: 'Review requested', pressed: true }));
     fireEvent.click(within(main()).getByRole('button', { name: 'Mentioned', pressed: true }));
-    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/8', 'example/demo-app/42', 'example/demo-app/43']);
+    // Yours: the sessions that own one of yours, and your PR rows.
+    expect(rows()).toEqual(['alpha', 'beta', '#5', '#8']);
     const field = within(main()).getByRole('searchbox', { name: 'Filter pull requests' });
     fireEvent.change(field, { target: { value: 'export' } });
-    expect(prRows()).toEqual(['example/demo-app/42']);
+    expect(rows()).toEqual(['alpha']);
     expect(clear()?.getAttribute('aria-label')).toBe('Clear filters');
     expect(clear()?.closest('.pr-list-actions')?.querySelector('[data-pr-refresh]')).not.toBeNull();
     fireEvent.click(clear()!);
-    expect(prRows()).toHaveLength(7);
+    expect(rows()).toHaveLength(7);
     expect((field as HTMLInputElement).value).toBe('');
     expect(within(main()).queryByRole('button', { pressed: true })).toBeNull();
     expect(document.activeElement).toBe(field);
-  });
-
-  it('shows what a chip finds under a collapsed heading', () => {
-    const store = memory();
-    renderDashboard(prList(ALL), { storage: store.source });
-    fireEvent.click(within(main()).getByRole('button', { name: /example\/event-relay/ }));
-    expect(prRows()).not.toContain('example/event-relay/78');
-    fireEvent.click(chip('Review requested'));
-    expect(prRows()).toContain('example/event-relay/78');
   });
 
   it('says when a chip finds none of its kind, with Clear filters', () => {
@@ -617,7 +708,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
     fireEvent.click(chip('Mentioned'));
     expect(screen.getByText('No mentions')).toBeDefined();
     fireEvent.click(within(main().querySelector('.empty-state')!).getByRole('button', { name: 'Clear filters' }));
-    expect(prRows()).toHaveLength(2);
+    expect(rows()).toEqual(['alpha']);
   });
 
   it('says when nothing of yours is open, and when the chips and the text find nothing together', () => {
@@ -626,10 +717,10 @@ describe('PRs that ask your review or mention you (W101)', () => {
     expect(screen.getByText('No open pull requests of yours')).toBeDefined();
     again(prList(ALL));
     fireEvent.change(within(main()).getByRole('searchbox', { name: 'Filter pull requests' }), { target: { value: 'retry budget' } });
-    expect(prRows()).toEqual([]);
+    expect(rows()).toEqual([]);
     expect(main().querySelector('.empty-state-sentence')?.textContent).toBe('Nothing in Pull requests matches "retry budget" with these filters.');
     fireEvent.click(within(main()).getByRole('button', { name: 'Yours', pressed: true }));
-    expect(prRows()).toEqual(['example/demo-app/77']);
+    expect(rows()).toEqual(['#77']);
   });
 
   it("names a search that failed while the others worked, and when its pull requests are from, or that they aren't listed (W101's review)", () => {
@@ -649,8 +740,8 @@ describe('PRs that ask your review or mention you (W101)', () => {
       'The pull requests that ask your review are from 2h ago. gh api failed with exit code 1.',
       "The pull requests that mention you aren't listed. GitHub didn't answer within 30 seconds.",
     ]);
-    // The list is kept: every PR, the review requests' last good ones among them.
-    expect(prRows()).toHaveLength(6);
+    // The list is kept: every row, the review requests' last good ones among them.
+    expect(rows()).toHaveLength(6);
     // A chip whose search has never worked says it couldn't list them, not that there are none.
     fireEvent.click(chip('Mentioned'));
     expect(screen.getByText("Couldn't list the pull requests that mention you")).toBeDefined();
@@ -674,6 +765,57 @@ describe('PRs that ask your review or mention you (W101)', () => {
     expect(relation({ ...teamReview, reviewRequest: { via: 'team' } })).toBe("Your review is requested through a team you're on.");
     expect(relation(mention)).toBe("You're mentioned in it.");
     expect(relation(failing)).toBeNull();
+  });
+});
+
+describe("the session view's Pull requests tab (W106)", () => {
+  const tab = () => within(sessionView()!).queryByRole('tab', { name: /^Pull requests/ });
+
+  it('lists the PRs the session owns, with the PR view’s details and Open on GitHub, and opens one’s view', async () => {
+    const { navigation } = renderDashboard(prList(PRS), { search: '?view=all&session=pr-alpha' });
+    await settle();
+    expect(tab()?.textContent).toBe('Pull requests (2)');
+    fireEvent.click(tab()!);
+    const panel = sessionView()!.querySelector<HTMLElement>('.session-prs')!;
+    expect(panel.hidden).toBe(false);
+    expect(panel.querySelector('h3')?.textContent).toBe('Its pull requests');
+    const cards = [...panel.querySelectorAll('.session-pr')];
+    expect(cards.map((card) => card.querySelector('.session-pr-open')?.textContent)).toEqual(['#42 Fix the made-up export job', `#43 ${approved.title}`]);
+    const details = Object.fromEntries([...cards[0]!.querySelectorAll('.pr-view-detail')].map((detail) => [detail.querySelector('dt')?.textContent, detail.querySelector('dd')?.textContent]));
+    expect(details.Checks).toBe('Failingtest (22.x)lint+2 more');
+    expect(details.Merge).toBe('No conflicts');
+    expect(details.Draft).toBe('Ready for review');
+    const github = within(cards[0] as HTMLElement).getByRole('link', { name: OPEN_ON_GITHUB });
+    expect([github.getAttribute('href'), github.getAttribute('target'), github.getAttribute('rel')]).toEqual(['https://github.com/example/demo-app/pull/42', '_blank', 'noopener noreferrer']);
+    // The footer stays: the message box is the session's.
+    expect(sessionView()!.querySelector<HTMLElement>('.session-view-foot')?.hidden).toBe(false);
+    fireEvent.click(within(cards[1] as HTMLElement).getByRole('button', { name: `#43 ${approved.title}` }));
+    await settle();
+    expect(navigation.location.search).toBe('?view=all&pr=example/demo-app/43');
+  });
+
+  it('lists the PRs it worked on that another session owns, saying which, after its own', async () => {
+    renderDashboard(prList(PRS), { search: '?view=all&session=pr-delta' });
+    await settle();
+    expect(tab()?.textContent).toBe('Pull requests (1)');
+    fireEvent.click(tab()!);
+    const panel = sessionView()!.querySelector<HTMLElement>('.session-prs')!;
+    expect(panel.querySelector('h3')?.textContent).toBe('Also worked on');
+    expect(panel.querySelector('.session-prs-intro')?.textContent).toBe(LINKED_NOTE);
+    expect(panel.querySelector('.session-pr-owner')?.textContent).toBe('Listed with alpha.');
+  });
+
+  it('has no tab for a session that only mentioned one, or has none, and keeps it once shown, as Sub-agents does', async () => {
+    const first = renderDashboard(prList(PRS), { search: '?view=all&session=pr-gamma' });
+    await settle();
+    expect(tab()).toBeNull();
+    first.unmount();
+    const { again } = renderDashboard(prList(PRS), { search: '?view=all&session=pr-beta' });
+    await settle();
+    fireEvent.click(tab()!);
+    again(prList([approved]));
+    expect(tab()?.textContent).toBe('Pull requests');
+    expect(sessionView()!.querySelector('.session-prs .empty-state-title')?.textContent).toBe('No open pull requests');
   });
 });
 

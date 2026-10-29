@@ -12,14 +12,14 @@
 
 import { COPY_SHORT_ID, DEMO_APP, NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { attachStatus, chooseInRepoList, focused, inTerminal, openFinished, openFromRow, openRepoList, repoLabels, rowNames, shownHint, toasts, VIEW, viewName, viewTab } from './_dom.js';
+import { attachStatus, chooseInRepoList, focused, inTerminal, openFinished, openFromRow, openRepoList, repoLabels, row, rowNames, shownHint, toasts, VIEW, viewName, viewTab } from './_dom.js';
 
 const q = JSON.stringify;
 const SUMMARY = `document.querySelector('.session-list .summary-count')?.textContent`;
 const TOGGLE = `document.querySelector('.session-list .finished-toggle')?.textContent`;
 const OLDER = `document.querySelector('.session-list [data-older-toggle]')`;
 /** The names of the rows shown whose status is Ended, in order. */
-const ENDED_ROWS = `[...document.querySelectorAll('.session-list li.session')].filter((li) => !li.closest('[hidden]') && li.querySelector('.badge.state-ended')?.textContent === 'Ended').map((li) => li.querySelector('.session-name').textContent.trim())`;
+const ENDED_ROWS = `[...document.querySelectorAll('.session-list .finished-sessions li.session')].filter((li) => !li.closest('[hidden]') && li.querySelector('.badge.state-ended')?.textContent === 'Ended').map((li) => li.querySelector('.session-name').textContent.trim())`;
 const TABS = `[...${VIEW}.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent.trim())`;
 const NOTE = `${VIEW}?.querySelector('.ended-foot .session-view-note')?.textContent`;
 const ACTIONS = `[...(${VIEW}?.querySelectorAll('.ended-actions button') ?? [])].map((b) => b.textContent.trim())`;
@@ -94,7 +94,8 @@ const part: Part = {
 
     await t.step('ended sessions are in their group’s Finished section, labelled Ended, muted, and never in Needs you', async () => {
       await t.fresh({ search: '?view=all' });
-      t.expectEqual(await page.evaluate(SUMMARY), '18 sessions', 'the summary counts the ones from the last 7 days');
+      // Eighteen sessions, pitwall-test-ended-pr among them, and five PR rows (W106).
+      t.expectEqual(await page.evaluate(SUMMARY), '24 sessions', 'the summary counts the ones from the last 7 days');
       t.expectEqual(await page.evaluate(TOGGLE), 'Finished (9) · 1 asked you', 'the finished background session and the eight ended ones, one of which asked');
       await openFinished(t);
       t.expectEqual(
@@ -103,9 +104,15 @@ const part: Part = {
         'the ended rows, newest first',
       );
       t.expect(
-        await page.evaluate(`[...document.querySelectorAll('.session-list li.session')].filter((li) => li.querySelector('.badge.state-ended')).every((li) => li.classList.contains('finished'))`),
+        await page.evaluate(`[...document.querySelectorAll('.session-list .finished-sessions li.session')].filter((li) => li.querySelector('.badge.state-ended')).every((li) => li.classList.contains('finished'))`),
         'each is muted, as a finished row is',
       );
+      // W106: an ended session that owns an open PR isn't finished work. It's listed with the rest, not muted, and still says Ended.
+      const owner = await page.evaluate<{ finished: boolean; muted: boolean; badge: string; pr: string } | null>(`(() => {
+        const li = ${row(NAMES.endedPr)}?.closest('li.session');
+        return li ? { finished: !!li.closest('.finished-sessions'), muted: li.classList.contains('finished'), badge: li.querySelector('.badge.state-ended')?.textContent ?? '', pr: li.querySelector('.pr-badge')?.textContent ?? '' } : null;
+      })()`);
+      t.expectEqual(owner, { finished: false, muted: false, badge: 'Ended', pr: 'Pull request #31' }, 'the ended session that owns an open PR, with the rest');
       const names = await page.evaluate<string[]>(rowNames);
       t.expect(!names.includes(NAMES.endedOld) && !names.includes(NAMES.endedOldOnly), 'none older than 7 days', names);
       await t.shot('finished');
@@ -124,7 +131,7 @@ const part: Part = {
       const names = await page.evaluate<string[]>(rowNames);
       t.expect(names.includes(NAMES.endedOld) && names.includes(NAMES.endedOldOnly), 'the older ones are listed', names);
       t.expectEqual(names.slice(-2), [NAMES.endedOld, NAMES.endedOldOnly], 'last, oldest last');
-      t.expectEqual(await page.evaluate(SUMMARY), '20 sessions', 'and counted');
+      t.expectEqual(await page.evaluate(SUMMARY), '26 sessions', 'and counted');
       t.expect((await labels()).includes('docs-site'), 'docs-site is in the repo list');
       await t.shot('show-older');
     });
@@ -140,7 +147,8 @@ const part: Part = {
     await t.step('an ended session’s view: the Conversation tab alone, Ended, and the footer’s note, Copy command and Resume in background', async () => {
       await openFromRow(t, NAMES.ended);
       await page.settle(150);
-      t.expectEqual(await page.evaluate(TABS), ['Conversation'], 'the Conversation tab alone');
+      // It was given #19, which pitwall-test-from-root owns since it pushed it, so its Pull requests tab lists it (W106).
+      t.expectEqual(await page.evaluate(TABS), ['Conversation', 'Pull requests (1)'], 'the Conversation tab alone, and Pull requests');
       t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.session-view-meta .badge.state-ended')?.textContent`), 'Ended', 'Ended where the status goes');
       t.expect(!(await page.evaluate(`!!${VIEW}.querySelector('.relay-box')`)), 'no message box');
       t.expectEqual(await page.evaluate(NOTE), NOTE_TEXT, 'the note');

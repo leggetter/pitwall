@@ -1,10 +1,10 @@
 /*
- * Pull requests (M4, W95; docs/design-system.md, 4: Pull requests): the PR list in the session list's
- * column, its rows, the PR view in the session view's place, the session row's PR badge and the
- * session view's PR links. Built on the session list's, the session rows' and the session view's own
- * rules (styles.css), with only what differs here, and only tokens. This file loads before
- * styles.css, so a rule that changes one of its rules says more than it does, as
- * `.session-badges.pr-badges` does.
+ * Pull requests (M4, W95, W106; docs/design-system.md, 4: Pull requests): the Pull requests view's
+ * header, notices and foot, the PR rows among the session rows, a repo that isn't cloned, the PR view
+ * in the session view's place, the session row's PR badge, the session view's PR links and its Pull
+ * requests tab. Built on the session list's, the session rows' and the session view's own rules
+ * (styles.css), with only what differs here, and only tokens. This file loads before styles.css, so a
+ * rule that changes one of its rules says more than it does, as `.session-badges.pr-badges` does.
  */
 
 /* The header's line 3: when the list was fetched, at the left, and Clear filters and Refresh at the right, which never move as the time ticks. */
@@ -47,96 +47,92 @@
   margin-top: var(--pw-space-1);
 }
 
-.pr-repos {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* The header has the line above the first repo. */
-.pr-repos > .pr-repo:first-child {
-  border-top: 0;
-}
-
-.pr-repo {
-  border-top: 1px solid var(--pw-border);
-}
-
-.pr-repo-heading {
-  margin: 0;
-  font: inherit;
-}
-
-/* A repo's heading: a toggle row, as the Finished section's is, with the repo's label and its counts. */
-.pr-repo-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--pw-space-1-5);
-  width: 100%;
-  min-width: 0;
-  padding: var(--pw-space-1-5) var(--pw-space-4);
-  border: 0;
-  background: var(--pw-surface-muted);
-  color: var(--pw-text-muted);
-  font-size: var(--pw-text-s);
-  font-weight: var(--pw-weight-medium);
-  line-height: var(--pw-leading-s);
-  font-variant-numeric: tabular-nums;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
-}
-
-@media (hover: hover) {
-  .pr-repo-toggle:hover {
-    background: var(--pw-surface-hover);
-  }
-}
-
-/* Full width inside the scrolling list, which would clip the outer ring (2.10). */
-.pr-repo-toggle:focus-visible {
-  outline-offset: -2px;
-  box-shadow: var(--pw-ring-focus-inset);
-}
-
-.pr-repo-toggle .chevron {
-  flex: none;
-  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
-}
-
-.pr-repo-toggle[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
-}
-
-.pr-repo-icon {
-  flex: none;
-  color: var(--pw-text-subtle);
-}
-
-.pr-repo-label {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--pw-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The count and the badge, at the right, whole. */
-.pr-repo-count {
-  flex: none;
-  margin-left: auto;
-  color: var(--pw-text-subtle);
-  font-weight: var(--pw-weight-regular);
-}
-
-.pr-repo-toggle > .badge {
-  flex: none;
-}
-
-/* A PR row is a session row (.session in styles.css); its title is an <h4>, under its repo's <h3>. */
+/* A PR row is a session row (.session in styles.css); its title is an <h3>, as a session's name is. */
 .pr-title {
   margin: 0;
+}
+
+/* "#128" before its title, tabular and muted, as a session row's title is beside its name. */
+.pr-row-number {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The slot where a session row has its star (W106): kept on every PR row, for W107's actions, so its
+ * badges and the time's slot line up with the session rows'. As wide in the line as the star is.
+ */
+.pr-row-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  width: var(--pw-control-sm);
+  margin-block: calc((var(--pw-leading-m) - var(--pw-control-sm)) / 2);
+  margin-inline: calc(-1 * var(--pw-space-1));
+}
+
+.session-line:has(> .pr-row-actions) .session-badges {
+  max-width: calc(100% - 10em - var(--pw-control-sm));
+}
+
+/* Line 2's end, "No session yet" or "Not cloned": quiet, and never cut, as the sub-agents count is. */
+.pr-row-end {
+  flex: none;
+  color: var(--pw-text-subtle);
+  /* Its own flex item, which would drop the space before its " · ". */
+  white-space: pre;
+}
+
+/*
+ * "#128 CI failing" on a session row (W106): when line 1 has no room, this badge gives way first,
+ * its label ending in an ellipsis, as any badge's does, down to about its number, before the status
+ * badge does. Its tooltip, and the session view, have it all.
+ */
+.session-badges > .badge.pr-badge {
+  flex: 0 1000 auto;
+  min-width: 4.5em;
+}
+
+.pr-badge-state {
+  font-weight: inherit;
+}
+
+/* "Not cloned" after a not-cloned repo's name in the session list's heading (W106). */
+.session-list-not-cloned {
+  flex: none;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-regular);
+  line-height: var(--pw-leading-s);
+}
+
+/* The Pull requests view's foot: Show older, the hidden line and GitHub's PRS_MAX, after the rows. */
+.pr-list-foot {
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.pr-hidden {
+  margin: 0;
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-top: 1px solid var(--pw-border);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.pr-hidden a {
+  color: var(--pw-link);
+  text-underline-offset: 2px;
+}
+
+/* In the empty state, the foot's lines are centred under its sentence, with no edges. */
+.pr-empty-foot .pr-list-foot,
+.pr-empty-foot .pr-older,
+.pr-empty-foot .pr-hidden {
+  justify-content: center;
+  border: 0;
+  text-align: center;
 }
 
 .pr-title bdi {
@@ -175,6 +171,7 @@
 
 /* "GitHub found more than 200…", quietly, at the list's foot. */
 .pr-truncated {
+  margin: 0;
   padding: var(--pw-space-2) var(--pw-space-4);
   border-top: 1px solid var(--pw-border);
   color: var(--pw-text-subtle);
@@ -359,5 +356,84 @@
 }
 
 .pr-view-none {
+  color: var(--pw-text-muted);
+}
+
+/*
+ * The session view's Pull requests tab (W106): the PRs the session owns, then those it's linked to
+ * that another session owns, each with the PR view's details, a line between them.
+ */
+.session-prs-section + .session-prs-section {
+  margin-top: var(--pw-space-6);
+}
+
+.session-prs-intro {
+  margin: 0 0 var(--pw-space-2);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-pr {
+  padding: var(--pw-space-3) 0;
+  border-top: 1px solid var(--pw-border);
+}
+
+.session-pr:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.session-pr-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pw-space-2);
+}
+
+.session-pr-title {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.link-button.session-pr-open {
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.session-pr-open .pr-row-number {
+  color: inherit;
+}
+
+.session-pr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  margin: var(--pw-space-1) 0 var(--pw-space-2);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-pr-note {
+  margin: 0 0 var(--pw-space-2);
+  color: var(--pw-text);
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+}
+
+.session-pr-owner {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* "Its session" after why the owner is linked, in the PR view's Sessions (W106). */
+.pr-view-owner {
   color: var(--pw-text-muted);
 }

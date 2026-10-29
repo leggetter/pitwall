@@ -1,5 +1,5 @@
 // Sub-agents in the session view (W77; docs/design-system.md, 4: Sub-agents and Session rows): a
-// session with none keeps its two tabs, after asking once; the row of one with some running ends line
+// session with none has no Sub-agents tab, after asking once; the row of one with some running ends line
 // 2 with the count, quietly, on one line; its view's third tab, "Sub-agents (5)", lists them running
 // first, then the newest started first, each with its badge, its time in the row's fixed slot, and
 // "Started by" for a nested one, with no message box; a row opens the sub-agent's transcript,
@@ -37,7 +37,7 @@ const part: Part = {
     const asked = (name: string) => server.records.requests.filter((request) => request === `GET /api/sessions/${encodeURIComponent(id(name))}/subagents 200`).length;
     const noPage = async (what: string) => t.expect(!(await page.evaluate<boolean>(ON_PAGE)), `focus isn't on the page ${what}`, await page.evaluate(focused));
 
-    await t.step('a session with none keeps its two tabs, after asking once', async () => {
+    await t.step('a session with none has no Sub-agents tab, after asking once', async () => {
       await t.fresh({ search: '?view=all' });
       await openFromRow(t, NAMES.conversation);
       await page.waitFor('the conversation', `${VIEW}.querySelectorAll('ol.conversation > li.entry').length > 0`);
@@ -45,7 +45,8 @@ const part: Part = {
       for (let i = 0; i < 50 && asked(NAMES.conversation) === 0; i++) await page.settle(100);
       await page.settle(300);
       t.expectEqual(asked(NAMES.conversation), 1, 'its sub-agents were asked for once');
-      t.expectEqual(await page.evaluate(TABS), ['Conversation', 'Terminal'], 'no Sub-agents tab');
+      // It opened #51, which pitwall-test-docs pushed to since, so it has a Pull requests tab (W106), and no Sub-agents tab.
+      t.expectEqual(await page.evaluate(TABS), ['Conversation', 'Terminal', 'Pull requests (1)'], 'no Sub-agents tab');
       await page.click('Close', viewClose);
       await page.waitFor('the view to close', `!${viewName}`);
     });
