@@ -7,8 +7,9 @@ import { describe, expect, it } from 'vitest';
 import type { SessionFacts } from '../index/index.js';
 import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
 import { RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type SessionSummary } from '../shared/protocol.js';
+import { memoryBudget } from './budget.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
-import { createRecapEngine, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
+import { createRecapEngine, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
 import { ANSWER_INVALID, CALL_FAILED, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
@@ -111,7 +112,8 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
     prepareDir: (dir) => dir,
     claudeVersion: async () => '2.1.312 (Claude Code)',
     now: () => clock.now,
-    relayName: 'pitwall-relay',
+    relay: { name: 'pitwall-relay', sent: (msgId) => msgId === 'sent-by-our-relay' },
+    budgetStore: memoryBudget(),
     log: (message) => logs.push(message),
     randomId: () => '0123456789abcdef',
     env: { PATH: '/usr/bin:/bin', HOME: '/made-up/home' },
@@ -267,7 +269,7 @@ describe('when a session is recapped', () => {
     h.start();
     const a = h.add('a');
     h.pages.set('a', [
-      { kind: 'cross-session', text: 'Please rebase on main.', from: 'pitwall-relay', at: new Date(h.clock.now - 9 * MINUTE).toISOString() },
+      { kind: 'cross-session', text: 'Please rebase on main.', from: 'pitwall-relay', msgId: 'sent-by-our-relay', at: new Date(h.clock.now - 9 * MINUTE).toISOString() },
       { kind: 'assistant', text: 'Rebased.', at: a.lastActivityAt! },
     ]);
     await h.poll([a]);
@@ -350,6 +352,46 @@ describe('the queue and the budget', () => {
     expect(h.calls[1]!.input).toContain('<latest-turns>');
     await h.engine.close();
     expect(h.engine.refresh(ended)).toEqual({ kind: 'closed' });
+  });
+});
+
+describe("the day's count on file", () => {
+  it('starts from what an earlier run today counted, and keeps only the day, the calls and the cost', async () => {
+    const store = memoryBudget({ day: '2026-10-29', calls: 199, costUsd: 0.2 });
+    const h = harness({ budgetStore: store, now: () => Date.parse('2026-10-29T12:00:00.000Z') });
+    expect(h.engine.health()).toMatchObject({ calls: 199, costUsd: 0.2 });
+    h.start();
+    await h.poll([h.add('a'), h.add('b')]);
+    expect(h.calls).toHaveLength(1);
+    expect(store.current()).toEqual({ day: '2026-10-29', calls: 200, costUsd: 0.2 });
+    await h.reply(h.calls[0], envelope(answer()));
+    expect(store.current()).toEqual({ day: '2026-10-29', calls: 200, costUsd: 0.2011 });
+    expect(JSON.stringify(store.current())).not.toMatch(/nightly|pitwall-test|made-up/);
+    expect(h.engine.refresh(session('b', {}, h.clock))).toMatchObject({ kind: 'spent' });
+  });
+
+  it('ignores a count from another day, and shares one with another pitwall on the same home', async () => {
+    const old = harness({ budgetStore: memoryBudget({ day: '2026-10-28', calls: 200, costUsd: 1 }) });
+    expect(old.engine.health()).toMatchObject({ calls: 0, costUsd: 0 });
+
+    const store = memoryBudget();
+    const first = harness({ budgetStore: store, budget: 3 });
+    const second = harness({ budgetStore: store, budget: 3 });
+    first.start();
+    second.start();
+    await first.poll([first.add('a')]);
+    await second.poll([second.add('b')]);
+    expect(store.current()?.calls).toBe(2);
+    await first.reply(first.calls[0], envelope(answer()));
+    await second.reply(second.calls[0], envelope(answer()));
+    // The third call of the day is one of them; the fourth is refused by the other, which read the file.
+    await first.poll([first.add('c')]);
+    expect(store.current()?.calls).toBe(3);
+    const d = second.add('d');
+    second.engine.observe(new Map(second.facts));
+    expect(second.engine.refresh(d)).toMatchObject({ kind: 'spent' });
+    await second.poll([second.add('e')]);
+    expect(second.calls).toHaveLength(1);
   });
 });
 
@@ -463,13 +505,19 @@ describe('failures', () => {
 });
 
 describe('hiding its calls', () => {
-  it('knows its calls by their pid while they run, by their name, and by their directory', async () => {
+  it('knows its calls by their pid while they run, by their directory, and by their name while the row is young', async () => {
     const h = harness();
     h.start();
     await h.poll([h.add('a')]);
     const pid = h.calls[0]!.pid;
+    const startedAgo = (ms: number) => new Date(h.clock.now - ms).toISOString();
     expect(h.engine.isOwn({ name: 'anything', cwd: '/elsewhere', pid })).toBe(true);
-    expect(h.engine.isOwn({ name: RECAP_NAME, cwd: '/elsewhere' })).toBe(true);
+    expect(h.engine.isOwn({ name: RECAP_NAME, cwd: '/elsewhere', startedAt: startedAgo(5000) })).toBe(true);
+    // A session of yours with the name, older than any call lives, isn't hidden; nor one with no start time.
+    expect(h.engine.isOwn({ name: RECAP_NAME, cwd: '/elsewhere', startedAt: startedAgo(OWN_NAME_MS) })).toBe(false);
+    expect(h.engine.isOwn({ name: RECAP_NAME, cwd: '/elsewhere', startedAt: startedAgo(3 * 3_600_000) })).toBe(false);
+    expect(h.engine.isOwn({ name: RECAP_NAME, cwd: '/elsewhere' })).toBe(false);
+    expect(h.engine.isOwn({ name: RECAP_NAME, cwd: '/elsewhere', startedAt: 'not a time' })).toBe(false);
     expect(h.engine.isOwn({ name: 'cwd-ab', cwd: DIR })).toBe(true);
     expect(h.engine.isOwn({ name: 'cwd-ab', cwd: `${DIR}/` })).toBe(true);
     expect(h.engine.isOwn({ name: 'pitwall-test-a', cwd: '/made-up/work/a', pid: 4000 })).toBe(false);

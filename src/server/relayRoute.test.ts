@@ -100,6 +100,7 @@ function fakeRelay(answer: RelaySendOutcome = { status: 'delivered' }): RelayMan
     alert: () => undefined,
     off: () => undefined,
     isRelay: () => false,
+    sentByRelay: () => false,
     async close() {
       relay.closed = true;
     },

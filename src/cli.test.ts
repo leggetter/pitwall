@@ -135,7 +135,7 @@ describe('parseCliArgs', () => {
   it('says in the help what --no-recaps does: what it sends, to which model, on whose login, and how often', () => {
     expect(USAGE).toContain('[--no-prs] [--no-recaps]');
     expect(USAGE.replace(/\s+/g, ' ')).toContain(
-      "--no-recaps Don't recap your sessions, and never run a recap call. Without it, once a session's turn has ended and it's been idle 5 minutes, and when you ask, pitwall sends excerpts of its transcript to claude-haiku-5-5, with claude -p on your Claude login, at most 200 calls a day, for a short recap: why it started, where it is and what's next.",
+      "--no-recaps Don't recap your sessions, and never run a recap call. Without it, once a session's turn has ended and it's been idle 5 minutes, and when you ask, pitwall sends excerpts of its transcript to claude-haiku-5-5, with claude -p and whatever login or API key claude finds in pitwall's environment, at most 200 calls a day, for a short recap: why it started, where it is and what's next.",
     );
   });
 
@@ -1307,7 +1307,8 @@ describe('npm run dev (scripts/dev.ts)', () => {
 
       const log = await devLog();
       const args = JSON.parse(/^args (.*)$/m.exec(log)![1]!) as string[];
-      expect(args).toEqual(['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(port), tmp]);
+      // Recaps off in development, without PITWALL_DEV_RECAPS=1 (W110's review).
+      expect(args).toEqual(['watch', '--clear-screen=false', 'src/cli.ts', '--port', String(port), '--no-recaps', tmp]);
       const marker = /^marker (.*)$/m.exec(log)![1]!;
       expect(existsSync(marker)).toBe(true);
 
@@ -1756,7 +1757,9 @@ describe('pitwall (the process): PITWALL_TOKEN comes from the environment only (
 describe('.env.example (W40)', () => {
   it('names PITWALL_TOKEN with no value, says it is for a single-user machine or development, and how to make one', async () => {
     const text = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
-    expect(text.split('\n').filter((line) => line !== '' && !line.startsWith('#'))).toEqual(['PITWALL_TOKEN=']);
+    expect(text.split('\n').filter((line) => line !== '' && !line.startsWith('#'))).toEqual(['PITWALL_TOKEN=', 'PITWALL_DEV_RECAPS=']);
+    // Recaps stay off under npm run dev unless it's 1 (W110's review).
+    expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('PITWALL_DEV_RECAPS=1 turns recaps on under npm run dev, which otherwise passes --no-recaps');
     expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('Use this only on a single-user machine or for development.');
     expect(text).toContain('never reads a .env');
     expect(text.replace(/\s*\n#\s*/g, ' ')).toContain('Left empty, as here, it counts as unset');

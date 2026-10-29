@@ -23,7 +23,11 @@
 // One line per entry: its time in UTC, then `User:`, `Claude:`, `Notice:` or `Message from session
 // NAME:`. Consecutive tool calls fold onto one `Tools:` line. A message from pitwall's relay is your
 // own, which you sent from pitwall's page (finding 4): it's a `User:` line, not another session's,
-// and the session's reply to the relay (a 'to-pitwall' entry, W46) is a `Claude:` line.
+// and the session's reply to the relay (a 'to-pitwall' entry, W46) is a `Claude:` line. A message
+// counts as the relay's only when its id (`origin.msg_id`, ConversationEntry.msgId) is one this
+// pitwall's relay sent, since any local session can take the relay's name (W110's review). One from
+// that name that isn't is `Message from session pitwall-relay (unverified):`. Ids are kept in
+// memory, so after a restart your earlier messages read as unverified.
 import { randomBytes } from 'node:crypto';
 import { cap, plainLine, tail } from '../index/text.js';
 import type { AwaySummary } from '../index/transcripts.js';
@@ -80,8 +84,14 @@ export function timeLabel(at: string | undefined): string {
   return `[${iso.slice(5, 10)} ${iso.slice(11, 16)}] `;
 }
 
+/** pitwall's relay, as a recap's input needs it: its name, and whether it sent a message, by the message's id. */
+export interface RelayMessages {
+  name: string;
+  sent(msgId: string): boolean;
+}
+
 /** What an entry says, as its line's speaker and text, or undefined for one a recap leaves out. */
-function speakerOf(entry: ConversationEntry, relayName: string | undefined): { speaker: string; text: string } | undefined {
+function speakerOf(entry: ConversationEntry, relay: RelayMessages | undefined): { speaker: string; text: string } | undefined {
   switch (entry.kind) {
     case 'user':
       return { speaker: 'User', text: entry.text };
@@ -93,9 +103,13 @@ function speakerOf(entry: ConversationEntry, relayName: string | undefined): { s
     case 'notice':
       return { speaker: 'Notice', text: entry.text };
     case 'cross-session': {
-      if (relayName !== undefined && entry.from === relayName && entry.subagent === undefined) return { speaker: 'User', text: entry.text };
       if (entry.subagent !== undefined) return { speaker: `Message from sub-agent ${plainLine(entry.subagent.description, NAME_MAX)}`, text: entry.text };
       const from = entry.from === undefined ? '' : plainLine(entry.from, NAME_MAX);
+      if (relay !== undefined && entry.from === relay.name) {
+        // Yours only when this pitwall's relay sent it.
+        if (entry.msgId !== undefined && relay.sent(entry.msgId)) return { speaker: 'User', text: entry.text };
+        return { speaker: `Message from session ${from} (unverified)`, text: entry.text };
+      }
       return { speaker: from === '' ? 'Message from another session' : `Message from session ${from}`, text: entry.text };
     }
     case 'question': {
@@ -129,7 +143,7 @@ export class TurnCollector {
   newestMs: number | undefined;
 
   constructor(
-    private readonly options: { relayName?: string; after?: string; cap?: number } = {},
+    private readonly options: { relay?: RelayMessages; after?: string; cap?: number } = {},
   ) {
     const after = options.after === undefined ? NaN : Date.parse(options.after);
     this.afterMs = Number.isFinite(after) ? after : undefined;
@@ -156,7 +170,7 @@ export class TurnCollector {
       return true;
     }
     if (!this.flushTools()) return false;
-    const said = speakerOf(entry, this.options.relayName);
+    const said = speakerOf(entry, this.options.relay);
     if (said === undefined) return true;
     return this.push(`${timeLabel(entry.at)}${said.speaker}: ${flat(said.text, ENTRY_MAX)}`);
   }

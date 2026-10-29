@@ -1774,8 +1774,21 @@ describe('readConversationPage: what arrives mid-turn (W99)', () => {
 
   it("shows a message from another session as a cross-session entry, with its sender, though it lacks the user entry's first line", async () => {
     expect(await entriesOf(peerMidTurn('Please **review** the made-up PR.', 'made-up-msg-1'))).toEqual([
-      { kind: 'cross-session', at: expect.any(String), text: 'Please **review** the made-up PR.', markdown: true, from: 'pitwall-test-peer', midTurn: true },
+      { kind: 'cross-session', at: expect.any(String), text: 'Please **review** the made-up PR.', markdown: true, from: 'pitwall-test-peer', msgId: 'made-up-msg-1', midTurn: true },
     ]);
+  });
+
+  it("carries a message's id, as Claude Code records it, so a recap can tell the relay's own messages (W110)", async () => {
+    const between = jsonl({
+      type: 'user',
+      isMeta: true,
+      origin: { kind: 'peer', from: 'uds:/tmp/cc-socks/1.sock', msg_id: 'made-up-msg-2' },
+      message: { role: 'user', content: 'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/cc-socks/1.sock" from-name="pitwall-relay">Please rebase.</cross-session-message>' },
+      timestamp: '2026-10-29T12:00:00.000Z',
+    });
+    expect((await page(await transcript(between))).entries).toMatchObject([{ kind: 'cross-session', from: 'pitwall-relay', msgId: 'made-up-msg-2' }]);
+    // None for a message with no id.
+    expect((await page(await transcript(jsonl({ type: 'user', isMeta: true, origin: { kind: 'peer' }, message: { role: 'user', content: '<cross-session-message from="x">hi</cross-session-message>' }, timestamp: '2026-10-29T12:00:00.000Z' })))).entries[0]).not.toHaveProperty('msgId');
   });
 
   it("labels a sub-agent's report with the sub-agent, as one that came between turns is (W76)", async () => {

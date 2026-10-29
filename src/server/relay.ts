@@ -154,6 +154,13 @@ export interface RelayManager {
   off(): RelayOff | undefined;
   /** True for a `claude agents` row that is the relay itself, by pid, session id or directory. */
   isRelay(row: { sessionId: string; pid?: number | undefined; cwd: string }): boolean;
+  /**
+   * True when this relay sent the message with this id: SendMessage's `msg_id` for one of your
+   * messages that matched its request. A recap writes such a message as yours (W110's review);
+   * another session can take the relay's name, but not its message ids. The newest
+   * SENT_IDS_MAX, in memory, so it's false for anything sent before pitwall started.
+   */
+  sentByRelay(msgId: string): boolean;
   /** Fails what's waiting and stops the relay. Resolves within about 2 seconds. */
   close(): Promise<void>;
 }
@@ -243,6 +250,8 @@ export interface RelayOptions {
 export const DEFAULT_RESTART: RestartPolicy = { baseMs: 1000, maxMs: 30_000, max: 5, windowMs: 10 * 60_000 };
 /** Exchanges kept, one per session messaged. */
 const MAX_EXCHANGES = 500;
+/** The ids of messages the relay sent that are kept, newest first (sentByRelay()). */
+export const SENT_IDS_MAX = 1000;
 /** The longest reply kept, in UTF-8 bytes, as the contract allows. */
 export const REPLY_MAX_BYTES = 2048;
 /** A stopped relay that ran at least this long wasn't failing to start, so the backoff starts over. */
@@ -362,6 +371,8 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
   let current: Job | undefined;
   const queue: Job[] = [];
   const exchanges = new Map<string, ExchangeState>();
+  /** The msg_ids of your messages the relay sent, oldest first, at most SENT_IDS_MAX. */
+  const sentIds = new Set<string>();
   const relayPids = new Set<number>();
   const relaySessionIds = new Set<string>();
   const dirs = new Set<string>([dir]);
@@ -914,7 +925,12 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       case 'sent':
         break;
     }
-    if (result.msgId !== undefined) job.msgId = result.msgId;
+    if (result.msgId !== undefined) {
+      job.msgId = result.msgId;
+      sentIds.delete(result.msgId);
+      sentIds.add(result.msgId);
+      while (sentIds.size > SENT_IDS_MAX) sentIds.delete(sentIds.values().next().value!);
+    }
     job.phase = 'grace';
     recordOutcome(job, 'delivered');
     if (job.gateId !== undefined && gate.pending(job.gateId)) {
@@ -1175,6 +1191,9 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       return gateBroken === undefined || gateBrokenAt === undefined ? undefined : { since: gateBrokenAt, reason: gateBroken };
     },
     isRelay,
+    sentByRelay(msgId) {
+      return sentIds.has(msgId);
+    },
     async close() {
       if (closed) return;
       closed = true;

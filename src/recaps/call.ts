@@ -43,8 +43,11 @@ export interface CallOptions {
   spawn: RecapSpawner;
   /** Called with the child's pid as soon as it's known, before anything is written to it, so pitwall can hide it. */
   onPid(pid: number): void;
-  /** Resolves when pitwall is closing: the call is stopped. */
-  stopped: Promise<void>;
+  /**
+   * Aborted when pitwall is closing: the call is stopped. Its listener is removed once the call
+   * settles, so a finished call's child, input and output aren't kept alive by it.
+   */
+  signal: AbortSignal;
 }
 
 /** Runs one call. Never rejects. */
@@ -61,6 +64,8 @@ export function runRecapCall(options: CallOptions): Promise<CallOutcome> {
       settled = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
+      options.signal.removeEventListener('abort', onAbort);
+      child = undefined;
       resolve(result);
     };
     /** Stops the child, with SIGKILL if SIGTERM didn't do it in 2 seconds, and remembers why. */
@@ -74,8 +79,13 @@ export function runRecapCall(options: CallOptions): Promise<CallOutcome> {
         settle(why);
       }, 2000);
     };
+    const onAbort = () => stop({ kind: 'stopped' });
+    if (options.signal.aborted) {
+      resolve({ kind: 'stopped' });
+      return;
+    }
     const timer = setTimeout(() => stop({ kind: 'timeout' }), options.timeoutMs);
-    void options.stopped.then(() => stop({ kind: 'stopped' }));
+    options.signal.addEventListener('abort', onAbort, { once: true });
     try {
       child = options.spawn(options.claudeBin, options.args, { cwd: options.cwd, env: options.env }, {
         stdout(chunk) {
@@ -98,8 +108,9 @@ export function runRecapCall(options: CallOptions): Promise<CallOutcome> {
       settle({ kind: 'spawn-error', notFound: false });
       return;
     }
+    if (settled) return;
     if (child.pid !== undefined) options.onPid(child.pid);
-    if (!settled) child.send(options.input);
+    child.send(options.input);
   });
 }
 

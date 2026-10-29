@@ -9,6 +9,7 @@ import {
   parseEnvelope,
   parseRecapAnswer,
   plainTitle,
+  RECAP_MAX_OUTPUT_TOKENS,
   RECAP_NAME,
   RECAP_SETTINGS,
   RECAP_SYSTEM_PROMPT,
@@ -82,14 +83,24 @@ describe('recapEnvironment', () => {
       CLAUDE_CODE_SESSION_ID: 'abc',
       PITWALL_TOKEN: 'secret',
       ANTHROPIC_BASE_URL: 'https://example.invalid',
+      ANTHROPIC_API_KEY: 'sk-made-up',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      claude_code_max_output_tokens: '64000',
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: '128000',
     });
     expect(env.DISABLE_PROMPT_CACHING).toBe('1');
+    // Output is capped, whatever was inherited, in any case of the name.
+    expect(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe(String(RECAP_MAX_OUTPUT_TOKENS));
+    expect(env).not.toHaveProperty('claude_code_max_output_tokens');
     expect(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('1');
     for (const name of ['NODE_OPTIONS', 'LD_PRELOAD', 'CLAUDE_CODE_EFFORT_LEVEL', 'MAX_THINKING_TOKENS', 'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'PITWALL_TOKEN']) {
       expect(env, name).not.toHaveProperty(name);
     }
-    // The user's own configuration stays, and PATH keeps only its absolute entries (D23).
+    // The user's own configuration stays, credentials and provider included, so a recap goes where
+    // claude would send it from pitwall's environment (D26); PATH keeps only its absolute entries (D23).
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid');
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-made-up');
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBe('1');
     if (process.platform !== 'win32') expect(env.PATH).toBe('/usr/bin:/bin');
   });
 });

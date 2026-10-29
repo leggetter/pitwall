@@ -1318,9 +1318,12 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
     // Who it came from, as Claude Code recorded it: a sub-agent's id for its report (W76).
     const from = origin === 'peer' && isRecord(entry.origin) ? entry.origin.from : undefined;
     if (item.kind === 'entry' && typeof from === 'string' && from.length <= ADDRESS_MAX) item.peer = from;
-    // Which message it is, a session's to this one (W99).
+    // Which message it is, a session's to this one (W99): on the entry too, for recaps (W110).
     const msgId = origin === 'peer' && isRecord(entry.origin) ? entry.origin.msg_id : undefined;
-    if (item.kind === 'entry' && typeof msgId === 'string' && msgId !== '' && msgId.length <= ADDRESS_MAX) item.msgId = msgId;
+    if (item.kind === 'entry' && typeof msgId === 'string' && msgId !== '' && msgId.length <= ADDRESS_MAX) {
+      item.msgId = msgId;
+      item.entry.msgId = msgId;
+    }
     return [item];
   }
   if (entry.isMeta === true) return [];

@@ -96,16 +96,30 @@ export function recapArgs(options: { model?: string } = {}): string[] {
 const EFFORT_VARIABLES: ReadonlySet<string> = new Set(['CLAUDE_CODE_EFFORT_LEVEL', 'MAX_THINKING_TOKENS']);
 
 /**
+ * The most a call may write, thinking included, set as Claude Code's documented
+ * `CLAUDE_CODE_MAX_OUTPUT_TOKENS` (W110's review): so a transcript that tells the model to write on
+ * can't keep it going to the timeout, and an inherited value can't raise it. Spike 010's answers ran
+ * to 340 to 900 output tokens, thinking included.
+ */
+export const RECAP_MAX_OUTPUT_TOKENS = 4096;
+
+/**
  * The call's environment: the relay's (relayEnvironment(): childEnvironment(), D23, without
- * variables that load code, with auto memory off), without EFFORT_VARIABLES, and with
- * `DISABLE_PROMPT_CACHING=1`, a documented variable: without it, `-p` writes the whole input to the
- * 1-hour prompt cache at twice the input price, and a recap's input is never sent again (finding 1).
+ * variables that load code, with auto memory off), without EFFORT_VARIABLES, with output capped at
+ * RECAP_MAX_OUTPUT_TOKENS, and with `DISABLE_PROMPT_CACHING=1`, a documented variable: without it,
+ * `-p` writes the whole input to the 1-hour prompt cache at twice the input price, and a recap's
+ * input is never sent again (finding 1). The rest is passed on as it is, credentials and provider
+ * included (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, Bedrock's and Vertex's variables): a recap
+ * goes wherever `claude` would send a request from pitwall's environment, your Claude login when
+ * none of those is set (D26).
  */
 export function recapEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   const result = relayEnvironment(env);
   for (const name of Object.keys(result)) {
-    if (EFFORT_VARIABLES.has(name.toUpperCase())) delete result[name];
+    const upper = name.toUpperCase();
+    if (EFFORT_VARIABLES.has(upper) || upper === 'CLAUDE_CODE_MAX_OUTPUT_TOKENS') delete result[name];
   }
+  result.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(RECAP_MAX_OUTPUT_TOKENS);
   result.DISABLE_PROMPT_CACHING = '1';
   return result;
 }

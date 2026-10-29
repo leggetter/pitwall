@@ -54,8 +54,9 @@ import {
 } from '../shared/protocol.js';
 import { pitwallHome } from '../server/launch.js';
 import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
+import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
-import { firstRecapInput, TurnCollector, updateRecapInput } from './input.js';
+import { firstRecapInput, TurnCollector, updateRecapInput, type RelayMessages } from './input.js';
 import {
   ANSWER_INVALID,
   MIN_RECAP_CLAUDE_VERSION,
@@ -89,8 +90,11 @@ export interface RecapEngine {
   start(index: RecapIndex): void;
   /** The index's sessionFacts hook: what it read of each session's transcript on its latest poll. */
   observe(facts: ReadonlyMap<string, SessionFacts>): void;
-  /** True for a `claude agents` row that is a recap call: by pid, its name, or its directory. For the index's `exclude`. */
-  isOwn(row: { name: string; cwd: string; pid?: number | undefined }): boolean;
+  /**
+   * True for a `claude agents` row that is a recap call: by its pid while it runs, by its directory,
+   * or by its name when the row started under OWN_NAME_MS ago. For the index's `exclude`.
+   */
+  isOwn(row: { name: string; cwd: string; pid?: number | undefined; startedAt?: string | undefined }): boolean;
   /** Asks for a recap of `session` now (POST recapRefreshPath()). Never throws. */
   refresh(session: SessionSummary): RefreshResult;
   /** The session's recap as GET recapPath() answers it, or undefined when there's none. */
@@ -133,8 +137,13 @@ export interface RecapEngineOptions {
   maxConcurrent?: number;
   /** How long a call may run. Default 60 seconds; spike 010's took 3 to 7. */
   timeoutMs?: number;
-  /** pitwall's relay's name (RELAY_NAME): its messages are the user's own (finding 4). */
-  relayName?: string;
+  /**
+   * pitwall's relay (D8): its name, and whether it sent a message, by the message's id. Its messages
+   * are the user's own (finding 4), when the id says so.
+   */
+  relay?: RelayMessages;
+  /** Where the day's count is kept. Default `recap-budget.json` beside `dir`, in pitwall's home (budget.ts). */
+  budgetStore?: BudgetStore;
   /** How many conversation pages a recap reads at most. Default 8. */
   maxPages?: number;
   /** Default: console.error with a `pitwall: recaps:` prefix. Never given session content. */
@@ -152,6 +161,12 @@ export const PAUSE_BASE_MS = 5 * 60_000;
 export const PAUSE_MAX_MS = 60 * 60_000;
 /** How soon `claude --version` is asked again after it said too old, or couldn't be run. */
 const VERSION_RETRY_MS = 10 * 60_000;
+/**
+ * A row named RECAP_NAME is a recap call's only while it's this young: a call lives at most about
+ * 62 seconds (its timeout, then SIGKILL), so a session of yours that takes the name is hidden for at
+ * most this long, never for its life (W110's review).
+ */
+export const OWN_NAME_MS = 2 * 60_000;
 
 interface Job {
   sessionId: string;
@@ -216,6 +231,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   const timeoutMs = options.timeoutMs ?? 60_000;
   const maxPages = Math.max(1, options.maxPages ?? 8);
   const log = options.log ?? ((message: string) => console.error(`pitwall: recaps: ${message}`));
+  const store = options.budgetStore ?? budgetFile(path.dirname(dir), log);
 
   let index: RecapIndex | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -246,10 +262,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   const pids = new Set<number>();
   const dirs = new Set<string>([dir]);
   addRealpath(dir);
-  let closing: (() => void) | undefined;
-  const stopped = new Promise<void>((resolve) => {
-    closing = resolve;
-  });
+  /** Aborted by close(), which stops the calls that are running. */
+  const closing = new AbortController();
+  sync();
 
   function addRealpath(candidate: string): void {
     try {
@@ -285,6 +300,20 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   function spent(): boolean {
     rollDay();
     return calls >= budget;
+  }
+
+  /** Takes in the day's count on file, which another pitwall on this home, or an earlier run, may have raised. */
+  function sync(): void {
+    rollDay();
+    const kept = store.read();
+    if (kept === undefined || kept.day !== day) return;
+    if (kept.calls > calls || kept.costUsd > costUsd) changes++;
+    calls = Math.max(calls, kept.calls);
+    costUsd = Math.max(costUsd, kept.costUsd);
+  }
+
+  function save(): void {
+    store.write({ day, calls, costUsd: Math.round(costUsd * 1e6) / 1e6 });
   }
 
   // ---------------------------------------------------------------- scheduling
@@ -419,7 +448,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt));
     const read = await sources.read(file);
     const collector = new TurnCollector({
-      ...(options.relayName === undefined ? {} : { relayName: options.relayName }),
+      ...(options.relay === undefined ? {} : { relay: options.relay }),
       ...(update ? { after: previous.throughAt } : {}),
     });
     await collectTurns(source, job.sessionId, collector);
@@ -456,10 +485,12 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const version = await checkVersion();
     if (closed) return;
     if (version !== undefined) return fail(job.sessionId, throughMs, version, 'setup');
+    // Counted on file too, so a restart or another pitwall on this home shares the day's budget.
+    sync();
     if (spent()) return;
-
     calls++;
     changes++;
+    save();
     const outcome = await runRecapCall({
       claudeBin,
       args: recapArgs(options.model === undefined ? {} : { model: options.model }),
@@ -472,11 +503,15 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
         entry.pid = pid;
         pids.add(pid);
       },
-      stopped,
+      signal: closing.signal,
     });
     if (outcome.kind === 'stopped') return;
     const result = readOutcome(outcome);
-    if (result.costUsd !== undefined) costUsd += result.costUsd;
+    if (result.costUsd !== undefined) {
+      sync();
+      costUsd += result.costUsd;
+      save();
+    }
     if (!result.ok) return fail(job.sessionId, throughMs, result.reason, 'call');
     const at = now();
     recaps.set(job.sessionId, {
@@ -584,11 +619,14 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     },
     isOwn(row) {
       if (row.pid !== undefined && pids.has(row.pid)) return true;
-      if (row.name === RECAP_NAME) return true;
-      return dirs.has(path.resolve(row.cwd));
+      if (dirs.has(path.resolve(row.cwd))) return true;
+      if (row.name !== RECAP_NAME) return false;
+      const started = parseMs(row.startedAt);
+      return !Number.isNaN(started) && now() - started < OWN_NAME_MS;
     },
     refresh(session) {
       if (closed) return { kind: 'closed' };
+      sync();
       if (session.transcript !== 'ok' || facts.get(session.sessionId)?.file === undefined) return { kind: 'no-transcript' };
       if (running.has(session.sessionId)) return { kind: 'running', retryAfterSeconds: 5 };
       if (spent()) return { kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) };
@@ -638,7 +676,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       listeners.clear();
       demandQueue.length = 0;
       autoQueue.length = 0;
-      closing?.();
+      closing.abort();
       const done = [...running.values()].map((each) => each.done);
       await Promise.race([Promise.all(done), new Promise((resolve) => setTimeout(resolve, 3000).unref())]);
     },
