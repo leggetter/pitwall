@@ -597,6 +597,8 @@ export function titleText(text: string): string {
 }
 
 const CROSS_SESSION_PREFIX = 'Another Claude session sent a message:';
+/** The tags a message from another session is wrapped in: the older one, and newer versions' (W99). */
+const CROSS_SESSION_TAGS = ['cross-session-message', 'agent-message'] as const;
 
 /**
  * Text that starts with one of these is written by Claude Code, not typed as a
@@ -648,13 +650,15 @@ export function promptTextOf(entry: Record<string, unknown>): string | undefined
   const raw = textOf(content);
   if (raw === undefined) return undefined;
   const text = stripSystemReminders(raw).trim();
-  if (text === '' || text.includes('<cross-session-message')) return undefined;
+  if (text === '' || CROSS_SESSION_TAGS.some((tag) => text.includes(`<${tag}`))) return undefined;
   if (NOT_A_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix))) return undefined;
   return text;
 }
 
 /** The modes of a `queued_command` attachment that stand for a user entry: a prompt, or a task notification. */
 const QUEUED_MODES = new Set(['prompt', 'task-notification']);
+/** The origins of one that stand for a user entry: a prompt the user typed, a message from a peer, a task notification. */
+const QUEUED_KINDS = new Set(['human', 'peer', 'task-notification']);
 
 /**
  * The user entry a `queued_command` attachment stands for, or undefined for any other entry (W99).
@@ -665,23 +669,31 @@ const QUEUED_MODES = new Set(['prompt', 'task-notification']);
  * (`coordinator`, meta). Its `prompt` is the user entry's content, a string or text and image blocks,
  * and its `origin` and `isMeta` are the user entry's, so read as one it becomes what that would: the
  * readers' own rules then say whether it's a prompt, a message or a notice. Only text and image
- * blocks are kept, so it's never a tool's result. A `commandMode` other than `prompt` or
- * `task-notification`, unseen so far, gives undefined: a shell command's, say, wouldn't read as typed.
- * Internal and undocumented.
+ * blocks are kept, so it's never a tool's result.
+ *
+ * The attachment has no `Another Claude session sent a message:` line, the user entry's second sign
+ * that a message isn't the user's, so its origin has to say what it is: only `human`, `peer` and
+ * `task-notification` are read, and with no origin only `commandMode: "task-notification"`, which then
+ * reads as one. Anything else gives undefined: a `coordinator` message, shown in neither form; an
+ * origin that isn't a record or is of an unknown kind; a prompt with no origin. `commandMode` is
+ * `prompt` or `task-notification`, or absent, as on the coordinator's, peers' and meta prompts in
+ * sub-agents' transcripts; another, unseen so far, gives undefined too: a shell command's, say,
+ * wouldn't read as typed. Meta on the attachment or on the entry. Internal and undocumented.
  */
 export function queuedEntryOf(entry: Record<string, unknown>): Record<string, unknown> | undefined {
   const attachment = entry.attachment;
   if (entry.type !== 'attachment' || !isRecord(attachment) || attachment.type !== 'queued_command') return undefined;
   const mode = attachment.commandMode;
   if (mode !== undefined && !(typeof mode === 'string' && QUEUED_MODES.has(mode))) return undefined;
+  const origin = attachment.origin;
+  if (origin === undefined ? mode !== 'task-notification' : !isRecord(origin) || typeof origin.kind !== 'string' || !QUEUED_KINDS.has(origin.kind)) return undefined;
   const prompt = attachment.prompt;
   const content =
     typeof prompt === 'string' ? prompt : Array.isArray(prompt) ? prompt.filter((block) => isRecord(block) && (block.type === 'text' || block.type === 'image')) : undefined;
   if (content === undefined) return undefined;
-  const user: Record<string, unknown> = { type: 'user', message: { role: 'user', content } };
+  const user: Record<string, unknown> = { type: 'user', message: { role: 'user', content }, origin: origin ?? { kind: 'task-notification' } };
   for (const key of ['timestamp', 'isSidechain', 'sessionKind'] as const) if (entry[key] !== undefined) user[key] = entry[key];
-  if (attachment.isMeta !== undefined) user.isMeta = attachment.isMeta;
-  if (attachment.origin !== undefined) user.origin = attachment.origin;
+  if (attachment.isMeta === true || entry.isMeta === true) user.isMeta = true;
   return user;
 }
 
