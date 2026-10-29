@@ -82,7 +82,7 @@ textarea {
 
 /*
  * The app shell (docs/design-system.md, 3). The page doesn't scroll: the app is one window tall, a
- * grid of the app strip (only while the relay is off), the header and the columns, and each column scrolls on
+ * grid of the app strip (only while the relay is off or recaps aren't being made), the header and the columns, and each column scrolls on
  * its own. Which columns there are comes from data-layout, which layout.ts sets from the app's width:
  * three-columns from 1,200 px, sidebar from 900 px, and drawer below that. The header's compact rule
  * is a container query on the app, which spans the window; the #uikit gallery's frames give it
@@ -993,13 +993,19 @@ textarea {
 
 /*
  * The app strip (section 4: Alerts and banners): above the header, only while the relay is off until
- * restart. One line, 32 px: a sentence too long for it ends in an ellipsis, with Details still there,
+ * restart, or recaps aren't being made (W111), a line for each. Each line is 32 px: a sentence too long for it ends in an ellipsis, with Details still there,
  * so the session view over the list can start just below it and never hide it. It inverts with the
  * theme, --pw-text-inverse on --pw-text (2.5), so it never uses a tone colour; its icon and link take
  * the text's colour.
  */
-.app-strip {
+/* Each line of its own, stacked, the relay's first (W111). */
+.app-strips {
   grid-area: strip;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-strip {
   display: flex;
   align-items: center;
   gap: var(--pw-space-2);
@@ -1185,7 +1191,8 @@ h2.empty-state-title:focus {
   color: var(--pw-text-subtle);
 }
 
-.badge.state-asked {
+.badge.state-asked,
+.badge.state-recap {
   background: var(--pw-state-asked-bg);
   box-shadow: inset 0 0 0 1px var(--pw-state-asked-border);
   color: var(--pw-state-asked-fg);
@@ -1900,6 +1907,15 @@ mark.match {
   color: var(--pw-text-subtle);
 }
 
+/*
+ * What an idle session's recap says it waits on, when that isn't you (W111): "Waiting on CI", as a
+ * Needs or Asked label is, 500, but in --pw-text-muted, with no tone: it doesn't need you.
+ */
+.session-waiting-on {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-medium);
+}
+
 /* "Not needed now" (W88), as quiet as the group's label, before what it needs. */
 .session-not-needed {
   color: var(--pw-text-subtle);
@@ -2545,6 +2561,175 @@ mark.match {
   font-size: var(--pw-text-xs);
   font-weight: var(--pw-weight-medium);
   line-height: var(--pw-leading-xs);
+}
+
+/*
+ * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
+ * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
+ * age and Refresh. Then the headline, always, on one line with an ellipsis while it's collapsed; then,
+ * while it's open, Why and Now or Next. At most 35% of the view's height, scrolling inside itself
+ * past that, as the footer does at half, so the body always keeps its room.
+ */
+.session-recap {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  max-height: 35%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--pw-space-2) var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface-muted);
+  color: var(--pw-text);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.recap-head {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+}
+
+.recap-heading {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+}
+
+.recap-title {
+  display: inline-block;
+  padding: var(--pw-space-0-5) 0;
+}
+
+/* The disclosure button: the chevron and the title, 4 px into the gutter so the chevron lines up with the lines below. */
+.recap-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  margin-left: calc(-1 * var(--pw-space-1));
+  padding: var(--pw-space-0-5) var(--pw-space-1);
+  border: 0;
+  border-radius: var(--pw-radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+@media (hover: hover) {
+  .recap-toggle:hover {
+    background: var(--pw-surface-hover);
+  }
+}
+
+.recap-toggle:focus-visible {
+  box-shadow: var(--pw-ring-focus);
+}
+
+.recap-toggle .chevron {
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.recap-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.recap-age {
+  flex: none;
+  color: var(--pw-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* At the end of line 1, its block margins taken back so the line stays 24 px. */
+.icon-button.recap-refresh {
+  flex: none;
+  margin-block: calc(-1 * var(--pw-space-0-5));
+  margin-left: auto;
+}
+
+/* The headline: its badges, then the text, which wraps while the strip is open. */
+.recap-headline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pw-space-1-5);
+  min-width: 0;
+  margin: 0;
+}
+
+.recap-headline .badge {
+  flex: none;
+}
+
+.recap-headline-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Collapsed: the headline alone, on one line, its whole in a tooltip when it's cut. */
+.session-recap[data-collapsed='true'] .recap-headline-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Why, and Now or Next: the labels in a column of their own, the text wrapping beside them. */
+.recap-lines {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--pw-space-1) var(--pw-space-3);
+  margin: var(--pw-space-1) 0 0;
+}
+
+.recap-line {
+  display: contents;
+}
+
+.recap-line dt {
+  color: var(--pw-text-subtle);
+  font-weight: var(--pw-weight-medium);
+}
+
+.recap-line dd {
+  margin: 0;
+  color: var(--pw-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.recap-note {
+  margin: 0;
+  color: var(--pw-text-muted);
+}
+
+/* Skeleton bars on --pw-surface-muted, where a sunken bar barely shows: --pw-surface-strong, as on --pw-bg. */
+.recap-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-2);
+  padding-block: var(--pw-space-1);
+}
+
+.recap-skeleton .skeleton-bar {
+  background: var(--pw-surface-strong);
+}
+
+.skeleton-bar.recap-skeleton-headline {
+  width: 70%;
+}
+
+.skeleton-bar.recap-skeleton-line {
+  width: 85%;
+}
+
+.skeleton-bar.recap-skeleton-line.short {
+  width: 55%;
 }
 
 /*

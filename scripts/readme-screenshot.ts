@@ -1,7 +1,8 @@
 // README screenshot: the production build on the app check's fake server, with a made-up world in
 // place of its fixtures: public repo names under ~/work, made-up sessions, one made-up conversation
 // open on its Conversation tab, and a few made-up open pull requests under example/, one of them
-// opened by a hero session (W95). No real session, transcript or pull request is read.
+// opened by a hero session (W95), and made-up recaps (W111): the open one's strip, and a row's quiet
+// reason. No real session, transcript, recap or pull request is read.
 //   npm run build && npx tsx scripts/readme-screenshot.ts <outDir> [light|dark]
 // then copy <outDir>/hero-light.png to docs/images/pitwall-light.png. Needs the app check's pinned
 // chrome-headless-shell (npm run appcheck:install-shell).
@@ -10,7 +11,7 @@ import { join } from 'node:path';
 import { defaultHeadlessShell, launchChrome } from './appcheck/chrome.js';
 import { Page } from './appcheck/page.js';
 import { importBuilt, madeUpToken, startFakeServer } from './appcheck/server.js';
-import type { ConversationEntry, IndexSnapshot, PullRequestList, PullRequestSummary, SessionGroup, SessionSummary } from '../src/shared/protocol.js';
+import type { ConversationEntry, IndexSnapshot, PullRequestList, PullRequestSummary, RecapHealth, SessionGroup, SessionRecap, SessionSummary } from '../src/shared/protocol.js';
 
 const [out, theme = 'light'] = process.argv.slice(2) as [string, 'light' | 'dark'];
 const DIST = join(import.meta.dirname, '../dist');
@@ -41,11 +42,26 @@ const make = (repo: string, name: string, minutes: number, extra: Partial<Sessio
 const job = (repo: string, name: string, minutes: number, extra: Partial<SessionSummary> = {}) =>
   make(repo, name, minutes, { kind: 'background', shortId: `ab12cd${String(n + 1).padStart(2, '0')}`, status: undefined, state: 'working', ...extra });
 
+// The open session's made-up recap (W111), made after its last turn, so it's current.
+const docsRecap: SessionRecap = {
+  why: 'You asked it to check the docs for broken links, and to say what it found before fixing anything.',
+  now: 'It built the docs site and checked all 1,284 links: one moved in the API reference, and one points at the removed SDK page.',
+  next: 'Say whether to fix both links now, or open an issue for each.',
+  waitingOn: 'you',
+  title: 'Find broken links in the docs',
+  at: ago(1.5),
+  throughAt: ago(2),
+  source: 'pitwall',
+};
 const docs = make('quickstarts', 'Docs link check', 2, {
   askedYou: { reason: 'question', excerpt: 'Fix both links now, or open an issue for each?' },
   needsYou: { reason: 'asked' },
   lastUserPrompt: 'Check the docs for broken links, and tell me what you find before fixing anything.',
+  title: docsRecap.title,
+  titleSource: 'pitwall',
+  recap: { waitingOn: 'you', title: docsRecap.title, next: docsRecap.next, at: docsRecap.at, source: 'pitwall' },
 });
+const recapHealth: RecapHealth = { calls: 23, budget: 200, costUsd: 0.025 };
 const starred = [
   job('mcp-events-bridge', 'Bridge release', 4, { state: 'blocked', needsYou: { reason: 'claude-code', text: 'May I push the branch and open the PR?' } }),
   make('hookdeck-cli', 'CLI release prep', 7, {
@@ -66,6 +82,10 @@ const starred = [
   job('outpost', 'Dependency updates', 16, { state: 'blocked', needsYou: { reason: 'claude-code', text: 'Merge the minor bumps, or review each one?' } }),
   make('hookdeck-typescript-sdk', 'Build fix', 25, {
     lastUserPrompt: 'Open the PR once the build passes.',
+    // Its made-up recap says it waits on CI, which its row says quietly (W111).
+    recap: { waitingOn: 'CI', title: 'Fix the ESM build', at: ago(20), source: 'pitwall' },
+    title: 'Fix the ESM build',
+    titleSource: 'pitwall',
     // It opened the made-up #128, below, so its row has the PR's badge.
     prLinks: [{ kind: 'opened', repo: 'example/hookdeck-typescript-sdk', number: 128, lastAt: ago(26) }],
   }),
@@ -85,7 +105,7 @@ const snapshot = (): IndexSnapshot => {
     { key: ROOT, label: 'work', kind: 'directory', root: ROOT, sessions: sessions.filter((s) => s.cwd === ROOT) },
     ...repos.map((repo): SessionGroup => ({ key: `${ROOT}/${repo}`, label: repo, kind: 'git', root: ROOT, sessions: sessions.filter((s) => s.cwd === `${ROOT}/${repo}`) })),
   ];
-  return { generatedAt: new Date().toISOString(), roots: [ROOT], groups: groups.filter((g) => g.sessions.length > 0), source: { ok: true } };
+  return { generatedAt: new Date().toISOString(), roots: [ROOT], groups: groups.filter((g) => g.sessions.length > 0), source: { ok: true }, recaps: recapHealth };
 };
 
 // Made-up open pull requests (W95), in made-up repos under example/ named for the hero's, each placed
@@ -155,6 +175,8 @@ world.prList = prList;
 world.session = (id: string) => sessions.find((s) => s.sessionId === id);
 world.conversation = (id: string) => (sessions.some((s) => s.sessionId === id) ? { sessionId: id, entries: id === docs.sessionId ? conversation : [] } : undefined);
 world.subagents = (id: string) => ({ sessionId: id, subagents: [], truncated: false });
+world.recapHealth = () => recapHealth;
+world.recap = (id: string) => (id === docs.sessionId ? docsRecap : undefined);
 world.directories = () => ({ roots: [{ root: ROOT, dirs: repos.map((path) => ({ path, repo: true as const })), truncated: false }] });
 
 const path = defaultHeadlessShell();

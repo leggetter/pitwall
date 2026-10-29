@@ -23,6 +23,7 @@ import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard }
 import { Confirmations, Conversations, EndedViews, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import { SubagentViews } from './subagents.js';
 import { PullRequestSpecimens } from './prs.js';
+import { RecapSpecimens } from './recaps.js';
 import './gallery.css';
 
 interface Section {
@@ -79,6 +80,13 @@ const SECTIONS: Section[] = [
     intro:
       "M4 (W95, W106): a row is a piece of work. The repo list's counts, with a cloned repo of PR rows alone and one that isn't cloned; session rows with the PRs they own and PR rows with none; the Pull requests view in each state, with its hidden line; PrView with its details and sessions, and its other states; the session view's PR links and its Pull requests tab; and the page with a PR open.",
     Content: PullRequestSpecimens,
+  },
+  {
+    id: 'recaps',
+    title: 'Recaps',
+    intro:
+      "M5 (W111): the recap strip between the session view's header and its tabs, in every state: You need to, Waiting on CI, another session and someone else, Done, May be out of date, Claude Code's recap, collapsed, refreshing, the day's budget spent, loading, none yet and failed; the session rows' recap reasons on line 2; and the app strip's recap lines.",
+    Content: RecapSpecimens,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },

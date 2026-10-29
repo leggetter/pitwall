@@ -176,7 +176,7 @@ import { isTyping, shortcutFor, useShortcutsStore, type Shortcut } from '../shor
 import { useStarred } from '../starred.js';
 import { useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
-import { AppStrip } from './AppStrip.js';
+import { AppStrips } from './AppStrip.js';
 import { Button } from './Button.js';
 import { Divider } from './Divider.js';
 import { EmptyState } from './EmptyState.js';
@@ -1580,6 +1580,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
       terminalFocus={terminalFocus}
       polledAt={updatedAt}
+      recaps={snapshot?.recaps}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
         owned: work.owned.get(session.sessionId) ?? [],
@@ -1711,7 +1712,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   return (
     <ToastContext.Provider value={toasts.show}>
     <div className="app" ref={app} data-layout={layout}>
-      {relayOff && <AppStrip off={relayOff} onDetails={relayAlert ? showRelayAlert : undefined} />}
+      <AppStrips relayOff={relayOff} onRelayDetails={relayAlert ? showRelayAlert : undefined} recaps={snapshot?.recaps} />
       <Header
         state={state}
         roots={snapshot?.roots}

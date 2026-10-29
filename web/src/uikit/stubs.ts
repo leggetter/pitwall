@@ -13,6 +13,7 @@ import {
   type AttachServerMessage,
   type ConversationEntry,
   type RelayResult,
+  type SessionRecap,
 } from '../../../src/shared/protocol.js';
 import type { ApiClient, ApiResult, ApiUpload } from '../api.js';
 import type { AttachEnv } from '../attach.js';
@@ -122,9 +123,20 @@ export interface StubOptions {
    * 503, a pitwall that keeps no attachments on this machine.
    */
   upload?: 'uploaded' | 'uploading' | 'failed' | 'failed-retrying' | 'refused' | 'unavailable';
+  /**
+   * Recaps (W111): what GET recapPath() answers, by session id, from `recaps`, and a 404 for the rest.
+   * `recapFetch`: `ok`, the default; `loading` never answers; `failed` is a 500. What Refresh gets,
+   * `recapRefresh`: `ok`, the default, after which no new recap comes; `sending` never answers;
+   * `spent`, a 429 with the day's budget spent; `off`, a 409; `failed`, a 500.
+   */
+  recaps?: Readonly<Record<string, SessionRecap>>;
+  recapFetch?: 'ok' | 'loading' | 'failed';
+  recapRefresh?: 'ok' | 'sending' | 'spent' | 'off' | 'failed';
 }
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
+/** Refresh's recapRefreshPath() (W111). */
+const RECAP_REFRESH_PATH = /^\/api\/sessions\/([^/?]+)\/recap\/refresh$/;
 /** A session's sub-agents, or one's transcript, with its cursor. */
 const SUBAGENTS_PATH = /^\/api\/sessions\/([^/?]+)\/subagents(?:\/([A-Za-z0-9]+)\/conversation(?:\?before=(.*))?)?$/;
 
@@ -148,6 +160,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
       listed += 1;
       return subagents(sessionId, options.subagents, listed - 1);
     }
+    if (method === 'POST' && RECAP_REFRESH_PATH.test(path)) return recapRefresh(options.recapRefresh ?? 'ok');
     const match = SESSION_PATH.exec(path);
     if (!match) return Promise.resolve(failed(404));
     const sessionId = decodeURIComponent(match[1] ?? '');
@@ -159,6 +172,12 @@ export function stubApi(options: StubOptions = {}): ApiClient {
       counts.set(sessionId, times + 1);
       if (options.entries && (options.conversation ?? 'ok') === 'ok') return Promise.resolve(ok({ sessionId, entries: options.entries }));
       return conversation(sessionId, options.conversation ?? 'ok', older, times);
+    }
+    if (method === 'GET' && route === 'recap') {
+      const recap = options.recaps?.[sessionId];
+      if (options.recapFetch === 'loading') return forever();
+      if (options.recapFetch === 'failed') return Promise.resolve(failed(500));
+      return Promise.resolve(recap ? ok(recap) : failed(404));
     }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
@@ -179,6 +198,21 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     // An unused upload removed (W82): done, as the server's 204.
     delete: (path) => Promise.resolve(path.startsWith(`${ATTACHMENTS_PATH}/`) ? { kind: 'ok', status: 204, body: undefined } : failed(404)),
   };
+}
+
+function recapRefresh(result: NonNullable<StubOptions['recapRefresh']>): Promise<ApiResult> {
+  switch (result) {
+    case 'sending':
+      return forever();
+    case 'spent':
+      return Promise.resolve(failed(429, { ok: false, error: "Made up: today's recaps are used up." }));
+    case 'off':
+      return Promise.resolve(failed(409, { ok: false, error: 'Made up: recaps are off.' }));
+    case 'failed':
+      return Promise.resolve(failed(500));
+    case 'ok':
+      return Promise.resolve(ok({ ok: true }));
+  }
 }
 
 /** `times` is how many uploads came before this one. */

@@ -851,11 +851,11 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - **Unlisted:** loading a URL with a session that isn't in the snapshot, and wasn't while the page was open, opens the view with an [empty state](#empty-states) centred in its body: the `info` icon, "This session isn't listed under these roots" as its title, which is the view's `<h2>` and names the region, and the sentence "pitwall lists no session with the id `<id>` under *roots*; it may have been removed, or run outside these roots." The header has only Close (or Back to sessions). The id is cut at 120 characters, and the id and roots are text. A session that leaves the snapshot while it's open, or that the back button returns to after it left, shows what it showed last instead, with the "no longer listed" alert.
   - Opening from the URL or the back button sends and changes nothing, and takes no focus. A running background session's view opens on its Terminal tab, which attaches, as a click on its row would have it, but its terminal takes no focus, after a reload too: nothing in the page asked for it, so the terminal's bar says how to type to it (W54, W57, see [Session view: header, tabs and footer](#session-view-header-tabs-and-footer)).
   - Never put the token in the query string. `web/src/token.ts` takes it out of the fragment before anything else reads the URL.
-- **Inside:** a sticky header, the tabs, the scrolling body and a sticky footer (see [Session view](#session-view-header-tabs-and-footer)).
+- **Inside:** a sticky header, the [recap strip](#recap-strip) while the session has a recap or one is coming (M5, W111), the tabs, the scrolling body and a sticky footer (see [Session view](#session-view-header-tabs-and-footer)).
 
 ### App strip and page alerts
 
-- **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert. Today that's one: the relay is off until restart, which the snapshot's `relayOff` says. See [Alerts and banners](#alerts-and-banners).
+- **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert, a line for each: the relay is off until restart, which the snapshot's `relayOff` says, and recaps aren't being made, the day's budget spent or the latest call failed, which its `recaps` says (W111). See [Alerts and banners](#alerts-and-banners).
   - Below 1,200 px the session view over the list starts below the header, which is below the strip, so both show in every layout.
 - **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert and "Lost the connection". "Started *name*" is a [toast](#toasts).
 
@@ -1035,7 +1035,7 @@ A row of tabs that switches what's below them: the session view's Conversation, 
 - **Status badges take their look from the state aliases** (`--pw-state-*`, 2.6), the rest from the tone tokens, so a state's look changes in one place.
 - **In a row,** a status badge too long for its line ends in an ellipsis (see [Session rows](#session-rows)); its full text is still in the DOM.
 
-- **Needs you comes from the index** (`SessionSummary.needsYou`, W69): a session needs you for one of `NeedsYou`'s reasons, judged from its context: the first four rows below show its five reasons, and a session has one at most, the first that holds. Claude Code's `state: 'blocked'` alone isn't one.
+- **Needs you comes from the index** (`SessionSummary.needsYou`, W69): a session needs you for one of `NeedsYou`'s reasons, judged from its context: the first five rows below show its six reasons, and a session has one at most, the first that holds. Claude Code's `state: 'blocked'` alone isn't one.
 - **And from its pull requests** (W106): a session's row needs you too while an open PR it owns needs attention (`prNeedsAttention()`), and a PR row while its PR does. That adds no status badge: the session's own stays as its state says, its PR badge is subtle danger, and line 2 says why ([Session rows](#session-rows)). It counts wherever Needs you counts, its badges, the root tabs' and the page title.
 
 | Session state | Label | Style |
@@ -1044,7 +1044,8 @@ A row of tabs that switches what's below them: the session view's Conversation, 
 | A background job whose own line says what it needs ('claude-code'), or blocked with a job file pitwall couldn't read ('blocked') | "Blocked", and ": *reason*" when Claude Code gives `waitingFor`. The job's line is on the row's line 2 | solid warning |
 | Resumed, or restarted after you confirmed it, in this run of pitwall, with no prompt since ('restarted') | "Waiting for your prompt" | solid warning |
 | Its last turn asked you ('asked') | "Asked you" | subtle warning |
-| Any of the four above, marked [not needed now](#not-needed-now) for what it needs (W88) | As above, and "Not needed now" after it in the session view | outline, as a stale Blocked is: solid is for needing you |
+| Its current recap says it's waiting on you ('recap', M5, W111), as a background job Claude Code calls done can be (Phil, 2026-10-29: "A lot of them are marked as done, whereas I'm sure there are open questions in them") | "Waiting on you", in Done's place. The recap's next is on the row's line 2 | subtle warning, as Asked you: a model's judgement of the transcript, as Asked is a heuristic's |
+| Any of the five above, marked [not needed now](#not-needed-now) for what it needs (W88) | As above, and "Not needed now" after it in the session view | outline, as a stale Blocked is: solid is for needing you |
 | Blocked, and nothing needs you, as a resumed session's "send a prompt to start" once pitwall has restarted | As its process is: no badge in the list and "Idle" in the session view, or "Busy", or "Not running" | as those rows |
 | Blocked and stale | "Blocked: *reason*", plus a "Stale" badge | outline, plus subtle neutral |
 | Failed | "Failed" | subtle danger |
@@ -1095,10 +1096,12 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
      - **Line 1 never wraps.** The title gives way first, then the name, then the status badge, which leaves the name and the time at least 10em. "Stale" and a finished session's "Asked you" are short and stay whole. The " · " is drawn with the title (CSS `::before`, not read out), so it goes when the title has.
   2. **What it wants or did last,** on one line with an ellipsis, when the transcript is readable:
      - "Needs: *line*", a background job's own line on what it needs, while that's why it needs you (`needsYou` 'claude-code', W69), as plain text, the same look as Asked. It's from the job's file, not the transcript, so it shows whatever the transcript's state; or
+     - "Waiting on you: *next*", what its current recap says you need to do, while that's why it needs you (`needsYou` 'recap', M5, W111), as plain text, the same look as Asked. It's from the recap, not the transcript, so it shows whatever the transcript's state, as Needs does. "Waiting on you" alone when the recap gives no next; or
      - "Asked: *excerpt*" (meta, the label in `--pw-warning-fg` 500, the excerpt in `--pw-text`); or
      - "You: *last prompt*" (meta, `--pw-text-muted`).
      - **Why a PR it owns needs you** (W106), in place of those, while that PR needs attention and the session doesn't need you itself: "CI is failing on #51", "#51 has merge conflicts", "Changes are requested on #51" or "Your review is requested on #51", in `--pw-text`, as an Asked excerpt is (`prReason()`). One that needs you itself shows what it needs, and the PR badge says the rest.
      - The full text is in a tooltip when it's cut short.
+     - **What an idle session waits on, when it isn't you** (W111): while its current recap, pitwall's, says it waits on CI, another session or someone else, the line starts with "Waiting on CI", "Waiting on another session" or "Waiting on someone else", in `--pw-text-muted` 500, with no tone, then " · " and what it did last, so the reason shows when that's cut. It never counts as needing you: no bar, no badge, no count. Not while it works (Busy or Working), needs you or has ended, nor from a recap older than its latest turn, which may no longer hold, nor from Claude Code's recap, which says nothing of what it waits on.
      - **Sub-agents running** (W77): while the snapshot's `subagentsRunning` is set, the line ends with "· 2 sub-agents running", or "· 1 sub-agent running", in `--pw-text-subtle`, as the group's label is: quiet, never a badge. The "·" is drawn only when something comes before it, and is `aria-hidden`, as the label's is. What it wants or did last gives way first, with its ellipsis; the count is never cut (`flex: none`). Nothing when none runs, so most rows are as they were. A session with no question, prompt or label shows the count alone.
        - **Why line 2, not line 1:** line 1 is the session's identity, then the badges and the time in its fixed slot, which line up down the list, with a give-way order of its own (the title, then the name, then the status badge). A count there would push the badges and the time out of line on some rows, and add a fourth thing to give way. Line 2 says what the session wants or is doing, and sub-agents running are what it's doing; it already gives way at its end, so the count can sit there whole, and rows stay two lines.
      - **The [Not needed now](#not-needed-now) toggle, last,** while the session needs you or is marked not needed now (W88): a ghost sm icon button, filled and always shown while it's marked, outlined and shown only on the row's hover and focus otherwise, and always on a touch screen, as the star is. Its icon is under the star's. What's before it gives way first, with its ellipsis, the sub-agents count included. Its negative block margins keep line 2 20 px tall, and a row that needs you with nothing else to say on line 2 has one for it.
@@ -1419,7 +1422,7 @@ See [Repo list](#repo-list):
 **Header** (sticky, `--pw-surface`, a bottom `--pw-border`, padding 12 px 16 px):
 
 1. **Line 1:**
-   - The name (l 16/24, 600), then " · " and the title (l 16/24, 400, `--pw-text-muted`), on one line: the title gives way first, then the name, each with an ellipsis, and the full title is in a tooltip when it's cut. The " · " is drawn with the title (`::before`, not read out), so it goes when the title has; screen readers get it from visually hidden text.
+   - The name (l 16/24, 600), then " · " and the title (l 16/24, 400, `--pw-text-muted`), on one line: the title gives way first, then the name, each with an ellipsis. The full title is in a tooltip, with where it came from, as the row has it: "pitwall's title, from the session's recent turns", its recap's (M5, W111), or "Claude Code's title, from the session's first prompt"; a title whose source isn't known has it only when it's cut. A background session's name is Claude Code's first-prompt title, so its recap's title after it says where it is now. The " · " is drawn with the title (`::before`, not read out), so it goes when the title has; screen readers get it from visually hidden text.
    - At the right: the [star toggle](#starred-sessions) (md, ghost, W53), then the `more` icon button (md, ghost) opening the actions menu, then the `close` icon button ("Close", Escape in its tooltip). At ≤ 600 px, "Back to sessions" at the start replaces Close.
      - The star is a button of its own, not an item in the actions menu, so whether the session is starred shows at a glance and one press changes it, as on its row. Its tooltip has `s`'s key cap, and it says `aria-keyshortcuts="s"`, while the single-key shortcuts are on.
    - The heading is the region's label (`aria-labelledby`) and takes focus when the view is opened from a row (`tabindex="-1"`, no visible ring on the heading itself).
@@ -1460,6 +1463,8 @@ See [Repo list](#repo-list):
 - **An interactive session's menu** (W90, replacing W40's Stop session that was always off): Copy session ID, the editors found (W72), the width items in three columns, then a separator and End session (`stop`), in Stop session's icon and place, so the menu reads the same for both kinds. Not in danger text: like Stop, it ends a process whose conversation is kept. It's `aria-disabled` while the session isn't running ("It isn't running, so there's nothing to end.") and while another action is out ("Wait for the current action to finish."). It opens End's [inline confirmation](#inline-confirmation). There's no Remove session, which is `claude rm`'s, for background sessions only. Once the session has ended, End session goes and Resume in background takes its place ([ended sessions](#ended-sessions)); once it's no longer listed, End session goes too.
   - **What End session does** (spike 005, D22): pitwall's server sends the session's Claude Code process SIGTERM, never SIGKILL, so its terminal goes back to the shell. It ends only an idle session, by its transcript: one that's working gets the stronger warning first. The page never sends a pid; the server takes it from a fresh `claude agents` and checks it's still that process just before the signal.
   - **Afterwards** the session leaves `claude agents` at once, and the next snapshot lists it as [ended](#ended-sessions), with Ended where its status goes and Resume in background in its footer.
+
+**Between the header and the tabs:** the [recap strip](#recap-strip) (W111), on every tab, and an inline confirmation above it while one is open.
 
 **Tabs** (a row under the header, sticky, padding 0 16 px, a bottom `--pw-border`, 40 px tall):
 
@@ -1517,6 +1522,41 @@ See [Repo list](#repo-list):
   - Once it's no longer listed: no footer, as below.
 - Sessions that are no longer listed: no footer. The header's alert says why.
 - **A draft is never lost to the session going** (W31): when the session stops running, or leaves the list, while the message box has a draft, the box stays, with the draft in it, still editable, so it can be copied. A meta note above it says why it can't be sent, linked to the textarea: "It isn't running any more, so this can't be sent. Your text stays here until you clear it." or "It's no longer listed, so this can't be sent. …", and Send is `aria-disabled`, its tooltip saying the same. Escape and the shortcuts still keep it (6.2). Cleared, the note or no footer takes its place, as above. A draft the tab kept (W44, [message box](#message-box)) keeps the footer the same way, in a view opened again after its session left the list.
+
+### Recap strip
+
+A session's recap (M5, W111; spike 010): why it was started, where it is now, and what's next or what it's waiting on. Phil, 2026-10-29: "Can you give me a status update? Where are we?" is a question he asks sessions often, and in a long session the open questions are far up. Phil agreed where it goes: "a collapsible strip in the session view between the header and the tabs, not in the terminal or the conversation".
+
+- **Component:** `RecapStrip` (`web/src/components/RecapStrip.tsx`), with its rules in `web/src/recap.ts`.
+- **Box:** a `<section>` named by its heading, between the session view's header and its tabs, on every tab, Terminal's included. `--pw-surface-muted`, as the footer is, a bottom `--pw-border`, padding 8 px 16 px, s 13/20, 4 px between its lines. At most 35% of the view's height, scrolling inside itself past that, as the footer does at half, so the body always keeps its room.
+- **Line 1:**
+  - **The disclosure button,** in an `<h3>`: the `expand` chevron, turned down while it's open, and the title, "Recap", or "Claude Code's recap" when only Claude Code's own `away_summary` is there (`source: 'claude-code'`), 500, `--pw-text`, a 4 px radius and `--pw-surface-hover` on hover, `aria-expanded`, `aria-controls` the lines. Claude Code's recap says only where it is, so it has nothing to open, and its title is plain text.
+  - **Its age,** a [timestamp](#timestamps), "4m ago", meta in `--pw-text-subtle`, the absolute time in its tooltip.
+  - **Refresh,** at the end: a ghost sm icon button (`retry`), named "Refresh the recap" by its tooltip, as the PR list's Refresh is.
+- **The headline,** always, collapsed too, so the most useful sentence is always visible (Phil, 2026-10-29: "Sometimes it's like, 'Here's what needs to be done.' Otherwise, it's just, 'Here's what was done,' or 'Here's what we're waiting on.'"). Its label is a badge, then the text in `--pw-text`, wrapping while the strip is open, and on one line with an ellipsis while it's collapsed, its whole in a tooltip when it's cut. Screen readers hear "You need to: …", from visually hidden punctuation. By what the recap waits on (`recapHeadline()`):
+
+| `waitingOn` | Label | Badge | Text |
+|---|---|---|---|
+| 'you' | "You need to" | subtle warning, the Needs you tone, as Asked you | its next |
+| 'CI', 'another session', 'someone else' | "Waiting on CI", "Waiting on another session", "Waiting on someone else" | subtle neutral, quiet | its next |
+| 'nothing' | "Done" | subtle success, quiet success | its now |
+| Claude Code's recap | "Now" | subtle neutral | its now, the `away_summary` |
+
+  - A field that's empty gives way to the other, so the headline always says something.
+  - **May be out of date:** while the recap is older than the session's latest turn (`stale`, from the snapshot's summary), the headline starts with an outline badge, "May be out of date", whose hint is "It's older than the session's latest turn.", then ". " for screen readers.
+- **Then, while it's open:** Why, and whichever of Now and Next the headline didn't show, left out when empty: a two-column grid, the labels in `--pw-text-subtle` 500, the text in `--pw-text-muted`, 4 px apart, 12 px between the columns.
+- **Collapsed:** the disclosure button closes the lines and keeps line 1 and the headline. The choice is the viewer's, for every session, in `localStorage` as `pitwall.recap-collapsed.v1`, `true` or `false` and nothing else (D14); anything else, nothing stored, or storage that throws reads as open, and a choice that can't be stored lasts until the page reloads. A view reads it as it opens.
+- **What it fetches, and when:** the snapshot carries what the list needs (`SessionSummary.recap`, D14); the view GETs the whole recap with `recapPath()` once it's shown, and again whenever the snapshot's `recap.at` changes. Never for a session with no recap, which has none to fetch, and nothing while a [root tab](#root-tabs) that isn't open hides the view.
+- **Asking for one, once:** as the view is first shown, when its recap is stale or it has none, it POSTs `recapRefreshPath()` after `--pw-delay-attach` (500 ms), so a session only passed through with `j` or `k` is never recapped, as it's never attached (W54). Never again by itself, whatever arrives: the recap engine makes the next one 5 minutes after a turn ends (W110), and Refresh is there for the rest. Not while the day's budget is spent, nor for a session no longer listed. A failure of this request says nothing; the strip shows what it has.
+- **Refresh:** POSTs `recapRefreshPath()`, with the apiKey, as every state-changing request is sent. Busy, with its spinner, `aria-busy` and "Making a new recap. It takes a few seconds." in its tooltip, until the snapshot's `recap.at` changes, a call fails (the app strip then says so), or a minute passes (`RECAP_WAIT_MS`). A press while it's busy sends nothing.
+  - **Off while the day's budget is spent,** `aria-disabled`, its tooltip saying why: "Today's 200 recaps are used up, so pitwall makes no more until midnight." Off too once the session is no longer listed: "It's no longer listed, so pitwall can't recap it."
+  - **Its answers:** a 429 while the budget lasts means a call for it is already running, so it stays busy until that one arrives; a 429 once the budget is spent is an info toast saying so; a 409, recaps off, is an info toast, "Recaps are off: pitwall was started with --no-recaps, so it doesn't make them.", and the strip goes; a 404, a session pitwall doesn't recap, likewise, "pitwall doesn't recap this session."; anything else an error toast, "Couldn't refresh the recap (HTTP 500). Try again in a moment."
+- **While the first is on its way:** line 1, "Recap", at once, so the tabs move only once, then skeleton bars after `--pw-delay-spinner`, on `--pw-surface-strong`, since sunken barely shows on muted, and "Loading the recap", visually hidden. With the snapshot's summary in hand and the whole recap on its way, its age and, while it waits on you, its headline from the summary's next, with bars for the lines.
+- **None:** "No recap yet.", meta in `--pw-text-muted`, once none is coming: the day's budget spent ("No recap yet. Today's 200 recaps are used up, so pitwall makes no more until midnight."), the latest call failed ("No recap yet. The latest recap failed: *pitwall's words*"), or the wait over.
+- **Failed:** "Couldn't load the recap (HTTP 500)." and a link button, Try again, which GETs it again.
+- **No strip** with recaps off (no `recaps` on the snapshot, or a 409), for an [ended](#ended-sessions) session, which pitwall doesn't recap, and for one the server says it doesn't recap (a 404), such as pitwall's own.
+- **Content:** every text from the recap is plain text (`plainText()`), in `<bdi>`, since it names files, PRs and people; never markdown or HTML. pitwall's own words (the labels, the notes, the toasts) are fixed.
+- **Accessibility:** a region named by its `<h3>`, the disclosure pattern with `aria-expanded` and `aria-controls`, and no live region, so a snapshot that changes the recap announces nothing; Refresh's results are toasts, which are. The headline's badges aren't focusable, so the stale hint is on hover only, and "May be out of date" says it in text.
 
 ### Message box
 
@@ -1763,11 +1803,15 @@ The session view's Sub-agents tab (W77; Phil, 2026-10-23 and 2026-10-27; the coo
 - **Never a message's text:** the title and summary are fixed, and "Latest:" is pitwall's own words. Where a copy differed is a line and character codes, such as "first at line 33: U+0107 became U+0063", never the characters.
 - **"May have sent", not "sent":** pitwall sees a call its gate didn't block only afterwards, so it can't say the message arrived (5: Errors). Some of those only restart the relay, so the alert says messaging is off only when `relayOff` does.
 
-**App strip** (one at a time):
+**App strip** (a line for each state, stacked, the relay's first):
 
-- **Component:** `AppStrip` (`web/src/components/AppStrip.tsx`).
+- **Component:** `AppStrips`, with `AppStrip` and `RecapsStrip`, in `web/src/components/AppStrip.tsx`.
 - **Box:** 32 px tall, full width above the header, `--pw-text` fill, `--pw-text-inverse` text (18.4:1 in light, 16.9:1 in dark), meta size; a 16 px `warning` icon in the text colour; a link button in `--pw-text-inverse` with an underline. The strip inverts with the theme, so it never uses a tone colour.
   - One line: a sentence too long for it ends in an ellipsis, with the whole sentence in a tooltip when it's cut, and Details stays on screen.
+- **Recaps** (M5, W111), from the snapshot's `recaps` (`recapsStripText()`), nothing while they're fine or off:
+  - **The day's budget spent,** first, since nothing more is made today whatever else went wrong, with the `info` icon: "Today's 200 recaps are used up, so pitwall makes no more until midnight. Each session keeps its last recap."
+  - **The latest call failed,** with the `warning` icon: "The latest recap failed: *pitwall's words*. Each session keeps its last recap until one works." The error is pitwall's, never the model's or `claude`'s output, as text.
+  - No Details: there's no alert behind it, and the session view's strip says the rest.
 - **Use:** only while the snapshot's `relayOff` is set, which pitwall sets once it has stopped using its relay for the rest of the run. Never inferred from a relay alert: some alerts only restart the relay. "Messaging is off until you restart pitwall: *reason*", where the reason is pitwall's own words ("its gate didn't check a SendMessage call."), then "Details", which reopens the relay alert and takes focus to it. Below 1,200 px with a session open, the alert is under the view, so Details closes the view first, as `/` does; while the message box has a draft, which closing would lose, it does nothing. It stays after the alert is dismissed and can't itself be dismissed. Details isn't there when there's no relay alert to show.
 
 ### Inline confirmation
