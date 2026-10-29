@@ -1,7 +1,7 @@
 // The command runner, on real child processes. They're `node -e` scripts,
 // never `claude`.
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { absoluteSearchPath } from '../index/exec.js';
@@ -192,11 +192,32 @@ describe('childEnvironment', () => {
       expect(absoluteSearchPath(':/usr/bin')).toBe('/usr/bin');
       expect(absoluteSearchPath('/usr/bin:')).toBe('/usr/bin');
       expect(absoluteSearchPath('/b:bin:./bin:../bin:node_modules/.bin:/a')).toBe('/b:/a');
-      // No shell expanded it, so it's relative: Node would look in <cwd>/~/.dotnet/tools.
-      expect(absoluteSearchPath('/usr/bin:~/.dotnet/tools')).toBe('/usr/bin');
       expect(absoluteSearchPath('/usr/bin:/bin:/usr/bin')).toBe('/usr/bin:/bin:/usr/bin');
       // An absolute path is kept as it's written, spaces and all.
       expect(absoluteSearchPath('/Applications/My Tools/bin:/usr/bin/../bin')).toBe('/Applications/My Tools/bin:/usr/bin/../bin');
+    });
+
+    // The coordinator's call (2026-10-29): as bash's own command search reads it, so a literal `~/.dotnet/tools` keeps working.
+    it('expands an entry that is ~ or starts with ~/ to the home directory, in its place', () => {
+      const HOME = '/Users/example';
+      expect(absoluteSearchPath('/usr/bin:~/.dotnet/tools', HOME)).toBe('/usr/bin:/Users/example/.dotnet/tools');
+      expect(absoluteSearchPath('~/bin:/usr/bin:~:/bin', HOME)).toBe('/Users/example/bin:/usr/bin:/Users/example:/bin');
+      expect(absoluteSearchPath('.:~/bin::bin', HOME)).toBe('/Users/example/bin');
+      expect(absoluteSearchPath('~/', HOME)).toBe('/Users/example/');
+      // A home directory with a trailing slash gives no doubled one, and `/` as home stays absolute.
+      expect(absoluteSearchPath('~/bin', '/Users/example/')).toBe('/Users/example/bin');
+      expect(absoluteSearchPath('~/bin:~', '/')).toBe('/bin:/');
+      // The default is this user's.
+      expect(absoluteSearchPath('~/.dotnet/tools')).toBe(`${homedir()}/.dotnet/tools`);
+    });
+
+    it("drops every other ~ entry: another user's, one not followed by a slash, and one a home directory that isn't absolute can't make absolute", () => {
+      const HOME = '/Users/example';
+      expect(absoluteSearchPath('~root/bin:/usr/bin', HOME)).toBe('/usr/bin');
+      expect(absoluteSearchPath('~example/bin:~bin:~~/bin:/usr/bin', HOME)).toBe('/usr/bin');
+      expect(absoluteSearchPath('bin/~/x:./~/bin:/usr/bin', HOME)).toBe('/usr/bin');
+      expect(absoluteSearchPath('~/bin:~', 'relative-home')).toBeUndefined();
+      expect(absoluteSearchPath('~/bin:/usr/bin', '')).toBe('/usr/bin');
     });
 
     it('is undefined when no absolute directory is left', () => {
@@ -205,6 +226,8 @@ describe('childEnvironment', () => {
 
     it('gives a child PATH cut that way, and leaves PATH out, never empty, when nothing is left', () => {
       expect(childEnvironment({ PATH: '.:/usr/bin::bin:/bin:', HOME: '/Users/example' })).toEqual({ PATH: '/usr/bin:/bin', HOME: '/Users/example' });
+      // `~` is this process's home directory, as os.homedir() gives it.
+      expect(childEnvironment({ PATH: '/usr/bin:~/.dotnet/tools:~other/bin' })).toEqual({ PATH: `/usr/bin:${homedir()}/.dotnet/tools` });
       // An empty PATH searches the working directory; none searches the system's default.
       expect(childEnvironment({ PATH: '.:', HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
       expect(childEnvironment({ PATH: '', HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });

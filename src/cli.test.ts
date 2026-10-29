@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -821,15 +821,18 @@ describe('pitwall (the process)', () => {
     }, 30_000);
 
     // W96's finding (W98): an empty or relative PATH entry would find `open` in the directory pitwall started in.
-    it('gives the opener the environment every child gets: no PITWALL_ variables, and only the absolute directories on PATH', async () => {
-      const path = `${bin}${delimiter}${delimiter}.${delimiter}relative-bin${delimiter}${process.env.PATH ?? ''}${delimiter}`;
+    it('gives the opener the environment every child gets: no PITWALL_ variables, and only the absolute directories on PATH, ~/ expanded', async () => {
+      const path = `${bin}${delimiter}${delimiter}.${delimiter}relative-bin${delimiter}~/pwtest-bin${delimiter}${process.env.PATH ?? ''}${delimiter}`;
       const { child, result, log } = await startOpening({ PATH: path });
       const seen = await readFile(`${log}.env`, 'utf8');
       expect(seen).toContain('PITWALL_HOME=unset\n');
       const entries = /^PATH=(.*)$/m.exec(seen)?.[1]?.split(delimiter) ?? [];
       expect(entries[0]).toBe(bin);
+      expect(entries[1]).toBe(join(homedir(), 'pwtest-bin'));
       expect(entries.filter((entry) => !isAbsolute(entry))).toEqual([]);
-      expect(entries).toEqual(path.split(delimiter).filter((entry) => isAbsolute(entry)));
+      // As bash reads them: `~` and `~/...` are the home directory, and any other relative or empty entry is dropped.
+      const home = (entry: string) => (entry === '~' ? homedir() : entry.startsWith('~/') ? `${homedir()}${entry.slice(1)}` : entry);
+      expect(entries).toEqual(path.split(delimiter).map(home).filter((entry) => isAbsolute(entry)));
 
       child.kill('SIGTERM');
       expect((await result).code).toBe(0);

@@ -71,7 +71,7 @@ describe('runFile', () => {
       const seen = JSON.parse(await runFile(node, ['-e', 'process.stdout.write(JSON.stringify(process.env))'], { timeoutMs: 10_000 })) as Record<string, string>;
       expect(seen.CLAUDECODE).toBeUndefined();
       expect(seen.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
-      // Only its absolute directories: this Mac's has a literal `~/.dotnet/tools`, which is relative.
+      // Only its absolute directories, with a leading `~` expanded, as this Mac's literal `~/.dotnet/tools` is.
       expect(seen.PATH).toBe(absoluteSearchPath(process.env.PATH ?? ''));
     } finally {
       for (const [name, value] of Object.entries(saved)) {
@@ -141,6 +141,29 @@ describe('runFile', () => {
       for (const [PATH, what] of entries()) {
         const err = await failure(runFile(PLANTED, [], { cwd: dir, env: { PATH }, timeoutMs: 10_000 }));
         expect(err.reason, what).toBe('not-found');
+      }
+    });
+
+    // The coordinator's call (2026-10-29): `~/bin` is the home directory's bin, as bash reads it, never <cwd>/~/bin.
+    it('is found in the home directory through a ~/ entry, not in a directory named ~ in the working directory', async () => {
+      const home = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-home-'));
+      const saved = process.env.HOME;
+      try {
+        await mkdir(path.join(home, 'bin'));
+        await writeFile(path.join(home, 'bin', PLANTED), '#!/bin/sh\necho home\n', { mode: 0o755 });
+        await mkdir(path.join(dir, '~', 'bin'), { recursive: true });
+        await writeFile(path.join(dir, '~', 'bin', PLANTED), '#!/bin/sh\necho cwd\n', { mode: 0o755 });
+        // os.homedir() reads HOME on macOS and Linux.
+        process.env.HOME = home;
+        expect(await runFile(PLANTED, [], { cwd: dir, env: { PATH: '~/bin' }, timeoutMs: 10_000 })).toBe('home\n');
+        // `~user/...` isn't expanded, and is dropped like any relative entry.
+        const err = await failure(runFile(PLANTED, [], { cwd: dir, env: { PATH: `~${path.basename(home)}/bin` }, timeoutMs: 10_000 }));
+        expect(err.reason).toBe('not-found');
+      } finally {
+        if (saved === undefined) delete process.env.HOME;
+        else process.env.HOME = saved;
+        await rm(home, { recursive: true, force: true });
+        await rm(path.join(dir, '~'), { recursive: true, force: true });
       }
     });
 
