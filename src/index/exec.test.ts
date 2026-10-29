@@ -153,7 +153,9 @@ describe('runFile', () => {
         await writeFile(path.join(home, 'bin', PLANTED), '#!/bin/sh\necho home\n', { mode: 0o755 });
         await mkdir(path.join(dir, '~', 'bin'), { recursive: true });
         await writeFile(path.join(dir, '~', 'bin', PLANTED), '#!/bin/sh\necho cwd\n', { mode: 0o755 });
-        // os.homedir() reads HOME on macOS and Linux.
+        // The child's own HOME first (W98's review).
+        expect(await runFile(PLANTED, [], { cwd: dir, env: { PATH: '~/bin', HOME: home }, timeoutMs: 10_000 })).toBe('home\n');
+        // Without one, os.homedir(), which reads this process's HOME on macOS and Linux.
         process.env.HOME = home;
         expect(await runFile(PLANTED, [], { cwd: dir, env: { PATH: '~/bin' }, timeoutMs: 10_000 })).toBe('home\n');
         // `~user/...` isn't expanded, and is dropped like any relative entry.

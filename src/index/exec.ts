@@ -87,39 +87,60 @@ const DROPPED_NAMES: ReadonlySet<string> = new Set([
 // CLAUDE.md), never more.
 
 /**
+ * What a child's PATH is when none of its entries is absolute: what libuv
+ * searches on macOS with no PATH at all (`_PATH_DEFPATH`), the same two
+ * directories glibc's execvp searches, `/bin` first. Set rather than left out,
+ * since a bash or sh further down would pick its own default, and bash's ends
+ * in `.` (W98's review).
+ */
+export const DEFAULT_SEARCH_PATH = '/usr/bin:/bin';
+
+/**
  * PATH with only its absolute directories, in their order, or undefined when
- * none is left (W96's finding, W98). An empty entry (`a::b`, or a leading or
- * trailing `:`), a relative one (`.`, `bin`) and an empty PATH all make a bare
- * command, such as `claude`, `gh` or `git`, resolve in the child's working
- * directory: Node's spawn and node-pty's execvp search PATH as the shell does.
- * pitwall runs gh from the temp directory, which on Linux every local user can
- * write to, so another user could plant `/tmp/gh` there. A PATH with nothing
- * left is left out rather than set empty: without one, the child searches the
- * system's default, `/usr/bin:/bin` on macOS, never the working directory.
+ * none is left (W96's finding, W98). A POSIX protection: an empty entry
+ * (`a::b`, or a leading or trailing `:`), a relative one (`.`, `bin`) and an
+ * empty PATH all make a bare command, such as `claude`, `gh` or `git`, resolve
+ * in the child's working directory, since Node's spawn and node-pty's execvp
+ * search PATH as the shell does. pitwall runs gh from the temp directory,
+ * which on Linux every local user can write to, so another user could plant
+ * `/tmp/gh` there. Windows' own lookup searches the working directory first
+ * whatever PATH says, and pitwall hasn't been run there, so childEnvironment()
+ * leaves PATH alone on Windows.
  *
- * An entry that is `~`, or starts with `~/`, is the user's home directory
- * (`home`, default os.homedir()) and the rest, kept in its place, as bash's
- * own command search reads it: a literal `~/.dotnet/tools`, which the .NET
- * SDK's `/etc/paths.d/dotnet-cli-tools` puts on a Mac's PATH, keeps working in
- * the sessions pitwall starts (coordinator, 2026-10-29). Node and execvp never expand it,
- * so unexpanded it would mean `<cwd>/~/.dotnet/tools`. `~user/...` isn't
- * expanded, and is dropped like any other relative entry, as is a `~` entry
- * when the home directory isn't absolute or can't be found.
+ * An entry that is `~`, or starts with `~/`, is the home directory and the
+ * rest, kept in its place, as bash reads `~` and `~/` in its own command
+ * search: a literal `~/.dotnet/tools`, which the .NET SDK's
+ * `/etc/paths.d/dotnet-cli-tools` puts on a Mac's PATH, keeps working in the
+ * sessions pitwall starts (coordinator, 2026-10-29). Node and execvp never
+ * expand it, so unexpanded it would mean `<cwd>/~/.dotnet/tools`. The home
+ * directory is `home`, else os.homedir(). Dropped like any other relative
+ * entry: `~user/...`, which isn't expanded; a `~` entry when the home
+ * directory isn't absolute or can't be found; and one whose home directory
+ * has a `:` in it, which would read as two entries.
  */
 export function absoluteSearchPath(value: string, home?: string): string | undefined {
   let homeDir = home;
-  const expanded = (entry: string): string => {
+  const expanded = (entry: string): string | undefined => {
     if (entry !== '~' && !entry.startsWith('~/')) return entry;
     homeDir ??= homeDirectory();
-    // Without a home directory, the entry stays relative, and is dropped.
-    if (homeDir === '') return entry;
-    return entry === '~' ? homeDir : homeDir.replace(/\/+$/, '') + entry.slice(1);
+    if (!path.posix.isAbsolute(homeDir)) return undefined;
+    const result = entry === '~' ? homeDir : homeDir.replace(/\/+$/, '') + entry.slice(1);
+    return result.includes(path.posix.delimiter) ? undefined : result;
   };
-  const kept = value
-    .split(path.delimiter)
-    .map(expanded)
-    .filter((entry) => path.isAbsolute(entry));
-  return kept.length > 0 ? kept.join(path.delimiter) : undefined;
+  const kept: string[] = [];
+  for (const entry of value.split(path.posix.delimiter)) {
+    const dir = expanded(entry);
+    if (dir !== undefined && path.posix.isAbsolute(dir)) kept.push(dir);
+  }
+  return kept.length > 0 ? kept.join(path.posix.delimiter) : undefined;
+}
+
+/**
+ * The PATH a child gets for `value`: absoluteSearchPath(), or DEFAULT_SEARCH_PATH when no entry is
+ * left. childEnvironment() gives every child this, and editors.ts searches it for an editor's command.
+ */
+export function childSearchPath(value: string, home?: string): string {
+  return absoluteSearchPath(value, home) ?? DEFAULT_SEARCH_PATH;
 }
 
 /** os.homedir(), or '' when it can't say: it throws when there's no HOME and no user database entry. */
@@ -141,8 +162,10 @@ function homeDirectory(): string {
  * opener (cli.ts). It's `env` without the variables named above, and, when
  * `token` is given, without any variable whose value contains it, so a child
  * can neither drive pitwall nor pass for the Claude Code session pitwall runs
- * inside; and with PATH cut to its absolute directories (absoluteSearchPath()),
- * so no bare command is found in the child's working directory. The CLI also
+ * inside; and, on macOS, Linux and the other Unixes, with PATH cut to its
+ * absolute directories, a leading `~` expanded with the environment's own HOME
+ * when that's absolute (childSearchPath()), so no bare command is found in the
+ * child's working directory. A PATH that isn't there stays out. The CLI also
  * deletes token-valued variables from process.env when it starts, so a caller
  * with no token to pass, such as runFile or the relay, is covered too.
  * server/command.ts re-exports it.
@@ -155,10 +178,10 @@ export function childEnvironment(env: NodeJS.ProcessEnv, token?: string): Record
     if (DROPPED_PREFIXES.some((prefix) => upper.startsWith(prefix)) || DROPPED_NAMES.has(upper)) continue;
     // An empty token would match every value.
     if (token !== undefined && token !== '' && value.includes(token)) continue;
-    // The search path: `PATH` exactly, as libuv and execvp read it, but any case on Windows, whose names have none.
-    if (process.platform === 'win32' ? upper === 'PATH' : name === 'PATH') {
-      const searchPath = absoluteSearchPath(value);
-      if (searchPath !== undefined) result[name] = searchPath;
+    // The search path, `PATH` exactly as libuv and execvp read it: a POSIX protection (absoluteSearchPath()).
+    if (name === 'PATH' && process.platform !== 'win32') {
+      const home = env.HOME !== undefined && path.posix.isAbsolute(env.HOME) ? env.HOME : undefined;
+      result[name] = childSearchPath(value, home);
       continue;
     }
     result[name] = value;

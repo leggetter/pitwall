@@ -493,6 +493,7 @@ const FAKE_OPENER = `#!/bin/sh
 {
   printf 'PATH=%s\\n' "$PATH"
   if [ -n "\${PITWALL_HOME+set}" ]; then echo "PITWALL_HOME=set"; else echo "PITWALL_HOME=unset"; fi
+  if [ -n "\${PITWALL_NO_OPEN+set}" ]; then echo "PITWALL_NO_OPEN=set"; else echo "PITWALL_NO_OPEN=unset"; fi
 } > "\${PWTEST_OPEN_LOG:?}.env"
 printf '%s\\n' "$#" "$@" >> "\${PWTEST_OPEN_LOG:?}"
 `;
@@ -825,7 +826,9 @@ describe('pitwall (the process)', () => {
       const path = `${bin}${delimiter}${delimiter}.${delimiter}relative-bin${delimiter}~/pwtest-bin${delimiter}${process.env.PATH ?? ''}${delimiter}`;
       const { child, result, log } = await startOpening({ PATH: path });
       const seen = await readFile(`${log}.env`, 'utf8');
+      // Two the CLI keeps in its own environment: what it was started with, never deleted.
       expect(seen).toContain('PITWALL_HOME=unset\n');
+      expect(seen).toContain('PITWALL_NO_OPEN=unset\n');
       const entries = /^PATH=(.*)$/m.exec(seen)?.[1]?.split(delimiter) ?? [];
       expect(entries[0]).toBe(bin);
       expect(entries[1]).toBe(join(homedir(), 'pwtest-bin'));
