@@ -126,6 +126,13 @@ describe('working line: the current step', () => {
     expect(step(you(1), call(2, 'Bash: echo\u001b[31m one\n\ttwo'))).toBe('Running Bash: echo one two');
   });
 
+  it('never cuts an emoji in half', () => {
+    // "Running Bash: " is 14 characters, so the emoji's first half would be the 119th.
+    const cut = step(you(1), call(2, `Bash: ${'x'.repeat(104)}🙂${'y'.repeat(20)}`));
+    expect(cut).toBe(`Running Bash: ${'x'.repeat(104)}…`);
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(cut)).toBe(false);
+  });
+
   it('never counts a call from an earlier turn that never got its result, as an interrupted one', () => {
     expect(step(call(1, 'Bash: sleep 100'), { kind: 'notice', at: at(2), text: '[Request interrupted by user]' }, you(3), claude(4))).toBe(THINKING);
   });
