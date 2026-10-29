@@ -60,7 +60,7 @@ export const PR_FILTER_PLACEHOLDER = 'Filter by title, repo, number or branch';
 /** Refresh's name and tooltip, and its tooltip while it's off or busy, which describes it. */
 export const REFRESH_LABEL = 'Refresh pull requests';
 export const REFRESH_BUSY = 'Fetching your pull requests from GitHub…';
-export const REFRESH_OFF = 'pitwall fetches your pull requests at most every 15 seconds, so Refresh is off for a moment.';
+export const REFRESH_OFF = 'pitwall fetches your pull requests at most once a minute, so Refresh is off for a moment.';
 
 /** How many linked sessions a row names before "+n". */
 const NAMED_SESSIONS = 2;
@@ -99,7 +99,7 @@ export interface PrListProps {
   onShowAll?: (() => void) | undefined;
 }
 
-/** Refresh: a ghost sm icon button, its spinner while a fetch runs, and off for 15 s after a refresh (prRefresh.ts). */
+/** Refresh: a ghost sm icon button, its spinner while a fetch runs, and off for a minute after a refresh (prRefresh.ts, W100). */
 export function PrRefreshButton({ refresh, refreshing }: { refresh: PrRefresh; refreshing: boolean }) {
   const busy = refresh.sending || refreshing;
   const off = !busy && refresh.offUntil > Date.now();

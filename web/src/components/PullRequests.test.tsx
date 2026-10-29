@@ -6,7 +6,7 @@
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { PRS_MAX, PRS_REFRESH_PATH, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
+import { PRS_MAX, PRS_REFRESH_MIN_MS, PRS_REFRESH_PATH, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
@@ -330,7 +330,7 @@ describe('Refresh', () => {
     return vi.fn<FetchLike>(async () => new Response(JSON.stringify(answer.body ?? {}), { status: answer.status, headers: answer.headers ?? {} }));
   }
 
-  it('POSTs with the apiKey, then is off for 15 seconds, saying why', async () => {
+  it('POSTs with the apiKey, then is off for a minute, saying why', async () => {
     const fetch = server({ status: 200, body: { ok: true } });
     renderDashboard(prList(PRS), { fetch });
     const button = screen.getByRole('button', { name: REFRESH_LABEL });
@@ -346,6 +346,31 @@ describe('Refresh', () => {
     fireEvent.click(button);
     await settle();
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('is on again a minute after a refresh, not before (W100)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const fetch = server({ status: 200, body: { ok: true } });
+      renderDashboard(prList(PRS), { fetch });
+      const button = screen.getByRole('button', { name: REFRESH_LABEL });
+      fireEvent.click(button);
+      await settle();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(PRS_REFRESH_MIN_MS).toBe(60_000);
+      act(() => vi.advanceTimersByTime(PRS_REFRESH_MIN_MS - 1000));
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      fireEvent.click(button);
+      await settle();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(button.getAttribute('aria-disabled')).toBeNull();
+      fireEvent.click(button);
+      await settle();
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows a spinner while a fetch runs', () => {

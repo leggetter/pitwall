@@ -2,8 +2,9 @@
 // count; the PR list's repo headings, collapsed and remembered through a reload, its rows and their
 // badges, Show older and the filter; the PR view, with its details, its sessions, Open on GitHub,
 // which leaves for the PR's own page, and Copy link; a session opened from it and the PR from the
-// session's header, with the back button; the session rows' badges; Refresh, its spinner, its 15 s
-// and a 429; each source state; a ?pr= link; and `j` and `k`. Made-up PRs only (fixtures.ts, PRS).
+// session's header, with the back button; the session rows' badges; Refresh, its spinner, its minute
+// (W100) and a 429; each source state; a ?pr= link; and `j` and `k`. Made-up PRs only (fixtures.ts,
+// PRS).
 
 import { NAMES, PRS, PRS_ERRORS, type PrsState } from '../fixtures.js';
 import type { PageRecords } from '../page.js';
@@ -187,7 +188,7 @@ const part: Part = {
       await t.shot('session-badges');
     });
 
-    await t.step('Refresh fetches once, with its spinner, then is off for 15 seconds', async () => {
+    await t.step('Refresh fetches once, with its spinner, then is off for a minute', async () => {
       await chooseInRepoList(t, 'Pull requests');
       await page.waitFor('the rows', `${prRows}.length > 0`);
       server.clearRecords();
@@ -203,8 +204,8 @@ const part: Part = {
       await t.shot('refreshed');
     });
 
-    await t.step('a refresh within 15 seconds of the last fetch gets an info toast with when, not an error', async () => {
-      // A reload forgets the page's own 15 s; the server's are still running.
+    await t.step('a refresh within a minute of the last fetch gets an info toast with when, not an error', async () => {
+      // A reload forgets the page's own minute; the server's is still running.
       await page.reload();
       await page.waitFor('the list after the reload', `${prRows}.length > 0`);
       t.allow(/\/api\/prs\/refresh/, 'the 429 the step brings about');

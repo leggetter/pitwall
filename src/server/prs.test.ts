@@ -281,10 +281,10 @@ describe('POST PRS_REFRESH_PATH', () => {
     await fetch.finish(ok([pr(1)]));
     const res = await asPage();
     expect(res.status).toBe(429);
-    expect(res.headers['retry-after']).toBe('11');
-    expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'Your pull requests were fetched moments ago. Try again in 11 seconds.' });
+    expect(res.headers['retry-after']).toBe('56');
+    expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'Your pull requests were fetched moments ago. Try again in 56 seconds.' });
     expect(fetch.calls()).toBe(2);
-    clock.advance(10_500);
+    clock.advance(55_500);
     const soon = await asPage();
     expect(soon.headers['retry-after']).toBe('1');
     expect(JSON.parse(soon.body).error).toBe('Your pull requests were fetched moments ago. Try again in 1 second.');
