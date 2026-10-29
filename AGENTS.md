@@ -67,9 +67,10 @@ docs/spikes/             spike write-ups, one file per spike, with a script besi
 src/shared/protocol.ts   the contract between the index, the server and the web UI
 src/index/               the session index. Entry point index.ts: startIndexer()
 src/server/              the local HTTP and WebSocket server. Entry point index.ts: startServer()
-src/prs/                 your open pull requests (M4): three gh api graphql searches, one call each, yours,
+src/prs/                 your open pull requests (M4): three gh api graphql searches, in pages of 25, yours,
                          those that ask your review and those that mention you (W101), read defensively,
-                         on its own poller. Entry point index.ts: createPrPoller(), prsOff() for --no-prs
+                         on its own poller, each PR placed under its repo or root (W105, place.ts).
+                         Entry point index.ts: createPrPoller(), prsOff() for --no-prs
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side

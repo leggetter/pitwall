@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { PR_LINKS_MAX } from '../shared/protocol.js';
-import { addLink, linkingCall, linkKey, newestLinks, openedByGh, openedByMcp, prUrlsIn, pruneLinks, pushedIn, toPrLink, type FoundLink } from './prLinks.js';
+import { PR_LINKS_MAX, PR_LINKS_STRONG_MAX } from '../shared/protocol.js';
+import {
+  addLink,
+  claudeLinkOf,
+  linkingCall,
+  linkKey,
+  newestLinks,
+  openedByGh,
+  openedByMcp,
+  prUrlsIn,
+  pruneLinks,
+  pushedIn,
+  toPrLink,
+  type FoundLink,
+} from './prLinks.js';
 
 // Every repo, branch and URL here is made up.
 
@@ -225,30 +238,45 @@ describe('newestLinks', () => {
     ]);
   });
 
-  it('over the cap, drops the oldest mentioned links first, then the oldest of the rest', () => {
+  it(`keeps the newest ${PR_LINKS_STRONG_MAX} strong links and the newest ${PR_LINKS_MAX} mentioned ones, each cap on its own (W105)`, () => {
+    expect([PR_LINKS_STRONG_MAX, PR_LINKS_MAX]).toEqual([200, 20]);
     const strong = Array.from({ length: 15 }, (_, i) => link('prompted', i + 1, 100 + i));
-    const mentioned = Array.from({ length: 10 }, (_, i) => link('mentioned', 100 + i, 1000 + i));
+    const mentioned = Array.from({ length: 30 }, (_, i) => link('mentioned', 100 + i, 1000 + i));
     const kept = newestLinks([...strong, ...mentioned]);
-    expect(kept).toHaveLength(PR_LINKS_MAX);
+    expect(kept).toHaveLength(15 + PR_LINKS_MAX);
     expect(kept.filter((l) => l.kind === 'prompted')).toHaveLength(15);
-    // The newest 5 mentioned, which are newer than every strong one, so first.
-    expect(kept.slice(0, 5).map((l) => l.number)).toEqual([109, 108, 107, 106, 105]);
-    const many = Array.from({ length: 25 }, (_, i) => link('opened', i + 1, i + 1));
-    expect(newestLinks([...many, link('mentioned', 99, 999)]).map((l) => l.number)).toEqual(Array.from({ length: 20 }, (_, i) => 25 - i));
+    // The newest 20 mentioned, which are newer than every strong one, so first; the oldest 10 go.
+    expect(kept.slice(0, PR_LINKS_MAX).map((l) => l.number)).toEqual(Array.from({ length: PR_LINKS_MAX }, (_, i) => 129 - i));
+    // Past 200 strong links, the oldest go, and a mention newer than all of them stays.
+    const kinds = ['opened', 'pushed', 'linked', 'prompted'] as const;
+    const many = Array.from({ length: 250 }, (_, i) => link(kinds[i % 4]!, i + 1, i + 1));
+    const capped = newestLinks([...many, link('mentioned', 999, 999)]);
+    expect(capped).toHaveLength(PR_LINKS_STRONG_MAX + 1);
+    expect(capped[0]).toMatchObject({ kind: 'mentioned', number: 999 });
+    expect(capped.slice(1).map((l) => l.number ?? Number(l.branch?.slice(1)))).toEqual(Array.from({ length: PR_LINKS_STRONG_MAX }, (_, i) => 250 - i));
+    // Other caps, as given.
+    expect(newestLinks([...strong, ...mentioned], 3, 2).map((l) => [l.kind, l.number])).toEqual([
+      ['mentioned', 129],
+      ['mentioned', 128],
+      ['prompted', 15],
+      ['prompted', 14],
+      ['prompted', 13],
+    ]);
   });
 
   it('keeps what merging whole files would, after pruning each', () => {
     const files = [0, 1, 2].map((f) => {
       const links = new Map<string, FoundLink>();
-      for (let i = 0; i < 200; i++) addLink(links, link(i % 3 === 0 ? 'mentioned' : i % 3 === 1 ? 'opened' : 'pushed', (i * 7 + f * 13) % 90, (i * 31 + f * 17) % 500 + 1));
+      for (let i = 0; i < 900; i++) addLink(links, link(i % 3 === 0 ? 'mentioned' : i % 3 === 1 ? 'opened' : 'pushed', (i * 7 + f * 13) % 400, (i * 31 + f * 17) % 2000 + 1));
       return links;
     });
     const whole = new Map<string, FoundLink>();
     for (const file of files) for (const found of file.values()) addLink(whole, found);
     const pruned = new Map<string, FoundLink>();
     for (const file of files) {
+      expect(file.size).toBeGreaterThan(PR_LINKS_STRONG_MAX + PR_LINKS_MAX);
       pruneLinks(file);
-      expect(file.size).toBeLessThanOrEqual(2 * PR_LINKS_MAX);
+      expect(file.size).toBeLessThanOrEqual(PR_LINKS_STRONG_MAX + PR_LINKS_MAX);
       for (const found of file.values()) addLink(pruned, found);
     }
     expect(newestLinks(pruned.values())).toEqual(newestLinks(whole.values()));
@@ -277,5 +305,75 @@ describe('the links', () => {
     const at = Date.parse('2026-10-16T12:00:00.000Z');
     expect(toPrLink({ kind: 'opened', repo: 'example/demo-app', number: 12, at })).toEqual({ kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: '2026-10-16T12:00:00.000Z' });
     expect(toPrLink({ kind: 'pushed', repo: 'example/demo-app', branch: 'main', at })).toEqual({ kind: 'pushed', repo: 'example/demo-app', branch: 'main', lastAt: '2026-10-16T12:00:00.000Z' });
+  });
+});
+
+describe('claudeLinkOf (W105)', () => {
+  const SESSION = '77777777-7777-4777-8777-777777777771';
+  const AT = '2026-10-29T13:30:31.794Z';
+  /** A `pr-link` entry as Claude Code writes one, made up. */
+  const entry = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    type: 'pr-link',
+    sessionId: SESSION,
+    prNumber: 42,
+    prUrl: 'https://github.com/Example/Demo-App/pull/42',
+    prRepository: 'Example/Demo-App',
+    timestamp: AT,
+    ...overrides,
+  });
+
+  it("is a 'linked' link with the lowercase repo, the number and the entry's time", () => {
+    expect(claudeLinkOf(entry(), SESSION)).toEqual({ kind: 'linked', repo: 'example/demo-app', number: 42, at: Date.parse(AT) });
+    // Without a session to check, any session's.
+    expect(claudeLinkOf(entry({ sessionId: 'another' }))).toMatchObject({ kind: 'linked', number: 42 });
+    // Owners and names by the contract's patterns: an Enterprise Managed User's `_`, a name's dots.
+    expect(claudeLinkOf(entry({ prRepository: 'pat_example/demo.app-2', prUrl: 'https://github.com/pat_example/demo.app-2/pull/42' }), SESSION)).toMatchObject({ repo: 'pat_example/demo.app-2' });
+    // The URL and the repo may differ in case only.
+    expect(claudeLinkOf(entry({ prUrl: 'https://github.com/example/demo-app/pull/42' }), SESSION)).toMatchObject({ repo: 'example/demo-app' });
+  });
+
+  it('is nothing for another entry, or another session’s link', () => {
+    expect(claudeLinkOf(entry({ type: 'user' }), SESSION)).toBeUndefined();
+    expect(claudeLinkOf(entry({ sessionId: 'another' }), SESSION)).toBeUndefined();
+    expect(claudeLinkOf(entry({ sessionId: undefined }), SESSION)).toBeUndefined();
+  });
+
+  it('is nothing unless the URL is exactly a PR’s, for the repo and number the entry names', () => {
+    for (const prUrl of [
+      'https://github.com/example/demo-app/pull/43',
+      'https://github.com/example/other/pull/42',
+      'https://github.com/someone/demo-app/pull/42',
+      'http://github.com/example/demo-app/pull/42',
+      'https://github.com/example/demo-app/pull/42/',
+      'https://github.com/example/demo-app/pull/42/files',
+      'https://github.com/example/demo-app/pull/42#issuecomment-1',
+      'https://github.com/example/demo-app/pull/042',
+      'https://github.com/example/demo-app/issues/42',
+      'https://www.github.com/example/demo-app/pull/42',
+      'https://github.com.example.com/example/demo-app/pull/42',
+      ' https://github.com/example/demo-app/pull/42',
+      'https://github.com/example/demo-app/pull/42\n',
+      'https://github.com/example/demo-app/pull/42?x=1',
+      42,
+      null,
+    ]) {
+      expect(claudeLinkOf(entry({ prUrl }), SESSION), String(prUrl)).toBeUndefined();
+    }
+  });
+
+  it('is nothing for a repo or number that isn’t well formed', () => {
+    for (const prRepository of ['example', 'example/demo-app/extra', '-example/demo-app', 'exa mple/demo-app', 'example/demo app', 'example/.', 'example/..', 'orgs/demo-app', '', 7]) {
+      const prUrl = typeof prRepository === 'string' ? `https://github.com/${prRepository}/pull/42` : 'https://github.com/example/demo-app/pull/42';
+      expect(claudeLinkOf(entry({ prRepository, prUrl }), SESSION), String(prRepository)).toBeUndefined();
+    }
+    for (const prNumber of [0, -1, 1.5, '42', Number.MAX_SAFE_INTEGER + 1, Number.NaN, null]) {
+      expect(claudeLinkOf(entry({ prNumber }), SESSION), String(prNumber)).toBeUndefined();
+    }
+  });
+
+  it('is nothing without a time', () => {
+    for (const timestamp of [undefined, '', 'yesterday', 1_730_000_000_000, '1970-01-01T00:00:00.000Z']) {
+      expect(claudeLinkOf(entry({ timestamp }), SESSION), String(timestamp)).toBeUndefined();
+    }
   });
 });

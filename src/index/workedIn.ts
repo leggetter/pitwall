@@ -12,9 +12,11 @@
 // PR links: prLinks.ts says what links a session to a PR. 'opened' comes from the successful
 // result of a call that creates a PR, and 'pushed' from the result of a push, failed or not, in any
 // of the session's files: the call is matched to its result by its tool_use id, and only the ids of
-// those calls are kept while their results are awaited. 'prompted' and 'mentioned' come from the
-// main transcript only, since a sub-agent's prompts are its parent's. The newest of each link is
-// kept per file, and the session's are merged from its files, newest first, at most PR_LINKS_MAX.
+// those calls are kept while their results are awaited. 'linked' is Claude Code's own `pr-link`
+// entry, in any of them (W105). 'prompted' and 'mentioned' come from the main transcript only,
+// since a sub-agent's prompts are its parent's. The newest of each link is kept per file, and the
+// session's are merged from its files, newest first: at most PR_LINKS_STRONG_MAX strong links and
+// PR_LINKS_MAX mentioned ones.
 //
 // The poll never waits on it. The index calls track() with the sessions it lists and reads
 // workedIn() and prLinks() synchronously. The first sight of a session queues a full scan of its
@@ -24,9 +26,12 @@
 // long first scan holds up no one else's small update for more than a file.
 //
 // Memory: files are read in 1 MiB chunks into one buffer, never whole. Only lines that could matter
-// are parsed: a tool call, `"type":"tool_use"`; a tool's result, `"type":"tool_result"`, only when
-// it holds the id of a call the file waits on; and, in the main transcript, any other line with both
-// `github.com/` and `/pull/`. One scan of a line tells a call from a result. What's kept, in memory
+// are parsed: a `pr-link` entry, `"type":"pr-link"` in a line of at most PR_LINK_LINE_MAX bytes;
+// a tool call, `"type":"tool_use"`; a tool's result, `"type":"tool_result"`, only when it holds the
+// id of a call the file waits on; and, in the main transcript, any other line with both
+// `github.com/` and `/pull/`. One scan of a line tells a call from a result. Claude Code writes the
+// current PR's `pr-link` again and again, 1,895 times in one of Phil's transcripts, so its test is
+// one bounded search of a short line, and its parse a line of about 200 bytes. What's kept, in memory
 // only, never on disk, because paths, repo names and branches from transcripts are session content:
 // - per file: { dev, ino, offset, carry }, its calls per repo, and its PR links, so a file that
 //   shrank or was replaced is rescanned from 0 without counting anything twice; and the calls whose
@@ -44,12 +49,13 @@
 import { open, readdir, realpath as fsRealpath, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { PR_LINKS_MAX, type PrLink, type PrLinkKind, type WorkedIn } from '../shared/protocol.js';
+import { PR_LINKS_MAX, PR_LINKS_STRONG_MAX, type PrLink, type PrLinkKind, type WorkedIn } from '../shared/protocol.js';
 import { runFile, RunError, type RunFile } from './exec.js';
 import { createGroupResolver, gitEnvironment } from './grouping.js';
 import { isRecord } from './guards.js';
 import {
   addLink,
+  claudeLinkOf,
   linkingCall,
   mayNamePr,
   newestLinks,
@@ -58,6 +64,7 @@ import {
   prUrlsIn,
   pruneLinks,
   pushedIn,
+  PR_LINK_LINE_MAX,
   toPrLink,
   type FoundLink,
   type LinkingCall,
@@ -96,8 +103,8 @@ export interface WorkedInScanner {
   workedIn(sessionId: string): readonly RepoWorkedIn[] | undefined;
   /**
    * The session's PR links (SessionSummary.prLinks, prLinks.ts), newest first, at most
-   * PR_LINKS_MAX, as of its last scan. Empty when it has none; undefined until it has been
-   * scanned, and after a failure.
+   * PR_LINKS_STRONG_MAX strong ones and PR_LINKS_MAX mentioned ones, as of its last scan. Empty
+   * when it has none; undefined until it has been scanned, and after a failure.
    */
   prLinks(sessionId: string): readonly PrLink[] | undefined;
   /** Resolves once nothing is queued or running. For tests and the benchmark. */
@@ -163,12 +170,14 @@ const RESULT_TAIL = Buffer.from('result"');
 /** Both on a line of the main transcript, which may then have a PR URL in a prompt or in Claude's text. */
 const GITHUB_MARK = Buffer.from('github.com/');
 const PULL_MARK = Buffer.from('/pull/');
+/** On a line of at most PR_LINK_LINE_MAX bytes: Claude Code's own `pr-link` entry, maybe. */
+const PR_LINK_MARK = Buffer.from('"type":"pr-link"');
 /** The most calls one file waits on for a result. Past this, the oldest is dropped. */
 const MAX_PENDING = 32;
 /** Lines read in a file after a call before its result is no longer waited for: one that never came, as after a crash. */
 const MAX_WAIT_LINES = 10_000;
 /** A file's links past this are pruned to what the result could keep (pruneLinks()). */
-const MAX_FILE_LINKS = 4 * PR_LINKS_MAX;
+const MAX_FILE_LINKS = 2 * (PR_LINKS_STRONG_MAX + PR_LINKS_MAX);
 const NEWLINE = 0x0a;
 /** A cache past this many entries is emptied, so a pathological transcript can't grow one without end. */
 const MAX_CACHE_ENTRIES = 100_000;
@@ -204,6 +213,8 @@ interface Pending extends LinkingCall {
 interface FileState {
   /** The session's main transcript, rather than a sub-agent's: only there do prompts and Claude's text link. */
   main: boolean;
+  /** The session's id, which a `pr-link` entry must name. */
+  sessionId: string;
   dev: number;
   ino: number;
   /** Bytes read so far, including the carry. */
@@ -226,6 +237,7 @@ interface FileState {
 }
 
 interface SessionState {
+  sessionId: string;
   main: string;
   startKey: string;
   files: Map<string, FileState>;
@@ -577,12 +589,13 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
   }
 
   /**
-   * The tool calls and PR links on one line. Only a line that could hold one is parsed: a tool call;
-   * a tool's result that holds the id of a call the file waits on; and, in the main transcript, any
-   * other line that holds both `github.com/` and `/pull/`.
+   * The tool calls and PR links on one line. Only a line that could hold one is parsed: a short one
+   * that names `"type":"pr-link"`; a tool call; a tool's result that holds the id of a call the file
+   * waits on; and, in the main transcript, any other line that holds both `github.com/` and `/pull/`.
    */
   function take(file: FileState, line: Buffer, calls: RawCall[]): void {
     file.lines++;
+    if (line.length <= PR_LINK_LINE_MAX && line.indexOf(PR_LINK_MARK) !== -1 && claudeLink(file, line)) return;
     const mark = toolMark(line);
     if (mark === 'result') {
       if (!awaits(file, line)) return;
@@ -625,6 +638,24 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
     // A prompt you typed, by lastUserPrompt's rule: no cross-session messages, meta lines or tool results.
     const prompt = file.main ? promptTextOf(entry) : undefined;
     if (prompt !== undefined && mayNamePr(prompt)) for (const pr of prUrlsIn(prompt)) link(file, 'prompted', pr, at);
+  }
+
+  /**
+   * Claude Code's own link (W105), from a line that names `"type":"pr-link"`: true when the line is
+   * a `pr-link` entry, kept or not, so nothing else reads it; false for any other line, which could
+   * name it inside, say, a tool's result.
+   */
+  function claudeLink(file: FileState, line: Buffer): boolean {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line.toString('utf8'));
+    } catch {
+      return false;
+    }
+    if (!isRecord(entry) || entry.type !== 'pr-link') return false;
+    const found = claudeLinkOf(entry, file.sessionId);
+    if (found !== undefined) add(file, found);
+    return true;
   }
 
   /** True when a line holds the id of a call the file waits on, after dropping those waited on too long. */
@@ -731,7 +762,7 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
       if (!info.isFile()) throw new Error('not a file');
       let known = state.files.get(file);
       if (known === undefined || known.dev !== info.dev || known.ino !== info.ino || info.size < known.offset) {
-        known = { main: file === state.main, dev: info.dev, ino: info.ino, offset: 0, carry: [], carryBytes: 0, skip: false, calls: 0, repos: new Map(), pending: new Map(), lines: 0, links: new Map() };
+        known = { main: file === state.main, sessionId: state.sessionId, dev: info.dev, ino: info.ino, offset: 0, carry: [], carryBytes: 0, skip: false, calls: 0, repos: new Map(), pending: new Map(), lines: 0, links: new Map() };
         state.files.set(file, known);
       }
       const end = info.size;
@@ -860,7 +891,7 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
           }
           let state = sessions.get(session.sessionId);
           if (state === undefined || state.main !== session.file) {
-            state = { main: session.file, startKey: session.startKey, files: new Map(), result: undefined, links: undefined };
+            state = { sessionId: session.sessionId, main: session.file, startKey: session.startKey, files: new Map(), result: undefined, links: undefined };
             sessions.set(session.sessionId, state);
           }
           state.startKey = session.startKey;

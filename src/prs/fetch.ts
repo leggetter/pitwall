@@ -1,7 +1,7 @@
 // One fetch of your open pull requests (M4, W93; W101): GitHub's search through `gh api graphql`,
 // three searches, one call each, run at once: the PRs you opened, those whose review is requested
-// of you and those that mention you (PullRequestRelation, PRS_SEARCHES). At most two pages of 100
-// for each, so at most PRS_MAX of each.
+// of you and those that mention you (PullRequestRelation, PRS_SEARCHES). Pages of PRS_PAGE_SIZE,
+// 25, one after another, up to PRS_MAX of each (W105).
 //
 //   how it runs   the index's runFile (index/exec.ts): no shell, stdin and stderr ignored, and the
 //                 environment scrubbed by childEnvironment(), with GH_PROMPT_DISABLED and
@@ -9,14 +9,17 @@
 //                 never asks, never checks for an update and prints plain JSON. In the temp
 //                 directory, as stop and remove run, so the directory pitwall started in, and its
 //                 git remotes, never matter. GitHub's token stays inside gh: pitwall never reads it
-//   calls         one per search, the three at once, and a second for a search with more than 100.
-//                 Not one call with the three as aliases: GitHub ends a request that takes more than
-//                 10 seconds, and the three together took 9.9 s on 2026-10-29 (W101's review). Apart,
-//                 one that fails or is slow fails only itself: the poller keeps the others
+//   calls         one per page of each search, the three searches at once, each page after the one
+//                 before. Not one call with the three as aliases: GitHub ends a request that takes
+//                 more than 10 seconds, and the three together took 9.9 s on 2026-10-29 (W101's
+//                 review). Apart, one that fails or is slow fails only itself: the poller keeps the
+//                 others. Pages of 25, not 100 (W105): your own search's 54 PRs in one page took
+//                 9.4 s, near GitHub's 10 s, and a page's time grows with the PRs on it
 //   arguments     every variable with -f, a string, never -F, which reads `@value` as a file. The
-//                 query and the searches are constants; the only value from outside is page 2's
-//                 cursor, from page 1's answer, and it's passed on only when it looks like one
-//   time          PRS_FETCH_TIMEOUT_MS for each search, both its pages together
+//                 query and the searches are constants; the only value from outside is the next
+//                 page's cursor, from the page before's answer, and it's passed on only when it looks
+//                 like one
+//   time          PRS_FETCH_TIMEOUT_MS for each search, all its pages together
 //   each search   its PRs, at most PRS_MAX, newest update first. mergeSearches() then lists each PR
 //                 once, as the first relation in PR_RELATIONS that found it, so a PR that's yours
 //                 and mentions you is yours, and one that asks your review and mentions you asks it
@@ -31,6 +34,8 @@
 //
 // Measured on 2026-10-29, by hand: yours 2 of the 5,000 rate-limit points an hour, 9.4 s for 54
 // PRs; review requested 3 points, 1.7 s; mentioned 2 points, 2.6 s. 7 points a fetch (PLAN.md, W101).
+// In pages of 25 (W105), the same day: yours 55 PRs in 3 pages of 3.7, 4.8 and 2.9 s, 11.4 s in
+// all; review requested 1.5 s; mentioned 2.6 s. A page of 25 costs 1 point by GitHub's formula.
 import os from 'node:os';
 import { RunError, type RunFile } from '../index/exec.js';
 import {
@@ -60,8 +65,15 @@ export const PRS_SEARCHES: Readonly<Record<PullRequestRelation, string>> = {
   mentioned: 'is:pr is:open mentions:@me -author:@me archived:false sort:updated-desc',
 };
 
-/** The most PRs one page asks for: GitHub's limit. */
-export const PRS_PAGE_SIZE = 100;
+/**
+ * The most PRs one page asks for (W105). GitHub allows 100, but a page's time grows with its PRs, each
+ * with its checks: your own search's 54 in one page took 9.4 s on 2026-10-29, against GitHub's limit
+ * of 10 s for a request. 25 keeps each page well under it.
+ */
+export const PRS_PAGE_SIZE = 25;
+
+/** The most pages one search fetches: PRS_MAX in pages of PRS_PAGE_SIZE. */
+export const PRS_MAX_PAGES = Math.ceil(PRS_MAX / PRS_PAGE_SIZE);
 
 /** The most checks read per PR. The most on one of Phil's PRs on 2026-10-28 was 14. */
 export const PRS_CONTEXTS_MAX = 100;
@@ -74,7 +86,7 @@ export const PRS_REVIEW_REQUESTS_MAX = 100;
 
 /**
  * The most bytes one page may print. 50 PRs with their checks were 38 KB; 100 PRs with 100 checks
- * each, with long names, stay under 4 MiB.
+ * each, with long names, stay under 4 MiB, and a page holds 25.
  */
 export const PRS_PAGE_MAX_BYTES = 4 * 1024 * 1024;
 
@@ -198,7 +210,7 @@ export function ghEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
-/** gh's arguments for one page of one search. Every variable is a string field, -f. */
+/** gh's arguments for one page of one search, `after` the cursor for any but the first. Every variable is a string field, -f. */
 export function ghArgs(relation: PullRequestRelation, after?: string): string[] {
   const args = ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${PRS_QUERIES[relation]}`, '-f', `q=${PRS_SEARCHES[relation]}`];
   if (after !== undefined) args.push('-f', `after=${after}`);
@@ -219,7 +231,11 @@ export async function fetchPullRequests(options: FetchOptions): Promise<FetchRes
   return Object.fromEntries(PR_RELATIONS.map((relation, index) => [relation, results[index]!])) as Record<PullRequestRelation, SearchResult>;
 }
 
-/** One search: page 1, then page 2 when there's more, within its own deadline. Never throws. */
+/**
+ * One search: page 1, then each next page while GitHub says there's more and a cursor of the right
+ * shape, until it has returned PRS_MAX or PRS_MAX_PAGES pages, all within its own deadline. One page that fails fails the search,
+ * rather than give a list it knows is short. Never throws.
+ */
 export async function fetchSearch(relation: PullRequestRelation, options: FetchOptions): Promise<SearchResult> {
   const now = options.monotonicNow ?? (() => performance.now());
   const deadline = now() + (options.timeoutMs ?? PRS_FETCH_TIMEOUT_MS);
@@ -239,13 +255,16 @@ export async function fetchSearch(relation: PullRequestRelation, options: FetchO
   const first = await page();
   if ('ok' in first) return first;
   const pages = [first];
-  let more = first.hasNextPage;
-  if (more && first.endCursor !== undefined && isWellFormedCursor(first.endCursor)) {
-    const second = await page(first.endCursor);
-    if ('ok' in second) return second;
-    pages.push(second);
-    more = second.hasNextPage;
+  let last = first;
+  let nodes = first.nodes;
+  while (last.hasNextPage && pages.length < PRS_MAX_PAGES && nodes < PRS_MAX && last.endCursor !== undefined && isWellFormedCursor(last.endCursor)) {
+    const next = await page(last.endCursor);
+    if ('ok' in next) return next;
+    pages.push(next);
+    nodes += next.nodes;
+    last = next;
   }
+  const more = last.hasNextPage;
 
   // By URL, since a PR updated between the two pages can move from one to the other.
   const byUrl = new Map<string, PullRequestSummary>();
