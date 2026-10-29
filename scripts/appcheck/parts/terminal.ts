@@ -241,7 +241,9 @@ const part: Part = {
       await openFromRow(t, NAMES.finished);
       await page.settle(200);
       t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'it opens on Conversation');
-      t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.session-view-note')?.textContent`), 'To message it, open its Terminal tab, which asks before restarting it.', 'its note');
+      // Since W107 it can be resumed in the background too, beside how to message it.
+      t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.session-view-note')?.textContent`), 'To message it, open its Terminal tab, which asks before restarting it, or resume it here in the background.', 'its note');
+      t.expect(await page.evaluate<boolean>(`[...${VIEW}.querySelectorAll('.ended-actions button')].some((b) => b.textContent.trim() === 'Resume in background')`), 'Resume in background beside it');
       await page.click('the Terminal tab', viewTabButton('Terminal'));
       await page.waitFor('the question', `!!${VIEW}.querySelector('.attach .inline-confirm[role="alertdialog"]')`);
       t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.attach .inline-confirm-question').textContent`), 'Restart and attach?', 'it asks first');

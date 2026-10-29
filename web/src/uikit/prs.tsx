@@ -5,23 +5,28 @@
 // none; the Pull requests view in each state, with its hidden line and Show older; the PR view with
 // its details and sessions, a review requested of you or a team and a mention (W101), and its other
 // states; the session view's links and its Pull requests tab; and the whole page with a PR open.
-// Refresh here asks nothing: the page's stubbed API answers nothing.
+// Refresh here asks nothing: the page's stubbed API answers nothing. W107's actions: a PR row's
+// New session or Clone and start, Resume on an ended session's row, the PR view's action, Clone and
+// start's confirmation, cloning and failing, and New session after a clone.
 
 import { useState } from 'react';
 import type { PullRequestList, PullRequestPlace, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
+import { ClonedNotice, CloneDialog } from '../components/CloneDialog.js';
 import { Dashboard } from '../components/Dashboard.js';
-import { PrRow } from '../components/PrRow.js';
+import { NewSessionDialog } from '../components/NewSessionDialog.js';
+import { PrRow, PrStartButton } from '../components/PrRow.js';
 import { PrView, UnlistedPrView, WaitingPrView } from '../components/PrView.js';
 import { RepoList } from '../components/RepoList.js';
 import { SessionPrsPanel } from '../components/SessionPrs.js';
 import { SessionRow } from '../components/SessionRow.js';
 import { SessionView } from '../components/SessionView.js';
 import { prKey, sessionsFor, strongPrsOf } from '../prs.js';
+import { prPrefill } from '../prStart.js';
 import { ALL_SESSIONS, memoryNavigation, type Selection } from '../selection.js';
 import { composeWork, prRowCounts, withPrRows } from '../work.js';
-import { ago, APP_DIR, background, endedSession, group, JOBS_DIR, ROOT, session, snapshot } from './fixtures.js';
-import { Specimen } from './kit.js';
-import { memoryStorage } from './stubs.js';
+import { ago, APP_DIR, background, DIALOG_SNAPSHOT, endedSession, group, JOBS_DIR, ROOT, session, snapshot } from './fixtures.js';
+import { press, Reopenable, Scenario, Specimen, text, type ScenarioProps } from './kit.js';
+import { CLONED_DIR, memoryStorage, type StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
 
 const noop = () => {};
@@ -72,6 +77,8 @@ const TEAM_REVIEW = pr('example/event-relay', 618, 'Rename the made-up delivery 
   place: ELSEWHERE,
 });
 const MENTION = pr('example/api-server', 23, 'Ask about the made-up rate limit headers', 5 * 60, { relation: 'mentioned', review: 'review-required', place: APP });
+// Its repo isn't cloned (W107): Clone and start's.
+const SDK_DOCS = pr('example/sdk-docs', 9, 'Add a made-up example to the SDK docs', 3 * 60, { place: ELSEWHERE });
 // No root claims its owner (W106): counted, never listed.
 const UNCLAIMED = pr('other-org/tool', 3, 'A made-up fix elsewhere', 6 * 60, { place: { kind: 'unclaimed' } });
 const PRS = [FAILING, CONFLICTS, QUIET, APPROVED, DRAFT, OLDER, REVIEW, TEAM_REVIEW, MENTION, UNCLAIMED];
@@ -112,14 +119,28 @@ function Rows() {
       <div className="session-list-body">
         <ul className="sessions">
           {[REVIEWER, OPENER, PUSHER, MENTIONER, ENDED].map((each) => (
-            <SessionRow key={each.sessionId} session={each} group={shown!} showGroup owned={WORK.owned.get(each.sessionId)} onOpen={noop} />
+            <SessionRow key={each.sessionId} session={each} group={shown!} showGroup owned={WORK.owned.get(each.sessionId)} onOpen={noop} offerResume />
           ))}
           {placed.map(({ pr: one, group: each }) => (
-            <PrRow key={prKey(one)} pr={one} group={each} showGroup onOpen={noop} />
+            <PrRow key={prKey(one)} pr={one} group={each} showGroup onOpen={noop} actions={<PrStartButton pr={one} onStart={noop} />} />
           ))}
         </ul>
       </div>
     </div>
+  );
+}
+
+/** Clone and start's confirmation, against the stub API, put into a state by `run`. */
+function CloneCase({ options, run }: { options?: StubOptions; run?: ScenarioProps['run'] }) {
+  return (
+    <Stubbed options={options}>
+      <Reopenable>
+        {(close) => {
+          const shown = <CloneDialog pr={SDK_DOCS} onClose={close} onCloned={close} />;
+          return run ? <Scenario run={run}>{shown}</Scenario> : shown;
+        }}
+      </Reopenable>
+    </Stubbed>
   );
 }
 
@@ -160,9 +181,48 @@ export function PullRequestSpecimens() {
 
       <Specimen
         title="Rows"
-        note="Session rows carry the open PRs they own: the most urgent as a badge, '#51', in subtle danger while it needs attention, with +n for more, before the status badge; line 2 says why while a PR needs you and the session doesn't. A session that only named one, or whose PR another session took over, has none. An ended session that owns an open PR is listed with the rest, not muted. Then PR rows, for the PRs no session owns: '#57' and the title, the badges and when it was updated, then line 2: its group, why it needs you or how it's yours, and 'No session listed' or 'Not cloned'."
+        note="Session rows carry the open PRs they own: the most urgent as a badge, '#51', in subtle danger while it needs attention, with +n for more, before the status badge; line 2 says why while a PR needs you and the session doesn't. A session that only named one, or whose PR another session took over, has none. An ended session that owns an open PR is listed with the rest, not muted, with Resume at the end of line 2 on hover and focus (W107). Then PR rows, for the PRs no session owns: '#57' and the title, the badges and when it was updated, and, on hover and focus, New session or Clone and start (W107); then line 2: its group, why it needs you or how it's yours, and 'No session listed' or 'Not cloned'."
       >
         <Rows />
+      </Specimen>
+
+      <Specimen
+        title="Clone and start: asking first"
+        note="W107: a PR row's action, or the PR view's, for a repo that isn't cloned. It says exactly what it will do, then New session there; Clone sends the repo alone, and the server picks the root and the directory. Focus starts on Close, as Cancel's."
+        frame="dialog"
+      >
+        <CloneCase />
+      </Specimen>
+      <Specimen title="Clone and start: cloning" note="Clone busy, the rest aria-disabled; Escape, Close and the backdrop do nothing while gh clones." frame="dialog">
+        <CloneCase options={{ clone: 'cloning' }} run={async (root) => press(root, 'Clone')} />
+      </Specimen>
+      <Specimen title="Clone and start: it failed" note="What failed, in pitwall's words, never gh's output, and the confirmation stays, to try again or cancel." frame="dialog">
+        <CloneCase
+          options={{ clone: 'failed' }}
+          run={async (root) => {
+            await press(root, 'Clone');
+            await text(root, "Couldn't clone example/sdk-docs.");
+          }}
+        />
+      </Specimen>
+      <Specimen
+        title="New session after a clone"
+        note="Prefilled in the new clone, added to the directories, pr-9 and a prompt that names the PR by its URL; the notice says what was cloned and that Claude Code won't trust it until claude has run there once, with the command. pitwall never trusts it for you."
+        frame="dialog-tall"
+      >
+        <Stubbed>
+          <Reopenable>
+            {(close) => (
+              <NewSessionDialog
+                snapshot={DIALOG_SNAPSHOT}
+                onClose={close}
+                onStarted={close}
+                prefill={prPrefill(SDK_DOCS, CLONED_DIR)}
+                notice={<ClonedNotice repo={SDK_DOCS.repoLabel} cwd={CLONED_DIR} hint={`cd ${CLONED_DIR} && claude`} />}
+              />
+            )}
+          </Reopenable>
+        </Stubbed>
       </Specimen>
 
       <Specimen
@@ -223,14 +283,14 @@ export function PullRequestSpecimens() {
       <Specimen title="Your review requested, through a team" note="It says how it's yours under its badges: of you, or of a team you're on, named when it's the one team asked." frame="short">
         <PrView pr={TEAM_REVIEW} sessions={linked(TEAM_REVIEW)} onOpenSession={noop} onClose={noop} />
       </Specimen>
-      <Specimen title="A mention" note="You're mentioned in it: not yours, and your review isn't asked. It never needs attention." frame="short">
-        <PrView pr={MENTION} sessions={linked(MENTION)} onOpenSession={noop} onClose={noop} />
+      <Specimen title="A mention" note="You're mentioned in it: not yours, and your review isn't asked. It never needs attention. With no session, in a cloned repo, Sessions offers New session (W107)." frame="short">
+        <PrView pr={MENTION} sessions={linked(MENTION)} onOpenSession={noop} onStart={noop} onClose={noop} />
       </Specimen>
       <Specimen title="Conflicts and changes requested" note="A long title wraps, where a session's name gives way." frame="short">
         <PrView pr={CONFLICTS} sessions={linked(CONFLICTS)} onOpenSession={noop} onClose={noop} />
       </Specimen>
-      <Specimen title="A draft, GitHub still checking for conflicts, and no session" frame="short">
-        <PrView pr={DRAFT} sessions={linked(DRAFT)} onOpenSession={noop} onClose={noop} />
+      <Specimen title="A draft, GitHub still checking for conflicts, and no session" note="With no session, Sessions offers Clone and start, since its repo isn't cloned (W107)." frame="short">
+        <PrView pr={DRAFT} sessions={linked(DRAFT)} onOpenSession={noop} onStart={noop} onClose={noop} />
       </Specimen>
       <Specimen title="From a fork, with an ended session" frame="short">
         <PrView pr={FORK} sessions={{ strong: [{ session: ENDED, link: link('opened', FORK, 3 * DAY) }], mentioned: [] }} onOpenSession={noop} onClose={noop} />

@@ -10,6 +10,13 @@ export interface RunOptions {
   env?: NodeJS.ProcessEnv;
   /** Reject when stdout grows past this many bytes. Default 16 MiB. */
   maxStdoutBytes?: number;
+  /**
+   * POSIX: start the child in a session and process group of its own (spawn's `detached`, which calls
+   * setsid), so it has no controlling terminal and nothing it starts can prompt in the one pitwall
+   * runs in, as ssh would for a passphrase; and a failure, the timeout's included, signals the whole
+   * group, so what it started, such as gh's `git clone`, stops with it (W107). Ignored on Windows.
+   */
+  processGroup?: boolean;
 }
 
 /**
@@ -207,6 +214,7 @@ export function childEnvironment(env: NodeJS.ProcessEnv, token?: string): Record
 export const runFile: RunFile = (file, args, options) =>
   new Promise<string>((resolve, reject) => {
     const maxBytes = options.maxStdoutBytes ?? DEFAULT_MAX_STDOUT;
+    const group = options.processGroup === true && process.platform !== 'win32';
     let settled = false;
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -218,18 +226,33 @@ export const runFile: RunFile = (file, args, options) =>
       stdio: ['ignore', 'pipe', 'ignore'],
       shell: false,
       windowsHide: true,
+      detached: group,
     });
+
+    /** Signals the child, or with `processGroup` its whole group, which may outlive it. */
+    const signal = (name: NodeJS.Signals) => {
+      if (group && child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, name);
+        } catch {
+          // The group has gone.
+        }
+        return;
+      }
+      child.kill(name);
+    };
 
     const finish = (error: RunError | undefined, stdout?: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (error) {
+        // Only while the child runs, whose pid then still names its group, so a reused pid is never signalled.
         if (child.exitCode === null && child.signalCode === null) {
-          child.kill('SIGTERM');
+          signal('SIGTERM');
           // Don't leave a process behind on every poll if it ignores SIGTERM.
           const force = setTimeout(() => {
-            if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+            if (child.exitCode === null && child.signalCode === null) signal('SIGKILL');
           }, 2000);
           force.unref();
           child.once('exit', () => clearTimeout(force));

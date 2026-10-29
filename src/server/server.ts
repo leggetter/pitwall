@@ -9,8 +9,10 @@
 //   GET /api/editors            then editors.ts: the editors found at startup
 //   GET /api/prs                then prs.ts: your open PRs, the latest list the poller has (M4);
 //                               POST /api/prs/refresh asks it for a fetch, at most one a minute,
-//                               else 429, and 409 with --no-prs
-//   POST /api/attachments       then attachments.ts: the one body that isn't JSON, the file's bytes
+//                               else 429, and 409 with --no-prs; POST /api/prs/clone, clone.ts,
+//                               clones a not-cloned PR's repo into its root, one at a time and
+//                               at most 3 a minute, else 429 (W107)
+//   POST /api/attachments      then attachments.ts: the one body that isn't JSON, the file's bytes
 //                               with its own Content-Type, at most 10 MiB, its type checked; DELETE
 //                               /api/attachments/:id removes one no spawn has used
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
@@ -61,6 +63,7 @@ import {
 import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
+import { registerClone, type CloneOptions } from './clone.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
@@ -161,6 +164,8 @@ export interface ServerInternals {
    * clean-up's bounds and its log (W84). The folder is ServerOptions.pitwallHome's.
    */
   attachments?: Omit<AttachmentStoreOptions, 'home'>;
+  /** Clone and start (W107, clone.ts): tests pass a fake runFile and file system calls, so no test runs gh or touches a real root. */
+  clone?: CloneOptions;
 }
 
 export async function startServerWithInternals(
@@ -197,13 +202,14 @@ export async function startServerWithInternals(
   const prs = options.prs ?? prsOff();
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
   const snapshots = createSnapshotView(indexer, prs);
-  // The directory list (W70), your open PRs and Refresh (M4), then the input routes: attachments
+  // The directory list (W70), your open PRs, Refresh (M4) and Clone and start (W107), then the input routes: attachments
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
   // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
   // test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
+    registerClone(app, indexer, prs, internals.clone);
     registerAttachments(app, attachments);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });

@@ -890,13 +890,13 @@ describe('resume (W66)', () => {
     }
   });
 
-  it("answers 409 for a session that hasn't ended, without checking or running anything", async () => {
+  it("answers 409 for a session that hasn't ended and isn't a background session that has stopped, without checking or running anything", async () => {
     const agents = fakeAgents();
     const started = await start(fakeRunner(resumedOutput()), { agents });
     for (const id of [BG_ID, INTERACTIVE_ID, NO_SHORT_ID]) {
       const res = await postAsPage(started, resumePath(id));
       expect(res.status, id).toBe(409);
-      expect(errorOf(res)).toMatch(/Only an interactive session that has ended can be resumed/);
+      expect(errorOf(res)).toMatch(/Only an interactive session that has ended, or a background session that isn't running, can be resumed/);
     }
     expect(agents.list).not.toHaveBeenCalled();
     expect(started.run.calls).toEqual([]);
@@ -1081,6 +1081,61 @@ describe('resume (W66)', () => {
   });
 });
 
+describe("resume a background session that isn't running (W107)", () => {
+  const STOPPED_ID = '99999999-9999-4999-8999-999999999999';
+  const errorOf = (res: HttpResult) => (res.json as { error: string }).error;
+  /** A stopped job, as `claude stop` leaves one: no process, its row still listed. */
+  const stopped = (overrides: Partial<SessionSummary> = {}) =>
+    session({ sessionId: STOPPED_ID, shortId: '99999999', name: 'pitwall-test-stopped', alive: false, finished: true, state: 'stopped', ...overrides });
+  const ownRow = (overrides: Partial<AgentRow> = {}) => agentRow(STOPPED_ID, { kind: 'background', shortId: '99999999', pid: undefined, state: 'stopped', ...overrides });
+  /** What Claude Code printed for one on 2.1.312: it woke the job in place, under its own short id. */
+  const woken = exited(
+    0,
+    `note: woke session 99999999 with its saved options (--name, --model).\nbackgrounded · 99999999 · pitwall-test-stopped (idle — send a prompt to start)\n  claude attach 99999999\n`,
+  );
+
+  it('runs claude --resume <id> --bg in its directory, after a fresh claude agents that lists its row with no process', async () => {
+    const agents = fakeAgents({ ok: true, rows: [ownRow()] });
+    const indexer = fakeIndexer(snapshotWith(stopped()));
+    const started = await start(fakeRunner(woken), { agents }, indexer);
+    const res = await postAsPage(started, resumePath(STOPPED_ID));
+    expect([res.status, res.json]).toEqual([200, { ok: true, shortId: '99999999' }]);
+    expect(agents.list).toHaveBeenCalledTimes(1);
+    expect(started.run.calls.map((call) => [call.args, call.options.cwd])).toEqual([[['--resume', STOPPED_ID, '--bg'], repo]]);
+    expect(indexer.noteRestart).toHaveBeenCalledWith(STOPPED_ID, expect.any(Number));
+  });
+
+  it('answers 409 and runs nothing when the listing gives it a process, an interactive row, or no row at all', async () => {
+    for (const rows of [[ownRow({ pid: 7777, status: 'idle' })], [ownRow(), agentRow(STOPPED_ID)], [] as AgentRow[]]) {
+      const agents = fakeAgents({ ok: true, rows });
+      const started = await start(fakeRunner(woken), { agents }, fakeIndexer(snapshotWith(stopped())));
+      const res = await postAsPage(started, resumePath(STOPPED_ID));
+      expect(res.status).toBe(409);
+      expect(errorOf(res)).toMatch(rows.length === 0 ? /no longer lists it/ : /running again/);
+      expect(started.run.calls).toEqual([]);
+    }
+  });
+
+  it('answers 409 for a running background session, one whose id is no UUID, or one with a pid, without checking anything', async () => {
+    for (const each of [stopped({ alive: true, pid: 7777 }), stopped({ sessionId: 'deploy' }), stopped({ pid: 7777 })]) {
+      const agents = fakeAgents({ ok: true, rows: [ownRow()] });
+      const started = await start(fakeRunner(woken), { agents }, fakeIndexer(snapshotWith(each)));
+      const res = await postAsPage(started, resumePath(each.sessionId));
+      expect(res.status).toBe(409);
+      expect(agents.list).not.toHaveBeenCalled();
+      expect(started.run.calls).toEqual([]);
+    }
+  });
+
+  it('says so when Claude Code is refused for trust, with the command, as for an ended session', async () => {
+    const agents = fakeAgents({ ok: true, rows: [ownRow()] });
+    const started = await start(fakeRunner(exited(1, '', 'Workspace not trusted. Run `claude` in /x once and accept the trust prompt, then retry.\n')), { agents }, fakeIndexer(snapshotWith(stopped())));
+    const res = await postAsPage(started, resumePath(STOPPED_ID));
+    expect(res.status).toBe(422);
+    expect(res.json).toMatchObject({ ok: false, hint: `cd ${repo} && claude` });
+  });
+});
+
 describe('resume, hardened after the W73 security look (W81)', () => {
   const worker = () => join(repo, 'packages', 'worker');
   const errorOf = (res: HttpResult) => (res.json as { error: string }).error;
@@ -1168,7 +1223,7 @@ describe('resume, hardened after the W73 security look (W81)', () => {
         const started = await start(fakeRunner(resumedOutput()), { agents }, fakeIndexer(snapshotWith(ended(id, repo))));
         const res = await postAsPage(started, resumePath(id));
         expect(res.status, id).toBe(409);
-        expect(errorOf(res)).toMatch(/Only an interactive session that has ended can be resumed/);
+        expect(errorOf(res)).toMatch(/Only an interactive session that has ended, or a background session that isn't running, can be resumed/);
         expect(agents.list).not.toHaveBeenCalled();
         expect(started.run.calls).toEqual([]);
       }

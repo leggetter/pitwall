@@ -81,7 +81,7 @@ import { Badge, StatusBadge } from './Badge.js';
 import { Button } from './Button.js';
 import { ConversationPanel, SubagentLinkContext, useConversation, type PageLoader, type SubagentRef } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
-import { COPY_RESUME_COMMAND, EndedFooter, RESUME_LABEL, useResume } from './EndedSession.js';
+import { COPY_RESUME_COMMAND, EndedFooter, isDormant, RESUME_LABEL, useResume } from './EndedSession.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
@@ -139,6 +139,8 @@ export const BACKGROUND_NOTES = {
   running: 'To message it, type in its Terminal tab, which attaches to it.',
   /** Finished, or its process exited: attaching restarts it, and the terminal asks first. */
   notRunning: 'To message it, open its Terminal tab, which asks before restarting it.',
+  /** The same, with Resume in background beside it (W107). */
+  resumable: 'To message it, open its Terminal tab, which asks before restarting it, or resume it here in the background.',
 } as const;
 
 /**
@@ -484,6 +486,8 @@ export function SessionView({
 
   // An ended interactive session (W67): no process, so no Terminal tab and no message box.
   const ended = session.ended === true;
+  // Ended, or a background session that isn't running: Resume in background brings either back (W107).
+  const dormant = isDormant(session);
   // An interactive session, or a background one that can't be attached from here.
   const background = session.kind === 'background';
   const terminalOff = !background
@@ -660,13 +664,13 @@ export function SessionView({
   // seconds before the attach, and asked to resume, not to type. In a root tab that isn't open (W38),
   // this waits until that tab is.
   useLayoutEffect(() => {
-    if (ended || hidden || !takePressed()) return;
+    if (dormant || hidden || !takePressed()) return;
     if (openingTab() === 'terminal') {
       asked.current = undefined;
       setQuiet(false);
       setChosen('terminal');
     }
-  }, [ended, hidden]);
+  }, [dormant, hidden]);
 
   // The ended footer went with focus inside it, Resume in background's say, as the session was listed
   // as running or left the list: focus goes to the Terminal tab, the way in, or the heading where
@@ -719,7 +723,7 @@ export function SessionView({
   // j, k, ↑ and ↓ wait for a resume's request too, so its result shows in the view it was asked from.
   const requesting = busy || resume.phase === 'running';
   const resumeCopy = ended ? resumeCommand(session) : undefined;
-  const canResume = ended && listed && !session.cwdMissing;
+  const canResume = dormant && listed && !session.cwdMissing;
   const onRunningRef = useRef(onRunningChange);
   onRunningRef.current = onRunningChange;
   useEffect(() => {
@@ -1181,7 +1185,11 @@ export function SessionView({
         // which it's about, and which then has the room; not once it's no longer listed, or where it
         // can't be attached, as the tab's tooltip says.
         <footer className="session-view-foot">
-          <p className="session-view-note">{session.alive ? BACKGROUND_NOTES.running : BACKGROUND_NOTES.notRunning}</p>
+          {canResume ? (
+            <EndedFooter session={session} resume={resume} onCopy={undefined} note={BACKGROUND_NOTES.resumable} onFocusLeaving={onFootFocusLeaving} />
+          ) : (
+            <p className="session-view-note">{session.alive ? BACKGROUND_NOTES.running : BACKGROUND_NOTES.notRunning}</p>
+          )}
         </footer>
       )}
     </Frame>

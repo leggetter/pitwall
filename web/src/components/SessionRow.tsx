@@ -11,7 +11,9 @@
 // most urgent as a badge, "#128 CI failing", with "+2" for more. It needs you when the session does
 // or when one of those PRs needs attention, and then line 2 says why, "CI is failing on #128", unless
 // the session needs you itself, which comes first. A finished or ended session that owns an open PR
-// isn't finished work, so its row isn't muted; its badge still says Ended.
+// isn't finished work, so its row isn't muted; its badge still says Ended, and, where the list offers
+// it, its line 2 ends with Resume (W107, RowResume.tsx), where a session that needs you has its Not
+// needed now toggle: it resumes an ended interactive session, or a background one that isn't running.
 //
 // Tooltips, on hover only, since none of them is on the name's button: the session's id and start
 // time on its name; the whole title and where it came from; Stale's and a finished Asked you's
@@ -30,6 +32,7 @@ import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
 import { NotNeededButton } from './NotNeededButton.js';
+import { canResumeFromRow, RowResume } from './RowResume.js';
 import { SessionPrBadgeView } from './PrBadges.js';
 import { StarButton } from './StarButton.js';
 import { Timestamp } from './Timestamp.js';
@@ -140,9 +143,14 @@ export interface SessionRowProps {
    * attention. One it's only linked to, or that another session has taken over, isn't here.
    */
   owned?: readonly PullRequestSummary[] | undefined;
+  /**
+   * Offer Resume on the row of a finished session that owns an open PR (W107): the list's current rows,
+   * where such a session stays until its PR closes. Not in the Finished section, which never lists one.
+   */
+  offerResume?: boolean;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, owned }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, owned, offerResume = false }: SessionRowProps) {
   // Marked not needed now (W88): it still needs you, by the index, but has no bar, its badge is outlined, and line 2 says so.
   const marked = isNotNeeded(session, notNeeded);
   // It needs you itself, or a PR it owns does (W106).
@@ -242,9 +250,13 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     </Tooltip>
   );
   // While it needs you itself, or is marked not needed now (W88): a mark is for what the session needs, never its PRs'. Shown while it's marked, otherwise on hover and focus.
-  const toggle = onNotNeeded && (own || marked) && (
-    <NotNeededButton sessionId={session.sessionId} name={session.name} marked={marked} onChange={(on) => onNotNeeded(session, on)} className="session-not-needed-toggle" />
-  );
+  const toggle =
+    onNotNeeded && (own || marked) ? (
+      <NotNeededButton sessionId={session.sessionId} name={session.name} marked={marked} onChange={(on) => onNotNeeded(session, on)} className="session-not-needed-toggle" />
+    ) : (
+      // Its place, on a finished session that owns an open PR (W107): it never needs you itself.
+      offerResume && (owned?.length ?? 0) > 0 && canResumeFromRow(session) && <RowResume session={session} className="session-not-needed-toggle session-row-resume" />
+    );
 
   return (
     <li className={className} data-attention={attention || undefined} onClick={openFromRow}>

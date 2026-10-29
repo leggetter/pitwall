@@ -197,6 +197,21 @@ describe('createPrPoller({ index }): every PR placed (W105)', () => {
     poller.stop();
   });
 
+  it('finds the repos again on rediscover(), with no fetch, once started and until stopped (W107)', async () => {
+    const { poller, fetch, repos } = start();
+    poller.rediscover?.();
+    expect(repos.refreshes()).toBe(0);
+    poller.start();
+    await fetch.finish(fetched([]));
+    const fetches = fetch.calls();
+    poller.rediscover?.();
+    expect(repos.refreshes()).toBe(1);
+    expect(fetch.calls()).toBe(fetches);
+    poller.stop();
+    poller.rediscover?.();
+    expect(repos.refreshes()).toBe(1);
+  });
+
   it('places a list that comes from a refresh before start(), without discovery', async () => {
     const { poller, fetch, repos } = start({ repos: [] });
     expect(poller.refresh()).toEqual({ kind: 'started' });

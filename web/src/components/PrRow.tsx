@@ -5,8 +5,9 @@
 // 1. "#128" and its title, in <bdi>, a button that opens the PR view in the third column, as ?pr=;
 //    then its badges, Review requested or Mentioned first on one that isn't yours (W101), then its
 //    own states; then when it was updated, in the time's fixed slot, as a session row has its last
-//    activity there; then the slot where a session row has its star, for W107's actions (New
-//    session, Clone and start).
+//    activity there; then, where a session row has its star, its action (W107, PrStartButton): New
+//    session in a cloned repo, or Clone and start in one that isn't, shown on hover and focus as an
+//    unpressed star is.
 // 2. Its group's label in the views that list every group; then why it needs you, "CI is failing",
 //    or else how it's yours, "Yours"; and, never cut, "No session listed", which is true whether or
 //    not a session worked on it that pitwall no longer lists, or "Not cloned" for a repo with no clone
@@ -23,6 +24,7 @@ import { prKey, prReason, RELATION_PHRASES } from '../prs.js';
 import { groupLabel } from '../sessions.js';
 import type { ListGroup } from '../work.js';
 import { Highlight } from './Highlight.js';
+import { Icon } from './Icon.js';
 import { PrStateBadges } from './PrBadges.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -34,6 +36,25 @@ export const PR_VIEW_ID = 'pr-view';
 /** The end of a PR row's line 2: no listed session owns it, or its repo has no clone under the root. */
 export const NO_SESSION = 'No session listed';
 export const NOT_CLONED = 'Not cloned';
+
+/** The PR row's action's name and tooltip (W107): "New session for #57", or "Clone example/sdk-docs and start a session for #9". */
+export function startLabel(pr: Pick<PullRequestSummary, 'number' | 'repoLabel' | 'place'>): string {
+  return pr.place?.kind === 'not-cloned' ? `Clone ${plainText(pr.repoLabel)} and start a session for #${pr.number}` : `New session for #${pr.number}`;
+}
+
+/**
+ * A PR row's action (W107): a ghost sm `add` icon button, named by its tooltip, that starts a session
+ * for the PR, through Clone and start's confirmation when its repo isn't cloned. It never opens the PR.
+ */
+export function PrStartButton({ pr, onStart }: { pr: PullRequestSummary; onStart: (pr: PullRequestSummary) => void }) {
+  return (
+    <Tooltip content={startLabel(pr)} relation="label">
+      <button type="button" className="icon-button ghost sm pr-start" data-start-pr={prKey(pr)} aria-haspopup="dialog" onClick={() => onStart(pr)}>
+        <Icon name="add" />
+      </button>
+    </Tooltip>
+  );
+}
 
 /** Clicks on these inside a row do their own thing, rather than opening the PR. */
 const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="button"]';

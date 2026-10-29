@@ -6,7 +6,8 @@
 // then its details, the checks with the failing ones' names, the review, whether it merges,
 // draft, its branch, and when it was opened and updated; then the sessions strongly linked to it, the
 // one that owns it first, as its session (W106), and those that only mentioned it, each opening that
-// session.
+// session. With no session, Sessions offers New session, or Clone and start for a repo that isn't
+// cloned (W107), as the PR's row does.
 //
 // Open on GitHub is a link that leaves pitwall, in a new tab, with noopener and noreferrer, and only
 // for the PR's own https://github.com/ address (githubPrUrl()); otherwise there's neither it nor Copy
@@ -25,6 +26,7 @@ import { githubPrUrl, prName, prRelationText, type LinkedSession } from '../prs.
 import { statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
 import { StatusBadge } from './Badge.js';
+import { Button } from './Button.js';
 import { CopyButton } from './CopyButton.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
@@ -51,6 +53,10 @@ export const LINK_KINDS: Readonly<Record<PrLinkKind, string>> = {
 
 /** After why the session that owns the PR is linked (W106): it acted on the PR last, so the PR is listed with it. */
 export const OWNS_IT = 'Its session';
+
+/** The PR view's actions with no session (W107): in a cloned repo, and in one that isn't. */
+export const START_NEW = 'New session';
+export const START_CLONE = 'Clone and start…';
 
 /** The Sessions section with none: how a session comes to be listed here. */
 export const NO_LINKED_SESSIONS = 'No session has opened it, pushed its branch or been given its link in a prompt, as far as pitwall can tell.';
@@ -114,6 +120,11 @@ export interface PrViewProps {
   notNeeded?: NotNeeded | undefined;
   /** Opens a linked session's view, in this view's place. */
   onOpenSession: (sessionId: string) => void;
+  /**
+   * Starts a session for it (W107), as its row's action does: New session in a cloned repo, Clone and
+   * start in one that isn't. Offered under Sessions while no session owns it and it's listed.
+   */
+  onStart?: ((pr: PullRequestSummary) => void) | undefined;
   onClose: () => void;
   layout?: SessionViewLayout;
   compact?: boolean;
@@ -127,7 +138,7 @@ export interface PrViewProps {
   backLabel?: string | undefined;
 }
 
-export function PrView({ pr, missing, sessions, ownerId, notNeeded, onOpenSession, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
+export function PrView({ pr, missing, sessions, ownerId, notNeeded, onOpenSession, onStart, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
   const ids = { title: useId(), details: useId(), sessions: useId(), mentioned: useId() };
   const title = plainText(pr.title);
   const url = githubPrUrl(pr);
@@ -203,7 +214,16 @@ export function PrView({ pr, missing, sessions, ownerId, notNeeded, onOpenSessio
                 ))}
             </ul>
           ) : (
-            <p className="pr-view-none">{NO_LINKED_SESSIONS}</p>
+            <>
+              <p className="pr-view-none">{NO_LINKED_SESSIONS}</p>
+              {onStart && (pr.place?.kind === 'cloned' || pr.place?.kind === 'not-cloned') && (
+                <div className="pr-view-start">
+                  <Button size="sm" icon="add" aria-haspopup="dialog" data-start-pr-view="" onClick={() => onStart(pr)}>
+                    {pr.place.kind === 'cloned' ? START_NEW : START_CLONE}
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </section>
         {sessions.mentioned.length > 0 && (
