@@ -482,6 +482,8 @@ describe('readConversationPage: paging', () => {
     expect(await page(await transcript(prompts(3)))).toEqual({
       sessionId: SID,
       entries: [expect.objectContaining({ text: 'prompt 0' }), expect.objectContaining({ text: 'prompt 1' }), expect.objectContaining({ text: 'prompt 2' })],
+      // A prompt is the newest line, so a turn is running, as far as the page can tell (W102).
+      turnEnded: false,
     });
     expect(await page(await transcript(''))).toEqual({ sessionId: SID, entries: [] });
   });
@@ -1535,6 +1537,96 @@ describe('readConversationPage: questions asked in a dialog (W49)', () => {
   });
 });
 
+describe('readConversationPage: turns, for the working line (W102)', () => {
+  /** Claude Code's mark that a turn has ended (spike 007, finding 4). */
+  const turnEnd = () => ({ type: 'system', subtype: 'turn_duration', durationMs: 4_200, isSidechain: false, timestamp: nextTimestamp() });
+  const typedMidTurn = (prompt: string) => queued(prompt, { origin: { kind: 'human' }, humanTurn: true });
+
+  it("marks what didn't begin a turn: what arrived mid-turn, a compaction summary and Claude Code's own error", async () => {
+    const entries = await entriesOf(
+      user('Fix the made-up test.'),
+      assistant([toolUse('toolu_1', 'Bash', { command: 'npm test' })], 'msg_1'),
+      toolResult('toolu_1'),
+      typedMidTurn('Also check the made-up flag.'),
+      queued('<task-notification><task-id>b9</task-id><status>completed</status><summary>Build finished</summary></task-notification>', {
+        commandMode: 'task-notification',
+        origin: { kind: 'task-notification' },
+      }),
+      user('This session is being continued from a previous conversation.', { isCompactSummary: true }),
+      assistant([text('API Error: 529 overloaded')], 'msg_err', { isApiErrorMessage: true }),
+    );
+    expect(entries.map((entry) => [entry.kind, entry.midTurn ?? false])).toEqual([
+      ['user', false],
+      ['tool', false],
+      ['user', true],
+      ['notice', true],
+      ['notice', true],
+      ['notice', true],
+    ]);
+  });
+
+  it('leaves unmarked what can begin one: a prompt, a message and a task notification between turns, and a slash command', async () => {
+    const entries = await entriesOf(
+      user('A made-up prompt.'),
+      user('Another Claude session sent a message:\n<cross-session-message from="pitwall-test-peer">Please look.</cross-session-message>'),
+      user('<task-notification><task-id>b7</task-id><status>completed</status><summary>Build finished</summary></task-notification>', { origin: { kind: 'task-notification' } }),
+      user('<command-name>/pitwall-test-review</command-name><command-args>42</command-args>'),
+    );
+    expect(entries.map((entry) => [entry.kind, entry.midTurn ?? false])).toEqual([
+      ['user', false],
+      ['cross-session', false],
+      ['notice', false],
+      ['notice', false],
+    ]);
+  });
+
+  it("says the newest turn has ended when Claude Code's mark is newer than every entry that runs a turn", async () => {
+    const file = await transcript(
+      jsonl(
+        user('Fix the made-up test.'),
+        assistant([text('Fixed.')], 'msg_1'),
+        turnEnd(),
+        // A local command and its output come with no turn and no mark after them.
+        user('<command-name>/model</command-name>'),
+        { type: 'system', subtype: 'local_command', content: '<local-command-stdout>Set model to made-up</local-command-stdout>', timestamp: nextTimestamp() },
+      ),
+    );
+    const newest = await page(file);
+    expect(newest.turnEnded).toBe(true);
+    // The mark is no entry, and takes no place on the page.
+    expect(newest.entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'notice', 'notice']);
+  });
+
+  it('says a turn is running once a prompt, a message, a tool result or Claude is newer than the mark', async () => {
+    const before = [user('First.'), assistant([text('Done.')], 'msg_1'), turnEnd()];
+    const cases: Array<[string, unknown[]]> = [
+      ['a prompt', [user('Second.')]],
+      ['a message from another session', [user('Another Claude session sent a message:\n<cross-session-message from="pitwall-test-peer">Hi.</cross-session-message>')]],
+      ['Claude', [user('Second.'), assistant([thinking('t')], 'msg_2'), assistant([text('On it.')], 'msg_2')]],
+      ['a tool call', [user('Second.'), assistant([toolUse('toolu_2', 'Bash', { command: 'sleep 60' })], 'msg_2')]],
+      ['a tool result', [user('Second.'), assistant([toolUse('toolu_2', 'Bash', { command: 'true' })], 'msg_2'), toolResult('toolu_2')]],
+    ];
+    for (const [what, after] of cases) {
+      expect((await page(await transcript(jsonl(...before, ...after)))).turnEnded, what).toBe(false);
+    }
+  });
+
+  it("reads the mark only on the newest page, and never a sub-agent's mark in the session's transcript", async () => {
+    const lines: unknown[] = [];
+    for (let i = 0; i < PAGE_ENTRIES + 5; i++) lines.push(user(`ask ${i}`), assistant([text(`reply ${i}`)], `msg_${i}`), turnEnd());
+    // A sub-agent's mark, newest of all, is its own turn's end, not the session's.
+    const file = await transcript(jsonl(...lines, user('One more.'), { ...turnEnd(), isSidechain: true }));
+    const newest = await page(file);
+    expect(newest.turnEnded).toBe(false);
+    expect(newest.before).toBeDefined();
+    expect(await page(file, newest.before)).not.toHaveProperty('turnEnded');
+  });
+
+  it('says nothing for a page with no entry that runs a turn and no mark', async () => {
+    expect(await page(await transcript(jsonl(user('<command-name>/model</command-name>'))))).not.toHaveProperty('turnEnded');
+  });
+});
+
 describe('readConversationPage: sub-agents (W76)', () => {
   const labels = {
     descriptions: new Map([
@@ -1653,7 +1745,8 @@ describe('readConversationPage: what arrives mid-turn (W99)', () => {
     expect(entries).toEqual([
       { kind: 'user', at: expect.any(String), text: 'Fix the made-up test.' },
       { kind: 'tool', at: expect.any(String), text: 'Bash: npm test', toolName: 'Bash', toolError: false },
-      { kind: 'user', at: prompt.timestamp, text: 'Also check the made-up flag.' },
+      // Marked as having come mid-turn, so it isn't read as what started the turn (W102).
+      { kind: 'user', at: prompt.timestamp, text: 'Also check the made-up flag.', midTurn: true },
       { kind: 'assistant', at: expect.any(String), text: 'Checking the flag too.', markdown: true },
     ]);
   });
@@ -1670,7 +1763,7 @@ describe('readConversationPage: what arrives mid-turn (W99)', () => {
 
   it("shows a message from another session as a cross-session entry, with its sender, though it lacks the user entry's first line", async () => {
     expect(await entriesOf(peerMidTurn('Please **review** the made-up PR.', 'made-up-msg-1'))).toEqual([
-      { kind: 'cross-session', at: expect.any(String), text: 'Please **review** the made-up PR.', markdown: true, from: 'pitwall-test-peer' },
+      { kind: 'cross-session', at: expect.any(String), text: 'Please **review** the made-up PR.', markdown: true, from: 'pitwall-test-peer', midTurn: true },
     ]);
   });
 
@@ -1683,7 +1776,7 @@ describe('readConversationPage: what arrives mid-turn (W99)', () => {
     });
     const file = await transcript(jsonl(report));
     expect((await page(file, undefined, { subagents })).entries).toEqual([
-      { kind: 'cross-session', at: expect.any(String), text: 'The made-up report.', markdown: true, from: 'a1b2c3', subagent: { agentId: 'a1b2c3', description: 'Build the made-up feature' } },
+      { kind: 'cross-session', at: expect.any(String), text: 'The made-up report.', markdown: true, from: 'a1b2c3', subagent: { agentId: 'a1b2c3', description: 'Build the made-up feature' }, midTurn: true },
     ]);
   });
 

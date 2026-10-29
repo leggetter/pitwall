@@ -35,6 +35,11 @@
 // the relay's messages come from as one that came between turns does. A message
 // from a session names its `msg_id` in either form, so a page that met both would
 // show it once; Claude Code wasn't seen writing both for any of these.
+//
+// For the web UI's working line (W102): each of those, a compaction summary and
+// Claude Code's own API error notice is marked `midTurn`, since none of them began
+// a turn, and the newest page says whether its newest turn has ended, by Claude
+// Code's `turn_duration` mark (spike 007, finding 4), which a page otherwise skips.
 
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -234,6 +239,8 @@ export async function readConversationPage(
       // A question dialog's call on this page whose result was on a newer one: that result's line again.
       const answerBytesRead = await result.builder.readAnswers(handle, size);
       const page: ConversationPage = { sessionId, entries: result.builder.finish(earlier) };
+      // Only the newest page runs to the end of the transcript, so only it can say whether the turn has ended (W102).
+      if (cursor === undefined && result.builder.turnEnded !== undefined) page.turnEnded = result.builder.turnEnded;
       if (result.stop !== undefined) {
         page.before = encodeCursor({
           offset: result.stop.offset,
@@ -689,7 +696,9 @@ type Item =
    * `peer`: who a message from a peer came from, as its `origin.from` says: a sub-agent's id for its report (W76).
    * `msgId`: its `origin.msg_id`, the same in the user entry and the mid-turn attachment that can stand for it (W99).
    */
-  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string; msgId?: string };
+  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string; msgId?: string }
+  /** Claude Code's mark that a turn has ended, a `system` entry of subtype `turn_duration` (spike 007, finding 4; W102). */
+  | { kind: 'turn-end' };
 
 /** A SendMessage call on the page whose result, if it has one yet, didn't fail, and where its line starts. */
 interface SendDraft extends SendCall {
@@ -736,6 +745,8 @@ class PageBuilder {
   private readonly relayFrom = new Map<string, number>();
   /** The `msg_id`s of the messages from peers on this page, so one written twice shows once (W99). At most a page's entries. */
   private readonly msgIds = new Set<string>();
+  /** Whether the newest turn on the page has ended (noteTurn()), once a line has said; undefined until then (W102). */
+  turnEnded: boolean | undefined;
 
   constructor(
     readonly pending: Map<string, Pending>,
@@ -752,10 +763,27 @@ class PageBuilder {
   offer(line: string, offset: number, end: number): 'taken' | 'full' {
     const items = itemsOfLine(line, this.sidechain);
     if (items.length === 0) return 'taken';
+    this.noteTurn(items);
     const added = this.newEntries(items);
     if (this.drafts.length > 0 && this.drafts.length + added > this.maxEntries) return 'full';
     for (let i = items.length - 1; i >= 0; i--) this.apply(items[i] as Item, offset, end);
     return 'taken';
+  }
+
+  /**
+   * Whether the newest turn has ended (W102), from the newest line that says either: a `turn_duration`
+   * mark says it has; Claude's own entries, a tool's result, a prompt or a message from another session
+   * say one is running. Notices say neither: a local command and its output, a compaction and a task
+   * notification can come between turns. Lines are offered newest first, so the first that says wins.
+   */
+  private noteTurn(items: Item[]): void {
+    if (this.turnEnded !== undefined) return;
+    for (const item of items) {
+      if (item.kind === 'turn-end') this.turnEnded = true;
+      else if (item.kind !== 'entry' || item.entry.kind === 'user' || item.entry.kind === 'cross-session') this.turnEnded = false;
+      else continue;
+      return;
+    }
   }
 
   /** How many new entries the line's items would add, given the oldest entry so far. */
@@ -764,7 +792,7 @@ class PageBuilder {
     let added = 0;
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i] as Item;
-      if (item.kind === 'result') continue;
+      if (item.kind === 'result' || item.kind === 'turn-end') continue;
       if (item.kind === 'text' && joins(oldest, item.messageId)) continue;
       if (item.kind === 'entry' && item.msgId !== undefined && this.msgIds.has(item.msgId)) continue;
       added++;
@@ -781,6 +809,8 @@ class PageBuilder {
 
   private apply(item: Item, offset: number, end: number): void {
     switch (item.kind) {
+      case 'turn-end':
+        return;
       case 'result': {
         this.pending.delete(item.id);
         const result: Pending = { state: item.state };
@@ -1051,7 +1081,16 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
   // Claude Code's internal api-request lines carry a system prompt, and they
   // can be most of a transcript's bytes. Nor "attachment": Claude Code writes
   // many kinds, and only a queued_command's is read (W99).
-  if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"local_command"') && !line.includes('"queued_command"')) return [];
+  // A turn's end is a small `system` entry of its own, `turn_duration` (W102).
+  if (
+    !line.includes('"user"') &&
+    !line.includes('"assistant"') &&
+    !line.includes('"local_command"') &&
+    !line.includes('"queued_command"') &&
+    !line.includes('"turn_duration"')
+  ) {
+    return [];
+  }
   let entry: unknown;
   try {
     entry = JSON.parse(line);
@@ -1068,9 +1107,12 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
     case 'system':
       return systemItems(entry, at);
     case 'attachment': {
-      // What arrived mid-turn, as the user entry it stands for (W99).
+      // What arrived mid-turn, as the user entry it stands for (W99), marked as having come mid-turn,
+      // so it doesn't read as what started the turn (W102).
       const queued = queuedEntryOf(entry);
-      return queued === undefined ? [] : userItems(queued, at);
+      const items = queued === undefined ? [] : userItems(queued, at);
+      for (const item of items) if (item.kind === 'entry') item.entry.midTurn = true;
+      return items;
     }
     default:
       return [];
@@ -1090,8 +1132,9 @@ function assistantItems(entry: Record<string, unknown>, at: string | undefined):
   const messageId = typeof message.id === 'string' ? message.id : undefined;
   const content = message.content;
   if (entry.isApiErrorMessage === true) {
+    // Claude Code's own error, written on Claude's side of a turn: never what started one (W102).
     const text = textOf(content)?.trim();
-    return text ? [notice(text, at)] : [];
+    return text ? [midTurn(notice(text, at))] : [];
   }
   if (typeof content === 'string') {
     const text = content.trim();
@@ -1230,7 +1273,8 @@ function shortText(content: unknown, max: number): string | undefined {
 
 function userItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
   if (entry.isCompactSummary === true) {
-    return [notice('Conversation compacted: Claude continued from a summary of the earlier conversation.', at)];
+    // Written as a turn goes on, or by a /compact that runs no turn of its own: never what started one (W102).
+    return [midTurn(notice('Conversation compacted: Claude continued from a summary of the earlier conversation.', at))];
   }
   const message = entry.message;
   if (!isRecord(message)) return [];
@@ -1293,8 +1337,12 @@ function asTyped(text: string): string {
   return text.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
 }
 
-/** Claude Code writes local slash-command output as `system` entries too. Other system entries are left out. */
+/**
+ * Claude Code writes local slash-command output as `system` entries too, and its mark that a turn has
+ * ended (W102), which is no entry. Other system entries are left out.
+ */
 function systemItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
+  if (entry.subtype === 'turn_duration') return [{ kind: 'turn-end' }];
   if (entry.subtype !== 'local_command' || typeof entry.content !== 'string') return [];
   return localCommandNotice(entry.content.trim(), at) ?? [];
 }
@@ -1384,6 +1432,12 @@ function notice(text: string, at: string | undefined): Item {
   const entry: ConversationEntry = withAt({ kind: 'notice', text: truncate(text, NOTICE_MAX) }, at);
   if (text.length > NOTICE_MAX) entry.truncated = true;
   return { kind: 'entry', entry };
+}
+
+/** An entry item marked as written during a turn, so it isn't read as what started one (ConversationEntry.midTurn, W102). */
+function midTurn(item: Item): Item {
+  if (item.kind === 'entry') item.entry.midTurn = true;
+  return item;
 }
 
 function withAt(entry: ConversationEntry, at: string | undefined): ConversationEntry {
