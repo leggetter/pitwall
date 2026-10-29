@@ -18,6 +18,9 @@ describe('prUrlsIn', () => {
       `${APP}/pull/18?w=1`,
       '[#19](https://github.com/Example/Demo-API/pull/19),',
       `"${APP}/pull/20"`,
+      `${APP}/pull/21/changes`,
+      `${APP}/pull/22/changes/0123456789abcdef0123456789abcdef01234567`,
+      `${APP}/pull/23/changes#diff-0a1b2c3d4e5f`,
     ].join(' ');
     expect(prUrlsIn(text)).toEqual([
       { repo: 'example/demo-app', number: 12 },
@@ -29,6 +32,9 @@ describe('prUrlsIn', () => {
       { repo: 'example/demo-app', number: 18 },
       { repo: 'example/demo-api', number: 19 },
       { repo: 'example/demo-app', number: 20 },
+      { repo: 'example/demo-app', number: 21 },
+      { repo: 'example/demo-app', number: 22 },
+      { repo: 'example/demo-app', number: 23 },
     ]);
   });
 
@@ -37,6 +43,7 @@ describe('prUrlsIn', () => {
       `${APP}/pull/new/feature/one`,
       `${APP}/pull/12.diff`,
       `${APP}/pull/12/merge`,
+      `${APP}/pull/12/changes/not-a-sha`,
       `${APP}/pull/0`,
       `${APP}/pull/12345678901`,
       `${APP}/issues/12`,
@@ -70,10 +77,33 @@ describe('openedByGh', () => {
 });
 
 describe('openedByMcp', () => {
-  it("takes the first PR URL: the GitHub MCP server's url, or the REST response's html_url before its body", () => {
+  it("takes a JSON result's html_url, else its url: the GitHub MCP server's { id, url }, or a REST-ordered PR", () => {
     expect(openedByMcp(JSON.stringify({ id: '1', url: `${APP}/pull/13` }))).toEqual([{ repo: 'example/demo-app', number: 13 }]);
     const rest = { url: 'https://api.github.com/repos/example/demo-app/pulls/14', id: 2, html_url: `${APP}/pull/14`, diff_url: `${APP}/pull/14.diff`, body: `Follows ${APP}/pull/9` };
     expect(openedByMcp(JSON.stringify(rest))).toEqual([{ repo: 'example/demo-app', number: 14 }]);
+    expect(openedByMcp(JSON.stringify({ url: `${APP}/pull/17`, html_url: `${APP}/pull/18` }))).toEqual([{ repo: 'example/demo-app', number: 18 }]);
+  });
+
+  it("takes html_url from an older server's whole go-github PullRequest, whose body comes first and names other PRs", () => {
+    // go-github's field order: id, number, state, locked, title, body, ..., url, html_url.
+    const goGithub = {
+      id: 3,
+      number: 15,
+      state: 'open',
+      locked: false,
+      title: 'A made-up title',
+      body: `Replaces ${APP}/pull/9 and follows https://github.com/example/demo-api/pull/4`,
+      head: { ref: 'feature/one', repo: { html_url: APP } },
+      url: 'https://api.github.com/repos/example/demo-app/pulls/15',
+      html_url: `${APP}/pull/15`,
+    };
+    expect(openedByMcp(JSON.stringify(goGithub, null, 2))).toEqual([{ repo: 'example/demo-app', number: 15 }]);
+  });
+
+  it('takes nothing from JSON without a PR URL in html_url or url, and the first PR URL from text that is not JSON', () => {
+    expect(openedByMcp(JSON.stringify({ body: `${APP}/pull/9`, html_url: `${APP}/pull/9/files`, url: 'https://api.github.com/repos/example/demo-app/pulls/9' }))).toEqual([]);
+    expect(openedByMcp(JSON.stringify([`${APP}/pull/9`]))).toEqual([]);
+    expect(openedByMcp(`Created ${APP}/pull/16, after ${APP}/pull/9`)).toEqual([{ repo: 'example/demo-app', number: 16 }]);
     expect(openedByMcp('failed to create pull request: a made-up error')).toEqual([]);
   });
 });
@@ -134,6 +164,24 @@ describe('pushedIn', () => {
     expect(pushedIn(output)).toEqual([
       { repo: 'example/demo-app', branch: 'main' },
       { repo: 'example/demo-api', branch: 'feature/one' },
+    ]);
+  });
+
+  it('leaves out the lines a git fetch or git pull after the push writes, under From', () => {
+    const output = [
+      `To ${APP}.git`,
+      ' * [new branch]      feature/one -> feature/one',
+      'From github.com:example/demo-app',
+      '   1a2b3c4..5d6e7f8  main       -> origin/main',
+      ' * [new branch]      feature/two -> origin/feature/two',
+      'Updating 1a2b3c4..5d6e7f8',
+      'Fast-forward',
+      `To ${APP}.git`,
+      '   1a2b3c4..5d6e7f8  main -> main',
+    ].join('\n');
+    expect(pushedIn(output)).toEqual([
+      { repo: 'example/demo-app', branch: 'feature/one' },
+      { repo: 'example/demo-app', branch: 'main' },
     ]);
   });
 

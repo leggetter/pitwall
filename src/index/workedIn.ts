@@ -9,12 +9,12 @@
 // configured root, and repos that no longer exist. A repo under any root counts, whichever root the
 // session is under.
 //
-// PR links: prLinks.ts says what links a session to a PR. 'opened' and 'pushed' come from the
-// successful result of a call that creates a PR or pushes, in any of the session's files: the call
-// is matched to its result by its tool_use id, and only the ids of those calls are kept while their
-// results are awaited. 'prompted' and 'mentioned' come from the main transcript only, since a
-// sub-agent's prompts are its parent's. The newest of each link is kept per file, and the session's
-// are merged from its files, newest first, at most PR_LINKS_MAX.
+// PR links: prLinks.ts says what links a session to a PR. 'opened' comes from the successful
+// result of a call that creates a PR, and 'pushed' from the result of a push, failed or not, in any
+// of the session's files: the call is matched to its result by its tool_use id, and only the ids of
+// those calls are kept while their results are awaited. 'prompted' and 'mentioned' come from the
+// main transcript only, since a sub-agent's prompts are its parent's. The newest of each link is
+// kept per file, and the session's are merged from its files, newest first, at most PR_LINKS_MAX.
 //
 // The poll never waits on it. The index calls track() with the sessions it lists and reads
 // workedIn() and prLinks() synchronously. The first sight of a session queues a full scan of its
@@ -645,20 +645,21 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
     }
   }
 
-  /** A tool's result: the links a successful one of a call the file waits on makes. */
+  /** A tool's result: the links the result of a call the file waits on makes. */
   function settle(file: FileState, block: Record<string, unknown>, lineAt: number): void {
     const id = block.tool_use_id;
     if (typeof id !== 'string') return;
     const pending = file.pending.get(id);
     if (pending === undefined) return;
     file.pending.delete(id);
-    if (block.is_error === true) return;
     const output = resultText(block.content);
     if (output === undefined) return;
     const at = lineAt || pending.at;
-    if (pending.opens !== undefined) {
+    // Only a success opens one: a failed gh pr create prints the URL of the PR that already exists.
+    if (pending.opens !== undefined && block.is_error !== true) {
       for (const pr of pending.opens === 'gh' ? openedByGh(output) : openedByMcp(output)) link(file, 'opened', pr, at);
     }
+    // A failed push counts too, as in `git push && npm test`: git marks each ref, and pushedIn() skips the rejected ones.
     if (pending.pushes === true) {
       for (const { repo, branch } of pushedIn(output)) add(file, { kind: 'pushed', repo, branch, at });
     }

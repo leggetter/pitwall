@@ -5,13 +5,16 @@
 //
 // The four kinds (PrLinkKind), each from its own place, since a PR URL anywhere in a transcript
 // would link the wrong sessions (`gh pr list`'s output names many):
-// - opened: a successful result of a call that creates a PR. For a Bash `gh pr create`, each line
-//   of its output that is a PR URL and nothing else, as gh prints the new PR's. For a GitHub MCP
-//   tool whose name ends in `create_pull_request`, the first PR URL in its result: the PR's
-//   `html_url` comes before its body, and the GitHub MCP server returns only the URL.
-// - pushed: a successful result of a Bash `git push`: each `To <remote>` line naming a GitHub
-//   repo, and the ref lines under it for a new branch, a fast-forward or a forced update. Rejected,
-//   deleted and up-to-date refs, tags and other refs are left out.
+// - opened: a successful result of a call that creates a PR: a failed `gh pr create` prints the
+//   URL of the PR that already exists. For a Bash `gh pr create` (or `gh pr new`), each line of its
+//   output that is a PR URL and nothing else, as gh prints the new PR's. For a GitHub MCP tool whose
+//   name ends in `create_pull_request`, a JSON result's `html_url`, else its `url`: the GitHub MCP
+//   server returns only `url`, and older releases the whole PR, whose `body` comes before
+//   `html_url` and may name other PRs. A result that isn't JSON gives its first PR URL.
+// - pushed: the result of a Bash `git push`, failed ones included, since git marks each ref: each
+//   `To <remote>` line naming a GitHub repo, and the ref lines under it for a new branch, a
+//   fast-forward or a forced update. Rejected (atomic failures too), deleted and up-to-date refs,
+//   tags, other refs, and a later `git fetch` or `git pull`'s lines, after `From`, are left out.
 // - prompted: a PR URL in a prompt you typed, by the rule behind lastUserPrompt (promptTextOf()),
 //   in the main transcript: a sub-agent's prompts are its parent's.
 // - mentioned: a PR URL in Claude's own text blocks in the main transcript.
@@ -47,16 +50,19 @@ export interface LinkingCall {
 export const MAX_OUTPUT_LINE = 1024;
 
 /**
- * `https://github.com/<owner>/<name>/pull/<n>`, and the same with a tab (`/files`, `/commits`,
- * `/checks`, and a commit's sha after the first two), a trailing `/`, `#...` or `?...`. Not a
- * longer path, such as `/pull/12/merge`, nor `/pull/12.diff`. Bounded, so it's linear.
+ * `https://github.com/<owner>/<name>/pull/<n>`, and the same with a tab (`/changes`, the Files
+ * changed tab since January 2026, `/files`, as it was, `/commits` and `/checks`, with a commit's sha
+ * after any of them), a trailing `/`, `#...` or `?...`. Not a longer path, such as
+ * `/pull/12/merge`, nor `/pull/12.diff`. Bounded, so it's linear.
  */
 const PR_URL =
-  /(?<![\w.+-])https:\/\/github\.com\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/pull\/([1-9][0-9]{0,9})(?:\/(?:files|commits|checks)(?:\/[0-9a-f]{7,40})?)?\/?(?![\w/-]|\.\w)/g;
-/** The same, as a whole line: what `gh pr create` prints. */
+  /(?<![\w.+-])https:\/\/github\.com\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/pull\/([1-9][0-9]{0,9})(?:\/(?:files|commits|checks|changes)(?:\/[0-9a-f]{7,40})?)?\/?(?![\w/-]|\.\w)/g;
+/** The same, as a whole line or field: what `gh pr create` prints and a PR's `html_url` holds. */
 const PR_URL_LINE = /^https:\/\/github\.com\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/pull\/([1-9][0-9]{0,9})$/;
 /** `To <remote>`, the line git push writes before a remote's ref lines. */
 const TO_LINE = /^To (\S+)$/;
+/** `From <remote>`, the line git fetch and git pull write before theirs, which aren't pushes. */
+const FROM_LINE = /^From \S/;
 /**
  * A ref line: its flag, summary, `from -> to`, and an optional `(reason)`. The flag is ` ` for a
  * fast-forward, `+` forced, `*` new, `-` deleted, `!` rejected and `=` up to date.
@@ -97,11 +103,29 @@ export function openedByGh(output: string): PrRef[] {
   return found;
 }
 
-/** The PR a GitHub MCP create-pull-request tool's result names first, which is the one it created. */
+/**
+ * The PR a GitHub MCP create-pull-request tool's result names: a JSON object's `html_url`, else its
+ * `url`, when it's a PR URL and nothing else, as the GitHub MCP server returns `{ id, url }` and
+ * older releases the whole PR, with its `body` before `html_url`. Only for a result that isn't
+ * JSON, the first PR URL in it.
+ */
 export function openedByMcp(output: string): PrRef[] {
   if (!mayNamePr(output)) return [];
-  for (const match of output.matchAll(PR_URL)) {
-    const ref = prRef(match[1] ?? '', match[2] ?? '', match[3] ?? '');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    for (const match of output.matchAll(PR_URL)) {
+      const ref = prRef(match[1] ?? '', match[2] ?? '', match[3] ?? '');
+      if (ref !== undefined) return [ref];
+    }
+    return [];
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+  const fields = parsed as Record<string, unknown>;
+  for (const value of [fields.html_url, fields.url]) {
+    const match = typeof value === 'string' ? PR_URL_LINE.exec(value) : null;
+    const ref = match ? prRef(match[1] ?? '', match[2] ?? '', match[3] ?? '') : undefined;
     if (ref !== undefined) return [ref];
   }
   return [];
@@ -111,9 +135,10 @@ export function openedByMcp(output: string): PrRef[] {
  * The branches a `git push`'s output says it pushed, to which GitHub repos: under each `To` line
  * that names one, the ref lines for a new branch (`* [new branch]`), a fast-forward (`a1..b2`) or a
  * forced update (`+ a1...b2`). The branch is the right-hand side, without `refs/heads/`; a ref
- * outside `refs/heads/` isn't a branch. Rejected (`[rejected]`, `[remote rejected]`), deleted, up to
- * date and new tag lines are left out, and "Everything up-to-date" has no ref lines. A `To` line
- * for a remote that isn't GitHub's leaves out the ref lines under it.
+ * outside `refs/heads/` isn't a branch. Rejected (`[rejected]`, `[remote rejected]`, an atomic
+ * push's), deleted, up to date and new tag lines are left out, and "Everything up-to-date" has no
+ * ref lines. A `To` line for a remote that isn't GitHub's leaves out the ref lines under it, and a
+ * `From` line, as a `git pull` after the push writes, those under it.
  */
 export function pushedIn(output: string): PushRef[] {
   const found: PushRef[] = [];
@@ -124,6 +149,10 @@ export function pushedIn(output: string): PushRef[] {
     const to = TO_LINE.exec(line);
     if (to) {
       repo = slugsIn(to[1] ?? '')[0];
+      continue;
+    }
+    if (FROM_LINE.test(line)) {
+      repo = undefined;
       continue;
     }
     if (repo === undefined) continue;
