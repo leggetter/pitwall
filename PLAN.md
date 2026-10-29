@@ -394,7 +394,19 @@ Phil, 2026-10-29, after the first try-out: the separate PR list doesn't work. PR
 - **Repos that aren't cloned** (Phil): when a PR's repo maps to a root through its owner, that repo is listed in the root's repo list even without a local directory. Starting a session for it creates the directory, by cloning it into the root, after a click that shows the path; how that fits with worktrees needs thought.
 - **Needs you** (Phil): yes. A row needs you when its session does, or its PR does: failing checks, conflicts, changes requested or a review request.
 - **The Pull requests item stays for now** (Phil), and the session list gets a way to filter by whether a row has a PR.
-- **Waiting on Phil** (2026-10-29): the default mapping of owners to roots without config (lean: each GitHub owner goes to the root with the most clones from it; config overrides); the UI's word for a row ("sessions" or "work"; lean: keep "sessions" until the try-out); cloning with `gh repo clone` into `<root>/<repo>`, and whether trusting the root covers the clone (pitwall never grants trust); building a minimal config file ([#101](https://github.com/leggetter/pitwall/issues/101)) with the roots and their owners now (lean: yes); and confirming that an ended session with an open PR stays in the main list.
+- **Settled** (Phil, 2026-10-29, all as the coordinator leaned):
+  - **Owners to roots without config:** each GitHub owner goes to the root with the most clones from it, and the config file overrides that. On 2026-10-29, `~/work`'s 72 clones pointed at one org 52 times and Phil's own account 10 times, and `~/oss`'s 14 at his account 12 times, so the org goes to `~/work` and his account to `~/oss`.
+  - **The word stays "sessions":** a PR on its own reads as "PR #131 · no session yet".
+  - **Cloning:** `gh repo clone owner/name <root>/<name>`, through gh's own login so private repos work, only after a click that shows the path. pitwall never grants trust: whether trusting the root covers a new clone is checked in W107.
+  - **A minimal config file now** ([#101](https://github.com/leggetter/pitwall/issues/101)): the roots and each root's GitHub owners, W103. The rest of #101 later.
+  - **Finished:** an ended session with an open PR stays in the main list until the PR closes.
+- **Work items:**
+  - **W103,** the minimal config file;
+  - **W104,** the contract, by the coordinator, after #102;
+  - **W105,** the index: Claude Code's `pr-link`, ownership, uncapped strong links, every repo's GitHub remotes, and placing each PR;
+  - **W106,** the web UI: PRs on session rows, PRs on their own, repos that aren't cloned, Finished, Needs you, the Has PR filter, the Pull requests view and the session view's Pull requests tab, replacing W95's list;
+  - **W107,** the actions: Resume, New session for a PR, and clone and start;
+  - **W108,** a security review of W99 onward, before Phil's try-out and `main`.
 
 ### M5 - Supervisor
 
