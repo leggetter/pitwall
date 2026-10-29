@@ -20,6 +20,9 @@
 // `git push` changes the directory it ran in (its `-C` target, or the shell's directory at that point
 // of the command, after any `cd` before it); a `gh pr create` or `gh pr merge` changes the repo it
 // names with `--repo`, or else the directory it ran in.
+//
+// PR links (prLinks.ts, W94) use the same lexer: prCommandsOf() says whether a Bash command runs
+// `git push` or `gh pr create`, whose results the scanner then reads.
 
 import path from 'node:path';
 
@@ -125,9 +128,7 @@ function parseShell(command: string, cwd: string | undefined, home: string, foun
   // The shell's directory as the command goes: undefined after a `cd` to somewhere it can't tell.
   let here = cwd;
   for (const all of lexShell(stripHeredocs(command))) {
-    let start = 0;
-    while (start < all.length && (ASSIGNMENT.test(all[start] ?? '') || WRAPPERS.has(all[start] ?? ''))) start++;
-    const words = all.slice(start);
+    const words = commandWords(all);
     const cmd = words[0];
     if (cmd === undefined) continue;
 
@@ -170,6 +171,47 @@ function parseShell(command: string, cwd: string | undefined, home: string, foun
       if (changes && named.repo.length === 0 && here !== undefined) found.path(here, true);
     }
   }
+}
+
+/** A command's words without the variable assignments and wrappers, such as `sudo` and `env`, before it. */
+function commandWords(all: readonly string[]): string[] {
+  let start = 0;
+  while (start < all.length && (ASSIGNMENT.test(all[start] ?? '') || WRAPPERS.has(all[start] ?? ''))) start++;
+  return all.slice(start);
+}
+
+/** What a Bash command runs that can link a session to a pull request (prLinks.ts, W94). */
+export interface PrCommands {
+  /** A `git push`, but not `--dry-run` or `-n`, alone or in a cluster such as `-nu`, which push nothing. */
+  push: boolean;
+  /** A `gh pr create`, or `gh pr new`, its alias. */
+  prCreate: boolean;
+}
+
+/** git push's dry run: `--dry-run`, or `-n` alone or among other short flags. */
+const DRY_RUN = /^(?:--dry-run|-[A-Za-z]*n[A-Za-z]*)$/;
+
+/**
+ * Whether a Bash command runs `git push` or `gh pr create`, by the lexer parseShell() uses, so a
+ * here-document's body, a quoted message or a comment that names one doesn't count. A command
+ * over MAX_SHELL_COMMAND runs neither, as it names nothing for parseShell(), and one that doesn't
+ * contain `push`, `create` or `new` isn't lexed at all.
+ */
+export function prCommandsOf(command: string): PrCommands {
+  const found: PrCommands = { push: false, prCreate: false };
+  if (command.length > MAX_SHELL_COMMAND || (!command.includes('push') && !command.includes('create') && !command.includes('new'))) return found;
+  for (const all of lexShell(stripHeredocs(command))) {
+    const words = commandWords(all);
+    if (words[0] === 'gh') {
+      if (words[1] === 'pr' && (words[2] === 'create' || words[2] === 'new')) found.prCreate = true;
+      continue;
+    }
+    if (words[0] !== 'git') continue;
+    let j = 1;
+    while (j < words.length && (words[j] ?? '').startsWith('-')) j += GIT_VALUE_OPTIONS.has(words[j] ?? '') ? 2 : 1;
+    if (words[j] === 'push' && !words.slice(j + 1).some((word) => DRY_RUN.test(word))) found.push = true;
+  }
+  return found;
 }
 
 /**
@@ -313,7 +355,7 @@ export function slugOf(text: string): string | undefined {
 }
 
 /** github.com paths that aren't an owner. */
-const NOT_OWNERS = new Set(['orgs', 'settings', 'apps', 'users', 'search', 'notifications', 'marketplace', 'sponsors', 'features', 'topics', 'login']);
+export const NOT_OWNERS: ReadonlySet<string> = new Set(['orgs', 'settings', 'apps', 'users', 'search', 'notifications', 'marketplace', 'sponsors', 'features', 'topics', 'login']);
 const GITHUB_URL =
   /(?:api\.github\.com\/repos\/|raw\.githubusercontent\.com\/|(?<![\w.-])github\.com[/:])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?=[/?#\s"')]|$)/g;
 

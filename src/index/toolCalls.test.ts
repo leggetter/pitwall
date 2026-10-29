@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lexShell, MAX_PATH_WORD, MAX_SHELL_COMMAND, placesOf, resolveWord, slugOf, slugsIn, stripHeredocs } from './toolCalls.js';
+import { lexShell, MAX_PATH_WORD, MAX_SHELL_COMMAND, placesOf, prCommandsOf, resolveWord, slugOf, slugsIn, stripHeredocs } from './toolCalls.js';
 
 // Made-up paths and repos only.
 const HOME = '/Users/example';
@@ -251,5 +251,40 @@ describe('placesOf: bounded on long input', () => {
     let result: unknown;
     expect(timed(() => (result = bash(command)))).toBeLessThan(BOUND_MS);
     expect(result).toEqual({ paths: [CWD], changedPaths: [], slugs: [], changedSlugs: [] });
+  });
+});
+
+describe('prCommandsOf (W94)', () => {
+  it('finds git push past git’s own options, assignments and wrappers, and gh pr create', () => {
+    expect(prCommandsOf('git -C ../api -c push.default=current push')).toEqual({ push: true, prCreate: false });
+    expect(prCommandsOf('GIT_TRACE=0 env git --no-pager push origin HEAD')).toEqual({ push: true, prCreate: false });
+    expect(prCommandsOf('cd ../api && git add -A && git commit -m "x" && git push -u origin feature/one')).toEqual({ push: true, prCreate: false });
+    expect(prCommandsOf('gh pr create --repo example/demo-app --fill')).toEqual({ push: false, prCreate: true });
+    expect(prCommandsOf('git push && gh pr create --fill')).toEqual({ push: true, prCreate: true });
+    expect(prCommandsOf('gh pr new --title t --body b')).toEqual({ push: false, prCreate: true });
+    expect(prCommandsOf('git push -uf origin feature/one')).toEqual({ push: true, prCreate: false });
+    expect(prCommandsOf('git push --no-verify origin feature/one')).toEqual({ push: true, prCreate: false });
+  });
+
+  it('finds neither in a dry run, another subcommand, quoted text, a comment or a here-document', () => {
+    for (const command of [
+      'git push --dry-run',
+      'git push -n origin main',
+      'git push -nu origin feature/one',
+      'git push -un origin feature/one',
+      'git push -fnv origin feature/one',
+      'git stash push -m wip',
+      'gh pr view --json url',
+      'echo "git push"',
+      'ls # then git push',
+      "cat <<'EOF' > plan.md\ngit push\ngh pr create\nEOF",
+      'gh repo create example/demo-app',
+    ]) {
+      expect(prCommandsOf(command)).toEqual({ push: false, prCreate: false });
+    }
+  });
+
+  it('reads no command over MAX_SHELL_COMMAND', () => {
+    expect(prCommandsOf(`git push ${'x'.repeat(MAX_SHELL_COMMAND)}`)).toEqual({ push: false, prCreate: false });
   });
 });
