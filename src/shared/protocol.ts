@@ -1475,7 +1475,8 @@ export type CloneResult =
 /**
  * Clone a not-cloned PR's repo into its root (W107, D25), answered with a CloneResult: `gh repo clone
  * <owner>/<name> <temp dir> -- --quiet` through the index's runFile, with no shell, the scrubbed
- * environment, `GH_PROMPT_DISABLED`, `GH_HOST=github.com` and `GIT_TERMINAL_PROMPT=0`, in a process
+ * environment, `GH_PROMPT_DISABLED`, `GH_HOST=github.com` and `GIT_TERMINAL_PROMPT=0`, without the
+ * `GIT_*` variables that would redirect it, from a 0700 directory of pitwall's own, in a process
  * group of its own with no terminal, into a fresh `.pitwall-clone-*` directory inside the root, then
  * renamed into place only while `<root>/<name>` still doesn't exist. POST a CloneRequest, with the
  * apiKey, `Host` and `Origin` checks of every state-changing request.
@@ -1489,8 +1490,9 @@ export type CloneResult =
  *   at its own real path; when `<root>/<name>` exists, of any kind, or appears while it clones; or
  *   when a clone of it is already running.
  * - 429 with `Retry-After` while another clone runs, or past CLONE_RATE.
- * - 502 when gh isn't installed, isn't logged in, or fails; 503 before the first snapshot; 504 past
- *   CLONE_TIMEOUT_MS. Each removes the temp directory, and only that.
+ * - 502 when gh isn't installed, isn't logged in, or fails; 503 before the first snapshot, and while
+ *   pitwall shuts down, which stops a running clone's whole group; 504 past CLONE_TIMEOUT_MS. Each
+ *   removes the temp directory, and only that. At start, pitwall removes those a killed pitwall left.
  */
 export const CLONE_PATH = '/api/prs/clone';
 

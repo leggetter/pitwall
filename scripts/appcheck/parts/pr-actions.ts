@@ -2,8 +2,9 @@
 // action in a cloned repo, New session prefilled in its clone, started, and the PR row going into the
 // new session's at once; Clone and start for a repo that isn't cloned, its confirmation, the made-up
 // clone, New session in the new folder with how to trust it, and the repo list then listing the clone;
-// a clone that fails; the PR view's own action; and Resume on the row of an ended session that owns an
-// open PR. Made-up PRs only (fixtures.ts, PRS); the fake server clones nothing.
+// a clone that fails; the PR view's own action; the row's action reached with Tab, which shows it; and
+// Resume on the row of an ended session that owns an open PR. Made-up PRs only (fixtures.ts, PRS);
+// the fake server clones nothing.
 
 import { CODE, DEMO_APP, NAMES, PRS } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -41,6 +42,20 @@ const part: Part = {
       // In the star's slot, so the badges still line up down the list.
       const edges = await page.evaluate<number[]>(`[...${MAIN}.querySelectorAll('li.session')].filter((li) => !li.closest('[hidden]') && li.querySelector('.session-badges .badge')).map((li) => Math.round(li.querySelector('.session-badges').getBoundingClientRect().right))`);
       t.expect(new Set(edges).size === 1, "every row's badges end at the same x", edges);
+    });
+
+    await t.step("Tab from a PR row's title reaches its action, which is hidden until then on a screen that hovers, and shows on focus", async () => {
+      // The pointer off the list, at the window's corner, so only focus can show it.
+      await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 });
+      await page.settle();
+      const opacity = `getComputedStyle(${startOf(PRS.review)}).opacity`;
+      if (await page.evaluate<boolean>(`matchMedia('(hover: hover)').matches`)) t.expectEqual(await page.evaluate(opacity), '0', 'hidden off the row');
+      await page.evaluate(`${prRow(PRS.review)}.querySelector('[data-open-pr]').focus()`);
+      await page.key('Tab');
+      await page.waitFor('focus on the action', `document.activeElement === ${startOf(PRS.review)}`);
+      await page.waitFor('it to show', `${opacity} === '1'`);
+      t.expectEqual(await page.evaluate(nameOf('document.activeElement')), 'New session for #57', 'named for its PR');
+      await t.shot('action-focused');
     });
 
     await t.step('New session opens prefilled in the clone: its directory, pr-57, and a prompt that asks for the review by its URL', async () => {

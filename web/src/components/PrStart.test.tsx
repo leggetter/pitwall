@@ -233,7 +233,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
     expect(notice.querySelector('.command-chip')?.textContent).toBe(`cd ${DOCS} && claude`);
     expect(directory().value).toBe(DOCS);
     expect(field('Name').value).toBe('pr-5');
-    expect(field('First prompt').value).toBe(`Fix the failing checks on ${docs.url}: build.`);
+    expect(field('First prompt').value).toBe(`Fix the failing checks on ${docs.url}.`);
     fireEvent.click(within(dialog('New session')).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
     expect(server.posts().at(-1)).toEqual({ url: SPAWN_PATH, body: { cwd: DOCS, name: 'pr-5', prompt: expect.stringContaining(docs.url) } });

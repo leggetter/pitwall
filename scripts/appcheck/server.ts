@@ -393,10 +393,6 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   }
 
   /**
-   * Open in an editor (W72), with pitwall's own checks and words (src/server/editors.ts): JSON, `{ editor }`
-   * alone with an editor in EDITORS, and a directory that's there. It records the open and opens nothing.
-   */
-  /**
    * Clone and start (W107), with src/server/clone.ts's statuses and words: the page sends only the repo,
    * and the world decides where. Cloned, it answers 201 with the new directory and the command that
    * trusts it a moment later, and the PR list then places the repo's PRs under the made-up clone.
@@ -423,6 +419,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     });
   }
 
+  /**
+   * Open in an editor (W72), with pitwall's own checks and words (src/server/editors.ts): JSON, `{ editor }`
+   * alone with an editor in EDITORS, and a directory that's there. It records the open and opens nothing.
+   */
   async function openInEditor(req: IncomingMessage, res: ServerResponse, sessionId: string) {
     if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 400, { ok: false, error: 'Send the request as application/json.' } satisfies ActionResult);
     const body = await readJson(req);

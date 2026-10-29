@@ -63,7 +63,7 @@ import {
 import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
-import { registerClone, type CloneOptions } from './clone.js';
+import { createCloneRoute, type CloneOptions } from './clone.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
@@ -202,6 +202,8 @@ export async function startServerWithInternals(
   const prs = options.prs ?? prsOff();
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
   const snapshots = createSnapshotView(indexer, prs);
+  // Clone and start (W107): its route, its sweep of what a killed pitwall left once listening, and on close() its running clone stopped.
+  const clone = createCloneRoute(indexer, prs, internals.clone);
   // The directory list (W70), your open PRs, Refresh (M4) and Clone and start (W107), then the input routes: attachments
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
   // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
@@ -209,7 +211,7 @@ export async function startServerWithInternals(
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
-    registerClone(app, indexer, prs, internals.clone);
+    clone.register(app);
     registerAttachments(app, attachments);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
@@ -283,6 +285,7 @@ export async function startServerWithInternals(
   attachments.start();
   // The first fetch of your open PRs, now that there's a server to show them.
   prs.start();
+  clone.start();
 
   let closed: Promise<void> | undefined;
   return {
@@ -298,6 +301,8 @@ export async function startServerWithInternals(
         }),
         attach.close(),
         relay.close(),
+        // gh and git run in a session of their own, so nothing else stops them: SIGTERM, then the temp folder removed.
+        clone.close(),
         attachments.close(),
       ]).then(() => undefined);
       return closed;
