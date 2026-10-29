@@ -367,6 +367,7 @@ Read-only, and separate from the session index. Requested by Phil on 2026-10-16,
     - **Tone:** the counts and failing checks and conflicts are subtle danger, changes requested subtle warning. Solid stays for sessions that need you: PRs never count in Needs you, its badges or the page title, and their rows have no attention bar.
     - **Storage:** the collapsed repo headings are kept as hashes of the repos (`pitwall.pr-repos.v1`, D14), never their names. Show older, the filter and the PR list's place are the page's, not stored, and the same in every root tab.
     - **Not shown on a row:** the head branch, which the filter matches and the PR view shows.
+    - **After #96's review:** owners and repo names follow one pattern in the contract (`GITHUB_OWNER_PATTERN`, `GITHUB_REPO_NAME_PATTERN`), which W93's reader and the page share, so an Enterprise Managed User's PRs aren't dropped. An open PR is called gone only from a list fetched since, never from a restart's first list. With pull requests off, a remembered `?view=prs` gives way to All sessions.
 - **Contract** (coordinator, W92, in `src/shared/protocol.ts`): `PullRequestSummary`, `PullRequestList`, `PullRequestSource`, `prNeedsAttention()`, `PrLink`, `PrLinkKind`, `prLinkIsStrong()`, `prLinkMatches()`, `SessionSummary.prLinks`, the `prs` WebSocket message, `PRS_PATH`, `PRS_REFRESH_PATH`, and the `PRS_*` and `PR_*` constants.
 - **Security:**
   - **Routes:** `GET /api/prs` has the snapshot's token check. Refresh has the apiKey, Origin and Host checks of every state-changing request.

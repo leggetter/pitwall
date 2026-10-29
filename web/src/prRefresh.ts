@@ -15,9 +15,11 @@ import { ApiContext } from './api.js';
 import { couldNot } from './format.js';
 import type { ShowToast } from './components/Toast.js';
 
-/** The info toast after a 429: nothing failed, and Refresh is on again in `seconds`. */
-export const refreshSoonText = (seconds: number) =>
-  `pitwall fetched your pull requests moments ago. Refresh again in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`;
+/**
+ * The info toast after a 429: nothing failed, and Refresh is on again in `seconds`. True whether the
+ * fetch that started moments ago worked or not, as after gh failed: pitwall checked, it didn't fetch.
+ */
+export const refreshSoonText = (seconds: number) => `pitwall checked GitHub moments ago. Refresh again in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`;
 
 /** The info toast after a 409. */
 export const PRS_OFF_TEXT = "Pull requests are off: pitwall was started with --no-prs, so it doesn't run gh.";

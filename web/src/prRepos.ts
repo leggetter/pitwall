@@ -7,8 +7,9 @@
 //
 // - collapsed: each collapsed repo's 64-bit FNV-1a hash (fnv1a64() in notNeeded.ts) of its lowercase
 //   `owner/name`, oldest first, never the name itself: a private repo's name is as sensitive as a PR's
-//   title, which stays out of storage, as session content does (D14). A hash says which heading it is,
-//   and nothing a reader of the storage could use. At most PR_REPOS_CAP, the oldest dropped.
+//   title, which stays out of storage, as session content does (D14). The hash keeps the name out of
+//   storage: it can confirm a name someone guesses, not reveal one. At most PR_REPOS_CAP, the oldest
+//   dropped.
 //
 // Never pruned because a repo has no open PRs: it may have some again later. Storage can be missing
 // or throw, in a private window or with site data blocked, as in groupState.ts: then every heading

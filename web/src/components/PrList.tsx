@@ -15,7 +15,7 @@
 // repos or their rows waits until both have left, as the session list waits for a snapshot.
 
 import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from 'react';
-import { PRS_SHOWN_DAYS, type PullRequestList, type PullRequestSummary, type SessionSummary } from '../../../src/shared/protocol.js';
+import { PRS_MAX, PRS_SHOWN_DAYS, type PullRequestList, type PullRequestSummary, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import type { PrRefresh } from '../prRefresh.js';
 import {
@@ -155,7 +155,13 @@ function RowLine2({ pr, linked }: { pr: PullRequestSummary; linked: readonly Lin
             {' · '}
           </span>
           <span className="visually-hidden">, {linked.length === 1 ? 'session' : 'sessions'} </span>
-          {named.join(', ')}
+          {named.map((name, index) => (
+            // By place as well as name: two sessions can share a name. Each in <bdi>, so a right-to-left name can't reorder the commas.
+            <span key={`${index}:${name}`}>
+              {index > 0 && ', '}
+              <bdi>{name}</bdi>
+            </span>
+          ))}
           {more > 0 && (
             <>
               <span aria-hidden="true"> +{more}</span>
@@ -495,7 +501,11 @@ export function PrList({
             </span>
           </li>
         )}
-        {list?.truncated && <li className="pr-truncated">GitHub found more than 200, so the 200 updated most recently are listed.</li>}
+        {list?.truncated && (
+          <li className="pr-truncated">
+            GitHub found more than {PRS_MAX}, so the {PRS_MAX} updated most recently are listed.
+          </li>
+        )}
       </ul>
     );
   }

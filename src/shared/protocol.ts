@@ -1071,6 +1071,23 @@ export function openInEditorPath(sessionId: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * A GitHub owner, as a regular expression's source, to put inside a larger pattern: letters,
+ * digits, `-`, and `_` for an Enterprise Managed User's `name_shortcode`, starting with a letter or
+ * digit, at most 100 characters. W93's reader (src/prs/parse.ts) and the web UI (web/src/prs.ts,
+ * openPr.ts) use this one pattern, so an owner one keeps the other never drops. Case is GitHub's;
+ * PullRequestSummary.repo and PrLink.repo are the lowercase form.
+ */
+export const GITHUB_OWNER_PATTERN = '[A-Za-z0-9][A-Za-z0-9_-]{0,99}';
+
+/**
+ * A GitHub repo name, as a regular expression's source: letters, digits, `.`, `-` and `_`, at most
+ * 100 characters. It also matches `.` and `..`, which GitHub never names a repo and every user of it
+ * refuses on its own. Neither pattern can hold a `/`, `?`, `#`, `@`, `%` or space, so `owner/name`
+ * can't step outside a PR's own path in a URL.
+ */
+export const GITHUB_REPO_NAME_PATTERN = '[A-Za-z0-9._-]{1,100}';
+
+/**
  * The latest commit's status check rollup: SUCCESS is 'passing'; FAILURE and
  * ERROR are 'failing'; PENDING and EXPECTED are 'pending'; 'none' when the
  * commit has no checks.

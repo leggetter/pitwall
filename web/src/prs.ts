@@ -10,6 +10,8 @@
 // mentioned one, Claude naming the PR in a reply, shows only in the PR view, under Mentioned in.
 
 import {
+  GITHUB_OWNER_PATTERN,
+  GITHUB_REPO_NAME_PATTERN,
   PR_FAILING_CHECKS_MAX,
   PR_TITLE_MAX,
   prLinkIsStrong,
@@ -32,11 +34,20 @@ import type { BadgeLook } from './sessions.js';
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isTime = (value: unknown): value is string => typeof value === 'string' && value.length <= 64 && !Number.isNaN(Date.parse(value));
 
-/** A lowercase `owner/name`, as GitHub allows them: what PullRequestSummary.repo and PrLink.repo hold. */
-const REPO = /^[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9._-]{1,100}$/;
+/** An `owner/name` as the contract's patterns allow them, in any case (GITHUB_OWNER_PATTERN), as W93's reader does. */
+const OWNER_NAME = new RegExp(`^(${GITHUB_OWNER_PATTERN})/(${GITHUB_REPO_NAME_PATTERN})$`);
 
 /** A PR's own address on github.com, and nothing more: no query, no fragment, no other host. */
-const GITHUB_PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})\/pull\/([1-9][0-9]{0,9})$/;
+const GITHUB_PR_URL = new RegExp(`^https://github\\.com/(${GITHUB_OWNER_PATTERN})/(${GITHUB_REPO_NAME_PATTERN})/pull/([1-9][0-9]{0,9})$`);
+
+/**
+ * Whether `value` is a lowercase `owner/name`, what PullRequestSummary.repo and PrLink.repo hold:
+ * an Enterprise Managed User's `name_shortcode` too, and never `.` or `..` as the name.
+ */
+export function isRepoKey(value: string): boolean {
+  const match = OWNER_NAME.exec(value);
+  return match !== null && value === value.toLowerCase() && match[2] !== '.' && match[2] !== '..';
+}
 
 /** The most characters of a check's name that the page keeps. */
 const NAME_MAX = 200;
@@ -61,6 +72,7 @@ export function githubPrUrl(pr: Pick<PullRequestSummary, 'url' | 'repo' | 'numbe
   const match = GITHUB_PR_URL.exec(pr.url);
   if (!match) return undefined;
   const [, owner = '', name = '', number = ''] = match;
+  if (name === '.' || name === '..') return undefined;
   return `${owner}/${name}`.toLowerCase() === pr.repo && Number(number) === pr.number ? pr.url : undefined;
 }
 
@@ -77,7 +89,7 @@ function parseSource(value: unknown): PullRequestSource | undefined {
 export function parsePullRequest(value: unknown): PullRequestSummary | undefined {
   if (!isRecord(value)) return undefined;
   const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable } = value;
-  if (typeof repo !== 'string' || !REPO.test(repo)) return undefined;
+  if (typeof repo !== 'string' || !isRepoKey(repo)) return undefined;
   if (typeof repoLabel !== 'string' || repoLabel.toLowerCase() !== repo) return undefined;
   if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) return undefined;
   if (typeof url !== 'string' || githubPrUrl({ url, repo, number }) === undefined) return undefined;
@@ -98,7 +110,7 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
   };
   // A head that isn't the contract's shape is left out, as the server leaves out one whose repo has
   // gone, or whose branch is empty, over 255 characters, or has a control or bidi control character.
-  if (isRecord(head) && typeof head.repo === 'string' && REPO.test(head.repo) && typeof head.branch === 'string') {
+  if (isRecord(head) && typeof head.repo === 'string' && isRepoKey(head.repo) && typeof head.branch === 'string') {
     const { branch } = head;
     if (branch !== '' && branch.length <= BRANCH_MAX && !CONTROL.test(branch)) pr.head = { repo: head.repo, branch };
   }

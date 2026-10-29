@@ -3,7 +3,7 @@
 // your made-up open pull requests (M4, W95), with the sessions' links to them. Nothing here comes
 // from a real session, transcript or pull request: every name is pitwall-test-*, every path is under
 // /Users/example, every link goes to example.com or github.com/example, and the PRs are in made-up
-// repos or public ones, such as hookdeck/outpost, with invented titles.
+// repos or public ones, such as example/event-relay, with invented titles.
 //
 // Parts refer to sessions by the names in NAMES, so a fixture can change without touching a part.
 
@@ -124,16 +124,16 @@ export const PRS = {
   failing: 'example/demo-app/51',
   /** example/demo-app #48: approved and passing. pitwall-test-nightly-export pushed its branch; pitwall-test-review opened it. */
   approved: 'example/demo-app/48',
-  /** hookdeck/outpost #612: conflicts and changes requested. pitwall-test-review opened it, pitwall-test-in-api was given it in a prompt. */
-  conflicts: 'hookdeck/outpost/612',
-  /** hookdeck/outpost #605: a draft, checks pending, GitHub still checking for conflicts. No session. */
-  draft: 'hookdeck/outpost/605',
+  /** example/event-relay #612: conflicts and changes requested. pitwall-test-review opened it, pitwall-test-in-api was given it in a prompt. */
+  conflicts: 'example/event-relay/612',
+  /** example/event-relay #605: a draft, checks pending, GitHub still checking for conflicts. No session. */
+  draft: 'example/event-relay/605',
   /** example/api-server #19: passing, no review needed. pitwall-test-from-root pushed it; the ended pitwall-test-ended-notes was given it. */
   quiet: 'example/api-server/19',
   /** example/docs-site #7, updated 120 days ago: review required. */
   older: 'example/docs-site/7',
-  /** hookdeck/outpost #540, updated 200 days ago: checks failing, which no count includes until Show older. */
-  olderFailing: 'hookdeck/outpost/540',
+  /** example/event-relay #41, updated 200 days ago: checks failing, which no count includes until Show older. */
+  olderFailing: 'example/event-relay/41',
 } as const;
 
 /**
@@ -258,12 +258,14 @@ export class World {
   }
 
   /**
-   * A refresh (W95), as PRS_REFRESH_PATH answers it: 'off' with pull requests off; 'soon', with the
+   * A refresh (W95), in the order W93's poller answers it (src/prs/poller.ts, refresh()): 'off' with
+   * pull requests off; 'running' while a fetch runs, before the first included; 'soon', with the
    * seconds left, within PRS_REFRESH_MIN_MS of the latest fetch's start; otherwise 'started', and
    * `done`, which ends the fetch, as it works and the source is ok again.
    */
-  refreshPrs(minMs: number): { result: 'off' } | { result: 'soon'; seconds: number } | { result: 'started'; done: () => void } {
+  refreshPrs(minMs: number): { result: 'off' } | { result: 'running' } | { result: 'soon'; seconds: number } | { result: 'started'; done: () => void } {
     if (this.#prs === 'off') return { result: 'off' };
+    if (this.#prsRefreshing || this.#prs === 'loading') return { result: 'running' };
     const now = Date.now();
     const since = now - this.#prsFetchStarted;
     if (since < minMs) return { result: 'soon', seconds: Math.max(1, Math.ceil((minMs - since) / 1000)) };

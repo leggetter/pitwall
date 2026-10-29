@@ -9,19 +9,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PR_PARAM, parseSession, SESSION_PARAM, withoutParams } from './openSession.js';
+import { isRepoKey } from './prs.js';
 import { browserNavigation, type NavigationEnv } from './selection.js';
 import type { HistoryMode } from './openSession.js';
 
 export { PR_PARAM };
 
-/** A PR's key as ?pr= has it: a lowercase `owner/name`, then its number. */
-const PR_VALUE = /^[a-z0-9][a-z0-9-]{0,38}\/[a-z0-9._-]{1,100}\/[1-9][0-9]{0,9}$/;
+/** A PR's key as ?pr= has it: a lowercase `owner/name` (isRepoKey()), then its number. */
+const PR_VALUE = /^(.+)\/([1-9][0-9]{0,9})$/;
 
 /** The open PR's key in a query string, or undefined with none, one that isn't a PR's key, or a ?session= that shows instead. */
 export function parsePr(search: string): string | undefined {
   if (parseSession(search) !== undefined) return undefined;
   const value = new URLSearchParams(search).get(PR_PARAM);
-  return value !== null && PR_VALUE.test(value) ? value : undefined;
+  const repo = value === null ? undefined : PR_VALUE.exec(value)?.[1];
+  return repo !== undefined && isRepoKey(repo) ? (value ?? undefined) : undefined;
 }
 
 /**

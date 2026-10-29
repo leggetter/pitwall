@@ -84,6 +84,24 @@ describe('parsePullRequestList', () => {
     expect(parsed?.prs).toEqual([good]);
   });
 
+  it("keeps every owner W93's reader keeps: an Enterprise Managed User's name_shortcode, a 45-character owner, and an EMU fork's head", () => {
+    const emu = pr({ number: 3, repoLabel: 'Pitwall_Test-Shortcode/demo-app' });
+    const long = pr({ number: 4, repoLabel: `${'o'.repeat(45)}/demo-app` });
+    const fork = pr({ number: 5, head: { repo: 'someone_emu/demo-app', branch: 'fix' } });
+    const parsed = parsePullRequestList(JSON.parse(JSON.stringify(prList([emu, long, fork]))));
+    expect(parsed?.prs).toEqual([emu, long, fork]);
+    expect(parsed?.prs.map((each) => each.repo)).toEqual(['pitwall_test-shortcode/demo-app', `${'o'.repeat(45)}/demo-app`, 'example/demo-app']);
+    expect(parsed?.prs[2]?.head).toEqual({ repo: 'someone_emu/demo-app', branch: 'fix' });
+    expect(githubPrUrl(emu)).toBe('https://github.com/Pitwall_Test-Shortcode/demo-app/pull/3');
+  });
+
+  it("drops what the contract's patterns don't allow: an owner over 100 characters, or starting with _ or -, and . or .. as a name", () => {
+    for (const repoLabel of [`${'o'.repeat(101)}/demo-app`, '_owner/demo-app', '-owner/demo-app', 'example/..', 'example/.', 'exa mple/demo-app']) {
+      const bad = { ...pr({ number: 9 }), repo: repoLabel.toLowerCase(), repoLabel, url: `https://github.com/${repoLabel}/pull/9` };
+      expect(parsePullRequestList(prList([bad]))?.prs, repoLabel).toEqual([]);
+    }
+  });
+
   it('keeps one PR per repo and number, at most PRS_MAX', () => {
     const many = Array.from({ length: PRS_MAX + 5 }, (_, index) => pr({ number: index + 1 }));
     expect(parsePullRequestList(prList([pr({ number: 1 }), ...many]))?.prs).toHaveLength(PRS_MAX);
@@ -186,8 +204,8 @@ describe('grouping, sorting and the attention count', () => {
   const demoOld = pr({ number: 1 }, 300);
   const demoFailing = pr({ number: 2, checks: 'failing' }, 400);
   const demoNew = pr({ number: 3 }, 10);
-  const outpostConflict = pr({ number: 9, repoLabel: 'hookdeck/outpost', mergeable: 'conflicts' }, 30);
-  const outpostReview = pr({ number: 8, repoLabel: 'hookdeck/outpost', review: 'changes-requested' }, 50);
+  const relayConflict = pr({ number: 9, repoLabel: 'example/event-relay', mergeable: 'conflicts' }, 30);
+  const relayReview = pr({ number: 8, repoLabel: 'example/event-relay', review: 'changes-requested' }, 50);
   const blog = pr({ number: 4, repoLabel: 'example/Blog' }, 5);
 
   it('puts the PRs that need attention first in a repo, then the newest updated', () => {
@@ -195,16 +213,16 @@ describe('grouping, sorting and the attention count', () => {
   });
 
   it('heads each repo once, ordered by its newest update, with its label as GitHub spells it', () => {
-    const groups = groupPrs([demoOld, outpostReview, demoFailing, blog, outpostConflict, demoNew]);
+    const groups = groupPrs([demoOld, relayReview, demoFailing, blog, relayConflict, demoNew]);
     expect(groups.map((group) => [group.repo, group.label, group.prs.map((each) => each.number), group.attention])).toEqual([
       ['example/blog', 'example/Blog', [4], 0],
       ['example/demo-app', 'example/demo-app', [2, 3, 1], 1],
-      ['hookdeck/outpost', 'hookdeck/outpost', [9, 8], 2],
+      ['example/event-relay', 'example/event-relay', [9, 8], 2],
     ]);
   });
 
   it('counts failing checks, conflicts and changes requested, drafts included', () => {
-    expect(countPrAttention([demoOld, demoFailing, outpostConflict, outpostReview, pr({ number: 20, draft: true, checks: 'failing' })])).toBe(4);
+    expect(countPrAttention([demoOld, demoFailing, relayConflict, relayReview, pr({ number: 20, draft: true, checks: 'failing' })])).toBe(4);
     expect(needAttention(1)).toBe('1 needs attention');
     expect(needAttention(3)).toBe('3 need attention');
     expect(openCount(12, 12)).toBe('12 open');
@@ -218,14 +236,14 @@ describe('grouping, sorting and the attention count', () => {
 describe('filterPrs', () => {
   const prs = [
     pr({ number: 42, title: 'Fix the made-up EXPORT job' }),
-    pr({ number: 7, repoLabel: 'hookdeck/outpost', head: { repo: 'hookdeck/outpost', branch: 'feat/retry-queue' } }),
+    pr({ number: 7, repoLabel: 'example/event-relay', head: { repo: 'example/event-relay', branch: 'feat/retry-queue' } }),
     pr({ number: 420 }),
   ];
   const numbers = (text: string) => filterPrs(prs, text).map((each) => each.number);
 
   it('matches the title, the repo, the number and the branch, case-insensitively, on the trimmed text', () => {
     expect(numbers('  export ')).toEqual([42]);
-    expect(numbers('OUTPOST')).toEqual([7]);
+    expect(numbers('EVENT-RELAY')).toEqual([7]);
     expect(numbers('#42')).toEqual([42, 420]);
     expect(numbers('retry-queue')).toEqual([7]);
     expect(numbers('')).toEqual([42, 7, 420]);
@@ -236,7 +254,7 @@ describe('filterPrs', () => {
 describe('sessions and PRs', () => {
   const failing = pr({ number: 42, checks: 'failing' });
   const quiet = pr({ number: 7 });
-  const other = pr({ number: 9, repoLabel: 'hookdeck/outpost' });
+  const other = pr({ number: 9, repoLabel: 'example/event-relay' });
 
   it('lists the strongly linked sessions apart from those that only mentioned it, finished ones last', () => {
     const opener = session({ name: 'opener', prLinks: [prLink('opened', failing, 30)] });
@@ -282,7 +300,7 @@ describe('sessions and PRs', () => {
     expect(badge?.hint.split('\n')).toEqual([
       'example/demo-app #42: A made-up change, number 42 (checks failing)',
       'example/demo-app #7: A made-up change, number 7',
-      'hookdeck/outpost #9: A made-up change, number 9',
+      'example/event-relay #9: A made-up change, number 9',
     ]);
     expect(sessionPrBadge([quiet])?.attention).toBe(false);
   });

@@ -11,7 +11,8 @@
 //
 // Two more states take its place: waiting, while a ?pr= from the URL waits for the first 'prs'
 // message, and unlisted, for one that isn't among your open PRs. One that leaves the list while it's
-// open, merged or closed, shows what it showed last, with an alert that says so.
+// open, merged or closed, shows what it showed last, with an alert that says so; so does one whose
+// list is off or failed since, but not while the first fetch after a restart runs (PrMissing).
 
 import { useId, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { PrLinkKind, PullRequestSummary } from '../../../src/shared/protocol.js';
@@ -46,8 +47,23 @@ export const LINK_KINDS: Readonly<Record<PrLinkKind, string>> = {
 /** The Sessions section with none: how a session comes to be listed here. */
 export const NO_LINKED_SESSIONS = 'No session has opened it, pushed its branch or been given its link in a prompt, as far as pitwall can tell.';
 
-/** The alert once the PR has left the list while it was open. */
-export const PR_GONE = "It's no longer among your open pull requests, so it may have been merged or closed. This is what it showed last.";
+/**
+ * Why the view shows what a PR showed last, once the latest list doesn't have it (PrViewProps.missing):
+ * - 'gone': a list fetched since doesn't have it, so it may have been merged or closed.
+ * - 'off': pull requests are off, as after a restart with `--no-prs`.
+ * - 'failed': the latest fetch failed with no list, so pitwall can't say.
+ * Not while the first fetch after a restart is still running: that list says nothing yet.
+ */
+export type PrMissing = 'gone' | 'off' | 'failed';
+
+export const PR_MISSING: Readonly<Record<PrMissing, string>> = {
+  gone: "It's no longer among your open pull requests, so it may have been merged or closed. This is what it showed last.",
+  off: "Pull requests are off: pitwall was started with --no-prs, so it doesn't run gh. This is what it showed last.",
+  failed: "pitwall couldn't list your pull requests just now, so this is what it showed last.",
+};
+
+/** The alert once the PR has left a list fetched since it was open. */
+export const PR_GONE = PR_MISSING.gone;
 
 /** What GitHub's mergeable says, in words. 'unknown' is GitHub still working it out, as it often is just after a push. */
 const MERGEABLE: Readonly<Record<PullRequestSummary['mergeable'], string>> = {
@@ -104,7 +120,7 @@ function LinkedRow({ linked, notNeeded, onOpen }: { linked: LinkedSession; notNe
   return (
     <li className={session.finished ? 'pr-view-session finished' : 'pr-view-session'}>
       <button type="button" className="link-button pr-view-session-open" data-open-linked-session={session.sessionId} onClick={() => onOpen(session.sessionId)}>
-        {plainText(session.name)}
+        <bdi>{plainText(session.name)}</bdi>
       </button>
       <StatusBadge badge={statusBadge(session, notNeeded)} />
       {session.lastActivityAt && <Timestamp className="pr-view-session-activity" at={session.lastActivityAt} prefix="Active " />}
@@ -115,8 +131,12 @@ function LinkedRow({ linked, notNeeded, onOpen }: { linked: LinkedSession; notNe
 
 export interface PrViewProps {
   pr: PullRequestSummary;
-  /** False once it has left the list, as one merged or closed does. The view keeps what it showed. */
-  listed: boolean;
+  /**
+   * Set once the latest list doesn't have it, and why (PrMissing): the view keeps what it showed,
+   * with an alert that says so. Undefined while it's listed, or while the first fetch since a
+   * restart runs, whose list says nothing yet.
+   */
+  missing?: PrMissing | undefined;
   /** The sessions linked to it (sessionsFor() in prs.ts): strongly, and those that only mentioned it. */
   sessions: { strong: readonly LinkedSession[]; mentioned: readonly LinkedSession[] };
   /** The viewer's Not needed now marks (W88), for the sessions' status badges. */
@@ -136,7 +156,7 @@ export interface PrViewProps {
   backLabel?: string | undefined;
 }
 
-export function PrView({ pr, listed, sessions, notNeeded, onOpenSession, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
+export function PrView({ pr, missing, sessions, notNeeded, onOpenSession, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
   const ids = { title: useId(), details: useId(), sessions: useId(), mentioned: useId() };
   const title = plainText(pr.title);
   const url = githubPrUrl(pr);
@@ -210,9 +230,9 @@ export function PrView({ pr, listed, sessions, notNeeded, onOpenSession, onClose
           <span className="pr-view-repo">{prName(pr)}</span>
           <PrStateBadges pr={pr} />
         </div>
-        {!listed && (
+        {missing !== undefined && (
           <Alert tone="neutral" role="status">
-            {PR_GONE}
+            {PR_MISSING[missing]}
           </Alert>
         )}
       </header>

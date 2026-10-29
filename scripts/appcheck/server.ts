@@ -353,7 +353,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
 
   /**
    * Refresh the PR list (W95), as the contract and W93's route (src/server/prs.ts) have it, in its
-   * words: no body is read; 409 with pull requests off;
+   * words: no body is read; 409 with pull requests off; 200 while a fetch runs, which it leaves to finish;
    * 429 with Retry-After within PRS_REFRESH_MIN_MS of the latest fetch's start; otherwise 200, and the
    * list as a 'prs' message, refreshing, then fetched a moment later.
    */
@@ -363,6 +363,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (answer.result === 'off') {
       records.refreshes.push(409);
       return json(res, 409, { ok: false, error: 'Pull requests are off: pitwall was started with --no-prs, so it never runs gh.' } satisfies ActionResult);
+    }
+    // A fetch is running: ok, and its list comes as a 'prs' message, as the real route answers.
+    if (answer.result === 'running') {
+      records.refreshes.push(200);
+      return json(res, 200, { ok: true } satisfies ActionResult);
     }
     if (answer.result === 'soon') {
       records.refreshes.push(429);

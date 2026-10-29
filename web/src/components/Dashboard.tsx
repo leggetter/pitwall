@@ -164,7 +164,7 @@ import { HighlightContext } from './Highlight.js';
 import { closeMenus } from './Menu.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
 import { PrList } from './PrList.js';
-import { PrView, UnlistedPrView, WaitingPrView } from './PrView.js';
+import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
 import { PreferencesDialog } from './Preferences.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
@@ -457,6 +457,23 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const listedPr = prOpen === undefined ? undefined : allPrs.find((pr) => prKey(pr) === prOpen);
   const shownPr = listedPr ?? (prOpen === undefined ? undefined : knownPrs.current.get(prOpen));
   const prState = prListState(prList);
+  // Why an open PR the latest list doesn't have shows what it showed last: gone only from a list
+  // fetched since, never from the empty list a restart's poller sends before its first fetch.
+  const prMissing: PrMissing | undefined =
+    listedPr !== undefined ? undefined : prState.kind === 'list' ? 'gone' : prState.kind === 'off' ? 'off' : prState.kind === 'failed' ? 'failed' : undefined;
+  // Pull requests off, as after a restart with --no-prs, with Pull requests selected, as a stored
+  // selection from an earlier run can have it: the repo list has no item to show it selected, so
+  // All sessions in the same root tab takes its place, replacing the history entry. A ?pr= stays,
+  // and its view says pull requests are off.
+  const prsOffNow = prState.kind === 'off';
+  useEffect(() => {
+    if (!prsSelected || !prsOffNow) return;
+    const instead = viewIn('all', tab);
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.replaceState(navigation.history.state, '', `${pathname}${withSelection(search, instead)}${hash}`);
+    writeStoredSelection(instead, storage);
+    followSelection();
+  }, [prsSelected, prsOffNow, tab, navigation, storage, followSelection]);
   // A ?pr= before the list says what it is: the view's skeletons after --pw-delay-spinner.
   const prWaiting = useWaiting(app, prOpen !== undefined && shownPr === undefined && prState.kind === 'loading');
 
@@ -1481,7 +1498,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       <PrView
         key={`pr:${prOpen}`}
         pr={shownPr}
-        listed={listedPr !== undefined}
+        missing={prMissing}
         sessions={sessionsFor(shownPr, everyListed)}
         notNeeded={marks}
         onOpenSession={openSessionFromPr}

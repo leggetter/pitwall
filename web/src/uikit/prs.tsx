@@ -50,12 +50,12 @@ const FAILING = pr('example/demo-app', 51, 'Add a made-up health route', 25, {
   failingCount: 5,
   review: 'review-required',
 });
-const CONFLICTS = pr('hookdeck/outpost', 612, 'Retry made-up deliveries with backoff, and say so in the delivery log', 70, { mergeable: 'conflicts', review: 'changes-requested' });
+const CONFLICTS = pr('example/event-relay', 612, 'Retry made-up deliveries with backoff, and say so in the delivery log', 70, { mergeable: 'conflicts', review: 'changes-requested' });
 const QUIET = pr('example/api-server', 19, 'Add a made-up rate limit to the API', 3 * 60);
 const APPROVED = pr('example/demo-app', 48, 'Tidy the made-up export job', 9 * 60, { review: 'approved' });
-const DRAFT = pr('hookdeck/outpost', 605, 'Document the made-up retry headers', 4 * DAY, { draft: true, checks: 'pending', mergeable: 'unknown' });
+const DRAFT = pr('example/event-relay', 605, 'Document the made-up retry headers', 4 * DAY, { draft: true, checks: 'pending', mergeable: 'unknown' });
 const OLDER = pr('example/docs-site', 7, 'Move the made-up guide to its own page', 120 * DAY, { review: 'review-required' });
-const FORK = pr('hookdeck/outpost', 590, 'Fix a made-up typo in the README', 6 * DAY, { head: { repo: 'pitwall-test/outpost', branch: 'fix-typo' }, review: 'approved' });
+const FORK = pr('example/event-relay', 590, 'Fix a made-up typo in the README', 6 * DAY, { head: { repo: 'pitwall-test/event-relay', branch: 'fix-typo' }, review: 'approved' });
 const PRS = [FAILING, CONFLICTS, QUIET, APPROVED, DRAFT, OLDER];
 
 const link = (kind: 'opened' | 'pushed' | 'prompted' | 'mentioned', target: PullRequestSummary, minutes: number) =>
@@ -169,13 +169,13 @@ export function PullRequestSpecimens() {
         <LivePrList prs={list()} />
       </Specimen>
       <Specimen title="A heading collapsed" note="Its count and its badge stay in sight. The page remembers it by a hash of the repo." frame="short">
-        <LivePrList prs={list()} collapsed={['hookdeck/outpost']} />
+        <LivePrList prs={list()} collapsed={['example/event-relay']} />
       </Specimen>
       <Specimen title="Show older, on" note="The PRs updated more than 90 days ago, listed and counted, with Hide older pull requests." frame="view">
         <LivePrList prs={list()} older />
       </Specimen>
       <Specimen title="The filter, matching" note="Title, repo, number and branch. A filter that finds something under a collapsed heading shows it." frame="short">
-        <LivePrList prs={list()} filter="retry" collapsed={['hookdeck/outpost']} />
+        <LivePrList prs={list()} filter="retry" collapsed={['example/event-relay']} />
       </Specimen>
       <Specimen title="The filter, matching nothing" frame="short">
         <LivePrList prs={list()} filter="nothing like it" />
@@ -216,19 +216,22 @@ export function PullRequestSpecimens() {
         note="In the session view's place. Open on GitHub, a link to the PR's own page in a new tab, Copy link and Close; its repo, number and badges; its details, with the failing checks' names and how many more; then the sessions strongly linked to it, and Mentioned in, each opening that session."
         frame="view"
       >
-        <PrView pr={FAILING} listed sessions={linked(FAILING)} onOpenSession={noop} onClose={noop} />
+        <PrView pr={FAILING} sessions={linked(FAILING)} onOpenSession={noop} onClose={noop} />
       </Specimen>
       <Specimen title="Conflicts and changes requested" note="A long title wraps, where a session's name gives way." frame="short">
-        <PrView pr={CONFLICTS} listed sessions={linked(CONFLICTS)} onOpenSession={noop} onClose={noop} />
+        <PrView pr={CONFLICTS} sessions={linked(CONFLICTS)} onOpenSession={noop} onClose={noop} />
       </Specimen>
       <Specimen title="A draft, GitHub still checking for conflicts, and no session" frame="short">
-        <PrView pr={DRAFT} listed sessions={linked(DRAFT)} onOpenSession={noop} onClose={noop} />
+        <PrView pr={DRAFT} sessions={linked(DRAFT)} onOpenSession={noop} onClose={noop} />
       </Specimen>
       <Specimen title="From a fork, with an ended session" frame="short">
-        <PrView pr={FORK} listed sessions={{ strong: [{ session: ENDED, link: link('opened', FORK, 3 * DAY) }], mentioned: [] }} onOpenSession={noop} onClose={noop} />
+        <PrView pr={FORK} sessions={{ strong: [{ session: ENDED, link: link('opened', FORK, 3 * DAY) }], mentioned: [] }} onOpenSession={noop} onClose={noop} />
       </Specimen>
-      <Specimen title="No longer listed" note="Merged or closed while it was open: what it showed last, with an alert." frame="short">
-        <PrView pr={QUIET} listed={false} sessions={linked(QUIET)} onOpenSession={noop} onClose={noop} />
+      <Specimen title="No longer listed" note="Merged or closed while it was open: what it showed last, with an alert. Only from a list fetched since: not while a restart's first fetch runs." frame="short">
+        <PrView pr={QUIET} missing="gone" sessions={linked(QUIET)} onOpenSession={noop} onClose={noop} />
+      </Specimen>
+      <Specimen title="Pull requests off since" note="Restarted with --no-prs while it was open." frame="short">
+        <PrView pr={QUIET} missing="off" sessions={linked(QUIET)} onOpenSession={noop} onClose={noop} />
       </Specimen>
       <Specimen title="Not one of your open PRs" note="A ?pr= that isn't in the list." frame="short">
         <UnlistedPrView prKey="example/demo-app/999" onClose={noop} />
@@ -237,7 +240,7 @@ export function PullRequestSpecimens() {
         <WaitingPrView waiting={{ shown: true, long: false }} onClose={noop} />
       </Specimen>
       <Specimen title="At 600 px and narrower" note="Back to pull requests, in Close's place." frame="short" width={375}>
-        <PrView pr={FAILING} listed sessions={linked(FAILING)} onOpenSession={noop} onClose={noop} compact backLabel="Back to pull requests" />
+        <PrView pr={FAILING} sessions={linked(FAILING)} onOpenSession={noop} onClose={noop} compact backLabel="Back to pull requests" />
       </Specimen>
 
       <Specimen

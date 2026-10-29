@@ -6,7 +6,7 @@
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { PRS_REFRESH_PATH, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
+import { PRS_MAX, PRS_REFRESH_PATH, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
@@ -20,8 +20,8 @@ import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '.
 import { fakeHistory } from '../test/history.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
-import { REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
-import { COPY_LINK, OPEN_ON_GITHUB, PrView } from './PrView.js';
+import { PrList, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
+import { COPY_LINK, OPEN_ON_GITHUB, PR_MISSING, PrView } from './PrView.js';
 import type { TerminalHandle } from './Terminal.js';
 
 class QuietTerminal implements TerminalHandle {
@@ -39,18 +39,18 @@ const ROOT = '/Users/example/code';
 const API_KEY = 'a'.repeat(43);
 const DAY = 60 * 24;
 
-// The made-up PRs: two in demo-app, two in outpost, and one in blog older than the 90 days.
+// The made-up PRs: two in demo-app, two in event-relay, and one in blog older than the 90 days.
 const failing = pr({ number: 42, title: 'Fix the made-up export job', checks: 'failing', failingChecks: ['test (22.x)', 'lint'], failingCount: 4 }, 30);
 const approved = pr({ number: 43, review: 'approved' }, 200);
-const conflicts = pr({ number: 9, repoLabel: 'hookdeck/outpost', mergeable: 'conflicts' }, 10);
-const draft = pr({ number: 8, repoLabel: 'hookdeck/outpost', draft: true, checks: 'pending', mergeable: 'unknown' }, 300);
+const conflicts = pr({ number: 9, repoLabel: 'example/event-relay', mergeable: 'conflicts' }, 10);
+const draft = pr({ number: 8, repoLabel: 'example/event-relay', draft: true, checks: 'pending', mergeable: 'unknown' }, 300);
 const older = pr({ number: 3, repoLabel: 'example/blog', review: 'changes-requested' }, 100 * DAY);
 const PRS = [conflicts, failing, approved, draft, older];
 
 /** The made-up sessions: alpha opened #42 and pushed #43's branch, beta pushed to #9, gamma named #42 in a reply, delta (finished) was given #42. */
 function sessions() {
   const alpha = session({ sessionId: 'pr-alpha', name: 'alpha', prLinks: [prLink('opened', failing, 5), prLink('pushed', approved, 2)] });
-  const beta = session({ sessionId: 'pr-beta', name: 'beta', cwd: `${ROOT}/outpost`, prLinks: [prLink('pushed', conflicts, 3)] });
+  const beta = session({ sessionId: 'pr-beta', name: 'beta', cwd: `${ROOT}/event-relay`, prLinks: [prLink('pushed', conflicts, 3)] });
   const gamma = session({ sessionId: 'pr-gamma', name: 'gamma', prLinks: [prLink('mentioned', failing, 1)] });
   const delta = session({ sessionId: 'pr-delta', name: 'delta', kind: 'background', shortId: 'd95', alive: false, pid: undefined, status: undefined, state: 'done', finished: true, prLinks: [prLink('prompted', failing, 40)] });
   const epsilon = session({ sessionId: 'pr-epsilon', name: 'epsilon' });
@@ -61,7 +61,7 @@ function snap(): IndexSnapshot {
   const { alpha, beta, gamma, delta, epsilon } = sessions();
   return snapshot([
     group({ key: `${ROOT}/demo-app`, label: 'demo-app', sessions: [alpha, gamma, epsilon, delta] }),
-    group({ key: `${ROOT}/outpost`, label: 'outpost', sessions: [beta] }),
+    group({ key: `${ROOT}/event-relay`, label: 'event-relay', sessions: [beta] }),
   ]);
 }
 
@@ -157,8 +157,8 @@ describe('the PR list', () => {
   it('heads each repo by its newest update, the PRs that need attention first, with the summary', () => {
     renderDashboard();
     expect(summary()).toBe('4 open2 need attention');
-    expect(repoHeadings()).toEqual(['hookdeck/outpost', 'example/demo-app']);
-    expect(prRows()).toEqual(['hookdeck/outpost/9', 'hookdeck/outpost/8', 'example/demo-app/42', 'example/demo-app/43']);
+    expect(repoHeadings()).toEqual(['example/event-relay', 'example/demo-app']);
+    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/8', 'example/demo-app/42', 'example/demo-app/43']);
     const heading = within(main()).getByRole('button', { name: /example\/demo-app/ });
     expect(heading.textContent).toBe('example/demo-app2 open1 needs attention');
     expect(heading.getAttribute('aria-expanded')).toBe('true');
@@ -171,6 +171,7 @@ describe('the PR list', () => {
     expect([...fortyTwo.querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Checks failing']);
     // alpha opened it and delta was given it; gamma only named it, so it isn't here.
     expect(fortyTwo.querySelector('.pr-what')?.textContent).toBe('#42 · , sessions alpha, delta');
+    expect([...fortyTwo.querySelectorAll('.pr-sessions bdi')].map((bdi) => bdi.textContent)).toEqual(['alpha', 'delta']);
     expect([...row(8).querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Draft', 'Checks pending']);
     expect([...row(43).querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Approved']);
     const many = sessionsFor(failing, [...Object.values(sessions()), session({ name: 'zeta', prLinks: [prLink('opened', failing)] })]).strong;
@@ -192,18 +193,18 @@ describe('the PR list', () => {
   it('collapses a repo, and remembers it by a hash of its name, never the name', () => {
     const store = memory();
     const first = renderDashboard(prList(PRS), { storage: store.source });
-    const toggle = within(main()).getByRole('button', { name: /hookdeck\/outpost/ });
+    const toggle = within(main()).getByRole('button', { name: /example\/event-relay/ });
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(prRows()).toEqual(['example/demo-app/42', 'example/demo-app/43']);
     const raw = store.items.get(PR_REPOS_KEY) ?? '';
-    expect(raw).not.toContain('outpost');
-    expect(JSON.parse(raw)).toEqual({ v: 1, collapsed: [fnv1a64('hookdeck/outpost')] });
+    expect(raw).not.toContain('event-relay');
+    expect(JSON.parse(raw)).toEqual({ v: 1, collapsed: [fnv1a64('example/event-relay')] });
     first.unmount();
     // A reload: still collapsed, with its counts in sight.
     renderDashboard(prList(PRS), { storage: store.source });
-    expect(within(main()).getByRole('button', { name: /hookdeck\/outpost/ }).getAttribute('aria-expanded')).toBe('false');
-    expect(within(main()).getByRole('button', { name: /hookdeck\/outpost/ }).textContent).toContain('1 needs attention');
+    expect(within(main()).getByRole('button', { name: /example\/event-relay/ }).getAttribute('aria-expanded')).toBe('false');
+    expect(within(main()).getByRole('button', { name: /example\/event-relay/ }).textContent).toContain('1 needs attention');
   });
 
   it('lists the PRs older than 90 days behind Show older, which keeps focus as Hide older', async () => {
@@ -229,8 +230,8 @@ describe('the PR list', () => {
     renderDashboard();
     const field = within(main()).getByRole('searchbox', { name: 'Filter pull requests' });
     expect(field.getAttribute('placeholder')).toBe('Filter by title, repo, number or branch');
-    fireEvent.change(field, { target: { value: 'outpost' } });
-    expect(prRows()).toEqual(['hookdeck/outpost/9', 'hookdeck/outpost/8']);
+    fireEvent.change(field, { target: { value: 'event-relay' } });
+    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/8']);
     expect(summary()).toBe('2 of 4 open2 need attention');
     fireEvent.change(field, { target: { value: 'export' } });
     expect(prRows()).toEqual(['example/demo-app/42']);
@@ -242,6 +243,11 @@ describe('the PR list', () => {
     fireEvent.click(within(main()).getByRole('button', { name: 'Clear filter' }));
     expect(prRows()).toHaveLength(4);
     expect(document.activeElement).toBe(field);
+  });
+
+  it('says when GitHub found more than PRS_MAX', () => {
+    renderDashboard(prList(PRS, { truncated: true }));
+    expect(main().querySelector('.pr-truncated')?.textContent).toBe(`GitHub found more than ${PRS_MAX}, so the ${PRS_MAX} updated most recently are listed.`);
   });
 
   it('says when it was fetched', () => {
@@ -259,13 +265,40 @@ describe('each source state', () => {
     expect(screen.getByRole('button', { name: REFRESH_LABEL }).getAttribute('aria-busy')).toBe('true');
   });
 
-  it('says pull requests are off, with Show all sessions', async () => {
-    const { navigation } = renderDashboard(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } }));
+  it('falls back to All sessions with pull requests off, as for ?view=prs remembered from an earlier run, keeping a ?pr=', async () => {
+    const off = prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } });
+    const store = memory({ 'pitwall.view.v1': 'view=prs' });
+    const { navigation } = renderDashboard(off, { search: '?view=prs&pr=example/demo-app/42', storage: store.source });
+    await settle();
+    expect(navigation.location.search).toBe('?view=all&pr=example/demo-app/42');
+    expect(store.items.get('pitwall.view.v1')).toBe('view=all');
+    expect(within(main()).getByRole('heading', { level: 2 }).textContent).toBe('All sessions');
+    expect(prItem()).toBeUndefined();
+    expect(screen.getByRole('heading', { name: "This pull request isn't listed" })).toBeDefined();
+    expect(prView()?.textContent).toContain('Pull requests are off');
+  });
+
+  it('says pull requests are off, with Show all sessions, in the list itself', () => {
+    const onShowAll = vi.fn();
+    const refresh = { refresh: () => {}, sending: false, offUntil: 0 };
+    render(
+      <PrList
+        list={prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } })}
+        sessions={[]}
+        filter=""
+        onFilter={() => {}}
+        showOlder={false}
+        onToggleOlder={() => {}}
+        collapsed={new Set()}
+        onToggleRepo={() => {}}
+        refresh={refresh}
+        onShowAll={onShowAll}
+      />,
+    );
     expect(screen.getByText('Pull requests are off')).toBeDefined();
     expect(screen.queryByRole('button', { name: REFRESH_LABEL })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show all sessions' }));
-    await settle();
-    expect(navigation.location.search).toBe('?view=all');
+    expect(onShowAll).toHaveBeenCalledTimes(1);
   });
 
   it('says how to install gh, how to log it in, and what failed, each with Refresh', () => {
@@ -429,18 +462,18 @@ describe('sessions and PRs', () => {
   it('steps through the PR list with j and k, and ↓ and ↑ on a row', async () => {
     const { navigation } = renderDashboard();
     press('j', document.body);
-    expect(document.activeElement?.getAttribute('data-open-pr')).toBe('hookdeck/outpost/9');
+    expect(document.activeElement?.getAttribute('data-open-pr')).toBe('example/event-relay/9');
     press('ArrowDown');
-    expect(document.activeElement?.getAttribute('data-open-pr')).toBe('hookdeck/outpost/8');
+    expect(document.activeElement?.getAttribute('data-open-pr')).toBe('example/event-relay/8');
     fireEvent.click(document.activeElement!);
     await settle();
-    expect(navigation.location.search).toBe('?view=prs&pr=hookdeck/outpost/8');
+    expect(navigation.location.search).toBe('?view=prs&pr=example/event-relay/8');
     press('j', document.body);
     await settle();
     expect(navigation.location.search).toBe('?view=prs&pr=example/demo-app/42');
     press('k', document.body);
     await settle();
-    expect(navigation.location.search).toBe('?view=prs&pr=hookdeck/outpost/8');
+    expect(navigation.location.search).toBe('?view=prs&pr=example/event-relay/8');
   });
 
   it('says a ?pr= that is not one of your open PRs is not listed, and waits for the first list', () => {
@@ -456,13 +489,29 @@ describe('sessions and PRs', () => {
     await settle();
     again(prList([approved]));
     expect(prView()?.querySelector('bdi')?.textContent).toBe('Fix the made-up export job');
-    expect(prView()?.textContent).toContain("It's no longer among your open pull requests");
+    expect(prView()?.textContent).toContain(PR_MISSING.gone);
+  });
+
+  it("doesn't call it gone while a restart's first fetch runs, and says so once pull requests are off", async () => {
+    const { again } = renderDashboard(prList(PRS), { search: '?view=prs&pr=example/demo-app/42' });
+    await settle();
+    // A restart: the poller's first message, before its first fetch, has no PRs and no fetchedAt.
+    again(prList([], { fetchedAt: undefined, refreshing: true }));
+    expect(prView()?.querySelector('bdi')?.textContent).toBe('Fix the made-up export job');
+    expect(prView()?.querySelector('.inline-alert')).toBeNull();
+    again(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'gh-auth', error: 'Not logged in.' } }));
+    expect(prView()?.textContent).toContain(PR_MISSING.failed);
+    again(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } }));
+    expect(prView()?.textContent).toContain(PR_MISSING.off);
+    // Fetched again, it's listed, and the alert goes.
+    again(prList(PRS));
+    expect(prView()?.querySelector('.inline-alert')).toBeNull();
   });
 });
 
 describe('the PR view', () => {
   const view = (each = failing, linked = sessionsFor(each, Object.values(sessions()))) =>
-    render(<PrView pr={each} listed sessions={linked} onOpenSession={() => {}} onClose={() => {}} layout="column" />);
+    render(<PrView pr={each} sessions={linked} onOpenSession={() => {}} onClose={() => {}} layout="column" />);
 
   it('links to GitHub in a new tab, with no opener or referrer, and copies the link', () => {
     view();
@@ -470,6 +519,7 @@ describe('the PR view', () => {
     expect(link.getAttribute('href')).toBe('https://github.com/example/demo-app/pull/42');
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    expect([...document.querySelectorAll('.pr-view-session-open bdi')].map((bdi) => bdi.textContent)).toEqual(['alpha', 'delta', 'gamma']);
     expect(screen.getByRole('button', { name: COPY_LINK })).toBeDefined();
   });
 
@@ -491,13 +541,13 @@ describe('the PR view', () => {
   });
 
   it('says GitHub is still checking for conflicts, a fork, and that no session is linked', () => {
-    const fork = { ...draft, head: { repo: 'someone/outpost', branch: 'fix-retries' } };
+    const fork = { ...draft, head: { repo: 'someone/event-relay', branch: 'fix-retries' } };
     view(fork, { strong: [], mentioned: [] });
     const details = Object.fromEntries([...document.querySelectorAll('.pr-view-detail')].map((detail) => [detail.querySelector('dt')?.textContent, detail.querySelector('dd')?.textContent]));
     expect(details.Merge).toBe('Checking for conflicts: GitHub works it out after a push, so the next fetch usually knows.');
     expect(details.Checks).toBe('Pending');
     expect(details.Draft).toBe('Draft');
-    expect(details.Branch).toBe('fix-retries, from someone/outpost');
+    expect(details.Branch).toBe('fix-retries, from someone/event-relay');
     expect(screen.getByText(/No session has opened it/)).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Mentioned in' })).toBeNull();
   });

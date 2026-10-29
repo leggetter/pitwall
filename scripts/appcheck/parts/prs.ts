@@ -8,7 +8,7 @@
 import { NAMES, PRS, PRS_ERRORS, type PrsState } from '../fixtures.js';
 import type { PageRecords } from '../page.js';
 import type { Part } from '../runner.js';
-import { chooseInRepoList, focused, openRepoList, repoItem, repoLabels, row, toasts } from './_dom.js';
+import { chooseInRepoList, focused, listHeading, openRepoList, repoItem, repoLabels, row, toasts } from './_dom.js';
 
 const q = JSON.stringify;
 const LIST = `document.querySelector('main.pr-list')`;
@@ -54,7 +54,7 @@ const part: Part = {
       await openRepoList(t);
       t.expectEqual((await page.evaluate<string[]>(repoLabels)).slice(0, 4), ['Needs you', 'All sessions', 'Starred', 'Pull requests'], 'the views, in order');
       const badge = await page.evaluate<{ text: string; danger: boolean } | null>(`(() => { const b = ${repoItem('Pull requests')}?.querySelector('.badge'); return b ? { text: b.textContent, danger: b.classList.contains('badge-subtle-danger') } : null; })()`);
-      // #51's failing checks and #612's conflicts; not #540's, which is older than 90 days.
+      // #51's failing checks and #612's conflicts; not #41's, which is older than 90 days.
       t.expectEqual(badge, { text: '2 need attention', danger: true }, 'its badge');
       await t.shot('repo-list');
     });
@@ -63,7 +63,7 @@ const part: Part = {
       await chooseInRepoList(t, 'Pull requests');
       await page.waitFor('the rows', `${prRows}.length > 0`);
       t.expect((await page.evaluate<string>('location.search')).startsWith('?view=prs'), 'the URL says so');
-      t.expectEqual(await page.evaluate(headings), ['example/demo-app', 'hookdeck/outpost', 'example/api-server'], 'the headings, by their newest update');
+      t.expectEqual(await page.evaluate(headings), ['example/demo-app', 'example/event-relay', 'example/api-server'], 'the headings, by their newest update');
       t.expectEqual(await page.evaluate(prRows), [PRS.failing, PRS.approved, PRS.conflicts, PRS.draft, PRS.quiet], 'the rows');
       t.expectEqual(await page.evaluate(summary), '5 open2 need attention', 'the summary');
       const failing = await page.evaluate<{ badges: string[]; line2: string; inside: boolean }>(`(() => {
@@ -81,17 +81,17 @@ const part: Part = {
     });
 
     await t.step('a heading collapses, with its counts in sight, and stays collapsed through a reload, by a hash of its name', async () => {
-      await page.click('the hookdeck/outpost heading', repoToggle('hookdeck/outpost'));
-      t.expectEqual(await page.evaluate(`${repoToggle('hookdeck/outpost')}.getAttribute('aria-expanded')`), 'false', 'collapsed');
+      await page.click('the example/event-relay heading', repoToggle('example/event-relay'));
+      t.expectEqual(await page.evaluate(`${repoToggle('example/event-relay')}.getAttribute('aria-expanded')`), 'false', 'collapsed');
       t.expectEqual(await page.evaluate(prRows), [PRS.failing, PRS.approved, PRS.quiet], 'its rows hidden');
-      t.expect((await page.evaluate<string>(`${repoToggle('hookdeck/outpost')}.textContent`)).includes('1 needs attention'), 'its badge still there');
+      t.expect((await page.evaluate<string>(`${repoToggle('example/event-relay')}.textContent`)).includes('1 needs attention'), 'its badge still there');
       const stored = await page.evaluate<string>(`localStorage.getItem(${q(STORE)}) ?? ''`);
-      t.expect(/^\{"v":1,"collapsed":\["[0-9a-f]{16}"\]\}$/.test(stored) && !stored.includes('outpost'), 'kept as a hash, never the name', stored);
+      t.expect(/^\{"v":1,"collapsed":\["[0-9a-f]{16}"\]\}$/.test(stored) && !stored.includes('event-relay'), 'kept as a hash, never the name', stored);
       await t.shot('collapsed');
       await page.reload();
       await page.waitFor('the list after the reload', `${prRows}.length > 0`);
-      t.expectEqual(await page.evaluate(`${repoToggle('hookdeck/outpost')}.getAttribute('aria-expanded')`), 'false', 'still collapsed');
-      await page.click('the heading again', repoToggle('hookdeck/outpost'));
+      t.expectEqual(await page.evaluate(`${repoToggle('example/event-relay')}.getAttribute('aria-expanded')`), 'false', 'still collapsed');
+      await page.click('the heading again', repoToggle('example/event-relay'));
       t.expectEqual(await page.evaluate(prRows), [PRS.failing, PRS.approved, PRS.conflicts, PRS.draft, PRS.quiet], 'expanded again');
     });
 
@@ -209,13 +209,13 @@ const part: Part = {
       await page.waitFor('the list after the reload', `${prRows}.length > 0`);
       t.allow(/\/api\/prs\/refresh/, 'the 429 the step brings about');
       await page.click('Refresh', REFRESH);
-      await page.waitFor('the toast', `${toasts}.some((text) => /^pitwall fetched your pull requests moments ago\\. Refresh again in \\d+ seconds?\\.$/.test(text))`);
+      await page.waitFor('the toast', `${toasts}.some((text) => /^pitwall checked GitHub moments ago\\. Refresh again in \\d+ seconds?\\.$/.test(text))`);
       t.expect(await page.evaluate<boolean>(`!!document.querySelector('.toasts .toast.info')`), 'an info toast');
       t.expectEqual(server.records.refreshes, [200, 429], 'the 429');
       t.expectEqual(await page.evaluate(`${REFRESH}.getAttribute('aria-disabled')`), 'true', 'off until then');
     });
 
-    await t.step('each source state says what it is and how to fix it, and an ok fetch brings the list back', async () => {
+    await t.step('each source state says what it is and how to fix it, off gives way to All sessions, and an ok fetch brings the list back', async () => {
       await switchTo('loading', 'the skeletons', `!!${LIST}?.querySelector('.skeleton-rows')`);
       await t.shot('loading');
       await switchTo('gh-missing', 'gh missing', `${emptyTitle} === "gh isn't installed"`);
@@ -230,7 +230,10 @@ const part: Part = {
       t.expect((await page.evaluate<string>(`${LIST}.querySelector('.pr-stale').textContent`)).endsWith('This list is from 2h ago.'), 'when the list is from');
       t.expectEqual((await page.evaluate<string[]>(prRows)).length, 5, 'the last list kept');
       await t.shot('stale');
-      await switchTo('off', 'off', `${emptyTitle} === 'Pull requests are off'`);
+      // Off, as after a restart with --no-prs: no item, so All sessions takes Pull requests' place.
+      await switchTo('off', 'All sessions in its place', `${listHeading} === 'All sessions'`);
+      t.expectEqual(await page.evaluate('location.search'), '?view=all', 'the URL replaced');
+      t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.view.v1')`), 'view=all', 'and remembered');
       await openRepoList(t);
       t.expect(!(await page.evaluate<string[]>(repoLabels)).includes('Pull requests'), 'no item in the repo list');
       if (t.layout === 'drawer') {
@@ -238,13 +241,21 @@ const part: Part = {
         await page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
       }
       await t.shot('off');
-      await switchTo('ok', 'the list', `${prRows}.length === 5`);
+      server.world.setPrs('ok');
+      server.broadcastPrs();
+      await chooseInRepoList(t, 'Pull requests');
+      await page.waitFor('the list', `${prRows}.length === 5`);
     });
 
-    await t.step("a ?pr= link opens that PR's view as the page loads, and one that isn't open says so", async () => {
+    await t.step("a ?pr= link opens that PR's view as the page loads, a restart's first list doesn't call it gone, and one that isn't open says so", async () => {
       await t.fresh({ search: `?view=prs&pr=${PRS.conflicts}`, ready: `!!${PR_VIEW}?.querySelector('h2 bdi')` });
       t.expectEqual(await page.evaluate(prViewTitle), 'Retry made-up deliveries with backoff', 'its view');
       t.expectEqual(await page.evaluate(`${PR_VIEW}.querySelector('.pr-view-detail:nth-child(3) dd')?.textContent`), 'Conflicts with its base branch', 'its conflicts');
+      // A restart: the poller's first list, before its first fetch, has no PRs yet. Not "gone".
+      await switchTo('loading', 'the list waiting', `!!${LIST}?.querySelector('.list-waiting')`);
+      await page.settle(300);
+      t.expectEqual(await page.evaluate(prViewTitle), 'Retry made-up deliveries with backoff', 'still its view');
+      t.expect(!(await page.evaluate<boolean>(`!!${PR_VIEW}.querySelector('.inline-alert')`)), 'and no alert that it may have been merged or closed');
       await t.fresh({ search: '?view=prs&pr=example/demo-app/999', ready: `!!${PR_VIEW}?.querySelector('.empty-state')` });
       t.expectEqual(await page.evaluate(`${PR_VIEW}.querySelector('h2')?.textContent`), "This pull request isn't listed", 'says so');
       await t.shot('unlisted');
