@@ -1065,9 +1065,10 @@ export function openInEditorPath(sessionId: string): string {
 
 // ---------------------------------------------------------------------------
 // M4: your open pull requests. Read-only and separate from the session index:
-// its own poller runs one `gh api graphql` search every PRS_POLL_INTERVAL_MS,
-// with no shell, so GitHub's token stays inside gh. PR titles from private
-// repos are as sensitive as session data.
+// its own poller runs one `gh api graphql` call every PRS_POLL_INTERVAL_MS,
+// with its three searches as aliases (W101), with no shell, so GitHub's token
+// stays inside gh. PR titles from private repos are as sensitive as session
+// data.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1096,6 +1097,35 @@ export type PullRequestChecks = 'passing' | 'failing' | 'pending' | 'none';
 
 /** GitHub's reviewDecision. */
 export type PullRequestReview = 'approved' | 'changes-requested' | 'review-required';
+
+/**
+ * How a pull request is yours (W101; Phil, 2026-10-29: "cover cases where I've been requested or
+ * probably tagged, because not everybody follows the request process"). Each is one of the fetch's
+ * searches, open PRs only, in repos that aren't archived:
+ *
+ * - 'authored': you opened it (`author:@me`).
+ * - 'review-requested': your review is requested, of you or of a team you're on
+ *   (`review-requested:@me`, which GitHub's docs say includes a team's requests). GitHub removes the
+ *   request once you've reviewed, so the PR leaves the next fetch's list.
+ * - 'mentioned': it @-mentions you (`mentions:@me`), and you didn't open it (`-author:@me`) and
+ *   aren't asked to review it.
+ *
+ * A PR that more than one search finds is listed once, as the first of PR_RELATIONS that found it.
+ */
+export type PullRequestRelation = 'authored' | 'review-requested' | 'mentioned';
+
+/** The relations, in the order that decides which one a PR found by several searches is. */
+export const PR_RELATIONS: readonly PullRequestRelation[] = ['authored', 'review-requested', 'mentioned'];
+
+/**
+ * How your review was requested (PullRequestSummary.reviewRequest), from the PR's review requests:
+ *
+ * - 'direct': of you, by name, as `user-review-requested:@me` finds.
+ * - 'team': not of you by name, so of a team you're on. `team` is its `org/slug`
+ *   (GITHUB_OWNER_PATTERN, a slash, then GITHUB_REPO_NAME_PATTERN), when exactly one team was asked;
+ *   with several, pitwall can't tell which one you're on, so it names none.
+ */
+export type PullRequestReviewRequest = { via: 'direct' } | { via: 'team'; team?: string };
 
 /**
  * GitHub's mergeable. 'unknown' while GitHub is still working it out, as it
@@ -1146,13 +1176,28 @@ export interface PullRequestSummary {
   /** Absent when GitHub reports no decision, as in a repo that requires no reviews. */
   review?: PullRequestReview;
   mergeable: PullRequestMergeable;
+  /** How it's yours (W101): you opened it, your review is requested, or it mentions you. */
+  relation: PullRequestRelation;
+  /**
+   * For relation 'review-requested': of you by name, or of a team you're on. Absent when the PR's
+   * review requests don't say, as when none of them could be read.
+   */
+  reviewRequest?: PullRequestReviewRequest;
 }
 
 /**
- * True for a PR that needs you: failing checks, merge conflicts or changes
- * requested, drafts included. The Pull requests item's count is these.
+ * True for a PR that needs you, which the Pull requests item counts:
+ *
+ * - One you opened with failing checks, merge conflicts or changes requested, drafts included.
+ * - One whose review is requested of you, or of a team you're on (W101): it waits on you until you
+ *   review it, when GitHub removes the request and the next fetch drops it.
+ *
+ * One that only mentions you never does, and neither do another author's failing checks or
+ * conflicts: they're theirs to fix.
  */
 export function prNeedsAttention(pr: PullRequestSummary): boolean {
+  if (pr.relation === 'review-requested') return true;
+  if (pr.relation !== 'authored') return false;
   return pr.checks === 'failing' || pr.mergeable === 'conflicts' || pr.review === 'changes-requested';
 }
 
@@ -1178,14 +1223,16 @@ export interface PullRequestList {
   /** True while a fetch is running. */
   refreshing: boolean;
   /**
-   * `is:pr is:open author:@me archived:false` on github.com, newest updatedAt
-   * first, at most PRS_MAX. After a fetch fails, the last good list stays,
-   * with its fetchedAt. Empty before the first fetch that worked. The web UI
-   * shows those updated in the last PRS_SHOWN_DAYS, and the rest behind Show
-   * older.
+   * Your open PRs on github.com, in repos that aren't archived: those you
+   * opened, those whose review is requested of you, and those that mention
+   * you (PullRequestRelation), each once, newest updatedAt first. At most
+   * PRS_MAX from each search, so at most PRS_LIST_MAX. After a fetch fails,
+   * the last good list stays, with its fetchedAt. Empty before the first
+   * fetch that worked. The web UI shows those updated in the last
+   * PRS_SHOWN_DAYS, and the rest behind Show older.
    */
   prs: PullRequestSummary[];
-  /** True when GitHub found more than PRS_MAX, and the rest were left out. */
+  /** True when GitHub found more than PRS_MAX for any one search, and the rest of it were left out. */
   truncated?: true;
 }
 
@@ -1217,8 +1264,11 @@ export const PRS_REFRESH_MIN_MS = 60 * 1000;
 /** A fetch that takes longer fails with reason 'error'. It took 8.5 s on 2026-10-28, for 50 PRs. */
 export const PRS_FETCH_TIMEOUT_MS = 30 * 1000;
 
-/** The most PRs a list holds: two pages of GitHub's search. */
+/** The most PRs one search keeps: two pages of GitHub's search. */
 export const PRS_MAX = 200;
+
+/** The most PRs a list holds: PRS_MAX from each of the searches (PR_RELATIONS). */
+export const PRS_LIST_MAX = PRS_MAX * PR_RELATIONS.length;
 
 /** The web UI lists PRs updated in this many days, and the rest behind Show older. */
 export const PRS_SHOWN_DAYS = 90;

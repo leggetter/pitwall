@@ -1,5 +1,6 @@
 // Made-up search results, shaped as `gh api graphql` prints them for fetch.ts's query, for the PR
-// source's tests. Every repo, title and branch here is invented: example/demo-app and its friends.
+// source's tests. Every repo, title, branch, login and team here is invented: example/demo-app and
+// its friends.
 // In src/test/, so not built.
 import type { FetchResult } from '../prs/fetch.js';
 import type { PrTimers } from '../prs/poller.js';
@@ -44,20 +45,57 @@ export const statusContext = (context: unknown, state: string): Record<string, u
   state,
 });
 
-/** One page of the search, as JSON text. */
-export function searchPage(
-  nodes: unknown[],
-  options: { total?: number; hasNextPage?: boolean; endCursor?: string | null } = {},
+/** One search's page, as it sits under its alias in the answer. */
+export interface PageOptions {
+  total?: number;
+  hasNextPage?: boolean;
+  endCursor?: string | null;
+}
+
+/** The login the made-up answers give for the viewer: never a real one. */
+export const VIEWER = 'pitwall-test-viewer';
+
+function page(nodes: unknown[], options: PageOptions = {}): Record<string, unknown> {
+  return {
+    issueCount: options.total ?? nodes.length,
+    pageInfo: { hasNextPage: options.hasNextPage ?? false, endCursor: options.endCursor ?? null },
+    nodes,
+  };
+}
+
+/**
+ * One call's answer, as JSON text (W101): each search under its alias, `authored`,
+ * `reviewRequested` and `mentioned`, with none found for any not given, and the viewer's login, or
+ * with `null`, no viewer.
+ */
+export function searchResponse(
+  searches: Partial<Record<'authored' | 'reviewRequested' | 'mentioned', { nodes: unknown[] } & PageOptions>>,
+  viewer: unknown = VIEWER,
 ): string {
-  return JSON.stringify({
-    data: {
-      search: {
-        issueCount: options.total ?? nodes.length,
-        pageInfo: { hasNextPage: options.hasNextPage ?? false, endCursor: options.endCursor ?? null },
-        nodes,
-      },
-    },
-  });
+  const data: Record<string, unknown> = { viewer: viewer === null ? null : { login: viewer } };
+  for (const alias of ['authored', 'reviewRequested', 'mentioned'] as const) {
+    const search = searches[alias];
+    data[alias] = page(search?.nodes ?? [], search);
+  }
+  return JSON.stringify({ data });
+}
+
+/** One call's answer with `nodes` as the author search's page, and none found for the other two. */
+export function searchPage(nodes: unknown[], options: PageOptions = {}): string {
+  return searchResponse({ authored: { nodes, ...options } });
+}
+
+/** A PR's review requests, as the review-requested search asks for them: each a User's login or a Team's `org/slug`. */
+export function reviewRequests(...reviewers: ({ user: unknown } | { team: unknown } | Record<string, unknown>)[]): Record<string, unknown> {
+  return {
+    nodes: reviewers.map((reviewer) =>
+      'user' in reviewer
+        ? { requestedReviewer: { __typename: 'User', login: reviewer.user } }
+        : 'team' in reviewer
+          ? { requestedReviewer: { __typename: 'Team', combinedSlug: reviewer.team } }
+          : { requestedReviewer: reviewer },
+    ),
+  };
 }
 
 // ---------------------------------------------------------------- the poller's clock and fetch

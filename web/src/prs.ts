@@ -1,7 +1,8 @@
 // Your open pull requests in the web UI (M4, W95; docs/design-system.md, 4: Pull requests): reading
 // the 'prs' message defensively, and what the screen derives from the list. Which sessions a PR is
 // linked to, a session's most urgent PR, the repo headings and their order, the 90-day window, the
-// filter, the attention count, the state badges, and the PR's link. All pure, so they're easy to test.
+// filter and its chips, the attention count, the state badges, how a PR is yours (W101), and the
+// PR's link. All pure, so they're easy to test.
 //
 // The index finds each session's links without knowing which PRs are open (SessionSummary.prLinks),
 // and the page matches them against the list with prLinkMatches() (src/shared/protocol.ts), so a link
@@ -13,17 +14,20 @@ import {
   GITHUB_OWNER_PATTERN,
   GITHUB_REPO_NAME_PATTERN,
   PR_FAILING_CHECKS_MAX,
+  PR_RELATIONS,
   PR_TITLE_MAX,
   prLinkIsStrong,
   prLinkMatches,
   prNeedsAttention,
-  PRS_MAX,
+  PRS_LIST_MAX,
   PRS_SHOWN_DAYS,
   type PrLink,
   type PullRequestChecks,
   type PullRequestList,
   type PullRequestMergeable,
+  type PullRequestRelation,
   type PullRequestReview,
+  type PullRequestReviewRequest,
   type PullRequestSource,
   type PullRequestSummary,
   type SessionSummary,
@@ -58,6 +62,9 @@ const BRANCH_MAX = 255;
 /** C0 and C1 controls and the bidi controls, which a head branch never has (PullRequestSummary.head). */
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
+/** A team's `org/slug`, as PullRequestReviewRequest.team holds it. */
+const TEAM = new RegExp(`^(${GITHUB_OWNER_PATTERN})/(${GITHUB_REPO_NAME_PATTERN})$`);
+
 const CHECKS: readonly PullRequestChecks[] = ['passing', 'failing', 'pending', 'none'];
 const REVIEWS: readonly PullRequestReview[] = ['approved', 'changes-requested', 'review-required'];
 const MERGEABLE: readonly PullRequestMergeable[] = ['clean', 'conflicts', 'unknown'];
@@ -88,7 +95,7 @@ function parseSource(value: unknown): PullRequestSource | undefined {
 /** One PR from the 'prs' message, or undefined when it isn't the contract's shape. */
 export function parsePullRequest(value: unknown): PullRequestSummary | undefined {
   if (!isRecord(value)) return undefined;
-  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable } = value;
+  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable, relation, reviewRequest } = value;
   if (typeof repo !== 'string' || !isRepoKey(repo)) return undefined;
   if (typeof repoLabel !== 'string' || repoLabel.toLowerCase() !== repo) return undefined;
   if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) return undefined;
@@ -96,6 +103,8 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
   if (typeof title !== 'string' || typeof draft !== 'boolean' || !isTime(createdAt) || !isTime(updatedAt)) return undefined;
   if (!(CHECKS as readonly unknown[]).includes(checks) || !(MERGEABLE as readonly unknown[]).includes(mergeable)) return undefined;
   if (review !== undefined && !(REVIEWS as readonly unknown[]).includes(review)) return undefined;
+  // How it's yours decides whether it needs you, so one this page doesn't know is left out.
+  if (!(PR_RELATIONS as readonly unknown[]).includes(relation)) return undefined;
   const pr: PullRequestSummary = {
     url,
     repo,
@@ -107,6 +116,7 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
     updatedAt,
     checks: checks as PullRequestChecks,
     mergeable: mergeable as PullRequestMergeable,
+    relation: relation as PullRequestRelation,
   };
   // A head that isn't the contract's shape is left out, as the server leaves out one whose repo has
   // gone, or whose branch is empty, over 255 characters, or has a control or bidi control character.
@@ -122,13 +132,30 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
   if (pr.checks === 'failing' && typeof failingCount === 'number' && Number.isSafeInteger(failingCount) && failingCount > (pr.failingChecks?.length ?? 0)) {
     pr.failingCount = failingCount;
   }
+  if (pr.relation === 'review-requested') {
+    const request = parseReviewRequest(reviewRequest);
+    if (request) pr.reviewRequest = request;
+  }
   return pr;
+}
+
+/**
+ * How a review was requested (W101), or undefined when it isn't the contract's shape. A team's name
+ * that isn't an `org/slug` is left out, and the request kept, as one of a team pitwall can't name.
+ */
+function parseReviewRequest(value: unknown): PullRequestReviewRequest | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.via === 'direct') return { via: 'direct' };
+  if (value.via !== 'team') return undefined;
+  const { team } = value;
+  const match = typeof team === 'string' ? TEAM.exec(team) : null;
+  return match && match[2] !== '.' && match[2] !== '..' ? { via: 'team', team: team as string } : { via: 'team' };
 }
 
 /**
  * The 'prs' message's list, or undefined when it isn't the contract's shape: no source, no
  * `refreshing`, or `prs` that isn't a list. A PR in it that isn't the contract's shape is left out,
- * and so is a second one with the same repo and number; at most PRS_MAX are kept.
+ * and so is a second one with the same repo and number; at most PRS_LIST_MAX are kept.
  */
 export function parsePullRequestList(value: unknown): PullRequestList | undefined {
   if (!isRecord(value)) return undefined;
@@ -137,7 +164,7 @@ export function parsePullRequestList(value: unknown): PullRequestList | undefine
   const seen = new Set<string>();
   const prs: PullRequestSummary[] = [];
   for (const each of value.prs) {
-    if (prs.length >= PRS_MAX) break;
+    if (prs.length >= PRS_LIST_MAX) break;
     const pr = parsePullRequest(each);
     if (!pr || seen.has(prKey(pr))) continue;
     seen.add(prKey(pr));
@@ -189,7 +216,10 @@ export function splitPrs(prs: readonly PullRequestSummary[], now: number): { rec
   return { recent, older };
 }
 
-/** How many of `prs` need you: failing checks, conflicts or changes requested (prNeedsAttention()). */
+/**
+ * How many of `prs` need you (prNeedsAttention()): your own with failing checks, conflicts or changes
+ * requested, and those whose review is requested of you (W101).
+ */
 export function countPrAttention(prs: readonly PullRequestSummary[]): number {
   return prs.reduce((count, pr) => count + (prNeedsAttention(pr) ? 1 : 0), 0);
 }
@@ -249,6 +279,36 @@ export function filterPrs(prs: readonly PullRequestSummary[], text: string): Pul
       `#${pr.number}`.includes(needle) ||
       (pr.head?.branch.toLowerCase().includes(needle) ?? false),
   );
+}
+
+/**
+ * The PR list's chips (W101): Yours, Review requested and Mentioned, in PR_RELATIONS' order. They
+ * combine as OR, as the session list's do: none on is All, either one alone narrows the list, and all
+ * three together show every PR.
+ */
+export const RELATION_CHIPS: Readonly<Record<PullRequestRelation, string>> = {
+  authored: 'Yours',
+  'review-requested': 'Review requested',
+  mentioned: 'Mentioned',
+};
+
+/** The PRs of the relations on, in the order given; with none on, every one. */
+export function filterPrsByRelation(prs: readonly PullRequestSummary[], relations: ReadonlySet<PullRequestRelation>): PullRequestSummary[] {
+  return relations.size === 0 ? [...prs] : prs.filter((pr) => relations.has(pr.relation));
+}
+
+/**
+ * How the PR is yours, in a sentence, for the PR view (W101), or undefined for one you opened, which
+ * needs none: "Your review is requested." with the team when it was a team's and pitwall can name
+ * it, "Your review is requested through a team you're on." when it can't, and "You're mentioned in
+ * it." for a mention.
+ */
+export function prRelationText(pr: Pick<PullRequestSummary, 'relation' | 'reviewRequest'>): string | undefined {
+  if (pr.relation === 'mentioned') return "You're mentioned in it.";
+  if (pr.relation !== 'review-requested') return undefined;
+  const request = pr.reviewRequest;
+  if (request?.via !== 'team') return 'Your review is requested.';
+  return request.team === undefined ? "Your review is requested through a team you're on." : `Your review is requested through ${plainText(request.team)}.`;
 }
 
 /** A session and its newest link to a PR. */
@@ -311,25 +371,38 @@ export function prsBySession(sessions: readonly SessionSummary[], prs: readonly 
 /** One of a PR's state badges (docs/design-system.md, 4: Pull requests). */
 export interface PrStateBadge {
   /** Stable, for React and the tests. */
-  state: 'failing' | 'conflicts' | 'changes-requested' | 'draft' | 'approved' | 'pending';
+  state: 'review-requested' | 'mentioned' | 'failing' | 'conflicts' | 'changes-requested' | 'draft' | 'approved' | 'pending';
   label: string;
   look: BadgeLook;
-  /** One of the three that make a PR need attention: highlighted. */
+  /** One of those that make a PR need attention: highlighted. */
   attention: boolean;
+  /** Its hover-only tooltip, when it has more to say: who a review was asked of. */
+  hint?: string;
 }
 
 /**
- * A PR's state badges, in the order they show: the highlighted ones, which make it need attention,
- * failing checks and conflicts in danger and changes requested in warning; then the quieter ones,
- * draft outlined, approved in success and checks pending in neutral. Passing checks, a clean merge, a
- * review that's still required and a mergeability GitHub is still working out get none in a row:
- * healthy and unknown states stay quiet. The PR view says each of them.
+ * A PR's state badges, in the order they show. First, how it's yours when you didn't open it (W101):
+ * Review requested in warning, which needs you, as a session that asked you is; Mentioned in
+ * neutral, which doesn't. Then the highlighted ones, which make your own PR need attention, failing
+ * checks and conflicts in danger and changes requested in warning; on another author's PR they keep
+ * their looks, but they're theirs to fix, so they don't make it need attention. Then the quieter
+ * ones, draft outlined, approved in success and checks pending in neutral. Passing checks, a clean
+ * merge, a review that's still required and a mergeability GitHub is still working out get none in a
+ * row: healthy and unknown states stay quiet. The PR view says each of them.
  */
 export function prStateBadges(pr: PullRequestSummary): PrStateBadge[] {
   const badges: PrStateBadge[] = [];
-  if (pr.checks === 'failing') badges.push({ state: 'failing', label: 'Checks failing', look: 'subtle-danger', attention: true });
-  if (pr.mergeable === 'conflicts') badges.push({ state: 'conflicts', label: 'Conflicts', look: 'subtle-danger', attention: true });
-  if (pr.review === 'changes-requested') badges.push({ state: 'changes-requested', label: 'Changes requested', look: 'subtle-warning', attention: true });
+  if (pr.relation === 'review-requested') {
+    const badge: PrStateBadge = { state: 'review-requested', label: 'Review requested', look: 'subtle-warning', attention: true };
+    const hint = prRelationText(pr);
+    if (pr.reviewRequest?.via === 'team' && hint) badge.hint = hint;
+    badges.push(badge);
+  }
+  if (pr.relation === 'mentioned') badges.push({ state: 'mentioned', label: 'Mentioned', look: 'subtle-neutral', attention: false });
+  const yours = pr.relation === 'authored';
+  if (pr.checks === 'failing') badges.push({ state: 'failing', label: 'Checks failing', look: 'subtle-danger', attention: yours });
+  if (pr.mergeable === 'conflicts') badges.push({ state: 'conflicts', label: 'Conflicts', look: 'subtle-danger', attention: yours });
+  if (pr.review === 'changes-requested') badges.push({ state: 'changes-requested', label: 'Changes requested', look: 'subtle-warning', attention: yours });
   if (pr.draft) badges.push({ state: 'draft', label: 'Draft', look: 'outline', attention: false });
   if (pr.review === 'approved') badges.push({ state: 'approved', label: 'Approved', look: 'subtle-success', attention: false });
   if (pr.checks === 'pending') badges.push({ state: 'pending', label: 'Checks pending', look: 'subtle-neutral', attention: false });

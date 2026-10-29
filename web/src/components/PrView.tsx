@@ -1,7 +1,9 @@
 // The PR view (M4, W95; docs/design-system.md, 4: Pull requests, The PR view): one pull request, in
 // the session view's place, as the third column from 1,200 px or over the list below that, in the
 // session view's own frame (Frame and Top in SessionView.tsx). A header with its title, in <bdi>,
-// Open on GitHub, Copy link and Close, then its repo and number and its state badges; then its details, the checks with the failing ones' names, the review, whether it merges,
+// Open on GitHub, Copy link and Close, then its repo and number and its state badges, then, for one
+// you didn't open, how it's yours (W101): your review requested, of you or a team, or a mention;
+// then its details, the checks with the failing ones' names, the review, whether it merges,
 // draft, its branch, and when it was opened and updated; then the sessions strongly linked to it, and
 // those that only mentioned it, each opening that session.
 //
@@ -18,7 +20,7 @@ import { useId, type KeyboardEvent, type ReactNode, type RefObject } from 'react
 import type { PrLinkKind, PullRequestSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
-import { githubPrUrl, prName, type LinkedSession } from '../prs.js';
+import { githubPrUrl, prName, prRelationText, type LinkedSession } from '../prs.js';
 import { statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
 import { StatusBadge } from './Badge.js';
@@ -167,6 +169,7 @@ export function PrView({ pr, missing, sessions, notNeeded, onOpenSession, onClos
     onStep(event.key === 'ArrowDown' ? 1 : -1);
   };
   const fork = pr.head && pr.head.repo !== pr.repo ? pr.head.repo : undefined;
+  const relation = prRelationText(pr);
   const rows: [string, ReactNode][] = [
     ['Checks', <Checks pr={pr} />],
     ['Review', pr.review ? REVIEW[pr.review] : 'No review required'],
@@ -230,6 +233,11 @@ export function PrView({ pr, missing, sessions, notNeeded, onOpenSession, onClos
           <span className="pr-view-repo">{prName(pr)}</span>
           <PrStateBadges pr={pr} />
         </div>
+        {relation !== undefined && (
+          <p className="pr-view-relation" data-relation={pr.relation}>
+            {relation}
+          </p>
+        )}
         {missing !== undefined && (
           <Alert tone="neutral" role="status">
             {PR_MISSING[missing]}

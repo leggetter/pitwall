@@ -470,7 +470,8 @@ echo '[]'
  * poller never runs the real one, which would reach GitHub with the user's
  * login: noClaude.ts can't see a process the CLI starts. It
  * records its arguments, NUL-separated, and what it saw of its environment,
- * next to itself, then prints one page with one made-up PR.
+ * next to itself, then prints an answer to the three searches (W101): one
+ * made-up PR of yours, one that asks your review by name, and no mention.
  */
 const FAKE_GH = `#!/bin/sh
 printf '%s\\0' "$@" > "$(dirname "$0")/gh-args"
@@ -479,7 +480,7 @@ printf '%s\\0' "$@" > "$(dirname "$0")/gh-args"
   echo "GH_NO_UPDATE_NOTIFIER=\${GH_NO_UPDATE_NOTIFIER-unset}"
   if [ -n "\${PITWALL_TOKEN+set}" ]; then echo "PITWALL_TOKEN=set"; else echo "PITWALL_TOKEN=unset"; fi
 } > "$(dirname "$0")/gh-env"
-echo '{"data":{"search":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/example/demo-app/pull/7","number":7,"title":"Add a demo feature","isDraft":false,"createdAt":"2026-10-01T09:00:00Z","updatedAt":"2026-10-20T09:00:00Z","headRefName":"feature/demo","headRepository":{"nameWithOwner":"example/demo-app"},"repository":{"nameWithOwner":"example/demo-app"},"reviewDecision":null,"mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}]}}}'
+echo '{"data":{"viewer":{"login":"pitwall-test-viewer"},"authored":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/example/demo-app/pull/7","number":7,"title":"Add a demo feature","isDraft":false,"createdAt":"2026-10-01T09:00:00Z","updatedAt":"2026-10-20T09:00:00Z","headRefName":"feature/demo","headRepository":{"nameWithOwner":"example/demo-app"},"repository":{"nameWithOwner":"example/demo-app"},"reviewDecision":null,"mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}]},"reviewRequested":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/example/demo-app/pull/8","number":8,"title":"Review a demo feature","isDraft":false,"createdAt":"2026-10-01T09:00:00Z","updatedAt":"2026-10-21T09:00:00Z","headRefName":"feature/review","headRepository":{"nameWithOwner":"example/demo-app"},"repository":{"nameWithOwner":"example/demo-app"},"reviewDecision":"REVIEW_REQUIRED","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]},"reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"User","login":"pitwall-test-viewer"}}]}}]},"mentioned":{"issueCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}'
 `;
 
 /**
@@ -741,17 +742,26 @@ describe('pitwall (the process)', () => {
     }
   }
 
-  it('fetches your open PRs at start with gh api graphql, -f fields only, never prompting, without the token (M4, W93)', async () => {
+  it('fetches your open PRs at start with gh api graphql, its three searches -f fields only, never prompting, without the token (M4, W93, W101)', async () => {
     await rm(join(bin, 'gh-args'), { force: true });
     await rm(join(bin, 'gh-env'), { force: true });
     const { child, result, url } = await start();
     const list = await prsWhen(url, (list) => list.fetchedAt !== undefined);
-    expect(list).toMatchObject({ source: { ok: true }, refreshing: false, prs: [{ repo: 'example/demo-app', number: 7, url: 'https://github.com/example/demo-app/pull/7' }] });
+    expect(list).toMatchObject({
+      source: { ok: true },
+      refreshing: false,
+      prs: [
+        { repo: 'example/demo-app', number: 8, url: 'https://github.com/example/demo-app/pull/8', relation: 'review-requested', reviewRequest: { via: 'direct' } },
+        { repo: 'example/demo-app', number: 7, url: 'https://github.com/example/demo-app/pull/7', relation: 'authored' },
+      ],
+    });
 
     const args = (await readFile(join(bin, 'gh-args'), 'utf8')).split('\0').slice(0, -1);
     expect(args.slice(0, 4)).toEqual(['api', 'graphql', '--hostname', 'github.com']);
-    expect(args.filter((arg) => arg.startsWith('-'))).toEqual(['--hostname', '-f', '-f']);
-    expect(args).toContain('q=is:pr is:open author:@me archived:false sort:updated-desc');
+    expect(args.filter((arg) => arg.startsWith('-'))).toEqual(['--hostname', '-f', '-f', '-f', '-f']);
+    expect(args).toContain('authored=is:pr is:open author:@me archived:false sort:updated-desc');
+    expect(args).toContain('reviewRequested=is:pr is:open review-requested:@me archived:false sort:updated-desc');
+    expect(args).toContain('mentioned=is:pr is:open mentions:@me -author:@me archived:false sort:updated-desc');
     expect((await readFile(join(bin, 'gh-env'), 'utf8')).split('\n')).toEqual(['GH_PROMPT_DISABLED=1', 'GH_NO_UPDATE_NOTIFIER=1', 'PITWALL_TOKEN=unset', '']);
 
     child.kill('SIGTERM');

@@ -1,6 +1,7 @@
 // Filtering the sessions (docs/design-system.md, section 4: Search and Filter chips): the filter
 // field, the filter chips and "Clear filters", together in role="search". Where they sit on the
-// page is the layout's business (section 3).
+// page is the layout's business (section 3). The PR list uses the field, the chips, with its own,
+// and Clear filters too (W95, W101).
 
 import { useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { FILTER_CHIPS, filtering, NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
@@ -92,16 +93,26 @@ export function FilterField({ value, onChange, inputRef, label = 'Filter session
   );
 }
 
-export interface FilterChipsProps {
-  chips: ReadonlySet<FilterChip>;
-  onChange: (chips: ReadonlySet<FilterChip>) => void;
+export interface FilterChipsProps<T extends string = FilterChip> {
+  chips: ReadonlySet<T>;
+  onChange: (chips: ReadonlySet<T>) => void;
+  /** The chips, in order: the session list's (FILTER_CHIPS) unless given, as the PR list's are (W101). */
+  options?: readonly T[];
+  /** Each chip's label: the session list's (CHIP_LABELS) unless given. */
+  labels?: Readonly<Record<T, string>>;
   /** Shown after the chips, in their group, so it wraps with them: Clear filters, or its room. */
   children?: ReactNode;
 }
 
 /** The filter chips: toggle buttons, each pressed while it's on. */
-export function FilterChips({ chips, onChange, children }: FilterChipsProps) {
-  const toggle = (chip: FilterChip) => {
+export function FilterChips<T extends string = FilterChip>({
+  chips,
+  onChange,
+  options = FILTER_CHIPS as unknown as readonly T[],
+  labels = CHIP_LABELS as unknown as Readonly<Record<T, string>>,
+  children,
+}: FilterChipsProps<T>) {
+  const toggle = (chip: T) => {
     const next = new Set(chips);
     if (next.has(chip)) next.delete(chip);
     else next.add(chip);
@@ -109,17 +120,36 @@ export function FilterChips({ chips, onChange, children }: FilterChipsProps) {
   };
   return (
     <div className="filter-chips" role="group" aria-label="Filters">
-      {FILTER_CHIPS.map((chip) => {
+      {options.map((chip) => {
         const on = chips.has(chip);
         return (
-          <button key={chip} type="button" className="chip" aria-pressed={on} onClick={() => toggle(chip)}>
+          <button key={chip} type="button" className="chip" aria-pressed={on} data-chip={chip} onClick={() => toggle(chip)}>
             {on && <Icon name="copied" />}
-            {CHIP_LABELS[chip]}
+            {labels[chip]}
           </button>
         );
       })}
       {children}
     </div>
+  );
+}
+
+/**
+ * Clear filters, after the chips (W91): a ghost sm icon button named by its tooltip, while any filter
+ * is on; otherwise its room, the same size and unseen, not a button and hidden from assistive
+ * technology, so nothing after it moves as it comes and goes (W75).
+ */
+export function ClearFilters({ on, onClear }: { on: boolean; onClear: () => void }) {
+  return on ? (
+    <Tooltip content="Clear filters" relation="label">
+      <button type="button" className="icon-button ghost sm" data-clear-filters="" onClick={onClear}>
+        <Icon name="clear-filters" />
+      </button>
+    </Tooltip>
+  ) : (
+    <span className="icon-button ghost sm filter-clear-room" aria-hidden="true">
+      <Icon name="clear-filters" />
+    </span>
   );
 }
 
@@ -146,26 +176,14 @@ export function FilterControls({ filters, onChange, children, fieldRef }: Filter
     <form className="filter-controls" role="search" onSubmit={(event) => event.preventDefault()}>
       <FilterField value={filters.text} onChange={(text) => onChange({ ...filters, text })} inputRef={field} />
       <FilterChips chips={filters.chips} onChange={(chips) => onChange({ ...filters, chips })}>
-        {filtering(filters) ? (
-          <Tooltip content="Clear filters" relation="label">
-            <button
-              type="button"
-              className="icon-button ghost sm"
-              onClick={() => {
-                onChange(NO_FILTERS);
-                // The button goes away with the filters, so focus goes back to the field rather than the page.
-                field.current?.focus();
-              }}
-            >
-              <Icon name="clear-filters" />
-            </button>
-          </Tooltip>
-        ) : (
-          // Its room, the same size and unseen: not a button, and hidden from assistive technology.
-          <span className="icon-button ghost sm filter-clear-room" aria-hidden="true">
-            <Icon name="clear-filters" />
-          </span>
-        )}
+        <ClearFilters
+          on={filtering(filters)}
+          onClear={() => {
+            onChange(NO_FILTERS);
+            // The button goes away with the filters, so focus goes back to the field rather than the page.
+            field.current?.focus();
+          }}
+        />
       </FilterChips>
       {children}
     </form>

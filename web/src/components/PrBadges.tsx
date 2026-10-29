@@ -9,12 +9,12 @@ import { prKey, prName, prStateBadges, type SessionPrBadge } from '../prs.js';
 import { Badge } from './Badge.js';
 import { Tooltip } from './Tooltip.js';
 
-/** A PR's state badges, highlighted first, then the quieter ones (prStateBadges()). Nothing for a healthy PR. */
+/** A PR's state badges: how it's yours when you didn't open it, then the highlighted ones, then the quieter ones (prStateBadges()). Nothing for a healthy PR of yours. */
 export function PrStateBadges({ pr }: { pr: PullRequestSummary }) {
   return (
     <>
       {prStateBadges(pr).map((badge) => (
-        <Badge key={badge.state} look={badge.look} className={`pr-state pr-state-${badge.state}`}>
+        <Badge key={badge.state} look={badge.look} hint={badge.hint} className={`pr-state pr-state-${badge.state}`}>
           {badge.label}
         </Badge>
       ))}
@@ -69,7 +69,7 @@ export function SessionPrLinks({ linked, onOpen }: { linked: readonly PullReques
           {prStateBadges(pr)
             .filter((badge) => badge.attention)
             .map((badge) => (
-              <Badge key={badge.state} look={badge.look} className={`pr-state pr-state-${badge.state}`}>
+              <Badge key={badge.state} look={badge.look} hint={badge.hint} className={`pr-state pr-state-${badge.state}`}>
                 {badge.label}
               </Badge>
             ))}

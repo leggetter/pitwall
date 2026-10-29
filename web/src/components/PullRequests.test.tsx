@@ -2,7 +2,8 @@
 // item and its count, the PR list with its repo headings, collapsed and remembered, its rows, Show
 // older, the filter and each source state; Refresh and its answers; the session row's badge and the
 // session view's links; the PR view; and navigation both ways, with the back button and the keys.
-// Made-up PRs, repos and sessions only.
+// W101's PRs that ask your review or mention you, their chips, badges and sentence. Made-up PRs,
+// repos, teams and sessions only.
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -20,7 +21,7 @@ import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '.
 import { fakeHistory } from '../test/history.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
-import { PrList, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
+import { NO_RELATION, PrList, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
 import { COPY_LINK, OPEN_ON_GITHUB, PR_MISSING, PrView } from './PrView.js';
 import type { TerminalHandle } from './Terminal.js';
 
@@ -247,7 +248,7 @@ describe('the PR list', () => {
 
   it('says when GitHub found more than PRS_MAX', () => {
     renderDashboard(prList(PRS, { truncated: true }));
-    expect(main().querySelector('.pr-truncated')?.textContent).toBe(`GitHub found more than ${PRS_MAX}, so the ${PRS_MAX} updated most recently are listed.`);
+    expect(main().querySelector('.pr-truncated')?.textContent).toBe(`GitHub found more than ${PRS_MAX} pull requests for one of its searches, so the ${PRS_MAX} of them updated most recently are listed.`);
   });
 
   it('says when it was fetched', () => {
@@ -287,6 +288,8 @@ describe('each source state', () => {
         sessions={[]}
         filter=""
         onFilter={() => {}}
+        relations={new Set()}
+        onRelations={() => {}}
         showOlder={false}
         onToggleOlder={() => {}}
         collapsed={new Set()}
@@ -531,6 +534,116 @@ describe('sessions and PRs', () => {
     // Fetched again, it's listed, and the alert goes.
     again(prList(PRS));
     expect(prView()?.querySelector('.inline-alert')).toBeNull();
+  });
+});
+
+describe('PRs that ask your review or mention you (W101)', () => {
+  // #77 asks your review, #78 a team's you're on, with its author's failing checks; #79 mentions you, with failures that are its author's.
+  const review = pr({ number: 77, title: 'Add a made-up retry budget', relation: 'review-requested', reviewRequest: { via: 'direct' } }, 20);
+  const teamReview = pr({ number: 78, repoLabel: 'example/event-relay', relation: 'review-requested', reviewRequest: { via: 'team', team: 'example/reviewers' }, checks: 'failing', failingChecks: ['lint'] }, 50);
+  const mention = pr({ number: 79, relation: 'mentioned', checks: 'failing', mergeable: 'conflicts' }, 40);
+  const ALL = [...PRS, review, teamReview, mention];
+  const chip = (label: string) => within(main()).getByRole('button', { name: label, pressed: false });
+  const badges = (number: number) => [...row(number).querySelectorAll('.badge')].map((badge) => badge.textContent);
+
+  it('counts a review request among those that need attention, and a mention not, in the repo list and the summary', () => {
+    renderDashboard(prList(ALL), { search: '?view=all' });
+    expect(prItem()?.querySelector('.badge')?.textContent).toBe('4 need attention');
+    fireEvent.click(prItem()!);
+    expect(summary()).toBe('7 open4 need attention');
+  });
+
+  it('marks a row Review requested or Mentioned, first among its badges, and sorts a review request with those that need attention', () => {
+    renderDashboard(prList(ALL));
+    expect(badges(77)).toEqual(['Review requested']);
+    expect(badges(78)).toEqual(['Review requested', 'Checks failing']);
+    expect(badges(79)).toEqual(['Mentioned', 'Checks failing', 'Conflicts']);
+    expect(row(78).querySelector('.pr-state-review-requested')?.classList.contains('badge-subtle-warning')).toBe(true);
+    expect(row(79).querySelector('.pr-state-mentioned')?.classList.contains('badge-subtle-neutral')).toBe(true);
+    // A team's request names the team in its hover tooltip.
+    expect(row(78).querySelector('.pr-state-review-requested')?.classList.contains('has-hint')).toBe(true);
+    expect(row(77).querySelector('.pr-state-review-requested')?.classList.contains('has-hint')).toBe(false);
+    // demo-app: #77 and #42 need attention, the newest first, then #79 and #43, which don't.
+    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/78', 'example/event-relay/8', 'example/demo-app/77', 'example/demo-app/42', 'example/demo-app/79', 'example/demo-app/43']);
+  });
+
+  it('has the chips Yours, Review requested and Mentioned, which combine as OR, and Clear filters clears them and the text', () => {
+    renderDashboard(prList(ALL));
+    const group = within(main()).getByRole('group', { name: 'Filters' });
+    expect([...group.querySelectorAll('.chip')].map((each) => each.textContent)).toEqual(['Yours', 'Review requested', 'Mentioned']);
+    // Clear filters is on line 3, before Refresh, and only while a filter is on.
+    const clear = () => main().querySelector('.pr-list-fetched')?.querySelector<HTMLButtonElement>('[data-clear-filters]') ?? null;
+    expect(group.querySelector('[data-clear-filters], .filter-clear-room')).toBeNull();
+    expect(clear()).toBeNull();
+    fireEvent.click(chip('Review requested'));
+    expect(within(main()).getByRole('button', { name: 'Review requested', pressed: true })).toBeDefined();
+    // The headings follow what's shown: #77 is newer than #78.
+    expect(prRows()).toEqual(['example/demo-app/77', 'example/event-relay/78']);
+    expect(summary()).toBe('2 of 7 open4 need attention');
+    fireEvent.click(chip('Mentioned'));
+    expect(prRows()).toEqual(['example/demo-app/77', 'example/demo-app/79', 'example/event-relay/78']);
+    fireEvent.click(chip('Yours'));
+    expect(prRows()).toHaveLength(7);
+    fireEvent.click(within(main()).getByRole('button', { name: 'Review requested', pressed: true }));
+    fireEvent.click(within(main()).getByRole('button', { name: 'Mentioned', pressed: true }));
+    expect(prRows()).toEqual(['example/event-relay/9', 'example/event-relay/8', 'example/demo-app/42', 'example/demo-app/43']);
+    const field = within(main()).getByRole('searchbox', { name: 'Filter pull requests' });
+    fireEvent.change(field, { target: { value: 'export' } });
+    expect(prRows()).toEqual(['example/demo-app/42']);
+    expect(clear()?.getAttribute('aria-label')).toBe('Clear filters');
+    expect(clear()?.closest('.pr-list-actions')?.querySelector('[data-pr-refresh]')).not.toBeNull();
+    fireEvent.click(clear()!);
+    expect(prRows()).toHaveLength(7);
+    expect((field as HTMLInputElement).value).toBe('');
+    expect(within(main()).queryByRole('button', { pressed: true })).toBeNull();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('shows what a chip finds under a collapsed heading', () => {
+    const store = memory();
+    renderDashboard(prList(ALL), { storage: store.source });
+    fireEvent.click(within(main()).getByRole('button', { name: /example\/event-relay/ }));
+    expect(prRows()).not.toContain('example/event-relay/78');
+    fireEvent.click(chip('Review requested'));
+    expect(prRows()).toContain('example/event-relay/78');
+  });
+
+  it('says when a chip finds none of its kind, with Clear filters', () => {
+    renderDashboard(prList([failing, approved]));
+    fireEvent.click(chip('Review requested'));
+    expect(screen.getByText(NO_RELATION['review-requested'].title)).toBeDefined();
+    expect(NO_RELATION['review-requested']).toEqual({ title: 'No reviews requested', sentence: "Open pull requests that ask your review, or a team's you're on, show here until you've reviewed them." });
+    fireEvent.click(within(main()).getByRole('button', { name: 'Review requested', pressed: true }));
+    fireEvent.click(chip('Mentioned'));
+    expect(screen.getByText('No mentions')).toBeDefined();
+    fireEvent.click(within(main().querySelector('.empty-state')!).getByRole('button', { name: 'Clear filters' }));
+    expect(prRows()).toHaveLength(2);
+  });
+
+  it('says when nothing of yours is open, and when the chips and the text find nothing together', () => {
+    const { again } = renderDashboard(prList([review, mention]));
+    fireEvent.click(chip('Yours'));
+    expect(screen.getByText('No open pull requests of yours')).toBeDefined();
+    again(prList(ALL));
+    fireEvent.change(within(main()).getByRole('searchbox', { name: 'Filter pull requests' }), { target: { value: 'retry budget' } });
+    expect(prRows()).toEqual([]);
+    expect(main().querySelector('.empty-state-sentence')?.textContent).toBe('Nothing in Pull requests matches "retry budget" with these filters.');
+    fireEvent.click(within(main()).getByRole('button', { name: 'Yours', pressed: true }));
+    expect(prRows()).toEqual(['example/demo-app/77']);
+  });
+
+  it('says in the PR view how it is yours: your review, of you or a team, or a mention', () => {
+    const relation = (each: typeof review) => {
+      const { unmount } = render(<PrView pr={each} sessions={{ strong: [], mentioned: [] }} onOpenSession={() => {}} onClose={() => {}} layout="column" />);
+      const text = prView()?.querySelector('.pr-view-relation')?.textContent ?? null;
+      unmount();
+      return text;
+    };
+    expect(relation(review)).toBe('Your review is requested.');
+    expect(relation(teamReview)).toBe('Your review is requested through example/reviewers.');
+    expect(relation({ ...teamReview, reviewRequest: { via: 'team' } })).toBe("Your review is requested through a team you're on.");
+    expect(relation(mention)).toBe("You're mentioned in it.");
+    expect(relation(failing)).toBeNull();
   });
 });
 

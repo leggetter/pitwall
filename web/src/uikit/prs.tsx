@@ -1,13 +1,15 @@
 // Pull requests (M4, W95; docs/design-system.md, 4: Pull requests): the real RepoList, PrList,
 // PrView, SessionRow and SessionView, with made-up PRs in public-looking repos and invented titles,
 // in each state: the repo list's item and its badge, the list with its headings, rows and badges, a
-// heading collapsed, Show older, the filter matching nothing, before the first fetch, off, gh missing
+// heading collapsed, Show older, the filter matching nothing, its chips (W101) on and finding none,
+// before the first fetch, off, gh missing
 // and not logged in, a failed fetch with and without a list, Refresh busy and off; the PR view with
-// its details and sessions, and its other states; the session row's badge; the session view's links;
+// its details and sessions, a review requested of you or a team and a mention (W101), and its other
+// states; the session row's badge; the session view's links;
 // and the whole page with a PR open. Refresh here asks nothing: its stub does nothing.
 
 import { useState } from 'react';
-import type { PullRequestList, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
+import type { PullRequestList, PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import { Dashboard } from '../components/Dashboard.js';
 import { PrList } from '../components/PrList.js';
 import { PrView, UnlistedPrView, WaitingPrView } from '../components/PrView.js';
@@ -25,7 +27,7 @@ import { Stubbed } from './views.js';
 const noop = () => {};
 const DAY = 24 * 60;
 
-/** A made-up PR, in a public-looking repo, with an invented title: passing and mergeable unless `extra` says otherwise. */
+/** A made-up PR, in a public-looking repo, with an invented title: yours, passing and mergeable unless `extra` says otherwise. */
 function pr(repoLabel: string, number: number, title: string, minutes: number, extra: Partial<PullRequestSummary> = {}): PullRequestSummary {
   const repo = repoLabel.toLowerCase();
   return {
@@ -40,6 +42,7 @@ function pr(repoLabel: string, number: number, title: string, minutes: number, e
     head: { repo, branch: `pitwall-test/${number}` },
     checks: 'passing',
     mergeable: 'clean',
+    relation: 'authored',
     ...extra,
   };
 }
@@ -56,7 +59,17 @@ const APPROVED = pr('example/demo-app', 48, 'Tidy the made-up export job', 9 * 6
 const DRAFT = pr('example/event-relay', 605, 'Document the made-up retry headers', 4 * DAY, { draft: true, checks: 'pending', mergeable: 'unknown' });
 const OLDER = pr('example/docs-site', 7, 'Move the made-up guide to its own page', 120 * DAY, { review: 'review-required' });
 const FORK = pr('example/event-relay', 590, 'Fix a made-up typo in the README', 6 * DAY, { head: { repo: 'pitwall-test/event-relay', branch: 'fix-typo' }, review: 'approved' });
-const PRS = [FAILING, CONFLICTS, QUIET, APPROVED, DRAFT, OLDER];
+// Not yours (W101): your review asked of you, and of a team you're on, with another author's failing checks; and a mention.
+const REVIEW = pr('example/demo-app', 57, 'Add a made-up retry budget', 40, { relation: 'review-requested', reviewRequest: { via: 'direct' }, review: 'review-required' });
+const TEAM_REVIEW = pr('example/event-relay', 618, 'Rename the made-up delivery states', 2 * 60, {
+  relation: 'review-requested',
+  reviewRequest: { via: 'team', team: 'example/reviewers' },
+  checks: 'failing',
+  failingChecks: ['lint'],
+  review: 'review-required',
+});
+const MENTION = pr('example/api-server', 23, 'Ask about the made-up rate limit headers', 5 * 60, { relation: 'mentioned', review: 'review-required' });
+const PRS = [FAILING, CONFLICTS, QUIET, APPROVED, DRAFT, OLDER, REVIEW, TEAM_REVIEW, MENTION];
 
 const link = (kind: 'opened' | 'pushed' | 'prompted' | 'mentioned', target: PullRequestSummary, minutes: number) =>
   kind === 'pushed'
@@ -78,8 +91,23 @@ const IDLE: PrRefresh = { refresh: noop, sending: false, offUntil: 0 };
 const OFF: PrRefresh = { refresh: noop, sending: false, offUntil: Date.now() + 3600_000 };
 
 /** The PR list as the session list's column shows it, with state of its own: its filter, Show older, collapsed repos and the open PR. */
-function LivePrList({ prs, refresh = IDLE, filter: startFilter = '', older = false, collapsed: startCollapsed = [] }: { prs: PullRequestList | undefined; refresh?: PrRefresh; filter?: string; older?: boolean; collapsed?: string[] }) {
+function LivePrList({
+  prs,
+  refresh = IDLE,
+  filter: startFilter = '',
+  older = false,
+  collapsed: startCollapsed = [],
+  relations: startRelations = [],
+}: {
+  prs: PullRequestList | undefined;
+  refresh?: PrRefresh;
+  filter?: string;
+  older?: boolean;
+  collapsed?: string[];
+  relations?: PullRequestRelation[];
+}) {
   const [filter, setFilter] = useState(startFilter);
+  const [relations, setRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set(startRelations));
   const [showOlder, setShowOlder] = useState(older);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set(startCollapsed));
   const [open, setOpen] = useState<string>();
@@ -89,6 +117,8 @@ function LivePrList({ prs, refresh = IDLE, filter: startFilter = '', older = fal
       sessions={SESSIONS}
       filter={filter}
       onFilter={setFilter}
+      relations={relations}
+      onRelations={setRelations}
       showOlder={showOlder}
       onToggleOlder={() => setShowOlder(!showOlder)}
       collapsed={collapsed}
@@ -149,13 +179,13 @@ export function PullRequestSpecimens() {
     <>
       <Specimen
         title="The repo list's item"
-        note="Pull requests, under Starred: a subtle danger badge with how many of the last 90 days' PRs need attention, failing checks, conflicts or changes requested. Solid is for sessions that need you."
+        note="Pull requests, under Starred: a subtle danger badge with how many of the last 90 days' PRs need attention: your own with failing checks, conflicts or changes requested, and those that ask your review. Solid is for sessions that need you."
         width={240}
       >
-        <LiveRepoList prs={{ attention: 2, count: 5 }} />
+        <LiveRepoList prs={{ attention: 4, count: 8 }} />
       </Specimen>
       <Specimen title="Selected, nothing needing attention" note="How many there are, as Starred counts, while none needs attention." width={240}>
-        <LiveRepoList prs={{ attention: 0, count: 5 }} start={viewIn('prs', undefined)} />
+        <LiveRepoList prs={{ attention: 0, count: 8 }} start={viewIn('prs', undefined)} />
       </Specimen>
       <Specimen title="Before the first fetch" note="The item, with no count. It's there once the server has sent a list, and never while pull requests are off." width={240}>
         <LiveRepoList prs={{ attention: 0, count: undefined }} />
@@ -163,10 +193,23 @@ export function PullRequestSpecimens() {
 
       <Specimen
         title="The PR list"
-        note="One heading per repo, ordered by its newest update, each collapsible; in each, the PRs that need attention first. A row: its title in <bdi>, its state badges, highlighted then quieter, when it was updated, its number and the sessions strongly linked to it. Click a row to mark it open."
+        note="One heading per repo, ordered by its newest update, each collapsible; in each, the PRs that need attention first. A row: its title in <bdi>, its state badges, Review requested or Mentioned first on one that isn't yours, then highlighted, then quieter, when it was updated, its number and the sessions strongly linked to it. Yours, Review requested and Mentioned are filter chips, which combine as OR; none on is All. Click a row to mark it open."
         frame="view"
       >
         <LivePrList prs={list()} />
+      </Specimen>
+      <Specimen
+        title="Review requested, on"
+        note="The PRs that ask your review, of you or of a team you're on (hover the badge), with Clear filters after the chips. Another author's failing checks keep their look but don't count."
+        frame="short"
+      >
+        <LivePrList prs={list()} relations={['review-requested']} />
+      </Specimen>
+      <Specimen title="Mentioned, on, and none" note="One chip on, and none of its kind: what's missing, how one gets here, and Clear filters." frame="short">
+        <LivePrList prs={list({ prs: [FAILING, REVIEW] })} relations={['mentioned']} />
+      </Specimen>
+      <Specimen title="Review requested, on, and none" note="Once you've reviewed one, GitHub removes the request, and it leaves at the next fetch." frame="short">
+        <LivePrList prs={list({ prs: [FAILING, MENTION] })} relations={['review-requested']} />
       </Specimen>
       <Specimen title="A heading collapsed" note="Its count and its badge stay in sight. The page remembers it by a hash of the repo." frame="short">
         <LivePrList prs={list()} collapsed={['example/event-relay']} />
@@ -217,6 +260,12 @@ export function PullRequestSpecimens() {
         frame="view"
       >
         <PrView pr={FAILING} sessions={linked(FAILING)} onOpenSession={noop} onClose={noop} />
+      </Specimen>
+      <Specimen title="Your review requested, through a team" note="It says how it's yours under its badges: of you, or of a team you're on, named when it's the one team asked." frame="short">
+        <PrView pr={TEAM_REVIEW} sessions={linked(TEAM_REVIEW)} onOpenSession={noop} onClose={noop} />
+      </Specimen>
+      <Specimen title="A mention" note="You're mentioned in it: not yours, and your review isn't asked. It never needs attention." frame="short">
+        <PrView pr={MENTION} sessions={linked(MENTION)} onOpenSession={noop} onClose={noop} />
       </Specimen>
       <Specimen title="Conflicts and changes requested" note="A long title wraps, where a session's name gives way." frame="short">
         <PrView pr={CONFLICTS} sessions={linked(CONFLICTS)} onOpenSession={noop} onClose={noop} />

@@ -1,7 +1,9 @@
-// Reads one page of `gh api graphql`'s answer to the search in fetch.ts, defensively: GitHub's
-// answer is data, and a PR's title is text anyone with push access to its branch can write.
+// Reads `gh api graphql`'s answer to fetch.ts's searches, defensively: GitHub's answer is data, and
+// a PR's title is text anyone with push access to its branch can write.
 //
-//   the page      `data.search` with `nodes` an array, else the whole page is unreadable
+//   the answer    `data.<alias>` with `nodes` an array for every search asked, else the whole
+//                 answer is unreadable. `data.viewer.login`, when it's a login, for review requests
+//   the page      one search's: its PRs, each with the search's relation
 //   each node     kept only when every field the contract needs is there and well formed: a repo
 //                 `owner/name` of GitHub's characters, a whole positive number, a url that is
 //                 exactly https://github.com/<owner>/<name>/pull/<number> for that repo and number,
@@ -13,6 +15,9 @@
 //                 (mergeable 'unknown', checks 'none'), rather than dropping the PR. Only the maps'
 //                 own keys are known, so `constructor` or `__proto__` is unknown too (enumValue())
 //   head          its repo and branch, or absent when the head repo is gone, or either is malformed
+//   review asked  for the review-requested search (W101): 'direct' when a requested reviewer is a
+//                 User whose login is the viewer's, else 'team' when any is a Team, named by its
+//                 `org/slug` when it's the only one; absent when neither can be read
 //
 // Nothing here logs: a title from a private repo is as sensitive as session data.
 import { hasUnsafeCharacters, isNonEmptyString, isRecord } from '../index/guards.js';
@@ -24,9 +29,12 @@ import {
   PR_TITLE_MAX,
   type PullRequestChecks,
   type PullRequestMergeable,
+  type PullRequestRelation,
   type PullRequestReview,
+  type PullRequestReviewRequest,
   type PullRequestSummary,
 } from '../shared/protocol.js';
+import { PRS_ALIASES } from './searches.js';
 
 /** One page of the search, as read. */
 export interface SearchPage {
@@ -86,19 +94,44 @@ function enumValue<T>(map: Readonly<Record<string, T>>, value: unknown): T | und
   return typeof value === 'string' && Object.hasOwn(map, value) ? map[value] : undefined;
 }
 
-/** A JSON page of the search, or undefined when it isn't one: not JSON, or without `data.search.nodes`. */
-export function parseSearchPage(stdout: string): SearchPage | undefined {
+/** A GitHub login: letters, digits and `-`, and `_` for an Enterprise Managed User, as an owner is. */
+const LOGIN = new RegExp(`^${OWNER}$`);
+/** A team's `org/slug`, as Team.combinedSlug gives it. */
+const TEAM = new RegExp(`^(${OWNER})/(${NAME})$`);
+
+/**
+ * The answer to one call of fetch.ts's query: each of `relations`' searches, as a page, or undefined
+ * when it isn't one: not JSON, or any of them without its `nodes`. Searches not asked for are
+ * ignored.
+ */
+export function parseSearchResponse(stdout: string, relations: readonly PullRequestRelation[]): Partial<Record<PullRequestRelation, SearchPage>> | undefined {
   let json: unknown;
   try {
     json = JSON.parse(stdout);
   } catch {
     return undefined;
   }
-  const search = isRecord(json) && isRecord(json.data) ? json.data.search : undefined;
+  const data = isRecord(json) && isRecord(json.data) ? json.data : undefined;
+  if (data === undefined) return undefined;
+  const login = isRecord(data.viewer) && typeof data.viewer.login === 'string' && LOGIN.test(data.viewer.login) ? data.viewer.login : undefined;
+  const pages: Partial<Record<PullRequestRelation, SearchPage>> = {};
+  for (const relation of relations) {
+    const page = parseSearchPage(data[PRS_ALIASES[relation]], relation, login);
+    if (page === undefined) return undefined;
+    pages[relation] = page;
+  }
+  return pages;
+}
+
+/**
+ * One search's page, its PRs with the search's relation, or undefined when it isn't one: without
+ * `nodes`. `viewer` is your login, for whether a review request names you.
+ */
+export function parseSearchPage(search: unknown, relation: PullRequestRelation = 'authored', viewer?: string): SearchPage | undefined {
   if (!isRecord(search) || !Array.isArray(search.nodes)) return undefined;
   const prs: PullRequestSummary[] = [];
   for (const node of search.nodes) {
-    const pr = parsePullRequest(node);
+    const pr = parsePullRequest(node, relation, viewer);
     if (pr !== undefined) prs.push(pr);
   }
   const pageInfo = isRecord(search.pageInfo) ? search.pageInfo : {};
@@ -108,8 +141,12 @@ export function parseSearchPage(stdout: string): SearchPage | undefined {
   return page;
 }
 
-/** One search result as a PullRequestSummary, or undefined when it's malformed or not a PR. */
-export function parsePullRequest(node: unknown): PullRequestSummary | undefined {
+/**
+ * One search result as a PullRequestSummary, with the relation of the search that found it, or
+ * undefined when it's malformed or not a PR. For 'review-requested', `viewer` is your login, which
+ * says whether the request names you.
+ */
+export function parsePullRequest(node: unknown, relation: PullRequestRelation = 'authored', viewer?: string): PullRequestSummary | undefined {
   if (!isRecord(node)) return undefined;
   const repoLabel = repoName(isRecord(node.repository) ? node.repository.nameWithOwner : undefined);
   if (repoLabel === undefined) return undefined;
@@ -132,13 +169,46 @@ export function parsePullRequest(node: unknown): PullRequestSummary | undefined 
     updatedAt,
     checks: 'none',
     mergeable: enumValue(MERGEABLE, node.mergeable) ?? 'unknown',
+    relation,
   };
   const head = headOf(node);
   if (head !== undefined) pr.head = head;
   Object.assign(pr, checksOf(node.commits));
   const review = enumValue(REVIEWS, node.reviewDecision);
   if (review !== undefined) pr.review = review;
+  if (relation === 'review-requested') {
+    const request = reviewRequestOf(node.reviewRequests, viewer);
+    if (request !== undefined) pr.reviewRequest = request;
+  }
   return pr;
+}
+
+/**
+ * Whether the PR's review requests name you or a team (W101). GitHub's search found it, so one of
+ * them is yours: one of a User whose login is yours, compared without case as GitHub's are, is
+ * 'direct'; otherwise one of a Team is 'team', named when it's the only team asked. Absent when it
+ * can't say: no request of you or of a team can be read, or your login can't, which can't rule out
+ * one of you by name.
+ */
+export function reviewRequestOf(requests: unknown, viewer: string | undefined): PullRequestReviewRequest | undefined {
+  const nodes = isRecord(requests) && Array.isArray(requests.nodes) ? requests.nodes : [];
+  const me = viewer?.toLowerCase();
+  /** Each team asked: its `org/slug`, or undefined when that can't be read. */
+  const teams: (string | undefined)[] = [];
+  for (const node of nodes) {
+    const reviewer = isRecord(node) ? node.requestedReviewer : undefined;
+    if (!isRecord(reviewer)) continue;
+    if (reviewer.__typename === 'User' && me !== undefined && typeof reviewer.login === 'string' && reviewer.login.toLowerCase() === me) return { via: 'direct' };
+    if (reviewer.__typename === 'Team') {
+      const slug = reviewer.combinedSlug;
+      const match = typeof slug === 'string' ? TEAM.exec(slug) : null;
+      teams.push(match !== null && match[2] !== '.' && match[2] !== '..' ? (slug as string) : undefined);
+    }
+  }
+  // A login that couldn't be read can't rule out a request of you by name.
+  if (teams.length === 0 || me === undefined) return undefined;
+  const [only] = teams;
+  return teams.length === 1 && only !== undefined ? { via: 'team', team: only } : { via: 'team' };
 }
 
 /**
