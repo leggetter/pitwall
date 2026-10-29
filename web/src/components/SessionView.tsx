@@ -53,7 +53,7 @@
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import type { Editor, EditorId, SessionSummary } from '../../../src/shared/protocol.js';
+import type { Editor, EditorId, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import type { BackgroundTab } from '../backgroundTab.js';
@@ -79,6 +79,7 @@ import { COPY_RESUME_COMMAND, EndedFooter, RESUME_LABEL, useResume } from './End
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
+import { SessionPrLinks } from './PrBadges.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
@@ -224,8 +225,12 @@ function plainKey(event: KeyboardEvent): boolean {
   return !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement);
 }
 
-interface FrameProps {
+export interface FrameProps {
   layout: SessionViewLayout;
+  /** The region's id, which rows' aria-controls name: the session view's, or the PR view's (W95). */
+  id?: string;
+  /** Another class beside session-view, such as the PR view's. */
+  className?: string;
   /** In a root tab that isn't open: hidden, with no id, and Escape isn't its. */
   hidden?: boolean;
   /** Slide in, over the list: when it opens, not when it changes from one session to the next. */
@@ -240,7 +245,7 @@ interface FrameProps {
  * The view's region: a <section> named by its heading, which is a non-modal dialog when it overlays
  * the list. It slides in when it opens over the list, but not when the window then crosses 1,200 px.
  */
-function Frame({ layout, hidden = false, animate, titleId, onEscape, children }: FrameProps) {
+export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false, animate, titleId, onEscape, children }: FrameProps) {
   const [opening, setOpening] = useState(animate && layout === 'overlay');
   const onEscapeRef = useRef(onEscape);
   const hiddenRef = useRef(hidden);
@@ -260,9 +265,9 @@ function Frame({ layout, hidden = false, animate, titleId, onEscape, children }:
 
   return (
     <section
-      id={hidden ? undefined : SESSION_VIEW_ID}
+      id={hidden ? undefined : id}
       hidden={hidden}
-      className={['session-view', layout === 'column' ? 'in-column' : 'overlay', opening && 'opening'].filter(Boolean).join(' ')}
+      className={['session-view', className, layout === 'column' ? 'in-column' : 'overlay', opening && 'opening'].filter(Boolean).join(' ')}
       {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : {})}
       aria-labelledby={titleId}
       onAnimationEnd={(event) => {
@@ -274,21 +279,23 @@ function Frame({ layout, hidden = false, animate, titleId, onEscape, children }:
   );
 }
 
-interface TopProps {
+export interface TopProps {
   compact: boolean;
   onClose: () => void;
+  /** At 600 px and narrower, the button in Close's place: "Back to sessions", or "Back to pull requests" over the PR list (W95). */
+  backLabel?: string | undefined;
   children: ReactNode;
   /** Between the heading and Close: the actions menu. */
   end?: ReactNode;
 }
 
 /** Line 1: Back at compact widths, the heading, then whatever goes at the end and Close. */
-function Top({ compact, onClose, children, end }: TopProps) {
+export function Top({ compact, onClose, backLabel = 'Back to sessions', children, end }: TopProps) {
   return (
     <div className="session-view-top">
       {compact && (
         <Button variant="ghost" icon="back" className="session-view-back" onClick={onClose} aria-keyshortcuts="Escape">
-          Back to sessions
+          {backLabel}
         </Button>
       )}
       {children}
@@ -369,6 +376,13 @@ export interface SessionViewProps {
    * its Terminal tab in this page, the default, or never. Read each time the terminal attaches.
    */
   terminalFocus?: TerminalFocus | undefined;
+  /** At 600 px and narrower, the button in Close's place: "Back to pull requests" while the PR list is under the view (W95). */
+  backLabel?: string | undefined;
+  /**
+   * The open pull requests the session is strongly linked to (M4, W95; prsFor() in prs.ts), most
+   * urgent first, and a way to open one's view: a line of the header, while it has any.
+   */
+  prs?: { linked: readonly PullRequestSummary[]; onOpen: (pr: PullRequestSummary) => void } | undefined;
   /**
    * The newest poll's time, a snapshot's or a heartbeat's generatedAt: while its Sub-agents tab is open
    * and any of them run, the tab asks for the list again at this pace (W77). Left out, as in the
@@ -404,6 +418,8 @@ export function SessionView({
   openedBy,
   terminalFocus = DEFAULT_TERMINAL_FOCUS,
   polledAt,
+  backLabel,
+  prs,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -849,6 +865,7 @@ export function SessionView({
         <Top
           compact={compact}
           onClose={onClose}
+          backLabel={backLabel}
           end={
             <>
               {star && <StarButton sessionId={sessionId} name={session.name} starred={star.starred} onStar={star.onStar} size="md" shortcut={SHORTCUT_KEYS.star} />}
@@ -945,6 +962,7 @@ export function SessionView({
             <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
           </p>
         )}
+        {prs && prs.linked.length > 0 && <SessionPrLinks linked={prs.linked} onOpen={prs.onOpen} />}
         {refused && (
           <p className="session-view-copy-fallback">
             {refused.label}: <code ref={fallbackRef}>{plainText(refused.text)}</code>

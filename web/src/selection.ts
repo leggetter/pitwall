@@ -1,6 +1,6 @@
 // What the repo list has selected (docs/design-system.md, 3: Repo list): the Needs you view, All
-// sessions, Starred (W53), or one group. It's in the URL, as ?view=needs-you, ?view=all,
-// ?view=starred or ?repo=<key>, with &root=<root> when pitwall watches more than one root, so a
+// sessions, Starred (W53), Pull requests (M4, W95), or one group. It's in the URL, as ?view=needs-you,
+// ?view=all, ?view=starred, ?view=prs or ?repo=<key>, with &root=<root> when pitwall watches more than one root, so a
 // reload or the back button shows the same columns. The last one chosen is kept in localStorage as
 // pitwall.view.v1, for a URL with none.
 //
@@ -18,10 +18,13 @@ import { groupId, groupLabel, startGroup, type Scope } from './sessions.js';
 
 export const VIEW_STATE_KEY = 'pitwall.view.v1';
 
-/** The repo list's views, in its order: Needs you, All sessions, then Starred (W53). */
-export type View = 'needs-you' | 'all' | 'starred';
+/**
+ * The repo list's views, in its order: Needs you, All sessions, Starred (W53), then Pull requests (W95),
+ * which lists your open PRs in the session list's place, and has no sessions of its own.
+ */
+export type View = 'needs-you' | 'all' | 'starred' | 'prs';
 
-const VIEWS: readonly string[] = ['needs-you', 'all', 'starred'] satisfies readonly View[];
+const VIEWS: readonly string[] = ['needs-you', 'all', 'starred', 'prs'] satisfies readonly View[];
 
 const isView = (value: string): value is View => VIEWS.includes(value);
 
@@ -101,12 +104,19 @@ export function findGroup(groups: readonly SessionGroup[], selection: Selection)
   return groups.find((group) => group.key === selection.repo && (selection.root === undefined || group.root === selection.root));
 }
 
+/** Whether the selection is Pull requests (W95), whose list is your open PRs rather than sessions. */
+export function isPrsSelection(selection: Selection): boolean {
+  return 'view' in selection && selection.view === 'prs';
+}
+
 /**
  * What the session list shows for a selection: a view, the group, or undefined for a group that has
- * left the snapshot. Starred lists the sessions whose ids are in `starred` (W53).
+ * left the snapshot, and for Pull requests, which lists no sessions (W95). Starred lists the sessions
+ * whose ids are in `starred` (W53).
  */
 export function scopeFor(groups: readonly SessionGroup[], selection: Selection, starred: ReadonlySet<string> = new Set()): Scope | undefined {
   if ('view' in selection) {
+    if (selection.view === 'prs') return undefined;
     if (selection.view === 'starred') return { kind: 'starred', ids: starred };
     return selection.view === 'all' ? { kind: 'all' } : { kind: 'needs-you' };
   }
@@ -115,7 +125,7 @@ export function scopeFor(groups: readonly SessionGroup[], selection: Selection, 
 }
 
 /** Each view's name on screen, as the repo list and the session list's heading show it. */
-export const VIEW_NAMES: Readonly<Record<View, string>> = { 'needs-you': 'Needs you', all: 'All sessions', starred: 'Starred' };
+export const VIEW_NAMES: Readonly<Record<View, string>> = { 'needs-you': 'Needs you', all: 'All sessions', starred: 'Starred', prs: 'Pull requests' };
 
 /**
  * A selection's name on screen. A group that has left the snapshot is named from its key: a root's
@@ -139,10 +149,10 @@ export function isRootSelection(selection: Selection, roots: readonly string[]):
 
 /**
  * Where a selection's Finished section remembers whether it's open, in pitwall.finished.v1: a group's
- * id, as before the three columns, or the view's name. Needs you has no Finished section.
+ * id, as before the three columns, or the view's name. Needs you and Pull requests have no Finished section.
  */
 export function finishedStateId(selection: Selection, group: SessionGroup | undefined): string | undefined {
-  if ('view' in selection) return selection.view === 'needs-you' ? undefined : `view:${selection.view}`;
+  if ('view' in selection) return selection.view === 'needs-you' || selection.view === 'prs' ? undefined : `view:${selection.view}`;
   return group ? groupId(group) : undefined;
 }
 

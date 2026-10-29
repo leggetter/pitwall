@@ -58,7 +58,7 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
         { doc: { key: '`?`', where: 'Anywhere' }, what: 'Show keyboard shortcuts', keys: [[key('?', 'Question mark')]] },
         {
           doc: { key: '`j` / `k`', where: 'Anywhere, including the conversation' },
-          what: 'Next or previous session in the list, showing it if a session is open',
+          what: 'Next or previous session in the list, or pull request in Pull requests, showing it if one is open',
           keys: [[key('j', 'J'), key('k', 'K')]],
         },
         { doc: { key: '`s`', where: 'Anywhere, with a session open' }, what: 'Star or unstar the open session', keys: [[key('s', 'S')]] },
@@ -68,11 +68,11 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
       title: 'Lists',
       rows: [
         {
-          doc: { key: '↓ / ↑', where: 'On a session row' },
-          what: 'On a session row: the next or previous row, showing that session too if one is open',
+          doc: { key: '↓ / ↑', where: 'On a session row or a PR row' },
+          what: 'On a session or PR row: the next or previous row, showing it too if one is open',
           keys: [[DOWN, UP]],
         },
-        { doc: { key: 'Enter', where: 'On a session row' }, what: 'On a session row: open the session', keys: [[ENTER]] },
+        { doc: { key: 'Enter', where: 'On a session row or a PR row' }, what: 'On a session or PR row: open it', keys: [[ENTER]] },
         {
           doc: { key: '↓ / ↑, Home / End, Enter', where: 'The repo list' },
           what: 'In the repo list: move, jump to either end, select',
@@ -89,8 +89,8 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
       title: 'Session view',
       rows: [
         {
-          doc: { key: '↓ / ↑', where: "In the session view's header, except in an open menu, which uses them itself" },
-          what: 'In its header: the next or previous session',
+          doc: { key: '↓ / ↑', where: "In the session view's header, except in an open menu, which uses them itself, or the PR view's" },
+          what: "In its header, or a PR view's: the next or previous session, or PR",
           keys: [[DOWN, UP]],
         },
         {
@@ -139,7 +139,7 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
       rows: [
         {
           doc: { key: 'Escape', where: 'Layered, nearest first' },
-          what: "Close the nearest: a tooltip, a menu or list, a confirmation, a dialog, the filter's text, then the session view. Not with a draft in the message box",
+          what: "Close the nearest: a tooltip, a menu or list, a confirmation, a dialog, the filter's text, then the session view or PR view. Not with a draft in the message box",
           keys: [[ESCAPE]],
         },
         {

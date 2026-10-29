@@ -16,7 +16,7 @@ npm run appcheck -- --out scratch/appcheck
   - `<dir>/shots/<part>/` holds each part's named screenshots.
   - `<dir>/failures/<part>/` holds a screenshot of the page as each failed step left it.
 - **Exit code:** 0 when every step passed, 1 when any failed, 2 when it couldn't run, such as with no build or no Chrome.
-- **Time:** about 8 minutes for a full run, 15 parts in 150 cases and about 1,240 steps, on the Mac it was written on (W90). One part at one size takes seconds.
+- **Time:** about 9 minutes for a full run, 16 parts in 160 cases and about 1,380 steps, on the Mac it was written on (W95). One part at one size takes seconds.
 
 ## Running part of it
 
@@ -102,9 +102,11 @@ Behind those it answers from `fixtures.ts`:
 
 - End session (W90), at `endSessionPath(id)`, with the server's body check, `{}` or `{ whileWorking: true }`, and its words (`src/server/end.ts`), chosen by the session's name: `END_WORKING` (`waiting`) gets 409 with `working: { turn: 'running' }` and `END_SUBAGENTS` (`inApi`) 409 with `working: { subagents: 2 }`, each until it's sent `whileWorking`; `END_REFUSED` (`conversation`) gets 409, its process changed while pitwall checked it; `END_LIMITED` (`fromRoot`) gets 429 with `Retry-After`, past 5 ends a minute; any other running interactive session ends, answered 300 ms later, and is listed as ended 800 ms after that (W67). It signals nothing.
 
+- your made-up open pull requests (W95), `PRS` in `fixtures.ts`, in made-up repos and public-looking ones with invented titles, covering every state, two of them older than 90 days, and some sessions' links to them of each kind: `GET PRS_PATH`, the `'prs'` message right after the first snapshot, and `POST PRS_REFRESH_PATH`, recorded in `refreshes`, which answers as W93's route does, in its order: 409 with pull requests off, 200 while a fetch runs, 429 with `Retry-After` within 15 s of the latest fetch's start, and otherwise 200, sending the list refreshing, then fetched 700 ms later. `t.fresh({ prs })`, or `world.setPrs()` then `broadcastPrs()`, puts the source in a state: `ok`, `loading`, `off`, `gh-missing`, `gh-auth`, `error`, or `stale`, a failed fetch that keeps a list two hours old.
+
 - a session's sub-agents and each one's transcript (W77): `inApi` has five, in `SUBAGENTS`, two running, one of them started by the other, then done, failed and stopped ones, and its conversation names them; every other session has none. `drafting`'s transcript has a page behind Load earlier, and a cursor the fake server doesn't know gets 410.
 
-It records what the page sent, such as attaches, keys typed into a terminal, the sizes it gave each attached session, spawns and the files they named, uploads and the status each got, uploads removed, relayed messages, resumes, opens in an editor and ends, for parts to check through `t.server.records`.
+It records what the page sent, such as attaches, keys typed into a terminal, the sizes it gave each attached session, spawns and the files they named, uploads and the status each got, uploads removed, relayed messages, resumes, opens in an editor, ends and refreshes of the PR list, for parts to check through `t.server.records`.
 
 **A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session. `t.fresh({ forcedColors: true })` emulates forced colours, as a Windows contrast theme sets them, until the next fresh page, and `t.fresh({ labels: { [key]: label } })` gives groups other names, such as a longer one for a heading.
 

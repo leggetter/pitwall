@@ -17,6 +17,8 @@
 import { hasUnsafeCharacters, isNonEmptyString, isRecord } from '../index/guards.js';
 import { plainLine } from '../index/text.js';
 import {
+  GITHUB_OWNER_PATTERN,
+  GITHUB_REPO_NAME_PATTERN,
   PR_FAILING_CHECKS_MAX,
   PR_TITLE_MAX,
   type PullRequestChecks,
@@ -40,10 +42,11 @@ export interface SearchPage {
 /**
  * A GitHub owner: letters, digits, `-`, and `_` for an Enterprise Managed User's `name_shortcode`.
  * A repo name: letters, digits, `.`, `-` and `_`, but not `.` or `..`. Neither can hold a `/`, `?`,
- * `#`, `@`, `%` or space, so `owner/name` can't step outside the PR's own path in a URL.
+ * `#`, `@`, `%` or space, so `owner/name` can't step outside the PR's own path in a URL. The
+ * contract's patterns (W95), which the web UI uses too, so it keeps every PR this keeps.
  */
-const OWNER = '[A-Za-z0-9][A-Za-z0-9_-]{0,99}';
-const NAME = '[A-Za-z0-9._-]{1,100}';
+const OWNER = GITHUB_OWNER_PATTERN;
+const NAME = GITHUB_REPO_NAME_PATTERN;
 const REPO = new RegExp(`^(${OWNER})/(${NAME})$`);
 const PR_URL = new RegExp(`^https://github\\.com/(${OWNER})/(${NAME})/pull/([1-9][0-9]{0,9})$`);
 /** What GitHub's DateTime looks like: UTC, with or without fractions of a second. */

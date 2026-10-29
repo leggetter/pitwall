@@ -1,6 +1,7 @@
 // README screenshot: the production build on the app check's fake server, with a made-up world in
-// place of its fixtures: public repo names under ~/work, made-up sessions, and one made-up
-// conversation open on its Conversation tab. No real session or transcript is read.
+// place of its fixtures: public repo names under ~/work, made-up sessions, one made-up conversation
+// open on its Conversation tab, and a few made-up open pull requests under example/, one of them
+// opened by a hero session (W95). No real session, transcript or pull request is read.
 //   npm run build && npx tsx scripts/readme-screenshot.ts <outDir> [light|dark]
 // then copy <outDir>/hero-light.png to docs/images/pitwall-light.png. Needs the app check's pinned
 // chrome-headless-shell (npm run appcheck:install-shell).
@@ -9,7 +10,7 @@ import { join } from 'node:path';
 import { defaultHeadlessShell, launchChrome } from './appcheck/chrome.js';
 import { Page } from './appcheck/page.js';
 import { importBuilt, madeUpToken, startFakeServer } from './appcheck/server.js';
-import type { ConversationEntry, IndexSnapshot, SessionGroup, SessionSummary } from '../src/shared/protocol.js';
+import type { ConversationEntry, IndexSnapshot, PullRequestList, PullRequestSummary, SessionGroup, SessionSummary } from '../src/shared/protocol.js';
 
 const [out, theme = 'light'] = process.argv.slice(2) as [string, 'light' | 'dark'];
 const DIST = join(import.meta.dirname, '../dist');
@@ -51,7 +52,11 @@ const starred = [
   make('hookdeck-go-sdk', 'Fix a flaky test', 9, { status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' }, lastUserPrompt: 'Find out why the retry test fails one run in ten.' }),
   docs,
   job('outpost', 'Dependency updates', 16, { state: 'blocked', needsYou: { reason: 'claude-code', text: 'Merge the minor bumps, or review each one?' } }),
-  make('hookdeck-typescript-sdk', 'Build fix', 25, { lastUserPrompt: 'Open the PR once the build passes.' }),
+  make('hookdeck-typescript-sdk', 'Build fix', 25, {
+    lastUserPrompt: 'Open the PR once the build passes.',
+    // It opened the made-up #128, below, so its row has the PR's badge.
+    prLinks: [{ kind: 'opened', repo: 'example/hookdeck-typescript-sdk', number: 128, lastAt: ago(26) }],
+  }),
   job('n8n-nodes-hookdeck', 'Node docs refresh', 140, { state: 'done', alive: false, pid: undefined, finished: true }),
 ];
 const others = [
@@ -70,6 +75,33 @@ const snapshot = (): IndexSnapshot => {
   ];
   return { generatedAt: new Date().toISOString(), roots: [ROOT], groups: groups.filter((g) => g.sessions.length > 0), source: { ok: true } };
 };
+
+// Made-up open pull requests (W95), in made-up repos under example/ named for the hero's: one with
+// failing checks, for the repo list's count, one Build fix opened, and one approved.
+const pullRequest = (repo: string, number: number, title: string, minutes: number, extra: Partial<PullRequestSummary> = {}): PullRequestSummary => ({
+  url: `https://github.com/example/${repo}/pull/${number}`,
+  repo: `example/${repo}`,
+  repoLabel: `example/${repo}`,
+  number,
+  title,
+  draft: false,
+  createdAt: ago(minutes + 60 * 24),
+  updatedAt: ago(minutes),
+  head: { repo: `example/${repo}`, branch: `fix-${number}` },
+  checks: 'passing',
+  mergeable: 'clean',
+  ...extra,
+});
+const prList = (): PullRequestList => ({
+  fetchedAt: ago(1),
+  source: { ok: true },
+  refreshing: false,
+  prs: [
+    pullRequest('hookdeck-go-sdk', 57, 'Make the retry test deterministic', 12, { checks: 'failing', failingChecks: ['test (1.23)'], review: 'review-required' }),
+    pullRequest('hookdeck-typescript-sdk', 128, 'Fix the ESM build', 24, { checks: 'pending' }),
+    pullRequest('hookdeck-cli', 312, 'Prepare the 1.4 release', 90, { review: 'approved' }),
+  ],
+});
 
 const conversation: ConversationEntry[] = [
   { kind: 'user', at: ago(9), text: 'Check the docs for broken links, and tell me what you find before fixing anything.' },
@@ -102,6 +134,7 @@ const token = madeUpToken();
 const server = await startFakeServer({ port: 4620, webRoot: join(DIST, 'web'), built: await importBuilt(DIST), token });
 const world = server.world as unknown as Record<string, unknown>;
 world.snapshot = snapshot;
+world.prList = prList;
 world.session = (id: string) => sessions.find((s) => s.sessionId === id);
 world.conversation = (id: string) => (sessions.some((s) => s.sessionId === id) ? { sessionId: id, entries: id === docs.sessionId ? conversation : [] } : undefined);
 world.subagents = (id: string) => ({ sessionId: id, subagents: [], truncated: false });
