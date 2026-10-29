@@ -17,8 +17,10 @@ import type {
   PullRequestList,
   PullRequestPlace,
   PullRequestSummary,
+  RecapHealth,
   RelayExchange,
   SessionGroup,
+  SessionRecap,
   SessionSummary,
   SpawnRequest,
   SubagentList,
@@ -197,6 +199,43 @@ export const PRS_SEARCH_ERRORS = {
   mentioned: 'Made up: gh api failed with exit code 1.',
 } as const;
 
+/**
+ * What recaps say (M5, W111): 'off', the default, as with --no-recaps, so the parts before W111 see
+ * the session view as they did; 'ok', with some calls made today and made-up recaps for some
+ * sessions (RECAPPED); 'spent', the day's budget used up; 'failing', the latest call failed, and so
+ * does each one asked for.
+ */
+export type RecapsState = 'off' | 'ok' | 'spent' | 'failing';
+
+/** The error 'failing' says, in pitwall's made-up words. */
+export const RECAPS_ERROR = "Made up: claude -p didn't answer within 60 seconds.";
+
+/** How long a made-up recap call takes, so Refresh shows its spinner. */
+export const RECAP_CALL_MS = 600;
+
+/**
+ * The sessions with a recap while recaps are on, by role: what each waits on, and whether it's
+ * current. A current recap that waits on you adds Needs you's 'recap' reason, as the index does
+ * (W110), unless the session needs you for another reason already. The rest have none, and a view
+ * opened on one asks for one.
+ */
+export const RECAPPED = {
+  /** NAMES.conversation: current, waiting on you. */
+  you: NAMES.conversation,
+  /** NAMES.asked: waiting on you, but older than its latest turn, so its view asks for a new one. */
+  stale: NAMES.asked,
+  /** NAMES.fromRoot: current, waiting on someone else, so its row says so quietly. */
+  someoneElse: NAMES.fromRoot,
+  /** NAMES.inApi: current, waiting on another session. */
+  anotherSession: NAMES.inApi,
+  /** NAMES.running2: current, waiting on CI; it works, so its row says nothing of it. */
+  ci: NAMES.running2,
+  /** NAMES.finished: current, nothing pending: Done. */
+  done: NAMES.finished,
+  /** NAMES.running3: only Claude Code's own recap. */
+  claudeCode: NAMES.running3,
+} as const;
+
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
 const SUBAGENT_CURSOR = 'pt77-older';
 
@@ -212,6 +251,8 @@ export interface ResetOptions {
   prs?: PrsState;
   /** Group labels by key, in place of the made-up ones, such as a longer name for a heading. */
   labels?: Readonly<Record<string, string>>;
+  /** What recaps say (W111): 'off', as with --no-recaps, by default. */
+  recaps?: RecapsState;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
@@ -232,9 +273,21 @@ export class World {
   /** When the latest fetch finished, and started: a refresh within PRS_REFRESH_MIN_MS of the start gets 429. */
   #prsFetchedAt = 0;
   #prsFetchStarted = 0;
+  /** Recaps (W111): their state, the recaps by session id, today's calls, the calls running, and the day's budget. */
+  #recapsState: RecapsState = 'off';
+  #recaps = new Map<string, SessionRecap>();
+  #recapCalls = 0;
+  #recapping = new Set<string>();
+  #recapBudget = 200;
 
   constructor() {
     this.reset();
+  }
+
+  /** The day's recap budget, from the build's RECAP_DAILY_BUDGET, which the fake server passes. */
+  setRecapBudget(budget: number): void {
+    this.#recapBudget = budget;
+    if (this.#recapsState === 'spent') this.#recapCalls = budget;
   }
 
   reset(options: ResetOptions = {}): void {
@@ -250,6 +303,10 @@ export class World {
     this.#prsFetchedAt = this.#now - 2 * MINUTE;
     this.#prsFetchStarted = this.#prsFetchedAt - 8_500;
     this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
+    this.#recapsState = options.recaps ?? 'off';
+    this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
+    this.#recapping = new Set();
+    this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
   }
 
   /**
@@ -280,8 +337,119 @@ export class World {
       if (home) home.sessions.unshift(summary);
       else groups.push({ key: summary.cwd, label: summary.cwd.slice(root.length + 1), kind: 'directory', root, sessions: [summary] });
     }
-    const named = groups.map((group) => ({ ...group, label: this.#labels[group.key] ?? group.label }));
-    return { generatedAt: new Date().toISOString(), roots: this.roots, groups: named.filter((group) => group.sessions.length > 0), source: { ok: true } };
+    const named = groups.map((group) => ({ ...group, label: this.#labels[group.key] ?? group.label, sessions: group.sessions.map((each) => this.#withRecap(each)) }));
+    const health = this.recapHealth();
+    return {
+      generatedAt: new Date().toISOString(),
+      roots: this.roots,
+      groups: named.filter((group) => group.sessions.length > 0),
+      source: { ok: true },
+      ...(health ? { recaps: health } : {}),
+    };
+  }
+
+  /** How recaps are doing (W111), as the snapshot carries it: absent with recaps off. */
+  recapHealth(): RecapHealth | undefined {
+    if (this.#recapsState === 'off') return undefined;
+    const health: RecapHealth = { calls: this.#recapCalls, budget: this.#recapBudget, costUsd: Math.round(this.#recapCalls * 11) / 10_000 };
+    return this.#recapsState === 'failing' ? { ...health, error: RECAPS_ERROR } : health;
+  }
+
+  /** A listed session's whole recap (W111), as GET recapPath() answers it, with `stale` from its activity; undefined without one. */
+  recap(sessionId: string): SessionRecap | undefined {
+    const recap = this.#recaps.get(sessionId);
+    const session = this.#sessions.get(sessionId);
+    if (!recap || !session) return undefined;
+    return this.#isStale(recap, session) ? { ...recap, stale: true } : recap;
+  }
+
+  /**
+   * Refresh (W111), in the order the contract gives recapRefreshPath()'s answers: 'off' with recaps
+   * off (409); 'not-recapped' for a session pitwall doesn't recap, an ended one (404); 'spent' with
+   * the day's budget used up, and 'running' while a call for it runs (429); otherwise 'started', and
+   * `done`, which ends the call: a new recap, through its latest activity, or with 'failing' none.
+   */
+  refreshRecap(sessionId: string): { result: 'off' } | { result: 'not-recapped' } | { result: 'spent' } | { result: 'running' } | { result: 'started'; done: () => void } {
+    if (this.#recapsState === 'off') return { result: 'off' };
+    const session = this.#sessions.get(sessionId);
+    if (!session || session.ended) return { result: 'not-recapped' };
+    if (this.#recapCalls >= this.#recapBudget) return { result: 'spent' };
+    if (this.#recapping.has(sessionId)) return { result: 'running' };
+    this.#recapping.add(sessionId);
+    this.#recapCalls += 1;
+    return {
+      result: 'started',
+      done: () => {
+        this.#recapping.delete(sessionId);
+        if (this.#recapsState === 'failing') return;
+        const now = new Date().toISOString();
+        const through = this.#sessions.get(sessionId)?.lastActivityAt ?? now;
+        const was = this.#recaps.get(sessionId);
+        const made = was && was.source === 'pitwall' ? was : this.#firstRecap(session);
+        this.#recaps.set(sessionId, { ...made, at: now, throughAt: through });
+      },
+    };
+  }
+
+  /** The session as the snapshot lists it with its recap (W111): the summary, the title from it, and Needs you's 'recap' while it's current and waits on you. */
+  #withRecap(session: SessionSummary): SessionSummary {
+    const recap = this.#recapsState === 'off' ? undefined : this.recap(session.sessionId);
+    if (!recap) return session;
+    const summary = { waitingOn: recap.waitingOn, title: recap.title, at: recap.at, source: recap.source, ...(recap.waitingOn === 'you' ? { next: recap.next } : {}), ...(recap.stale ? { stale: true as const } : {}) };
+    const listed: SessionSummary = { ...session, recap: summary };
+    if (recap.source === 'pitwall') Object.assign(listed, { title: recap.title, titleSource: 'pitwall' });
+    const needs = recap.source === 'pitwall' && recap.waitingOn === 'you' && !recap.stale && !session.stale && !session.finished && session.needsYou === undefined;
+    return needs ? { ...listed, needsYou: { reason: 'recap', text: recap.next } } : listed;
+  }
+
+  /** Older than the session's latest activity. */
+  #isStale(recap: SessionRecap, session: SessionSummary): boolean {
+    return session.lastActivityAt !== undefined && Date.parse(session.lastActivityAt) > Date.parse(recap.throughAt);
+  }
+
+  /** The made-up recaps, by session name (RECAPPED). */
+  #baseRecaps(): { name: string; recap: SessionRecap }[] {
+    const through = (name: string) => this.byName(name).lastActivityAt ?? this.#ago(10);
+    const made = (name: string, extra: Partial<SessionRecap>): { name: string; recap: SessionRecap } => ({
+      name,
+      recap: {
+        why: 'You asked it to add a made-up health route to the API, with a test.',
+        now: 'The route and its test are in, and the made-up CI run on #51 is red on lint.',
+        next: 'Say whether it should fix the lint errors on #51 now, or leave them for the made-up follow-up.',
+        waitingOn: 'you',
+        title: 'Add a made-up health route',
+        at: through(name),
+        throughAt: through(name),
+        source: 'pitwall',
+        ...extra,
+      },
+    });
+    return [
+      made(RECAPPED.you, {}),
+      made(RECAPPED.stale, {
+        why: 'You asked it to review the made-up retry change.',
+        now: 'It reviewed the retry change and asked whether to retry the failed batch now.',
+        next: 'Say whether to retry the made-up failed batch now, or wait for tonight.',
+        title: 'Review the made-up retry change',
+        at: this.#ago(19),
+        throughAt: this.#ago(20),
+      }),
+      made(RECAPPED.someoneElse, { why: 'You asked it to tidy both made-up services.', now: 'It pushed #19 and asked for a review.', next: "It's waiting for the made-up reviewer's approval on #19.", waitingOn: 'someone else', title: 'Tidy both made-up services' }),
+      made(RECAPPED.anotherSession, { why: 'You asked it to add a made-up route.', now: 'Its sub-agents are drafting the route and its tests.', next: "It's waiting for pitwall-test-api's made-up health route to land first.", waitingOn: 'another session', title: 'Add a made-up route' }),
+      made(RECAPPED.ci, { why: 'You asked it to make the made-up retry worker back off.', now: 'It pushed the backoff to its branch.', next: "It's waiting for the made-up CI run to finish.", waitingOn: 'CI', title: 'Back off the made-up retry worker' }),
+      made(RECAPPED.done, { why: 'You asked it to run the made-up migration.', now: 'The made-up migration ran, and every table checks out.', next: '', waitingOn: 'nothing', title: 'Run the made-up migration' }),
+      made(RECAPPED.claudeCode, { why: '', now: 'The made-up index rebuild is half done; it runs until the last shard is in.', next: '', waitingOn: 'nothing', title: '', source: 'claude-code' }),
+    ];
+  }
+
+  /** A first recap for a session that had none, made up from its role. */
+  #firstRecap(session: SessionSummary): SessionRecap {
+    const now = new Date().toISOString();
+    const base = { at: now, throughAt: now, source: 'pitwall' as const };
+    if (session.name === NAMES.waiting) {
+      return { ...base, why: 'You asked it to update the made-up getting started guide.', now: 'It rewrote the install steps and wants to run the made-up docs build.', next: 'Answer its permission prompt to run the made-up docs build.', waitingOn: 'you', title: 'Update the getting started guide' };
+    }
+    return { ...base, why: `You asked it to tidy the made-up export job, in ${session.name}.`, now: 'The made-up export job retries three times now, with backoff.', next: '', waitingOn: 'nothing', title: 'Tidy the made-up export job' };
   }
 
   /**

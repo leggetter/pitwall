@@ -507,3 +507,9 @@
 .uikit-buttons td {
   vertical-align: middle;
 }
+
+/* A recap strip alone (W111), at a session view's usual width, on the view's own surface. */
+.uikit-recap-stage {
+  max-width: 760px;
+  border: 1px solid var(--pw-border);
+}

@@ -16,7 +16,7 @@ npm run appcheck -- --out scratch/appcheck
   - `<dir>/shots/<part>/` holds each part's named screenshots.
   - `<dir>/failures/<part>/` holds a screenshot of the page as each failed step left it.
 - **Exit code:** 0 when every step passed, 1 when any failed, 2 when it couldn't run, such as with no build or no Chrome.
-- **Time:** about 10 minutes for a full run, 17 parts in 170 cases and about 1,460 steps, on the Mac it was written on (W102). One part at one size takes seconds.
+- **Time:** about 12 minutes for a full run, 18 parts in 180 cases and about 1,600 steps, on the Mac it was written on (W111). One part at one size takes seconds.
 
 ## Running part of it
 
@@ -106,9 +106,11 @@ Behind those it answers from `fixtures.ts`:
 
 - a running turn (W102): `running`'s conversation ends with a command still out, after a prompt typed mid-turn, and its newest page says its turn hasn't ended, so its Conversation tab has the working line; `world.endTurn()` ends it, as the index's next poll would list it: done, its activity moved, its page with the command's result, Claude's reply and the turn's end.
 
+- recaps (W111), off by default, as with `--no-recaps`, so the other parts see the session view as before. `t.fresh({ recaps })` turns them on: `ok`, with today's calls and made-up recaps for the sessions in `RECAPPED` (one current and waiting on you, which adds Needs you's 'recap', one stale, one waiting on someone else, one on another session, one on CI, one done and one of Claude Code's own), `stale` worked out from each session's activity; `spent`, the day's budget used up; `failing`, the latest call failed, and each one asked for fails too. `GET recapPath(id)`, recorded in `recapFetches`, answers the recap or 404; `POST recapRefreshPath(id)`, recorded in `recapRefreshes`, answers as the contract has it, in its order: 409 with recaps off, 404 for an ended session, 429 with the budget spent or a call for it running, otherwise 200, and the new recap in the snapshot `RECAP_CALL_MS` later.
+
 - a session's sub-agents and each one's transcript (W77): `inApi` has five, in `SUBAGENTS`, two running, one of them started by the other, then done, failed and stopped ones, and its conversation names them; every other session has none. `drafting`'s transcript has a page behind Load earlier, and a cursor the fake server doesn't know gets 410.
 
-It records what the page sent, such as attaches, keys typed into a terminal, the sizes it gave each attached session, spawns and the files they named, uploads and the status each got, uploads removed, relayed messages, resumes, opens in an editor, ends and refreshes of the PR list, for parts to check through `t.server.records`.
+It records what the page sent, such as attaches, keys typed into a terminal, the sizes it gave each attached session, spawns and the files they named, uploads and the status each got, uploads removed, relayed messages, resumes, opens in an editor, ends, refreshes of the PR list, and recaps fetched and asked for, for parts to check through `t.server.records`.
 
 **A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session. Every fresh page asks for reduced motion; `t.fresh({ motion: true })` leaves motion on, as for the working line's spinner (W102), until the next fresh page. `t.fresh({ forcedColors: true })` emulates forced colours, as a Windows contrast theme sets them, until the next fresh page, and `t.fresh({ labels: { [key]: label } })` gives groups other names, such as a longer one for a heading.
 

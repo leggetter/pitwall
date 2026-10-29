@@ -8,7 +8,8 @@
 // World in fixtures.ts, the editor list and open in an editor (W72), which opens nothing, and New
 // session's uploads (W82), with the contract's checks, keeping nothing of a file but its size, and
 // your made-up open pull requests (W95): GET PRS_PATH, the 'prs' message right after the first
-// snapshot and on each change, and POST PRS_REFRESH_PATH, with the contract's 409 and 429.
+// snapshot and on each change, and POST PRS_REFRESH_PATH, with the contract's 409 and 429; and
+// recaps (W111), off unless a case turns them on: GET recapPath() and POST recapRefreshPath().
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
@@ -38,13 +39,14 @@ import type {
   IndexSnapshot,
   PullRequestList,
   RelayResult,
+  SessionRecap,
   ResumeResult,
   SessionSummary,
   SpawnRequest,
   SpawnResult,
   SubagentList,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -90,11 +92,31 @@ export interface Records {
   ends: Array<{ name: string; whileWorking: boolean; status: number }>;
   /** Each refresh of the PR list the server answered (W95), by its status: 200, 409 or 429. */
   refreshes: number[];
+  /** Each GET of a session's recap (W111), by the session's name and its status: 200 or 404. */
+  recapFetches: Array<{ name: string; status: number }>;
+  /** Each POST asking for a new recap (W111), by the session's name and its status: 200, 404, 409 or 429. */
+  recapRefreshes: Array<{ name: string; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], ends: [], refreshes: [], uploads: [], deletes: [], requests: [] });
+const emptyRecords = (): Records => ({
+  attaches: [],
+  inputs: [],
+  sizes: [],
+  spawns: [],
+  relays: [],
+  actions: [],
+  resumes: [],
+  opens: [],
+  ends: [],
+  refreshes: [],
+  recapFetches: [],
+  recapRefreshes: [],
+  uploads: [],
+  deletes: [],
+  requests: [],
+});
 
 /** How long a refresh's made-up fetch takes, so Refresh shows its spinner (W95). */
 const PRS_FETCH_MS = 700;
@@ -200,6 +222,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const apiKey = security.randomSecret();
   const headers = Object.entries(security.securityHeaders(port));
   const world = new World();
+  world.setRecapBudget(protocol.RECAP_DAILY_BUDGET);
   let records = emptyRecords();
   // The uploads kept (W82), by id, and the names that have had their one failure.
   const uploaded = new Map<string, { used: boolean }>();
@@ -279,13 +302,23 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       return json(res, 200, page satisfies ConversationPage);
     }
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end)$/.exec(url.pathname);
+    // Refresh a session's recap (W111): recapRefreshPath(id).
+    const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
+    if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
+
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
     const route = match[2];
     if (route === 'conversation' && method === 'GET') return json(res, 200, world.conversation(session.sessionId) satisfies ConversationPage | undefined);
     if (route === 'subagents' && method === 'GET') return json(res, 200, world.subagents(session.sessionId) satisfies SubagentList | undefined);
+    if (route === 'recap' && method === 'GET') {
+      // recapPath(id) (W111): the session's whole recap, or 404 while it has none, as the contract says.
+      const recap = world.recapHealth() ? world.recap(session.sessionId) : undefined;
+      records.recapFetches.push({ name: session.name, status: recap ? 200 : 404 });
+      return recap ? json(res, 200, recap satisfies SessionRecap) : end(res, 404);
+    }
     if (route === 'relay' && method === 'POST') {
       if (session.kind !== 'interactive' || !session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running interactive session.' } satisfies RelayResult);
       const body = await readJson(req);
@@ -380,6 +413,39 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     later(PRS_FETCH_MS, () => {
       answer.done();
       broadcastPrs();
+    });
+  }
+
+  /**
+   * Ask for a new recap (W111), as the contract has recapRefreshPath() answer, in made-up words: no
+   * body is read; 404 for a session it doesn't list or recap, 409 with recaps off, 429 with the day's
+   * budget spent or a call for it running, otherwise 200, and the new recap in the snapshot a moment
+   * later, or, while recaps are failing, none.
+   */
+  async function refreshRecap(req: IncomingMessage, res: ServerResponse, sessionId: string) {
+    await readJson(req);
+    const session = world.session(sessionId);
+    const answer = session ? world.refreshRecap(sessionId) : ({ result: 'not-recapped' } as const);
+    const record = (status: number) => {
+      if (session) records.recapRefreshes.push({ name: session.name, status });
+    };
+    if (answer.result === 'off') {
+      record(409);
+      return json(res, 409, { ok: false, error: 'Made up: recaps are off, as with --no-recaps.' } satisfies ActionResult);
+    }
+    if (answer.result === 'not-recapped') {
+      record(404);
+      return json(res, 404, { ok: false, error: "Made up: pitwall doesn't recap this session." } satisfies ActionResult);
+    }
+    if (answer.result === 'spent' || answer.result === 'running') {
+      record(429);
+      return json(res, 429, { ok: false, error: answer.result === 'spent' ? "Made up: today's recaps are used up." : 'Made up: a recap of it is already being made.' } satisfies ActionResult);
+    }
+    record(200);
+    json(res, 200, { ok: true } satisfies ActionResult);
+    later(RECAP_CALL_MS, () => {
+      answer.done();
+      broadcast();
     });
   }
 

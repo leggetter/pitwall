@@ -4,7 +4,7 @@ The pit wall for your Claude Code sessions: watch every one on your machine, ste
 
 Run many Claude Code sessions at once, across terminals and repos, and it's hard to see which ones need you. pitwall shows them all in one place, including the sessions it didn't start: the third-party session managers checked before it was built see only the sessions they launch themselves ([D1](docs/decisions.md#d1---the-session-list-comes-from-claude-agents---json---all)).
 
-![pitwall in the light theme: Needs you, All sessions, Starred and the repos on the left; the starred sessions in the middle, each with its repo, its status and what it needs from you; and on the right, an open session's conversation, ending with the question it asked you, above the message box](docs/images/pitwall-light.png)
+![pitwall in the light theme: Needs you, All sessions, Starred and the repos on the left; the starred sessions in the middle, each with its repo, its status and what it needs from you; and on the right, an open session's recap, what you need to do, why it started and where it is, then its conversation, ending with the question it asked you, above the message box](docs/images/pitwall-light.png)
 
 *The sessions and the conversation in the screenshot are made up.*
 

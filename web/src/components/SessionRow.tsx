@@ -25,7 +25,8 @@ import { prNeedsAttention, type PullRequestSummary, type SessionGroup, type Sess
 import { absoluteTime, plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { prReason, sessionPrBadge } from '../prs.js';
-import { groupLabel, isNotNeeded, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
+import { quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
+import { groupLabel, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
@@ -56,8 +57,8 @@ export const NOT_NEEDED_TEXT = 'Not needed now';
 /** The id of the session view, which every row's name controls. */
 export const SESSION_VIEW_ID = 'session-view';
 
-/** The title's tooltip: the whole title, which may be cut short on screen, and where it came from. */
-function titleHint(title: string, source: SessionSummary['titleSource']): string {
+/** The title's tooltip: the whole title, which may be cut short on screen, and where it came from. The session view's heading has it too. */
+export function titleHint(title: string, source: SessionSummary['titleSource']): string {
   const from = source === undefined ? undefined : TITLE_HINTS[source];
   return from === undefined ? title : `${title}\n${from}`;
 }
@@ -66,8 +67,9 @@ function titleHint(title: string, source: SessionSummary['titleSource']): string
 const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="button"]';
 
 /**
- * Line 2: what a background job's own line says it needs (W69), or what the session asked you, or
- * else what you last asked it, or why the transcript can't say.
+ * Line 2: what a background job's own line says it needs (W69), or what its recap says it's waiting
+ * on you for (M5, W111), or what the session asked you, or else what you last asked it, or why the
+ * transcript can't say.
  */
 function whatItWants(session: SessionSummary): { content: ReactNode; hint?: string } | undefined {
   // Claude Code's line, from the job's file, not the transcript: shown whatever the transcript's state.
@@ -81,6 +83,20 @@ function whatItWants(session: SessionSummary): { content: ReactNode; hint?: stri
         </span>
       ),
       hint: text,
+    };
+  }
+  // Its recap's `next`, from the index's recap, not the transcript: shown whatever the transcript's state, as Needs is.
+  if (needsAttention(session) && session.needsYou?.reason === 'recap') {
+    const next = recapNeedsText(session);
+    const text = next === undefined ? undefined : plainText(next);
+    return {
+      content: (
+        <span className="asked">
+          <span className="asked-label">{WAITING_ON_TEXT.you}{text === undefined ? '' : ':'}</span>
+          {text !== undefined && <> {text}</>}
+        </span>
+      ),
+      hint: text === undefined ? WAITING_ON_TEXT.you : `${WAITING_ON_TEXT.you}: ${text}`,
     };
   }
   if (session.transcript !== 'ok') {
@@ -157,6 +173,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const reason = !own && prNeed !== undefined ? prReason(prNeed, true) : undefined;
   const wants: { content: ReactNode; hint?: string } | undefined =
     reason !== undefined ? { content: <span className="asked pr-reason">{reason}</span>, hint: reason } : whatItWants(session);
+  // What an idle session's recap says it waits on, when that isn't you (W111): quiet, first on line 2, never needing you.
+  const waitingOn = quietWaitingOn(session, attention);
   const pr = sessionPrBadge(owned);
   // Line 2's label: the group's, in Needs you and All sessions.
   const label = showGroup ? plainText(groupLabel(group)) : undefined;
@@ -197,7 +215,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   ].filter(Boolean);
 
   // Line 2, when there's anything to say (W88's toggle has a line 2 to itself when there isn't).
-  const line2 = (label !== undefined || wants || running || marked) && (
+  const line2 = (label !== undefined || wants || running || marked || waitingOn !== undefined) && (
     <Tooltip content={wants?.hint} relation="none" onlyIfCut>
       <p className="session-what">
         {/* What gives way, with an ellipsis, before the running count does. */}
@@ -207,7 +225,18 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               <span className="session-group">
                 <Highlight text={label} />
               </span>
-              {(marked || wants) && (
+              {(marked || wants || waitingOn !== undefined) && (
+                <span className="session-what-sep" aria-hidden="true">
+                  {' · '}
+                </span>
+              )}
+            </>
+          )}
+          {waitingOn !== undefined && (
+            // Quiet, as the group's label is, and before what it last did, so it's seen when that's cut short.
+            <>
+              <span className="session-waiting-on">{waitingOn}</span>
+              {wants && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
                 </span>
@@ -230,7 +259,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {running !== undefined && (
           // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
           <span className="session-running">
-            {(label !== undefined || wants || marked) && (
+            {(label !== undefined || wants || marked || waitingOn !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>

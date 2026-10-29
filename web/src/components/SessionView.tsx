@@ -3,7 +3,8 @@
 // header with its name and title, status, kind, last activity and directory, where it started and
 // the repos it worked in when there are any (W34), and the actions menu, with Open in VS Code and Open
 // in Cursor for the editors pitwall's server found (W72, editors.ts);
-// the Conversation and Terminal tabs; the body, which is all that scrolls; and the footer: the message
+// the recap strip (W111, RecapStrip.tsx) while the snapshot says recaps are on; the Conversation and
+// Terminal tabs; the body, which is all that scrolls; and the footer: the message
 // box for an interactive session, or for a background one a note that it takes messages in its
 // terminal (W47). Under line 2, a line says where to answer while it waits on you, and another what to
 // do about a directory that has gone (W47).
@@ -58,7 +59,7 @@
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import type { Editor, EditorId, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
+import type { Editor, EditorId, PullRequestSummary, RecapHealth, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import type { BackgroundTab } from '../backgroundTab.js';
@@ -91,7 +92,8 @@ import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
-import { finishedAskedHint, NOT_NEEDED_TEXT, SESSION_VIEW_ID, STALE_HINT } from './SessionRow.js';
+import { RecapStrip } from './RecapStrip.js';
+import { finishedAskedHint, NOT_NEEDED_TEXT, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
 import { StarButton } from './StarButton.js';
 import { SubagentsPanel, subagentsCount, useSubagents } from './Subagents.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
@@ -392,6 +394,12 @@ export interface SessionViewProps {
    */
   prs?: { owned: readonly PullRequestSummary[]; linked: readonly LinkedPr[]; onOpen: (pr: PullRequestSummary) => void } | undefined;
   /**
+   * How recaps are doing, the snapshot's RecapHealth (M5, W111): with it, the recap strip sits between
+   * the header and the tabs. Left out, as with recaps off and in the gallery's and tests' views that
+   * aren't about recaps, there's none.
+   */
+  recaps?: RecapHealth | undefined;
+  /**
    * The newest poll's time, a snapshot's or a heartbeat's generatedAt: while its Sub-agents tab is open
    * and any of them run, the tab asks for the list again at this pace (W77). Left out, as in the
    * gallery and the tests of a view alone, it follows the session's activity instead.
@@ -428,6 +436,7 @@ export function SessionView({
   polledAt,
   backLabel,
   prs,
+  recaps,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -911,8 +920,9 @@ export function SessionView({
             <span className="session-view-name">{name}</span>
             {title && (
               // The " · " is drawn with the title, so it goes when the title has given way. Screen
-              // readers get it from the hidden text instead. The whole title is in a tooltip when it's cut.
-              <Tooltip content={title} relation="none" onlyIfCut>
+              // readers get it from the hidden text instead. The whole title is in a tooltip, with where
+              // it came from, as the row has it; one whose source isn't known has it only when it's cut.
+              <Tooltip content={titleHint(title, session.titleSource)} relation="none" onlyIfCut={session.titleSource === undefined}>
                 <span className="session-view-subtitle">
                   <span className="visually-hidden"> · </span>
                   {title}
@@ -1012,6 +1022,9 @@ export function SessionView({
       {(canAct || (!background && listed)) && (
         <SessionConfirm actions={actions} session={session} ended={ended || !session.alive} onReturnFocus={returnFocusToMenu} />
       )}
+
+      {/* Why it was started, where it is and what's next (W111), between the header and the tabs, on every tab. */}
+      <RecapStrip session={session} health={recaps} listed={listed} hidden={hidden} />
 
       <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
         <button
