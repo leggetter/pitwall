@@ -245,7 +245,8 @@ describe('parseSearchPage', () => {
       endCursor: 'Y3Vyc29yOjEwMA==',
     }));
     expect(page?.prs.map((pr) => pr.number)).toEqual([1]);
-    expect(page).toMatchObject({ total: 150, hasNextPage: true, endCursor: 'Y3Vyc29yOjEwMA==' });
+    // What GitHub returned, before any was dropped.
+    expect(page).toMatchObject({ nodes: 4, total: 150, hasNextPage: true, endCursor: 'Y3Vyc29yOjEwMA==' });
   });
 
   it('reads a last page: no next page, and no cursor', () => {
@@ -262,7 +263,7 @@ describe('parseSearchPage', () => {
 
   it('ignores a total or page info of the wrong shape', () => {
     const page = parseSearchPage(JSON.stringify({ data: { search: { issueCount: 'many', pageInfo: { hasNextPage: 'yes', endCursor: 42 }, nodes: [] } } }));
-    expect(page).toEqual({ prs: [], hasNextPage: false });
+    expect(page).toEqual({ prs: [], nodes: 0, hasNextPage: false });
   });
 });
 

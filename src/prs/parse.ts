@@ -28,6 +28,8 @@ import {
 /** One page of the search, as read. */
 export interface SearchPage {
   prs: PullRequestSummary[];
+  /** How many nodes GitHub returned, before any was dropped. */
+  nodes: number;
   /** How many PRs the search found in all (`issueCount`), when GitHub said. */
   total?: number;
   hasNextPage: boolean;
@@ -87,7 +89,7 @@ export function parseSearchPage(stdout: string): SearchPage | undefined {
     if (pr !== undefined) prs.push(pr);
   }
   const pageInfo = isRecord(search.pageInfo) ? search.pageInfo : {};
-  const page: SearchPage = { prs, hasNextPage: pageInfo.hasNextPage === true };
+  const page: SearchPage = { prs, nodes: search.nodes.length, hasNextPage: pageInfo.hasNextPage === true };
   if (typeof search.issueCount === 'number' && Number.isSafeInteger(search.issueCount) && search.issueCount >= 0) page.total = search.issueCount;
   if (typeof pageInfo.endCursor === 'string') page.endCursor = pageInfo.endCursor;
   return page;

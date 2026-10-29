@@ -15,6 +15,9 @@
 //                 required", is 'gh-auth'; anything else is 'error'. Each says what happened in
 //                 pitwall's words, never gh's output: runFile ignores stderr, and stdout is only
 //                 ever read as JSON
+//   none kept     GitHub found PRs, but every one was dropped, as after a change in its answer's
+//                 shape: that's 'error', unreadable, so the poller keeps the last good list rather
+//                 than replace it with an empty one
 //
 // Measured on 2026-10-28: 50 PRs in one page, 2 of the 5,000 rate-limit points an hour, 8.5 s
 // and 38 KB.
@@ -100,8 +103,11 @@ export interface FetchOptions {
   ghBin?: string;
   /** What gh's environment is made from, before runFile scrubs it. Default process.env. */
   env?: NodeJS.ProcessEnv;
-  /** For the deadline across both pages. Default Date.now. */
-  now?: () => number;
+  /**
+   * A monotonic clock in milliseconds, for the deadline across both pages, so a change to the
+   * system clock can't stretch or cut it. Default performance.now().
+   */
+  monotonicNow?: () => number;
   /** Default PRS_FETCH_TIMEOUT_MS. */
   timeoutMs?: number;
 }
@@ -142,7 +148,7 @@ export function isWellFormedCursor(cursor: string): boolean {
 
 /** Your open PRs, newest update first, at most PRS_MAX; or why they couldn't be fetched. Never throws. */
 export async function fetchPullRequests(options: FetchOptions): Promise<FetchResult> {
-  const now = options.now ?? Date.now;
+  const now = options.monotonicNow ?? (() => performance.now());
   const deadline = now() + (options.timeoutMs ?? PRS_FETCH_TIMEOUT_MS);
   const env = ghEnvironment(options.env ?? process.env);
   const page = async (after?: string): Promise<SearchPage | FetchResult> => {
@@ -173,6 +179,8 @@ export async function fetchPullRequests(options: FetchOptions): Promise<FetchRes
   for (const { prs } of pages) for (const pr of prs) if (!byUrl.has(pr.url)) byUrl.set(pr.url, pr);
   const prs = [...byUrl.values()].sort(byUpdatedNewestFirst);
   const total = first.total ?? 0;
+  const returned = pages.reduce((sum, { nodes }) => sum + nodes, 0);
+  if (prs.length === 0 && (returned > 0 || total > 0)) return { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
   const truncated = more || total > PRS_MAX || prs.length > PRS_MAX;
   return { ok: true, prs: prs.slice(0, PRS_MAX), truncated };
 }

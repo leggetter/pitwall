@@ -8,7 +8,9 @@
 //   on failure   the last good list stays, with its fetchedAt; `source` says what went wrong
 //   listeners    told only when the list's content changes, `refreshing` included, so every fetch
 //                tells them twice: when it starts and when it ends
-//   timers       injected with the clock, for tests; the real ones don't keep the process alive
+//   timers       injected with the clocks, for tests; the real ones don't keep the process alive.
+//                The refresh gap and the fetch's deadline are measured on a monotonic clock, so
+//                a change to the system clock can't open or close them; fetchedAt is wall time
 //   stop()       no more fetches; a fetch still running is left to its timeout, and what it finds
 //                is dropped. The server stops it on close()
 //
@@ -55,8 +57,10 @@ export interface PrPollerOptions {
   runFile?: RunFile;
   /** For the default fetch: the gh to run. Default `gh` on PATH. */
   ghBin?: string;
-  /** Default Date.now. */
+  /** Wall time, for fetchedAt. Default Date.now. */
   now?: () => number;
+  /** A monotonic clock in milliseconds, for the refresh gap and the default fetch's deadline. Default performance.now(). */
+  monotonicNow?: () => number;
   timers?: PrTimers;
   /** Default PRS_POLL_INTERVAL_MS. */
   intervalMs?: number;
@@ -98,19 +102,20 @@ export function prsOff(): PrSource {
 /** A poller of your open PRs. Nothing runs until start(), or a refresh. */
 export function createPrPoller(options: PrPollerOptions = {}): PrSource {
   const now = options.now ?? Date.now;
+  const monotonicNow = options.monotonicNow ?? (() => performance.now());
   const timers = options.timers ?? realTimers;
   const intervalMs = options.intervalMs ?? PRS_POLL_INTERVAL_MS;
   const refreshMinMs = options.refreshMinMs ?? PRS_REFRESH_MIN_MS;
   const runFile = options.runFile ?? realRunFile;
   const fetch =
-    options.fetch ?? (() => fetchPullRequests({ runFile, now, ...(options.ghBin === undefined ? {} : { ghBin: options.ghBin }) }));
+    options.fetch ?? (() => fetchPullRequests({ runFile, monotonicNow, ...(options.ghBin === undefined ? {} : { ghBin: options.ghBin }) }));
 
   let list = initialList();
   let content = JSON.stringify(list);
   const listeners = new Set<(list: PullRequestList) => void>();
   let fetching = false;
   let stopped = false;
-  /** When the latest fetch started, by `now`. */
+  /** When the latest fetch started, by monotonicNow. */
   let lastStartedAt: number | undefined;
   let timer: unknown;
 
@@ -136,7 +141,7 @@ export function createPrPoller(options: PrPollerOptions = {}): PrSource {
   const run = async () => {
     cancelTimer();
     fetching = true;
-    lastStartedAt = now();
+    lastStartedAt = monotonicNow();
     update({ ...list, refreshing: true });
     let result: FetchResult;
     try {
@@ -172,7 +177,7 @@ export function createPrPoller(options: PrPollerOptions = {}): PrSource {
       if (stopped) return { kind: 'stopped' };
       if (fetching) return { kind: 'running' };
       if (lastStartedAt !== undefined) {
-        const wait = lastStartedAt + refreshMinMs - now();
+        const wait = lastStartedAt + refreshMinMs - monotonicNow();
         if (wait > 0) return { kind: 'too-soon', retryAfterSeconds: Math.max(1, Math.ceil(wait / 1000)) };
       }
       void run();

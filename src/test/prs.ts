@@ -64,7 +64,10 @@ export function searchPage(
 
 /** A clock and timers that move only when the test says. */
 export function fakeClock(start = Date.UTC(2026, 9, 28, 12, 0, 0)) {
+  // The monotonic clock, which advance() moves and the timers run on. Wall time is it plus an
+  // offset that only jumpWall() changes, as when the system clock is set.
   let now = start;
+  let wallOffset = 0;
   let nextId = 1;
   const pending = new Map<number, { at: number; callback: () => void }>();
   const timers: PrTimers = {
@@ -78,7 +81,14 @@ export function fakeClock(start = Date.UTC(2026, 9, 28, 12, 0, 0)) {
     },
   };
   return {
-    now: () => now,
+    /** Wall time, for fetchedAt. */
+    now: () => now + wallOffset,
+    /** Monotonic time, for the refresh gap and the fetch's deadline. */
+    monotonic: () => now,
+    /** Sets the wall clock on or back by `ms`, leaving monotonic time and the timers alone. */
+    jumpWall(ms: number) {
+      wallOffset += ms;
+    },
     timers,
     pending: () => [...pending.values()].map((timer) => timer.at - now),
     /** Moves the clock on, running each timer that comes due, in order. */

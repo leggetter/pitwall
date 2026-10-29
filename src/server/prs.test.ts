@@ -87,7 +87,7 @@ afterEach(async () => {
 async function start(options: { prs?: PrSource | 'none'; indexer?: Indexer } = {}) {
   const clock = fakeClock();
   const fetch = fakeFetch();
-  const poller = options.prs ?? createPrPoller({ fetch: fetch.fetch, now: clock.now, timers: clock.timers });
+  const poller = options.prs ?? createPrPoller({ fetch: fetch.fetch, now: clock.now, monotonicNow: clock.monotonic, timers: clock.timers });
   const server = await startServerWithInternals({
     indexer: options.indexer ?? fakeIndexer(),
     token: TOKEN,

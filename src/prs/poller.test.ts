@@ -2,8 +2,8 @@
 // nothing here runs gh or waits in real time.
 import { describe, expect, it } from 'vitest';
 import { PRS_POLL_INTERVAL_MS, PRS_REFRESH_MIN_MS, type PullRequestList, type PullRequestSummary } from '../shared/protocol.js';
-import { fakeClock, fakeFetch, flush, prNode } from '../test/prs.js';
-import type { FetchResult } from './fetch.js';
+import { fakeClock, fakeFetch, flush, prNode, searchPage } from '../test/prs.js';
+import { FETCH_ERRORS, type FetchResult } from './fetch.js';
 import { parsePullRequest } from './parse.js';
 import { createPrPoller, prsOff, PRS_OFF_ERROR } from './poller.js';
 
@@ -13,7 +13,7 @@ const ok = (prs: PullRequestSummary[], truncated = false): FetchResult => ({ ok:
 function setup() {
   const clock = fakeClock();
   const fetch = fakeFetch();
-  const poller = createPrPoller({ fetch: fetch.fetch, now: clock.now, timers: clock.timers });
+  const poller = createPrPoller({ fetch: fetch.fetch, now: clock.now, monotonicNow: clock.monotonic, timers: clock.timers });
   const seen: PullRequestList[] = [];
   poller.subscribe((list) => seen.push(list));
   return { clock, fetch, poller, seen };
@@ -161,6 +161,20 @@ describe('createPrPoller: refresh', () => {
     expect(fetch.calls()).toBe(2);
   });
 
+  it('measures the gap on the monotonic clock, so setting the system clock neither opens nor closes it', async () => {
+    const { clock, fetch, poller } = setup();
+    poller.start();
+    await fetch.finish(ok([]));
+    // An hour on: on wall time alone, the gap would be long past.
+    clock.jumpWall(60 * 60_000);
+    expect(poller.refresh()).toEqual({ kind: 'too-soon', retryAfterSeconds: 15 });
+    // An hour back: on wall time alone, it would be an hour away.
+    clock.jumpWall(-2 * 60 * 60_000);
+    clock.advance(PRS_REFRESH_MIN_MS);
+    expect(poller.refresh()).toEqual({ kind: 'started' });
+    expect(fetch.calls()).toBe(2);
+  });
+
   it('rounds the wait up: just after a start, the whole 15 seconds', async () => {
     const { clock, fetch, poller } = setup();
     poller.start();
@@ -189,6 +203,14 @@ describe('createPrPoller: refresh', () => {
 });
 
 describe('createPrPoller: the list', () => {
+  it('sets fetchedAt by wall time, wherever the system clock was set', async () => {
+    const { clock, fetch, poller } = setup();
+    poller.start();
+    clock.jumpWall(-24 * 60 * 60_000);
+    await fetch.finish(ok([]));
+    expect(poller.latest().fetchedAt).toBe('2026-10-27T12:00:00.000Z');
+  });
+
   it('sets fetchedAt by the clock when a fetch ends, and refreshing while it runs', async () => {
     const { clock, fetch, poller } = setup();
     poller.start();
@@ -270,6 +292,27 @@ describe('createPrPoller: the list', () => {
     off();
     await fetch.finish(ok([]));
     expect(told).toEqual(['b']);
+  });
+});
+
+describe('createPrPoller: with the real fetch and a fake runFile', () => {
+  it('keeps the last good list when every PR in the next answer is dropped, as after a change in its shape', async () => {
+    const clock = fakeClock();
+    const answers = [searchPage([prNode({ number: 1 }), prNode({ number: 2 })]), searchPage([{ changed: true }, { changed: true }])];
+    const poller = createPrPoller({
+      runFile: async () => answers.shift() ?? '',
+      now: clock.now,
+      monotonicNow: clock.monotonic,
+      timers: clock.timers,
+    });
+    poller.start();
+    await flush();
+    const good = poller.latest();
+    expect(good.prs.map((pr) => pr.number)).toEqual([1, 2]);
+    clock.advance(PRS_POLL_INTERVAL_MS);
+    await flush();
+    expect(poller.latest()).toEqual({ ...good, source: { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable } });
+    poller.stop();
   });
 });
 

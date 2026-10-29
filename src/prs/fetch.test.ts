@@ -99,7 +99,7 @@ describe('fetchPullRequests: the command', () => {
   it('runs in the temp directory, with a timeout of PRS_FETCH_TIMEOUT_MS, a cap on stdout, and an environment that never prompts', async () => {
     const env = { PATH: '/usr/bin', HOME: '/home/demo', GH_FORCE_TTY: '1', CLICOLOR_FORCE: '1', GH_TOKEN: 'kept-for-gh' };
     const { runFile, calls } = fakeRunFile([searchPage([])]);
-    await fetchPullRequests({ runFile, env, now: () => 1000 });
+    await fetchPullRequests({ runFile, env, monotonicNow: () => 1000 });
     const options = calls[0]!.options;
     expect(options.timeoutMs).toBe(PRS_FETCH_TIMEOUT_MS);
     expect(options.maxStdoutBytes).toBe(PRS_PAGE_MAX_BYTES);
@@ -142,6 +142,29 @@ describe('fetchPullRequests: the list', () => {
     const { runFile } = fakeRunFile([searchPage([prNode({ number: 1 }), { not: 'a pr' }, prNode({ number: 2, url: 'https://evil.example/pull/2' })])]);
     const result = await fetchPullRequests({ runFile });
     expect(result.ok && result.prs.map((pr) => pr.number)).toEqual([1]);
+  });
+
+  it('fails as unreadable when GitHub returned PRs and every one was dropped, so the last good list stays', async () => {
+    // As after a change in the answer's shape: nodes that are there, none of them readable.
+    const changed = [{ pullRequest: { url: 'https://github.com/example/demo-app/pull/1' } }, prNode({ number: '1' }), {}];
+    for (const stdout of [searchPage(changed), searchPage([], { total: 3 }), searchPage(changed, { total: 0 })]) {
+      const { runFile } = fakeRunFile([stdout]);
+      expect(await fetchPullRequests({ runFile }), stdout.slice(0, 80)).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });
+    }
+  });
+
+  it('is an empty list, not a failure, when GitHub found none', async () => {
+    const { runFile } = fakeRunFile([searchPage([], { total: 0 })]);
+    expect(await fetchPullRequests({ runFile })).toEqual({ ok: true, prs: [], truncated: false });
+  });
+
+  it('keeps page 2’s PRs when every one on page 1 was dropped', async () => {
+    const { runFile } = fakeRunFile([
+      searchPage([{}, {}], { total: 3, hasNextPage: true, endCursor: 'abc' }),
+      searchPage([prNode({ number: 3 })], { total: 3 }),
+    ]);
+    const result = await fetchPullRequests({ runFile });
+    expect(result.ok && result.prs.map((pr) => pr.number)).toEqual([3]);
   });
 
   it('fetches page 2 with page 1’s cursor, and puts the two together, without duplicates', async () => {
@@ -208,15 +231,31 @@ describe('fetchPullRequests: the list', () => {
       // Page 1 takes 20 s.
       if (call.args.every((arg) => !arg.startsWith('after='))) clock += 20_000;
     });
-    expect(await fetchPullRequests({ runFile, now: () => clock })).toMatchObject({ ok: true });
+    expect(await fetchPullRequests({ runFile, monotonicNow: () => clock })).toMatchObject({ ok: true });
     expect(calls.map((call) => call.options.timeoutMs)).toEqual([30_000, 10_000]);
 
     clock = 0;
     const slow = fakeRunFile([page1, searchPage([])], () => {
       clock += 30_000;
     });
-    expect(await fetchPullRequests({ runFile: slow.runFile, now: () => clock })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
+    expect(await fetchPullRequests({ runFile: slow.runFile, monotonicNow: () => clock })).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.timeout });
     expect(slow.calls).toHaveLength(1);
+  });
+
+  it('times the deadline on a monotonic clock by default, so setting the system clock can’t cut it', async () => {
+    const realNow = Date.now;
+    let jumps = 0;
+    // Each read of the wall clock is an hour on from the last.
+    Date.now = () => realNow() + ++jumps * 60 * 60_000;
+    try {
+      const { runFile, calls } = fakeRunFile([searchPage(prs(100), { total: 150, hasNextPage: true, endCursor: 'abc' }), searchPage(prs(50, 101))]);
+      expect(await fetchPullRequests({ runFile })).toMatchObject({ ok: true });
+      expect(calls).toHaveLength(2);
+      expect(calls[1]!.options.timeoutMs).toBeGreaterThan(PRS_FETCH_TIMEOUT_MS - 5000);
+      expect(calls[1]!.options.timeoutMs).toBeLessThanOrEqual(PRS_FETCH_TIMEOUT_MS);
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   it('fails the whole fetch when page 2 fails, rather than give a list it knows is short', async () => {
