@@ -35,7 +35,7 @@ import { pitwallOrigin, proofFor } from './test/proof.js';
 
 describe('parseCliArgs', () => {
   it('defaults to no roots, the default port and opening the browser', () => {
-    expect(parseCliArgs([], {})).toEqual({ kind: 'run', roots: [], open: true, prs: true });
+    expect(parseCliArgs([], {})).toEqual({ kind: 'run', roots: [], open: true, prs: true, recaps: true });
   });
 
   it('takes several roots, --port and --no-open in any order', () => {
@@ -45,12 +45,13 @@ describe('parseCliArgs', () => {
       port: 5000,
       open: false,
       prs: true,
+      recaps: true,
     });
-    expect(parseCliArgs(['--port=0', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], port: 0, open: true, prs: true });
+    expect(parseCliArgs(['--port=0', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], port: 0, open: true, prs: true, recaps: true });
   });
 
   it('treats everything after -- as a root', () => {
-    expect(parseCliArgs(['--', '--port'], {})).toEqual({ kind: 'run', roots: ['--port'], open: true, prs: true });
+    expect(parseCliArgs(['--', '--port'], {})).toEqual({ kind: 'run', roots: ['--port'], open: true, prs: true, recaps: true });
   });
 
   it('skips the browser when PITWALL_NO_OPEN=1', () => {
@@ -74,7 +75,7 @@ describe('parseCliArgs', () => {
   });
 
   it('takes --interval in whole seconds from 1 to 300, as milliseconds', () => {
-    expect(parseCliArgs(['--interval', '2', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], intervalMs: 2000, open: true, prs: true });
+    expect(parseCliArgs(['--interval', '2', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], intervalMs: 2000, open: true, prs: true, recaps: true });
     expect(parseCliArgs(['--interval=1'], {})).toMatchObject({ intervalMs: 1000 });
     expect(parseCliArgs(['--interval', '300'], {})).toMatchObject({ intervalMs: 300_000 });
     expect(parseCliArgs(['--interval', '010'], {})).toMatchObject({ intervalMs: 10_000 });
@@ -111,7 +112,7 @@ describe('parseCliArgs', () => {
   });
 
   it('turns pull requests off with --no-prs (M4, W93), anywhere among the roots', () => {
-    expect(parseCliArgs(['a', '--no-prs', 'b'], {})).toEqual({ kind: 'run', roots: ['a', 'b'], open: true, prs: false });
+    expect(parseCliArgs(['a', '--no-prs', 'b'], {})).toEqual({ kind: 'run', roots: ['a', 'b'], open: true, prs: false, recaps: true });
     expect(parseCliArgs(['--no-prs', '--no-open'], {})).toMatchObject({ open: false, prs: false });
     expect(() => parseCliArgs(['--no-prs=1'], {})).toThrow(UsageError);
     expect(() => parseCliArgs(['--prs'], {})).toThrow(UsageError);
@@ -124,13 +125,27 @@ describe('parseCliArgs', () => {
     );
   });
 
+  it('turns recaps off with --no-recaps (M5, W110), anywhere among the roots', () => {
+    expect(parseCliArgs(['a', '--no-recaps', 'b'], {})).toEqual({ kind: 'run', roots: ['a', 'b'], open: true, prs: true, recaps: false });
+    expect(parseCliArgs(['--no-recaps', '--no-prs'], {})).toMatchObject({ prs: false, recaps: false });
+    expect(() => parseCliArgs(['--no-recaps=1'], {})).toThrow(UsageError);
+    expect(() => parseCliArgs(['--recaps'], {})).toThrow(UsageError);
+  });
+
+  it('says in the help what --no-recaps does: what it sends, to which model, on whose login, and how often', () => {
+    expect(USAGE).toContain('[--no-prs] [--no-recaps]');
+    expect(USAGE.replace(/\s+/g, ' ')).toContain(
+      "--no-recaps Don't recap your sessions, and never run a recap call. Without it, once a session's turn has ended and it's been idle 5 minutes, and when you ask, pitwall sends excerpts of its transcript to claude-haiku-5-5, with claude -p on your Claude login, at most 200 calls a day, for a short recap: why it started, where it is and what's next.",
+    );
+  });
+
   it('rejects unknown options', () => {
     expect(() => parseCliArgs(['--host', '0.0.0.0'], {})).toThrow(UsageError);
     expect(() => parseCliArgs(['--token', 'x'], {})).toThrow(UsageError);
   });
 
   it('takes --config <path> as given, and refuses it without a path (W103)', () => {
-    expect(parseCliArgs(['--config', 'my.json', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], config: 'my.json', open: true, prs: true });
+    expect(parseCliArgs(['--config', 'my.json', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], config: 'my.json', open: true, prs: true, recaps: true });
     expect(parseCliArgs(['--config=~/p.json'], {})).toMatchObject({ config: '~/p.json' });
     expect(() => parseCliArgs(['--config'], {})).toThrow(UsageError);
     expect(() => parseCliArgs(['--config='], {})).toThrow(new UsageError('--config needs a path'));

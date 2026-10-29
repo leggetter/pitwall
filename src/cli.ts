@@ -26,11 +26,12 @@ import { parseArgs } from 'node:util';
 import { ConfigError, loadConfig, ownersByRoot, type LoadedConfig } from './config.js';
 import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
+import { createRecapEngine } from './recaps/engine.js';
 import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
-import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS } from './shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
 export const INTERVAL_MIN_SECONDS = 1;
@@ -43,7 +44,7 @@ export const INTERVAL_MAX_SECONDS = 300;
  */
 export const TOKEN_MIN_DIFFERENT = 8;
 
-export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
+export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the config file's, then to the current directory.
@@ -62,6 +63,13 @@ Options:
                         Without it, pitwall runs gh api graphql at start, every
                         ${PRS_POLL_INTERVAL_MS / 60_000} minutes and on Refresh, for your open PRs on
                         github.com. gh must be installed and logged in.
+  --no-recaps           Don't recap your sessions, and never run a recap call.
+                        Without it, once a session's turn has ended and it's
+                        been idle ${RECAP_DEBOUNCE_MS / 60_000} minutes, and when you ask, pitwall sends
+                        excerpts of its transcript to ${RECAP_MODEL}, with
+                        claude -p on your Claude login, at most ${RECAP_DAILY_BUDGET} calls a
+                        day, for a short recap: why it started, where it is
+                        and what's next.
   -h, --help            Show this help.
   -v, --version         Show the version.
 
@@ -167,6 +175,8 @@ export type CliCommand =
       open: boolean;
       /** False with `--no-prs`: pitwall never runs gh. */
       prs: boolean;
+      /** False with `--no-recaps`: pitwall never runs a recap call. */
+      recaps: boolean;
     };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
@@ -182,6 +192,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         interval: { type: 'string' },
         'no-open': { type: 'boolean' },
         'no-prs': { type: 'boolean' },
+        'no-recaps': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -202,6 +213,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     ...(values.interval === undefined ? {} : { intervalMs: parseInterval(values.interval) * 1000 }),
     open: !values['no-open'] && env.PITWALL_NO_OPEN !== '1',
     prs: !values['no-prs'],
+    recaps: !values['no-recaps'],
   };
 }
 
@@ -540,10 +552,14 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   // The relay (D8) starts on the first message. The index leaves its own session out, and shows its exchanges.
   const relay = createRelayManager();
+  // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and
+  // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.
+  const recaps = command.recaps ? createRecapEngine({ relayName: RELAY_NAME }) : undefined;
   const indexer = startIndexer({
     roots,
     intervalMs,
-    exclude: (row) => relay.isRelay(row),
+    exclude: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
+    ...(recaps === undefined ? {} : { sessionFacts: (facts) => recaps.observe(facts) }),
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
     relayOff: () => relay.off(),
@@ -570,10 +586,12 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       // With the index, each PR is placed under the clone of its repo, or the root that claims its
       // owner, with each configured root's `github.owners` by real path (W105, W103).
       prs: command.prs ? createPrPoller({ index: indexer, ownersByRoot: ownersByRoot(config, roots) }) : prsOff(),
+      ...(recaps === undefined ? {} : { recaps }),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {
     indexer.stop();
+    void recaps?.close();
     if (error instanceof PortInUseError) {
       console.error(
         `pitwall: port ${error.port} on 127.0.0.1 is already in use. Pick another with --port <n>, or use --port 0 for a free one.`,

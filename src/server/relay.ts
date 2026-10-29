@@ -1296,16 +1296,16 @@ export function relayEnvironment(env: NodeJS.ProcessEnv): Record<string, string>
 export const MIN_CLAUDE_VERSION = '2.1.295';
 
 /**
- * Whether `claude --version` output names MIN_CLAUDE_VERSION or later, and
- * the version it named. Output that doesn't start with a version counts as
- * too old.
+ * Whether `claude --version` output names `minimum` or later, MIN_CLAUDE_VERSION
+ * unless another is given (recaps pass theirs), and the version it named.
+ * Output that doesn't start with a version counts as too old.
  */
-export function checkClaudeVersion(output: string): { ok: boolean; version?: string } {
+export function checkClaudeVersion(output: string, minimum: string = MIN_CLAUDE_VERSION): { ok: boolean; version?: string } {
   const match = /^\s*(\d+)\.(\d+)\.(\d+)/.exec(output);
   if (match === null) return { ok: false };
   const version = `${match[1]}.${match[2]}.${match[3]}`;
   const found = [match[1], match[2], match[3]].map(Number);
-  const min = MIN_CLAUDE_VERSION.split('.').map(Number);
+  const min = minimum.split('.').map(Number);
   for (let i = 0; i < 3; i++) {
     if (found[i]! !== min[i]!) return { ok: found[i]! > min[i]!, version };
   }
