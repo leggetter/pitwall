@@ -13,6 +13,7 @@ import {
   browserCommand,
   claimOpenMarker,
   currentDirectory,
+  effectiveRoots,
   envFileProblem,
   fallbackPortMessage,
   FIXED_TOKEN_LINE,
@@ -127,6 +128,24 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['--host', '0.0.0.0'], {})).toThrow(UsageError);
     expect(() => parseCliArgs(['--token', 'x'], {})).toThrow(UsageError);
   });
+
+  it('takes --config <path> as given, and refuses it without a path (W103)', () => {
+    expect(parseCliArgs(['--config', 'my.json', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], config: 'my.json', open: true, prs: true });
+    expect(parseCliArgs(['--config=~/p.json'], {})).toMatchObject({ config: '~/p.json' });
+    expect(() => parseCliArgs(['--config'], {})).toThrow(UsageError);
+    expect(() => parseCliArgs(['--config='], {})).toThrow(new UsageError('--config needs a path'));
+  });
+
+  it('says in the help where the config file is, its example, precedence, and that it never holds the token (W103)', () => {
+    expect(USAGE).toContain('[--config <path>]');
+    const help = USAGE.replace(/\s+/g, ' ');
+    expect(help).toContain('--config <path> Read this config file instead of ~/.pitwall/config.json. It must exist.');
+    expect(help).toContain("pitwall reads config.json in ~/.pitwall, or in PITWALL_HOME when that's set, if it's there, or else the file --config names.");
+    expect(help).toContain('{ "path": "~/work", "github": { "owners": ["example-co"] } }');
+    expect(help).toContain("Roots given as arguments replace the file's, and each keeps its \"github\" settings when it's the same directory as one in the file.");
+    expect(help).toContain('It can\'t hold the token: PITWALL_TOKEN comes from the environment only.');
+    expect(help).toContain('PITWALL_HOME Where config.json, launch files and attachments are, instead of ~/.pitwall.');
+  });
 });
 
 describe('fallbackPortMessage', () => {
@@ -167,6 +186,44 @@ describe('resolveRoots', () => {
 
   it('fails clearly for a root that is a file', () => {
     expect(() => resolveRoots(['file'], tmp)).toThrow(new UsageError(`root is not a directory: ${join(tmp, 'file')}`));
+  });
+});
+
+describe('effectiveRoots (W103)', () => {
+  let tmp: string;
+  const file = '/home/example/.pitwall/config.json';
+  const configured = (...paths: string[]) => ({ file, roots: paths.map((path, i) => ({ key: `roots[${i}]`, path, real: path })) });
+
+  beforeAll(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
+    await mkdir(join(tmp, 'a'));
+    await mkdir(join(tmp, 'b'));
+    await writeFile(join(tmp, 'file'), '');
+  });
+
+  afterAll(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("uses the arguments when there are any, replacing the file's roots", () => {
+    expect(effectiveRoots(['a'], configured(join(tmp, 'b')), tmp)).toEqual([join(tmp, 'a')]);
+  });
+
+  it("uses the file's roots without arguments, in their order", () => {
+    expect(effectiveRoots([], configured(join(tmp, 'b'), join(tmp, 'a')), tmp)).toEqual([join(tmp, 'b'), join(tmp, 'a')]);
+  });
+
+  it('uses the current directory with neither', () => {
+    expect(effectiveRoots([], { file }, tmp)).toEqual([tmp]);
+  });
+
+  it("names the file's key when one of its roots isn't a directory", () => {
+    expect(() => effectiveRoots([], configured(join(tmp, 'a'), join(tmp, 'file')), tmp)).toThrow(
+      new UsageError(`root is not a directory: ${join(tmp, 'file')} ("roots[1]" in ${file})`),
+    );
+    expect(() => effectiveRoots([], configured(join(tmp, 'missing')), tmp)).toThrow(
+      new UsageError(`root does not exist: ${join(tmp, 'missing')} ("roots[0]" in ${file})`),
+    );
   });
 });
 

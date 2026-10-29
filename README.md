@@ -40,7 +40,7 @@ npm run build
 node dist/cli.js ~/code
 ```
 
-- **The root:** `~/code` stands for the directory that holds your work. pitwall lists every session whose working directory is in it or below it. Give two or more roots, such as `~/work ~/oss`, to get a tab for each, or none for the current directory.
+- **The root:** `~/code` stands for the directory that holds your work. pitwall lists every session whose working directory is in it or below it. Give two or more roots, such as `~/work ~/oss`, to get a tab for each, or none for the current directory. To stop typing them, list them in the [config file](#configuration).
 - **npm's notes:** `npm ci` may say it skipped install scripts for `esbuild`, `fsevents` and `node-pty`, as recent npm 11 releases do by default. On macOS that's fine: `node-pty`, the one native module, loads the macOS build it ships with, and pitwall makes its helper executable the first time it attaches. It may also report advisories in two dev dependencies, Vite and happy-dom. pitwall uses Vite only to build the web UI, never its dev server, and happy-dom only in `npm test`.
 - **On Linux,** which is untried, `node-pty` ships no build and compiles in its install script, which needs Python, `make` and a C++ compiler. npm 10 runs that script, as CI does; npm 11 skips it unless it's approved (`npm help install-scripts`). Without it, attaching to a session fails with a message, and the rest of pitwall works.
 
@@ -68,7 +68,7 @@ node dist/cli.js ~/code
   - **End** a running interactive session, after a confirmation, by sending its Claude Code process SIGTERM, never SIGKILL. Its terminal goes back to the shell, and its conversation is kept, but a reply in progress is lost. One that's still working asks again, naming what's running. pitwall never ends a relay, its own or another pitwall's, or a process it runs under.
   - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg`.
   - **Open** a session's directory in VS Code or Cursor.
-- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
+- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
 
 ### Security, in brief
 
@@ -92,14 +92,15 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 From the clone, after `npm run build`:
 
 ```
-node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
+node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
 ```
 
 `npm start -- [root...]`, with the same options, runs the same thing.
 
 | Option | What it does | Default |
 | --- | --- | --- |
-| `root...` | The directories to watch. Sessions whose working directory is in a root or below it are listed. Two or more roots get a tab each | The current directory |
+| `root...` | The directories to watch. Sessions whose working directory is in a root or below it are listed. Two or more roots get a tab each. They replace the config file's roots | The config file's roots, or the current directory |
+| `--config <path>` | Read this [config file](#configuration) instead of `~/.pitwall/config.json`. It must exist | `~/.pitwall/config.json`, if it's there |
 | `--port <n>` | The port on 127.0.0.1. A busy default falls back to a free port; a port you give fails if it's busy. `0` always picks a free one | 4517 |
 | `--interval <seconds>` | How often to poll `claude agents`, in whole seconds from 1 to 300 | 5 |
 | `--no-open` | Don't open the browser. `PITWALL_NO_OPEN=1` does the same | Opens it |
@@ -108,7 +109,28 @@ node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open] [--no
 | `-v`, `--version` | Show the version | |
 
 - **`PITWALL_TOKEN`:** a fixed token instead of a new one every run, so a pinned tab keeps working across restarts on the same port. It must be at least 32 characters from `A-Z`, `a-z`, `0-9`, `-` and `_`, with at least 8 different ones and not one piece repeated, as in `abcabc…`. It isn't printed. Any page or script that ever saw it can drive every later run that uses it, so use it only on a single-user machine ([D7](docs/decisions.md#d7---the-browser-is-opened-through-a-launch-file-not-a-url-with-the-token-in-it)). pitwall reads it from the environment only, never from a `.env` file.
-- **`PITWALL_HOME`:** where pitwall keeps its own files, instead of `~/.pitwall`.
+- **`PITWALL_HOME`:** where pitwall keeps its own files and reads its config file, instead of `~/.pitwall`.
+
+### Configuration
+
+pitwall reads `~/.pitwall/config.json` when it's there, or `config.json` in `PITWALL_HOME` when that's set, or the file `--config <path>` names. With no file, every setting is its default. It's JSON, with `//` and `/* */` comments and trailing commas allowed. For now it holds the roots, and each root's GitHub owners:
+
+```jsonc
+{
+  "roots": [
+    // A path: absolute, or starting with ~/
+    "~/oss",
+    // Or an object, with the GitHub owners whose pull requests it lists
+    { "path": "~/work", "github": { "owners": ["example-co"] } },
+  ],
+}
+```
+
+- **`roots`:** the roots to watch when you give none as arguments. Each is a path, absolute or starting with `~/`, or an object with a `path` and `github`.
+- **`github.owners`:** whose pull requests a root lists for repos it has no clone of: a list of GitHub users and organizations, `"all"` for every owner no other root lists, or `"none"` for pull requests in its own clones only. Without it, each owner goes to the root with the most clones from it. An owner can be listed for one root only, and only one root can have `"all"`. It takes effect with M4's redesign, which lists pull requests under their roots, still being built.
+- **Precedence:** a flag, then an environment variable, then the file, then the default. Roots you give as arguments replace the file's, not add to them, but each still keeps its `github` settings when it's the same directory as a root in the file, by its real path, so `pitwall ~/work` alone keeps `~/work`'s owners.
+- **Mistakes:** a bad value stops pitwall with a message naming the key and the file, as a bad flag does. An unknown key is a warning, so an older pitwall can read a newer file.
+- **Security** ([D24](docs/decisions.md#d24---a-config-file-beside-the-flags)): the file decides which directories pitwall reads, so on macOS and Linux it must be yours and not writable by group or others, or pitwall refuses it. It never holds the token: a key named like one is an error, since `PITWALL_TOKEN` comes from the environment only. Nothing in it can turn off the token, the `Host` and `Origin` checks or listening on 127.0.0.1 alone, and pitwall reads no config file from inside a repo.
 
 ### In the page
 
@@ -204,7 +226,7 @@ Apache-2.0: see [`LICENSE`](LICENSE). The bundled fonts and icons keep their own
 
 ## More
 
-- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D23, with their reasoning.
+- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D24, with their reasoning.
 - **[`PLAN.md`](PLAN.md):** the living plan: status, what's next, open questions, and each milestone's work.
 - **[`docs/design-system.md`](docs/design-system.md):** the web UI's design system: tokens, layout, components, content and accessibility.
 - **[`docs/spikes/`](docs/spikes/):** the experiments behind the decisions, one write-up each.
