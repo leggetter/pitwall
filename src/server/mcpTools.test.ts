@@ -252,6 +252,14 @@ describe('read_session', () => {
     expect(second.json.before).toBeUndefined();
   });
 
+  it('gives no before once the oldest page is read to its start, after a newer one (W113’s review)', async () => {
+    const newest: ConversationPage = { sessionId: 'a', entries: Array.from({ length: 10 }, (_, i) => entry(10 + i)), before: CURSOR };
+    const older: ConversationPage = { sessionId: 'a', entries: Array.from({ length: 10 }, (_, i) => entry(i)) };
+    const { json } = await call(tools({ sessions: [session('a')], pages: new Map([[undefined, newest], [CURSOR, older]]) }).read_session!, { id: 'a' });
+    expect((json.entries as unknown[]).length).toBe(20);
+    expect(json.before).toBeUndefined();
+  });
+
   it('cuts an entry to READ_ENTRY_MAX keeping its start and end, removes controls and bidi characters, and keeps the answer within its cap', async () => {
     const long = `START ${'a'.repeat(10_000)} END`;
     const page: ConversationPage = {
