@@ -44,6 +44,18 @@
 //   POST /api/sessions/:sessionId/recap/refresh  then recapRoutes.ts: a recap now; 409 with --no-recaps,
 //                                                429 when the day's budget is spent or one is running
 //
+// With the supervisor on (M5, W112, W113), the snapshot carries its state too, and goes out again when
+// that changes (snapshotSupervisor.ts):
+//
+//   POST /api/supervisor/message, /start, /interrupt   then supervisorRoutes.ts; 409 with --no-supervisor
+//   GET /api/supervisor/conversation   its own transcript, paged as a session's, under the same limit;
+//                                      404 before it has one, and with --no-supervisor
+//   POST /api/supervisor/approvals/:id  404 until W115
+//   /mcp                                outside /api/*, so neither the token nor the apiKey is taken
+//                                      there: Host only, then mcp.ts: no Origin, POST, the running
+//                                      supervisor's own bearer token, JSON, at most 64 KiB. 404 with
+//                                      --no-supervisor
+//
 // The token can read the API, for scripts. The apiKey, which only a client
 // that answered a challenge gets, can read it too, and is the only credential
 // for state-changing requests. Neither is ever logged. No response carries
@@ -54,13 +66,16 @@ import type { Duplex } from 'node:stream';
 import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { readFileSync } from 'node:fs';
 import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
 import { prsOff } from '../prs/index.js';
 import {
   ATTACH_PATH,
   CONVERSATION_STALE_STATUS,
   conversationPath,
+  MCP_PATH,
   SNAPSHOT_PATH,
+  supervisorConversationPath,
   subagentConversationPath,
   subagentsPath,
   WS_PATH,
@@ -74,10 +89,15 @@ import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
+import { registerMcp } from './mcp.js';
+import { createSupervisorTools } from './mcpTools.js';
 import { registerPrs } from './prs.js';
 import { registerRecaps } from './recapRoutes.js';
 import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
 import { createRecapView } from './snapshotRecaps.js';
+import { createSupervisorView } from './snapshotSupervisor.js';
+import { registerSupervisor } from './supervisorRoutes.js';
+import type { Supervisor } from '../supervisor/supervisor.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import {
@@ -110,6 +130,18 @@ const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
 /** The sub-agent routes (W76), decoded the same way. */
 const SUBAGENTS_ROUTE = decodeURIComponent(subagentsPath(':sessionId'));
 const SUBAGENT_CONVERSATION_ROUTE = decodeURIComponent(subagentConversationPath(':sessionId', ':agentId'));
+/** The supervisor's own conversation (W113). */
+const SUPERVISOR_CONVERSATION_ROUTE = supervisorConversationPath();
+
+/** pitwall's version, for the MCP server's serverInfo: package.json's, two folders up from src/server and dist/server alike. */
+function packageVersion(): string {
+  try {
+    const parsed = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: unknown };
+    return typeof parsed.version === 'string' ? parsed.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 /**
  * The status for a `before` cursor made for another version of the
@@ -212,14 +244,33 @@ export async function startServerWithInternals(
   const recaps = options.recaps;
   // With recaps, each session's recap, its title and Needs you's 'recap' reason, under W105's view.
   const recapped = recaps === undefined ? undefined : createRecapView(indexer, recaps);
+  // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
+  const supervisor = options.supervisor;
+  // With it, the snapshot carries its state, under W105's view.
+  const supervised = supervisor === undefined ? undefined : createSupervisorView(recapped ?? indexer, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
-  const snapshots = createSnapshotView(recapped ?? indexer, prs);
+  const snapshots = createSnapshotView(supervised ?? recapped ?? indexer, prs);
+  // pitwall's MCP server, for the supervisor alone (W112): read-only tools over what pitwall already has.
+  const mcp =
+    supervisor === undefined
+      ? undefined
+      : {
+          token: () => supervisor.mcpToken(),
+          version: packageVersion(),
+          tools: createSupervisorTools({
+            snapshots,
+            conversation: (sessionId, before) => indexer.conversation(sessionId, before),
+            ...(recaps === undefined ? {} : { recaps }),
+            prs,
+            ownSessionIds: () => supervisor.ownSessionIds(),
+          }),
+        };
   // Clone and start (W107): its route, its sweep of what a killed pitwall left once listening, and on close() its running clone stopped.
   const clone = createCloneRoute(indexer, prs, internals.clone);
   // The directory list (W70), your open PRs, Refresh (M4) and Clone and start (W107), then the input routes: attachments
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
-  // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
-  // test adds.
+  // detection starts here, end session (W90), which never ends the relay or the supervisor, the relay
+  // (W11), recaps (W110), the supervisor's routes and its MCP server (W112, W113), then any a test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
@@ -227,12 +278,19 @@ export async function startServerWithInternals(
     registerAttachments(app, attachments);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
-    registerEndSession(app, indexer, { isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true, ...internals.end, slots: commandSlots });
+    registerEndSession(app, indexer, {
+      isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
+      isSupervisor: (row) => supervisor?.isOwn(row) === true,
+      ...internals.end,
+      slots: commandSlots,
+    });
     registerRelay(app, indexer, relay);
     registerRecaps(app, indexer, recaps);
+    registerSupervisor(app, supervisor);
+    registerMcp(app, mcp);
     internals.routes?.(app);
   };
-  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
+  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -300,6 +358,8 @@ export async function startServerWithInternals(
   prs.start();
   // Recaps from the index's snapshots, now that there's a server to show them.
   recaps?.start(indexer);
+  // The supervisor's MCP config names this server's MCP URL, now that its port is known. Nothing starts yet.
+  supervisor?.bind({ mcpUrl: `http://${LOOPBACK_HOST}:${port}${MCP_PATH}` });
   clone.start();
 
   let closed: Promise<void> | undefined;
@@ -310,6 +370,7 @@ export async function startServerWithInternals(
       // No more fetches, and no more 'prs' messages to clients that are closing.
       prs.stop();
       snapshots.stop();
+      supervised?.stop();
       recapped?.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
@@ -321,6 +382,8 @@ export async function startServerWithInternals(
         clone.close(),
         attachments.close(),
         recaps?.close(),
+        // Its stdin closed, then SIGTERM and SIGKILL if it lingers; its MCP config removed.
+        supervisor?.close(),
       ]).then(() => undefined);
       return closed;
     },
@@ -346,9 +409,11 @@ interface AppContext {
   webRoot: string;
   port(): number;
   routes: ServerInternals['routes'];
+  /** The supervisor, for its conversation's pages (W113). Absent with --no-supervisor. */
+  supervisor?: Pick<Supervisor, 'conversation'>;
 }
 
-function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
+function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes, supervisor }: AppContext): Hono {
   const app = new Hono();
   // Conversation pages being read now.
   let conversationReads = 0;
@@ -443,6 +508,14 @@ function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes }:
     const agentId = c.req.param('agentId');
     if (agentId === undefined || !isSafeAgentId(agentId)) return c.body(null, 404);
     return pageOf(c, (before) => indexer.subagentConversation(lookup.session.sessionId, agentId, before));
+  });
+
+  // The supervisor's own conversation (W113), from its transcript, which the index never lists, paged
+  // and limited as a session's is. 404 before it has one, and with --no-supervisor.
+  app.get(SUPERVISOR_CONVERSATION_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    if (supervisor === undefined) return c.body(null, 404);
+    return pageOf(c, (before) => supervisor.conversation(before));
   });
 
   routes?.(app);

@@ -20,7 +20,7 @@ import {
 } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { CommandSlots } from './actions.js';
-import { DEFAULT_END_RATE, END_SIGNAL, isRelayName, parseEndRequest, workingError, type EndOptions, type Signaller } from './end.js';
+import { DEFAULT_END_RATE, END_SIGNAL, isRelayName, isSupervisorName, parseEndRequest, workingError, type EndOptions, type Signaller } from './end.js';
 import type { RunningServer } from './index.js';
 import type { ProcessInfo, ProcessLookup, ProcessParents, Processes } from './processes.js';
 import type { RelayManager } from './relay.js';
@@ -546,6 +546,29 @@ describe('end session: the fresh listing’s guards', () => {
     expect(res.status).toBe(409);
     expect(res.json).toMatchObject({ error: expect.stringMatching(/pitwall's own relay/) });
     expectNothingSignalled(started);
+  });
+
+  it('never ends pitwall’s supervisor (M5, W113): this pitwall’s, by Supervisor.isOwn(), or any session named as one is', async () => {
+    expect(isSupervisorName(' Pitwall-Supervisor ')).toBe(true);
+    expect(isSupervisorName('pitwall-supervisor-2')).toBe(false);
+    const own = await start({ end: { isSupervisor: (each) => each.pid === PID } });
+    const res = await end(own);
+    expect(res.status).toBe(409);
+    expect(res.json).toMatchObject({ error: "That's pitwall's own supervisor, which pitwall never ends." });
+    expectNothingSignalled(own);
+    const SUPERVISOR_ID = '88888888-8888-4888-8888-888888888888';
+    const named = await start({
+      indexer: fakeIndexer(snapshot(session(SUPERVISOR_ID, { name: 'pitwall-supervisor', pid: PID + 30 }))),
+      agents: fakeAgents({ ok: true, rows: [row({ sessionId: SUPERVISOR_ID, name: 'pitwall-supervisor', pid: PID + 30 })] }),
+    });
+    const fromSnapshot = await end(named, SUPERVISOR_ID);
+    expect(fromSnapshot.status).toBe(409);
+    expect(fromSnapshot.json).toMatchObject({ error: expect.stringMatching(/pitwall supervisor/) });
+    expectNothingSignalled(named);
+    const renamed = await start({ agents: fakeAgents({ ok: true, rows: [row({ name: 'Pitwall-Supervisor' })] }) });
+    const fromListing = await end(renamed);
+    expect(fromListing.status).toBe(409);
+    expectNothingSignalled(renamed);
   });
 });
 
