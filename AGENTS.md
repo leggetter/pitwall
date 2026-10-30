@@ -16,7 +16,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, is being built on `m4/integration`, which merges into `main` with Phil's approval. See "M4 - My open pull requests" and "M4 work breakdown" in `PLAN.md`, and `docs/design-system.md`.
 
-M5, the supervisor, is being built on `m5/integration`, branched from `m4/integration` before M4 reached `main`, starting with per-session recaps (W109 to W111). See "M5 - Supervisor" and "M5 work breakdown" in `PLAN.md`.
+M5, the supervisor, is being built on `m5/integration`, branched from `m4/integration` before M4 reached `main`, starting with per-session recaps (W109 to W111), then pitwall's read-only MCP server and the supervisor process (W112, W113). See "M5 - Supervisor" and "M5 work breakdown" in `PLAN.md`.
 
 ## Rules
 
@@ -50,7 +50,8 @@ npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <secon
                          `--port <n>` the port (default 4517, or a free one if it's busy),
                          `--no-open` leaves the browser alone, `--no-prs` turns off your open
                          pull requests, so pitwall never runs gh, `--no-recaps` turns off recaps, so
-                         pitwall never sends transcript excerpts to the model, and `--config <path>`
+                         pitwall never sends transcript excerpts to the model, `--no-supervisor` turns
+                         off the supervisor, so pitwall never runs it, and `--config <path>`
                          reads that config file instead of ~/.pitwall/config.json (README's Configuration)
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
                          (scripts/appcheck/README.md); --list, --only <part>, --widths, --themes, --ports
@@ -80,13 +81,19 @@ src/recaps/              per-session recaps (M5, W110, D26): engine.ts schedules
                          builds the input, prompt.ts the command line, environment and strict parsing, call.ts
                          runs one. The transcript reads are src/index/recapSources.ts; the snapshot's view
                          and routes are src/server/snapshotRecaps.ts and recapRoutes.ts. Off with --no-recaps
+src/supervisor/          the supervisor (M5, W113, D4): one claude -p session on Opus 5.5 that pitwall starts
+                         when the page asks, owns and resumes by its session id; prompt.ts its command line,
+                         environment and versioned system prompt, state.ts its 0600 state file, supervisor.ts
+                         the process and its stream. Its MCP server is src/server/mcp.ts (the route, by hand)
+                         and mcpTools.ts (the read-only tools, W112); the snapshot's view and routes are
+                         src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Off with --no-supervisor
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side
 src/test/                test helpers shared across test files, such as the v3 proof, made-up PRs, and
                          noClaude.ts, which fails any server test that would run `claude` or `gh` without
-                         PITWALL_LIVE=1, or open an editor at all; not built. Recap tests pass the engine a
-                         fake spawner, so none runs claude
+                         PITWALL_LIVE=1, or open an editor at all; not built. Recap and supervisor tests pass
+                         a fake spawner, and server tests a stand-in supervisor (supervisor.ts), so none runs claude
 web/                     the React web UI, built by Vite to dist/web
 web/public/theme-init.js sets the theme before first paint (a same-origin script, for the CSP)
 web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out
