@@ -898,6 +898,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [ ] Peers, sessions talking to each other: undecided ([#99](https://github.com/leggetter/pitwall/issues/99))
 - [ ] Chatting with a session from the Conversation tab, and sessions pitwall hosts: later, after M5 ([#108](https://github.com/leggetter/pitwall/issues/108))
 - [ ] A session asking the supervisor to spin off work, as an approval card labelled with the session that asked: after M5 (Phil, 2026-10-29)
+- [ ] Model and effort for each kind of work (a session, its sub-agents, the supervisor, recaps, the relay): defaults in the config file, overrides in the app's settings; after this round of work, M4's merge and M5 ([#114](https://github.com/leggetter/pitwall/issues/114); Phil, 2026-10-30, after the week's usage limit stopped three agents)
 
 ---
 
