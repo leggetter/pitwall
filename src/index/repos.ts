@@ -233,7 +233,12 @@ const sameRoots = (a: readonly string[], b: readonly string[]) => a.length === b
 
 export function createRepoDiscovery(options: RepoDiscoveryOptions = {}): RepoDiscovery {
   const fsTimeoutMs = options.fsTimeoutMs ?? REPOS_FS_TIMEOUT_MS;
-  /** The calls that didn't answer in time and still haven't, by kind and path: not made again until they do. */
+  /**
+   * The calls that didn't answer in time and still haven't, by kind and path: not made again until
+   * they do. Each one still holds one of libuv's worker threads, four by default and shared with all
+   * of pitwall's file I/O, so four hung mounts under the roots, at different paths, would stall it
+   * all (W117's review). Not guarded: refusing every call once two hang would empty the repo list.
+   */
   const unanswered = new Set<string>();
   /**
    * `call`, rejected with Unanswered when it takes longer than fsTimeoutMs, or at once while the same

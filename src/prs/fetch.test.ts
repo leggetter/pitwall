@@ -1,6 +1,6 @@
 // One fetch (fetch.ts), with a fake runFile: no test here runs gh. Each search is its own call
 // (W101), so most tests here fetch the author search alone, as W93's single search was.
-import { statSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -136,7 +136,7 @@ describe('fetchPullRequests: the command', () => {
     const options = calls[0]!.options;
     expect(options.timeoutMs).toBe(PRS_FETCH_TIMEOUT_MS);
     expect(options.maxStdoutBytes).toBe(PRS_PAGE_MAX_BYTES);
-    expect(options.env).toEqual({ PATH: '/usr/bin', HOME: '/home/demo', GH_TOKEN: 'kept-for-gh', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' });
+    expect(options.env).toEqual({ PATH: '/usr/bin', HOME: '/home/demo', GH_TOKEN: 'kept-for-gh', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_CEILING_DIRECTORIES: expect.stringContaining(os.tmpdir()) });
   });
 
   describe("in a 0700 directory of pitwall's own, never the shared temp directory itself (W108)", () => {
@@ -192,6 +192,18 @@ describe('fetchPullRequests: the command', () => {
   it('builds page 2 with -f after=<cursor> only', () => {
     expect(fields(ghArgs('mentioned', 'Y3Vyc29yOjEwMA=='))).toEqual({ query: PRS_QUERIES.mentioned, q: PRS_SEARCHES.mentioned, after: 'Y3Vyc29yOjEwMA==' });
     expect(ghArgs('authored').some((arg) => arg.startsWith('after='))).toBe(false);
+  });
+
+  it("stops git's search for a repository at the temp directory gh's own directory is made in (W117's review)", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-ceiling-'));
+    try {
+      const ceilings = ghEnvironment({}, tmp).GIT_CEILING_DIRECTORIES?.split(':');
+      expect(ceilings).toContain(tmp);
+      expect(ceilings).toContain(realpathSync.native(tmp));
+      expect(ghEnvironment({ GIT_CEILING_DIRECTORIES: '/elsewhere' }, tmp).GIT_CEILING_DIRECTORIES?.split(':')).toContain('/elsewhere');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('copies the environment rather than changing it', () => {

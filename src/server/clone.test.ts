@@ -401,7 +401,7 @@ describe('POST CLONE_PATH: cloning', () => {
     expect(basename(call?.options.cwd as string)).toMatch(/^pitwall-gh-[A-Za-z0-9]{6}$/);
     expect(cwdMode).toBe(0o700);
     expect(await lstat(call?.options.cwd as string).then(() => true, () => false)).toBe(false);
-    expect(call?.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_HOST: 'github.com', GIT_TERMINAL_PROMPT: '0' });
+    expect(call?.options.env).toEqual({ PATH: '/usr/bin', HOME: '/Users/example', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_CEILING_DIRECTORIES: expect.stringContaining(os.tmpdir()), GH_HOST: 'github.com', GIT_TERMINAL_PROMPT: '0' });
     // In place, and nothing else left in the root.
     expect((await lstat(join(target, '.git'))).isDirectory()).toBe(true);
     expect(await rootEntries()).toEqual(['Demo-App']);

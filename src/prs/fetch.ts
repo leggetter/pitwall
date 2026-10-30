@@ -10,7 +10,9 @@
 //                 directory of pitwall's own, `mkdtemp(<tmpdir>/pitwall-gh-)`, one per fetch,
 //                 removed after, as W107's clone runs gh (W108's finding): never the directory
 //                 pitwall started in, so its git remotes never matter, nor the shared temp
-//                 directory itself, which on Linux any local user can write to, so a `.git` planted
+//                 directory itself, which on Linux any local user can write to; and git, should
+//                 anything gh runs look for a repository, stops at the temp directory
+//                 (GIT_CEILING_DIRECTORIES, ghEnvironment(), W117's review), so a `.git` planted
 //                 there is never read. GitHub's token stays inside gh: pitwall never reads it
 //   calls         one per page of each search, the three searches at once, each page after the one
 //                 before. Not one call with the three as aliases: GitHub ends a request that takes
@@ -48,6 +50,7 @@
 // PRs; review requested 3 points, 1.7 s; mentioned 2 points, 2.6 s. 7 points a fetch (PLAN.md, W101).
 // In pages of 25 (W105), the same day: yours 55 PRs in 3 pages of 3.7, 4.8 and 2.9 s, 11.4 s in
 // all; review requested 1.5 s; mentioned 2.6 s. A page of 25 costs 1 point by GitHub's formula.
+import { realpathSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -245,9 +248,22 @@ export function exitError(code: number | undefined): string {
   return `gh api failed${code === undefined ? '' : ` with exit code ${code}`}. Check your network, or run gh auth status, then Refresh.`;
 }
 
-/** The environment gh runs in: yours, without what would make it print for a terminal, and never prompting. */
-export function ghEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result: NodeJS.ProcessEnv = { ...env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' };
+/**
+ * The environment gh runs in: yours, without what would make it print for a terminal, and never
+ * prompting. And git, if anything gh runs looks for a repository from its working directory, stops at
+ * the temp directory that directory is made in, `tmpdir` by the path given and its real path
+ * (GIT_CEILING_DIRECTORIES, before any you set): git searches parent folders, and on Linux anyone can
+ * put a `.git` in the shared temp directory (W117's review saw git 2.50 find one there).
+ */
+export function ghEnvironment(env: NodeJS.ProcessEnv, tmpdir: string = os.tmpdir()): NodeJS.ProcessEnv {
+  const ceilings = new Set([tmpdir]);
+  try {
+    ceilings.add(realpathSync.native(tmpdir));
+  } catch {
+    // The path given alone.
+  }
+  if (env.GIT_CEILING_DIRECTORIES) ceilings.add(env.GIT_CEILING_DIRECTORIES);
+  const result: NodeJS.ProcessEnv = { ...env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_CEILING_DIRECTORIES: [...ceilings].join(':') };
   delete result.GH_FORCE_TTY;
   delete result.CLICOLOR_FORCE;
   return result;
@@ -313,7 +329,7 @@ export async function fetchSearch(relation: PullRequestRelation, options: FetchO
     return inGhDirectory(options.tmpdir ?? os.tmpdir(), (dir) => fetchSearch(relation, { ...options, cwd: dir }), () => ({ ok: false, reason: 'error', error: FETCH_ERRORS.noDirectory }));
   }
   const now = options.monotonicNow ?? (() => performance.now());
-  const env = ghEnvironment(options.env ?? process.env);
+  const env = ghEnvironment(options.env ?? process.env, options.tmpdir ?? os.tmpdir());
 
   const pass = async (): Promise<Pass> => {
     const deadline = now() + (options.timeoutMs ?? PRS_FETCH_TIMEOUT_MS);
