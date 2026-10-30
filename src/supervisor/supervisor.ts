@@ -25,8 +25,9 @@
 //
 //   $PITWALL_HOME/supervisor/           0700   its folder
 //     state.json                        0600   the session id and the prompt's version (state.ts)
-//     mcp.json                          0600   the MCP config, with this process's bearer token,
-//                                              removed when the process exits
+//     mcp-<pid>.json                    0600   the MCP config, with this process's bearer token, one
+//                                              per pitwall, removed when the supervisor exits; one a
+//                                              pitwall that died left is removed at the next start
 //     session/                          0700   the empty folder claude runs in, where nothing is written
 //
 // The MCP server's bearer token is new for each process (crypto random) and valid only while that
@@ -58,7 +59,7 @@ import { ConversationCursorError, readConversationPage } from '../index/conversa
 import { runFile } from '../index/exec.js';
 import { isRecord } from '../index/guards.js';
 import { defaultConfigDir, encodeProjectDir, isSessionUuid } from '../index/transcripts.js';
-import type { ConversationPage, SupervisorState } from '../shared/protocol.js';
+import { MCP_SERVER_NAME, type ConversationPage, type SupervisorState } from '../shared/protocol.js';
 import { ensureLaunchDir, pitwallHome } from '../server/launch.js';
 import { checkClaudeVersion, spawnRelayChild, type RelayChild, type RelayChildEvents, type RelaySpawner } from '../server/relay.js';
 import { nameKey, oneLine, userMessageLine } from '../server/relayPrompt.js';
@@ -76,8 +77,52 @@ import {
 } from './prompt.js';
 import { supervisorStateFile, SUPERVISOR_STATE_FILE, type SupervisorStateStore } from './state.js';
 
-/** The MCP config file's name in the supervisor's folder. */
-export const SUPERVISOR_MCP_CONFIG_FILE = 'mcp.json';
+/**
+ * The MCP config file's name in the supervisor's folder: one per pitwall process, by its pid, so two
+ * pitwalls on one home never write or remove each other's (W113's review).
+ */
+export function supervisorMcpConfigFile(pid: number = process.pid): string {
+  return `mcp-${pid}.json`;
+}
+
+const MCP_CONFIG_FILE = /^mcp-(\d+)\.json$/;
+
+/**
+ * Removes the MCP config files that pitwall processes which are gone left in `dir`, as a crash or
+ * SIGKILL does: only regular files named as supervisorMcpConfigFile() names them, owned by this user,
+ * for a pid that isn't running. Never throws.
+ */
+export function sweepMcpConfigs(dir: string, alive: (pid: number) => boolean = pidAlive): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  const uid = process.getuid?.();
+  for (const name of names) {
+    const pid = Number(MCP_CONFIG_FILE.exec(name)?.[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid || alive(pid)) continue;
+    const file = path.join(dir, name);
+    try {
+      const stats = lstatSync(file);
+      if (!stats.isFile() || (uid !== undefined && stats.uid !== uid)) continue;
+      unlinkSync(file);
+    } catch {
+      // Left for the next start.
+    }
+  }
+}
+
+/** Whether a process with this pid is running: one that exists but isn't ours (EPERM) counts. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 /** start()'s and send()'s answer, which the routes turn into a status (src/server/supervisorRoutes.ts). */
 export type SupervisorOutcome =
@@ -213,7 +258,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   const home = path.resolve(options.home ?? pitwallHome());
   const dir = path.join(home, SUPERVISOR_DIR_NAME);
   const sessionDir = path.join(dir, SUPERVISOR_SESSION_DIR_NAME);
-  const configFile = path.join(dir, SUPERVISOR_MCP_CONFIG_FILE);
+  const configFile = path.join(dir, supervisorMcpConfigFile());
   const claudeBin = options.claudeBin ?? 'claude';
   const spawn = options.spawn ?? spawnRelayChild;
   const agents = options.agents ?? createAgentsSource(options.claudeBin === undefined ? {} : { claudeBin: options.claudeBin });
@@ -331,6 +376,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     try {
       ensureLaunchDir(home);
       prepareDir(dir);
+      sweepMcpConfigs(dir);
       cwd = prepareDir(sessionDir);
       dirs.add(cwd);
     } catch {
@@ -594,6 +640,11 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       return;
     }
     if (!isRecord(event)) return;
+    // A message from another session, which the supervisor refuses (SUPERVISOR_SETTINGS): if one
+    // reaches it anyway, fail closed (W113's review).
+    if (isRecord(event.origin) && event.origin.kind === 'peer') {
+      return trip(p, 'A message from another session reached the supervisor, though it refuses them, so pitwall stopped it. Press Start to start it again.');
+    }
     switch (event.type) {
       case 'control_response':
         return onControlResponse(p, event);
@@ -661,6 +712,16 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     }
     if (event.permissionMode !== undefined && event.permissionMode !== 'dontAsk') {
       return trip(p, "The supervisor started in a permission mode pitwall didn't ask for, so pitwall stopped it.");
+    }
+    // pitwall's MCP server, its only way to read anything (W113's review): missing or failed, it would
+    // answer from nothing. Another status, such as pending, is only logged.
+    if (Array.isArray(event.mcp_servers)) {
+      const own = event.mcp_servers.find((server) => isRecord(server) && server.name === MCP_SERVER_NAME);
+      const status = isRecord(own) ? own.status : undefined;
+      if (own === undefined || status === 'failed') {
+        return trip(p, "The supervisor started without pitwall's tools connected, so it couldn't read your sessions; pitwall stopped it. Press Start to try again.");
+      }
+      if (status !== 'connected') log(`pitwall's MCP server is ${oneLine(String(status), 40)} for the supervisor.`);
     }
     const id = event.session_id;
     if (typeof id === 'string' && isSessionUuid(id) && id !== sessionId) {
@@ -862,12 +923,12 @@ export function heldBy(stderr: string): { id?: string } | undefined {
 
 /**
  * What 'held' says: whose session it is, the command that frees it, and that pitwall won't run it.
- * An interactive row with the supervisor's name is another pitwall's supervisor, on the same home,
- * as an `npm run dev` pitwall beside an installed one is.
+ * An interactive row with the supervisor's name is most likely another pitwall's supervisor, on the
+ * same home, as an `npm run dev` pitwall beside an installed one is; or you, resuming it by hand.
  */
 export function heldError(shortId: string | undefined, kind: AgentRow['kind'], name?: string): string {
   if (kind !== 'background' && name !== undefined && nameKey(name.trim()) === nameKey(SUPERVISOR_NAME)) {
-    return "Another pitwall is running the supervisor's conversation, so this one can't resume it. Close the other pitwall, then press Start.";
+    return "Another pitwall, or a terminal where you resumed it, is running the supervisor's conversation, so this one can't resume it. Close that, then press Start.";
   }
   if (kind !== 'background') {
     return "Another Claude Code session is running the supervisor's conversation, so pitwall can't resume it. Exit that session, then press Start. pitwall won't end it for you.";

@@ -50,10 +50,14 @@ export const SUPERVISOR_ALLOWED_TOOLS: readonly string[] = SUPERVISOR_READ_TOOLS
 /**
  * Settings on top of `--setting-sources ""`, which loads none of yours: no auto memory, which
  * would otherwise be the one thing read from your files and would make a memory folder (spike
- * 010, finding 1). Messages from other sessions are left at Claude Code's default, as for the
- * relay, so a session's reply can reach the supervisor once it can message (W115).
+ * 010, finding 1). Messages from other sessions are refused (`crossSessionInbound: 'refuse'`, W113's
+ * review; the coordinator's call, safer and reversible): otherwise any local session, a
+ * prompt-injected one included, could start an Opus turn at your expense with its own text. Replies
+ * to the supervisor's messages (W115) are read from the receiving session's transcript through the
+ * index, as the relay's are (spike 009, recommendation 4), so it needn't take any. supervisor.ts also
+ * stops it if one ever arrives.
  */
-export const SUPERVISOR_SETTINGS = JSON.stringify({ autoMemoryEnabled: false });
+export const SUPERVISOR_SETTINGS = JSON.stringify({ autoMemoryEnabled: false, crossSessionInbound: 'refuse' });
 
 /**
  * Appended to Claude Code's system prompt with --append-system-prompt. Version

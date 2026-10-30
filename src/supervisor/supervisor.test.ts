@@ -1,7 +1,7 @@
 // The supervisor's process (M5, W113), with a fake child that speaks stream-json as Claude Code
 // 2.1.312 does (spike 009, and the handshake probe in src/server/mcp.ts), a fake session list and a
 // state store in memory. No test runs `claude`. Made-up sessions and text only.
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -11,7 +11,7 @@ import { SUPERVISOR_MODEL } from '../shared/protocol.js';
 import type { RelayChild, RelayChildEvents } from '../server/relay.js';
 import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_NAME } from './prompt.js';
 import { memoryState, type SupervisorRecord } from './state.js';
-import { createSupervisor, heldBy, heldError, turnCost, type Supervisor, type SupervisorOptions } from './supervisor.js';
+import { createSupervisor, heldBy, heldError, sweepMcpConfigs, turnCost, type Supervisor, type SupervisorOptions } from './supervisor.js';
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-000000000001';
 const OTHER_SESSION = 'bbbbbbbb-0000-4000-8000-000000000002';
@@ -189,7 +189,7 @@ describe('starting the supervisor', () => {
     expect(flag(args, '--setting-sources')).toBe('');
     expect(args).toContain('--strict-mcp-config');
     expect(flag(args, '--allowed-tools')).toBe('mcp__pitwall__list_sessions,mcp__pitwall__read_session,mcp__pitwall__list_prs,mcp__pitwall__get_recap');
-    expect(flag(args, '--settings')).toBe('{"autoMemoryEnabled":false}');
+    expect(flag(args, '--settings')).toBe('{"autoMemoryEnabled":false,"crossSessionInbound":"refuse"}');
     expect(args).not.toContain('--resume');
     expect(args).not.toContain('--permission-prompt-tool');
     expect(options.cwd).toBe(realpathSync(sessionDir));
@@ -207,7 +207,7 @@ describe('starting the supervisor', () => {
     const { supervisor, children, dir, sessionDir } = harness();
     await supervisor.start();
     const file = flag(children[0]!.args, '--mcp-config')!;
-    expect(file).toBe(path.join(path.resolve(dir), 'mcp.json'));
+    expect(file).toBe(path.join(path.resolve(dir), `mcp-${process.pid}.json`));
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     expect(statSync(sessionDir).mode & 0o777).toBe(0o700);
@@ -287,13 +287,22 @@ describe('messages', () => {
     expect(supervisor.state().status).toBe('idle');
   });
 
-  it('is working while a turn a session started runs, with no message of yours', async () => {
+  it('stops itself when a message from another session reaches it, since it refuses them (W113’s review)', async () => {
     const { supervisor, children } = harness();
     await supervisor.start();
     children[0]!.init();
     expect(supervisor.state().status).toBe('working');
     children[0]!.result({ origin: { kind: 'peer', name: 'pitwall-test-target' } });
-    expect(supervisor.state().status).toBe('idle');
+    expect(supervisor.state()).toMatchObject({ status: 'failed', error: expect.stringContaining('A message from another session reached the supervisor') });
+  });
+
+  it('stops itself when pitwall’s MCP server failed to connect, or is missing (W113’s review)', async () => {
+    for (const servers of [[{ name: 'pitwall', status: 'failed' }], [{ name: 'another', status: 'connected' }]]) {
+      const { supervisor, children } = harness();
+      await supervisor.start();
+      children[0]!.init(undefined, { mcp_servers: servers });
+      expect(supervisor.state()).toMatchObject({ status: 'failed', error: expect.stringContaining("without pitwall's tools connected") });
+    }
   });
 
   it('interrupts a running turn with the stream’s interrupt control request, and says when nothing runs', async () => {
@@ -513,6 +522,20 @@ describe('turnCost()', () => {
   });
 });
 
+describe('sweepMcpConfigs()', () => {
+  it('removes the config files of pitwalls that are gone, and nothing else (W113’s review)', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-sweep-'));
+    try {
+      for (const name of ['mcp-111.json', 'mcp-222.json', `mcp-${process.pid}.json`, 'mcp.json', 'state.json', 'mcp-333.json.tmp']) writeFileSync(path.join(dir, name), '{}');
+      mkdirSync(path.join(dir, 'mcp-444.json'));
+      sweepMcpConfigs(dir, (pid) => pid === 222);
+      expect(readdirSync(dir).sort()).toEqual(['mcp-222.json', 'mcp-333.json.tmp', 'mcp-444.json', `mcp-${process.pid}.json`, 'mcp.json', 'state.json'].sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('heldBy() and heldError()', () => {
   it('reads Claude Code’s refusal for its short id, and says what to run, never doing it', () => {
     expect(heldBy('Error: That session is running in the background (ab12cd34). Run `claude attach ab12cd34`')).toEqual({ id: 'ab12cd34' });
@@ -520,6 +543,6 @@ describe('heldBy() and heldError()', () => {
     expect(heldBy('No conversation found')).toBeUndefined();
     expect(heldError('ab12cd34', 'background')).toContain('Run `claude stop ab12cd34` to hand it back');
     expect(heldError(undefined, 'interactive')).toContain('Exit that session');
-    expect(heldError(undefined, 'interactive', 'pitwall-supervisor')).toBe("Another pitwall is running the supervisor's conversation, so this one can't resume it. Close the other pitwall, then press Start.");
+    expect(heldError(undefined, 'interactive', 'pitwall-supervisor')).toBe("Another pitwall, or a terminal where you resumed it, is running the supervisor's conversation, so this one can't resume it. Close that, then press Start.");
   });
 });

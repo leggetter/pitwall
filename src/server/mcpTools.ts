@@ -319,7 +319,11 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
             next = { ...(cursor.page === undefined ? {} : { page: cursor.page }), skip: entries.length - 1 - index };
             break;
           }
-          if (page.before === undefined) break;
+          // The oldest page, read to its start: nothing older, so no cursor (W113's review).
+          if (page.before === undefined) {
+            next = undefined;
+            break;
+          }
           cursor = { page: page.before, skip: 0 };
           next = cursor;
         }

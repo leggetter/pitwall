@@ -36,6 +36,8 @@ describe('supervisorArgs()', () => {
     expect(args).not.toContain('--resume');
     expect(args).not.toContain('--bare');
     expect(args).not.toContain('--dangerously-skip-permissions');
+    // Messages from other sessions refused (W113's review), auto memory off.
+    expect(JSON.parse(value('--settings')!)).toEqual({ autoMemoryEnabled: false, crossSessionInbound: 'refuse' });
     const resumed = supervisorArgs({ mcpConfig: '/x', resume: 'aaaaaaaa-0000-4000-8000-000000000001' });
     expect(resumed.slice(-2)).toEqual(['--resume', 'aaaaaaaa-0000-4000-8000-000000000001']);
   });
