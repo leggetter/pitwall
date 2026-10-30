@@ -220,8 +220,8 @@ export function cloneArgs(slug: string, dir: string): string[] {
  * default host, which GH_HOST or gh's config can make an Enterprise one; and git never asking for a
  * username or password. gh's own `git_protocol`, https or ssh, still decides how it clones.
  */
-export function cloneEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result: NodeJS.ProcessEnv = { ...gitEnvironment(ghEnvironment(env)), GH_HOST: 'github.com', GIT_TERMINAL_PROMPT: '0' };
+export function cloneEnvironment(env: NodeJS.ProcessEnv, tmpdir: string = os.tmpdir()): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = { ...gitEnvironment(ghEnvironment(env, tmpdir)), GH_HOST: 'github.com', GIT_TERMINAL_PROMPT: '0' };
   // Configuration from the environment can redirect a repository too (core.worktree), and a template
   // directory installs hooks into the new clone: the clone takes only the user's own config files.
   for (const name of Object.keys(result)) {
@@ -444,7 +444,7 @@ export function createCloneRoute(indexer: Pick<Indexer, 'latest'>, prs: Pick<PrS
           await run(options.ghBin ?? 'gh', cloneArgs(slug, into), {
             cwd: ghCwd,
             timeoutMs,
-            env: cloneEnvironment(options.env ?? process.env),
+            env: cloneEnvironment(options.env ?? process.env, tmp),
             maxStdoutBytes: 1024 * 1024,
             processGroup: true,
             signal: current.controller.signal,
