@@ -1,6 +1,7 @@
 import type { Indexer } from '../index/index.js';
 import type { PrSource } from '../prs/index.js';
 import type { RecapEngine } from '../recaps/engine.js';
+import type { Supervisor } from '../supervisor/supervisor.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
 
@@ -52,6 +53,15 @@ export interface ServerOptions {
    * reaches the model.
    */
   recaps?: RecapEngine;
+  /**
+   * The supervisor (M5, W113): the one the CLI makes with createSupervisor(), so the indexer can
+   * hide it. The server gives it its MCP server's URL once listening, composes its state into the
+   * snapshot, serves its routes and pitwall's MCP server (W112), and closes it on close(). It starts
+   * only when the page asks. Without it, the supervisor is off, as with `--no-supervisor`: no
+   * snapshot has `supervisor`, its routes answer 409 or 404, the MCP route 404, and nothing runs it,
+   * so a test never reaches the model.
+   */
+  supervisor?: Supervisor;
 }
 
 export interface RunningServer {

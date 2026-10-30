@@ -31,7 +31,9 @@
 //      snapshot's pid. No other row names that pid, and no row names another pid for the session, by
 //      every row it printed, those parseAgentRows() skipped or merged included (pidOwners(),
 //      sessionPids()). It isn't a relay: this pitwall's (relay.ts' isRelay), or any session named
-//      RELAY_NAME, as another pitwall's relay is, in the snapshot or the listing.
+//      RELAY_NAME, as another pitwall's relay is, in the snapshot or the listing. Nor the supervisor
+//      (M5, W113): this pitwall's (Supervisor.isOwn()), or any interactive session named
+//      SUPERVISOR_NAME, as another pitwall's is.
 //   4. The process started no later than the session did, by the listing's startedAt: ps's `lstart`
 //      is whole seconds, rounded down, so it's never later than the real start, and Claude Code
 //      writes startedAt after its process has started, so the session's own process always passes.
@@ -63,6 +65,7 @@ import { END_SESSION_WAIT_MS, endSessionPath, type EndSessionResult, type EndSes
 import { CommandSlots, LOOKUP_ERRORS, RateWindow } from './actions.js';
 import { ancestry, createProcesses, isClaudeCommand, type ProcessInfo, type ProcessLookup, type Processes } from './processes.js';
 import { nameKey, RELAY_NAME } from './relayPrompt.js';
+import { SUPERVISOR_NAME } from '../supervisor/prompt.js';
 import { resolveSession } from './sessions.js';
 
 /** The signal End session sends, and the only one (spike 005). */
@@ -94,6 +97,8 @@ export interface EndOptions {
   signal?: Signaller;
   /** True for a `claude agents` row that is pitwall's own relay (RelayManager.isRelay), or one of its recap calls (RecapEngine.isOwn). Default none. */
   isRelay?: (row: AgentRow) => boolean;
+  /** True for a `claude agents` row that is pitwall's supervisor (Supervisor.isOwn()). Default none. */
+  isSupervisor?: (row: AgentRow) => boolean;
   /** pitwall's own pid. Default process.pid. */
   selfPid?: number;
   /** The slots shared with stop, remove, resume and open (actions.ts). The server passes its own. Default: new ones. */
@@ -113,6 +118,11 @@ export interface EndOptions {
 /** True for a session named as a pitwall relay is, this pitwall's or another's (RELAY_NAME). */
 export function isRelayName(name: string): boolean {
   return nameKey(name.trim()) === nameKey(RELAY_NAME);
+}
+
+/** True for a session named as a pitwall supervisor is, this pitwall's or another's (SUPERVISOR_NAME). */
+export function isSupervisorName(name: string): boolean {
+  return nameKey(name.trim()) === nameKey(SUPERVISOR_NAME);
 }
 
 /** The request, when it's `{}` or `{ whileWorking: true }`. */
@@ -172,6 +182,7 @@ export function registerEndSession(
   const processes = options.processes ?? createProcesses();
   const signal = options.signal ?? defaultSignal;
   const isRelay = options.isRelay ?? (() => false);
+  const isSupervisor = options.isSupervisor ?? (() => false);
   const selfPid = options.selfPid ?? process.pid;
   const slots = options.slots ?? new CommandSlots();
   const endRate = options.endRate ?? DEFAULT_END_RATE;
@@ -231,6 +242,7 @@ export function registerEndSession(
       if (!session.alive || pid === undefined || !Number.isSafeInteger(pid) || pid <= 1) return refuse(c, "It isn't running, so there's nothing to end.", 409);
       if (!isSessionUuid(sessionId)) return refuse(c, "Its session id isn't one pitwall can act on.", 409);
       if (isRelayName(session.name)) return refuse(c, "That's a pitwall relay, which pitwall never ends.", 409);
+      if (isSupervisorName(session.name)) return refuse(c, "That's a pitwall supervisor, which pitwall never ends.", 409);
       if (ending.has(sessionId)) return refuse(c, 'pitwall is already ending this session.', 409);
 
       const release = slots.acquire();
@@ -272,6 +284,8 @@ export function registerEndSession(
         }
         if (isRelay(row)) return refuse(c, "That's pitwall's own relay, which pitwall never ends.", 409);
         if (isRelayName(row.name)) return refuse(c, "That's a pitwall relay, which pitwall never ends.", 409);
+        if (isSupervisor(row)) return refuse(c, "That's pitwall's own supervisor, which pitwall never ends.", 409);
+        if (isSupervisorName(row.name)) return refuse(c, "That's a pitwall supervisor, which pitwall never ends.", 409);
 
         // 4. A process that started after the session did isn't the session's: lstart is rounded down, and startedAt is written after the start.
         const sessionStart = Date.parse(row.startedAt);

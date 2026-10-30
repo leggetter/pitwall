@@ -27,11 +27,12 @@ import { ConfigError, loadConfig, ownersByRoot, type LoadedConfig } from './conf
 import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
 import { createRecapEngine } from './recaps/engine.js';
+import { createSupervisor } from './supervisor/supervisor.js';
 import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
-import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL } from './shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, SUPERVISOR_MODEL } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
 export const INTERVAL_MIN_SECONDS = 1;
@@ -44,7 +45,7 @@ export const INTERVAL_MAX_SECONDS = 300;
  */
 export const TOKEN_MIN_DIFFERENT = 8;
 
-export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps]
+export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps] [--no-supervisor]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the config file's, then to the current directory.
@@ -71,6 +72,13 @@ Options:
                         in pitwall's environment, at most ${RECAP_DAILY_BUDGET} calls a day,
                         for a short recap: why it started, where it is and
                         what's next.
+  --no-supervisor       Turn the supervisor off, and never run it. Without it,
+                        pitwall starts the supervisor only when you open it or
+                        send it a message: a claude -p session on
+                        ${SUPERVISOR_MODEL}, on whatever login or API key claude
+                        finds, that answers from what pitwall knows of your
+                        sessions and PRs, and reads a session's latest turns
+                        when you ask about it. It can only read.
   -h, --help            Show this help.
   -v, --version         Show the version.
 
@@ -178,6 +186,8 @@ export type CliCommand =
       prs: boolean;
       /** False with `--no-recaps`: pitwall never runs a recap call. */
       recaps: boolean;
+      /** False with `--no-supervisor`: pitwall never runs the supervisor. */
+      supervisor: boolean;
     };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
@@ -194,6 +204,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         'no-open': { type: 'boolean' },
         'no-prs': { type: 'boolean' },
         'no-recaps': { type: 'boolean' },
+        'no-supervisor': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -215,6 +226,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     open: !values['no-open'] && env.PITWALL_NO_OPEN !== '1',
     prs: !values['no-prs'],
     recaps: !values['no-recaps'],
+    supervisor: !values['no-supervisor'],
   };
 }
 
@@ -557,10 +569,13 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.
   // Your messages through the relay are yours in a recap's input, by their ids (W110's review).
   const recaps = command.recaps ? createRecapEngine({ relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) } }) : undefined;
+  // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
+  // With --no-supervisor, there's none, and pitwall never runs it.
+  const supervisor = command.supervisor ? createSupervisor() : undefined;
   const indexer = startIndexer({
     roots,
     intervalMs,
-    exclude: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
+    exclude: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true || supervisor?.isOwn(row) === true,
     ...(recaps === undefined ? {} : { sessionFacts: (facts) => recaps.observe(facts) }),
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
@@ -589,11 +604,13 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       // owner, with each configured root's `github.owners` by real path (W105, W103).
       prs: command.prs ? createPrPoller({ index: indexer, ownersByRoot: ownersByRoot(config, roots) }) : prsOff(),
       ...(recaps === undefined ? {} : { recaps }),
+      ...(supervisor === undefined ? {} : { supervisor }),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {
     indexer.stop();
     void recaps?.close();
+    void supervisor?.close();
     if (error instanceof PortInUseError) {
       console.error(
         `pitwall: port ${error.port} on 127.0.0.1 is already in use. Pick another with --port <n>, or use --port 0 for a free one.`,
