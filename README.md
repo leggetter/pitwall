@@ -50,7 +50,7 @@ node dist/cli.js ~/code
 - **If it doesn't open,** use the link pitwall prints: `pitwall is running at http://127.0.0.1:4517/#token=…`.
 - **A new token every run.** A tab from an earlier run can't reconnect, so use the new link. `PITWALL_TOKEN` fixes the token, for a pinned tab on a single-user machine (see [Use](#use)).
 - **If port 4517 is busy,** pitwall uses a free port and says so. `--port <n>` picks one, and fails if it's busy.
-- **To stop pitwall,** press Ctrl+C in its terminal. Your sessions keep running: a terminal open in the page detaches without stopping its session, and pitwall's relay session, if it started one, stops with it.
+- **To stop pitwall,** press Ctrl+C in its terminal. Your sessions keep running: a terminal open in the page detaches without stopping its session, and pitwall's relay and supervisor sessions, if it started them, stop with it. The supervisor's conversation is resumed the next time you open it.
 
 ### What it reads, and what it does only when you ask
 
@@ -68,6 +68,13 @@ node dist/cli.js ~/code
   - **How it's fenced:** the call has no tools, loads none of your settings, hooks, plugins, `CLAUDE.md` or MCP servers, saves no session, may write at most 4,096 tokens, and runs in `~/.pitwall/recap/`, where nothing is written. Recaps are kept in memory only, so a restart makes them again.
   - **What a recap can change:** what the page shows: the recap, the session's title, and Needs you, which a recap can add a session to but never take one out of. Text in a transcript can steer what a recap says, as with any summary: at worst it chooses a session's title and, with Needs you, its line 2, up to 400 characters, shown as plain text. A recap can't run or send anything.
   - **`--no-recaps` turns them off,** and pitwall then never runs a recap call.
+- **It sends what it knows of your sessions to a model, Anthropic's by default, when you talk to its supervisor** ([D4](docs/decisions.md#d4---the-supervisor-is-a-headless-claude-code-session-that-pitwall-runs-with-read-only-tools-from-its-own-mcp-server)):
+  - **What:** the supervisor is one `claude -p` session on Opus 5.5, `pitwall-supervisor`, with whatever credentials and provider `claude` finds in pitwall's environment, as for recaps. It sends your messages, its system prompt, and what its tools return when it calls them: the sessions pitwall lists, each one's name, id, repo, directory, state, why it needs you, its recap, the pull requests it owns and its last activity; a session's latest turns when it reads one, at most 40 entries or about 30,000 characters a call, each entry cut to 2,000; your open pull requests, with their titles, failing checks' names, where pitwall lists them and the session that owns each; and a session's whole recap. Each tool's answer is at most 40,000 characters, and marks everything that came from a session, a recap or GitHub as untrusted data.
+  - **When:** only once you open it or send it a message. It doesn't start with pitwall, and isn't started again when it stops: your next message, or Start, does that. Each turn costs about $0.002 to $0.06 at API list prices, the first of a conversation the most; on a Max plan it counts against its usage limits instead.
+  - **How it's fenced:** it has no built-in tools, so no Bash, files, web or messaging, only the four read-only tools of pitwall's own MCP server; it loads none of your settings, hooks, plugins, `CLAUDE.md` or MCP servers, and runs in `~/.pitwall/supervisor/session/`, where nothing is written. pitwall's MCP server answers only with a token made for each supervisor process and kept in a 0600 file, never the page's token or key, and refuses any request a browser could send.
+  - **What it can do:** read, and answer you. It can't message a session, start one, run a command or change a file. Proposing messages and new sessions, each sent only after you approve it, comes later (W115).
+  - **What's kept:** its session id and its system prompt's version, in `~/.pitwall/supervisor/state.json`, so it resumes the same conversation; a new version of the prompt starts a new one. Claude Code keeps its transcript in `~/.claude/projects/`, as for any session.
+  - **`--no-supervisor` turns it off,** and pitwall then never runs it.
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked. The session sees it as a message from another session, so a message can't approve a permission prompt.
   - **Attach** to a background session, in a terminal in the page. Opening a running one's view attaches to it by default, since that's where it takes input. One that has finished asks first, because attaching restarts it.
@@ -76,7 +83,7 @@ node dist/cli.js ~/code
   - **Resume** an ended interactive session, or a background one that has stopped, in the background, with `claude --resume <id> --bg`.
   - **Clone** a pull request's repo, when no root has a clone of it, with `gh repo clone` and your GitHub login, into the root that claims its owner, after a click that shows where. pitwall picks the folder itself, refuses one that exists, clones into a hidden temporary folder in the root and moves it into place only then, and removes only that temporary folder when anything fails, or when pitwall stops mid-clone ([D25](docs/decisions.md#d25---cloning-a-pull-requests-repo-is-the-servers-decision-after-a-click)).
   - **Open** a session's directory in VS Code or Cursor.
-- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, the empty folder its recap calls run in and the day's recap count, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
+- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, the empty folder its recap calls run in and the day's recap count, the supervisor's folder, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay and the supervisor are Claude Code sessions too, so Claude Code keeps their transcripts in `~/.claude/projects/`, as it does for every session.
 
 ### Security, in brief
 
@@ -87,6 +94,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 - **`Host` and `Origin` checks:** `Host` must be `127.0.0.1:<port>` on every request, against DNS rebinding. A WebSocket must come from pitwall's own page, an API request from another origin is refused, and there's no CORS.
 - **A strict Content Security Policy:** the page loads only pitwall's own files, and no other site can put it in a frame.
 - **Recaps leave your machine:** unless you start pitwall with `--no-recaps`, it sends excerpts of your sessions' transcripts to the model `claude` reaches from pitwall's environment, Anthropic's on your Claude login by default, for each session's recap, as [above](#what-it-reads-and-what-it-does-only-when-you-ask). The call can't use a tool, and what comes back is only shown.
+- **So does what the supervisor reads,** once you open it or message it, unless you start pitwall with `--no-supervisor`: your sessions' list, recaps and pull requests, and a session's latest turns when it reads them. It can only read, through pitwall's own MCP server, which takes only a token made for each supervisor process, refuses any request with an `Origin`, so no web page can reach it, and checks `Host` as every route does.
 
 ### Caveats
 
@@ -94,14 +102,14 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 - **Internal files:** transcripts, sub-agents' folders and job state are Claude Code's internal formats, which change between versions. pitwall reads them read-only, behind adapters that fail soft: a file it can't read shows as unavailable, or as less detail, never as a crash.
 - **A running interactive session can only be messaged, not driven.** For anything more, such as answering a prompt, type `/bg` in the session's terminal to move it to the background, and pitwall can then attach to it ([D2](docs/decisions.md#d2---interactive-sessions-relay-messages-or-bg-for-full-control)).
 - **Untrusted directories:** Claude Code won't start a session from a script in a directory you haven't trusted. New session then shows Claude Code's error and the command to run; pitwall never grants trust for you. A repo pitwall clones isn't trusted either, even under a root you trust, since Claude Code's trust in a folder doesn't cover a git repo inside it: run `claude` in it once, as New session says after the clone.
-- **Cost:** each message you send starts a turn on the target session's own model, plus a Haiku turn in the relay.
+- **Cost:** each message you send starts a turn on the target session's own model, plus a Haiku turn in the relay. Each message to the supervisor is a turn on Opus 5.5.
 
 ## Use
 
 From the clone, after `npm run build`:
 
 ```
-node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps]
+node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps] [--no-supervisor]
 ```
 
 `npm start -- [root...]`, with the same options, runs the same thing.
@@ -115,6 +123,7 @@ node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>]
 | `--no-open` | Don't open the browser. `PITWALL_NO_OPEN=1` does the same | Opens it |
 | `--no-prs` | Don't list your open pull requests, so pitwall never runs `gh`. Without it, pitwall runs `gh api graphql` at start, every 3 minutes and on Refresh, for your open PRs on github.com, and those that ask your review or mention you; `gh` must be installed and logged in | Lists them |
 | `--no-recaps` | Don't recap your sessions, so pitwall never runs a recap call. Without it, pitwall sends excerpts of a session's transcript to Haiku 5.5 with `claude -p`, on your Claude login unless pitwall's environment gives `claude` other credentials, once its turn has ended and it's been idle 5 minutes, and when you ask, at most 200 calls a day ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)) | Recaps them |
+| `--no-supervisor` | Turn the supervisor off, so pitwall never runs it. Without it, pitwall starts the supervisor, a `claude -p` session on Opus 5.5, only when you open it or send it a message, and it reads what pitwall knows of your sessions and pull requests through pitwall's own read-only MCP server ([D4](docs/decisions.md#d4---the-supervisor-is-a-headless-claude-code-session-that-pitwall-runs-with-read-only-tools-from-its-own-mcp-server)) | Runs it when asked |
 | `-h`, `--help` | Show the help, with every option and variable | |
 | `-v`, `--version` | Show the version | |
 
@@ -166,6 +175,7 @@ flowchart TB
     relay["Relay: pitwall-relay"]
     prs["PR poller"]
     recaps["Recaps: claude -p, pitwall-recap"]
+    supervisor["Supervisor: claude -p, pitwall-supervisor"]
   end
 
   subgraph machine["On your machine"]
@@ -177,6 +187,7 @@ flowchart TB
 
   github["github.com, through gh api graphql"]
   model["Haiku 5.5, through claude's login"]
+  opus["Opus 5.5, through claude's login"]
 
   page ~~~ index
   page <-->|"HTTP and WebSocket, with the token"| server
@@ -193,6 +204,9 @@ flowchart TB
   index -->|"what it read"| recaps
   recaps -->|"excerpts, once idle, and on Refresh"| model
   recaps -->|"each session's recap"| server
+  server -->|"your message, on stdin"| supervisor
+  supervisor -->|"read-only MCP tools, with its own token"| server
+  supervisor -->|"your messages and what its tools return"| opus
 ```
 
 - **The index** turns what it reads into a snapshot of the sessions under your roots: each one grouped by repo, with read-only `git`, and whether it needs you. The server pushes a snapshot to the page only when something changed.
@@ -200,6 +214,7 @@ flowchart TB
 - **The PR poller** runs three `gh api graphql` searches, one call each, for your open pull requests and those that ask your review or mention you, on its own timer, never with the session poll, so `gh` keeps your GitHub token and pitwall never reads it. The server pushes the list to the page when it changes.
 - **The terminal in the page** is xterm.js, on its own WebSocket, connected to a pseudo-terminal (PTY) that runs `claude attach <id>`. So you get Claude Code's whole interface, permission prompts included.
 - **Recaps** are one short `claude -p` call per session on Haiku 5.5, with no tools and no session saved, once its turn has ended and it's been idle 5 minutes, or when you ask. The server adds each session's recap to the snapshot, its title from the recap, and Needs you when the recap says it's waiting on you, and pushes the snapshot again when one lands. While a call runs, Claude Code lists it as a session, `pitwall-recap`, which pitwall leaves out of its list ([D26](docs/decisions.md#d26---recaps-whats-sent-when-and-what-they-can-change)).
+- **The supervisor** is one headless `claude -p` session, `pitwall-supervisor`, on Opus 5.5, that pitwall starts when you open it or message it, owns, and resumes by its session id across restarts. It has no built-in tools: it answers from pitwall's own MCP server, served at `/mcp` by the same server, whose four read-only tools give the sessions with their recaps, a session's latest turns, your pull requests and a recap. The server shows its state in the snapshot ([D4](docs/decisions.md#d4---the-supervisor-is-a-headless-claude-code-session-that-pitwall-runs-with-read-only-tools-from-its-own-mcp-server)).
 - **The relay** exists because the documented way to message an interactive session is Claude Code's cross-session messaging, which only a Claude session can use. So pitwall runs a headless one, `claude -p` named `pitwall-relay`, with `SendMessage` as its only tool, and a gate hook that lets it send only the message you wrote ([D8](docs/decisions.md#d8---messages-to-interactive-sessions-go-through-one-headless-relay-session)).
 
 ### Messaging an interactive session
@@ -231,7 +246,7 @@ sequenceDiagram
 ## Roadmap
 
 - **Now, pull requests with their sessions (M4):** your open pull requests, and the open ones that ask your review or mention you, with CI and review state. A session that worked on a pull request carries it on its row, and one no session has worked on is a row of its own under its repo, cloned or not. A row needs you when its pull request does: failing checks, conflicts or changes requested on your own, or a review requested of you. A session that ended with its pull request still open stays in the list until it closes.
-- **A supervisor (M5):** a Claude Code session that pitwall runs and shows in its own chat panel, which you talk to instead of visiting each session. It lists and summarises sessions, and messages or starts them once you approve. M5 also gives each session a recap of why it started, where it is now and what's next, shown in its view, and its title comes from the same recap. Recaps come first: the server makes them now (W110), and their strip in the page is next.
+- **A supervisor (M5):** a Claude Code session that pitwall runs and shows in its own chat panel, which you talk to instead of visiting each session. It lists and summarises sessions, and messages or starts them once you approve. M5 also gives each session a recap of why it started, where it is now and what's next, shown in its view, and its title comes from the same recap. Recaps and their strip are built (W110, W111); the server now runs the supervisor, read-only, with pitwall's MCP server (W112, W113); its panel and approvals are next.
 - **Triage (M6):** urgency with reasons, from the index, the supervisor and M4's pull requests. The supervisor reads each idle session's latest turns to judge whether it really needs you. Triage tells "blocked on you" from "blocked on someone else", and pairs pull requests with sessions: "CI is failing on your PR, and the session that opened it is idle."
 - **Considering, undecided: Peers ([#99](https://github.com/leggetter/pitwall/issues/99)).** Sessions already message each other with Claude Code's cross-session messaging. pitwall could show who a session has talked to, and both sides of each exchange as one thread, apart from sub-agents. The supervisor's messages would show the same way, as its audit trail.
 
