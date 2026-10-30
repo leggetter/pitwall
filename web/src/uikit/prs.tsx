@@ -79,6 +79,8 @@ const TEAM_REVIEW = pr('example/event-relay', 618, 'Rename the made-up delivery 
 const MENTION = pr('example/api-server', 23, 'Ask about the made-up rate limit headers', 5 * 60, { relation: 'mentioned', review: 'review-required', place: APP });
 // Its repo isn't cloned (W107): Clone and start's.
 const SDK_DOCS = pr('example/sdk-docs', 9, 'Add a made-up example to the SDK docs', 3 * 60, { place: ELSEWHERE });
+// A stranger's, on their own repo, that mentions you, and isn't cloned (W108): Clone and start's warning.
+const STRANGER = pr('a-stranger/made-up-thing', 2, 'A made-up change that mentions you', 50, { relation: 'mentioned', place: ELSEWHERE });
 // No root claims its owner (W106): counted, never listed.
 const UNCLAIMED = pr('other-org/tool', 3, 'A made-up fix elsewhere', 6 * 60, { place: { kind: 'unclaimed' } });
 const PRS = [FAILING, CONFLICTS, QUIET, APPROVED, DRAFT, OLDER, REVIEW, TEAM_REVIEW, MENTION, UNCLAIMED];
@@ -131,12 +133,12 @@ function Rows() {
 }
 
 /** Clone and start's confirmation, against the stub API, put into a state by `run`. */
-function CloneCase({ options, run }: { options?: StubOptions; run?: ScenarioProps['run'] }) {
+function CloneCase({ options, run, of = SDK_DOCS }: { options?: StubOptions; run?: ScenarioProps['run']; of?: PullRequestSummary }) {
   return (
     <Stubbed options={options}>
       <Reopenable>
         {(close) => {
-          const shown = <CloneDialog pr={SDK_DOCS} onClose={close} onCloned={close} />;
+          const shown = <CloneDialog pr={of} onClose={close} onCloned={close} />;
           return run ? <Scenario run={run}>{shown}</Scenario> : shown;
         }}
       </Reopenable>
@@ -188,10 +190,17 @@ export function PullRequestSpecimens() {
 
       <Specimen
         title="Clone and start: asking first"
-        note="W107: a PR row's action, or the PR view's, for a repo that isn't cloned. It says exactly what it will do, then New session there; Clone sends the repo alone, and the server picks the root and the directory. Focus starts on Close, as Cancel's."
+        note="W107: a PR row's action, or the PR view's, for a repo that isn't cloned. It says exactly what it will do, whose it is (W108), then New session there; Clone sends the repo alone, and the server picks the root and the directory. Focus starts on Close, as Cancel's."
         frame="dialog"
       >
         <CloneCase />
+      </Specimen>
+      <Specimen
+        title="Clone and start: a pull request that isn't yours"
+        note="W108: one that asks your review or mentions you. A warning alert says so, how it's yours, who owns its repo, and that cloning it puts someone else's code on this machine: anyone can open a PR on their own repo that mentions you."
+        frame="dialog"
+      >
+        <CloneCase of={STRANGER} />
       </Specimen>
       <Specimen title="Clone and start: cloning" note="Clone busy, the rest aria-disabled; Escape, Close and the backdrop do nothing while gh clones." frame="dialog">
         <CloneCase options={{ clone: 'cloning' }} run={async (root) => press(root, 'Clone')} />
@@ -207,7 +216,7 @@ export function PullRequestSpecimens() {
       </Specimen>
       <Specimen
         title="New session after a clone"
-        note="Prefilled in the new clone, added to the directories, pr-9 and a prompt that names the PR by its URL; the notice says what was cloned and that Claude Code won't trust it until claude has run there once, with the command. pitwall never trusts it for you."
+        note="Prefilled in the new clone, added to the directories, pr-9 and a prompt that names the PR by its URL; the notice says what was cloned, that Claude Code won't trust it until claude has run there once, that trusting it lets the repo's own settings, hooks and MCP servers run (W108), and the command. pitwall never trusts it for you."
         frame="dialog-tall"
       >
         <Stubbed>

@@ -36,14 +36,37 @@ describe('rootOwners', () => {
       // One each: the tie goes to the first root given.
       clone(`${WORK}/g`, WORK, 'origin=example-tie/g'),
       clone(`${OSS}/h`, OSS, 'origin=example-tie/h'),
-      // A clone counts once for each owner its remotes name, however many remotes name it.
+      // A clone counts once, for its origin's owner alone, whatever its other remotes name (W108).
       clone(`${OSS}/i`, OSS, 'origin=example-fork/i', 'upstream=example-fork/i-old', 'up=example-up/i'),
     ];
     expect(rootOwners(ROOTS, repos)).toEqual<RootOwners[]>([
       { root: WORK, owners: ['example-org', 'example-tie'], source: 'clones' },
-      { root: OSS, owners: ['example-fork', 'example-up', 'someone'], source: 'clones' },
+      { root: OSS, owners: ['example-fork', 'someone'], source: 'clones' },
     ]);
     expect(rootOwners([OSS, WORK], repos).find((r) => r.root === OSS)?.owners).toContain('example-tie');
+  });
+
+  it("counts only origin remotes: an upstream, or any other remote, pointing at a stranger's account never claims it (W108)", () => {
+    // The reviewer's probe: one clone whose upstream names someone's own public repo, which they
+    // could open a PR on that mentions you. Before, that was enough for the root to claim them.
+    const repos = [
+      clone(`${OSS}/tool`, OSS, 'origin=someone/tool', 'upstream=a-stranger/tool'),
+      clone(`${OSS}/lib`, OSS, 'fork=a-stranger/lib', 'mine=someone/lib'),
+      clone(`${OSS}/site`, OSS, 'upstream=a-stranger/site'),
+    ];
+    const owners = rootOwners(ROOTS, repos);
+    expect(owners).toEqual<RootOwners[]>([
+      { root: WORK, owners: [], source: 'clones' },
+      { root: OSS, owners: ['someone'], source: 'clones' },
+    ]);
+    expect(claimingRoot('a-stranger', owners)).toBeUndefined();
+    const stranger = pr('a-stranger/new-thing', 3);
+    expect(placeOf(stranger, cloneIndex(repos, ROOTS), owners, HOME)).toEqual({ kind: 'unclaimed' });
+    // A config list still names any owner.
+    const configured = rootOwners(ROOTS, repos, new Map([[OSS, ['a-stranger']]]));
+    expect(placeOf(stranger, cloneIndex(repos, ROOTS), configured, HOME)).toEqual({ kind: 'not-cloned', root: OSS });
+    // And a clone of the PR's own repo still places it, through any remote: it's on this machine already.
+    expect(placeOf(pr('a-stranger/site', 4), cloneIndex(repos, ROOTS), owners, HOME)).toMatchObject({ kind: 'cloned', key: `${OSS}/site` });
   });
 
   it('is every root, with no owners, when there are no clones, and leaves out clones under no root it was given', () => {

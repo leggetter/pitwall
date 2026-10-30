@@ -162,7 +162,7 @@ describe('New session for a PR row in a cloned repo', () => {
     fireEvent.click(button);
     expect(directory().value).toBe(DEMO);
     expect(field('Name').value).toBe('pr-57');
-    expect(field('First prompt').value).toBe(`Review ${review.url}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub.`);
+    expect(field('First prompt').value).toBe(`Review ${review.url}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub. It isn't my pull request: don't check out its branch or run any of its code without asking me first.`);
     // It didn't open the PR's view: the action is the row's control.
     expect(document.getElementById('pr-view')).toBeNull();
   });
@@ -215,10 +215,32 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
     fireEvent.click(button);
     const confirm = dialog(CLONE_TITLE);
     expect(confirm.querySelector('.clone-what')?.textContent).toBe('Clone example/Docs-Site into ~/code/Docs-Site');
+    // Yours: said as meta, not a warning (W108).
+    const whose = confirm.querySelector('.clone-whose');
+    expect(whose?.textContent).toBe("This is your pull request. It's in a repo owned by example.");
+    expect(whose?.classList.contains('inline-alert')).toBe(false);
     expect(server.posts()).toEqual([]);
     fireEvent.click(within(confirm).getByRole('button', { name: 'Clone' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: CLONE_TITLE })).toBeNull());
     expect(server.posts()).toEqual([{ url: CLONE_PATH, body: { repo: 'example/docs-site' } }]);
+  });
+
+  it("says whose it is when it isn't yours, and that cloning it puts someone else's code on this machine, before anything happens (W108)", () => {
+    // A stranger's PR on their own repo that mentions you, and one that asks your review through a team.
+    const theirs = placed(pr({ number: 3, repoLabel: 'A-Stranger/Thing', relation: 'mentioned' }, 30), { kind: 'not-cloned', root: ROOT });
+    const team = placed(pr({ number: 4, repoLabel: 'example/Team-Thing', relation: 'review-requested', reviewRequest: { via: 'team', team: 'example/reviewers' } }, 35), { kind: 'not-cloned', root: ROOT });
+    const server = fakeServer();
+    renderDashboard(server, '?view=all', prList([...PRS, theirs, team]));
+    fireEvent.click(startButton(theirs)!);
+    let whose = dialog(CLONE_TITLE).querySelector('.clone-whose');
+    expect(whose?.classList.contains('inline-alert')).toBe(true);
+    expect(whose?.classList.contains('warning')).toBe(true);
+    expect(whose?.textContent).toBe("This pull request isn't yours: you're mentioned in it. It's in a repo owned by A-Stranger. Cloning it puts someone else's code on this machine.");
+    fireEvent.click(within(dialog(CLONE_TITLE)).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(startButton(team)!);
+    whose = dialog(CLONE_TITLE).querySelector('.clone-whose');
+    expect(whose?.textContent).toBe("This pull request isn't yours: your review is requested through example/reviewers. It's in a repo owned by example. Cloning it puts someone else's code on this machine.");
+    expect(server.posts()).toEqual([]);
   });
 
   it('then opens New session in the new clone, saying how to trust it, with the command to copy', async () => {
@@ -230,6 +252,8 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
     const notice = dialog('New session').querySelector('.cloned-notice')!;
     expect(notice.querySelector('.inline-alert-title')?.textContent).toBe(clonedText('example/Docs-Site', DOCS));
     expect(notice.textContent).toContain(CLONED_TRUST_TEXT);
+    // What trusting it lets the repo do, said plainly (W108).
+    expect(notice.textContent).toContain("Trusting it lets the repo's own Claude Code settings, hooks and MCP servers run, so only trust a repo whose code you'd run.");
     expect(notice.querySelector('.command-chip')?.textContent).toBe(`cd ${DOCS} && claude`);
     expect(directory().value).toBe(DOCS);
     expect(field('Name').value).toBe('pr-5');

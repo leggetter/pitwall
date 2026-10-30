@@ -1,7 +1,10 @@
 // One fetch (fetch.ts), with a fake runFile: no test here runs gh. Each search is its own call
 // (W101), so most tests here fetch the author search alone, as W93's single search was.
+import { mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
-import { describe, expect, it } from 'vitest';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RunError, type RunFile, type RunOptions } from '../index/exec.js';
 import { PR_RELATIONS, PRS_FETCH_TIMEOUT_MS, PRS_MAX, type PullRequestRelation } from '../shared/protocol.js';
 import { checkRun, prNode, reviewRequests, rollup, searchPage, VIEWER } from '../test/prs.js';
@@ -9,6 +12,7 @@ import {
   exitError,
   FETCH_ERRORS,
   fetchPullRequests,
+  GH_CWD_PREFIX,
   fetchSearch,
   ghArgs,
   consistent,
@@ -125,15 +129,58 @@ describe('fetchPullRequests: the command', () => {
     }
   });
 
-  it('runs in the temp directory, with a timeout of PRS_FETCH_TIMEOUT_MS, a cap on stdout, and an environment that never prompts', async () => {
+  it('runs with a timeout of PRS_FETCH_TIMEOUT_MS, a cap on stdout, and an environment that never prompts', async () => {
     const env = { PATH: '/usr/bin', HOME: '/home/demo', GH_FORCE_TTY: '1', CLICOLOR_FORCE: '1', GH_TOKEN: 'kept-for-gh' };
     const { runFile, calls } = fakeRunFile([searchPage([])]);
     await authored({ runFile, env, monotonicNow: () => 1000 });
     const options = calls[0]!.options;
     expect(options.timeoutMs).toBe(PRS_FETCH_TIMEOUT_MS);
     expect(options.maxStdoutBytes).toBe(PRS_PAGE_MAX_BYTES);
-    expect(options.env).toEqual({ PATH: '/usr/bin', HOME: '/home/demo', GH_TOKEN: 'kept-for-gh', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' });
-    expect(options.cwd).toBe(os.tmpdir());
+    expect(options.env).toEqual({ PATH: '/usr/bin', HOME: '/home/demo', GH_TOKEN: 'kept-for-gh', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_CEILING_DIRECTORIES: expect.stringContaining(os.tmpdir()) });
+  });
+
+  describe("in a 0700 directory of pitwall's own, never the shared temp directory itself (W108)", () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-fetch-')));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('one for the three searches of a fetch, made fresh in the temp directory and removed after', async () => {
+      const modes: number[] = [];
+      const { runFile, calls } = fakeRunFile([searchPage([]), searchPage([]), searchPage([])], (call) => {
+        modes.push(statSync(call.options.cwd as string).mode & 0o777);
+      });
+      await fetchPullRequests({ runFile, tmpdir: tmp });
+      const cwds = new Set(calls.map((call) => call.options.cwd));
+      expect(cwds.size).toBe(1);
+      const cwd = calls[0]?.options.cwd as string;
+      expect(path.dirname(cwd)).toBe(tmp);
+      expect(path.basename(cwd)).toMatch(new RegExp(`^${GH_CWD_PREFIX}[A-Za-z0-9]{6}$`));
+      expect(modes).toEqual([0o700, 0o700, 0o700]);
+      expect(await readdir(tmp)).toEqual([]);
+      // Another fetch gets another.
+      const again = fakeRunFile([searchPage([]), searchPage([]), searchPage([])]);
+      await fetchPullRequests({ runFile: again.runFile, tmpdir: tmp });
+      expect(again.calls[0]?.options.cwd).not.toBe(cwd);
+      expect(await readdir(tmp)).toEqual([]);
+    });
+
+    it('a search on its own makes its own, and removes it after, when gh fails too', async () => {
+      const { runFile, calls } = fakeRunFile([new RunError('exit', 'exited with code 1', 1)]);
+      expect((await authored({ runFile, tmpdir: tmp })).ok).toBe(false);
+      expect(path.dirname(calls[0]?.options.cwd as string)).toBe(tmp);
+      expect(await readdir(tmp)).toEqual([]);
+    });
+
+    it('runs no gh, and says why, when the directory can’t be made', async () => {
+      const { runFile, calls } = fakeRunFile([]);
+      const result = await fetchPullRequests({ runFile, tmpdir: path.join(tmp, 'missing') });
+      for (const relation of PR_RELATIONS) expect(result[relation]).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.noDirectory });
+      expect(calls).toEqual([]);
+    });
   });
 
   it('passes the gh it was given', async () => {
@@ -145,6 +192,18 @@ describe('fetchPullRequests: the command', () => {
   it('builds page 2 with -f after=<cursor> only', () => {
     expect(fields(ghArgs('mentioned', 'Y3Vyc29yOjEwMA=='))).toEqual({ query: PRS_QUERIES.mentioned, q: PRS_SEARCHES.mentioned, after: 'Y3Vyc29yOjEwMA==' });
     expect(ghArgs('authored').some((arg) => arg.startsWith('after='))).toBe(false);
+  });
+
+  it("stops git's search for a repository at the temp directory gh's own directory is made in (W117's review)", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-ceiling-'));
+    try {
+      const ceilings = ghEnvironment({}, tmp).GIT_CEILING_DIRECTORIES?.split(':');
+      expect(ceilings).toContain(tmp);
+      expect(ceilings).toContain(realpathSync.native(tmp));
+      expect(ghEnvironment({ GIT_CEILING_DIRECTORIES: '/elsewhere' }, tmp).GIT_CEILING_DIRECTORIES?.split(':')).toContain('/elsewhere');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('copies the environment rather than changing it', () => {
@@ -497,7 +556,8 @@ describe('fetchPullRequests: three searches, one call each (W101)', () => {
       return new Promise((resolve) => waiting.push(() => resolve(searchPage([]))));
     };
     const fetch = fetchPullRequests({ runFile });
-    await new Promise((resolve) => setImmediate(resolve));
+    // Each starts once gh's directory is made (W108), without waiting on another.
+    await vi.waitFor(() => expect(started).toHaveLength(3));
     expect(started).toEqual([...PR_RELATIONS]);
     for (const resolve of waiting) resolve();
     expect(Object.keys(await fetch)).toEqual([...PR_RELATIONS]);

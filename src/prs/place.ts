@@ -6,10 +6,15 @@
 //               (Phil, 2026-10-29: each owner goes to the root with the most clones from it, and
 //               the config file overrides that; the rule as the coordinator set it in W105's review):
 //     1. listed   an owner a configured list names goes to that root, the first given if two do
-//     2. clones   otherwise, every root's clones of it are counted, a clone once for each owner its
-//                 remotes name, and the root with the most claims it, unless its config is 'none'
+//     2. clones   otherwise, every root's clones of it are counted, each clone by its `origin`
+//                 remote alone, and the root with the most claims it, unless its config is 'none'
 //                 or a list that doesn't name it: then the next root by count that would claim it
-//                 does, an unconfigured one or one configured 'all'
+//                 does, an unconfigured one or one configured 'all'. Only `origin` (W108's finding,
+//                 the coordinator's call): when any remote counted, one `upstream` remote pointing
+//                 at a stranger's account was enough for a root to claim it, so a PR anyone opened
+//                 on their own public repo, mentioning you, was offered for Clone. `origin` is the
+//                 repo you cloned, or made; a fork's `upstream` no longer claims its owner. A
+//                 config list still names any owner
 //     3. 'all'    otherwise, the first root configured 'all'
 //     ties        by the order the roots were given
 //   RootOwners  rootOwners(), one per root: a configured root's value (source 'config'), and an
@@ -52,6 +57,9 @@ function configuredOwners(owners: readonly unknown[]): string[] {
 
 const ownerOf = (slug: string) => slug.slice(0, slug.indexOf('/'));
 
+/** The one remote a clone's owner is counted by (W108): the repo it was cloned from, or made as. */
+const ORIGIN = 'origin';
+
 /** Which owners each root claims (RootOwners), one per root, in the order given. */
 export function rootOwners(roots: readonly string[], repos: readonly LocalRepo[], ownersByRoot?: OwnersByRoot): RootOwners[] {
   const config = new Map<string, string[] | 'all' | 'none'>();
@@ -63,15 +71,16 @@ export function rootOwners(roots: readonly string[], repos: readonly LocalRepo[]
   const listed = new Set<string>();
   for (const value of config.values()) if (Array.isArray(value)) for (const owner of value) listed.add(owner);
 
-  // Clones per owner, per root: every root's.
+  // Clones per owner, per root: every root's, each by its `origin` alone (W108).
   const counts = new Map<string, Map<string, number>>();
   for (const repo of repos) {
     if (!roots.includes(repo.root)) continue;
-    for (const owner of new Set(repo.remotes.map((remote) => ownerOf(remote.slug)))) {
-      let perRoot = counts.get(owner);
-      if (perRoot === undefined) counts.set(owner, (perRoot = new Map()));
-      perRoot.set(repo.root, (perRoot.get(repo.root) ?? 0) + 1);
-    }
+    const origin = repo.remotes.find((remote) => remote.name === ORIGIN);
+    if (origin === undefined) continue;
+    const owner = ownerOf(origin.slug);
+    let perRoot = counts.get(owner);
+    if (perRoot === undefined) counts.set(owner, (perRoot = new Map()));
+    perRoot.set(repo.root, (perRoot.get(repo.root) ?? 0) + 1);
   }
   // Step 2: the root with the most clones that would claim the owner, ties by the roots' order.
   const inferred = new Map<string, string[]>();
@@ -134,7 +143,7 @@ export function cloneIndex(repos: readonly LocalRepo[], roots: readonly string[]
 function bestClone(slug: string, clones: readonly LocalRepo[]): LocalRepo | undefined {
   const name = slug.slice(slug.indexOf('/') + 1);
   const rank = (repo: LocalRepo) =>
-    (path.basename(repo.key).toLowerCase() === name ? 0 : 2) + (repo.remotes.some((remote) => remote.name === 'origin' && remote.slug === slug) ? 0 : 1);
+    (path.basename(repo.key).toLowerCase() === name ? 0 : 2) + (repo.remotes.some((remote) => remote.name === ORIGIN && remote.slug === slug) ? 0 : 1);
   let best: LocalRepo | undefined;
   for (const repo of clones) if (best === undefined || rank(repo) < rank(best)) best = repo;
   return best;

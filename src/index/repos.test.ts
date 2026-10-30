@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RunError, type RunFile, type RunOptions } from './exec.js';
-import { createRepoDiscovery, githubSlugOf, parseRemotes, REPOS_REFRESH_MS, type DiscoveryTimers, type RepoDiscovery, type RepoDiscoveryOptions } from './repos.js';
+import { createRepoDiscovery, githubSlugOf, parseRemotes, REPOS_FS_TIMEOUT_MS, REPOS_REFRESH_MS, type DiscoveryTimers, type RepoDiscovery, type RepoDiscoveryOptions } from './repos.js';
 
 // Every repo, remote and path here is made up: example/* on GitHub, and temp directories.
 
@@ -360,6 +360,58 @@ describe('createRepoDiscovery', () => {
       },
     });
     expect((await discover(d, [work, path.join(dir, 'missing-root')])).map((r) => r.key)).toEqual([app]);
+  });
+
+  it("skips a directory that doesn't answer within REPOS_FS_TIMEOUT_MS, so the discovery ends and the next one runs, and asks it again only once it has answered (W108)", async () => {
+    expect(REPOS_FS_TIMEOUT_MS).toBe(2_000);
+    const app = await repo(path.join(work, 'demo-app'));
+    const site = await repo(path.join(oss, 'site'));
+    // Two hung directories, as on a network mount that stopped answering: one whose listing never
+    // comes, with a repo below it, and one whose `.git` lookup never does.
+    const hung = path.join(work, 'hung');
+    const api = await repo(path.join(hung, 'demo-api'));
+    const stuck = await repo(path.join(oss, 'stuck'));
+    const git = fakeGit(
+      new Map([
+        [app, ['git@github.com:example/demo-app.git']],
+        [site, ['git@github.com:example/site.git']],
+        [api, ['git@github.com:example/demo-api.git']],
+        [stuck, ['git@github.com:example/stuck.git']],
+      ]),
+    );
+    const asked = { readdir: 0, dotGit: 0 };
+    const answers: (() => void)[] = [];
+    const never = () => new Promise<void>((resolve) => answers.push(resolve));
+    const d = start({
+      run: git.run,
+      fsTimeoutMs: 50,
+      fs: {
+        readdir: async (at) => {
+          if (at === hung && asked.readdir++ === 0) await never();
+          return readdir(at, { withFileTypes: true });
+        },
+        dotGit: async (at) => {
+          if (at === stuck && asked.dotGit++ === 0) await never();
+          return stat(path.join(at, '.git')).then((info) => (info.isDirectory() ? 'dir' : 'file'), () => null);
+        },
+      },
+    });
+    const started = performance.now();
+    expect((await discover(d)).map((r) => r.key)).toEqual([app, site].sort());
+    expect(performance.now() - started).toBeLessThan(1_500);
+    expect(d.ready()).toBe(true);
+    // The next discovery runs, and doesn't ask either again while it hasn't answered.
+    d.refresh();
+    await d.settled();
+    expect(d.stats().discoveries).toBe(2);
+    expect(asked).toEqual({ readdir: 1, dotGit: 1 });
+    // Once they answer, late, the next one reads them.
+    for (const answer of answers) answer();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    d.refresh();
+    await d.settled();
+    expect(asked).toEqual({ readdir: 2, dotGit: 2 });
+    expect(d.repos().map((r) => r.key)).toEqual([app, api, site, stuck].sort());
   });
 
   it('never throws from update(), and does nothing once stopped', async () => {

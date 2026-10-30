@@ -1,6 +1,6 @@
 // The PR poller (poller.ts): its timing and refresh limits on a fake clock, with a fake fetch, so
 // nothing here runs gh or waits in real time.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PRS_POLL_INTERVAL_MS, PRS_REFRESH_MIN_MS, type PullRequestList, type PullRequestSummary } from '../shared/protocol.js';
 import { fakeClock, fakeFetch, fetched, fetchFailed, flush, prNode, searchPage } from '../test/prs.js';
 import { FETCH_ERRORS, PRS_SEARCHES, type FetchResult } from './fetch.js';
@@ -397,11 +397,11 @@ describe('createPrPoller: with the real fetch and a fake runFile', () => {
       timers: clock.timers,
     });
     poller.start();
-    await flush();
+    // The real fetch makes gh's directory on disk first (W108), so it takes more than a turn of the loop.
+    await vi.waitFor(() => expect(poller.latest().prs.map((each) => each.number)).toEqual([1, 2]));
     const good = poller.latest();
-    expect(good.prs.map((each) => each.number)).toEqual([1, 2]);
     clock.advance(PRS_POLL_INTERVAL_MS);
-    await flush();
+    await vi.waitFor(() => expect(poller.latest().searches?.authored?.failed).toBeDefined());
     const latest = poller.latest();
     expect(latest.source).toEqual({ ok: true });
     expect(latest.prs).toEqual(good.prs);

@@ -52,7 +52,12 @@
 // allowSignalsTo(). The test's own pid isn't one of its children, so it's
 // refused too. Signal 0 only asks whether a process is there. A negative pid,
 // a process group, counts as its leader's: runFile's `processGroup` (W107)
-// signals the group of a child it started in one of its own.
+// signals the group of a child it started in one of its own. A group whose
+// leader was started in one of its own (spawn's `detached`) may be signalled
+// for GROUP_GRACE_MS after the leader exits too, since runFile's SIGKILL
+// reaches what's left of it, such as a git that ignored the SIGTERM gh exited
+// on (W108's finding); a group id isn't reused while the group lasts, and 10 s
+// is far too short for the pid space to wrap round to it.
 import childProcess from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
@@ -72,14 +77,20 @@ interface GuardState {
   spawned: Set<number>;
   /** Pids a test said it may signal (allowSignalsTo()), such as a process its own child started. */
   allowed: Set<number>;
+  /** The leaders of the groups a wrapped spawn started (`detached`), while they run and for GROUP_GRACE_MS after: groups a test may signal. */
+  groups: Set<number>;
   /** The refusing gh first on PATH: its folder, and the file it writes each call to. Absent with PITWALL_LIVE=1. */
   ghStandIn?: { bin: string; calls: string };
 }
 
 const STATE = Symbol.for('pitwall.noClaude');
-const state: GuardState = ((globalThis as Record<symbol, GuardState | undefined>)[STATE] ??= { installed: false, refusals: [], spawned: new Set(), allowed: new Set() });
+const state: GuardState = ((globalThis as Record<symbol, GuardState | undefined>)[STATE] ??= { installed: false, refusals: [], spawned: new Set(), allowed: new Set(), groups: new Set() });
 state.spawned ??= new Set();
 state.allowed ??= new Set();
+state.groups ??= new Set();
+
+/** How long after a group's leader exits the group may still be signalled: runFile's SIGKILL comes 2 s after its SIGTERM (W108). */
+export const GROUP_GRACE_MS = 10_000;
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
 /** The programs a test may run only with PITWALL_LIVE=1. */
@@ -112,15 +123,28 @@ export function allowSignalsTo(pid: number): void {
   state.allowed.add(pid);
 }
 
-/** Notes a child the wrapped APIs started, and forgets it once it has exited, so a reused pid is never taken for it. */
-function remember(result: unknown): void {
+/** Whether spawn's `(file, args?, options?)` start the child in a group of its own. */
+function startsGroup([, second, third]: unknown[]): boolean {
+  const options = Array.isArray(second) ? third : second;
+  return isRecord(options) && options.detached === true;
+}
+
+/**
+ * Notes a child the wrapped APIs started, and forgets it once it has exited, so a reused pid is never
+ * taken for it; the group of one started in its own, GROUP_GRACE_MS after.
+ */
+function remember(result: unknown, group = false): void {
   // promisify(exec) and promisify(execFile) return a promise with the child as `child`.
   const child = isRecord(result) && isRecord(result.child) && typeof result.then === 'function' ? result.child : result;
   if (!isRecord(child) || typeof child.pid !== 'number') return;
   const pid = child.pid;
   if (typeof child.once === 'function') {
     state.spawned.add(pid);
-    (child.once as (event: string, listener: () => void) => void).call(child, 'exit', () => state.spawned.delete(pid));
+    if (group) state.groups.add(pid);
+    (child.once as (event: string, listener: () => void) => void).call(child, 'exit', () => {
+      state.spawned.delete(pid);
+      if (group) setTimeout(() => state.groups.delete(pid), GROUP_GRACE_MS).unref();
+    });
   } else if (typeof child.onExit === 'function') {
     // node-pty's IPty.
     state.spawned.add(pid);
@@ -248,7 +272,7 @@ function guarded(
     if (opensAnEditor(args)) refuse(api, 'editor');
     const result = original.apply(this, args);
     // A running child, which a test may signal: not spawnSync's or execSync's, which have exited by now.
-    if (remembers) remember(result);
+    if (remembers) remember(result, api === 'spawn' && startsGroup(args));
     return result;
   };
 }
@@ -278,9 +302,12 @@ function install(): void {
   // End session's signal (W90): only signal 0, or a child the wrapped APIs started and that's still running.
   const kill = process.kill.bind(process);
   process.kill = function (pid: number, signal?: string | number) {
-    // A group (a negative pid) by its leader, which runFile's processGroup started in a group of its own (W107).
-    const leader = Number.isInteger(pid) && pid < -1 ? -pid : pid;
-    if (!isLive() && signal !== 0 && !state.spawned.has(leader) && !state.allowed.has(leader)) refuse('process.kill', 'signal');
+    // A group (a negative pid) by its leader, which runFile's processGroup started in a group of its own (W107),
+    // and for GROUP_GRACE_MS after that leader exits, what's left of its group (W108).
+    const group = Number.isInteger(pid) && pid < -1;
+    const leader = group ? -pid : pid;
+    const ownGroup = group && state.groups.has(leader);
+    if (!isLive() && signal !== 0 && !state.spawned.has(leader) && !ownGroup && !state.allowed.has(leader)) refuse('process.kill', 'signal');
     return kill(pid, signal);
   } as typeof process.kill;
 

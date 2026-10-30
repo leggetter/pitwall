@@ -4,16 +4,33 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CLONE_PATH, type PullRequestSummary } from '../../src/shared/protocol.js';
 import { createApiClient, type FetchLike } from './api.js';
-import { cloneRepo, cloneTarget, pendingLink, prPrefill, prPrompt, prSessionName, withPendingLinks } from './prStart.js';
+import { cloneRepo, cloneTarget, cloneWhose, NOT_YOURS_ASK, pendingLink, prPrefill, prPrompt, prSessionName, withPendingLinks } from './prStart.js';
 import { group, pr, prLink, session } from './test/fixtures.js';
 
 const URL = 'https://github.com/example/demo-app/pull/57';
 const at = '2026-03-02T12:00:00.000Z';
 
+describe('cloneWhose (W108)', () => {
+  it('says how the PR is yours and who owns its repo, and for one that isn’t yours, that cloning puts someone else’s code here', () => {
+    expect(cloneWhose(pr({ number: 9, repoLabel: 'Example/SDK-Docs' }))).toEqual({ theirs: false, text: "This is your pull request. It's in a repo owned by Example." });
+    expect(cloneWhose(pr({ number: 9, repoLabel: 'example/sdk-docs', relation: 'review-requested', reviewRequest: { via: 'direct' } }))).toEqual({
+      theirs: true,
+      text: "This pull request isn't yours: your review is requested. It's in a repo owned by example. Cloning it puts someone else's code on this machine.",
+    });
+    expect(cloneWhose(pr({ number: 9, repoLabel: 'example/sdk-docs', relation: 'review-requested', reviewRequest: { via: 'team' } })).text).toBe(
+      "This pull request isn't yours: your review is requested through a team you're on. It's in a repo owned by example. Cloning it puts someone else's code on this machine.",
+    );
+    expect(cloneWhose(pr({ number: 9, repoLabel: 'a-stranger/thing', relation: 'mentioned' }))).toEqual({
+      theirs: true,
+      text: "This pull request isn't yours: you're mentioned in it. It's in a repo owned by a-stranger. Cloning it puts someone else's code on this machine.",
+    });
+  });
+});
+
 describe('prPrompt', () => {
-  it('asks for a review of a PR that asks yours, by its URL', () => {
+  it('asks for a review of a PR that asks yours, by its URL, and not to check out or run its code without asking first (W108)', () => {
     expect(prPrompt(pr({ number: 57, relation: 'review-requested', reviewRequest: { via: 'direct' } }))).toBe(
-      `Review ${URL}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub.`,
+      `Review ${URL}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub. It isn't my pull request: don't check out its branch or run any of its code without asking me first.`,
     );
   });
 
@@ -30,9 +47,17 @@ describe('prPrompt', () => {
     );
   });
 
-  it('says what to do with one that needs nothing, and one that mentions you', () => {
+  it('says what to do with one that needs nothing, and one that mentions you, which isn’t yours either (W108)', () => {
     expect(prPrompt(pr({ number: 57 }))).toBe(`Work on ${URL}.`);
-    expect(prPrompt(pr({ number: 57, relation: 'mentioned' }))).toBe(`Read ${URL}, which mentions me, and tell me what it needs from me.`);
+    expect(prPrompt(pr({ number: 57, relation: 'mentioned' }))).toBe(`Read ${URL}, which mentions me, and tell me what it needs from me. ${NOT_YOURS_ASK}`);
+  });
+
+  it('asks before running the code only of a PR that isn’t yours, in pitwall’s words and the URL alone', () => {
+    expect(NOT_YOURS_ASK).toBe("It isn't my pull request: don't check out its branch or run any of its code without asking me first.");
+    for (const relation of ['review-requested', 'mentioned'] as const) expect(prPrompt(pr({ number: 57, relation })).endsWith(` ${NOT_YOURS_ASK}`)).toBe(true);
+    for (const yours of [pr({ number: 57 }), pr({ number: 57, checks: 'failing' }), pr({ number: 57, mergeable: 'conflicts', review: 'changes-requested' })]) {
+      expect(prPrompt(yours)).not.toContain(NOT_YOURS_ASK);
+    }
   });
 
   it('never carries the title or a check’s name, which the PR’s author, a repo’s maintainers or their apps choose', () => {

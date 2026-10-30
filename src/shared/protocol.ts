@@ -1336,9 +1336,11 @@ export type PullRequestPlace =
  * the rule as set in W105's review), ties always by the order the roots were given:
  *
  * 1. By the root whose configured list (`github.owners`) names it.
- * 2. Otherwise, by the root with the most clones whose remotes point at it, counting every root's,
- *    unless that root's config is 'none' or a list that doesn't name it: then by the next root by
- *    clones that would claim it, one with no config or with 'all'.
+ * 2. Otherwise, by the root with the most clones whose `origin` remote points at it, counting every
+ *    root's, unless that root's config is 'none' or a list that doesn't name it: then by the next
+ *    root by clones that would claim it, one with no config or with 'all'. Only `origin` (W108's
+ *    finding): a remote such as `upstream` can name anyone, a stranger whose own public repo could
+ *    have a PR that mentions you, and claiming their owner would offer that repo for Clone.
  * 3. Otherwise, by the first root configured 'all'. None claims it otherwise.
  *
  * `owners` is the config file's value for a root it configures (source 'config'): a list, 'all' or
