@@ -8,7 +8,10 @@
 // - A session that needs you, by pitwall's own Needs you, says so on its row, "<name> needs you:
 //   <reason>", and comes first.
 // - A started session the index hasn't listed yet says "Starting…" and has no Open, since there's
-//   nothing to open; Open appears with the next snapshot that lists it.
+//   nothing to open; Open appears with the next snapshot that lists it. So does a resumed one (W127),
+//   "Resumed <name>", until the index lists it running again.
+// - A copy Claude Code started instead of resuming (W127) says "Resumed a copy of <name>", with a
+//   line saying the message went to the copy; Open opens the copy, by its own short id.
 // - Names are text in <bdi>: a session's name is its own, or the one the card showed.
 // - A region named by its <h3>, "Sent and started (2)", above the drafts; its list scrolls past 30% of
 //   the view (ScrollBox). A snapshot that changes it announces nothing: Needs you's own count does.
@@ -17,7 +20,7 @@ import { useId } from 'react';
 import type { SessionSummary, SupervisorHandoff } from '../../../src/shared/protocol.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { statusBadge } from '../sessions.js';
-import { handoffName, handoffRows, handoffVerb } from '../supervisor.js';
+import { HANDOFF_COPY_NOTE, handoffName, handoffRows, handoffVerb } from '../supervisor.js';
 import { Badge } from './Badge.js';
 import { Button } from './Button.js';
 import { ScrollBox } from './ScrollBox.js';
@@ -67,15 +70,20 @@ export function SupervisorHandoffs({ handoffs, sessions, notNeeded, onOpenSessio
                       {badge.label}
                     </Badge>
                   ) : (
-                    <span className="supervisor-handoff-starting">{row.handoff.kind === 'spawn' ? HANDOFF_STARTING : 'Not listed'}</span>
+                    <span className="supervisor-handoff-starting">{row.handoff.kind === 'message' ? 'Not listed' : HANDOFF_STARTING}</span>
                   )}
                   <Timestamp className="supervisor-handoff-at" at={row.handoff.at} />
                   {row.session !== undefined && onOpenSession !== undefined && (
                     <Button size="sm" variant="outline" className="supervisor-handoff-open" onClick={() => onOpenSession(row.session!.sessionId)} data-handoff-open="">
-                      Open <bdi>{name}</bdi> <span aria-hidden="true">→</span>
+                      {row.handoff.copy === true ? 'Open the copy' : <>Open <bdi>{name}</bdi></>} <span aria-hidden="true">→</span>
                     </Button>
                   )}
                 </div>
+                {row.handoff.copy === true && (
+                  <p className="supervisor-handoff-copy" data-handoff-copy="">
+                    {HANDOFF_COPY_NOTE}
+                  </p>
+                )}
                 {row.needs !== undefined && (
                   <p className="supervisor-handoff-needs" data-handoff-needs="">
                     {row.needs}

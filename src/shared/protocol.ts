@@ -1903,19 +1903,25 @@ export interface SupervisorState {
 }
 
 /**
- * One thing you approved (W124): a message sent to a session, or a session started. The supervisor
- * never sees a session's reply (Phil, 2026-11-02): you carry on in the session itself, which the
- * panel opens. `name` is the session's name as the card showed it, or as `claude --bg` reported it;
- * `sessionId` the session pitwall checked the message's recipient was; `shortId` what `claude --bg`
- * reported, which the page matches with SessionSummary.shortId once the index lists it.
+ * One thing you approved (W124): a message sent to a session, a session started, or a finished
+ * session resumed with a message (W127). The supervisor never sees a session's reply (Phil,
+ * 2026-11-02): you carry on in the session itself, which the panel opens. `name` is the session's
+ * name as the card showed it, or as `claude --bg` reported it; `sessionId` the session pitwall
+ * checked the message's recipient was, or the one it resumed; `shortId` what `claude --bg` reported,
+ * which the page matches with SessionSummary.shortId once the index lists it.
+ *
+ * `copy` (W127): the session was open in another Claude Code process after all, so Claude Code
+ * started a copy of its conversation under a new id, `shortId`, and the message went to the copy,
+ * not to the session `name` names (spike 011). The original is unchanged. Never with `sessionId`.
  */
 export interface SupervisorHandoff {
   id: string;
-  kind: 'message' | 'spawn';
+  kind: 'message' | 'spawn' | 'resume';
   name: string;
   at: string;
   sessionId?: string;
   shortId?: string;
+  copy?: true;
 }
 
 /** The most hand-offs SupervisorState carries: the newest, in this run. */
@@ -1923,12 +1929,15 @@ export const SUPERVISOR_HANDOFFS_MAX = 20;
 
 /**
  * Something the supervisor wants to do, waiting on your click (W115): a message to a session through
- * SendMessage, or a new session through the MCP server's spawn_session. Its text is the model's, so
- * it's shown as plain text in `<bdi>`, never as Markdown, and you can edit it before it goes.
+ * SendMessage, a new session through the MCP server's spawn_session, or a finished session resumed
+ * with a message through resume_session (W127): `sessionId`, `name` and `directory` are the listed
+ * session's, as pitwall resolved the id, never the model's input. Its text is the model's, so it's
+ * shown as plain text in `<bdi>`, never as Markdown, and you can edit it before it goes.
  */
 export type SupervisorApproval =
   | { id: string; kind: 'message'; to: string; text: string; at: string; expiresAt: string }
-  | { id: string; kind: 'spawn'; directory: string; name?: string; prompt: string; at: string; expiresAt: string };
+  | { id: string; kind: 'spawn'; directory: string; name?: string; prompt: string; at: string; expiresAt: string }
+  | { id: string; kind: 'resume'; sessionId: string; name: string; directory: string; text: string; at: string; expiresAt: string };
 
 /**
  * Your answer to an approval (POST supervisorApprovalPath()): send it as it is, send your edit
@@ -1943,7 +1952,7 @@ export const SUPERVISOR_MODEL = 'claude-opus-5-5';
 /** An approval you don't answer is declined after this, inside the 30 minutes pitwall gives the supervisor's MCP calls (W115). */
 export const SUPERVISOR_APPROVAL_TIMEOUT_MS = 29 * 60 * 1000;
 
-/** The longest message you can send the supervisor, and the longest edit of a message it proposes. */
+/** The longest message you can send the supervisor, and the longest message or edit it proposes, resume_session's included (W127). */
 export const SUPERVISOR_MESSAGE_MAX = 20_000;
 
 /**
@@ -1990,7 +1999,7 @@ export const MCP_PATH = '/mcp';
 export const MCP_SERVER_NAME = 'pitwall';
 
 /**
- * Its tools. The read-only ones are allowed outright; spawn_session asks for your approval (W115);
+ * Its tools. The read-only ones are allowed outright; spawn_session (W115) and resume_session (W127) ask for your approval;
  * approve is the permission prompt tool (`--permission-prompt-tool mcp__pitwall__approve`), which
  * Claude Code calls itself and leaves out of the model's tools.
  */
@@ -2000,6 +2009,7 @@ export const MCP_TOOLS = {
   listPrs: 'list_prs',
   getRecap: 'get_recap',
   spawnSession: 'spawn_session',
+  resumeSession: 'resume_session',
   approve: 'approve',
 } as const;
 

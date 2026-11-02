@@ -193,9 +193,9 @@ describe('MCP over the route, as Claude Code 2.1.312 speaks it', () => {
     expect(initialized.body).toBe('');
 
     const list = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).body) as { result: { tools: { name: string; annotations: { readOnlyHint: boolean } }[] } };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'spawn_session', 'approve']);
-    // The four that read say so; spawn_session and approve don't (W115).
-    expect(list.result.tools.map((tool) => tool.annotations.readOnlyHint)).toEqual([true, true, true, true, false, false]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'spawn_session', 'resume_session', 'approve']);
+    // The four that read say so; spawn_session, resume_session (W127) and approve don't (W115).
+    expect(list.result.tools.map((tool) => tool.annotations.readOnlyHint)).toEqual([true, true, true, true, false, false, false]);
 
     const called = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_sessions', arguments: {} } })).body) as { result: { content: { type: string; text: string }[]; isError?: boolean } };
     expect(called.result.isError).toBeUndefined();

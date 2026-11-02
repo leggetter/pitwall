@@ -1362,6 +1362,17 @@ describe('helpers', () => {
     expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', { model: 'default', effort: 'xhigh' })).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--effort', 'xhigh']);
   });
 
+  it('resumeArgs puts the supervisor’s message last, after --, so one that starts with - stays a message (W127, spike 011)', () => {
+    expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', {}, '--dangerously-skip-permissions')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--', '--dangerously-skip-permissions']);
+    expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', { effort: 'high' }, 'Go on.')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--effort', 'high', '--', 'Go on.']);
+  });
+
+  it('parseCopyNote reads the note Claude Code 2.1.316 prints for a session running in the background (spike 011)', () => {
+    const note = 'note: session e3518930 is already running in the background, so this started a copy as b821060d. `claude attach e3518930` opens the original.';
+    expect(parseCopyNote(note)).toEqual({ found: true, shortId: 'b821060d' });
+    expect(parseBackgrounded('backgrounded · b821060d\n  claude agents             list sessions')).toEqual({ shortId: 'b821060d' });
+  });
+
   it('spawnArgs always ends the options before the prompt', () => {
     expect(spawnArgs({ cwd: '/x', prompt: '-p' })).toEqual(['--bg', '--', '-p']);
     expect(spawnArgs({ cwd: '/x', prompt: 'p', name: 'n', model: 'm' })).toEqual(['--bg', '--name', 'n', '--model', 'm', '--', 'p']);

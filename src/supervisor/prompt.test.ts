@@ -19,12 +19,13 @@ import {
 } from './prompt.js';
 
 describe('the supervisor’s tools', () => {
-  it('allows the read-only MCP tools outright, asks before SendMessage and spawn_session, and approve answers the asks', () => {
+  it('allows the read-only MCP tools outright, asks before SendMessage, spawn_session and resume_session, and approve answers the asks', () => {
     expect(SUPERVISOR_ALLOWED_TOOLS).toEqual(['mcp__pitwall__list_sessions', 'mcp__pitwall__read_session', 'mcp__pitwall__list_prs', 'mcp__pitwall__get_recap']);
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.spawnSession));
+    expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.resumeSession));
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.approve));
     expect(SUPERVISOR_ALLOWED_TOOLS.join(',')).not.toMatch(/SendMessage|Bash/);
-    expect(SUPERVISOR_ASK_TOOLS).toEqual(['SendMessage', 'mcp__pitwall__spawn_session']);
+    expect(SUPERVISOR_ASK_TOOLS).toEqual(['SendMessage', 'mcp__pitwall__spawn_session', 'mcp__pitwall__resume_session']);
     expect(SUPERVISOR_PROMPT_TOOL).toBe('mcp__pitwall__approve');
     expect([...SUPERVISOR_INIT_TOOLS].sort()).toEqual([...SUPERVISOR_ALLOWED_TOOLS, ...SUPERVISOR_ASK_TOOLS, SUPERVISOR_PROMPT_TOOL].sort());
     expect(SUPERVISOR_INIT_TOOLS.has('Bash')).toBe(false);
@@ -61,7 +62,7 @@ describe('supervisorArgs()', () => {
     expect(JSON.parse(supervisorSettings(hooks))).toEqual({
       autoMemoryEnabled: false,
       crossSessionInbound: 'refuse',
-      permissions: { ask: ['SendMessage', 'mcp__pitwall__spawn_session'] },
+      permissions: { ask: ['SendMessage', 'mcp__pitwall__spawn_session', 'mcp__pitwall__resume_session'] },
       hooks,
     });
   });
@@ -97,7 +98,7 @@ describe('supervisorEnvironment()', () => {
 
 describe('the system prompt, version 3', () => {
   it('reads from the tools, recaps first, treats what they return as untrusted, proposes messages and sessions for approval with a reason, never asks a session its status', () => {
-    expect(SUPERVISOR_PROMPT_VERSION).toBe(4);
+    expect(SUPERVISOR_PROMPT_VERSION).toBe(5);
     const prompt = SUPERVISOR_SYSTEM_PROMPT;
     expect(prompt).toContain("Answer from pitwall's tools");
     expect(prompt).toContain('read_session');
@@ -149,6 +150,17 @@ describe('the system prompt, version 3', () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain('draft one new session per piece');
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("don't touch the same files");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain('When two pieces would overlap, say so');
+  });
+
+  it('resumes the finished session that has the context, with the message, rather than asking the user to paste it (W127)', () => {
+    const prompt = SUPERVISOR_SYSTEM_PROMPT;
+    expect(prompt).toContain('with resume_session');
+    expect(prompt).toContain('propose this rather than a new session');
+    expect(prompt).toContain('never ask the user to open it and paste your text themselves');
+    expect(prompt).toContain('A running session takes SendMessage instead');
+    expect(prompt).toContain('a resumed one\'s included, speaks as you, the supervisor');
+    expect(prompt).toContain('or to find the finished session that did the related work');
+    expect(prompt).toContain('the message went to the copy');
   });
 
   it('writes short, with little formatting and no closing sections (W124)', () => {

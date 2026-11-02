@@ -116,7 +116,8 @@
 }
 
 .supervisor-handoffs-note,
-.supervisor-handoff-needs {
+.supervisor-handoff-needs,
+.supervisor-handoff-copy {
   margin: 0;
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
@@ -195,6 +196,11 @@
 
 .supervisor-handoff-needs {
   color: var(--pw-text);
+  overflow-wrap: anywhere;
+}
+
+/* A copy Claude Code started instead of resuming (W127): said in subtle text, as the note under the heading. */
+.supervisor-handoff-copy {
   overflow-wrap: anywhere;
 }
 

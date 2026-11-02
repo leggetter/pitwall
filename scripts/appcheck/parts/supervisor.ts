@@ -3,7 +3,8 @@
 // view in the third column as ?supervisor, one history entry, in a session's place and back; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
 // reply as markdown; Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
-// goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
+// goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); a
+// resume draft for a finished session and its "Resumed" row (W127); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
 // starts nothing; and none with --no-supervisor. Made-up example/* content only.
 
 import { NAMES, SUPERVISOR_APPROVALS } from '../fixtures.js';
@@ -191,6 +192,38 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`[...${card}.querySelectorAll('.approval-hidden')].map((each) => each.textContent)`), ['U+00A0'], 'the no-break space as its code');
       t.expect(await page.evaluate<boolean>(`${card}.querySelector('.approval-text').getAttribute('role') === 'region'`), 'a Tab stop while it scrolls');
       await t.shot('long-draft');
+    });
+
+    await t.step('a resume draft (W127): the finished session by its own name, the note, Send, then “Resumed” with Open', async () => {
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: 'resume' });
+      await page.waitFor('one card', `${CARDS}.length === 1`);
+      const card = `${CARDS}[0]`;
+      t.expectEqual(
+        await page.evaluate(`({ kind: ${card}.dataset.kind, title: ${card}.querySelector('h4').textContent, note: ${card}.querySelector('.approval-note')?.textContent ?? null, label: ${card}.querySelector('.approval-label')?.textContent ?? null })`),
+        {
+          kind: 'resume',
+          title: `Resume ${NAMES.ended} and send`,
+          note: 'Resumes this finished session in the background with claude --resume, in its own folder, and sends the message below as its next turn.',
+          label: 'Message',
+        },
+        'the card says what it resumes and that the message is its next turn',
+      );
+      const buttons = await page.evaluate<string[]>(`[...${card}.querySelectorAll('button')].map((b) => b.textContent.trim())`);
+      t.expectEqual(buttons, ['Send', 'Edit', "Don't send"], 'Send, Edit and Don’t send');
+      const box = await page.evaluate<{ right: number }>(`(() => { const r = ${card}.getBoundingClientRect(); return { right: r.right }; })()`);
+      t.expect(box.right <= t.viewport.width + 0.5, 'the card inside the window', box);
+      await t.shot('resume-card');
+      await page.click('Send', cardButton(0, 'Send'));
+      await page.waitFor('its row, once the index lists it running', `${HANDOFFS}.length === 1 && !!${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
+      t.expectEqual(records.decisions.at(-1), { id: SUPERVISOR_APPROVALS.resume, decision: 'send', status: 200 }, 'sent once');
+      const row = await page.evaluate<{ kind: string; what: string; open: string | null }>(
+        `(() => { const li = ${HANDOFFS}[0]; return { kind: li.dataset.handoff, what: li.querySelector('.supervisor-handoff-what').textContent, open: li.querySelector('[data-handoff-open]')?.textContent ?? null }; })()`,
+      );
+      t.expectEqual(row, { kind: 'resume', what: `Resumed ${NAMES.ended}`, open: `Open ${NAMES.ended} →` }, '“Resumed <name>” with Open');
+      await t.shot('resume-handoff');
+      await page.click(`Open ${NAMES.ended}`, `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
+      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
+      t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), NAMES.ended, 'the session it resumed');
     });
 
     await t.step('Load earlier: its older turns', async () => {

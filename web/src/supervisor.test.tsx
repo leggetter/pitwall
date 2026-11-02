@@ -30,6 +30,7 @@ const AT = '2026-10-29T10:00:00.000Z';
 const LATER = '2026-10-29T10:29:00.000Z';
 const message = { id: 'a1', kind: 'message', to: 'pitwall-test-api', text: 'Please rerun the made-up tests.', at: AT, expiresAt: LATER };
 const spawn = { id: 'a2', kind: 'spawn', directory: '/Users/example/code/demo-app', name: 'pr-57', prompt: 'Review the made-up PR.', at: AT, expiresAt: LATER };
+const resume = { id: 'a3', kind: 'resume', sessionId: '00000000-0000-4000-8000-000000000127', name: 'pitwall-test-precision', directory: '/Users/example/code/demo-app', text: 'The user asked me to pass this on: go on.', at: AT, expiresAt: LATER };
 
 describe('its place in the URL', () => {
   it('is ?supervisor, with no value, after the selection', () => {
@@ -57,10 +58,10 @@ describe('its place in the URL', () => {
 
 describe('the snapshot’s state, read defensively', () => {
   it('keeps what it knows how to show', () => {
-    expect(asSupervisorState({ status: 'idle', sessionId: 's1', approvals: [message, spawn], lastTurnAt: AT, costUsd: 0.04 })).toEqual({
+    expect(asSupervisorState({ status: 'idle', sessionId: 's1', approvals: [message, spawn, resume], lastTurnAt: AT, costUsd: 0.04 })).toEqual({
       status: 'idle',
       sessionId: 's1',
-      approvals: [message, spawn],
+      approvals: [message, spawn, resume],
       lastTurnAt: AT,
       costUsd: 0.04,
     });
@@ -106,6 +107,13 @@ describe('its words', () => {
     expect(approvalTitle(message as never)).toBe('Message to pitwall-test-api');
     expect(approvalTitle(spawn as never)).toBe('New session in ~/code/demo-app, named pr-57');
     expect(approvalTitle({ ...spawn, name: undefined } as never)).toBe('New session in ~/code/demo-app');
+    expect(approvalTitle(resume as never)).toBe('Resume pitwall-test-precision and send');
+  });
+
+  it('reads a resume card only with the listed session’s id, name and directory (W127)', () => {
+    for (const bad of [{ ...resume, sessionId: '' }, { ...resume, name: ' ' }, { ...resume, directory: '' }, { ...resume, text: 7 }]) {
+      expect(asSupervisorState({ status: 'idle', approvals: [bad] })?.approvals).toEqual([]);
+    }
   });
 });
 

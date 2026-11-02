@@ -61,7 +61,9 @@
 // realpath of the resolved session's own `cwd`, checked immediately before it
 // starts, never a directory the request names, with `PWD` set to that `cwd`,
 // its `sessionId`, a UUID, and no prompt, so no message text is on the command
-// line.
+// line. The supervisor's resume_session (W127) runs the same code, createResumeRunner(),
+// after your approval, with its message as the last argument after `--`, as
+// spawn's first prompt is (spike 011).
 //
 // Attachments (W79, spike 008): spawn appends one `@<path>` line per file to
 // the first prompt, after a blank line, and passes `--add-dir=<its folder>` for
@@ -98,6 +100,7 @@ import {
   stopPath,
   type ActionResult,
   type ResumeResult,
+  type SessionSummary,
   type SpawnResult,
   type WorkChoice,
   WORK_DEFAULT,
@@ -153,6 +156,11 @@ export interface ActionOptions {
    * spawn route and the supervisor's spawn_session (W115), so they share them. Default: a new one.
    */
   spawner?: SpawnRunner;
+  /**
+   * What resumes a listed session, with resume's checks and limits. The server makes one for the
+   * resume route and the supervisor's resume_session (W127), so they share them. Default: a new one.
+   */
+  resumer?: ResumeRunner;
   /**
    * The model and effort for sessions and their sub-agents (W119): what spawn uses when the request
    * names none, and what resume always uses. Default: none, so no flags, as before W119.
@@ -361,9 +369,14 @@ export function parseCopyNote(output: string): { found: true; shortId?: string }
   return SHORT_ID_PATTERN.test(shortId) ? { found: true, shortId } : { found: true };
 }
 
-/** The arguments for resuming an ended session in the background, with no prompt. */
-export function resumeArgs(sessionId: string, choice: WorkChoice = {}): string[] {
-  return ['--resume', sessionId, '--bg', ...workArgs(choice)];
+/**
+ * The arguments for resuming a session in the background: with no prompt, from the resume route; or
+ * with the supervisor's message, after your approval (W127), as the last argument after `--`, so a
+ * message that starts with `-` stays a message. Claude Code runs it as the resumed session's next
+ * turn, under the same session id (spike 011).
+ */
+export function resumeArgs(sessionId: string, choice: WorkChoice = {}, prompt?: string): string[] {
+  return ['--resume', sessionId, '--bg', ...workArgs(choice), ...(prompt === undefined ? [] : ['--', prompt])];
 }
 
 /**
@@ -661,6 +674,190 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
   return { start, limiter };
 }
 
+/** What resume answers, with its status, for the route and for the supervisor's resume_session (W127). */
+export interface ResumeOutcome {
+  status: 200 | 409 | 422 | 429 | 502 | 504;
+  result: ResumeResult;
+  retryAfterSeconds?: number;
+  /**
+   * Why it wasn't resumed, when that's that it's running: the fresh `claude agents` lists it, so a
+   * resume would start a copy. The supervisor's resume_session says to message it instead (W127).
+   */
+  running?: true;
+}
+
+/**
+ * Brings a listed session back with `claude --resume <id> --bg`, after the checks the resume route
+ * makes (W66, W81, W107): the route's, and the supervisor's resume_session's after your approval
+ * (W127), which share one runner, so one resume of a session runs at a time, under the same command
+ * slots and spawn's per-minute limit. With `prompt`, it's the resumed session's next turn, as the
+ * last argument after `--` (spike 011): on its command line, as spawn's first prompt is.
+ */
+export interface ResumeRunner {
+  resume(session: SessionSummary, prompt?: string): Promise<ResumeOutcome>;
+}
+
+/**
+ * Why a listed session can't be resumed at all, or undefined when it can be tried: an interactive
+ * session that has ended, or a background one that isn't running (W107), with a UUID for an id, since
+ * `claude --resume` takes a name too, and a directory that still exists. The resume route and the
+ * supervisor's resume_session (W127) both check with it, before the fresh listing.
+ */
+export function resumeProblem(session: SessionSummary): string | undefined {
+  if (!isResumable(session) || !isSessionUuid(session.sessionId)) {
+    return "Only an interactive session that has ended, or a background session that isn't running, can be resumed from pitwall.";
+  }
+  if (session.cwdMissing === true) return `It started in ${session.cwd}, which no longer exists, and Claude Code resumes a session only from where it started.`;
+  return undefined;
+}
+
+/** A background session that isn't running, stopped or finished (W107): no process, not alive. */
+function isStoppedJob(session: SessionSummary): boolean {
+  return session.kind === 'background' && !session.alive && session.pid === undefined;
+}
+
+/** An ended interactive session, or a stopped background one. */
+function isResumable(session: SessionSummary): boolean {
+  return session.ended === true || isStoppedJob(session);
+}
+
+export function createResumeRunner(
+  indexer: Pick<Indexer, 'latest' | 'pollSoon' | 'noteRestart'>,
+  options: Omit<ActionOptions, 'resumer' | 'slots'> & { slots: CommandSlots; limiter: Pick<SpawnLimiter, 'countStart'> },
+): ResumeRunner {
+  const run = options.run ?? runCommand;
+  const now = options.now ?? Date.now;
+  const claudeBin = options.claudeBin ?? 'claude';
+  const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
+  const env = () => childEnvironment(options.env ?? process.env, options.token);
+  const sessionWork = () => ({ session: options.work?.choice('session') ?? {}, subagents: options.work?.choice('subagents') ?? {} });
+  const { slots, limiter } = options;
+  const agents = options.agents ?? createAgentsSource({ claudeBin });
+  // Session ids being resumed now: a second resume of one waits for the first's answer.
+  const resuming = new Set<string>();
+
+  async function resume(session: SessionSummary, prompt?: string): Promise<ResumeOutcome> {
+    const answer = (result: ResumeResult, status: ResumeOutcome['status'], extra: Partial<ResumeOutcome> = {}): ResumeOutcome => ({ status, result, ...extra });
+    // From the resolved summary, never a route parameter or a tool's input. A UUID only: `claude --resume` takes a name too.
+    const { sessionId, cwd } = session;
+    // A background session that isn't running, stopped or finished, comes back the same way, under
+    // its own short id: Claude Code "woke session <id> with its saved options" (W107, checked live).
+    const stoppedJob = isStoppedJob(session);
+    const problem = resumeProblem(session);
+    if (problem !== undefined) return answer({ ok: false, error: problem }, 409);
+    if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
+    const release = slots.acquire();
+    if (!release) return answer({ ok: false, error: slots.busyError }, 429, { retryAfterSeconds: 1 });
+    resuming.add(sessionId);
+    try {
+      // A session that's open in a terminal again gets an unnamed copy, and Claude Code still exits 0
+      // (spike 006, finding 5), so it's checked first, and nothing runs when the check can't be made.
+      // Its session id in any row counts, one parseAgentRows() skipped included (W81).
+      const listing = await agents.list();
+      if (!listing.ok) {
+        return answer({ ok: false, error: `pitwall couldn't check that the session isn't running again, so it didn't resume it: ${listing.error}.` }, 502);
+      }
+      if (stoppedJob) {
+        // Its own row is listed, as a background job's always is: it must still be one, with no process.
+        const rows = listing.rows.filter((row) => row.sessionId === sessionId);
+        if (sessionPids(listing, sessionId).size > 0 || rows.some((row) => row.kind !== 'background')) {
+          indexer.pollSoon();
+          return answer({ ok: false, error: "It's running again, so pitwall didn't resume it." }, 409, { running: true });
+        }
+        if (rows.length === 0) {
+          indexer.pollSoon();
+          return answer({ ok: false, error: 'Claude Code no longer lists it as a background session, so pitwall didn’t resume it.' }, 409);
+        }
+      } else if (listedSessionIds(listing).has(sessionId)) {
+        indexer.pollSoon();
+        return answer(
+          { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." },
+          409,
+          { running: true },
+        );
+      }
+
+      // Afresh, as spawn checks its directory, and only now, after the listing, which can take 10 s:
+      // it may have gone, or been swapped for a symlink that leads elsewhere, since the poll (W73, W81).
+      // Nothing that can wait comes between this check and the run.
+      const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
+      if (!dir.ok) return answer({ ok: false, error: dir.error }, 409);
+
+      // It starts a long-lived session, so it counts toward spawn's per-minute limit, which it shares.
+      const start = limiter.countStart();
+      if (!start.ok) return answer({ ok: false, error: start.error }, 429, { retryAfterSeconds: start.retryAfterSeconds });
+
+      // It runs in the realpath just checked, never the snapshot's path, so a symlink swapped after
+      // the check can't move it. PWD is the snapshot's `cwd`, not pitwall's own, which
+      // childEnvironment() passes on: Claude Code finds the session in the project folder of the
+      // directory it started in, and a CLI that prefers PWD to the real cwd, to keep a symlinked path,
+      // would otherwise look in pitwall's, or, given the realpath, in the realpath's, which isn't the
+      // one a session started through a symlink is in. The check just resolved that `cwd` to
+      // `dir.path`, so the two name the same directory; one that no longer resolves to a directory
+      // under a root was refused with 409 above, rather than run with PWD set to the realpath.
+      // The defaults for sessions and their sub-agents (W119), only for a session this pitwall started
+      // or resumed (W119's review, #114's scope): one started elsewhere keeps the model and effort it
+      // was started with, so no flags. Claude Code takes `--model` and `--effort` on a resume too.
+      const ours = options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
+      const work = ours ? sessionWork() : { session: {}, subagents: {} };
+      const result = await run(claudeBin, resumeArgs(sessionId, work.session, prompt), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
+      if (result.kind === 'failed') {
+        if (result.reason === 'timeout') {
+          indexer.pollSoon();
+          return answer({ ok: false, error: `claude --resume ${result.message}. The session may still appear in the list.` }, 504);
+        }
+        return answer({ ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
+      }
+      if (result.code !== 0) {
+        const message = said(result);
+        const untrusted = untrustedLine(message);
+        // The path PWD named, which checkDirectory() found free of control and bidi characters.
+        if (untrusted !== undefined) return answer(untrustedResult(untrusted, cwd), 422);
+        return answer({ ok: false, error: firstLine(message) ?? `claude --resume exited with code ${result.code}.` }, 502);
+      }
+
+      // Exit 0 either way: the copy's note says it wasn't this session that resumed.
+      const copy = parseCopyNote(`${result.stdout}\n${result.stderr}`);
+      if (copy !== undefined) {
+        indexer.pollSoon();
+        const copied: ResumeResult = {
+          ok: false,
+          error: `It was open in another Claude Code process after all, so Claude Code started a copy${copy.shortId === undefined ? '' : ` as ${copy.shortId}`} instead. The copy is listed as a background session with no name, which you can stop and remove.`,
+        };
+        // Left alone: it's the user's to stop and remove. Attach treats it as starting, as a spawn.
+        if (copy.shortId !== undefined) {
+          copied.copyShortId = copy.shortId;
+          options.spawned?.add(copy.shortId);
+        }
+        return answer(copied, 409);
+      }
+      const resumed = parseBackgrounded(result.stdout);
+      if (!resumed) {
+        indexer.pollSoon();
+        const line = firstLine(result.stdout);
+        return answer(
+          { ok: false, error: `Claude Code didn't report the resumed session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
+          502,
+        );
+      }
+      options.spawned?.add(resumed.shortId);
+      options.resumed?.add(sessionId);
+      options.started?.add(sessionId);
+      options.started?.add(resumed.shortId);
+      // You asked for it back, so it needs your prompt until you send one (NeedsYou's 'restarted', W69).
+      // Polls soon. With a prompt it has one, its next turn, so it doesn't (W127).
+      if (prompt === undefined) indexer.noteRestart(sessionId, now());
+      else indexer.pollSoon();
+      return answer({ ok: true, shortId: resumed.shortId }, 200);
+    } finally {
+      release();
+      resuming.delete(sessionId);
+    }
+  }
+
+  return { resume };
+}
+
 /** The stop route as a Hono pattern. stopPath() encodes its argument, so the pattern is decoded back. */
 const STOP_ROUTE = decodeURIComponent(stopPath(':sessionId'));
 const REMOVE_ROUTE = decodeURIComponent(removePath(':sessionId'));
@@ -679,14 +876,11 @@ export const LOOKUP_ERRORS = {
  */
 export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'pollSoon' | 'noteRestart'>, options: ActionOptions = {}): void {
   const run = options.run ?? runCommand;
-  const now = options.now ?? Date.now;
   const claudeBin = options.claudeBin ?? 'claude';
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const env = () => childEnvironment(options.env ?? process.env, options.token);
   // New sessions, from New session's dialog here and from the supervisor's spawn_session (W115): one limit for both.
   const spawner = options.spawner ?? createSpawnRunner(options);
-  // A resumed session's model and effort, and its sub-agents' model (W119): the defaults for sessions.
-  const sessionWork = () => ({ session: options.work?.choice('session') ?? {}, subagents: options.work?.choice('subagents') ?? {} });
   const limiter = spawner.limiter;
 
   const spawnResult = (c: Context, result: SpawnResult, status: 201 | 400 | 413 | 415 | 422 | 429 | 502 | 503 | 504) => {
@@ -764,134 +958,15 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
   app.post(STOP_ROUTE, (c) => act(c, 'stop'));
   app.post(REMOVE_ROUTE, (c) => act(c, 'rm'));
 
-  const agents = options.agents ?? createAgentsSource({ claudeBin });
-  // Session ids being resumed now: a second resume of one waits for the first's answer.
-  const resuming = new Set<string>();
+  // Resume (W66, W107), and the supervisor's resume_session after your approval (W127): one runner.
+  const resumer = options.resumer ?? createResumeRunner(indexer, { ...options, slots, limiter });
 
   app.post(RESUME_ROUTE, async (c) => {
     c.header('Cache-Control', 'no-store');
-    const answer = (result: ResumeResult, status: 200 | 400 | 404 | 409 | 422 | 429 | 502 | 503 | 504) => c.json(result, status);
     const lookup = resolveSession(indexer, c.req.param('sessionId'));
-    if (!lookup.ok) return answer({ ok: false, error: LOOKUP_ERRORS[lookup.status] }, lookup.status);
-    const { session } = lookup;
-    // From the resolved summary, never the route parameter. A UUID only: `claude --resume` takes a name too.
-    const { sessionId, cwd } = session;
-    // A background session that isn't running, stopped or finished, comes back the same way, under
-    // its own short id: Claude Code "woke session <id> with its saved options" (W107, checked live).
-    const stoppedJob = session.kind === 'background' && !session.alive && session.pid === undefined;
-    if ((session.ended !== true && !stoppedJob) || !isSessionUuid(sessionId)) {
-      return answer({ ok: false, error: "Only an interactive session that has ended, or a background session that isn't running, can be resumed from pitwall." }, 409);
-    }
-    if (session.cwdMissing === true) {
-      return answer({ ok: false, error: `It started in ${cwd}, which no longer exists, and Claude Code resumes a session only from where it started.` }, 409);
-    }
-    if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
-    const release = slots.acquire();
-    if (!release) return answer(busy(c), 429);
-    resuming.add(sessionId);
-    try {
-      // A session that's open in a terminal again gets an unnamed copy, and Claude Code still exits 0
-      // (spike 006, finding 5), so it's checked first, and nothing runs when the check can't be made.
-      // Its session id in any row counts, one parseAgentRows() skipped included (W81).
-      const listing = await agents.list();
-      if (!listing.ok) {
-        return answer({ ok: false, error: `pitwall couldn't check that the session isn't running again, so it didn't resume it: ${listing.error}.` }, 502);
-      }
-      if (stoppedJob) {
-        // Its own row is listed, as a background job's always is: it must still be one, with no process.
-        const rows = listing.rows.filter((row) => row.sessionId === sessionId);
-        if (sessionPids(listing, sessionId).size > 0 || rows.some((row) => row.kind !== 'background')) {
-          indexer.pollSoon();
-          return answer({ ok: false, error: "It's running again, so pitwall didn't resume it." }, 409);
-        }
-        if (rows.length === 0) {
-          indexer.pollSoon();
-          return answer({ ok: false, error: 'Claude Code no longer lists it as a background session, so pitwall didn’t resume it.' }, 409);
-        }
-      } else if (listedSessionIds(listing).has(sessionId)) {
-        indexer.pollSoon();
-        return answer(
-          { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." },
-          409,
-        );
-      }
-
-      // Afresh, as spawn checks its directory, and only now, after the listing, which can take 10 s:
-      // it may have gone, or been swapped for a symlink that leads elsewhere, since the poll (W73, W81).
-      // Nothing that can wait comes between this check and the run.
-      const dir = await checkDirectory(cwd, indexer.latest()?.roots ?? []);
-      if (!dir.ok) return answer({ ok: false, error: dir.error }, 409);
-
-      // It starts a long-lived session, so it counts toward spawn's per-minute limit, which it shares.
-      const start = limiter.countStart();
-      if (!start.ok) {
-        c.header('Retry-After', String(start.retryAfterSeconds));
-        return answer({ ok: false, error: start.error }, 429);
-      }
-
-      // It runs in the realpath just checked, never the snapshot's path, so a symlink swapped after
-      // the check can't move it. PWD is the snapshot's `cwd`, not pitwall's own, which
-      // childEnvironment() passes on: Claude Code finds the session in the project folder of the
-      // directory it started in, and a CLI that prefers PWD to the real cwd, to keep a symlinked path,
-      // would otherwise look in pitwall's, or, given the realpath, in the realpath's, which isn't the
-      // one a session started through a symlink is in. The check just resolved that `cwd` to
-      // `dir.path`, so the two name the same directory; one that no longer resolves to a directory
-      // under a root was refused with 409 above, rather than run with PWD set to the realpath.
-      // The defaults for sessions and their sub-agents (W119), only for a session this pitwall started
-      // or resumed (W119's review, #114's scope): one started elsewhere keeps the model and effort it
-      // was started with, so no flags. Claude Code takes `--model` and `--effort` on a resume too.
-      const ours = options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
-      const work = ours ? sessionWork() : { session: {}, subagents: {} };
-      const result = await run(claudeBin, resumeArgs(sessionId, work.session), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
-      if (result.kind === 'failed') {
-        if (result.reason === 'timeout') {
-          indexer.pollSoon();
-          return answer({ ok: false, error: `claude --resume ${result.message}. The session may still appear in the list.` }, 504);
-        }
-        return answer({ ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
-      }
-      if (result.code !== 0) {
-        const message = said(result);
-        const untrusted = untrustedLine(message);
-        // The path PWD named, which checkDirectory() found free of control and bidi characters.
-        if (untrusted !== undefined) return answer(untrustedResult(untrusted, cwd), 422);
-        return answer({ ok: false, error: firstLine(message) ?? `claude --resume exited with code ${result.code}.` }, 502);
-      }
-
-      // Exit 0 either way: the copy's note says it wasn't this session that resumed.
-      const copy = parseCopyNote(`${result.stdout}\n${result.stderr}`);
-      if (copy !== undefined) {
-        indexer.pollSoon();
-        const copied: ResumeResult = {
-          ok: false,
-          error: `It was open in another Claude Code process after all, so Claude Code started a copy${copy.shortId === undefined ? '' : ` as ${copy.shortId}`} instead. The copy is listed as a background session with no name, which you can stop and remove.`,
-        };
-        // Left alone: it's the user's to stop and remove. Attach treats it as starting, as a spawn.
-        if (copy.shortId !== undefined) {
-          copied.copyShortId = copy.shortId;
-          options.spawned?.add(copy.shortId);
-        }
-        return answer(copied, 409);
-      }
-      const resumed = parseBackgrounded(result.stdout);
-      if (!resumed) {
-        indexer.pollSoon();
-        const line = firstLine(result.stdout);
-        return answer(
-          { ok: false, error: `Claude Code didn't report the resumed session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
-          502,
-        );
-      }
-      options.spawned?.add(resumed.shortId);
-      options.resumed?.add(sessionId);
-      options.started?.add(sessionId);
-      options.started?.add(resumed.shortId);
-      // You asked for it back, so it needs your prompt until you send one (NeedsYou's 'restarted', W69). Polls soon.
-      indexer.noteRestart(sessionId, now());
-      return answer({ ok: true, shortId: resumed.shortId }, 200);
-    } finally {
-      release();
-      resuming.delete(sessionId);
-    }
+    if (!lookup.ok) return c.json({ ok: false, error: LOOKUP_ERRORS[lookup.status] } satisfies ResumeResult, lookup.status);
+    const outcome = await resumer.resume(lookup.session);
+    if (outcome.retryAfterSeconds !== undefined) c.header('Retry-After', String(outcome.retryAfterSeconds));
+    return c.json(outcome.result, outcome.status);
   });
 }

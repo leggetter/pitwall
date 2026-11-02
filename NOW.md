@@ -18,7 +18,8 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 | W124, the supervisor's v3 prompt, cheaper lookups and Open hand-offs (Phil's first use) | In review, into `m5/integration` |
 | W125, session names in the supervisor's replies open the session; list_prs's old PRs don't need you | In review, into `m5/integration` |
 | W126, why a recap's answer was refused; a fence and a disagreeing waitingOn repaired (Phil's report, 2026-11-02) | In review, into `m5/integration` |
-| W128, Needs you names the PR; a recap for a finished session whose PR needs you; Rename pushed to "Nice to have, later" | In review, into `m5/integration` |
+| W127, the supervisor resumes a finished session and sends it a message (resume_session, spike 011, prompt v5) | In review, into `m5/integration` |
+| W128, Needs you names the PR; a recap for a finished session whose PR needs you; Rename pushed to "Nice to have, later" | Merged ([#130](https://github.com/leggetter/pitwall/pull/130)) |
 | M5 try-out | Phil's, on port 4519; started, W124 came from it |
 | Merge `m5/integration` into `main` | Waits on Phil's word after the try-out |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
@@ -51,5 +52,5 @@ Read these as the work needs them, not all at the start.
 - **[`docs/decisions.md`](docs/decisions.md):** settled decisions D1 to D26 with their reasoning. D4 (the supervisor), D8 (the relay), D24 (the config file) and D26 (recaps) matter for M5.
 - **[`docs/design-system.md`](docs/design-system.md):** tokens, layout and components, before a UI change. A UI change runs the app check: [`scripts/appcheck/README.md`](scripts/appcheck/README.md).
 - **[`docs/plan-archive.md`](docs/plan-archive.md):** history, for M0 to M4: work breakdowns, findings, reviews and decisions. Look a W number up here when an old one is cited.
-- **[`docs/spikes/`](docs/spikes/):** what each spike measured; 009 (the supervisor process) and 010 (recaps) are M5's.
+- **[`docs/spikes/`](docs/spikes/):** what each spike measured; 009 (the supervisor process), 010 (recaps) and 011 (resuming a finished session with a message, W127) are M5's.
 - **[`README.md`](README.md):** for newcomers; update it when what pitwall does changes.

@@ -1,6 +1,7 @@
 // The supervisor's approvals (M5, W114, W115; docs/design-system.md, 4: Supervisor): a draft card for
 // each thing it wants to do that waits on your click, oldest first, above its message box. A message to
-// a session, or a new session in a directory, with the text it would send, as text in <bdi>, never
+// a session, a new session in a directory, or a finished session resumed with a message (W127), with
+// the text it would send, as text in <bdi>, never
 // markdown, since it's the model's and may quote a transcript; when it runs out; and Send, Edit and
 // Don't send.
 //
@@ -45,13 +46,13 @@ export const EDIT_EMPTY = 'Type the text to send, or Cancel to keep the draft.';
 export const editTooLong = (over: number, limit: number = SUPERVISOR_TEXT_MAX) =>
   `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${limit.toLocaleString('en')}.`;
 
-/** The longest edit of each kind: a message's, SUPERVISOR_MESSAGE_MAX; a new session's first prompt, SPAWN_PROMPT_MAX (W115). */
+/** The longest edit of each kind: a message's, a resumed session's included (W127), SUPERVISOR_MESSAGE_MAX; a new session's first prompt, SPAWN_PROMPT_MAX (W115). */
 export function editLimit(kind: SupervisorApproval['kind']): number {
   return kind === 'spawn' ? SPAWN_PROMPT_MAX : SUPERVISOR_TEXT_MAX;
 }
 
 /** What each kind's text is, as the card labels it. */
-const TEXT_LABELS = { message: 'Message', spawn: 'First prompt' } as const;
+const TEXT_LABELS = { message: 'Message', spawn: 'First prompt', resume: 'Message' } as const;
 
 /** The most lines the card's text box shows before it scrolls, on a tall window (supervisor.css). */
 export const APPROVAL_TEXT_LINES = 8;
@@ -89,6 +90,9 @@ function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
 
 /** What a spawn card adds under its heading: how the session starts. */
 export const SPAWN_NOTE = 'Starts a background session there with claude --bg, its first prompt as below.';
+
+/** What a resume card adds under its heading (W127): how the finished session comes back, and what it reads. */
+export const RESUME_NOTE = 'Resumes this finished session in the background with claude --resume, in its own folder, and sends the message below as its next turn.';
 
 export interface ApprovalCardsProps {
   approvals: readonly SupervisorApproval[];
@@ -253,7 +257,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const busy = phase.kind !== 'idle';
   const busyWith = (decision: SupervisorDecision['decision']) => phase.kind !== 'idle' && phase.decision === decision;
   const title = approvalTitle(approval);
-  const directory = approval.kind === 'spawn' ? plainText(approval.directory) : undefined;
+  const directory = approval.kind === 'message' ? undefined : plainText(approval.directory);
   const text = approvalText(approval);
   const parts = visibleParts(text);
   const notes = [overflowing || text.split('\n').length > APPROVAL_TEXT_LINES ? lengthNote(text) : undefined, hiddenNote(parts)].filter((note) => note !== undefined);
@@ -277,6 +281,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
         Not sent unless you answer by <Timestamp at={approval.expiresAt} format="time" />
       </p>
       {approval.kind === 'spawn' && <p className="approval-note">{SPAWN_NOTE}</p>}
+      {approval.kind === 'resume' && <p className="approval-note">{RESUME_NOTE}</p>}
       {editing === undefined ? (
         <div className="approval-body">
           <p className="approval-label" id={ids.text}>
@@ -297,7 +302,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
       ) : (
         <div className="approval-body approval-editing">
           <label className="approval-label" htmlFor={ids.editor}>
-            {approval.kind === 'message' ? 'Edit the message' : 'Edit the first prompt'}
+            {approval.kind === 'spawn' ? 'Edit the first prompt' : 'Edit the message'}
           </label>
           <textarea
             ref={editor}

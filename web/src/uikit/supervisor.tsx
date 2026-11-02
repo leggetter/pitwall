@@ -13,7 +13,7 @@ import { SupervisorOffView, SupervisorView } from '../components/SupervisorView.
 import { ToastProvider } from '../components/Toast.js';
 import { DraftStorageContext } from '../drafts.js';
 import { memoryNavigation, type Selection } from '../selection.js';
-import { ago, APP_GROUP, JOBS_GROUP, LIST_SNAPSHOT, NOTES_GROUP, snapshot, SUPERVISOR_MESSAGE, SUPERVISOR_SPAWN } from './fixtures.js';
+import { ago, APP_GROUP, JOBS_GROUP, LIST_SNAPSHOT, NOTES_GROUP, snapshot, SUPERVISOR_MESSAGE, SUPERVISOR_RESUME, SUPERVISOR_SPAWN } from './fixtures.js';
 import { element, Scenario, Specimen, type } from './kit.js';
 import { memoryDrafts, memoryStorage, type StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
@@ -83,7 +83,7 @@ const pressIn = async (root: HTMLElement, label: string, index = 0) => {
 const typeInBox = async (root: HTMLElement, text: string) => type(await element<HTMLTextAreaElement>(root, '.supervisor-box textarea'), text);
 const send = async (root: HTMLElement) => (await element<HTMLButtonElement>(root, '.supervisor-box button[type="submit"]')).click();
 
-const APPROVALS: SupervisorApproval[] = [SUPERVISOR_MESSAGE, SUPERVISOR_SPAWN];
+const APPROVALS: SupervisorApproval[] = [SUPERVISOR_MESSAGE, SUPERVISOR_SPAWN, SUPERVISOR_RESUME];
 const LONG_DRAFT: SupervisorApproval = {
   id: 'pitwall-test-approval-long',
   kind: 'message',
@@ -150,7 +150,7 @@ export function SupervisorSpecimens() {
         </ToastProvider>
       </Specimen>
 
-      <Specimen title="Draft cards" note="Above the message box, oldest first: a message to a session, and a new session in a directory, named. Each one's text as text, in <bdi>, never markdown; when it's declined if you don't answer; Send, Edit and Don't send." frame="view">
+      <Specimen title="Draft cards" note="Above the message box, oldest first: a message to a session, a new session in a directory, named, and a finished session resumed with a message (W127). Each one's text as text, in <bdi>, never markdown; when it's declined if you don't answer; Send, Edit and Don't send." frame="view">
         <View state={{ ...IDLE, approvals: APPROVALS }} />
       </Specimen>
       <Specimen title="A long draft" note="Eight lines, then its text scrolls, a Tab stop while it does; past 40% of the view, the cards scroll under their heading." frame="view">
