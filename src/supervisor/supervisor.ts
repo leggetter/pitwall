@@ -374,6 +374,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (sessionId !== undefined) result.sessionId = sessionId;
     if (lastTurnAt !== undefined) result.lastTurnAt = lastTurnAt;
     if (costUsd !== undefined) result.costUsd = Math.round(costUsd * 1e6) / 1e6;
+    const handoffs = approvals.handoffs();
+    if (handoffs.length > 0) result.handoffs = handoffs;
     return result;
   }
 

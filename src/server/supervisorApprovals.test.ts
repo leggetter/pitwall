@@ -245,6 +245,9 @@ describe('a message to a session, behind your click', () => {
     expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: 'hello from a test' } });
     expect(queue.list()).toEqual([]);
     expect(queue.takeNotes()).toEqual([]);
+    // A hand-off the panel opens the session from (W124), on the snapshot too.
+    expect(queue.handoffs()).toEqual([{ id: expect.any(String), kind: 'message', name: TARGET, sessionId: 'target', at: new Date(NOW).toISOString() }]);
+    await until(() => messages.some((message) => message.type === 'snapshot' && message.snapshot.supervisor?.handoffs?.length === 1));
     // Answered once: the card has gone.
     expect((await decide(server.port, apiKey, card.id, { decision: 'send' })).status).toBe(404);
     ws.close();
@@ -274,6 +277,8 @@ describe('a message to a session, behind your click', () => {
     await until(() => queue.list().length === 1);
     expect((await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'decline' })).status).toBe(200);
     expect(await answer).toEqual({ behavior: 'deny', message: DECLINED_MESSAGE });
+    // Nothing went, so nothing to open (W124).
+    expect(queue.handoffs()).toEqual([]);
     ws.close();
   });
 
@@ -399,9 +404,12 @@ describe('a new session, behind your click', () => {
     expect((await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_other' })).isError).toBe(true);
     expect((await callTool(server.port, 'spawn_session', { ...allowed.updatedInput, prompt: 'Something else.' })).isError).toBe(true);
     expect(runs).toEqual([]);
+    // Approved but not started yet: no hand-off until it starts (W124).
+    expect(queue.handoffs()).toEqual([]);
     const started = await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_spawn' });
     expect(started.isError).toBeUndefined();
     expect(JSON.parse(started.text)).toEqual({ started: true, name: 'pitwall-test-new', shortId: 'c0ffee12', directory: repo });
+    expect(queue.handoffs()).toEqual([{ id: expect.any(String), kind: 'spawn', name: 'pitwall-test-new', shortId: 'c0ffee12', at: new Date(NOW).toISOString() }]);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.args).toEqual(['--bg', '--name', 'pitwall-test-new', '--', 'Write the release notes for 1.2.']);
     expect(runs[0]!.options.cwd).toBe(repo);

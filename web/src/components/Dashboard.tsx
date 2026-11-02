@@ -460,6 +460,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // view is open while the URL says so and no session or PR is open in its place.
   const supervisor = useMemo(() => asSupervisorState(snapshot?.supervisor), [snapshot?.supervisor]);
   const supervisorOpen = supervisorUrl.open && openId === undefined && prOpen === undefined;
+  // Every listed session, for what the supervisor sent and started (W124).
+  const supervisorSessions = useMemo(() => (snapshot?.groups ?? []).flatMap((group) => group.sessions), [snapshot?.groups]);
   // Its drafts that wait on you: each counts in Needs you's badge, in every root tab, and the page title.
   const approvals = approvalsWaiting(supervisor);
   const prsSelected = isPrsSelection(selection);
@@ -1836,6 +1838,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         onDraftChange={(has) => {
           drafts.current.set(SUPERVISOR_DRAFT_ID, has);
         }}
+        sessions={supervisorSessions}
+        notNeeded={notNeeded.entries}
+        onOpenSession={openSessionFromPr}
       />
     );
   } else if (supervisorOpen && !snapshot) {

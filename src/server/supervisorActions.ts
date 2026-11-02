@@ -317,9 +317,18 @@ export function createSpawnSessionTool(sources: SupervisorActionSources): McpToo
         return { text: `pitwall: the session didn't start: ${outcome.result.error}${hint}`, isError: true };
       }
       sources.onSpawned?.();
+      // So the panel can open it, and list it with its state (W124).
+      sources.approvals.handoff({ kind: 'spawn', name: outcome.result.name, shortId: outcome.result.shortId });
       return { text: JSON.stringify({ started: true, name: outcome.result.name, shortId: outcome.result.shortId, directory: checked.value.cwd }) };
     },
   };
+}
+
+/** The id of the one running, listed session named `to`, ignoring case, as checkMessage() checked it. */
+function recipientOf(to: string, snapshot: IndexSnapshot | undefined, own: ReadonlySet<string>): string | undefined {
+  const key = nameKey(to);
+  const found = (snapshot?.groups ?? []).flatMap((group) => group.sessions).filter((session) => messageable(session, own) && nameKey(session.name) === key);
+  return found.length === 1 ? found[0]!.sessionId : undefined;
 }
 
 /** A decision's answer for the route, with its status. */
@@ -375,6 +384,9 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
       }
       if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput: next })) return gone();
       if (decision.decision === 'edit' && decision.text !== approval.text) sources.approvals.note(editNote(approval, decision.text));
+      // So the panel can open the session it went to (W124): the one running session of that name, as checked.
+      const recipient = recipientOf(approval.to, sources.snapshots.latest(), own);
+      sources.approvals.handoff({ kind: 'message', name: approval.to, ...(recipient === undefined ? {} : { sessionId: recipient }) });
       return { status: 200 };
     }
     // A new session.

@@ -20,8 +20,10 @@ import {
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
   type ConversationEntry,
+  type SessionSummary,
   type SupervisorApproval,
   type SupervisorDecision,
+  type SupervisorHandoff,
   type SupervisorState,
   type SupervisorStatus,
 } from '../../src/shared/protocol.js';
@@ -31,7 +33,8 @@ import { visibleString } from '../../src/shared/hiddenText.js';
 import { PR_PARAM, SESSION_PARAM, SUPERVISOR_PARAM, withoutParams, type HistoryMode } from './openSession.js';
 import { outgoingText } from './relay.js';
 import { browserNavigation, type NavigationEnv } from './selection.js';
-import type { BadgeLook } from './sessions.js';
+import { needsAttention, needsText, recapNeedsText, statusBadge, type BadgeLook, type StatusBadge } from './sessions.js';
+import type { NotNeeded } from './notNeeded.js';
 import { currentStep, turnStartIndex, turnStarted, type WorkingLineState } from './working.js';
 
 export { SUPERVISOR_PARAM };
@@ -168,6 +171,20 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
   return undefined;
 }
 
+/** The most hand-offs the page reads: the server keeps SUPERVISOR_HANDOFFS_MAX. */
+const HANDOFFS_READ_MAX = 50;
+
+/** One hand-off (W124), or undefined when it isn't one this page knows how to show. */
+function asHandoff(value: unknown): SupervisorHandoff | undefined {
+  if (!isRecord(value)) return undefined;
+  const { id, kind, name, at, sessionId, shortId } = value;
+  if (!isId(id) || (kind !== 'message' && kind !== 'spawn') || !isText(name) || name.trim() === '' || !isTime(at)) return undefined;
+  const handoff: SupervisorHandoff = { id, kind, name, at };
+  if (isId(sessionId)) handoff.sessionId = sessionId;
+  if (isId(shortId)) handoff.shortId = shortId;
+  return handoff;
+}
+
 /**
  * The snapshot's `supervisor`, as the page reads it: undefined with `--no-supervisor`, or for
  * anything that isn't a state, as from a newer pitwall's; approvals that aren't well formed left out,
@@ -175,7 +192,7 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
  */
 export function asSupervisorState(value: unknown): SupervisorState | undefined {
   if (!isRecord(value)) return undefined;
-  const { status, sessionId, error, approvals, lastTurnAt, costUsd } = value;
+  const { status, sessionId, error, approvals, lastTurnAt, costUsd, handoffs } = value;
   if (typeof status !== 'string' || !(STATUSES as readonly string[]).includes(status)) return undefined;
   const seen = new Set<string>();
   const kept = (Array.isArray(approvals) ? approvals : []).flatMap((each) => {
@@ -189,8 +206,76 @@ export function asSupervisorState(value: unknown): SupervisorState | undefined {
   if (isText(error) && error.trim() !== '') state.error = error;
   if (isTime(lastTurnAt)) state.lastTurnAt = lastTurnAt;
   if (typeof costUsd === 'number' && Number.isFinite(costUsd) && costUsd >= 0) state.costUsd = costUsd;
+  const done = (Array.isArray(handoffs) ? handoffs.slice(-HANDOFFS_READ_MAX) : []).flatMap((each) => asHandoff(each) ?? []);
+  if (done.length > 0) state.handoffs = done;
   return state;
 }
+
+// --- What it sent and started (W124) ---------------------------------------------------------------
+// The supervisor never sees a session's reply (Phil, 2026-11-02): you carry on in the session, which
+// the panel opens, as clicking it in the list does. Only sessions pitwall lists are opened: a hand-off
+// is matched to one by the session id pitwall checked a message's recipient was, or by the short id
+// `claude --bg` reported for a session it started, never by a name or a URL the model wrote.
+
+/** One session the panel lists under "Sent and started": the newest hand-off to it, and the session once the index lists it. */
+export interface HandoffRow {
+  handoff: SupervisorHandoff;
+  /** The session it went to, or started, as the snapshot lists it: undefined until the index has it. */
+  session?: SessionSummary;
+  /** "<name> needs you: <reason>", while pitwall's own Needs you says so. */
+  needs?: string;
+}
+
+/** The listed session a hand-off went to: by its session id, or a started one by its short id. */
+export function handoffSession(handoff: SupervisorHandoff, sessions: readonly SessionSummary[]): SessionSummary | undefined {
+  if (handoff.sessionId !== undefined) {
+    const found = sessions.find((session) => session.sessionId === handoff.sessionId);
+    if (found !== undefined) return found;
+  }
+  if (handoff.shortId === undefined) return undefined;
+  return sessions.find((session) => session.shortId === handoff.shortId);
+}
+
+/** Why a session needs you, as a short line: Claude Code's own line, the recap's, its question, or its badge. */
+export function needsReason(session: SessionSummary, badge: StatusBadge = statusBadge(session)): string {
+  const text = needsText(session) ?? recapNeedsText(session) ?? (session.needsYou?.reason === 'asked' ? session.askedYou?.excerpt : undefined);
+  const line = text === undefined ? '' : plainText(text).replace(/\s+/g, ' ').trim();
+  if (line !== '') return line.length > NEEDS_REASON_MAX ? `${line.slice(0, NEEDS_REASON_MAX - 1).trimEnd()}…` : line;
+  return `${badge.label.charAt(0).toLowerCase()}${badge.label.slice(1)}`;
+}
+
+/** The longest reason a needs-you notice gives, in characters. */
+export const NEEDS_REASON_MAX = 160;
+
+/** The name a row shows: the session's own, once listed, else the one the hand-off has. */
+export const handoffName = (row: HandoffRow) => visibleString(row.session?.name ?? row.handoff.name);
+
+/**
+ * The rows: one per session, its newest hand-off, those that need you first, then newest first. A
+ * session started and then messaged is one row, "Started", since that's where it came from.
+ */
+export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, sessions: readonly SessionSummary[], notNeeded?: NotNeeded): HandoffRow[] {
+  const byKey = new Map<string, { row: HandoffRow; order: number; started: boolean }>();
+  (handoffs ?? []).forEach((handoff, order) => {
+    const session = handoffSession(handoff, sessions);
+    const key = session !== undefined ? `s:${session.sessionId}` : handoff.shortId !== undefined ? `b:${handoff.shortId}` : `h:${handoff.id}`;
+    const before = byKey.get(key);
+    const started = (before?.started ?? false) || handoff.kind === 'spawn';
+    const kept = started && handoff.kind === 'message' && before !== undefined ? before.row.handoff : handoff;
+    const row: HandoffRow = { handoff: kept };
+    if (session !== undefined) {
+      row.session = session;
+      if (needsAttention(session, notNeeded)) row.needs = `${visibleString(session.name)} needs you: ${needsReason(session)}`;
+    }
+    byKey.set(key, { row, order, started });
+  });
+  return [...byKey.values()]
+    .sort((a, b) => Number(b.row.needs !== undefined) - Number(a.row.needs !== undefined) || b.order - a.order)
+    .map((each) => each.row);
+}
+
+/** What a row says it did. */
+export const handoffVerb = (handoff: SupervisorHandoff) => (handoff.kind === 'spawn' ? 'Started' : 'Message sent to');
 
 /** How many approvals wait on you: each counts in Needs you's total and the page title (SupervisorState.approvals). */
 export function approvalsWaiting(state: SupervisorState | undefined): number {

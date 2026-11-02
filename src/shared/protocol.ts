@@ -1881,7 +1881,32 @@ export interface SupervisorState {
   lastTurnAt?: string;
   /** Its turns' `total_cost_usd` in this run, at API list prices, as `claude -p` reports them. */
   costUsd?: number;
+  /**
+   * What you approved in this run, oldest first (W124): each message sent and each session started,
+   * so the panel can open that session, list the sessions it started with their state, and say when
+   * one needs you. At most SUPERVISOR_HANDOFFS_MAX; absent when there are none.
+   */
+  handoffs?: SupervisorHandoff[];
 }
+
+/**
+ * One thing you approved (W124): a message sent to a session, or a session started. The supervisor
+ * never sees a session's reply (Phil, 2026-11-02): you carry on in the session itself, which the
+ * panel opens. `name` is the session's name as the card showed it, or as `claude --bg` reported it;
+ * `sessionId` the session pitwall checked the message's recipient was; `shortId` what `claude --bg`
+ * reported, which the page matches with SessionSummary.shortId once the index lists it.
+ */
+export interface SupervisorHandoff {
+  id: string;
+  kind: 'message' | 'spawn';
+  name: string;
+  at: string;
+  sessionId?: string;
+  shortId?: string;
+}
+
+/** The most hand-offs SupervisorState carries: the newest, in this run. */
+export const SUPERVISOR_HANDOFFS_MAX = 20;
 
 /**
  * Something the supervisor wants to do, waiting on your click (W115): a message to a session through

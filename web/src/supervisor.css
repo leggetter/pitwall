@@ -103,6 +103,101 @@
   background: var(--pw-surface-muted);
 }
 
+/* What it sent and started (W124): the drafts' band, above them, its list scrolling past 30%. */
+.supervisor-handoffs {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  max-height: 30%;
+  padding: var(--pw-space-3) var(--pw-space-4) 0;
+  border-top: 1px solid var(--pw-border);
+  background: var(--pw-surface-muted);
+}
+
+.supervisor-handoffs-note,
+.supervisor-handoff-needs {
+  margin: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.supervisor-handoffs-scroll {
+  padding-bottom: var(--pw-space-2);
+}
+
+.supervisor-handoff-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.supervisor-handoff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-0-5);
+  padding: var(--pw-space-1-5) var(--pw-space-2);
+  background: var(--pw-surface);
+  border-radius: var(--pw-radius-md);
+  box-shadow: inset 0 0 0 1px var(--pw-border);
+}
+
+/* Needs you, by pitwall's own Needs you: the bar a row has. */
+.supervisor-handoff-needs-you {
+  box-shadow:
+    inset 3px 0 0 var(--pw-state-attention-bar),
+    inset 0 0 0 1px var(--pw-border);
+}
+
+.supervisor-handoff-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  min-width: 0;
+}
+
+.supervisor-handoff-what {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: var(--pw-text-m);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+.supervisor-handoff-name {
+  font-weight: var(--pw-weight-medium);
+}
+
+.supervisor-handoff-starting,
+.supervisor-handoff-at {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+}
+
+.supervisor-handoff-open {
+  margin-inline-start: auto;
+  max-width: 100%;
+}
+
+.supervisor-handoff-open bdi {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 16rem;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+.supervisor-handoff-needs {
+  color: var(--pw-text);
+  overflow-wrap: anywhere;
+}
+
 .supervisor-approvals-title {
   flex: none;
   font-size: var(--pw-text-m);
