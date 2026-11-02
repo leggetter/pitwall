@@ -1991,7 +1991,10 @@ export type ClaudeDefaultSource =
   | { kind: 'setting'; key: 'model' | 'effortLevel' | 'modelSettings' | 'maxEffortLevel'; scope: ClaudeSettingsScope }
   /** The model's own default effort, or none for a model without effort levels. */
   | { kind: 'model' }
-  /** Your account's default model, which only Claude Code sees: by plan, or an organization's default. */
+  /**
+   * Your account's default model, which only Claude Code sees: by plan, or an organization's default.
+   * For effort: the effort of that model, so it can't be known either.
+   */
   | { kind: 'account' }
   /** A session's sub-agents: the session's model. */
   | { kind: 'session' };
@@ -2004,6 +2007,12 @@ export interface ClaudeDefault {
    */
   value?: string;
   source: ClaudeDefaultSource;
+  /**
+   * `unrecognised`: the source sets a model that isn't one isWorkModel() allows, so its value isn't
+   * sent (W122's review: a project's settings file, from a clone, can hold any text). `may-not-apply`:
+   * a user file's top-level `effortLevel` on a model the docs don't say it applies to.
+   */
+  note?: 'unrecognised' | 'may-not-apply';
 }
 
 /** Claude Code's defaults for each kind of work pitwall starts (W122). */
@@ -2016,7 +2025,10 @@ export interface ClaudeDefaults {
    * have none of their own.
    */
   effort: Record<WorkKind, Record<string, ClaudeDefault>>;
-  /** The directory whose project settings were read, for New session. Absent: none, so sessions' are your settings alone. */
+  /**
+   * The directory whose project settings were read, as New session asked for it (`?dir=`), so it can
+   * tell this answer from one for an earlier choice. Absent: none, so sessions' are your settings alone.
+   */
   dir?: string;
 }
 

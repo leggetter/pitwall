@@ -588,7 +588,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   const work = createWorkStore({
     ...(config.work === undefined ? {} : { config: config.work }),
     ...(config.found ? { configFile: config.file } : {}),
-    claude: createClaudeDefaultsReader(),
+    claude: createClaudeDefaultsReader({ roots: () => roots }),
   });
   const relay = createRelayManager({ work: () => work.choice('relay') });
   // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and

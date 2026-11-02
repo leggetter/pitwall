@@ -37,13 +37,22 @@
 //   Recaps and the supervisor drop CLAUDE_CODE_EFFORT_LEVEL from their environment
 //   (src/recaps/prompt.ts, src/supervisor/prompt.ts); the relay keeps it.
 //
-// Fails soft: a file that's missing, too big, unreadable or not a JSON object is skipped, as `claude
-// -p` skips a broken one, and a value of the wrong type is ignored.
-import { readdir, readFile, stat } from 'node:fs/promises';
+// Fails soft: a file that's missing, over 1 MiB, not a regular file (a FIFO isn't waited on),
+// unreadable or not a JSON object is skipped, as `claude -p` skips a broken one, and a value of the
+// wrong type is ignored. Each is read as the config file is (D24): open, fstat, a capped read. A model
+// that isn't one pitwall allows is never sent, only its source (checkedModel()).
+//
+// Two gaps the docs leave: whether `--setting-sources ""` still loads managed settings (it lists only
+// user, project and local, so pitwall assumes yes), and where the local file lives when the repository
+// root isn't yours (Claude Code then keeps it with `.claude/settings.json`; pitwall doesn't check the
+// owner, so it reads the root's).
+import { closeSync, constants, fstatSync, openSync, realpathSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
   EFFORT_LEVELS,
+  isWorkModel,
   OFFERED_WORK_MODELS,
   WORK_DEFAULT,
   WORK_KINDS,
@@ -54,6 +63,8 @@ import {
   type WorkChoices,
   type WorkKind,
 } from '../shared/protocol.js';
+import { readCapped } from '../config.js';
+import { matchRoot } from '../index/roots.js';
 
 /** A settings file, read: what W122 uses of it. */
 export interface ClaudeSettingsFile {
@@ -72,7 +83,11 @@ export interface ClaudeSources {
   env: Readonly<Record<string, string | undefined>>;
 }
 
-const MAX_SETTINGS_BYTES = 1024 * 1024;
+/** The most a settings file may hold, as the config file (D24). */
+export const MAX_SETTINGS_BYTES = 1024 * 1024;
+
+/** The most a worktree's `.git` file may hold: one `gitdir:` line. */
+export const MAX_GIT_FILE_BYTES = 4 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -128,18 +143,42 @@ function mergeSettings(scope: ClaudeSettingsScope, docs: readonly ClaudeSettings
   return merged;
 }
 
-async function readJson(file: string): Promise<unknown> {
+/**
+ * A regular file's bytes, or undefined: as the config file is read (D24, src/config.ts), opened with
+ * O_NONBLOCK so a FIFO isn't waited on, checked through the open file (fstat), never stat-then-open,
+ * and read up to `max` bytes, stopping there. A symbolic link is followed; what it leads to must be a
+ * regular file.
+ */
+export function readBounded(file: string, max: number): Buffer | undefined {
+  let fd: number;
   try {
-    const info = await stat(file);
-    if (!info.isFile() || info.size > MAX_SETTINGS_BYTES) return undefined;
-    return JSON.parse(await readFile(file, 'utf8')) as unknown;
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch {
+    return undefined;
+  }
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile() || stats.size > max) return undefined;
+    return readCapped(fd, max);
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function readJson(file: string): unknown {
+  const bytes = readBounded(file, MAX_SETTINGS_BYTES);
+  if (bytes === undefined) return undefined;
+  try {
+    return JSON.parse(bytes.toString('utf8')) as unknown;
   } catch {
     return undefined;
   }
 }
 
 async function readSettingsFile(scope: ClaudeSettingsScope, file: string): Promise<ClaudeSettingsFile | undefined> {
-  return readSettingsDocument(scope, await readJson(file));
+  return readSettingsDocument(scope, readJson(file));
 }
 
 /** The system directory of file-based managed settings (managed-settings, "Where each mechanism stores the policy"). */
@@ -167,30 +206,56 @@ export async function readManagedSettings(dir: string): Promise<ClaudeSettingsFi
   return mergeSettings('managed', docs);
 }
 
+function realOrSame(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
 /**
  * Where the local settings file lives for `dir`: the git repository's root, or for a linked
  * worktree, the main checkout's root. `dir` itself outside a repository, or where the root is your
  * home directory (settings, "Where Claude Code keeps the local file").
+ *
+ * A `.git` file's `gitdir:` is the directory's own say (W122's review): its main checkout is used
+ * only when it's under one of `roots`, or `dir` is inside it, as a worktree in `.worktrees/` is;
+ * else the worktree's own root. The file is read as the settings files are, at most 4 KiB.
  */
-export async function localSettingsRoot(dir: string, home: string): Promise<string> {
+export async function localSettingsRoot(dir: string, home: string, roots: readonly string[] = []): Promise<string> {
   let current = dir;
   for (;;) {
     const marker = path.join(current, '.git');
+    let found: 'dir' | 'file' | undefined;
+    let fd: number | undefined;
     try {
-      const info = await stat(marker);
+      fd = openSync(marker, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+      const stats = fstatSync(fd);
+      found = stats.isDirectory() ? 'dir' : stats.isFile() ? 'file' : undefined;
+    } catch {
+      // Not here: up a level.
+    } finally {
+      if (fd !== undefined) closeSync(fd);
+    }
+    if (found !== undefined) {
       let root = current;
-      if (info.isFile()) {
+      if (found === 'file') {
         // A linked worktree: "gitdir: <main>/.git/worktrees/<name>".
-        const match = /^gitdir:\s*(.+?)\s*$/m.exec(await readFile(marker, 'utf8'));
+        const text = readBounded(marker, MAX_GIT_FILE_BYTES)?.toString('utf8');
+        const match = text === undefined ? null : /^gitdir:\s*(.+?)\s*$/m.exec(text);
         const gitdir = match?.[1] === undefined ? undefined : path.resolve(current, match[1]);
         const worktrees = gitdir === undefined ? undefined : path.dirname(gitdir);
         if (worktrees !== undefined && path.basename(worktrees) === 'worktrees' && path.basename(path.dirname(worktrees)) === '.git') {
-          root = path.dirname(path.dirname(worktrees));
+          const main = path.dirname(path.dirname(worktrees));
+          const realMain = realOrSame(main);
+          const realRoots = roots.map(realOrSame);
+          const inside = path.relative(realMain, realOrSame(dir));
+          const ownRepo = inside === '' || (!inside.startsWith('..') && !path.isAbsolute(inside));
+          if (ownRepo || matchRoot(realMain, realRoots) !== undefined) root = main;
         }
       }
       return root === home ? dir : root;
-    } catch {
-      // Not here: up a level.
     }
     const parent = path.dirname(current);
     if (parent === current) return dir;
@@ -204,6 +269,8 @@ export interface ClaudeSettingsPaths {
   /** Where managed-settings.json lives. */
   managedDir: string;
   home: string;
+  /** The roots, for which main checkouts a worktree's `.git` file may lead to. */
+  roots?: readonly string[];
 }
 
 /** The documented places, for this machine and environment. */
@@ -224,7 +291,7 @@ export async function readClaudeSettings(paths: ClaudeSettingsPaths, dir?: strin
   const managed = await readManagedSettings(paths.managedDir);
   const project: ClaudeSettingsFile[] = [];
   if (dir !== undefined) {
-    const root = await localSettingsRoot(dir, paths.home);
+    const root = await localSettingsRoot(dir, paths.home, paths.roots ?? []);
     const atRoot = await readSettingsFile('local', path.join(root, '.claude', 'settings.local.json'));
     // A local file an earlier Claude Code left in the directory itself still counts, below the root's.
     const atDir = root === dir ? undefined : await readSettingsFile('local', path.join(dir, '.claude', 'settings.local.json'));
@@ -257,17 +324,27 @@ function variableDefault(name: string, found: { value: string; scope?: ClaudeSet
   return { value: found.value, source: { kind: 'variable', name, ...(found.scope === undefined ? {} : { scope: found.scope }) } };
 }
 
+/**
+ * A model default, sent only when it's one isWorkModel() allows for `kind`; otherwise its source,
+ * noted `unrecognised` (W122's review): a project's settings file comes with a clone, and could hold
+ * text dressed as advice, such as a command to run.
+ */
+export function checkedModel(found: ClaudeDefault, kind: WorkKind = 'session'): ClaudeDefault {
+  if (found.value === undefined || isWorkModel(found.value, kind)) return found;
+  return { source: found.source, note: 'unrecognised' };
+}
+
 /** The model a process started with no `--model` runs on, or `account` when only Claude Code can know. */
 export function resolveModel(sources: ClaudeSources): ClaudeDefault {
   const env = variable(sources, 'ANTHROPIC_MODEL');
-  if (env !== undefined && env.value !== WORK_DEFAULT) return variableDefault('ANTHROPIC_MODEL', env);
+  if (env !== undefined && env.value !== WORK_DEFAULT) return checkedModel(variableDefault('ANTHROPIC_MODEL', env));
   for (const file of sources.files) {
-    if (file.model !== undefined && file.model !== '' && file.model !== WORK_DEFAULT) return { value: file.model, source: { kind: 'setting', key: 'model', scope: file.scope } };
+    if (file.model !== undefined && file.model !== '' && file.model !== WORK_DEFAULT) return checkedModel({ value: file.model, source: { kind: 'setting', key: 'model', scope: file.scope } });
   }
   // An organization's default would come here; pitwall can't see it, so the next is only a likely answer
   // where there's none. ANTHROPIC_DEFAULT_MODEL's own exceptions (model-config):
   const fallback = variable(sources, 'ANTHROPIC_DEFAULT_MODEL');
-  if (fallback !== undefined && !['default', 'inherit', 'opusplan', 'haiku'].includes(fallback.value)) return variableDefault('ANTHROPIC_DEFAULT_MODEL', fallback);
+  if (fallback !== undefined && !['default', 'inherit', 'opusplan', 'haiku'].includes(fallback.value)) return checkedModel(variableDefault('ANTHROPIC_DEFAULT_MODEL', fallback));
   return { source: { kind: 'account' } };
 }
 
@@ -328,10 +405,17 @@ export function modelEffort(canonical: string): { value?: EffortLevel } | undefi
   return { value: 'high' };
 }
 
-/** Whether a user file's top-level `effortLevel` applies: on models before Opus 5.5 only (settings-reference, `effortLevel`). */
+/**
+ * Whether a user file's top-level `effortLevel` applies, as far as the docs say (settings-reference,
+ * `effortLevel`): it keeps applying "on Opus 5, Fable 5.1, and earlier models", and Opus 5.5 and
+ * later ignore it. For Sonnet and Haiku the docs don't say: undefined, "may not apply".
+ */
 function userEffortApplies(canonical: string): boolean | undefined {
   const parsed = parseModel(canonical);
-  return parsed === undefined ? undefined : parsed.version < 5.5;
+  if (parsed === undefined) return undefined;
+  if (parsed.family === 'opus') return parsed.version < 5.5;
+  if (parsed.family === 'fable') return parsed.version <= 5.1 ? true : undefined;
+  return undefined;
 }
 
 /** The entry for `canonical` in a file's `modelSettings`: its name, an alias of it, or with a date or `[1m]`. */
@@ -368,10 +452,10 @@ export function resolveEffort(model: string | undefined, sources: ClaudeSources,
         break;
       }
       if (file.effortLevel !== undefined && SETTING_LEVELS.includes(file.effortLevel)) {
-        const applies = file.scope !== 'user' ? true : canonical === undefined ? undefined : userEffortApplies(canonical);
-        if (applies === undefined) return { source: { kind: 'model' } };
-        if (applies) {
-          result = { value: file.effortLevel, source: { kind: 'setting', key: 'effortLevel', scope: file.scope } };
+        if (canonical === undefined && file.scope === 'user') return { source: { kind: 'model' } };
+        const applies = file.scope !== 'user' ? true : userEffortApplies(canonical!);
+        if (applies !== false) {
+          result = { value: file.effortLevel, source: { kind: 'setting', key: 'effortLevel', scope: file.scope }, ...(applies === undefined ? { note: 'may-not-apply' as const } : {}) };
           break;
         }
       }
@@ -411,7 +495,7 @@ export function claudeDefaults(read: ClaudeSettingsRead, env: Readonly<Record<st
     const sources: ClaudeSources = { files: kind === 'session' || kind === 'subagents' ? read.session : read.managed, env };
     if (kind === 'subagents') {
       const sub = variable(sources, 'CLAUDE_CODE_SUBAGENT_MODEL');
-      model[kind] = sub === undefined ? { source: { kind: 'session' } } : variableDefault('CLAUDE_CODE_SUBAGENT_MODEL', sub);
+      model[kind] = sub === undefined ? { source: { kind: 'session' } } : checkedModel(variableDefault('CLAUDE_CODE_SUBAGENT_MODEL', sub), 'subagents');
       effort[kind] = {};
       continue;
     }
@@ -424,7 +508,10 @@ export function claudeDefaults(read: ClaudeSettingsRead, env: Readonly<Record<st
     effort[kind] = {};
     for (const candidate of candidates) {
       const runsOn = candidate === WORK_DEFAULT ? model[kind].value : candidate;
-      effort[kind][candidate] = resolveEffort(runsOn, sources, KEEPS_EFFORT_VARIABLE[kind]);
+      const resolved = resolveEffort(runsOn, sources, KEEPS_EFFORT_VARIABLE[kind]);
+      // On your account's model, whatever pitwall can't know of the model, it can't know of its effort.
+      const onAccount = candidate === WORK_DEFAULT && model[kind].source.kind === 'account' && resolved.value === undefined && resolved.source.kind === 'model';
+      effort[kind][candidate] = onAccount ? { source: { kind: 'account' } } : resolved;
     }
   }
   return { model, effort, ...(dir === undefined ? {} : { dir }) };
@@ -434,12 +521,15 @@ export function claudeDefaults(read: ClaudeSettingsRead, env: Readonly<Record<st
 export type ClaudeDefaultsReader = (layers: { builtIn: WorkChoices; config: WorkChoices; overrides: WorkChoices }, dir?: string) => Promise<ClaudeDefaults | undefined>;
 
 /** The reader for this machine: the documented files, and pitwall's environment, read at each call. */
-export function createClaudeDefaultsReader(options: { env?: () => Readonly<Record<string, string | undefined>>; paths?: () => ClaudeSettingsPaths } = {}): ClaudeDefaultsReader {
+export function createClaudeDefaultsReader(
+  options: { env?: () => Readonly<Record<string, string | undefined>>; paths?: () => ClaudeSettingsPaths; roots?: () => readonly string[] } = {},
+): ClaudeDefaultsReader {
   const env = options.env ?? (() => process.env);
   return async (layers, dir) => {
     try {
       const current = env();
-      const read = await readClaudeSettings(options.paths?.() ?? claudeSettingsPaths(current), dir);
+      const paths = options.paths?.() ?? claudeSettingsPaths(current);
+      const read = await readClaudeSettings({ ...paths, roots: paths.roots ?? options.roots?.() ?? [] }, dir);
       return claudeDefaults(read, current, layers, dir);
     } catch {
       return undefined;

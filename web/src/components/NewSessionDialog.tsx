@@ -225,7 +225,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   const [customModel, setCustomModel] = useState('');
   const [effort, setEffort] = useState<'' | EffortLevel | typeof WORK_DEFAULT>('');
   // pitwall's defaults for sessions (W119), for the first options' words. Without them, "Default".
-  const [work, setWork] = useState<WorkSettings>();
+  // With the directory they were asked for (W122), so an answer for an earlier choice never shows.
+  const [loadedWork, setWork] = useState<{ settings: WorkSettings; dir: string | undefined }>();
   const [prompt, setPrompt] = useState(prefill?.prompt ?? '');
   const [busy, setBusy] = useState(false);
   // Problems show once a submit has been tried, then follow the typing.
@@ -372,8 +373,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   // The defaults for sessions (W119), and Claude Code's own for the directory chosen (W122), whose
   // project settings can change them: as the dialog opens, then a quarter second after the directory
   // last changed, so typing one doesn't ask at each key. Only a directory without a problem is sent;
-  // the server checks it again, and reads none it doesn't find under a root. A failure keeps what was
-  // shown, or "Default", which the server still applies.
+  // the server checks it again, and reads none it doesn't find under a root. Until the answer for the
+  // directory chosen comes, or when it fails, the first options say "Default", which the server still
+  // applies.
   const settingsDir = directoryProblem(cwd, snapshot.roots, tab) === undefined ? cwd : undefined;
   const firstFetch = useRef(true);
   useEffect(() => {
@@ -381,7 +383,10 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     const controller = new AbortController();
     const load = () =>
       void fetchWorkSettings(api, controller.signal, settingsDir).then((loaded) => {
-        if (loaded !== undefined && !controller.signal.aborted) setWork(loaded);
+        if (loaded === undefined || controller.signal.aborted) return;
+        // An answer that read another directory's project settings is someone else's: leave it.
+        if (loaded.claude?.dir !== undefined && loaded.claude.dir !== settingsDir) return;
+        setWork({ settings: loaded, dir: settingsDir });
       });
     if (firstFetch.current) {
       firstFetch.current = false;
@@ -394,6 +399,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
       controller.abort();
     };
   }, [api, settingsDir]);
+  // Only the answer for the directory chosen now: until it comes, or when it fails, "Default", never
+  // the last directory's.
+  const work = loadedWork !== undefined && loadedWork.dir === settingsDir ? loadedWork.settings : undefined;
   const defaults = work?.effective.session;
   // The model a session would run on, for its effort's default: the choice, else the default's.
   const effortModel = modelChoice === '' ? undefined : modelChoice === OTHER ? model || undefined : modelChoice;

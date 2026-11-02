@@ -22,7 +22,6 @@ import {
   type WorkKind,
   type WorkSettings,
 } from '../../src/shared/protocol.js';
-import { hiddenCharacter } from '../../src/shared/hiddenText.js';
 import type { ApiClient } from './api.js';
 
 /** Each kind's name in Preferences. */
@@ -123,17 +122,20 @@ function readSource(value: unknown): ClaudeDefaultSource | undefined {
 }
 
 /**
- * One default, read defensively: a value of at most 80 characters, on one line, with no control, bidi,
- * zero-width or other character you can't see (W120's rule: a project's settings file, from a clone, can name
- * one), and a source pitwall knows.
+ * One default, read defensively: a source pitwall knows, and a value only where the same check as the
+ * server's passes (W122's review): a model isWorkModel() allows for the kind, an effort one of Claude
+ * Code's levels, `auto` or `none`. A project's settings file comes with a clone, so a default could
+ * otherwise be any text, such as a command dressed as advice.
  */
-function readDefault(value: unknown): ClaudeDefault | undefined {
+function readDefault(value: unknown, field: 'model' | 'effort', kind: WorkKind): ClaudeDefault | undefined {
   if (!isRecord(value)) return undefined;
   const source = readSource(value.source);
   if (source === undefined) return undefined;
-  if (value.value === undefined) return { source };
-  if (typeof value.value !== 'string' || value.value.length === 0 || value.value.length > 80 || /[\t\n]/.test(value.value) || hiddenCharacter(value.value) !== undefined) return undefined;
-  return { value: value.value, source };
+  const note: Pick<ClaudeDefault, 'note'> = value.note === 'unrecognised' || value.note === 'may-not-apply' ? { note: value.note } : {};
+  if (value.value === undefined) return { source, ...note };
+  const allowed = field === 'model' ? isWorkModel(value.value, kind) : isEffortLevel(value.value) || value.value === 'auto' || value.value === 'none';
+  if (!allowed) return undefined;
+  return { value: value.value as string, source, ...note };
 }
 
 function readClaudeDefaults(value: unknown): ClaudeDefaults | undefined {
@@ -141,14 +143,14 @@ function readClaudeDefaults(value: unknown): ClaudeDefaults | undefined {
   const model = {} as ClaudeDefaults['model'];
   const effort = {} as ClaudeDefaults['effort'];
   for (const kind of WORK_KINDS) {
-    const one = readDefault(value.model[kind]);
+    const one = readDefault(value.model[kind], 'model', kind);
     if (one === undefined) return undefined;
     model[kind] = one;
     effort[kind] = {};
     const byModel = value.effort[kind];
     if (!isRecord(byModel)) continue;
     for (const [name, entry] of Object.entries(byModel)) {
-      const read = readDefault(entry);
+      const read = readDefault(entry, 'effort', kind);
       if (read !== undefined && name.length <= 64) effort[kind][name] = read;
     }
   }
@@ -229,9 +231,11 @@ export function sourceText(source: ClaudeDefaultSource): string {
 /** Claude Code's default, resolved, as words after "Default: ": "Opus 5.5 (your Claude Code settings)". */
 export function claudeText(field: 'model' | 'effort', resolved: ClaudeDefault): string {
   const { value, source } = resolved;
-  if (source.kind === 'account') return 'set by your Claude account';
+  if (source.kind === 'account') return field === 'effort' ? "set by your Claude account's model" : 'set by your Claude account';
   if (source.kind === 'session') return "the session's model";
+  if (resolved.note === 'unrecognised') return `a model pitwall doesn't recognise (${sourceText(source)})`;
   if (value === undefined) return field === 'effort' ? "the model's own" : CLAUDE_DEFAULT_TEXT;
+  if (resolved.note === 'may-not-apply') return `${fieldValueText(field, value)} (${sourceText(source)}, may not apply to this model)`;
   if (field === 'effort' && value === 'auto') return `none sent, the API's own (${sourceText(source)})`;
   if (field === 'effort' && value === 'none') return 'none (the model takes none)';
   return `${fieldValueText(field, value)} (${sourceText(source)})`;
