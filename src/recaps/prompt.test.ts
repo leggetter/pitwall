@@ -78,6 +78,11 @@ describe('RECAP_SYSTEM_PROMPT', () => {
     expect(RECAP_SYSTEM_PROMPT).toContain('exactly one of "you", "another session", "CI", "someone else", "nothing"');
   });
 
+  it('leaves nothing for you in a session you said is done, follow-ups outside it included (#140)', () => {
+    expect(RECAP_SYSTEM_PROMPT).toContain("When the user's latest prompt says this whole session is finished, closed or done with, not just a part of the work, and asks it for nothing more, nothing is left in it: todos is empty and waitingOn is \"nothing\", even if it named follow-ups outside it");
+    expect(RECAP_SYSTEM_PROMPT).toContain('This holds for an update too, until the user asks this session for more.');
+  });
+
   it('asks for a summary and to-dos (W121): why and now, a goal that moved on, where it is in a plan, and to-dos in order, each owned', () => {
     expect(RECAP_SYSTEM_PROMPT).toContain('{"summary": "...", "todos": [{"text": "...", "owner": "..."}], "waitingOn": "...", "title": "..."}');
     expect(RECAP_SYSTEM_PROMPT).toContain('first why the session was started, from the user\'s first prompt, then where it is now');

@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-02, on `m5.1/integration`, as M5's detail moved to the archive.
+Last updated: 2026-11-02, on `m5.1/integration`, as #141 fixed #140.
 
 ## Current milestone
 
@@ -16,6 +16,7 @@ Last updated: 2026-11-02, on `m5.1/integration`, as M5's detail moved to the arc
 | Item | State |
 | --- | --- |
 | M5.1, efficiency | Not started |
+| [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you) | Fixed in the recap prompt ([#141](https://github.com/leggetter/pitwall/pull/141)), merged into `m5.1/integration`. Checked live on Haiku: an ended session, old prompt 3 of 3 "you", new 2 of 2 "nothing"; one that asks you something, or that's done with only part of the work, still "you" (2 of 2 each). A "Not needed" action is in "Nice to have, later" |
 | [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory), Phil's UX feedback | Not started; small, a UI change with the `new-session` app-check part |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
