@@ -1860,6 +1860,13 @@ export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
 /**
+ * The levels recaps may run at (W119's review): a recap call may write at most 4,096 tokens, thinking
+ * included (RECAP_MAX_OUTPUT_TOKENS in src/recaps/prompt.ts), and `xhigh` or `max` could use them up
+ * before the answer, failing the recap.
+ */
+export const RECAP_EFFORT_LEVELS = ['low', 'medium', 'high'] as const satisfies readonly EffortLevel[];
+
+/**
  * Claude Code's documented model aliases (code.claude.com/docs/en/model-config, "Model aliases"),
  * which `--model` takes. Each names the latest model of its kind on your provider.
  */

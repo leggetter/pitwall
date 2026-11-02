@@ -71,7 +71,9 @@ describe('the words and choices', () => {
     const s = settings();
     expect(choiceValues(s, 'recaps', 'model')).toEqual(['default', 'opus', 'sonnet', 'haiku', 'fable', 'claude-haiku-5-5']);
     expect(choiceValues(s, 'subagents', 'model')).toEqual(['default', 'opus', 'sonnet', 'haiku', 'fable']);
-    expect(choiceValues(s, 'recaps', 'effort')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    // Recaps stop at high: their output cap counts thinking.
+    expect(choiceValues(s, 'recaps', 'effort')).toEqual(['low', 'medium', 'high']);
+    expect(choiceValues(s, 'supervisor', 'effort')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     expect(choiceValues(s, 'session', 'effort')).toEqual(['default', 'low', 'medium', 'high', 'xhigh', 'max']);
   });
 
@@ -137,6 +139,39 @@ describe("Preferences' Models and effort", () => {
     fireEvent.change(selectIn(rowOf('Recaps'), 'Effort'), { target: { value: '' } });
     await settle();
     expect(posts(fetch, WORK_PATH).at(-1)).toEqual({ overrides: { ...empty(), supervisor: { model: 'sonnet' } } });
+  });
+
+  it('sends one save at a time, then the latest set, so the server never applies them out of order', async () => {
+    const answers: ((response: Response) => void)[] = [];
+    let open = 0;
+    let most = 0;
+    const fetch = vi.fn<FetchLike>(async (_url, init) => {
+      if (init.method === undefined) return new Response(JSON.stringify(settings()), { status: 200 });
+      open += 1;
+      most = Math.max(most, open);
+      const body = JSON.parse(String(init.body)) as { overrides: WorkSettings['overrides'] };
+      const response = await new Promise<Response>((resolve) => answers.push(resolve));
+      open -= 1;
+      return new Response(JSON.stringify({ ...settings(), overrides: body.overrides }), { status: response.status });
+    });
+    renderSection(fetch);
+    await settle();
+    fireEvent.change(selectIn(rowOf('Recaps'), 'Effort'), { target: { value: 'low' } });
+    fireEvent.change(selectIn(rowOf('Supervisor'), 'Model'), { target: { value: 'sonnet' } });
+    fireEvent.change(selectIn(rowOf('Relay'), 'Effort'), { target: { value: 'max' } });
+    await settle();
+    expect(answers).toHaveLength(1);
+    answers[0]!(new Response('', { status: 200 }));
+    await settle();
+    expect(answers).toHaveLength(2);
+    answers[1]!(new Response('', { status: 200 }));
+    await settle();
+    expect(most).toBe(1);
+    expect(posts(fetch as ReturnType<typeof fakeServer>, WORK_PATH)).toEqual([
+      { overrides: { ...empty(), recaps: { effort: 'low' } } },
+      { overrides: { ...empty(), supervisor: { model: 'sonnet' }, recaps: { effort: 'low' }, relay: { effort: 'max' } } },
+    ]);
+    expect([selectIn(rowOf('Recaps'), 'Effort').value, selectIn(rowOf('Supervisor'), 'Model').value, selectIn(rowOf('Relay'), 'Effort').value]).toEqual(['low', 'sonnet', 'max']);
   });
 
   it("puts the choice back and says why when the server refuses it", async () => {

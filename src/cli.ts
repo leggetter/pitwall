@@ -105,13 +105,15 @@ Config file:
                         clones only. Without it, each owner goes to the root
                         with the most clones from it.
   work                  The model and effort for each kind of work pitwall
-                        starts: "session" (New session and resume),
+                        starts: "session" (New session, and resuming a
+                        session pitwall started),
                         "subagents" (a new session's sub-agents, model only),
                         "supervisor", "recaps" and "relay", each
                         { "model": ..., "effort": ... }. A model is opus,
                         sonnet, haiku, fable or another Claude Code alias, or
                         a full name such as claude-opus-5-5; an effort is low,
-                        medium, high, xhigh or max; "default" for either is
+                        medium, high, xhigh or max (recaps: up to high);
+                        "default" for either is
                         Claude Code's own. Without them, sessions get Claude
                         Code's defaults, the supervisor ${SUPERVISOR_MODEL},
                         recaps ${RECAP_MODEL} and the relay haiku. Preferences

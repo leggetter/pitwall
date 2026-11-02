@@ -1402,8 +1402,8 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
   const configured = (): WorkStore =>
     createWorkStore({ config: { ...emptyChoices(), session: { model: 'opus', effort: 'high' }, subagents: { model: 'haiku' } }, configFile: '/home/example/.pitwall/config.json' });
 
-  async function startWith(work: WorkStore, run = fakeRunner(backgrounded()), env: NodeJS.ProcessEnv = {}): Promise<Started> {
-    const server = await startServerWithInternals({ indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0, work }, { actions: { run, env, agents: fakeAgents() } });
+  async function startWith(work: WorkStore, run = fakeRunner(backgrounded()), env: NodeJS.ProcessEnv = {}, indexer = fakeIndexer(), agents = fakeAgents()): Promise<Started> {
+    const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, work }, { actions: { run, env, agents } });
     running.push(server);
     return { server, apiKey: await apiKeyOf(server.port), run };
   }
@@ -1476,12 +1476,35 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     expect(withSessionWork({ ...spawn, effort: 'low' }, configured())).toEqual({ cwd: repo, prompt: 'go', model: 'opus', effort: 'low', subagentModel: 'haiku' });
   });
 
-  it('resume takes the defaults for sessions and their sub-agents', async () => {
-    const started = await startWith(configured(), fakeRunner(resumedOutput()));
+  it("resume leaves a session pitwall didn't start alone: no model or effort flags, and no sub-agent model (#114's scope)", async () => {
+    const env = { PATH: '/usr/bin', CLAUDE_CODE_EFFORT_LEVEL: 'max' };
+    const started = await startWith(configured(), fakeRunner(resumedOutput()), env);
     expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
     const [call] = started.run.calls;
-    expect(call?.args).toEqual(['--resume', ENDED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
-    expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+    expect(call?.args).toEqual(['--resume', ENDED_ID, '--bg']);
+    expect(call?.options.env).toEqual({ ...env, PWD: call?.options.env.PWD });
+  });
+
+  it('resume takes the defaults for sessions and their sub-agents for a session this pitwall resumed before', async () => {
+    const started = await startWith(configured(), fakeRunner(resumedOutput(), resumedOutput()));
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    const [first, second] = started.run.calls;
+    expect(first?.args).toEqual(['--resume', ENDED_ID, '--bg']);
+    expect(second?.args).toEqual(['--resume', ENDED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+    expect(second?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+  });
+
+  it('resume takes the defaults for a stopped background session this pitwall started, found by its short id', async () => {
+    const STOPPED_ID = '99999999-9999-4999-8999-999999999999';
+    const stopped = session({ sessionId: STOPPED_ID, shortId: '99999999', name: 'pitwall-test-stopped', alive: false, finished: true, state: 'stopped' });
+    const agents = fakeAgents({ ok: true, rows: [agentRow(STOPPED_ID, { kind: 'background', shortId: '99999999', pid: undefined, state: 'stopped' })] });
+    const woken = exited(0, 'backgrounded · 99999999 · pitwall-test-stopped (idle — send a prompt to start)\n');
+    const started = await startWith(configured(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken), {}, fakeIndexer(snapshotWith(stopped)), agents);
+    expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
+    expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+    expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+    expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
   });
 
   it('GET answers each layer and what applies; POST replaces the overrides and answers the same', async () => {

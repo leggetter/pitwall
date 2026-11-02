@@ -155,6 +155,13 @@ export interface ActionOptions {
    * names none, and what resume always uses. Default: none, so no flags, as before W119.
    */
   work?: Pick<WorkStore, 'choice'>;
+  /**
+   * Every short id and session id this pitwall started or resumed, for its run (W119's review): a
+   * resume takes the defaults for sessions only for one of these, since #114 leaves sessions pitwall
+   * didn't start alone. The server makes one for spawn, spawn_session and resume. Default: none, so
+   * no resume takes the defaults.
+   */
+  started?: Pick<Set<string>, 'add' | 'has'>;
 }
 
 /** What spawn needs from the AttachmentStore. */
@@ -636,6 +643,7 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
         return { status: 502, result: { ok: false, error: `Claude Code didn't report the new session's id${line ? `: ${line}` : '.'} It may still appear in the list.` } };
       }
       options.spawned?.add(started.shortId);
+      options.started?.add(started.shortId);
       return { status: 201, result: { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId } };
     } finally {
       if (ids.length > 0) {
@@ -824,8 +832,11 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       // one a session started through a symlink is in. The check just resolved that `cwd` to
       // `dir.path`, so the two name the same directory; one that no longer resolves to a directory
       // under a root was refused with 409 above, rather than run with PWD set to the realpath.
-      // The defaults for sessions and their sub-agents (W119): Claude Code takes `--model` and `--effort` on a resume too.
-      const work = sessionWork();
+      // The defaults for sessions and their sub-agents (W119), only for a session this pitwall started
+      // or resumed (W119's review, #114's scope): one started elsewhere keeps the model and effort it
+      // was started with, so no flags. Claude Code takes `--model` and `--effort` on a resume too.
+      const ours = options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
+      const work = ours ? sessionWork() : { session: {}, subagents: {} };
       const result = await run(claudeBin, resumeArgs(sessionId, work.session), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
@@ -868,6 +879,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       }
       options.spawned?.add(resumed.shortId);
       options.resumed?.add(sessionId);
+      options.started?.add(sessionId);
+      options.started?.add(resumed.shortId);
       // You asked for it back, so it needs your prompt until you send one (NeedsYou's 'restarted', W69). Polls soon.
       indexer.noteRestart(sessionId, now());
       return answer({ ok: true, shortId: resumed.shortId }, 200);

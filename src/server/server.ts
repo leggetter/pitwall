@@ -260,8 +260,10 @@ export async function startServerWithInternals(
   const supervised = supervisor === undefined ? undefined : createSupervisorView(recapped ?? indexer, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
   const snapshots = createSnapshotView(supervised ?? recapped ?? indexer, prs);
+  // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).
+  const started = new Set<string>();
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
-  const actionOptions: ActionOptions = { token, spawned, resumed, work, ...internals.actions, slots: commandSlots, attachments };
+  const actionOptions: ActionOptions = { token, spawned, resumed, work, started, ...internals.actions, slots: commandSlots, attachments };
   const spawner = internals.actions?.spawner ?? createSpawnRunner(actionOptions);
   // What the supervisor can do behind your click (W115): its approvals, checked against this snapshot.
   const supervisorActions: SupervisorActionSources | undefined =

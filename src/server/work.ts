@@ -27,6 +27,7 @@ import type { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
   isEffortLevel,
+  RECAP_EFFORT_LEVELS,
   isWorkModel,
   RECAP_MODEL,
   SUPERVISOR_MODEL,
@@ -70,6 +71,9 @@ export function modelProblem(kind: WorkKind): string {
 
 export const EFFORT_PROBLEM = `must be low, medium, high, xhigh or max, or "${WORK_DEFAULT}" for Claude Code's own`;
 
+/** Why recaps take at most `high` (RECAP_EFFORT_LEVELS). */
+export const RECAP_EFFORT_PROBLEM = `must be low, medium or high, or "${WORK_DEFAULT}" for Claude Code's own: a recap may write at most 4,096 tokens, thinking included, and xhigh or max could use them up before the answer`;
+
 /**
  * One kind's `{ model?, effort? }`, checked: `key` is where it is, such as `work.recaps`, for
  * messages. `fail` throws or returns; `unknown` is told of each key it doesn't know. Never quotes a
@@ -95,6 +99,7 @@ export function parseWorkChoice(
     if (kind === 'subagents') return fail(`${key}.effort`, SUBAGENT_EFFORT_ERROR);
     const effort = entry.effort;
     if (effort !== WORK_DEFAULT && !isEffortLevel(effort)) return fail(`${key}.effort`, EFFORT_PROBLEM);
+    if (kind === 'recaps' && effort !== WORK_DEFAULT && !(RECAP_EFFORT_LEVELS as readonly string[]).includes(effort)) return fail(`${key}.effort`, RECAP_EFFORT_PROBLEM);
     choice.effort = effort;
   }
   return choice;
