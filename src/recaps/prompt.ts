@@ -79,7 +79,7 @@ Answer with one JSON object and nothing else: no code fence, no text before or a
 
 Write to the user as "you", never by their name, even where the material names them. Call the session "it" or "this session", never "I", "me" or "we", even where the material does. Plain words, with no Markdown. Be specific: name a file, a PR or a command only when it helps the user act. Don't invent anything the material doesn't say.
 
-When updating, revise the previous recap rather than writing a new one. Keep the summary steady: keep why the session was started, and its sentences that are still true, in their words, and change only what the newer turns change. Drop the to-dos the newer turns finished, keep the rest in their order, and add new ones where they belong.`;
+When updating, revise the previous recap rather than writing a new one. Keep the summary steady: keep why the session was started, and its sentences that are still true, in their words, and change only what the newer turns change. Drop the to-dos the newer turns finished, keep the rest in their order, and add new ones where they belong. A question the newer turns show you answered is finished: drop it, and if the answer leaves work, that work is a new to-do, usually the session's.`;
 
 /**
  * The call's command line, after `claude`. Nothing from a transcript is in it: the input goes over
@@ -230,6 +230,8 @@ export function parseRecapAnswer(text: string): RecapAnswer | undefined {
   }
   if (todos.length === 0 && waitingOn !== 'nothing') return undefined;
   if (waitingOn === 'you' && !todos.some((todo) => todo.owner === 'you')) return undefined;
+  // And not 'nothing' beside a to-do for you, which would say "2 for you" in the strip but nothing in Needs you (#123's review).
+  if (waitingOn === 'nothing' && todos.some((todo) => todo.owner === 'you')) return undefined;
   return { summary, todos, waitingOn: waitingOn as RecapWaitingOn, title };
 }
 
