@@ -872,7 +872,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 
 | Variant | Fill | Edge | Text and icon | Hover | Use |
 |---|---|---|---|---|---|
-| **Primary** | `--pw-accent` | `--pw-shadow-accent` | `--pw-on-accent` | fill `--pw-accent-hover` | The one main action in a region: New session, Start session, Send |
+| **Primary** | `--pw-accent` | `--pw-shadow-accent` | `--pw-on-accent` | fill `--pw-accent-hover` | The one main action in a region: the empty state's New session, Start session, Send (not the header's New session, an outline button) |
 | **Outline** | `--pw-surface` | `--pw-shadow-control` | `--pw-text`, icon `--pw-text-muted` | fill `--pw-surface-hover` | Secondary actions: Cancel, Try again, Clear filters |
 | **Ghost** | none | none | `--pw-text-muted`, icon `--pw-text-muted` | fill `--pw-surface-hover` (`--pw-surface-hover-bg` when it sits on `--pw-bg`, 2.3), text `--pw-text`, edge `--pw-shadow-control` | Toolbar and header actions, icon buttons, Dismiss |
 | **Danger** | `--pw-danger-solid` | none | `--pw-on-danger-solid` | 8 % darker (`filter: brightness(0.92)`) | Confirming a destructive action: Stop session, Remove session, End session |
