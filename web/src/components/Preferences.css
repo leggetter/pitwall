@@ -3,21 +3,27 @@
  * which scrolls, each after a 1 px line and 16 px, its title in m 14/20 600, 12 px above its first
  * setting, then its settings 16 px apart.
  *
- * The medium card, 624 px (W62): of the three dialog widths, the smallest that puts every option's
- * line on one line but one. The longest that fits, Every repo it worked in's, is about 434 px, so a
- * card of 488 px at the least: the body's padding, the radio and its gap take 54 px. The terminal
- * takes the keyboard's When you open it, two sentences of about 733 px, stays on two.
+ * The large card, 840 px (W122; W62 had the medium, 624 px): Models and effort puts a kind of work,
+ * its Model and its Effort on one line, and each select shows Claude Code's resolved default in full,
+ * "Default: Opus 5.5 (your Claude Code settings)". Below 900 px it's the window less its margins,
+ * as any large dialog (`size="lg"`).
  */
+
+/* The rows follow the body's width, which the window and the rule below set: a container. */
+.preferences-dialog .dialog-body {
+  container: preferences / inline-size;
+}
 
 /*
  * From 900 px, where the repo list is a column at the window's left, the card never covers it: at most
  * the window less the list's width on each side, so a new grouping shows beside the dialog as it's
- * chosen (W59's reason for no Save button). That's 420 px at 900 px, and 624 px from 1,104 px. A media
- * query, as for every component that fills the window (2.12): 100vw is the window, like the query.
+ * chosen (W59's reason for no Save button). That's 420 px at 900 px, 624 px at 1,104 px, and 840 px
+ * from 1,320 px. A media query, as for every component that fills the window (2.12): 100vw is the
+ * window, like the query.
  */
 @media (min-width: 900px) {
   .dialog.preferences-dialog {
-    width: min(var(--pw-dialog-md), 100%, 100vw - 2 * var(--pw-sidebar-w));
+    width: min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-sidebar-w));
   }
 }
 
@@ -41,29 +47,45 @@
 }
 
 /*
- * Models and effort (W119): a row per kind of work, its name in label type, its hint and cost in meta
- * type, then its Model and Effort selects side by side, each half the row, stacked below 480 px. The
- * selects fill their half, so a long default ("Default: claude-haiku-5-5") stays readable.
+ * Models and effort (W119, W122): a row per kind of work. Where the body is at least 800 px wide, as
+ * in the 840 px card, from 1,320 px beside the repo list and from 872 px below 900 px, its name, then
+ * its Model and Effort selects, on one line: the name's column 144 px, for the longest name, Sessions'
+ * sub-agents, on one line, and Model 1.3 times Effort's width, so Model has about 318 px for its text
+ * and Effort 234: "Default: Opus 5.5 (your Claude Code settings)" is about 304 px, "Default: medium
+ * (the model's own)" about 222. Its hint and cost under them, across the row. Narrower, the name, the
+ * hint, then the selects side by side, which at 1,200 px (a 688 px body) still fit both, and stacked
+ * below a 416 px body (a 480 px window, and the 420 px card at 900 px). The selects fill their space,
+ * and a default that still doesn't fit ends in an ellipsis, in full in the open list.
  */
 .work-row {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-areas:
+    'name'
+    'hint'
+    'fields';
   gap: var(--pw-space-1);
 }
 
 .work-row-name {
+  grid-area: name;
   font-size: var(--pw-text-s);
   font-weight: var(--pw-weight-bold);
   line-height: var(--pw-leading-s);
+}
+
+.work-row-hint {
+  grid-area: hint;
 }
 
 .work-row-cost {
   color: var(--pw-text);
 }
 
+/* Model wider than Effort: its defaults run longer, "Default: Opus 5.5 (your Claude Code settings)". */
 .work-row-fields {
+  grid-area: fields;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: var(--pw-space-3);
   margin-top: var(--pw-space-1);
 }
@@ -78,7 +100,30 @@
   text-overflow: ellipsis;
 }
 
-@media (max-width: 479px) {
+@container preferences (min-width: 800px) {
+  .work-row {
+    grid-template-columns: 9rem minmax(0, 1fr);
+    grid-template-areas:
+      'name fields'
+      'hint hint';
+    column-gap: var(--pw-space-3);
+  }
+
+  /* Level with the selects, under their labels. */
+  .work-row-name {
+    display: flex;
+    align-items: center;
+    align-self: end;
+    min-height: var(--pw-control-lg);
+    white-space: nowrap;
+  }
+
+  .work-row-fields {
+    margin-top: 0;
+  }
+}
+
+@container preferences (max-width: 415px) {
   .work-row-fields {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -6,17 +6,23 @@
 import {
   EFFORT_LEVELS,
   isEffortLevel,
+  OFFERED_WORK_MODELS,
   isWorkModel,
   RECAP_EFFORT_LEVELS,
   SUBAGENT_MODEL_ALIASES,
   WORK_DEFAULT,
   WORK_KINDS,
   WORK_PATH,
+  type ClaudeDefault,
+  type ClaudeDefaults,
+  type ClaudeDefaultSource,
+  type ClaudeSettingsScope,
   type WorkChoice,
   type WorkChoices,
   type WorkKind,
   type WorkSettings,
 } from '../../src/shared/protocol.js';
+import { hiddenCharacter } from '../../src/shared/hiddenText.js';
 import type { ApiClient } from './api.js';
 
 /** Each kind's name in Preferences. */
@@ -41,11 +47,15 @@ export const WORK_HINTS: Readonly<Record<WorkKind, string>> = {
 export const WORK_SECTION_TEXT =
   "pitwall's server keeps these until it stops. They don't change the config file: its \"work\" block sets the defaults.";
 
-/** Claude Code's own default, as a choice. */
+/** The section's words on Claude Code's own defaults (W122), once the server has sent them. */
+export const CLAUDE_DEFAULTS_TEXT =
+  "Claude Code's own defaults are read from its settings files and your environment as this opens. A project's settings can change a session's, as New session shows, and your organization's default or policy from claude.ai can change any.";
+
+/** Claude Code's own default, as a choice, when its value isn't known. */
 export const CLAUDE_DEFAULT_TEXT = "Claude Code's default";
 
 /** The aliases offered in Preferences and New session, besides what the layers already name. */
-export const OFFERED_MODELS = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+export const OFFERED_MODELS = OFFERED_WORK_MODELS;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -77,11 +87,78 @@ export function readWorkSettings(value: unknown): WorkSettings | undefined {
   const overrides = readChoices(value.overrides);
   const effective = readChoices(value.effective);
   if (!builtIn || !config || !overrides || !effective) return undefined;
-  return { builtIn, config, overrides, effective, ...(typeof value.configFile === 'string' ? { configFile: value.configFile } : {}) };
+  const claude = readClaudeDefaults(value.claude);
+  return {
+    builtIn,
+    config,
+    overrides,
+    effective,
+    ...(typeof value.configFile === 'string' ? { configFile: value.configFile } : {}),
+    ...(claude === undefined ? {} : { claude }),
+  };
 }
 
-export async function fetchWorkSettings(api: Pick<ApiClient, 'get'>, signal?: AbortSignal): Promise<WorkSettings | undefined> {
-  const result = await api.get(WORK_PATH, signal === undefined ? {} : { signal });
+const SCOPES: readonly string[] = ['managed', 'local', 'project', 'user'];
+const SETTING_KEYS: readonly string[] = ['model', 'effortLevel', 'modelSettings', 'maxEffortLevel'];
+/** The variables a source may name (W122): only these are shown. */
+const VARIABLES: readonly string[] = ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_MODEL', 'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_SUBAGENT_MODEL'];
+
+function readSource(value: unknown): ClaudeDefaultSource | undefined {
+  if (!isRecord(value)) return undefined;
+  const scope = typeof value.scope === 'string' && SCOPES.includes(value.scope) ? (value.scope as ClaudeSettingsScope) : undefined;
+  switch (value.kind) {
+    case 'variable':
+      if (typeof value.name !== 'string' || !VARIABLES.includes(value.name)) return undefined;
+      return { kind: 'variable', name: value.name, ...(scope === undefined ? {} : { scope }) };
+    case 'setting':
+      if (typeof value.key !== 'string' || !SETTING_KEYS.includes(value.key) || scope === undefined) return undefined;
+      return { kind: 'setting', key: value.key as 'model', scope };
+    case 'model':
+    case 'account':
+    case 'session':
+      return { kind: value.kind };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * One default, read defensively: a value of at most 80 characters, on one line, with no control, bidi,
+ * zero-width or other character you can't see (W120's rule: a project's settings file, from a clone, can name
+ * one), and a source pitwall knows.
+ */
+function readDefault(value: unknown): ClaudeDefault | undefined {
+  if (!isRecord(value)) return undefined;
+  const source = readSource(value.source);
+  if (source === undefined) return undefined;
+  if (value.value === undefined) return { source };
+  if (typeof value.value !== 'string' || value.value.length === 0 || value.value.length > 80 || /[\t\n]/.test(value.value) || hiddenCharacter(value.value) !== undefined) return undefined;
+  return { value: value.value, source };
+}
+
+function readClaudeDefaults(value: unknown): ClaudeDefaults | undefined {
+  if (!isRecord(value) || !isRecord(value.model) || !isRecord(value.effort)) return undefined;
+  const model = {} as ClaudeDefaults['model'];
+  const effort = {} as ClaudeDefaults['effort'];
+  for (const kind of WORK_KINDS) {
+    const one = readDefault(value.model[kind]);
+    if (one === undefined) return undefined;
+    model[kind] = one;
+    effort[kind] = {};
+    const byModel = value.effort[kind];
+    if (!isRecord(byModel)) continue;
+    for (const [name, entry] of Object.entries(byModel)) {
+      const read = readDefault(entry);
+      if (read !== undefined && name.length <= 64) effort[kind][name] = read;
+    }
+  }
+  return { model, effort, ...(typeof value.dir === 'string' ? { dir: value.dir } : {}) };
+}
+
+/** GET WORK_PATH, with New session's directory (W122) for its project settings. */
+export async function fetchWorkSettings(api: Pick<ApiClient, 'get'>, signal?: AbortSignal, dir?: string): Promise<WorkSettings | undefined> {
+  const where = dir === undefined || dir === '' ? WORK_PATH : `${WORK_PATH}?dir=${encodeURIComponent(dir)}`;
+  const result = await api.get(where, signal === undefined ? {} : { signal });
   return result.kind === 'ok' ? readWorkSettings(result.body) : undefined;
 }
 
@@ -112,6 +189,71 @@ export function valueText(value: string | undefined): string {
   return value === undefined || value === WORK_DEFAULT ? CLAUDE_DEFAULT_TEXT : value;
 }
 
+/** A model as people say it: `claude-opus-5-5` as Opus 5.5, `claude-haiku-4-5-20251001` as Haiku 4.5; an alias as itself. */
+export function modelText(model: string): string {
+  const match = /^claude-(opus|sonnet|haiku|fable)-(\d{1,2})(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(model);
+  if (!match) return model;
+  const family = match[1]!.toLowerCase();
+  return `${family[0]!.toUpperCase()}${family.slice(1)} ${match[2]}${match[3] === undefined ? '' : `.${match[3]}`}${match[4] === undefined ? '' : ' (1M)'}`;
+}
+
+/** A field's value as shown: a model by modelText(), an effort as itself, the field's label saying what it is. */
+function fieldValueText(field: 'model' | 'effort', value: string): string {
+  return field === 'model' ? modelText(value) : value;
+}
+
+/** Where a settings file is, in words. */
+export const SCOPE_TEXT: Readonly<Record<ClaudeSettingsScope, string>> = {
+  user: 'your Claude Code settings',
+  project: "the project's Claude Code settings",
+  local: "the project's local Claude Code settings",
+  managed: "your organization's managed settings",
+};
+
+/** Where a Claude Code default comes from, in the brackets after it. */
+export function sourceText(source: ClaudeDefaultSource): string {
+  switch (source.kind) {
+    case 'variable':
+      return source.scope === undefined ? source.name : `${source.name} in ${SCOPE_TEXT[source.scope]}`;
+    case 'setting':
+      return source.key === 'maxEffortLevel' ? `the maxEffortLevel cap in ${SCOPE_TEXT[source.scope]}` : SCOPE_TEXT[source.scope];
+    case 'model':
+      return "the model's own";
+    case 'account':
+      return 'your Claude account';
+    case 'session':
+      return "the session's";
+  }
+}
+
+/** Claude Code's default, resolved, as words after "Default: ": "Opus 5.5 (your Claude Code settings)". */
+export function claudeText(field: 'model' | 'effort', resolved: ClaudeDefault): string {
+  const { value, source } = resolved;
+  if (source.kind === 'account') return 'set by your Claude account';
+  if (source.kind === 'session') return "the session's model";
+  if (value === undefined) return field === 'effort' ? "the model's own" : CLAUDE_DEFAULT_TEXT;
+  if (field === 'effort' && value === 'auto') return `none sent, the API's own (${sourceText(source)})`;
+  if (field === 'effort' && value === 'none') return 'none (the model takes none)';
+  return `${fieldValueText(field, value)} (${sourceText(source)})`;
+}
+
+/**
+ * Claude Code's default for `kind`'s `field`, from the server's `claude` (W122), or undefined when it
+ * didn't send one. For effort, on `model`: the model the kind would run on, WORK_DEFAULT or none for
+ * Claude Code's own.
+ */
+export function claudeDefault(settings: WorkSettings, kind: WorkKind, field: 'model' | 'effort', model?: string): ClaudeDefault | undefined {
+  const claude = settings.claude;
+  if (claude === undefined) return undefined;
+  if (field === 'model') return claude.model[kind];
+  return claude.effort[kind][model === undefined ? WORK_DEFAULT : model];
+}
+
+/** The model `kind` runs on as things stand: the override, else the config file's, else pitwall's; WORK_DEFAULT for Claude Code's. */
+export function modelInEffect(settings: WorkSettings, kind: WorkKind): string {
+  return settings.effective[kind].model ?? WORK_DEFAULT;
+}
+
 /** What applies without an override, and where it comes from: the config file, or pitwall's own. */
 export function defaultOf(settings: WorkSettings, kind: WorkKind, field: 'model' | 'effort'): { value?: string; source: 'config' | 'pitwall' } {
   const config = settings.config[kind][field];
@@ -120,11 +262,39 @@ export function defaultOf(settings: WorkSettings, kind: WorkKind, field: 'model'
   return builtIn === undefined ? { source: 'pitwall' } : { value: builtIn, source: 'pitwall' };
 }
 
-/** The first option's words: "Default: opus, from the config file", or "Default: Claude Code's". */
+/** "Default: " and Claude Code's default, resolved where the server said, else "Claude Code's". */
+function claudeDefaultText(settings: WorkSettings, kind: WorkKind, field: 'model' | 'effort', model?: string): string {
+  const resolved = claudeDefault(settings, kind, field, model);
+  return resolved === undefined ? "Default: Claude Code's" : `Default: ${claudeText(field, resolved)}`;
+}
+
+/**
+ * Preferences' first option, with no override: "Default: opus (the config file)", "Default: Haiku 5.5
+ * (pitwall's default)", or Claude Code's, resolved (W122): "Default: Opus 5.5 (your Claude Code
+ * settings)", "Default: medium (the model's own)". An effort's is on the model in effect.
+ */
 export function defaultText(settings: WorkSettings, kind: WorkKind, field: 'model' | 'effort'): string {
   const { value, source } = defaultOf(settings, kind, field);
-  if (value === undefined || value === WORK_DEFAULT) return source === 'config' ? "Default: Claude Code's, from the config file" : "Default: Claude Code's";
-  return source === 'config' ? `Default: ${value}, from the config file` : `Default: ${value}`;
+  if (value === undefined || value === WORK_DEFAULT) return claudeDefaultText(settings, kind, field, field === 'effort' ? modelInEffect(settings, kind) : undefined);
+  return `Default: ${fieldValueText(field, value)} (${source === 'config' ? 'the config file' : "pitwall's default"})`;
+}
+
+/**
+ * New session's first option: what the server applies to a session with none chosen, the override
+ * included, so "Default: opus" or Claude Code's, resolved for the directory. "Default" before the
+ * settings load. An effort's is on `model`, the Model field's choice, or the default's.
+ */
+export function sessionDefaultText(settings: WorkSettings | undefined, field: 'model' | 'effort', model?: string): string {
+  if (settings === undefined) return 'Default';
+  const value = settings.effective.session[field];
+  if (value !== undefined && value !== WORK_DEFAULT) return `Default: ${fieldValueText(field, value)}`;
+  return claudeDefaultText(settings, 'session', field, field === 'effort' ? (model ?? modelInEffect(settings, 'session')) : undefined);
+}
+
+/** The "Claude Code's default" option, with its value where the server resolved it: "Claude Code's default: Opus 5.5 (…)". */
+export function claudeChoiceText(settings: WorkSettings | undefined, kind: WorkKind, field: 'model' | 'effort', model?: string): string {
+  const resolved = settings === undefined ? undefined : claudeDefault(settings, kind, field, model);
+  return resolved === undefined ? CLAUDE_DEFAULT_TEXT : `${CLAUDE_DEFAULT_TEXT}: ${claudeText(field, resolved)}`;
 }
 
 /**
@@ -145,9 +315,13 @@ export function choiceValues(settings: WorkSettings | undefined, kind: WorkKind,
   return values;
 }
 
-/** An option's words for a value from choiceValues(). */
-export function choiceText(value: string): string {
-  return value === WORK_DEFAULT ? CLAUDE_DEFAULT_TEXT : value;
+/**
+ * An option's words for a value from choiceValues(): Claude Code's default with its value where
+ * known, a model by modelText(), an effort as itself. For effort, on the model in effect.
+ */
+export function choiceText(value: string, settings?: WorkSettings, kind?: WorkKind, field: 'model' | 'effort' = 'model'): string {
+  if (value === WORK_DEFAULT) return settings === undefined || kind === undefined ? CLAUDE_DEFAULT_TEXT : claudeChoiceText(settings, kind, field, field === 'effort' ? modelInEffect(settings, kind) : undefined);
+  return field === 'model' ? modelText(value) : value;
 }
 
 /**

@@ -7,7 +7,8 @@
 //   which reveals a combobox of the directories under the roots (W70), fetched once per opening, the
 //   first time it's chosen, and narrowed as you type (directories.ts); Name and Model, optional,
 //   Model's "Other…" revealing a field, and Effort (W119), each starting from pitwall's defaults for
-//   sessions, which the first option names once they've loaded (modelEffort.ts); and the first prompt. With a root tab open (W38), the
+//   sessions, which the first option names once they've loaded, or Claude Code's own, resolved for
+//   the directory chosen (W122, modelEffort.ts); and the first prompt. With a root tab open (W38), the
 //   directories are that tab's, and a typed one must be in that tab, so the session is listed where
 //   it was started from. A chosen directory is sent as its absolute path; a typed one as before, or
 //   from a `~/` path under a root.
@@ -64,7 +65,7 @@ import {
   type DirectoryOption,
 } from '../directories.js';
 import { plainText, shortenHome } from '../format.js';
-import { CLAUDE_DEFAULT_TEXT, fetchWorkSettings, valueText } from '../modelEffort.js';
+import { claudeChoiceText, fetchWorkSettings, modelInEffect, sessionDefaultText } from '../modelEffort.js';
 import {
   directoryChoices,
   directoryProblem,
@@ -90,14 +91,6 @@ import '../actions.css';
 /** The picker's "type one" choice. No path can contain a NUL, so it can't collide with one. */
 const OTHER = '\u0000other';
 const MODELS = ['sonnet', 'opus', 'haiku'] as const;
-
-/**
- * The Model and Effort fields' first option: pitwall's default for sessions, once loaded (W119), as
- * "Default: opus", or "Default" when it's Claude Code's own or hasn't loaded.
- */
-export function sessionDefaultText(value: string | undefined): string {
-  return value === undefined || value === WORK_DEFAULT ? 'Default' : `Default: ${valueText(value)}`;
-}
 
 /** The sentence before the trust command (4: Dialogs, New session dialog). */
 export const TRUST_TEXT = "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:";
@@ -278,16 +271,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     });
   };
 
-  // The defaults for sessions, once per opening. A failure leaves "Default", which the server still applies.
-  useEffect(() => {
-    if (!api) return;
-    const controller = new AbortController();
-    void fetchWorkSettings(api, controller.signal).then((loaded) => {
-      if (loaded !== undefined && !controller.signal.aborted) setWork(loaded);
-    });
-    return () => controller.abort();
-  }, [api]);
-  const defaults = work?.effective.session;
 
   // With no directory to choose but a typed one, the field is there from the start.
   useEffect(() => {
@@ -385,6 +368,35 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   // The chosen option's path only while the field shows exactly its label, untrimmed, so what's sent is what's shown.
   const cwd = dirChoice !== OTHER ? dirChoice : accepted !== undefined && customDir === accepted.label ? accepted.path : resolveTypedDirectory(typed, snapshot.roots);
   const model = modelChoice === OTHER ? customModel.trim() : modelChoice;
+
+  // The defaults for sessions (W119), and Claude Code's own for the directory chosen (W122), whose
+  // project settings can change them: as the dialog opens, then a quarter second after the directory
+  // last changed, so typing one doesn't ask at each key. Only a directory without a problem is sent;
+  // the server checks it again, and reads none it doesn't find under a root. A failure keeps what was
+  // shown, or "Default", which the server still applies.
+  const settingsDir = directoryProblem(cwd, snapshot.roots, tab) === undefined ? cwd : undefined;
+  const firstFetch = useRef(true);
+  useEffect(() => {
+    if (!api) return;
+    const controller = new AbortController();
+    const load = () =>
+      void fetchWorkSettings(api, controller.signal, settingsDir).then((loaded) => {
+        if (loaded !== undefined && !controller.signal.aborted) setWork(loaded);
+      });
+    if (firstFetch.current) {
+      firstFetch.current = false;
+      load();
+      return () => controller.abort();
+    }
+    const timer = setTimeout(load, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [api, settingsDir]);
+  const defaults = work?.effective.session;
+  // The model a session would run on, for its effort's default: the choice, else the default's.
+  const effortModel = modelChoice === '' ? undefined : modelChoice === OTHER ? model || undefined : modelChoice;
   const problems = {
     cwd: dirChoice !== OTHER ? directoryProblem(cwd, snapshot.roots, tab) : typedDirectoryProblem(typed, cwd, snapshot.roots, tab),
     name: nameProblem(name),
@@ -629,8 +641,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
         </label>
         <span className="select">
           <select id={ids.model} className="select-input" value={modelChoice} onChange={edit(setModelChoice)} {...disabled}>
-            <option value="">{sessionDefaultText(defaults?.model)}</option>
-            {defaults?.model !== undefined && defaults.model !== WORK_DEFAULT && <option value={WORK_DEFAULT}>{CLAUDE_DEFAULT_TEXT}</option>}
+            <option value="">{sessionDefaultText(work, 'model')}</option>
+            {defaults?.model !== undefined && defaults.model !== WORK_DEFAULT && <option value={WORK_DEFAULT}>{claudeChoiceText(work, 'session', 'model')}</option>}
             {MODELS.map((alias) => (
               <option key={alias} value={alias}>
                 {alias}
@@ -670,8 +682,10 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
         </label>
         <span className="select">
           <select id={ids.effort} className="select-input" value={effort} onChange={edit((value) => setEffort(value as typeof effort))} {...disabled}>
-            <option value="">{sessionDefaultText(defaults?.effort)}</option>
-            {defaults?.effort !== undefined && defaults.effort !== WORK_DEFAULT && <option value={WORK_DEFAULT}>{CLAUDE_DEFAULT_TEXT}</option>}
+            <option value="">{sessionDefaultText(work, 'effort', effortModel)}</option>
+            {defaults?.effort !== undefined && defaults.effort !== WORK_DEFAULT && (
+              <option value={WORK_DEFAULT}>{claudeChoiceText(work, 'session', 'effort', effortModel ?? (work === undefined ? undefined : modelInEffect(work, 'session')))}</option>
+            )}
             {EFFORT_LEVELS.map((level) => (
               <option key={level} value={level}>
                 {level}

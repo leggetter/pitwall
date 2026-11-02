@@ -1,9 +1,10 @@
-// The Preferences dialog (docs/design-system.md, 4: Preferences and Dialogs; W59, W62): from the
-// header, 624 px wide where there's room and never over the repo list from 900 px, inside the window
+// The Preferences dialog (docs/design-system.md, 4: Preferences and Dialogs; W59, W62, W122): from the
+// header, 840 px wide where there's room and never over the repo list from 900 px, inside the window
 // with its body scrolling on a short one; Tab stays inside it; a choice applies at once; Escape and
 // Close close it, with focus back on its button. Then what its Session view settings do, and its
 // Models and effort (W119): a Model and an Effort select per kind of work, each from its default, the
-// costs, and a change sent to the server at once.
+// costs, and a change sent to the server at once; with room, a kind, its model and its effort on one
+// line, and Claude Code's resolved defaults in full (W122).
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -35,7 +36,7 @@ const part: Part = {
   title: 'The Preferences dialog: size, focus, Tab, choices that apply at once, Escape and Close; its Session view settings; and Models and effort',
   async run(t) {
     const { page, server } = t;
-    const width = Math.min(624, t.viewport.width - 32, ...(t.viewport.width >= 900 ? [t.viewport.width - 480] : []));
+    const width = Math.min(840, t.viewport.width - 32, ...(t.viewport.width >= 900 ? [t.viewport.width - 480] : []));
 
     await t.step('opens from the header, with focus on its first choice', async () => {
       await t.fresh({ search: '?view=all' });
@@ -100,16 +101,36 @@ const part: Part = {
       await openDialog(t, 'Preferences');
       await page.waitFor('Models and effort to load', `!!${workSelect('Relay', 'Effort')}`);
       const first = (kind: string, label: 'Model' | 'Effort') => page.evaluate<string>(`${workSelect(kind, label)}?.options[0]?.textContent`);
-      t.expectEqual(await first('Sessions', 'Model'), 'Default: opus, from the config file', "sessions' model, from the made-up config file");
-      t.expectEqual(await first('Sessions', 'Effort'), 'Default: high, from the config file', "sessions' effort");
-      t.expectEqual(await first('Recaps', 'Model'), 'Default: claude-haiku-5-5', "recaps' own model");
-      t.expectEqual(await first('Supervisor', 'Model'), 'Default: claude-opus-5-5', "the supervisor's own model");
+      t.expectEqual(await first('Sessions', 'Model'), 'Default: Opus 5.5 (your Claude Code settings)', "sessions' model, Claude Code's, from made-up settings (W122)");
+      t.expectEqual(await first('Sessions', 'Effort'), 'Default: high (the config file)', "sessions' effort, from the made-up config file");
+      t.expectEqual(await first('Recaps', 'Model'), "Default: Haiku 5.5 (pitwall's default)", "recaps' own model");
+      t.expectEqual(await first('Recaps', 'Effort'), "Default: medium (the model's own)", "recaps' effort, Haiku 5.5's own");
+      t.expectEqual(await first('Supervisor', 'Model'), "Default: Opus 5.5 (pitwall's default)", "the supervisor's own model");
       t.expect(!(await page.evaluate(`!!${workSelect("Sessions' sub-agents", 'Effort')}`)), 'sub-agents have no Effort');
       t.expect(/Today: \$[0-9.]+ for \d+ of \d+ calls, at API list prices\./.test(await page.evaluate<string>(`${DIALOG}.textContent`)), "recaps' cost today");
-      // Side by side in a row, or stacked below 480 px.
+      // Side by side in a row, or stacked where the body is narrower than 416 px (W122: the card's body, a
+      // container, in place of the window's 480 px), as at 375 px, and at 900 px, where the card is 420 px.
+      const body = await page.evaluate<number>(`(() => { const b = ${DIALOG}.querySelector('.dialog-body'); const s = getComputedStyle(b); return b.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); })()`);
       const [model, effort] = await page.evaluate<Box[]>(`[${workSelect('Recaps', 'Model')}, ${workSelect('Recaps', 'Effort')}].map((s) => { const r = s.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })`);
-      if (t.viewport.width < 480) t.expect(Math.abs(model!.left - effort!.left) < 1 && effort!.top >= model!.bottom, 'Model and Effort stack below 480 px', { model, effort });
-      else t.expect(Math.abs(model!.top - effort!.top) < 1 && effort!.left >= model!.right, 'Model and Effort side by side', { model, effort });
+      if (body < 416) t.expect(Math.abs(model!.left - effort!.left) < 1 && effort!.top >= model!.bottom, 'Model and Effort stack in a body under 416 px', { model, effort, body });
+      else t.expect(Math.abs(model!.top - effort!.top) < 1 && effort!.left >= model!.right, 'Model and Effort side by side', { model, effort, body });
+      // W122: where the body is 800 px wide (the 840 px card), the kind's name is on the selects' line; from 600 px,
+      // side by side or on one line, each first option fits whole.
+      const name = await page.evaluate<Box>(`(() => { const r = [...${DIALOG}.querySelectorAll('.work-row-name')].find((n) => n.textContent === 'Recaps').getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })()`);
+      if (body >= 800) {
+        t.expect(name.right <= model!.left && name.bottom > model!.top && name.top < model!.bottom, 'a kind, its model and its effort on one line', { name, model, effort, body });
+        const longest = await page.evaluate<number>(`[...${DIALOG}.querySelectorAll('.work-row-name')].find((n) => n.textContent === "Sessions' sub-agents").getBoundingClientRect().height`);
+        t.expect(longest < 40, "Sessions' sub-agents on one line, level with its select", longest);
+      }
+      else t.expect(name.bottom <= model!.top, "the kind's name above its selects", { name, model, body });
+      if (body >= 600) {
+        // How wide each select's first option is, in the select's font, against the room for its text.
+        const fits = await page.evaluate<Array<{ text: string; needs: number; room: number }>>(
+          `[...${DIALOG}.querySelectorAll('.work-row select')].map((s) => { const c = document.createElement('canvas').getContext('2d'); const st = getComputedStyle(s); c.font = [st.fontStyle, st.fontWeight, st.fontSize, st.fontFamily].join(' '); const text = s.options[0].textContent; return { text, needs: c.measureText(text).width, room: s.clientWidth - parseFloat(st.paddingLeft) - parseFloat(st.paddingRight) }; })`,
+        );
+        const cut = fits.filter((f) => f.needs > f.room);
+        t.expect(cut.length === 0, "every first option's default fits whole", cut);
+      }
       t.expectEqual(await page.evaluate(chooseOption(workSelect('Recaps', 'Effort'), 'low')), 'low', 'recaps at low effort');
       await page.settle(300);
       t.expectEqual(server.records.workPosts, [{ overrides: { session: {}, subagents: {}, supervisor: {}, recaps: { effort: 'low' }, relay: {} }, status: 200 }], 'the whole set of overrides, sent once');

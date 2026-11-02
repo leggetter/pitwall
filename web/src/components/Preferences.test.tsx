@@ -174,7 +174,7 @@ describe('the Preferences dialog', () => {
     const dialog = openPreferences();
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Each change applies at once. This browser remembers the view settings; pitwall keeps the models for this run.');
-    expect(dialog.classList.contains('md')).toBe(true);
+    expect(dialog.classList.contains('lg')).toBe(true);
     expect(dialog.querySelector('.dialog-foot')).toBeNull();
     expect(within(dialog).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close']);
   });
@@ -293,21 +293,48 @@ describe('the Preferences dialog', () => {
     expect(preferencesDialog()).not.toBeNull();
   });
 
-  it('is the medium dialog, from 900 px never over the repo list, at most the window less 96 px tall, whose body is what scrolls, as in a 375 × 540 window', () => {
+  it('is the large dialog, from 900 px never over the repo list, at most the window less 96 px tall, whose body is what scrolls, as in a 375 × 540 window', () => {
     renderApp();
     const dialog = openPreferences();
-    // 624 px wide, as the New session dialog is, so its options' lines fit on one line (W62).
-    expect(dialog.classList.contains('md')).toBe(true);
+    // 840 px wide (W122), so a kind of work, its model and its effort share a line.
+    expect(dialog.classList.contains('lg')).toBe(true);
     expect(dialog.classList.contains('preferences-dialog')).toBe(true);
     // From the sidebar breakpoint, at most the window less the repo list's width on each side.
     const wide = block(withoutComments(preferencesCss), /@media \(min-width: 900px\)\s*\{/);
-    expect(declarations(block(wide, /\.dialog\.preferences-dialog\s*\{/))).toEqual([['width', 'min(var(--pw-dialog-md), 100%, 100vw - 2 * var(--pw-sidebar-w))']]);
+    expect(declarations(block(wide, /\.dialog\.preferences-dialog\s*\{/))).toEqual([['width', 'min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-sidebar-w))']]);
     const css = withoutComments(dialogCss);
     const card = declarations(block(css, /\n\.dialog\s*\{/));
     expect(card.filter(([property]) => property === 'max-height').map(([, value]) => value)).toContain('calc(100dvh - 2 * var(--pw-space-12))');
     const body = new Map(declarations(block(css, /\.dialog-body\s*\{/)));
     expect(body.get('overflow-y')).toBe('auto');
     expect(body.get('min-height')).toBe('0');
+  });
+
+  it('puts a kind of work, its model and its effort on one line where the body is 800 px wide, as at 1,440 px, side by side under its name at 1,104 and 1,200 px, and stacks them at 900 and 375 px (W122)', () => {
+    const css = withoutComments(preferencesCss);
+    expect(new Map(declarations(block(css, /\.preferences-dialog \.dialog-body\s*\{/))).get('container')).toBe('preferences / inline-size');
+    const oneLine = block(css, /@container preferences \(min-width: 800px\)\s*\{/);
+    const row = new Map(declarations(block(oneLine, /\.work-row\s*\{/)));
+    expect(row.get('grid-template-areas')).toBe("'name fields' 'hint hint'");
+    expect(row.get('grid-template-columns')).toBe('9rem minmax(0, 1fr)');
+    expect(new Map(declarations(block(css, /\n\.work-row-fields\s*\{/))).get('grid-template-columns')).toBe('minmax(0, 1.3fr) minmax(0, 1fr)');
+    const narrow = block(css, /@container preferences \(max-width: 415px\)\s*\{/);
+    expect(new Map(declarations(block(narrow, /\.work-row-fields\s*\{/))).get('grid-template-columns')).toBe('minmax(0, 1fr)');
+    // The card's width at each window width, by the rules above and Dialog.css's 16 px margins, and its body's, less 32 px of padding.
+    const lg = 840;
+    const sidebar = 240;
+    const cardAt = (window: number) => Math.min(lg, window - 32, window >= 900 ? window - 2 * sidebar : Infinity);
+    const layoutAt = (window: number) => {
+      const body = cardAt(window) - 32;
+      return body >= 800 ? 'one line' : body <= 415 ? 'stacked' : 'side by side';
+    };
+    expect([375, 900, 1104, 1200, 1440].map((width) => [width, cardAt(width), layoutAt(width)])).toEqual([
+      [375, 343, 'stacked'],
+      [900, 420, 'stacked'],
+      [1104, 624, 'side by side'],
+      [1200, 720, 'side by side'],
+      [1440, 840, 'one line'],
+    ]);
   });
 });
 
