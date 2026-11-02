@@ -863,6 +863,30 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - **Peers ([#99](https://github.com/leggetter/pitwall/issues/99)):** build it at all? Undecided. The name is settled: Peers, not agent conversations (Phil, 2026-10-29).
 - **Cursor's Claude Code extension panel:** do I use it? Its sessions keep a separate list and may not appear in `claude agents --json`.
 
+## Nice to have, later
+
+Small improvements that aren't needed now, gathered from reviews and try-outs so they don't get lost (Phil, 2026-11-02). None is planned yet. Bigger items have their own issues: Peers ([#99](https://github.com/leggetter/pitwall/issues/99)), chatting with a session and hosted sessions ([#108](https://github.com/leggetter/pitwall/issues/108)), the rest of the config file ([#101](https://github.com/leggetter/pitwall/issues/101)) and model and effort per kind of work ([#114](https://github.com/leggetter/pitwall/issues/114)).
+
+- **Web UI**
+  - **Code-split the web UI:** the main bundle is 571 KB (176 KB gzipped), over Vite's 500 kB warning; the supervisor panel, the PR views and Preferences could load on demand. Served from localhost, so it costs only parse time.
+  - **The Supervisor item's selected look** matches All sessions' when its view is open; a lighter current-only look might read better (W114's review).
+  - **The PR list's placeholder** shows for about 8 s after a restart, until the first fetch.
+- **Pull requests**
+  - **Snooze a PR's attention,** by its key and a hash of its state, as Not needed now does for sessions, so an abandoned PR of yours doesn't stay in Needs you (W106).
+  - **Who asked for a review:** PR authors aren't fetched, so a row can't say (W101).
+  - **Leave out team review requests,** a setting for when big teams make them noisy (W101).
+  - **The Clone dialog's warning** goes by the PR's relation, not the repo's owner, so your own PR to someone else's repo shows none; say "code its owner controls" for every clone (W117).
+  - **New sessions in their own worktree** for a PR, with `claude --worktree <PR URL>`, which fetches only from `origin`, so forks need checking first (W107).
+- **Repo discovery**
+  - **Remotes through an SSH host alias or `url.insteadOf`** aren't recognised, so those clones place no PRs (W105).
+  - **Repos more than two levels below a root** are found only once a session has worked in them (W105).
+  - **Several hung mounts** at different paths could take all of libuv's four worker threads; documented in `repos.ts`, not guarded (W117).
+- **Processes**
+  - **`claude agents`, stop, remove, `claude --version` and the editors** still run in the shared temp directory; they could get a private one, as gh does (W117).
+- **Recaps**
+  - **Keep recaps across restarts,** under `~/.pitwall`, so a restart doesn't recap every session again (spike 010).
+  - **`--effort low` for recaps,** half the time, if quality holds (spike 010).
+
 ## Suggested actions
 
 - [x] Create the repo and this plan
