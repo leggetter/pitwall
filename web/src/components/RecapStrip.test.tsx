@@ -9,7 +9,7 @@ import { planStatusPath, planStatusRefreshPath, RECAP_DAILY_BUDGET, recapPath, r
 import { ApiContext, type ApiClient, type ApiResult } from '../api.js';
 import { RECAP_COLLAPSED_KEY, RECAP_WAIT_MS, RECAPS_OFF_TEXT, budgetText, refreshRecapFailedText } from '../recap.js';
 import { minutesAgo, session } from '../test/fixtures.js';
-import { NO_PLAN_TEXT, PLAN_NO_TRANSCRIPT_TEXT, PLAN_OFF_TEXT, PLAN_STATUS_BUSY, parsePlanStatus, planFailedText } from '../planStatus.js';
+import { NO_PLAN_TEXT, PLAN_FULL_TEXT, PLAN_NO_TRANSCRIPT_TEXT, PLAN_OFF_TEXT, PLAN_STATUS_BUSY, PLAN_STATUS_READY, parsePlanStatus, planFailedText } from '../planStatus.js';
 import { RecapStrip, STALE_LABEL } from './RecapStrip.js';
 import { SessionView } from './SessionView.js';
 import { ToastContext, type ShowToast } from './Toast.js';
@@ -378,10 +378,13 @@ describe('the summary and the to-dos', () => {
     expect(document.querySelector('.recap-age')?.getAttribute('datetime')).toBe(full().at);
   });
 
-  it('is a region named by its heading, with no live region', async () => {
+  it("is a region named by its heading, with no live region but the plan status panel's, empty until it's used", async () => {
     await shown(full());
     expect(screen.getByRole('region', { name: 'Recap' })).toBe(strip());
-    expect(strip()?.querySelector('[role="status"], [role="alert"], [aria-live]')).toBeNull();
+    const live = [...(strip()?.querySelectorAll('[role="status"], [role="alert"], [aria-live]') ?? [])];
+    expect(live).toHaveLength(1);
+    expect(live[0]!.closest('.recap-plan')).not.toBeNull();
+    expect(live[0]!.textContent).toBe('');
   });
 });
 
@@ -748,6 +751,7 @@ describe('Plan status (W123)', () => {
     ['there is no transcript', status(404, { ok: false, error: 'made up' }), PLAN_NO_TRANSCRIPT_TEXT],
     ['the call failed, in pitwall’s words', status(502, { ok: false, error: "The plan status call's answer wasn't the JSON pitwall asked for." }), "The plan status call's answer wasn't the JSON pitwall asked for."],
     ['anything else', status(500), planFailedText(500)],
+    ['pitwall is making as many as it does at a time, for other sessions', status(429, { ok: false, error: 'made up', busy: 'running', others: true }), PLAN_FULL_TEXT],
   ])('says why when %s', async (_name, answer, text) => {
     const server = planApi({ posts: [answer] });
     renderStrip({ session: target(full()) }, server.api);
@@ -775,6 +779,41 @@ describe('Plan status (W123)', () => {
     expect(server.planGets()).toBe(1);
     expect(items()).toHaveLength(4);
     expect(button()?.hasAttribute('aria-busy')).toBe(false);
+  });
+
+  it('says "Plan status ready." once to a screen reader when Reading… ends, and nothing for a newer one from a snapshot', async () => {
+    let finish: (result: ApiResult) => void = () => undefined;
+    const server = planApi({ stored: PLAN, posts: [new Promise<ApiResult>((resolve) => (finish = resolve))] });
+    const view = renderStrip({ session: target(full()) }, server.api);
+    const region = document.querySelector<HTMLElement>('.recap-plan [role="status"]')!;
+    expect(region.textContent).toBe('');
+    await press();
+    expect(region.textContent).toBe('');
+    await act(async () => {
+      finish(ok({ ok: true, status: PLAN }));
+    });
+    await settle();
+    expect(region.textContent).toBe(PLAN_STATUS_READY);
+    let changes = 0;
+    const observer = new MutationObserver((records) => (changes += records.length));
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+    view.update({ session: target(full(), { planStatusAt: minutesAgo(0) }) });
+    await settle();
+    expect(server.planGets()).toBe(1);
+    observer.disconnect();
+    expect(changes).toBe(0);
+    // Closed, it says nothing.
+    fireEvent.click(document.querySelector<HTMLButtonElement>('.recap-plan-close')!);
+    await settle();
+    expect(region.textContent).toBe('');
+  });
+
+  it('says the error once to a screen reader when Reading… ends without a plan status', async () => {
+    const reason = "The plan status call's answer wasn't the JSON pitwall asked for.";
+    const server = planApi({ posts: [status(502, { ok: false, error: reason })] });
+    renderStrip({ session: target(full()) }, server.api);
+    await press();
+    expect(document.querySelector('.recap-plan [role="status"]')?.textContent).toBe(reason);
   });
 
   it('reads the plan status defensively', () => {

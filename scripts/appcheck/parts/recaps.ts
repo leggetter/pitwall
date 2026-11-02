@@ -88,6 +88,7 @@ const plan = `(() => {
     changes: panel?.querySelector('.recap-plan-changes')?.textContent ?? null,
     age: panel?.querySelector('.recap-plan-age')?.textContent ?? null,
     note: panel && !panel.hidden ? panel.querySelector('.recap-note')?.textContent ?? null : null,
+    said: panel?.querySelector('[role="status"]')?.textContent ?? null,
     noOverflow: strip.scrollWidth <= strip.clientWidth + 1,
     panelInside: !panel || panel.hidden || (panel.getBoundingClientRect().right <= box.right + 0.5 && panel.getBoundingClientRect().left >= box.left - 0.5),
     focused: document.activeElement === button,
@@ -105,12 +106,14 @@ type Plan = {
   changes: string | null;
   age: string | null;
   note: string | null;
+  said: string | null;
   noOverflow: boolean;
   panelInside: boolean;
   focused: boolean;
 };
 const PLAN_BUTTON = `${STRIP}?.querySelector('[data-plan-status]')`;
 const PLAN_STATE_TEXT = { done: 'Done', now: 'Now', next: 'Next', dropped: 'Dropped' } as const;
+const PLAN_STATUS_READY = 'Plan status ready.';
 
 const APP_STRIP = `document.querySelector('.app-strips [data-strip="recaps"]')?.textContent ?? null`;
 const lineTwo = (name: string) => `(${row(name)})?.closest('li.session')?.querySelector('.session-what-text')?.textContent ?? null`;
@@ -266,6 +269,7 @@ const part: Part = {
       await page.waitFor('Plan status to be busy', `${plan}?.busy === true`);
       const busy = await page.evaluate<Plan>(plan);
       t.expectEqual(busy.state, 'making', 'the panel says one is being made');
+      t.expectEqual(busy.said, '', 'its live region says nothing meanwhile');
       await t.shot('plan-busy');
       const shown = await page.waitFor<Plan>('the plan status', `(() => { const p = ${plan}; return p && p.state === 'shown' && !p.busy ? p : null; })()`, 8_000);
       t.expectEqual(shown.line, PLANNED.plan, 'the plan, in one line');
@@ -276,6 +280,7 @@ const part: Part = {
       );
       t.expectEqual(shown.changes, `Changes: ${PLANNED.changes}`, 'how the plan changed');
       t.expectEqual(shown.age, 'just now', 'its age');
+      t.expectEqual(shown.said, PLAN_STATUS_READY, 'its live region says it is ready, once');
       t.expect(shown.panelInside && shown.noOverflow, 'the panel inside the strip, nothing wider than it', shown);
       t.expectEqual(server.records.planMakes, [{ name: NAMES.conversation, status: 200 }], 'one made');
       await t.shot('plan');

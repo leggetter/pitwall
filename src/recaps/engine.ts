@@ -114,8 +114,8 @@ export type PlanStatusOutcome =
   | { kind: 'no-transcript' }
   /** The day's budget is spent: Retry-After is midnight. */
   | { kind: 'spent'; retryAfterSeconds: number }
-  /** A plan status of it is being made already. */
-  | { kind: 'running'; retryAfterSeconds: number }
+  /** A plan status of it is being made already, or, with `others`, PLAN_MAX_CONCURRENT of other sessions'. */
+  | { kind: 'running'; retryAfterSeconds: number; others?: true }
   /** The call failed or couldn't be made: why, in pitwall's words, never the model's or claude's output. */
   | { kind: 'failed'; reason: string }
   | { kind: 'closed' };
@@ -204,6 +204,11 @@ export const PAUSE_AFTER_FAILURES = 3;
 /** The first pause, doubling with each failure after that, up to PAUSE_MAX_MS. */
 export const PAUSE_BASE_MS = 5 * 60_000;
 export const PAUSE_MAX_MS = 60 * 60_000;
+/** Plan status calls at a time, of all sessions (W123's review): more presses are answered 'running'. */
+export const PLAN_MAX_CONCURRENT = 2;
+/** A model Claude Code refused, for a plan status: it runs on recaps' model, so that's the setting to change. */
+export const PLAN_MODEL_REJECTED =
+  "Claude Code didn't accept the model set for recaps, which plan status uses too, so pitwall made no plan status: it may not exist, or your account can't use it. Choose another in Preferences, under Models and effort, or in the config file's \"work.recaps\".";
 /** How soon `claude --version` is asked again after it said too old, or couldn't be run. */
 const VERSION_RETRY_MS = 10 * 60_000;
 /**
@@ -783,6 +788,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       const file = facts.get(session.sessionId)?.file;
       if (session.transcript !== 'ok' || file === undefined) return Promise.resolve({ kind: 'no-transcript' });
       if (planRunning.has(session.sessionId)) return Promise.resolve({ kind: 'running', retryAfterSeconds: 5 });
+      // One call per session, and a few at a time in all, on top of recaps' own maxConcurrent.
+      if (planRunning.size >= PLAN_MAX_CONCURRENT) return Promise.resolve({ kind: 'running', retryAfterSeconds: 5, others: true });
       if (spent()) return Promise.resolve({ kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) });
       const made = runPlan(session.sessionId, file, parseMs(session.lastActivityAt))
         .catch((error: unknown): PlanStatusOutcome => {
@@ -888,7 +895,7 @@ function readCall<T>(
       const envelope = parseEnvelope(outcome.stdout);
       const cost = envelope.costUsd === undefined ? {} : { costUsd: envelope.costUsd };
       // A refused model exits 1, with a result that says so (W119): pitwall's words for that, not the exit code.
-      if (!envelope.ok && envelope.reason === modelRejectedMessage('recaps')) return { ok: false, reason: envelope.reason, ...cost };
+      if (!envelope.ok && envelope.reason === modelRejectedMessage('recaps')) return { ok: false, reason: noun === 'recap' ? envelope.reason : PLAN_MODEL_REJECTED, ...cost };
       if (outcome.code !== 0) {
         const how = outcome.code === null ? `was stopped by ${outcome.signal ?? 'a signal'}` : `exited with code ${outcome.code}`;
         return { ok: false, reason: `The ${noun} call ${how}.`, ...cost };

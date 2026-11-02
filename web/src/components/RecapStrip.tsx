@@ -29,7 +29,7 @@
 // live region, so a snapshot that changes it announces nothing; Refresh's results are toasts. Every
 // text from the recap is plain text, in <bdi>, since it names files, PRs and people.
 
-import { useContext, useId, useRef, type Ref } from 'react';
+import { useContext, useEffect, useId, useRef, useState, type Ref } from 'react';
 import type { PlanItem, PlanStatus, RecapHealth, RecapTodo, SessionRecap, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { plainText } from '../format.js';
@@ -53,9 +53,11 @@ import {
   PLAN_STATUS_BUSY,
   PLAN_STATUS_CLOSE,
   PLAN_STATUS_LABEL,
+  PLAN_STATUS_READY,
   PLAN_STATUS_REMAKE,
   planStateLook,
   usePlanStatus,
+  type PlanPanelState,
   type PlanStatusController,
 } from '../planStatus.js';
 import { Badge } from './Badge.js';
@@ -223,8 +225,13 @@ function PlanPanel({ plan, id, onClose }: { plan: PlanStatusController; id: stri
   const headingId = useId();
   const { state } = plan;
   const shown = state.kind === 'shown' ? state.status : undefined;
+  const said = useSaidOnce(state, plan.open);
   return (
     <div className="recap-plan" id={id} role="region" aria-labelledby={headingId} hidden={!plan.open} data-plan-state={plan.open ? state.kind : undefined}>
+      {/* There from the start, empty: says once that it's ready, or why not, when Reading… ends; a newer one from a snapshot says nothing. */}
+      <p className="visually-hidden" role="status" data-plan-said="">
+        {said}
+      </p>
       <div className="recap-plan-head">
         <h4 className="recap-plan-heading" id={headingId}>
           {PLAN_STATUS_LABEL}
@@ -261,6 +268,23 @@ function PlanPanel({ plan, id, onClose }: { plan: PlanStatusController; id: stri
       )}
     </div>
   );
+}
+
+/**
+ * What the panel's live region says: "Plan status ready." or the error, once, when loading or making
+ * ends, and nothing while it's under way, while it's closed, or when a shown one is replaced by a newer one.
+ */
+function useSaidOnce(state: PlanPanelState, open: boolean): string {
+  const [said, setSaid] = useState('');
+  const before = useRef(state.kind);
+  useEffect(() => {
+    const was = before.current;
+    before.current = state.kind;
+    if (!open || state.kind === 'loading' || state.kind === 'making') return setSaid('');
+    if (was !== 'loading' && was !== 'making') return;
+    setSaid(state.kind === 'shown' ? PLAN_STATUS_READY : state.message);
+  }, [state, open]);
+  return said;
 }
 
 function PlanBody({ status }: { status: PlanStatus }) {

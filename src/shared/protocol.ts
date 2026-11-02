@@ -1834,7 +1834,7 @@ export function planStatusPath(sessionId: string): string {
  * apiKey, pitwall's Origin and its exact Host. It counts against the day's recap budget
  * (RECAP_DAILY_BUDGET) as a recap call. 404 when pitwall has no transcript of the session, 409 with
  * `--no-recaps`, 429 when the day's budget is spent or a plan status of it is being made already,
- * which the answer's `busy` says, 502 when the call failed, with why in pitwall's words, 503 while
+ * which the answer's `busy` says, or when two of other sessions' are (busy 'running', with `others`), 502 when the call failed, with why in pitwall's words, 503 while
  * the server closes.
  */
 export function planStatusRefreshPath(sessionId: string): string {
@@ -1842,7 +1842,10 @@ export function planStatusRefreshPath(sessionId: string): string {
 }
 
 /** planStatusRefreshPath()'s answer: the new plan status, or why not. */
-export type PlanStatusResult = { ok: true; status: PlanStatus } | { ok: false; error: string; busy?: 'spent' | 'running' };
+export type PlanStatusResult =
+  | { ok: true; status: PlanStatus }
+  /** `others`: busy with other sessions' plan statuses, as many as pitwall makes at a time, so none of this one is coming. */
+  | { ok: false; error: string; busy?: 'spent' | 'running'; others?: true };
 
 // --- The supervisor (M5; spike 009; D4 reopened, option B) ----------------------------------------
 

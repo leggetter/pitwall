@@ -11,7 +11,7 @@ import type { Indexer } from '../index/index.js';
 import type { RecapChildEvents } from '../recaps/call.js';
 import { memoryBudget } from '../recaps/budget.js';
 import { createRecapEngine, type RecapEngine } from '../recaps/engine.js';
-import { planStatusPath, planStatusRefreshPath, recapPath, recapRefreshPath, SNAPSHOT_PATH, WS_PATH, type IndexSnapshot, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { planStatusPath, planStatusRefreshPath, recapPath, recapRefreshPath, SNAPSHOT_PATH, WS_PATH, type IndexSnapshot, type PlanStatusResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
@@ -319,6 +319,20 @@ describe('the plan status routes (W123)', () => {
     // Only when it was made, never its words (D14).
     expect(JSON.stringify(snapshot)).not.toContain('Step 2');
     expect(snapshot.recaps?.calls).toBe(1);
+    ws.close();
+  });
+
+  it('POST answers 429 busy running, with others, when as many plan statuses as pitwall makes at a time are running for other sessions', async () => {
+    const recaps = engineWithFakeClaude();
+    const engine = { ...recaps.engine, makePlanStatus: () => Promise.resolve({ kind: 'running' as const, retryAfterSeconds: 5, others: true as const }) };
+    const { server } = await start({ recaps: engine });
+    const { apiKey, ws } = await authedClient(server.port);
+    const res = await post(server.port, planStatusRefreshPath('a'), apiKey);
+    expect(res.status).toBe(429);
+    expect(res.headers['retry-after']).toBe('5');
+    const body = JSON.parse(res.body) as PlanStatusResult;
+    expect(body).toMatchObject({ ok: false, busy: 'running', others: true });
+    expect(body.ok === false && body.error).toMatch(/2 plan statuses for other sessions/);
     ws.close();
   });
 
