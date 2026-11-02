@@ -893,7 +893,7 @@ web/                     W4. Vite + React app, built to dist/web and served by t
 - [x] Not needed now, for a session in Needs you that's really waiting on someone else (W88, merged in #90)
 - [x] A licence for going public: Apache-2.0 (D21)
 - [x] The README rewritten for newcomers, with diagrams and a roadmap, and the decisions moved to `docs/decisions.md` (2026-10-28)
-- [ ] M4: my open pull requests (W92 to W99 on `m4/integration`, with W100 and W101 in review in one PR; W96's security review approved W92 to W98 for `main`; merging waits on Phil)
+- [x] M4: my open pull requests (W92 to W117, built on `m4/integration`, approved by W96's and W108's security reviews and Phil's try-out; merged into `main` in [#117](https://github.com/leggetter/pitwall/pull/117), 2026-11-02)
 - [ ] A config file beside the CLI's flags ([#101](https://github.com/leggetter/pitwall/issues/101)): the minimal one, the roots and each root's GitHub owners, is W103, in review in [#106](https://github.com/leggetter/pitwall/pull/106) (D24); the rest of #101 later (Phil, 2026-10-29)
 - [ ] M5: supervisor
 - [ ] M6: triage
