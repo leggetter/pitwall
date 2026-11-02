@@ -56,7 +56,8 @@ export const RECAP_SETTINGS = JSON.stringify({ crossSessionInbound: 'refuse', au
  * for W121 into a summary and to-dos (Phil, 2026-11-02: "just an updated version of what we're
  * working on... Then, what's next? What are the outstanding actions?"), with finding 3's two style
  * fixes, and each to-do the step itself, with no lead-in, since the strip tags its owner and line 2
- * puts "Next:" before it (W111's review).
+ * puts "Next:" before it (W111's review). A session you've said is done has nothing left for you,
+ * whatever follow-ups it named outside itself, so its recap never puts it under Needs you (#140).
  */
 export const RECAP_SYSTEM_PROMPT = `You write recaps of Claude Code sessions for pitwall, a local dashboard that shows its user every Claude Code session on their machine. The user reads your recap to pick a session back up without scrolling through it: what the work is, where it is, and what's left to do.
 
@@ -80,6 +81,7 @@ Answer with one JSON object and nothing else: no code fence, no text before or a
   - "CI": it's waiting for checks, a build or a deploy to finish.
   - "someone else": it's waiting on another person, such as a reviewer or an author.
   - "nothing": the work is finished, or nothing is pending. Always "nothing" when todos is empty.
+- When the user's latest prompt says this session is finished, closed or done with, nothing is left in it: todos is empty and waitingOn is "nothing", even if it named follow-ups outside it, such as a PR in another repo still to ship. Say so in the summary, and name such a follow-up there. This holds for an update too, until the user asks this session for more.
 - title: what the session is about, in at most 6 words, with no full stop.
 
 Write to the user as "you", never by their name, even where the material names them. Call the session "it" or "this session", never "I", "me" or "we", even where the material does. Plain words, with no Markdown. Be specific: name a file, a PR or a command only when it helps the user act. Don't invent anything the material doesn't say.
