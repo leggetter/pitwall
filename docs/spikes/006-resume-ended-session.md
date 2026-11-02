@@ -95,7 +95,7 @@ No real session was messaged, attached to, resumed, stopped or removed. What the
 
 ## Recommendation
 
-Build it, as Phil agreed on 2026-10-23, with his choices of 2026-10-27 (`PLAN.md`, "Resuming ended interactive sessions" in M3.1):
+Build it, as Phil agreed on 2026-10-23, with his choices of 2026-10-27 (`docs/plan-archive.md`, "Resuming ended interactive sessions" in M3.1):
 
 - **Find:** a scanner over the transcripts, behind the transcript adapter, that never holds up the poll. Ended sessions are listed with `ended` and `finished` set, kind `interactive`, for 30 days.
 - **Resume:** `claude --resume <id> --bg` with no prompt, in the session's own directory. First check that a fresh `claude agents --json` doesn't list it; afterwards, report Claude Code's copy note if there is one.

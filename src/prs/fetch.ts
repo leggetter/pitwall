@@ -47,7 +47,7 @@
 //                 already (parse.ts) isn't malformed
 //
 // Measured on 2026-10-29, by hand: yours 2 of the 5,000 rate-limit points an hour, 9.4 s for 54
-// PRs; review requested 3 points, 1.7 s; mentioned 2 points, 2.6 s. 7 points a fetch (PLAN.md, W101).
+// PRs; review requested 3 points, 1.7 s; mentioned 2 points, 2.6 s. 7 points a fetch (docs/plan-archive.md, W101).
 // In pages of 25 (W105), the same day: yours 55 PRs in 3 pages of 3.7, 4.8 and 2.9 s, 11.4 s in
 // all; review requested 1.5 s; mentioned 2.6 s. A page of 25 costs 1 point by GitHub's formula.
 import { realpathSync } from 'node:fs';
