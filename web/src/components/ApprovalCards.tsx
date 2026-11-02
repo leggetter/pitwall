@@ -35,7 +35,6 @@ import { visibleParts, visibleString, type VisiblePart } from '../../../src/shar
 import { characterCount } from '../relay.js';
 import {
   APPROVAL_GONE,
-  approvalDirectory,
   approvalText,
   approvalTitle,
   decideApproval,
@@ -306,7 +305,8 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
           {/* Names aren't unique (W129, M2): where it is and when it was last active, as text. */}
           <p className="approval-where">
             {resumeWhereLead(approval.sameName)}
-            <bdi className="approval-folder">{approvalDirectory(approval)}</bdi>
+            {/* The whole path, not ~: the page can't know the real home, so /Users/Shared/x and /Users/me/x would both read ~/x (#133's re-check). */}
+            <bdi className="approval-folder">{visibleString(approval.directory)}</bdi>
             {approval.lastActivityAt === undefined ? (
               '.'
             ) : (

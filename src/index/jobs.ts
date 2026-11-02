@@ -102,6 +102,7 @@ export function parseSavedPermission(text: string, sessionId: string): SavedPerm
   const flags = parsed.respawnFlags;
   if (!Array.isArray(flags) || flags.length > 200 || !flags.every((flag) => typeof flag === 'string')) return { kind: 'unknown' };
   let found: PermissionModeName | undefined;
+  let unknown = false;
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i] as string;
     let value: string | undefined;
@@ -109,10 +110,16 @@ export function parseSavedPermission(text: string, sessionId: string): SavedPerm
     else if (flag === '--permission-mode') value = flags[++i] ?? '';
     else if (flag.startsWith('--permission-mode=')) value = flag.slice('--permission-mode='.length);
     else continue;
-    if (!(PERMISSION_MODES as readonly string[]).includes(value)) return { kind: 'unknown' };
+    if (!(PERMISSION_MODES as readonly string[]).includes(value)) {
+      unknown = true;
+      continue;
+    }
     // Skipping permissions wins over any mode beside it.
     if (found !== 'bypassPermissions') found = value as PermissionModeName;
   }
+  // Bypassed wins whatever else is there, an unknown mode included, so its warning never drops (#133's re-check).
+  if (found === 'bypassPermissions') return { kind: 'mode', mode: found };
+  if (unknown) return { kind: 'unknown' };
   return found === undefined ? { kind: 'unset' } : { kind: 'mode', mode: found };
 }
 

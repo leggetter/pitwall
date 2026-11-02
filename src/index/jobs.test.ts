@@ -240,6 +240,12 @@ describe('createJobReader', () => {
 // W129, the re-review's L1: a stopped job's saved permission mode, for a resume's card. The flags as
 // Claude Code 2.1.316 saved them for a made-up job started with `--permission-mode plan`.
 describe('parseSavedPermission', () => {
+  it("keeps a bypassed mode whatever's beside it, an unknown mode included (#133's re-check)", () => {
+    expect(parseSavedPermission(state(['--dangerously-skip-permissions', '--permission-mode', 'newmode']), SID)).toEqual({ kind: 'mode', mode: 'bypassPermissions' });
+    expect(parseSavedPermission(state(['--permission-mode', 'newmode', '--dangerously-skip-permissions']), SID)).toEqual({ kind: 'mode', mode: 'bypassPermissions' });
+    expect(parseSavedPermission(state(['--permission-mode', 'newmode', '--permission-mode', 'plan']), SID)).toEqual({ kind: 'unknown' });
+  });
+
   const state = (respawnFlags: unknown, sessionId = SID) => JSON.stringify({ sessionId, respawnFlags });
 
   it('takes --permission-mode, in either spelling, when it’s one of Claude Code’s modes', () => {
