@@ -1610,7 +1610,7 @@ A session's recap (M5, W111, W121; spike 010): a summary of why it was started a
 
 pitwall's supervisor (M5, W113, W114; D4): one headless Claude Code session pitwall runs, which knows every session from its recap and drafts messages and new sessions for you to send. Phil, 2026-10-29: "the point is to create a customized workflow that isn't just typing into a terminal and having a specialized UI". Its panel is a repo list item and a view in the third column, never a terminal.
 
-- **Components:** `SupervisorView`, `ApprovalCards` and `SupervisorBox` (`web/src/components/`), with the rules in `web/src/supervisor.ts` and the styles in `web/src/supervisor.css`. The snapshot's `supervisor` (`SupervisorState`) is read defensively (`asSupervisorState()`): a state that isn't one is no supervisor, and an approval that isn't well formed is left out.
+- **Components:** `SupervisorView`, `SupervisorHandoffs`, `ApprovalCards` and `SupervisorBox` (`web/src/components/`), with the rules in `web/src/supervisor.ts` and the styles in `web/src/supervisor.css`. The snapshot's `supervisor` (`SupervisorState`) is read defensively (`asSupervisorState()`): a state that isn't one is no supervisor, and an approval that isn't well formed is left out.
 - **Never started by the page:** opening the view, from the item, a URL, the back button or a reload, starts nothing. Only Start and a message do, each a click.
 
 #### The repo list's item
@@ -1644,6 +1644,16 @@ pitwall's supervisor (M5, W113, W114; D4): one headless Claude Code session pitw
 - **Start:** POSTs `SUPERVISOR_START_PATH`; busy, "Starting…", until the snapshot says it's starting, or 30 s; a refusal is a danger alert with `role="alert"`, "Couldn't start the supervisor." and pitwall's reason, as the 409 a held one gets, unless the held or failed alert above already says the same reason. Any change of status takes it away.
 - **Its conversation:** the session view's [conversation](#conversation), from `supervisorConversationPath()`, as a region named "Conversation": markdown as pitwall's own elements (D15), folded tool calls, Load earlier and Jump to latest. Fetched again when its status or last turn changes, after a message is taken, and every 2 s while it works or starts, a transcript or not. The [working line](#conversation) (W102) comes from the snapshot's status, which pitwall has from the process it runs, not from the transcript's mark of a turn's end.
 - **A new conversation,** with nothing in it yet (a 404, or no entries): an empty state in the body, the `supervisor` icon, "Ask the supervisor about your sessions", one sentence on what it does and that it sends nothing until you say so, then "Put a question in the message box:" and three outline sm questions, "Which sessions need me, and why?", "What's running, in a sentence each?" and "What should I work on next?". Each fills the box, with focus there; none sends. Not while it starts or works, when the working line is there instead.
+
+#### Sent and started
+
+What you approved in this run (W124): each session the supervisor messaged or started, from the snapshot's `SupervisorState.handoffs` and the sessions pitwall lists, never a supervisor turn. The supervisor never sees a session's reply (Phil, 2026-11-02), so this is where you go on from.
+
+- **Region:** above the drafts, on the same muted band, a `<section>` named by its `<h3>`, "Sent and started (2)", with "The supervisor doesn't see their replies. Open a session to carry on there." under it; its list scrolls past 30% of the view (`ScrollBox`).
+- **A row,** one per session, its newest hand-off, on `--pw-surface` with a 1 px `--pw-border` edge: "Started *name*" or "Message sent to *name*", the name in `<bdi>`; the session's status badge, as its row in the list has it (`statusBadge()`); when, "just now"; and outline sm "Open *name* →", the arrow `aria-hidden`, which opens the session's view in the supervisor's place, as clicking it in the list does. A session started and then messaged stays "Started".
+- **Needs you:** while pitwall's own Needs you says so, Not needed now's marks included, the row has the needs-you bar and a line, "*name* needs you: *reason*": Claude Code's own line, the recap's, the question it asked, or its badge's words, at most 160 characters. Those rows come first, then newest first.
+- **Only sessions pitwall lists:** a row is matched by the session id pitwall checked a message's recipient was, or the short id `claude --bg` reported, never by a name or a URL the model wrote. A started session the index hasn't listed yet says "Starting…" and has no Open until it is.
+- **Announcements:** none; Needs you's own count says when one needs you.
 
 #### Draft cards
 
