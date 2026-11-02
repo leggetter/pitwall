@@ -42,6 +42,8 @@ import type {
   EndSessionResult,
   IndexSnapshot,
   PullRequestList,
+  PlanStatus,
+  PlanStatusResult,
   RecapRefreshResult,
   RelayResult,
   SessionRecap,
@@ -52,7 +54,7 @@ import type {
   SubagentList,
   SupervisorDecision,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { COPY_SHORT_ID, NAMES, PLAN_CALL_MS, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -116,6 +118,10 @@ export interface Records {
   recapFetches: Array<{ name: string; status: number }>;
   /** Each POST asking for a new recap (W111), by the session's name and its status: 200, 404, 409 or 429. */
   recapRefreshes: Array<{ name: string; status: number }>;
+  /** Each GET of a session's plan status (W123), by the session's name and its status: 200 or 404. */
+  planFetches: Array<{ name: string; status: number }>;
+  /** Each POST making a plan status (W123), by the session's name and its status: 200, 404, 409 or 429. */
+  planMakes: Array<{ name: string; status: number }>;
   /** Each Clone and start the server answered (W107): the repo the page sent, and the status it got. */
   clones: Array<{ repo: unknown; status: number }>;
   /** Each message to the supervisor (W114), by its length and the status it got. Never its text. */
@@ -142,6 +148,8 @@ const emptyRecords = (): Records => ({
   refreshes: [],
   recapFetches: [],
   recapRefreshes: [],
+  planFetches: [],
+  planMakes: [],
   clones: [],
   supervisorMessages: [],
   supervisorStarts: [],
@@ -365,8 +373,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     // Refresh a session's recap (W111): recapRefreshPath(id).
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
+    // Make a session's plan status (W123): planStatusRefreshPath(id).
+    const planMake = /^\/api\/sessions\/([^/]+)\/plan-status\/refresh$/.exec(url.pathname);
+    if (planMake && method === 'POST') return makePlanStatus(req, res, decodeURIComponent(planMake[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -378,6 +389,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       const recap = world.recapHealth() ? world.recap(session.sessionId) : undefined;
       records.recapFetches.push({ name: session.name, status: recap ? 200 : 404 });
       return recap ? json(res, 200, recap satisfies SessionRecap) : end(res, 404);
+    }
+    if (route === 'plan-status' && method === 'GET') {
+      // planStatusPath(id) (W123): the newest plan status, or 404 before one is made.
+      const status = world.planStatus(session.sessionId);
+      records.planFetches.push({ name: session.name, status: status ? 200 : 404 });
+      return status ? json(res, 200, status satisfies PlanStatus) : end(res, 404);
     }
     if (route === 'relay' && method === 'POST') {
       if (session.kind !== 'interactive' || !session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running interactive session.' } satisfies RelayResult);
@@ -505,6 +522,38 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     json(res, 200, { ok: true } satisfies ActionResult);
     later(RECAP_CALL_MS, () => {
       answer.done();
+      broadcast();
+    });
+  }
+
+  /**
+   * Make a plan status (W123), as the contract has planStatusRefreshPath() answer, in made-up words:
+   * no body is read; 404, 409 and 429 as for a recap; otherwise 200 with the plan status once the
+   * made-up call ends, PLAN_CALL_MS later, and the snapshot flags it.
+   */
+  async function makePlanStatus(req: IncomingMessage, res: ServerResponse, sessionId: string) {
+    await readJson(req);
+    const session = world.session(sessionId);
+    const answer = session ? world.makePlanStatus(sessionId) : ({ result: 'not-recapped' } as const);
+    const record = (status: number) => {
+      if (session) records.planMakes.push({ name: session.name, status });
+    };
+    if (answer.result === 'off') {
+      record(409);
+      return json(res, 409, { ok: false, error: 'Made up: plan status is off, as with --no-recaps.' } satisfies PlanStatusResult);
+    }
+    if (answer.result === 'not-recapped') {
+      record(404);
+      return json(res, 404, { ok: false, error: "Made up: pitwall can't read this session's plan." } satisfies PlanStatusResult);
+    }
+    if (answer.result === 'spent' || answer.result === 'running') {
+      record(429);
+      return json(res, 429, { ok: false, error: answer.result === 'spent' ? "Made up: today's recaps are used up." : 'Made up: a plan status of it is being made.', busy: answer.result } satisfies PlanStatusResult);
+    }
+    later(PLAN_CALL_MS, () => {
+      const status = answer.done();
+      record(200);
+      json(res, 200, { ok: true, status } satisfies PlanStatusResult);
       broadcast();
     });
   }

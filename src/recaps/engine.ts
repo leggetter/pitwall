@@ -37,6 +37,14 @@
 // session.
 // Before pitwall's first recap of a session, and while the day's budget is spent, Claude Code's own
 // `away_summary` stands in for it (source 'claude-code'), which never sets Needs you.
+//
+// Plan status (W123): makePlanStatus(), only when you ask, a call like a recap's, from the same
+// directory, under the same name and hidden the same way, with the plan prompt, over the first prompt,
+// the whole compaction summary and up to PLAN_TURNS_CAP of the latest turns. Counted against the
+// day's budget when it starts, at most one at a time per session, outside the recaps' queue and their
+// two at a time. Its failures are answered to the request, never RecapHealth's error, and never
+// pause recaps. The newest per session is kept in memory; the snapshot carries only when it was made
+// (SessionSummary.planStatusAt).
 import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,7 +56,9 @@ import {
   RECAP_DAILY_BUDGET,
   RECAP_DEBOUNCE_MS,
   RECAP_FIELD_MAX,
+  PLAN_TURNS_CAP,
   type IndexSnapshot,
+  type PlanStatus,
   type NeedsYou,
   type RecapHealth,
   type RecapSummary,
@@ -61,17 +71,23 @@ import { modelRejectedMessage } from '../server/work.js';
 import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
-import { firstRecapInput, TurnCollector, updateRecapInput, type RelayMessages } from './input.js';
+import { firstRecapInput, planStatusInput, TurnCollector, updateRecapInput, type RelayMessages } from './input.js';
 import {
   ANSWER_INVALID,
+  CALL_FAILED,
+  ENVELOPE_UNREADABLE,
   MIN_RECAP_CLAUDE_VERSION,
+  PLAN_ANSWER_INVALID,
   parseEnvelope,
+  parsePlanAnswer,
   parseRecapAnswer,
+  planStatusArgs,
   plainField,
   RECAP_DIR_NAME,
   RECAP_NAME,
   recapArgs,
   recapEnvironment,
+  type PlanAnswer,
   type RecapAnswer,
 } from './prompt.js';
 
@@ -90,6 +106,20 @@ export type RefreshResult =
   | { kind: 'running'; retryAfterSeconds: number }
   | { kind: 'closed' };
 
+/** makePlanStatus()'s answer, which the route turns into a status (src/server/recapRoutes.ts). */
+export type PlanStatusOutcome =
+  /** Made: the newest plan status, kept for GET planStatusPath(). */
+  | { kind: 'made'; status: PlanStatus }
+  /** pitwall has no transcript of it to read. */
+  | { kind: 'no-transcript' }
+  /** The day's budget is spent: Retry-After is midnight. */
+  | { kind: 'spent'; retryAfterSeconds: number }
+  /** A plan status of it is being made already. */
+  | { kind: 'running'; retryAfterSeconds: number }
+  /** The call failed or couldn't be made: why, in pitwall's words, never the model's or claude's output. */
+  | { kind: 'failed'; reason: string }
+  | { kind: 'closed' };
+
 export interface RecapEngine {
   /** Starts scheduling from the index's snapshots. Once; the server calls it when it's listening. */
   start(index: RecapIndex): void;
@@ -104,7 +134,15 @@ export interface RecapEngine {
   refresh(session: SessionSummary): RefreshResult;
   /** The session's recap as GET recapPath() answers it, or undefined when there's none. */
   recap(session: SessionSummary): SessionRecap | undefined;
-  /** `session` as the snapshot carries it: with its recap, its title from the recap, and Needs you's 'recap' reason. The same object when there's no recap. */
+  /**
+   * Makes the session's plan status now (W123, POST planStatusRefreshPath()), and resolves once the
+   * call has finished. At most one at a time per session, counted against the day's budget as a
+   * recap call. Never rejects.
+   */
+  makePlanStatus(session: SessionSummary): Promise<PlanStatusOutcome>;
+  /** The session's newest plan status, as GET planStatusPath() answers it, or undefined when none has been made. */
+  planStatus(session: SessionSummary): PlanStatus | undefined;
+  /** `session` as the snapshot carries it: with its recap, its title from the recap, Needs you's 'recap' reason and when its plan status was made. The same object when there's neither recap nor plan status. */
   decorate(session: SessionSummary): SessionSummary;
   /** How recaps are doing today (IndexSnapshot.recaps). */
   health(): RecapHealth;
@@ -247,6 +285,10 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   const listeners = new Set<() => void>();
   /** pitwall's recaps, by session id: source 'pitwall', never `stale`, which is worked out when shown. */
   const recaps = new Map<string, SessionRecap>();
+  /** Each session's newest plan status (W123), by session id, in memory only. */
+  const plans = new Map<string, PlanStatus>();
+  /** Plan status calls running, by session id: at most one each. */
+  const planRunning = new Map<string, Promise<PlanStatusOutcome>>();
   /** What the index read on its latest poll. */
   let facts: ReadonlyMap<string, SessionFacts> = new Map();
   /** Sessions whose latest call failed: for what activity, and when. */
@@ -364,7 +406,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const listed = new Set<string>();
     for (const group of snapshot.groups) for (const session of group.sessions) listed.add(session.sessionId);
     // Only listed sessions are kept: one that comes back later gets a first recap.
-    for (const map of [recaps, failures]) for (const id of map.keys()) if (!listed.has(id)) map.delete(id);
+    for (const map of [recaps, failures, plans]) for (const id of map.keys()) if (!listed.has(id)) map.delete(id);
     sources.retain(new Set([...facts.values()].flatMap((each) => (each.file === undefined ? [] : [each.file]))));
     if (!snapshot.source.ok) return pump();
     const nowMs = now();
@@ -539,9 +581,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   }
 
   /** The latest turns, newest first through the conversation's pages, until the collector is done. Fails soft. */
-  async function collectTurns(source: RecapIndex, sessionId: string, collector: TurnCollector): Promise<void> {
+  async function collectTurns(source: RecapIndex, sessionId: string, collector: TurnCollector, pages = maxPages): Promise<void> {
     let before: string | undefined;
-    for (let page = 0; page < maxPages && !collector.done; page++) {
+    for (let page = 0; page < pages && !collector.done; page++) {
       let read;
       try {
         read = await source.conversation(sessionId, before);
@@ -554,6 +596,88 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       before = read.before;
     }
     collector.finish();
+  }
+
+  // ---------------------------------------------------------------- one plan status (W123)
+
+  /**
+   * A plan status of `sessionId`: its first prompt, its newest compaction summary and its latest
+   * turns up to PLAN_TURNS_CAP (input.ts planStatusInput()), in one call as a recap's, counted
+   * against the day's budget. Its failures are its own: they don't set RecapHealth's error or pause
+   * recaps, since the strip says why at once.
+   */
+  async function runPlan(sessionId: string, file: string, throughFrom: number): Promise<PlanStatusOutcome> {
+    const source = index;
+    if (source === undefined) return { kind: 'failed', reason: "pitwall hasn't read the sessions yet. Try again in a moment." };
+    const read = await sources.read(file);
+    const collector = new TurnCollector({ ...(options.relay === undefined ? {} : { relay: options.relay }), cap: PLAN_TURNS_CAP });
+    // Three times a recap's turns, so up to twice its pages.
+    await collectTurns(source, sessionId, collector, 2 * maxPages);
+    if (closed) return { kind: 'closed' };
+    const throughMs = Math.max(Number.isNaN(throughFrom) ? 0 : throughFrom, collector.newestMs ?? 0);
+    const keep = (answer: PlanAnswer): PlanStatusOutcome => {
+      const status: PlanStatus = answer.found
+        ? { found: true, plan: answer.plan, items: answer.items.map(({ text, state }) => ({ text, state })), ...(answer.changes === undefined ? {} : { changes: answer.changes }), at: new Date(now()).toISOString(), throughAt: new Date(throughMs).toISOString() }
+        : { found: false, items: [], at: new Date(now()).toISOString(), throughAt: new Date(throughMs).toISOString() };
+      plans.set(sessionId, status);
+      changed();
+      return { kind: 'made', status };
+    };
+    // Nothing to read: no plan, without a call.
+    if (collector.count === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
+    const input = planStatusInput(
+      {
+        ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
+        ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
+        turns: collector.text(),
+      },
+      options.randomId,
+    );
+    let cwd: string;
+    try {
+      cwd = prepareDir(dir);
+      dirs.add(cwd);
+    } catch {
+      return { kind: 'failed', reason: `pitwall couldn't prepare its folder for recap calls, ${dir}.` };
+    }
+    const version = await checkVersion();
+    if (closed) return { kind: 'closed' };
+    if (version !== undefined) return { kind: 'failed', reason: version };
+    sync();
+    if (spent()) return { kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) };
+    calls++;
+    changes++;
+    save();
+    let pid: number | undefined;
+    const outcome = await runRecapCall({
+      claudeBin,
+      args: planStatusArgs(options.work?.() ?? (options.model === undefined ? {} : { model: options.model })),
+      cwd,
+      env: recapEnvironment(options.env ?? process.env),
+      input,
+      timeoutMs,
+      spawn,
+      onPid(each) {
+        pid = each;
+        pids.add(each);
+      },
+      signal: closing.signal,
+    });
+    if (pid !== undefined) pids.delete(pid);
+    if (outcome.kind === 'stopped') return { kind: 'closed' };
+    const result = readPlanOutcome(outcome);
+    if (result.costUsd !== undefined) {
+      sync();
+      costUsd += result.costUsd;
+      save();
+      changes++;
+    }
+    if (!result.ok) {
+      log(result.reason);
+      changed();
+      return { kind: 'failed', reason: result.reason };
+    }
+    return keep(result.answer);
   }
 
   /** Undefined when Claude Code is new enough, else why not, in pitwall's words. */
@@ -653,10 +777,34 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     recap(session) {
       return shown(session);
     },
+    makePlanStatus(session) {
+      if (closed) return Promise.resolve({ kind: 'closed' });
+      sync();
+      const file = facts.get(session.sessionId)?.file;
+      if (session.transcript !== 'ok' || file === undefined) return Promise.resolve({ kind: 'no-transcript' });
+      if (planRunning.has(session.sessionId)) return Promise.resolve({ kind: 'running', retryAfterSeconds: 5 });
+      if (spent()) return Promise.resolve({ kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) });
+      const made = runPlan(session.sessionId, file, parseMs(session.lastActivityAt))
+        .catch((error: unknown): PlanStatusOutcome => {
+          log(`a plan status failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`);
+          return { kind: 'failed', reason: 'pitwall hit an unexpected error while making a plan status.' };
+        })
+        .finally(() => {
+          planRunning.delete(session.sessionId);
+        });
+      planRunning.set(session.sessionId, made);
+      return made;
+    },
+    planStatus(session) {
+      const status = plans.get(session.sessionId);
+      return status === undefined ? undefined : { ...status, items: status.items.map((item) => ({ ...item })) };
+    },
     decorate(session) {
       const recap = shown(session);
-      if (recap === undefined) return session;
+      const planAt = plans.get(session.sessionId)?.at;
+      if (recap === undefined) return planAt === undefined ? session : { ...session, planStatusAt: planAt };
       const decorated: SessionSummary = { ...session, recap: summaryOf(recap) };
+      if (planAt !== undefined) decorated.planStatusAt = planAt;
       // pitwall's title, even while Claude Code's away_summary stands in for its recap.
       const title = recaps.get(session.sessionId)?.title;
       if (title !== undefined && !sameTitle(title, session.name)) {
@@ -694,7 +842,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       demandQueue.length = 0;
       autoQueue.length = 0;
       closing.abort();
-      const done = [...running.values()].map((each) => each.done);
+      const done: Promise<unknown>[] = [...running.values()].map((each) => each.done);
+      done.push(...planRunning.values());
       await Promise.race([Promise.all(done), new Promise((resolve) => setTimeout(resolve, 3000).unref())]);
     },
   };
@@ -707,13 +856,34 @@ function answerOf(recap: SessionRecap): RecapAnswer {
 
 /** What a call's process gave: a recap, or why not, in pitwall's words, with its cost when it reported one. */
 export function readOutcome(outcome: Exclude<CallOutcome, { kind: 'stopped' }>): { ok: true; answer: RecapAnswer; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
+  return readCall(outcome, parseRecapAnswer, 'recap');
+}
+
+/** What a plan status call's process gave (W123): its answer, or why not, in pitwall's words, with its cost when it reported one. */
+export function readPlanOutcome(outcome: Exclude<CallOutcome, { kind: 'stopped' }>): { ok: true; answer: PlanAnswer; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
+  return readCall(outcome, parsePlanAnswer, 'plan status');
+}
+
+/** The envelope's reasons, which name a recap call, for another kind of call. */
+function envelopeReason(reason: string, noun: 'recap' | 'plan status'): string {
+  if (noun === 'recap') return reason;
+  if (reason === ENVELOPE_UNREADABLE) return `The ${noun} call printed something pitwall couldn't read.`;
+  if (reason === CALL_FAILED) return `Claude Code said the ${noun} call failed.`;
+  return reason;
+}
+
+function readCall<T>(
+  outcome: Exclude<CallOutcome, { kind: 'stopped' }>,
+  parse: (text: string) => T | undefined,
+  noun: 'recap' | 'plan status',
+): { ok: true; answer: T; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
   switch (outcome.kind) {
     case 'spawn-error':
-      return { ok: false, reason: outcome.notFound ? "claude wasn't found, so pitwall couldn't make a recap." : "pitwall couldn't start claude for a recap." };
+      return { ok: false, reason: outcome.notFound ? `claude wasn't found, so pitwall couldn't make a ${noun}.` : `pitwall couldn't start claude for a ${noun}.` };
     case 'timeout':
-      return { ok: false, reason: "The recap call didn't finish in time, so pitwall stopped it." };
+      return { ok: false, reason: `The ${noun} call didn't finish in time, so pitwall stopped it.` };
     case 'too-large':
-      return { ok: false, reason: 'The recap call printed far more than a recap, so pitwall stopped it.' };
+      return { ok: false, reason: `The ${noun} call printed far more than a ${noun}, so pitwall stopped it.` };
     case 'exit': {
       const envelope = parseEnvelope(outcome.stdout);
       const cost = envelope.costUsd === undefined ? {} : { costUsd: envelope.costUsd };
@@ -721,11 +891,11 @@ export function readOutcome(outcome: Exclude<CallOutcome, { kind: 'stopped' }>):
       if (!envelope.ok && envelope.reason === modelRejectedMessage('recaps')) return { ok: false, reason: envelope.reason, ...cost };
       if (outcome.code !== 0) {
         const how = outcome.code === null ? `was stopped by ${outcome.signal ?? 'a signal'}` : `exited with code ${outcome.code}`;
-        return { ok: false, reason: `The recap call ${how}.`, ...cost };
+        return { ok: false, reason: `The ${noun} call ${how}.`, ...cost };
       }
-      if (!envelope.ok) return { ok: false, reason: envelope.reason, ...cost };
-      const answer = parseRecapAnswer(envelope.text);
-      if (answer === undefined) return { ok: false, reason: ANSWER_INVALID, ...cost };
+      if (!envelope.ok) return { ok: false, reason: envelopeReason(envelope.reason, noun), ...cost };
+      const answer = parse(envelope.text);
+      if (answer === undefined) return { ok: false, reason: noun === 'recap' ? ANSWER_INVALID : PLAN_ANSWER_INVALID, ...cost };
       return { ok: true, answer, ...cost };
     }
   }

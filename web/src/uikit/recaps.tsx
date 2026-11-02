@@ -1,5 +1,5 @@
 // Recaps (M5, W111, W121): the real RecapStrip in every state, in the session view and alone at its width,
-// the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
+// Plan status (W123), the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
 // API (stubs.ts) holding its made-up recap, and its own collapsed setting in memory, so pressing one
 // changes none of the others. Every recap here is made up, as spike 010's examples are.
 
@@ -266,6 +266,21 @@ export function RecapSpecimens() {
       </StripSpecimen>
       <StripSpecimen title="Open, a long recap" note="Six to-dos, the most a recap keeps, for each owner. Open, everything wraps; past 35% of the view's height it scrolls inside itself.">
         <Strip of={LONG} />
+      </StripSpecimen>
+      <StripSpecimen title="Plan status" note="W123: pressed, where the session is in its bigger plan, under the summary and the to-dos: the plan's one line, its items in order, each Done, Now, Next or Dropped, and how the plan changed; its age, Make a new one and Close.">
+        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
+          <Strip of={LONG} />
+        </Scenario>
+      </StripSpecimen>
+      <StripSpecimen title="Plan status, no plan" note="The transcript shows no plan the session works through.">
+        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
+          <Strip of={LONG} options={{ planStatus: 'none' }} />
+        </Scenario>
+      </StripSpecimen>
+      <StripSpecimen title="Plan status, being made" note="Its button busy, and the panel saying so, while the call runs.">
+        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
+          <Strip of={LONG} options={{ planStatus: 'making' }} />
+        </Scenario>
       </StripSpecimen>
       <StripSpecimen title="Refreshing" note="Refresh pressed: its spinner until the snapshot's recap changes, or a minute passes, or a call fails.">
         <Scenario run={async (root) => (await element(root, '[data-recap-refresh]')).click()}>

@@ -11,7 +11,7 @@ import type { Indexer } from '../index/index.js';
 import type { RecapChildEvents } from '../recaps/call.js';
 import { memoryBudget } from '../recaps/budget.js';
 import { createRecapEngine, type RecapEngine } from '../recaps/engine.js';
-import { recapPath, recapRefreshPath, SNAPSHOT_PATH, WS_PATH, type IndexSnapshot, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { planStatusPath, planStatusRefreshPath, recapPath, recapRefreshPath, SNAPSHOT_PATH, WS_PATH, type IndexSnapshot, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
@@ -100,8 +100,8 @@ function engineWithFakeClaude(options: { budget?: number } = {}) {
     log: () => undefined,
     ...(options.budget === undefined ? {} : { budget: options.budget }),
   });
-  const answer = (index: number) => {
-    calls[index]!.stdout(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(RECAP), total_cost_usd: 0.001 }));
+  const answer = (index: number, result: unknown = RECAP) => {
+    calls[index]!.stdout(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: typeof result === 'string' ? result : JSON.stringify(result), total_cost_usd: 0.001 }));
     calls[index]!.exit(0, null);
   };
   return { engine, calls, answer };
@@ -259,6 +259,102 @@ describe('the recap routes', () => {
     const snapshot = JSON.parse((await request(server.port, SNAPSHOT_PATH, 'GET', { authorization: `Bearer ${TOKEN}` })).body) as IndexSnapshot;
     expect(snapshot).not.toHaveProperty('recaps');
     expect(snapshot.groups[0]?.sessions[0]).not.toHaveProperty('recap');
+    ws.close();
+  });
+});
+
+const PLAN = {
+  found: true,
+  plan: 'Fix the made-up export, in three steps',
+  items: [
+    { text: 'Step 1: find the cause', state: 'done' },
+    { text: 'Step 2: fix it', state: 'now' },
+    { text: 'Step 3: backport it', state: 'next' },
+  ],
+  changes: '',
+};
+
+describe('the plan status routes (W123)', () => {
+  it('are the paths the contract names', () => {
+    expect(planStatusPath('abc')).toBe('/api/sessions/abc/plan-status');
+    expect(planStatusRefreshPath('abc')).toBe('/api/sessions/abc/plan-status/refresh');
+  });
+
+  it('GET has the snapshot’s authorization; POST needs the apiKey and this Origin and Host', async () => {
+    const recaps = engineWithFakeClaude();
+    const { server } = await start({ recaps: recaps.engine });
+    for (const headers of [{}, { authorization: 'Bearer wrong' }] as Record<string, string>[]) {
+      expect((await request(server.port, planStatusPath('a'), 'GET', headers)).status).toBe(401);
+    }
+    expect((await request(server.port, planStatusPath('a'), 'GET', { authorization: `Bearer ${TOKEN}`, origin: 'http://evil.example' })).status).toBe(403);
+    const { apiKey, ws } = await authedClient(server.port);
+    expect((await request(server.port, planStatusRefreshPath('a'), 'POST', { authorization: `Bearer ${TOKEN}`, origin: origin(server.port) })).status).toBe(403);
+    expect((await request(server.port, planStatusRefreshPath('a'), 'POST', { authorization: `Bearer ${apiKey}` })).status).toBe(403);
+    expect((await request(server.port, planStatusRefreshPath('a'), 'POST', { authorization: `Bearer ${apiKey}`, origin: 'http://evil.example' })).status).toBe(403);
+    expect((await request(server.port, planStatusRefreshPath('a'), 'POST', { authorization: `Bearer ${apiKey}`, origin: origin(server.port), host: `localhost:${server.port}` })).status).toBe(403);
+    expect(recaps.calls).toHaveLength(0);
+    ws.close();
+  });
+
+  it('POST waits for the call and answers the plan status, which GET then has and the snapshot flags; 429 while it runs', async () => {
+    const recaps = engineWithFakeClaude();
+    const { server } = await start({ recaps: recaps.engine });
+    const get = () => request(server.port, planStatusPath('a'), 'GET', { authorization: `Bearer ${TOKEN}` });
+    expect((await get()).status).toBe(404);
+    const { apiKey, ws } = await authedClient(server.port);
+    const made = post(server.port, planStatusRefreshPath('a'), apiKey);
+    await waitFor(() => recaps.calls.length === 1);
+    const busy = await post(server.port, planStatusRefreshPath('a'), apiKey);
+    expect(busy.status).toBe(429);
+    expect(JSON.parse(busy.body).busy).toBe('running');
+    recaps.answer(0, PLAN);
+    const res = await made;
+    expect(res.status).toBe(200);
+    const expected = { found: true, plan: PLAN.plan, items: PLAN.items, at: new Date(NOW).toISOString(), throughAt: new Date(NOW - 60_000).toISOString() };
+    expect(JSON.parse(res.body)).toEqual({ ok: true, status: expected });
+    expect(JSON.parse((await get()).body)).toEqual(expected);
+    const snapshot = JSON.parse((await request(server.port, SNAPSHOT_PATH, 'GET', { authorization: `Bearer ${TOKEN}` })).body) as IndexSnapshot;
+    const listed = snapshot.groups[0]?.sessions.find((each) => each.sessionId === 'a');
+    expect(listed?.planStatusAt).toBe(new Date(NOW).toISOString());
+    // Only when it was made, never its words (D14).
+    expect(JSON.stringify(snapshot)).not.toContain('Step 2');
+    expect(snapshot.recaps?.calls).toBe(1);
+    ws.close();
+  });
+
+  it('POST answers "no plan found", 502 in pitwall\'s words for an answer it refuses, 404 with no transcript, and 429 once the budget is spent', async () => {
+    const recaps = engineWithFakeClaude({ budget: 2 });
+    const { server } = await start({ recaps: recaps.engine });
+    const { apiKey, ws } = await authedClient(server.port);
+    expect((await post(server.port, planStatusRefreshPath('no-file'), apiKey)).status).toBe(404);
+    const none = post(server.port, planStatusRefreshPath('a'), apiKey);
+    await waitFor(() => recaps.calls.length === 1);
+    recaps.answer(0, { found: false });
+    const noPlan = await none;
+    expect(noPlan.status).toBe(200);
+    expect(JSON.parse(noPlan.body).status).toMatchObject({ found: false, items: [] });
+    const bad = post(server.port, planStatusRefreshPath('a'), apiKey);
+    await waitFor(() => recaps.calls.length === 2);
+    recaps.answer(1, '```json\n{"found": false}\n```');
+    const refused = await bad;
+    expect(refused.status).toBe(502);
+    expect(JSON.parse(refused.body)).toEqual({ ok: false, error: "The plan status call's answer wasn't the JSON pitwall asked for." });
+    // The refused answer didn't replace the plan status before it.
+    expect(recaps.engine.planStatus(session('a'))?.found).toBe(false);
+    const spent = await post(server.port, planStatusRefreshPath('a'), apiKey);
+    expect(spent.status).toBe(429);
+    expect(JSON.parse(spent.body).busy).toBe('spent');
+    expect(Number(spent.headers['retry-after'])).toBeGreaterThan(0);
+    ws.close();
+  });
+
+  it('with --no-recaps: POST answers 409 and GET 404', async () => {
+    const { server } = await start();
+    const { apiKey, ws } = await authedClient(server.port);
+    const res = await post(server.port, planStatusRefreshPath('a'), apiKey);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body).error).toMatch(/--no-recaps/);
+    expect((await request(server.port, planStatusPath('a'), 'GET', { authorization: `Bearer ${TOKEN}` })).status).toBe(404);
     ws.close();
   });
 });

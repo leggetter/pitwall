@@ -33,7 +33,7 @@ import { randomBytes } from 'node:crypto';
 import { cap, plainLine, tail } from '../index/text.js';
 import type { AwaySummary } from '../index/transcripts.js';
 import type { CompactionSummary } from '../index/recapSources.js';
-import { RECAP_FIRST_PROMPT_CAP, RECAP_TURNS_CAP, type ConversationEntry } from '../shared/protocol.js';
+import { PLAN_COMPACTION_CAP, PLAN_FIRST_PROMPT_CAP, RECAP_FIRST_PROMPT_CAP, RECAP_TURNS_CAP, type ConversationEntry } from '../shared/protocol.js';
 import type { RecapAnswer } from './prompt.js';
 
 /** The longest entry, keeping its start and end (finding 2). */
@@ -327,4 +327,36 @@ export function updateRecapInput(input: UpdateInput, random?: () => string): str
   parts.push(block('previous-recap', JSON.stringify({ summary, todos: todos.map(({ text, owner }) => ({ text, owner })), waitingOn, title })));
   parts.push(block('turns-since-previous-recap', input.turns));
   return frame(parts, 'Revise the previous recap with what the newer turns show: keep its summary steady, changing only what they change, and drop the to-dos they finished, a question you answered included. Answer with the JSON object only.', random);
+}
+
+/** What a plan status reads (W123). */
+export interface PlanInput {
+  firstPrompt?: string;
+  compaction?: CompactionSummary;
+  /** TurnCollector.text(), collected up to PLAN_TURNS_CAP: the latest turns, oldest first. */
+  turns: string;
+}
+
+/**
+ * A plan status's input (W123): more of the transcript than a recap's, for the bigger picture. The
+ * first prompt, at most PLAN_FIRST_PROMPT_CAP characters, its start and end, since a plan is often set
+ * out there; the newest compaction summary whole, all its sections, at most PLAN_COMPACTION_CAP, its
+ * start and end, since its pending tasks and current work say where the plan stood; and the latest
+ * turns. Framed as a recap's is, so text in the transcript can't close the frame.
+ *
+ *   <session-ID>
+ *   <first-prompt>…</first-prompt>
+ *   <compaction-summary at="…">…</compaction-summary>
+ *   <latest-turns>…</latest-turns>
+ *   </session-ID>
+ *   Write the plan status. Answer with the JSON object only.
+ */
+export function planStatusInput(input: PlanInput, random?: () => string): string {
+  const parts: string[] = [];
+  const first = input.firstPrompt === undefined ? '' : startAndEnd(plainBlock(input.firstPrompt), PLAN_FIRST_PROMPT_CAP);
+  if (first !== '') parts.push(block('first-prompt', first));
+  const compaction = input.compaction === undefined ? '' : startAndEnd(plainBlock(input.compaction.text), PLAN_COMPACTION_CAP);
+  if (compaction !== '') parts.push(block('compaction-summary', compaction, atAttribute(input.compaction?.at)));
+  parts.push(block('latest-turns', input.turns));
+  return frame(parts, 'Write the plan status: the plan this session works through, if the material shows one, where each of its items is, and how the plan changed. Answer with the JSON object only.', random);
 }

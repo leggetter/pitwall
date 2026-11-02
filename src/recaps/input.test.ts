@@ -1,13 +1,14 @@
 // A recap's input (M5, W110, spike 010's finding 2): the caps, the framing, the relay's messages as
 // the user's, and Claude Code's own recap and compaction summary. Every transcript here is made up.
 import { describe, expect, it } from 'vitest';
-import { RECAP_FIRST_PROMPT_CAP, RECAP_TURNS_CAP, type ConversationEntry } from '../shared/protocol.js';
+import { PLAN_COMPACTION_CAP, PLAN_FIRST_PROMPT_CAP, RECAP_FIRST_PROMPT_CAP, RECAP_TURNS_CAP, type ConversationEntry } from '../shared/protocol.js';
 import {
   compactionExcerpt,
   COMPACTION_SECTION_MAX,
   COMPACTION_START_MAX,
   ENTRY_MAX,
   firstRecapInput,
+  planStatusInput,
   newFrameId,
   startAndEnd,
   timeLabel,
@@ -256,5 +257,31 @@ describe('the input', () => {
     const cut = startAndEnd(text, 51);
     expect(cut.length).toBeLessThanOrEqual(51);
     expect(cut).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+  });
+});
+
+describe('the plan status input (W123)', () => {
+  it('has the first prompt to PLAN_FIRST_PROMPT_CAP, the whole compaction summary to PLAN_COMPACTION_CAP, and the turns, framed', () => {
+    const firstPrompt = `Work through M2. ${'p'.repeat(PLAN_FIRST_PROMPT_CAP)} The end.`;
+    const compaction = `1. Primary Request and Intent:\nM2.\n2. Key Concepts:\nkept\n${'c'.repeat(PLAN_COMPACTION_CAP)}\n9. Optional Next Step:\nW3.`;
+    const input = planStatusInput({ firstPrompt, compaction: { text: compaction, at: '2026-10-29T10:00:00.000Z' }, turns: '[10-29 11:00] User: on to W3' }, () => '0123456789abcdef');
+    expect(input.startsWith('Everything between <session-0123456789abcdef> and </session-0123456789abcdef>')).toBe(true);
+    const first = /<first-prompt>\n([\s\S]*?)\n<\/first-prompt>/.exec(input)![1]!;
+    expect(first.length).toBeLessThanOrEqual(PLAN_FIRST_PROMPT_CAP);
+    expect(first.length).toBeGreaterThan(RECAP_FIRST_PROMPT_CAP);
+    expect(first.endsWith('The end.')).toBe(true);
+    const summary = /<compaction-summary at="2026-10-29T10:00:00.000Z">\n([\s\S]*?)\n<\/compaction-summary>/.exec(input)![1]!;
+    expect(summary.length).toBeLessThanOrEqual(PLAN_COMPACTION_CAP);
+    // All its sections, its start and its end, not a recap's excerpt.
+    expect(summary).toContain('2. Key Concepts:\nkept');
+    expect(summary.endsWith('9. Optional Next Step:\nW3.')).toBe(true);
+    expect(input).toContain('<latest-turns>\n[10-29 11:00] User: on to W3\n</latest-turns>');
+    expect(input.trimEnd().endsWith('Answer with the JSON object only.')).toBe(true);
+  });
+
+  it('leaves out what it has none of', () => {
+    const input = planStatusInput({ turns: 'User: hi' }, () => '0123456789abcdef');
+    expect(input).not.toContain('<first-prompt>');
+    expect(input).not.toContain('<compaction-summary');
   });
 });

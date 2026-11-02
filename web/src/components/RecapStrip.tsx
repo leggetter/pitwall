@@ -15,6 +15,11 @@
 // - **Then, while it's open:** the to-dos, in order, each with its owner as a small tag, yours in the
 //   Needs you tone and your to-dos' text in full colour; or "Nothing left to do." with none. Claude
 //   Code's recap has a summary only, so it has nothing to open.
+// - **Plan status** (W123), beside Refresh: a disclosure button that opens a panel under the summary
+//   and the to-dos, where the session is in its bigger plan (planStatus.ts): the plan's one line, its
+//   items in order, each tagged Done, Now, Next or Dropped, and how the plan changed; its age, Make a
+//   new one and Close; "No plan found in this session." when there's none. Shown whether the strip is
+//   collapsed or open, since you asked for it.
 // - **While the first is on its way,** the strip's line 1 at once, so the tabs don't move twice, and
 //   skeleton bars after --pw-delay-spinner; "No recap yet." once none is coming, with why when pitwall
 //   can say; and "Couldn't load the recap." with Try again when fetching it failed.
@@ -24,8 +29,8 @@
 // live region, so a snapshot that changes it announces nothing; Refresh's results are toasts. Every
 // text from the recap is plain text, in <bdi>, since it names files, PRs and people.
 
-import { useContext, useId, useRef } from 'react';
-import type { RecapHealth, RecapTodo, SessionRecap, SessionSummary } from '../../../src/shared/protocol.js';
+import { useContext, useId, useRef, type Ref } from 'react';
+import type { PlanItem, PlanStatus, RecapHealth, RecapTodo, SessionRecap, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { plainText } from '../format.js';
 import {
@@ -41,6 +46,18 @@ import {
   type RecapController,
 } from '../recap.js';
 import type { StorageSource } from '../groupState.js';
+import {
+  NO_PLAN_TEXT,
+  PLAN_CHANGES_LABEL,
+  PLAN_STATE_TEXT,
+  PLAN_STATUS_BUSY,
+  PLAN_STATUS_CLOSE,
+  PLAN_STATUS_LABEL,
+  PLAN_STATUS_REMAKE,
+  planStateLook,
+  usePlanStatus,
+  type PlanStatusController,
+} from '../planStatus.js';
 import { Badge } from './Badge.js';
 import { Icon } from './Icon.js';
 import { Spinner } from './Spinner.js';
@@ -77,8 +94,11 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
   const ref = useRef<HTMLElement>(null);
   const recap = useRecap({ api, session, health, listed, hidden, toast, delayFrom: () => ref.current });
   const [collapsed, setCollapsed] = useRecapCollapsed(storage);
+  const plan = usePlanStatus({ api, session, health, listed, hidden });
+  const planButton = useRef<HTMLButtonElement>(null);
   const headingId = useId();
   const bodyId = useId();
+  const planId = useId();
   const { state } = recap;
   const waiting = useWaiting(ref, state.kind === 'loading');
   if (state.kind === 'off') return null;
@@ -94,7 +114,7 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
   const title = RECAP_TITLES[source];
 
   return (
-    <section ref={ref} className="session-recap" aria-labelledby={headingId} data-recap={state.kind} data-collapsed={openable ? collapsed : undefined}>
+    <section ref={ref} className="session-recap" aria-labelledby={headingId} data-recap={state.kind} data-collapsed={openable ? collapsed : undefined} data-plan={plan.open ? 'open' : undefined}>
       <div className="recap-head">
         <h3 className="recap-heading" id={headingId}>
           {openable ? (
@@ -112,7 +132,10 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
             {STALE_LABEL}
           </Badge>
         )}
-        <RefreshButton recap={recap} />
+        <span className="recap-actions">
+          <PlanStatusButton plan={plan} controls={planId} buttonRef={planButton} />
+          <RefreshButton recap={recap} />
+        </span>
       </div>
 
       {shown ? (
@@ -157,7 +180,124 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
           )}
         </div>
       )}
+
+      <PlanPanel
+        plan={plan}
+        id={planId}
+        onClose={() => {
+          plan.close();
+          planButton.current?.focus();
+        }}
+      />
     </section>
+  );
+}
+
+/** Plan status (W123): a ghost sm text button beside Refresh, a disclosure for the panel, busy while one is made. */
+function PlanStatusButton({ plan, controls, buttonRef }: { plan: PlanStatusController; controls: string; buttonRef: Ref<HTMLButtonElement> }) {
+  return (
+    <Tooltip content={plan.busy ? PLAN_STATUS_BUSY : "Where this session is in its plan, read from its transcript."} relation="description">
+      <button
+        ref={buttonRef}
+        type="button"
+        className="button ghost sm recap-plan-button"
+        aria-expanded={plan.open}
+        aria-controls={controls}
+        aria-busy={plan.busy || undefined}
+        data-plan-status=""
+        onClick={plan.toggle}
+      >
+        {plan.busy && <Spinner size="button" />}
+        {PLAN_STATUS_LABEL}
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * The plan status panel (W123), under the summary and the to-dos: its heading, age, Make a new one and
+ * Close; then the plan's one line, its items in order with their states as small tags, and how the
+ * plan changed; or why there's none. Every text from it is plain text, in <bdi>.
+ */
+function PlanPanel({ plan, id, onClose }: { plan: PlanStatusController; id: string; onClose: () => void }) {
+  const headingId = useId();
+  const { state } = plan;
+  const shown = state.kind === 'shown' ? state.status : undefined;
+  return (
+    <div className="recap-plan" id={id} role="region" aria-labelledby={headingId} hidden={!plan.open} data-plan-state={plan.open ? state.kind : undefined}>
+      <div className="recap-plan-head">
+        <h4 className="recap-plan-heading" id={headingId}>
+          {PLAN_STATUS_LABEL}
+        </h4>
+        {shown && <Timestamp className="recap-age recap-plan-age" at={shown.at} />}
+        <span className="recap-actions">
+          <Tooltip content={plan.busy ? PLAN_STATUS_BUSY : PLAN_STATUS_REMAKE} relation={plan.busy ? 'description' : 'label'}>
+            <button
+              type="button"
+              className="icon-button ghost sm recap-plan-remake"
+              aria-label={PLAN_STATUS_REMAKE}
+              aria-disabled={plan.busy || undefined}
+              aria-busy={plan.busy || undefined}
+              onClick={plan.remake}
+            >
+              {plan.busy ? <Spinner size="button" /> : <Icon name="retry" />}
+            </button>
+          </Tooltip>
+          <Tooltip content={PLAN_STATUS_CLOSE} relation="label">
+            <button type="button" className="icon-button ghost sm recap-plan-close" aria-label={PLAN_STATUS_CLOSE} onClick={onClose}>
+              <Icon name="close" />
+            </button>
+          </Tooltip>
+        </span>
+      </div>
+      {!plan.open ? null : state.kind === 'shown' ? (
+        <PlanBody status={state.status} />
+      ) : state.kind === 'error' ? (
+        <p className="recap-note">
+          <bdi>{state.message}</bdi>
+        </p>
+      ) : (
+        <p className="recap-note">{state.kind === 'making' ? PLAN_STATUS_BUSY : 'Loading the plan status.'}</p>
+      )}
+    </div>
+  );
+}
+
+function PlanBody({ status }: { status: PlanStatus }) {
+  if (!status.found) return <p className="recap-note">{NO_PLAN_TEXT}</p>;
+  return (
+    <>
+      {status.plan !== undefined && (
+        <p className="recap-plan-line">
+          <bdi>{plainText(status.plan)}</bdi>
+        </p>
+      )}
+      <PlanItems items={status.items} />
+      {status.changes !== undefined && (
+        <p className="recap-plan-changes">
+          <span className="recap-plan-changes-label">{PLAN_CHANGES_LABEL}</span> <bdi>{plainText(status.changes)}</bdi>
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The items, in the plan's order, as a numbered list: each its text, then its state as a small tag. Now in full colour, Dropped struck through. */
+function PlanItems({ items }: { items: PlanItem[] }) {
+  return (
+    <ol className="recap-plan-items" aria-label="Plan items">
+      {items.map((item, index) => (
+        <li className="recap-plan-item" key={index} data-state={item.state}>
+          <span className="recap-plan-item-text">
+            <bdi>{plainText(item.text)}</bdi>
+          </span>
+          <span className="visually-hidden">, </span>
+          <Badge look={planStateLook(item.state)} className="recap-plan-state">
+            {PLAN_STATE_TEXT[item.state]}
+          </Badge>
+        </li>
+      ))}
+    </ol>
   );
 }
 
