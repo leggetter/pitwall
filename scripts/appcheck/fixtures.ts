@@ -21,6 +21,7 @@ import type {
   RecapHealth,
   RelayExchange,
   SessionGroup,
+  PlanStatus,
   SessionRecap,
   SessionSummary,
   SpawnRequest,
@@ -218,6 +219,25 @@ export const RECAPS_ERROR = "Made up: claude -p didn't answer within 60 seconds.
 /** How long a made-up recap call takes, so Refresh shows its spinner. */
 export const RECAP_CALL_MS = 600;
 
+/** How long a made-up plan status call takes (W123), so Plan status shows its spinner. */
+export const PLAN_CALL_MS = 700;
+
+/** The sessions whose made-up transcript shows no plan (W123): the rest work through PLANNED's. */
+export const NO_PLAN = NAMES.finished;
+
+/** The made-up plan a plan status finds (W123), for every session but NO_PLAN. */
+export const PLANNED = {
+  plan: 'Add the made-up health route to the API, in its plan file',
+  items: [
+    { text: 'W1: the route and its test', state: 'done' },
+    { text: 'W2: fix the lint errors on #51', state: 'now' },
+    { text: 'W3: rate limit the route', state: 'dropped' },
+    { text: 'W4: mark #51 ready', state: 'next' },
+    { text: 'W5: document the route in the made-up API guide', state: 'next' },
+  ],
+  changes: 'W3 was dropped: the made-up gateway already limits the route.',
+} as const;
+
 /**
  * The sessions with a recap while recaps are on, by role: what each waits on, and whether it's
  * current. A current recap that waits on you adds Needs you's 'recap' reason, as the index does
@@ -316,6 +336,9 @@ export class World {
   /** Recaps (W111): their state, the recaps by session id, today's calls, the calls running, and the day's budget. */
   #recapsState: RecapsState = 'off';
   #recaps = new Map<string, SessionRecap>();
+  /** Plan statuses made (W123), by session id, and the calls running. */
+  #plans = new Map<string, PlanStatus>();
+  #planning = new Set<string>();
   #recapCalls = 0;
   #recapping = new Set<string>();
   #recapBudget = 200;
@@ -366,6 +389,8 @@ export class World {
     this.#recapsState = options.recaps ?? 'off';
     this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
     this.#recapping = new Set();
+    this.#plans = new Map();
+    this.#planning = new Set();
     this.#recapErrorAt = this.#now - 3 * MINUTE;
     this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
     this.#supervisorTurn += 1;
@@ -619,10 +644,46 @@ export class World {
     };
   }
 
+  /** A listed session's newest plan status (W123), as GET planStatusPath() answers it; undefined before one is made. */
+  planStatus(sessionId: string): PlanStatus | undefined {
+    return this.#recapsState === 'off' ? undefined : this.#plans.get(sessionId);
+  }
+
+  /**
+   * Plan status (W123), in the order the contract gives planStatusRefreshPath()'s answers: 'off' (409),
+   * 'not-recapped' (404), 'spent' or 'running' (429), otherwise 'started', and `done`, which ends the
+   * call and gives its plan status: PLANNED, or no plan for NO_PLAN. Counted as a recap call.
+   */
+  makePlanStatus(sessionId: string): { result: 'off' } | { result: 'not-recapped' } | { result: 'spent' } | { result: 'running' } | { result: 'started'; done: () => PlanStatus } {
+    if (this.#recapsState === 'off') return { result: 'off' };
+    const session = this.#sessions.get(sessionId);
+    if (!session || session.transcript !== 'ok') return { result: 'not-recapped' };
+    if (this.#recapCalls >= this.#recapBudget) return { result: 'spent' };
+    if (this.#planning.has(sessionId)) return { result: 'running' };
+    this.#planning.add(sessionId);
+    this.#recapCalls += 1;
+    return {
+      result: 'started',
+      done: () => {
+        this.#planning.delete(sessionId);
+        const at = new Date().toISOString();
+        const through = this.#sessions.get(sessionId)?.lastActivityAt ?? at;
+        const status: PlanStatus =
+          session.name === NO_PLAN
+            ? { found: false, items: [], at, throughAt: through }
+            : { found: true, plan: PLANNED.plan, items: PLANNED.items.map((item) => ({ ...item })), changes: PLANNED.changes, at, throughAt: through };
+        this.#plans.set(sessionId, status);
+        return status;
+      },
+    };
+  }
+
   /** The session as the snapshot lists it with its recap (W111): the summary, the title from it, and Needs you's 'recap' while it's current and waits on you. */
   #withRecap(session: SessionSummary): SessionSummary {
     const recap = this.#recapsState === 'off' ? undefined : this.recap(session.sessionId);
-    if (!recap) return session;
+    const planAt = this.planStatus(session.sessionId)?.at;
+    if (!recap) return planAt === undefined ? session : { ...session, planStatusAt: planAt };
+    if (planAt !== undefined) session = { ...session, planStatusAt: planAt };
     const yours = recap.todos.filter((todo) => todo.owner === 'you');
     const next = yours[0]?.text;
     const summary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source, ...(next === undefined ? {} : { next }), ...(recap.stale ? { stale: true as const } : {}) };

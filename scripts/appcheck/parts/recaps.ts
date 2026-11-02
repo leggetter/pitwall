@@ -3,10 +3,11 @@
 // tag; collapsed, the summary's first line and how many are yours, and kept so after a reload; a stale recap, and a session with none, asking for one
 // once as the view opens, an ended session's included (D26); Refresh, busy until the new one comes,
 // and off while the day's budget is spent; Claude Code's recap; the rows' recap reasons on line 2,
-// and an outline Waiting on you on an ended one; the app strip's recap lines; and, with recaps off,
-// no strip and nothing asked.
+// and an outline Waiting on you on an ended one; the app strip's recap lines; Plan status (W123),
+// beside Refresh, busy while it's made, then the plan, its items' states and the changes, Close,
+// no plan, and the budget spent; and, with recaps off, no strip and nothing asked.
 
-import { NAMES, RECAP_CALL_MS, RECAPPED, RECAPS_ERROR } from '../fixtures.js';
+import { NAMES, NO_PLAN, PLANNED, RECAP_CALL_MS, RECAPPED, RECAPS_ERROR } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { attachStatus, openFinished, openFromRow, row, VIEW, viewClose, viewName } from './_dom.js';
 
@@ -65,6 +66,52 @@ type Strip = {
   share: number;
   oneLine: boolean | null;
 };
+/** Plan status (W123): its button, its panel and what the panel shows, and whether it fits the strip. */
+const plan = `(() => {
+  const strip = ${VIEW}?.querySelector('.session-recap');
+  if (!strip) return null;
+  const button = strip.querySelector('[data-plan-status]');
+  const refresh = strip.querySelector('[data-recap-refresh]');
+  const panel = strip.querySelector('.recap-plan');
+  const box = strip.getBoundingClientRect();
+  const b = button?.getBoundingClientRect();
+  const r = refresh?.getBoundingClientRect();
+  return {
+    label: button?.textContent ?? null,
+    expanded: button?.getAttribute('aria-expanded') ?? null,
+    busy: button?.getAttribute('aria-busy') === 'true',
+    besideRefresh: !!b && !!r && Math.abs(b.top - r.top) < 6 && b.right <= r.left + 0.5,
+    buttonInside: !!b && b.left >= box.left - 0.5 && b.right <= box.right + 0.5,
+    state: panel && !panel.hidden ? panel.dataset.planState ?? null : null,
+    line: panel?.querySelector('.recap-plan-line')?.textContent ?? null,
+    items: [...(panel?.querySelectorAll('.recap-plan-item') ?? [])].map((li) => [li.querySelector('.recap-plan-item-text')?.textContent ?? '', li.querySelector('.recap-plan-state')?.textContent ?? '']),
+    changes: panel?.querySelector('.recap-plan-changes')?.textContent ?? null,
+    age: panel?.querySelector('.recap-plan-age')?.textContent ?? null,
+    note: panel && !panel.hidden ? panel.querySelector('.recap-note')?.textContent ?? null : null,
+    noOverflow: strip.scrollWidth <= strip.clientWidth + 1,
+    panelInside: !panel || panel.hidden || (panel.getBoundingClientRect().right <= box.right + 0.5 && panel.getBoundingClientRect().left >= box.left - 0.5),
+    focused: document.activeElement === button,
+  };
+})()`;
+type Plan = {
+  label: string | null;
+  expanded: string | null;
+  busy: boolean;
+  besideRefresh: boolean;
+  buttonInside: boolean;
+  state: string | null;
+  line: string | null;
+  items: [string, string][];
+  changes: string | null;
+  age: string | null;
+  note: string | null;
+  noOverflow: boolean;
+  panelInside: boolean;
+  focused: boolean;
+};
+const PLAN_BUTTON = `${STRIP}?.querySelector('[data-plan-status]')`;
+const PLAN_STATE_TEXT = { done: 'Done', now: 'Now', next: 'Next', dropped: 'Dropped' } as const;
+
 const APP_STRIP = `document.querySelector('.app-strips [data-strip="recaps"]')?.textContent ?? null`;
 const lineTwo = (name: string) => `(${row(name)})?.closest('li.session')?.querySelector('.session-what-text')?.textContent ?? null`;
 const badge = (name: string) => `(${row(name)})?.closest('li.session')?.querySelector('.session-badges [data-status]')?.textContent ?? null`;
@@ -208,6 +255,47 @@ const part: Part = {
       t.expectEqual(asked(NAMES.conversation), [{ name: NAMES.conversation, status: 200 }], 'one request');
     });
 
+    await t.step('Plan status: beside Refresh; pressed, busy, then the plan, its items in order with their states, and the changes', async () => {
+      const before = await page.evaluate<Plan>(plan);
+      t.expectEqual(before.label, 'Plan status', 'named Plan status');
+      t.expect(before.besideRefresh, 'beside Refresh, before it', before);
+      t.expect(before.buttonInside && before.noOverflow, 'inside the strip, however narrow', before);
+      t.expectEqual(before.expanded, 'false', 'closed until pressed');
+      t.expect(server.records.planMakes.length === 0 && server.records.planFetches.length === 0, 'nothing fetched or made until pressed', server.records.planMakes);
+      await page.click('Plan status', PLAN_BUTTON);
+      await page.waitFor('Plan status to be busy', `${plan}?.busy === true`);
+      const busy = await page.evaluate<Plan>(plan);
+      t.expectEqual(busy.state, 'making', 'the panel says one is being made');
+      await t.shot('plan-busy');
+      const shown = await page.waitFor<Plan>('the plan status', `(() => { const p = ${plan}; return p && p.state === 'shown' && !p.busy ? p : null; })()`, 8_000);
+      t.expectEqual(shown.line, PLANNED.plan, 'the plan, in one line');
+      t.expectEqual(
+        shown.items,
+        PLANNED.items.map((item) => [item.text, PLAN_STATE_TEXT[item.state]]),
+        'its items, in order, each with its state',
+      );
+      t.expectEqual(shown.changes, `Changes: ${PLANNED.changes}`, 'how the plan changed');
+      t.expectEqual(shown.age, 'just now', 'its age');
+      t.expect(shown.panelInside && shown.noOverflow, 'the panel inside the strip, nothing wider than it', shown);
+      t.expectEqual(server.records.planMakes, [{ name: NAMES.conversation, status: 200 }], 'one made');
+      await t.shot('plan');
+      await page.click('Close the plan status', `${STRIP}?.querySelector('.recap-plan-close')`);
+      const closed = await page.waitFor<Plan>('the panel to close', `(() => { const p = ${plan}; return p && p.state === null ? p : null; })()`);
+      t.expect(closed.focused && closed.expanded === 'false', 'focus back on Plan status, closed', closed);
+      await page.click('Plan status', PLAN_BUTTON);
+      const again = await page.waitFor<Plan>('the plan status again', `(() => { const p = ${plan}; return p && p.state === 'shown' ? p : null; })()`);
+      t.expectEqual(again.items.length, PLANNED.items.length, 'the same one');
+      t.expect(server.records.planMakes.length === 1 && server.records.planFetches.length === 0, 'shown again without asking', server.records.planFetches);
+    });
+
+    await t.step('Plan status for a session whose transcript shows no plan', async () => {
+      await open(NO_PLAN);
+      await page.click('Plan status', PLAN_BUTTON);
+      const none = await page.waitFor<Plan>('no plan', `(() => { const p = ${plan}; return p && p.state === 'shown' && !p.busy ? p : null; })()`, 8_000);
+      t.expectEqual(none.note, 'No plan found in this session.', 'says so');
+      t.expectEqual(none.items, [], 'no items');
+    });
+
     await t.step('rows: Waiting on you on line 2 in Needs you, and what an idle session waits on otherwise', async () => {
       await closeView();
       await page.navigate('/?view=needs-you');
@@ -233,6 +321,10 @@ const part: Part = {
       await page.click('Refresh the recap', `${STRIP}?.querySelector('[data-recap-refresh]')`);
       await page.settle(1_000);
       t.expectEqual(server.records.recapRefreshes.length, 0, 'nothing asked for');
+      await page.click('Plan status', PLAN_BUTTON);
+      const spent = await page.waitFor<Plan>('Plan status to say why', `(() => { const p = ${plan}; return p && p.state === 'error' ? p : null; })()`);
+      t.expect(spent.note?.startsWith("Today's 200 recaps are used up") ?? false, 'Plan status says the budget is spent', spent.note);
+      t.expectEqual(server.records.planMakes.length, 0, 'and makes none');
       await t.shot('budget');
     });
 

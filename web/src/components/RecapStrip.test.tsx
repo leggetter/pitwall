@@ -1,14 +1,15 @@
 // The recap strip (M5, W111, W121; docs/design-system.md, 4: Recap strip): when it shows, what it
 // fetches and when, the one request for a new recap as a view opens on a stale recap or none, never in
 // a loop, the summary and the to-dos under it, collapsed and open, Refresh and its answers, and its
-// loading and failed states. Made-up sessions and recaps only.
+// loading and failed states; and Plan status (W123). Made-up sessions, recaps and plans only.
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RECAP_DAILY_BUDGET, recapPath, recapRefreshPath, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../../src/shared/protocol.js';
+import { planStatusPath, planStatusRefreshPath, RECAP_DAILY_BUDGET, recapPath, recapRefreshPath, type PlanStatus, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, type ApiClient, type ApiResult } from '../api.js';
 import { RECAP_COLLAPSED_KEY, RECAP_WAIT_MS, RECAPS_OFF_TEXT, budgetText, refreshRecapFailedText } from '../recap.js';
 import { minutesAgo, session } from '../test/fixtures.js';
+import { NO_PLAN_TEXT, PLAN_NO_TRANSCRIPT_TEXT, PLAN_OFF_TEXT, PLAN_STATUS_BUSY, parsePlanStatus, planFailedText } from '../planStatus.js';
 import { RecapStrip, STALE_LABEL } from './RecapStrip.js';
 import { SessionView } from './SessionView.js';
 import { ToastContext, type ShowToast } from './Toast.js';
@@ -620,5 +621,168 @@ describe('loading and failing', () => {
     renderStrip({ session: target(recap) }, fakeApi({ recap: ok({ ...recap, waitingOn: 'the moon' }) }).api);
     await settle();
     expect(strip()?.dataset.recap).toBe('failed');
+  });
+});
+
+describe('Plan status (W123)', () => {
+  const PLAN: PlanStatus = {
+    found: true,
+    plan: 'M2 of the made-up export rewrite',
+    items: [
+      { text: 'W1: the reader', state: 'done' },
+      { text: 'W2: the writer', state: 'now' },
+      { text: 'W3: the old path', state: 'dropped' },
+      { text: 'W4: the docs', state: 'next' },
+    ],
+    changes: 'W3 was dropped: the writer replaces it.',
+    at: minutesAgo(2),
+    throughAt: minutesAgo(3),
+  };
+
+  /** An ApiClient for the plan routes: GET planStatusPath() with `stored`, POSTs with `posts` in turn; the recap routes as fakeApi's, with `recap`. */
+  function planApi(options: { stored?: PlanStatus; posts?: Answer[] } = {}) {
+    const posts = [...(options.posts ?? [])];
+    const answer = (value: Answer): Promise<ApiResult> => (value === 'pending' ? new Promise(() => {}) : value instanceof Promise ? value : Promise.resolve(value));
+    const get = vi.fn<ApiClient['get']>(async (path) => {
+      if (path === recapPath(SID)) return ok(full());
+      if (path === planStatusPath(SID)) return options.stored ? ok(options.stored) : status(404);
+      return status(404);
+    });
+    const post = vi.fn<ApiClient['post']>(async (path) => {
+      if (path !== planStatusRefreshPath(SID)) return status(404);
+      return answer(posts.shift() ?? ok({ ok: true, status: PLAN }));
+    });
+    const api: ApiClient = { get, post, upload: vi.fn(), delete: vi.fn() };
+    return { api, get, post, planPosts: () => post.mock.calls.filter(([path]) => path === planStatusRefreshPath(SID)).length, planGets: () => get.mock.calls.filter(([path]) => path === planStatusPath(SID)).length };
+  }
+
+  const button = () => document.querySelector<HTMLButtonElement>('[data-plan-status]');
+  const panel = () => document.querySelector<HTMLElement>('.recap-plan');
+  const items = () => [...document.querySelectorAll('.recap-plan-item')].map((li) => [li.querySelector('.recap-plan-item-text')?.textContent, li.querySelector('.recap-plan-state')?.textContent]);
+  const panelNote = () => document.querySelector('.recap-plan .recap-note')?.textContent;
+  const press = async () => {
+    fireEvent.click(button()!);
+    await settle();
+  };
+
+  it('is a button named Plan status beside Refresh, which fetches and makes nothing until it is pressed', async () => {
+    const server = planApi();
+    renderStrip({ session: target(full()) }, server.api);
+    await pastAskDelay();
+    expect(button()?.textContent).toBe('Plan status');
+    expect(button()?.closest('.recap-actions')?.querySelector('[data-recap-refresh]')).not.toBeNull();
+    expect(button()?.getAttribute('aria-expanded')).toBe('false');
+    expect(panel()?.hidden).toBe(true);
+    expect(server.planPosts()).toBe(0);
+    expect(server.planGets()).toBe(0);
+  });
+
+  it('pressed with none made, makes one, busy meanwhile, then shows the plan, its items with their states, the changes and its age', async () => {
+    let finish: (result: ApiResult) => void = () => undefined;
+    const server = planApi({ posts: [new Promise<ApiResult>((resolve) => (finish = resolve))] });
+    renderStrip({ session: target(full()) }, server.api);
+    await press();
+    expect(server.planPosts()).toBe(1);
+    expect(button()?.getAttribute('aria-expanded')).toBe('true');
+    expect(button()?.getAttribute('aria-busy')).toBe('true');
+    expect(panel()?.hidden).toBe(false);
+    expect(panelNote()).toBe(PLAN_STATUS_BUSY);
+    await act(async () => {
+      finish(ok({ ok: true, status: PLAN }));
+    });
+    await settle();
+    expect(button()?.hasAttribute('aria-busy')).toBe(false);
+    expect(document.querySelector('.recap-plan-line')?.textContent).toBe(PLAN.plan);
+    expect(items()).toEqual([
+      ['W1: the reader', 'Done'],
+      ['W2: the writer', 'Now'],
+      ['W3: the old path', 'Dropped'],
+      ['W4: the docs', 'Next'],
+    ]);
+    expect(document.querySelector('.recap-plan-changes')?.textContent).toBe(`Changes: ${PLAN.changes}`);
+    expect(document.querySelector('.recap-plan-age time')?.getAttribute('datetime') ?? document.querySelector('.recap-plan-age')?.textContent).toBeTruthy();
+    expect(document.querySelector('.recap-plan-item[data-state="now"]')).not.toBeNull();
+  });
+
+  it('pressed with one made, fetches it and makes none; closed and pressed again, shows it without asking again', async () => {
+    const server = planApi({ stored: PLAN });
+    renderStrip({ session: target(full(), { planStatusAt: PLAN.at }) }, server.api);
+    await press();
+    expect(server.planGets()).toBe(1);
+    expect(server.planPosts()).toBe(0);
+    expect(items()).toHaveLength(4);
+    fireEvent.click(document.querySelector<HTMLButtonElement>('.recap-plan-close')!);
+    await settle();
+    expect(panel()?.hidden).toBe(true);
+    expect(document.activeElement).toBe(button());
+    await press();
+    expect(server.planGets()).toBe(1);
+    expect(items()).toHaveLength(4);
+    // Make a new one.
+    fireEvent.click(document.querySelector<HTMLButtonElement>('.recap-plan-remake')!);
+    await settle();
+    expect(server.planPosts()).toBe(1);
+  });
+
+  it('fetches a newer one while it is open, when the snapshot says one was made', async () => {
+    const server = planApi({ stored: PLAN });
+    const view = renderStrip({ session: target(full(), { planStatusAt: PLAN.at }) }, server.api);
+    await press();
+    expect(server.planGets()).toBe(1);
+    view.update({ session: target(full(), { planStatusAt: minutesAgo(0) }) });
+    await settle();
+    expect(server.planGets()).toBe(2);
+  });
+
+  it('says "No plan found in this session." when the transcript shows none', async () => {
+    const server = planApi({ posts: [ok({ ok: true, status: { found: false, items: [], at: minutesAgo(0), throughAt: minutesAgo(1) } })] });
+    renderStrip({ session: target(full()) }, server.api);
+    await press();
+    expect(panelNote()).toBe(NO_PLAN_TEXT);
+    expect(document.querySelector('.recap-plan-items')).toBeNull();
+  });
+
+  it.each([
+    ['the budget is spent', status(429, { ok: false, error: 'made up', busy: 'spent' }), budgetText(RECAP_DAILY_BUDGET)],
+    ['recaps are off', status(409, { ok: false, error: 'made up' }), PLAN_OFF_TEXT],
+    ['there is no transcript', status(404, { ok: false, error: 'made up' }), PLAN_NO_TRANSCRIPT_TEXT],
+    ['the call failed, in pitwall’s words', status(502, { ok: false, error: "The plan status call's answer wasn't the JSON pitwall asked for." }), "The plan status call's answer wasn't the JSON pitwall asked for."],
+    ['anything else', status(500), planFailedText(500)],
+  ])('says why when %s', async (_name, answer, text) => {
+    const server = planApi({ posts: [answer] });
+    renderStrip({ session: target(full()) }, server.api);
+    await press();
+    expect(panelNote()).toBe(text);
+    expect(button()?.hasAttribute('aria-busy')).toBe(false);
+  });
+
+  it('asks for nothing while the snapshot says the budget is spent, and says so', async () => {
+    const server = planApi();
+    renderStrip({ session: target(full()), health: SPENT }, server.api);
+    await press();
+    expect(server.planPosts()).toBe(0);
+    expect(panelNote()).toBe(budgetText(RECAP_DAILY_BUDGET));
+  });
+
+  it('after a 429 running, stays busy until the snapshot says the other request made one, then fetches it', async () => {
+    const server = planApi({ stored: PLAN, posts: [status(429, { ok: false, error: 'made up', busy: 'running' })] });
+    const view = renderStrip({ session: target(full()) }, server.api);
+    await press();
+    expect(button()?.getAttribute('aria-busy')).toBe('true');
+    expect(panelNote()).toBe(PLAN_STATUS_BUSY);
+    view.update({ session: target(full(), { planStatusAt: PLAN.at }) });
+    await settle();
+    expect(server.planGets()).toBe(1);
+    expect(items()).toHaveLength(4);
+    expect(button()?.hasAttribute('aria-busy')).toBe(false);
+  });
+
+  it('reads the plan status defensively', () => {
+    expect(parsePlanStatus(PLAN)).toEqual(PLAN);
+    expect(parsePlanStatus({ ...PLAN, items: [{ text: 'x', state: 'blocked' }] })).toBeUndefined();
+    expect(parsePlanStatus({ ...PLAN, items: [] })).toBeUndefined();
+    expect(parsePlanStatus({ found: false, items: [], at: PLAN.at, throughAt: PLAN.throughAt })).toEqual({ found: false, items: [], at: PLAN.at, throughAt: PLAN.throughAt });
+    expect(parsePlanStatus({ found: false, plan: 'x', items: [], at: PLAN.at, throughAt: PLAN.throughAt })).toBeUndefined();
+    expect(parsePlanStatus({ ...PLAN, at: 'not a time' })).toBeUndefined();
   });
 });

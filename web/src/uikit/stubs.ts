@@ -138,6 +138,12 @@ export interface StubOptions {
   recapFetch?: 'ok' | 'loading' | 'failed';
   recapRefresh?: 'ok' | 'sending' | 'spent' | 'off' | 'failed';
   /**
+   * Plan status (W123): what POST planStatusRefreshPath() gets. `found`, the default, a made-up plan
+   * made now; `none`, no plan found; `making` never answers; `spent`, a 429 with the day's budget
+   * spent. GET planStatusPath() is always a 404: the gallery's sessions have none made yet.
+   */
+  planStatus?: 'found' | 'none' | 'making' | 'spent';
+  /**
    * What Clone and start gets (W107), in the server's words (src/server/clone.ts). `cloned` answers
    * with a made-up clone's directory and the command that trusts it; `cloning` never answers;
    * `failed` is gh failing, a 502.
@@ -164,6 +170,8 @@ export const CLONED_DIR = '/Users/example/code/sdk-docs';
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
 /** Refresh's recapRefreshPath() (W111). */
 const RECAP_REFRESH_PATH = /^\/api\/sessions\/([^/?]+)\/recap\/refresh$/;
+/** Plan status's planStatusRefreshPath() (W123). */
+const PLAN_REFRESH_PATH = /^\/api\/sessions\/([^/?]+)\/plan-status\/refresh$/;
 /** A session's sub-agents, or one's transcript, with its cursor. */
 const SUBAGENTS_PATH = /^\/api\/sessions\/([^/?]+)\/subagents(?:\/([A-Za-z0-9]+)\/conversation(?:\?before=(.*))?)?$/;
 
@@ -199,6 +207,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
       return subagents(sessionId, options.subagents, listed - 1);
     }
     if (method === 'POST' && RECAP_REFRESH_PATH.test(path)) return recapRefresh(options.recapRefresh ?? 'ok');
+    if (method === 'POST' && PLAN_REFRESH_PATH.test(path)) return planStatus(options.planStatus ?? 'found');
     const match = SESSION_PATH.exec(path);
     if (!match) return Promise.resolve(failed(404));
     const sessionId = decodeURIComponent(match[1] ?? '');
@@ -290,6 +299,39 @@ function recapRefresh(result: NonNullable<StubOptions['recapRefresh']>): Promise
       return Promise.resolve(failed(500));
     case 'ok':
       return Promise.resolve(ok({ ok: true }));
+  }
+}
+
+/** A made-up plan status (W123), made now. */
+function planStatus(result: NonNullable<StubOptions['planStatus']>): Promise<ApiResult> {
+  const at = new Date().toISOString();
+  switch (result) {
+    case 'making':
+      return forever();
+    case 'spent':
+      return Promise.resolve(failed(429, { ok: false, error: "Made up: today's recaps are used up.", busy: 'spent' }));
+    case 'none':
+      return Promise.resolve(ok({ ok: true, status: { found: false, items: [], at, throughAt: at } }));
+    case 'found':
+      return Promise.resolve(
+        ok({
+          ok: true,
+          status: {
+            found: true,
+            plan: 'Fix the made-up export on large files, then backport it, in four steps',
+            items: [
+              { text: 'Step 1: find why files over 2 GB fail', state: 'done' },
+              { text: 'Step 2: fix the size field, with a test', state: 'done' },
+              { text: 'Step 3: get #42 reviewed and merged', state: 'now' },
+              { text: 'Step 4: backport the fix to 1.x', state: 'next' },
+              { text: 'Rewrite the upload step', state: 'dropped' },
+            ],
+            changes: 'You dropped the upload step rewrite: the size field fix is enough. The backport was added after you asked about 1.x.',
+            at,
+            throughAt: at,
+          },
+        }),
+      );
   }
 }
 

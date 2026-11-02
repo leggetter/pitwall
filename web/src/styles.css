@@ -2589,9 +2589,28 @@ mark.match {
 
 .recap-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--pw-space-2);
+  gap: var(--pw-space-1) var(--pw-space-2);
   min-width: 0;
+}
+
+/*
+ * Plan status and Refresh (W123), together at the end of line 1, so they wrap onto a line of their own
+ * together when line 1 is too narrow for them, as at 375 px with "May be out of date".
+ */
+.recap-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-1);
+  margin-left: auto;
+}
+
+/* Plan status: a ghost sm text button, its block margins taken back so line 1 stays 24 px. */
+.button.recap-plan-button {
+  flex: none;
+  margin-block: calc(-1 * var(--pw-space-0-5));
 }
 
 .recap-heading {
@@ -2658,7 +2677,6 @@ mark.match {
 .icon-button.recap-refresh {
   flex: none;
   margin-block: calc(-1 * var(--pw-space-0-5));
-  margin-left: auto;
 }
 
 /* The summary: one paragraph, wrapping while the strip is open; collapsed, "2 for you" after it. */
@@ -2720,6 +2738,97 @@ mark.match {
 .recap-note {
   margin: 0;
   color: var(--pw-text-muted);
+}
+
+/* While the plan status is open, the strip may take half the view, as the footer may, since the plan can run to 15 items. */
+.session-recap[data-plan='open'] {
+  max-height: 50%;
+}
+
+/*
+ * The plan status panel (W123): under the summary and the to-dos, a top --pw-border, its heading, age,
+ * Make a new one and Close on its line 1; then the plan's one line, its items in order, each with its
+ * state as a small tag, and how the plan changed.
+ */
+.recap-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin-top: var(--pw-space-1);
+  padding-top: var(--pw-space-2);
+  border-top: 1px solid var(--pw-border);
+}
+
+.recap-plan[hidden] {
+  display: none;
+}
+
+.recap-plan-head {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-2);
+  min-width: 0;
+}
+
+.recap-plan-head .icon-button {
+  flex: none;
+  margin-block: calc(-1 * var(--pw-space-0-5));
+}
+
+.recap-plan-heading {
+  margin: 0;
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+}
+
+.recap-plan-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.recap-plan-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin: 0;
+  padding-left: var(--pw-space-5);
+  color: var(--pw-text-muted);
+}
+
+.recap-plan-items ::marker {
+  color: var(--pw-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.recap-plan-item {
+  overflow-wrap: anywhere;
+}
+
+/* What it's on now stands out where it is, in the plan's order. */
+.recap-plan-item[data-state='now'] {
+  color: var(--pw-text);
+}
+
+.recap-plan-item[data-state='dropped'] .recap-plan-item-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--pw-text-subtle);
+}
+
+.recap-plan-item .badge.recap-plan-state {
+  margin-left: var(--pw-space-1-5);
+  vertical-align: baseline;
+}
+
+.recap-plan-changes {
+  margin: 0;
+  color: var(--pw-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.recap-plan-changes-label {
+  color: var(--pw-text);
+  font-weight: var(--pw-weight-medium);
 }
 
 /* Skeleton bars on --pw-surface-muted, where a sunken bar barely shows: --pw-surface-strong, as on --pw-bg. */

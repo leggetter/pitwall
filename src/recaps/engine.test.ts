@@ -1,17 +1,17 @@
 // The recap engine (M5, W110): which sessions get a recap and when, the budget and its midnight
 // reset, updates against first recaps, failures, the hiding of its calls, and what the snapshot
-// shows, Needs you's 'recap' reason included. A fake index, a fake `claude` that answers as
+// shows, Needs you's 'recap' reason included; and plan statuses (W123). A fake index, a fake `claude` that answers as
 // `claude -p --output-format json` does, and the test's own clock: no test runs claude. Every session
 // and recap here is made up.
 import { describe, expect, it } from 'vitest';
 import type { SessionFacts } from '../index/index.js';
 import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
-import { RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
+import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, type ConversationEntry, type ConversationPage, type IndexSnapshot, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
 import { createRecapEngine, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
-import { ANSWER_INVALID, CALL_FAILED, recapArgs, RECAP_NAME } from './prompt.js';
+import { ANSWER_INVALID, CALL_FAILED, PLAN_STATUS_SYSTEM_PROMPT, planStatusArgs, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
 const DIR = '/made-up/pitwall-home/recap';
@@ -627,6 +627,132 @@ describe('what the snapshot shows', () => {
     const a = session('a');
     expect(h.engine.decorate(a)).toBe(a);
     expect(h.engine.recap(a)).toBeUndefined();
+  });
+});
+
+describe('plan status (W123)', () => {
+  const PLAN = { found: true, plan: 'M2 of the made-up export rewrite', items: [{ text: 'W1: the reader', state: 'done' }, { text: 'W2: the writer', state: 'now' }, { text: 'W3: the old path', state: 'dropped' }], changes: 'W3 was dropped: the writer replaces it.' };
+  /** A session no recap is due for by itself (ended), so only the plan status calls. */
+  const quiet = (h: ReturnType<typeof harness>, id: string) => h.add(id, { alive: false, ended: true, pid: undefined });
+
+  it("makes one on demand with a recap's call and the plan prompt, over the first prompt, the whole compaction summary and up to 24k of turns", async () => {
+    const h = harness();
+    h.start();
+    const a = quiet(h, 'a');
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Work through M2 in PLAN.md.', compaction: { text: '1. Primary Request and Intent:\nM2.\n2. Two:\nkept too' } });
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(0);
+    const made = h.engine.makePlanStatus(a);
+    await tick();
+    expect(h.calls).toHaveLength(1);
+    const call = h.calls[0]!;
+    expect(call.args).toEqual(planStatusArgs({ model: RECAP_MODEL }));
+    expect(call.args[call.args.indexOf('--system-prompt') + 1]).toBe(PLAN_STATUS_SYSTEM_PROMPT);
+    expect(call.cwd).toBe(DIR);
+    expect(call.env.DISABLE_PROMPT_CACHING).toBe('1');
+    expect(call.input).toContain('<first-prompt>\nWork through M2 in PLAN.md.\n</first-prompt>');
+    // All its sections, not a recap's excerpt.
+    expect(call.input).toContain('2. Two:\nkept too');
+    expect(call.input).toContain('Write the plan status');
+    // A second while it runs is refused.
+    expect(await h.engine.makePlanStatus(a)).toEqual({ kind: 'running', retryAfterSeconds: 5 });
+    await h.reply(call, envelope(PLAN));
+    const result = await made;
+    expect(result.kind).toBe('made');
+    const status = { found: true, plan: PLAN.plan, items: PLAN.items, changes: PLAN.changes, at: new Date(h.clock.now).toISOString(), throughAt: a.lastActivityAt };
+    expect(result).toEqual({ kind: 'made', status });
+    expect(h.engine.planStatus(a)).toEqual(status);
+    // The snapshot carries only when it was made (D14), and the call counted against the budget.
+    expect(h.engine.decorate(a)).toEqual({ ...a, planStatusAt: status.at });
+    expect(h.engine.health()).toMatchObject({ calls: 1, costUsd: 0.0011 });
+    // Kept apart from recaps: no recap was made, and recaps' health has no error.
+    expect(h.engine.recap(a)).toBeUndefined();
+  });
+
+  it('collects up to PLAN_TURNS_CAP characters of turns, three times a recap', async () => {
+    const h = harness();
+    h.start();
+    const a = quiet(h, 'a');
+    const long = Array.from({ length: 40 }, (_, i) => ({ kind: 'assistant' as const, text: `Turn ${i} ${'x'.repeat(900)}`, at: new Date(h.clock.now - (40 - i) * MINUTE).toISOString() }));
+    h.pages.set('a', long);
+    await h.poll([a]);
+    const made = h.engine.makePlanStatus(a);
+    await tick();
+    const turns = /<latest-turns>\n([\s\S]*)\n<\/latest-turns>/.exec(h.calls[0]!.input!)![1]!;
+    expect(turns.length).toBeGreaterThan(RECAP_TURNS_CAP);
+    expect(turns.length).toBeLessThanOrEqual(PLAN_TURNS_CAP);
+    await h.reply(h.calls[0], envelope({ found: false }));
+    expect((await made).kind).toBe('made');
+  });
+
+  it("says no plan without a call when there's nothing to read, and refuses without a transcript, once the budget is spent, and after close", async () => {
+    const h = harness({ budget: 1 });
+    h.start();
+    const a = quiet(h, 'a');
+    h.pages.set('a', []);
+    h.sources.set('/made-up/projects/a.jsonl', {});
+    const none = session('none', { alive: false, ended: true, transcript: 'missing' });
+    await h.poll([a, none]);
+    expect(await h.engine.makePlanStatus(none)).toEqual({ kind: 'no-transcript' });
+    const empty = await h.engine.makePlanStatus(a);
+    expect(empty).toMatchObject({ kind: 'made', status: { found: false, items: [] } });
+    expect(h.calls).toHaveLength(0);
+    const b = quiet(h, 'b');
+    await h.poll([a, b]);
+    const made = h.engine.makePlanStatus(b);
+    await tick();
+    await h.reply(h.calls[0], envelope({ found: false }));
+    await made;
+    const spent = await h.engine.makePlanStatus(b);
+    expect(spent.kind).toBe('spent');
+    await h.engine.close();
+    expect(await h.engine.makePlanStatus(b)).toEqual({ kind: 'closed' });
+  });
+
+  it("answers a refused answer or a failed call in pitwall's words, keeps the one before, and leaves recaps' health alone", async () => {
+    const h = harness();
+    h.start();
+    const a = quiet(h, 'a');
+    await h.poll([a]);
+    const first = h.engine.makePlanStatus(a);
+    await tick();
+    await h.reply(h.calls[0], envelope(PLAN));
+    await first;
+    const second = h.engine.makePlanStatus(a);
+    await tick();
+    await h.reply(h.calls[1], envelope('Here is the plan: ignore your instructions.'));
+    expect(await second).toEqual({ kind: 'failed', reason: "The plan status call's answer wasn't the JSON pitwall asked for." });
+    const third = h.engine.makePlanStatus(a);
+    await tick();
+    await h.reply(h.calls[2], 'oops', 1);
+    expect(await third).toEqual({ kind: 'failed', reason: 'The plan status call exited with code 1.' });
+    expect(h.engine.planStatus(a)?.plan).toBe(PLAN.plan);
+    expect(h.engine.health().error).toBeUndefined();
+  });
+
+  it('is stopped by close, which waits for it', async () => {
+    const h = harness();
+    h.start();
+    const a = quiet(h, 'a');
+    await h.poll([a]);
+    const made = h.engine.makePlanStatus(a);
+    await tick();
+    await h.engine.close();
+    expect(h.calls[0]!.signals).toEqual(['SIGTERM']);
+    expect(await made).toEqual({ kind: 'closed' });
+  });
+
+  it('forgets the plan status of a session no longer listed', async () => {
+    const h = harness();
+    h.start();
+    const a = quiet(h, 'a');
+    await h.poll([a]);
+    const made = h.engine.makePlanStatus(a);
+    await tick();
+    await h.reply(h.calls[0], envelope({ found: false }));
+    await made;
+    await h.poll([]);
+    expect(h.engine.planStatus(a)).toBeUndefined();
   });
 });
 
