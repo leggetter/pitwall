@@ -270,7 +270,10 @@ export function registerWork(app: Hono, store: WorkStore, checkDir: (dir: string
     c.header('Cache-Control', 'no-store');
     const asked = c.req.query('dir');
     const dir = asked === undefined || asked === '' ? undefined : await checkDir(asked);
-    return c.json(await store.describe(dir));
+    const described = await store.describe(dir);
+    // `claude.dir` is the directory as asked, so the page can tell its answer from an earlier one's.
+    if (dir !== undefined && asked !== undefined && described.claude !== undefined) return c.json({ ...described, claude: { ...described.claude, dir: asked } });
+    return c.json(described);
   });
   app.post(
     WORK_PATH,
