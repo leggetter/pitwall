@@ -606,6 +606,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `not-needed` / `not-needed-on` | snooze / snooze at fill 1 | A session's [Not needed now](#not-needed-now) toggle, off and on (W88), as the star's two states are, and the actions menu's Mark not needed now. Snooze is "not now"; it comes back by itself |
 | `undo` | undo | The actions menu's Put back in Needs you (W88), which undoes Mark not needed now |
 | `subagents` | account_tree | The session view's [Sub-agents tab](#sub-agents) (W77): a session and the sub-agents it started, some started by another. A hierarchy is what it means here, where it read wrongly for a repo |
+| `supervisor` | support_agent | The repo list's [Supervisor item](#supervisor) and its view's heading (W114): a headset, the pit wall's race engineer on the radio to every car |
 | `attach` | attach_file | New session's Attach files, and its drop target (W82; see [Dialogs](#dialogs)) |
 | `image` / `pdf` / `file` | image / picture_as_pdf / description | The type of a file in New session's list (W82): an image that has no thumbnail yet, a PDF, and text |
 | `theme-system` / `theme-light` / `theme-dark` | computer / light_mode / dark_mode | The theme switch |
@@ -723,10 +724,11 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
 - **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of the views, an `<hr>` divider, then a `<ul>` of [repo list items](#repo-list-items) for each root's groups, then, while any group is hidden, another `<hr>` and the [Hidden section](#hidden-groups).
   - With two or more roots, it's the open [root tab](#root-tabs)'s: that root's groups and hidden groups alone, under no heading, since the tab names the root.
 - **Contents, top to bottom:**
-  1. The views: "Needs you", every session that needs you under the root (the open tab's, with several), except those marked [not needed now](#not-needed-now) (W88), "All sessions", "Starred", the [starred sessions](#starred-sessions) under the root (W53), and, once the server has sent a list and unless pull requests are off, "Pull requests", every row with an open PR under the root, with how many need you through one (W95, W106, see [Pull requests](#pull-requests)).
-  2. A 1 px `--pw-border` divider, 8 px above and below.
-  3. Every group: a git repo, or a directory that isn't in one, and, for pull requests no session owns, a cloned repo with no session listed, or a repo that isn't cloned (W106).
-  4. While any group is hidden, the same divider, then the [Hidden section](#hidden-groups): "Hidden (*n*)", collapsed by default, listing the hidden groups.
+  1. While pitwall runs a supervisor, the [Supervisor](#supervisor) item, first, in every root tab (M5, W114).
+  2. The views: "Needs you", every session that needs you under the root (the open tab's, with several), except those marked [not needed now](#not-needed-now) (W88), "All sessions", "Starred", the [starred sessions](#starred-sessions) under the root (W53), and, once the server has sent a list and unless pull requests are off, "Pull requests", every row with an open PR under the root, with how many need you through one (W95, W106, see [Pull requests](#pull-requests)).
+  3. A 1 px `--pw-border` divider, 8 px above and below.
+  4. Every group: a git repo, or a directory that isn't in one, and, for pull requests no session owns, a cloned repo with no session listed, or a repo that isn't cloned (W106).
+  5. While any group is hidden, the same divider, then the [Hidden section](#hidden-groups): "Hidden (*n*)", collapsed by default, listing the hidden groups.
 - **Starred** (Phil, 2026-10-22, W53: "it would be good to be able to pin or star sessions. they then live under a pinned/starred group. Then you can easily switch between those you are actively working on."): the sessions starred with the star toggle on their rows or in their views, under the root, wherever they're grouped. See [Starred sessions](#starred-sessions).
   - It's always there, starred or not, so the list never jumps as the first star comes or the last goes, and its empty state says how to star.
 - **Hiding a group** (Phil, 2026-10-21, W35): any group, a git repo or a directory, the root's own included, can be hidden from the list with the session list header's Hide from repo list (see [Session list](#session-list)), and shown again there or from the Hidden section. The views can't be.
@@ -843,6 +845,7 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - Drag to resize, within the widths in [2.12](#212-breakpoints-and-widths). ← and → move it 16 px (← widens the view, since the divider is its left edge), Home and End jump to the minimum and maximum, and a double-click resets to 760 px, or the maximum if that's less.
   - **Without dragging** (WCAG 2.5.7): the actions menu's Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px or the maximum. Each is `aria-disabled` when it can't, with why in its tooltip. They change the same width as the divider, through one store (`createPanelWidthStore()` in `panelWidth.ts`), and are in three columns only.
   - Save the width in `localStorage` as `pitwall.panel-width.v1`: on each key, on a double-click, on each of the menu's width items, and when a drag ends. A value that isn't a whole number of px from 560 up reads as 760.
+- **The supervisor's view** (M5, W114) takes it too, from `?supervisor`: see [Supervisor](#supervisor).
 - **A pull request's view** (W95) takes the session view's place, frame and layout, from `?pr=`: the third column shows one thing, a session or a PR, and opening either takes the other's place in one history entry. With Pull requests selected and nothing open, the column says "Select a session or pull request" (W106). See [Pull requests](#pull-requests).
 - **The open session is in the URL:** `?session=<sessionId>`, after the selection.
   - Opening a session pushes a history entry, and opening the one that's open adds none; moving with ↑/↓ replaces it; closing pushes one without the parameter.
@@ -855,7 +858,7 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
 
 ### App strip and page alerts
 
-- **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert, a line for each: the relay is off until restart, which the snapshot's `relayOff` says, and recaps aren't being made, the day's budget spent or the latest call failed, which its `recaps` says (W111). See [Alerts and banners](#alerts-and-banners).
+- **App strip:** a 32 px strip above the header for a state that affects the whole app and outlasts a dismissed alert, a line for each: the relay is off until restart, which the snapshot's `relayOff` says, and recaps aren't being made, the day's budget spent or the latest call failed, which its `recaps` says (W111), and the supervisor can't run, held or failed, which its `supervisor` says, with Open (W114). See [Alerts and banners](#alerts-and-banners).
   - Below 1,200 px the session view over the list starts below the header, which is below the strip, so both show in every layout.
 - **Page alerts:** inline alerts at the top of the session list column, above its header, full column width: the poll failed, a server error, the relay alert and "Lost the connection". "Started *name*" is a [toast](#toasts).
 
@@ -1587,6 +1590,75 @@ A session's recap (M5, W111; spike 010): why it was started, where it is now, an
 - **Content:** every text from the recap is plain text (`plainText()`), in `<bdi>`, since it names files, PRs and people; never markdown or HTML. pitwall's own words (the labels, the notes, the toasts) are fixed.
 - **Accessibility:** a region named by its `<h3>`, the disclosure pattern with `aria-expanded` and `aria-controls`, and no live region, so a snapshot that changes the recap announces nothing; Refresh's results are toasts, which are. The badges aren't focusable, so the stale hint is on hover only, and "May be out of date" says it in text.
 
+### Supervisor
+
+pitwall's supervisor (M5, W113, W114; D4): one headless Claude Code session pitwall runs, which knows every session from its recap and drafts messages and new sessions for you to send. Phil, 2026-10-29: "the point is to create a customized workflow that isn't just typing into a terminal and having a specialized UI". Its panel is a repo list item and a view in the third column, never a terminal.
+
+- **Components:** `SupervisorView`, `ApprovalCards` and `SupervisorBox` (`web/src/components/`), with the rules in `web/src/supervisor.ts` and the styles in `web/src/supervisor.css`. The snapshot's `supervisor` (`SupervisorState`) is read defensively (`asSupervisorState()`): a state that isn't one is no supervisor, and an approval that isn't well formed is left out.
+- **Never started by the page:** opening the view, from the item, a URL, the back button or a reload, starts nothing. Only Start and a message do, each a click.
+
+#### The repo list's item
+
+- **Where:** first in the repo list, above Needs you, in every [root tab](#root-tabs), while pitwall runs a supervisor; none with `--no-supervisor`. It's in the list's one Tab stop, as the views are.
+- **What:** a link to its view, `?supervisor` after the selection, with the `supervisor` icon (a headset) and "Supervisor". The page opens it with no reload. It isn't a selection: it's marked current while its view is open, `aria-current="true"` and `aria-controls="supervisor-view"`, as an open session's row is, with the selected look.
+- **Its status,** after its name, while it works, starts, is held or has failed: a badge, "Working" subtle info with its dot (and Starting the same, with a dot rather than a spinner, so nothing in the list moves), "Held" subtle warning, "Failed" subtle danger; nothing while it's idle or off. The badge is `aria-hidden`, and the link's name says it once, "Supervisor, working".
+- **Its drafts,** last, while any wait on you: their count, solid warning, as Needs you's is, "2 drafts need you" to a screen reader.
+
+#### Needs you and the page title
+
+- **Each draft counts** in Needs you's badge, in every root tab, and in the page title, as the contract says (`SupervisorState.approvals`). Not in the root tabs' own badges: the item, in every tab, already has them in sight.
+- **Needs you says where they are:** while drafts wait, a warning [inline alert](#alerts-and-banners) over its rows, "The supervisor has 2 drafts waiting for you. Send, edit or don't send each one, in the supervisor's view.", with outline sm "Open the supervisor" (`supervisor` icon). No role: it's there while they are. With no row needing you, the empty state's title is "Nothing else needs you right now".
+
+#### Its view
+
+- **Place:** the third column, in a session view's or a PR view's place and frame (`Frame`, id `supervisor-view`), as `?supervisor`: opening it drops `?session=` and `?pr=`, and opening either drops it, each one pushed history entry, so the back button goes between them. Each [root tab](#root-tabs) keeps it as part of its place. Below 1,200 px it lies over the list as a session's does, and at 600 px and narrower it's full width, with Back.
+- **Focus:** opened from the item, the app strip's Open or Needs you's notice, its heading takes focus; from a URL or the back button, none. Close, Back or Escape gives focus back to the item, or the session list's heading where the repo list is a drawer that's shut. Escape does nothing while the message box has a draft.
+- **Header:** the `supervisor` icon and "Supervisor" as its `<h2>`; then its status badge, this run's cost, "$0.04 this run" (or "Under $0.01 this run"), with an info button saying what it counts (API list prices; on a subscription, the plan's usage), and "Last turn 4m ago".
+
+| Status | Badge | The header and the view |
+|---|---|---|
+| `off` | "Off", outline | primary sm Start at the end of the meta line, and "It isn't running. Start it, or send it a message, which starts it." |
+| `starting` | "Starting", subtle info with the spinner | the working line says "Starting the supervisor", with no time |
+| `idle` | "Idle", subtle neutral | |
+| `working` | "Working", subtle info with its dot | the working line, and Stop beside Send |
+| `held` | "Held", subtle warning | a warning alert, "A background session has its conversation", with the error in pitwall's words, the `claude stop` command it names as a [command chip](#copy) to copy ("Copy the stop command"), and outline sm Start, for once you've run it. pitwall never stops your session (D2). Send is off, saying why |
+| `failed` | "Failed", subtle danger | a danger alert with the error, and outline sm Start |
+| `--no-supervisor` | | no item; a `?supervisor` URL shows an [empty state](#empty-states), "The supervisor is off" |
+
+- **Start:** POSTs `SUPERVISOR_START_PATH`; busy, "Starting…", until the snapshot says it's starting, or 30 s; a refusal is a danger alert with `role="alert"`, "Couldn't start the supervisor." and pitwall's reason, as the 409 a held one gets.
+- **Its conversation:** the session view's [conversation](#conversation), from `supervisorConversationPath()`, as a region named "Conversation": markdown as pitwall's own elements (D15), folded tool calls, Load earlier and Jump to latest. Fetched again when its status or last turn changes, after a message is taken, and every 2 s while it works or starts, a transcript or not. The [working line](#conversation) (W102) comes from the snapshot's status, which pitwall has from the process it runs, not from the transcript's mark of a turn's end.
+- **A new conversation,** with nothing in it yet (a 404, or no entries): an empty state in the body, the `supervisor` icon, "Ask the supervisor about your sessions", one sentence on what it does and that it sends nothing until you say so, then "Put a question in the message box:" and three outline sm questions, "Which sessions need me, and why?", "What's running, in a sentence each?" and "What should I work on next?". Each fills the box, with focus there; none sends. Not while it starts or works, when the working line is there instead.
+
+#### Draft cards
+
+What it wants to do that waits on your click (W115 builds the server side; until then the real server has none, and the app check's fake server and the gallery show them).
+
+- **Region:** between the conversation and the message box, a `<section>` named by its `<h3>`, "Drafts for you (2)", on the footer's muted band, at most 40% of the view, its list scrolling under the heading past that (a Tab stop while it does, `ScrollBox`). Oldest first, as the snapshot has them.
+- **A card:** an `<li>` named by its `<h4>`, on `--pw-surface`, `--pw-radius-md`, a 1 px `--pw-border` edge and the needs-you bar a row has, `inset 3px 0 0 var(--pw-state-attention-bar)`.
+  - **Its heading** says what it would do, as text: "Message to *session*", or "New session in *directory*, named *name*", the directory with home as `~` and the whole path in a tooltip.
+  - **Then,** meta: "Drafted 5m ago · Not sent unless you answer by 10:00", when it's declined by itself (`expiresAt`, as a time of day, so nothing ticks); a new session's card adds "Starts a background session there with claude --bg, its first prompt as below."
+  - **Its text,** labelled "Message" or "First prompt": the model's, so plain text in `<bdi>`, line breaks kept, never markdown or HTML, eight lines then it scrolls (four on short windows).
+  - **Actions,** sm: primary Send (`send`), outline Edit, ghost Don't send.
+- **Deciding:** each POSTs a `SupervisorDecision` to `supervisorApprovalPath()`. The pressed button is busy, "Sending…" or "Declining…", and the others are off, until the snapshot drops the card, since that's when pitwall has acted; after 30 s with the card still there, it can be answered again, with a note to check the conversation first. A 404 is a neutral alert, "It's no longer waiting: it was answered in another tab, withdrawn, or ran out of time."; any other failure a danger alert in pitwall's words, "Couldn't send it (HTTP 500). If this card is still here, try again.", or with the server's reason.
+- **Edit:** the text in place, in a text box labelled "Edit the message" or "Edit the first prompt", three to eight lines, its count from 80% of `SUPERVISOR_MESSAGE_MAX` (20,000); primary Send edit, which sends `{ decision: 'edit', text }`, and ghost Cancel. ⌘/Ctrl + Enter sends the edit; Escape cancels it, not the view. Send edit is off while it's empty or over the limit, saying why.
+- **Focus:** Edit puts it in the editor, and Cancel or Escape back on Edit. A card that goes with focus in it hands focus to the next card's heading, or the one before's, or, with none left, the message box.
+- **Announcements:** none for a snapshot that adds or drops a card; the decisions' failures are `role="alert"`.
+
+#### Its message box
+
+The session view's [message box](#message-box) in look and keys, "Message the supervisor" to a screen reader, its text box "Message to the supervisor".
+
+- **Send** POSTs `{ text }` to `SUPERVISOR_MESSAGE_PATH`, as you; one sent while it's off starts it. While a turn runs it waits for that turn, and the box says so, a neutral alert, "Queued: it reads this when its current turn ends."; otherwise a visually hidden "Sent to the supervisor." and nothing on screen, since the message shows in the conversation.
+- **Not sent:** pitwall's own refusal, with its reason, whatever the status, "Not sent: …": the 409 while it's held, the 413 over the limit, the 429 with messages already waiting, and the 502 and 503 when it couldn't start or pitwall is closing, since nothing was written then (`src/server/supervisorRoutes.ts`). With no answer, a server error without a reason, or a success it can't read, the uncertain wording and tone (D13): "… so it may have reached the supervisor. Check its conversation before sending again." The draft stays.
+- **Stop,** outline md (`stop`), beside Send while it works, POSTs `SUPERVISOR_INTERRUPT_PATH`: busy, "Stopping…", until the snapshot says the turn has stopped, or 15 s. A 409, no turn running, counts as done: it ended as you pressed it. When Stop goes with focus on it, the text box takes it.
+- **Its draft** is kept in the tab's `sessionStorage` as `pitwall.draft.v1:supervisor`, as a session's is (W44, D14), with the same warning after a reload for a send pitwall never heard the end of.
+- **Its limit:** `SUPERVISOR_MESSAGE_MAX`, 20,000 characters; the count from 80%.
+- **Its note,** behind the info button: "Starts a turn on the supervisor's model, Opus 5.5, which counts against your plan's usage. It reads your sessions' recaps, and a session's conversation when you ask about it, and sends or starts nothing without your click."
+
+#### The app strip
+
+While it's held or has failed, a line of the [app strip](#app-strip-and-page-alerts): "The supervisor can't run: *error*" or "The supervisor stopped: *error*", with Open, which opens its view, where the command and Start are.
+
 ### Message box
 
 The composer in the session view's footer, for interactive sessions. Messages go through pitwall's relay.
@@ -2114,6 +2186,8 @@ The header's dialog of settings, a section for each area they affect (W59; Phil,
 | The Pull requests view's states (W95, W106) | | | See [Pull requests](#pull-requests), States | |
 | The session view, unlisted (see [Session view](#session-view)) | `info` | "This session isn't listed under these roots", the view's heading | "pitwall lists no session with the id `<id>` under *roots*; it may have been removed, or run outside these roots." | none; Close is in the header |
 | Conversation, nothing yet | | | "Nothing to show yet." (status line) | none |
+| The supervisor's conversation, nothing yet (W114) | `supervisor` | "Ask the supervisor about your sessions" | "It knows every session pitwall lists, from their recaps, and reads a session's conversation when you ask about it. It drafts messages and new sessions, and sends nothing until you say so." | three outline sm questions, which fill the message box: see [Supervisor](#supervisor) |
+| `?supervisor` with `--no-supervisor` (W114) | `supervisor` | "The supervisor is off", the view's heading | "pitwall was started with `--no-supervisor`, so it runs none. Start pitwall without it to talk to one here." | none; Close is in the header |
 | Sub-agents, none (W77), for a tab shown while its list came back empty | `subagents` | "No sub-agents" | "Sub-agents this session starts show here, with their state and transcripts." | none |
 | A sub-agent's transcript, none | | | "No transcript for this sub-agent." (status line) | none |
 | No transcript | | | "No transcript for this session." (status line) | none |
@@ -2250,7 +2324,7 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 
 ### Labels
 
-- **Buttons:** a verb, or a verb and object: "Refresh", "Show 2 older pull requests" and "Hide older pull requests", "Clear filter", "Back to pull requests" (W95), "New session", "Start session", "Send", "Stop session", "Remove session", "Restart and attach", "Attach again", "Detach", "Copy", "Dismiss", "Try again", "Clear filters", "Load earlier", "Jump to latest", "Resume in background", "Copy command", "Show 3 older sessions" and "Hide older sessions" (W67), "Back to sub-agents" (W77), "Attach files" (W82), "Mark not needed now", "Put back in Needs you" and "Undo" (W88), "End session" and "End session anyway" (W90).
+- **Buttons:** a verb, or a verb and object: "Refresh", "Show 2 older pull requests" and "Hide older pull requests", "Clear filter", "Back to pull requests" (W95), "New session", "Start session", "Send", "Stop session", "Remove session", "Restart and attach", "Attach again", "Detach", "Copy", "Dismiss", "Try again", "Clear filters", "Load earlier", "Jump to latest", "Resume in background", "Copy command", "Show 3 older sessions" and "Hide older sessions" (W67), "Back to sub-agents" (W77), "Attach files" (W82), "Mark not needed now", "Put back in Needs you" and "Undo" (W88), "End session" and "End session anyway" (W90), "Start", "Stop", "Send edit", "Don't send" and "Open the supervisor" (W114).
 - **Cancel** is always "Cancel".
 - **Confirmations:** the confirm button repeats the question's verb and object: "Stop this session?" → "Stop session".
 - **Progress:** the -ing form with an ellipsis: "Starting…", "Sending…", "Stopping…", "Removing…", "Resuming…", "Attaching…", "Uploading…" (W82), "Loading the conversation…", "Loading the sub-agents…", "Loading earlier…", "Trying again…".
@@ -2366,7 +2440,7 @@ Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They'
 | ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself, or the PR view's | Show the next / previous row, a session or a PR (W95, W106), with focus on its view's heading. Nothing while the message box has a draft or a Stop, Remove or resume runs |
 | Enter | On a session row or a PR row | Open the session, or the PR (W95) |
 | ↓ / ↑, Home / End, Enter | The repo list | Move between items, jump to the ends, select |
-| Escape | Layered, nearest first | Close a tooltip, a menu or a combobox's list (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, the restart before attaching, or a link's question while focus is in it) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → close the session view, or the PR view (W95). Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
+| Escape | Layered, nearest first | Close a tooltip, a menu or a combobox's list (a menu item's tooltip closes with its menu) → cancel a confirmation (Stop, Remove, the restart before attaching, or a link's question while focus is in it) → close a dialog or the repo drawer → clear the filter (when focused and not empty) → cancel an edit of a supervisor's draft card, while focus is in it (W114) → close the session view, the PR view (W95) or the supervisor's view (W114). Never inside the terminal; never discards a draft in the message box; does nothing while a confirmation's action runs |
 | ⌘/Ctrl + Enter | The message box | Send |
 | ⌘/Ctrl + Enter | The New session dialog | Start the session |
 | ← / →, Home / End | The root tabs, with two or more roots | Move focus between the roots' tabs; Enter or Space opens the focused tab, with its own selection and open session |
