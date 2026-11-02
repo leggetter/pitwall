@@ -9,7 +9,8 @@
 //   failed, the error, with Start.
 // - The conversation: the session view's (Conversation.tsx), from supervisorConversationPath(), with
 //   Load earlier, Jump to latest, markdown as pitwall's own elements (D15) and the working line (W102)
-//   while it works, from the snapshot's status. A new conversation has an empty state: what the
+//   while it works, from the snapshot's status. A session or PR its replies name opens it (W125,
+//   mentions.ts), as its row does. A new conversation has an empty state: what the
 //   supervisor is for, and questions that fill the message box.
 // - What it sent and started in this run, each session with its state, Needs you's notice and
 //   "Open <name> →" (SupervisorHandoffs.tsx, W124), from the snapshot alone.
@@ -21,7 +22,9 @@
 // conversation and the box announce, so a snapshot that changes its status announces nothing.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { SessionSummary, SupervisorState } from '../../../src/shared/protocol.js';
+import type { PullRequestSummary, SessionSummary, SupervisorState } from '../../../src/shared/protocol.js';
+import { createMentions, type MentionTarget } from '../mentions.js';
+import { needsAttention } from '../sessions.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { ApiContext } from '../api.js';
 import { getSupervisorConversation } from '../conversation.js';
@@ -49,6 +52,7 @@ import { CopyCommand } from './CopyCommand.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
+import { MentionsContext, type MentionsValue } from './Markdown.js';
 import { Frame, Top, type SessionViewLayout } from './SessionView.js';
 import { SupervisorBox } from './SupervisorBox.js';
 import { SupervisorHandoffs } from './SupervisorHandoffs.js';
@@ -94,10 +98,15 @@ export interface SupervisorViewProps {
   notNeeded?: NotNeeded | undefined;
   /** Opens a session's view in this one's place, as its row in the list does (W124). */
   onOpenSession?: ((sessionId: string) => void) | undefined;
+  /** Your open PRs, as pitwall lists them, which a reply can name as owner/name#123 (W125). */
+  prs?: readonly PullRequestSummary[] | undefined;
+  /** Opens a PR's view by its key (prKey()), as its row does. */
+  onOpenPr?: ((key: string) => void) | undefined;
 }
 
-export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], notNeeded, onOpenSession }: SupervisorViewProps) {
+export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], notNeeded, onOpenSession, prs, onOpenPr }: SupervisorViewProps) {
   const api = useContext(ApiContext);
+  const mentions = useReplyMentions(sessions, notNeeded, onOpenSession, prs, onOpenPr);
   const ids = { title: useId(), conversation: useId(), panel: useId(), suggest: useId() };
   const ownHeading = useRef<HTMLHeadingElement>(null);
   const heading = headingRef ?? ownHeading;
@@ -297,16 +306,18 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
       <h3 className="visually-hidden" id={ids.conversation}>
         Conversation
       </h3>
-      <ConversationPanel
-        conversation={conversation}
-        id={ids.panel}
-        labelledBy={ids.conversation}
-        hidden={false}
-        role="region"
-        working={working}
-        workingReady={conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
-        empty={empty}
-      />
+      <MentionsContext.Provider value={mentions}>
+        <ConversationPanel
+          conversation={conversation}
+          id={ids.panel}
+          labelledBy={ids.conversation}
+          hidden={false}
+          role="region"
+          working={working}
+          workingReady={conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
+          empty={empty}
+        />
+      </MentionsContext.Provider>
 
       <SupervisorHandoffs handoffs={state.handoffs} sessions={sessions} notNeeded={notNeeded} onOpenSession={onOpenSession} />
 
@@ -317,6 +328,42 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
       </footer>
     </Frame>
   );
+}
+
+/**
+ * What the replies can name (W125, mentions.ts): the sessions and PRs pitwall lists, rebuilt only when
+ * what a mention depends on changes, so a snapshot that changes nothing else draws no reply again.
+ * None without a way to open them.
+ */
+function useReplyMentions(
+  sessions: readonly SessionSummary[],
+  notNeeded: NotNeeded | undefined,
+  onOpenSession: ((sessionId: string) => void) | undefined,
+  prs: readonly PullRequestSummary[] | undefined,
+  onOpenPr: ((key: string) => void) | undefined,
+): MentionsValue | undefined {
+  const opens = useRef({ onOpenSession, onOpenPr });
+  opens.current = { onOpenSession, onOpenPr };
+  const linkSessions = onOpenSession !== undefined;
+  const linkPrs = onOpenPr !== undefined;
+  const signature = JSON.stringify([
+    linkSessions ? sessions.map((session) => [session.sessionId, session.name, session.shortId ?? '', session.alive, session.ended === true, needsAttention(session, notNeeded)]) : [],
+    linkPrs ? (prs ?? []).map((pr) => [pr.repo, pr.number, pr.repoLabel]) : [],
+  ]);
+  const inputs = useRef({ sessions, notNeeded, prs });
+  inputs.current = { sessions, notNeeded, prs };
+  return useMemo(() => {
+    if (!linkSessions && !linkPrs) return undefined;
+    const { sessions: all, notNeeded: marks, prs: list } = inputs.current;
+    return {
+      mentions: createMentions(linkSessions ? all : [], linkPrs ? (list ?? []) : [], marks),
+      open: (target: MentionTarget) => {
+        if (target.kind === 'session') opens.current.onOpenSession?.(target.sessionId);
+        else opens.current.onOpenPr?.(target.key);
+      },
+    };
+    // The signature is what the mentions depend on.
+  }, [signature, linkSessions, linkPrs]);
 }
 
 export interface SupervisorOffViewProps {

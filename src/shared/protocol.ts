@@ -1480,8 +1480,21 @@ export const PRS_MAX = 200;
 /** The most PRs a list holds: PRS_MAX from each of the searches (PR_RELATIONS). */
 export const PRS_LIST_MAX = PRS_MAX * PR_RELATIONS.length;
 
-/** The web UI lists PRs updated in this many days, and the rest behind Show older. */
+/**
+ * The web UI lists PRs updated in this many days, and the rest behind Show older. A PR no session owns
+ * that's older than this never needs you, in the UI or in the supervisor's list_prs (W125).
+ */
 export const PRS_SHOWN_DAYS = 90;
+
+/**
+ * Whether a PR was last updated more than PRS_SHOWN_DAYS before `now`, in ms: the web UI lists such a
+ * PR, when no session owns it, behind Show older, and list_prs marks it older (W125). A `now` or an
+ * updatedAt that isn't a time makes none older.
+ */
+export function prIsOlder(pr: Pick<PullRequestSummary, 'updatedAt'>, now: number): boolean {
+  const updated = Date.parse(pr.updatedAt);
+  return !Number.isNaN(updated) && updated < now - PRS_SHOWN_DAYS * 24 * 60 * 60 * 1000;
+}
 
 /** The longest PR title kept, in characters. */
 export const PR_TITLE_MAX = 300;

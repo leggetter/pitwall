@@ -19,6 +19,7 @@ import {
   PR_TITLE_MAX,
   prLinkIsStrong,
   prLinkMatches,
+  prIsOlder,
   prNeedsAttention,
   PRS_LIST_MAX,
   PRS_SHOWN_DAYS,
@@ -266,8 +267,6 @@ export function prsOff(list: PullRequestList | undefined): boolean {
   return list?.source.ok === false && list.source.reason === 'off';
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 /**
  * "Now" for the 90-day window: the list's own fetchedAt, so what's hidden changes only with a fetch, as
  * the ended sessions' window follows the snapshot's time. Date.now() before the first fetch.
@@ -279,8 +278,7 @@ export function listNow(list: PullRequestList | undefined, fallback = Date.now()
 
 /** A PR last updated more than PRS_SHOWN_DAYS before `now`: listed behind Show older. A `now` that isn't a time hides nothing. */
 export function isOlderPr(pr: Pick<PullRequestSummary, 'updatedAt'>, now: number): boolean {
-  const updated = Date.parse(pr.updatedAt);
-  return !Number.isNaN(updated) && updated < now - PRS_SHOWN_DAYS * DAY_MS;
+  return prIsOlder(pr, now);
 }
 
 /**

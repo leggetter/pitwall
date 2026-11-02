@@ -264,6 +264,24 @@ describe('the supervisor’s view', () => {
     expect(conversation.querySelector('strong')?.textContent).toBe('pitwall-test-alpha');
     expect(viewOf().queryByText(SUPERVISOR_EMPTY.title)).toBeNull();
   });
+
+  it('a session its reply names opens it, as its row does (W125)', async () => {
+    const fetch = fakeServer({
+      page: {
+        sessionId: 'sup-1',
+        entries: [{ kind: 'assistant', text: '**pitwall-test-alpha** waits on a prompt; `pitwall-test-beta` is idle.', markdown: true, at: minutesAgo(2) }],
+      },
+    });
+    renderDashboard(snap({ status: 'idle', sessionId: 'sup-1', approvals: [], lastTurnAt: minutesAgo(2) }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const conversation = viewOf().getByRole('region', { name: 'Conversation' });
+    const mentions = within(conversation).getAllByRole('button', { name: /^Open session / });
+    expect(mentions.map((button) => button.getAttribute('aria-label'))).toEqual(['Open session pitwall-test-alpha']);
+    fireEvent.click(mentions[0]!);
+    await settle();
+    expect(view()).toBeUndefined();
+    expect(document.getElementById('session-view')?.querySelector('h2')?.textContent).toContain('pitwall-test-alpha');
+  });
 });
 
 describe('its states', () => {

@@ -9,7 +9,9 @@ import { ClipboardContext, COPIED, COPY_FAILED, type ClipboardLike } from '../co
 import { toastMessages, toastSaying } from '../test/toasts.js';
 import { descriptionOf, hover, pass, shownTooltips, tooltipText, unhover } from '../test/tooltips.js';
 import { MAX_ELEMENTS } from '../markdown.js';
-import { AS_WRITTEN, LINK_CONSEQUENCE, linkQuestion, Markdown, OPEN_LINK } from './Markdown.js';
+import { createMentions } from '../mentions.js';
+import { pr, session } from '../test/fixtures.js';
+import { AS_WRITTEN, LINK_CONSEQUENCE, linkQuestion, Markdown, MentionsContext, OPEN_LINK, type MentionsValue } from './Markdown.js';
 import { ToastProvider } from './Toast.js';
 
 function renderMarkdown(text: string, clipboard: ClipboardLike = { writeText: vi.fn(async () => {}) }) {
@@ -734,5 +736,60 @@ describe("Markdown: links that ask first (W55, W48's F6)", () => {
     expect(root.querySelector('a')).toBeNull();
     expect(root.querySelector('p')!.textContent).toBe(written.replace(/`/g, ''));
     expect(root.querySelector('pre code')!.textContent).toBe(`gh pr view ${userinfo}`);
+  });
+});
+
+describe('Markdown: mentions in the supervisor’s replies (W125)', () => {
+  const named = session({ name: 'pr-894' });
+  const generic = session({ name: 'website' });
+  const listed = pr({ number: 51, repoLabel: 'example/demo-app' });
+
+  function renderMentions(text: string) {
+    const open = vi.fn();
+    const value: MentionsValue = { mentions: createMentions([named, generic], [listed]), open };
+    const result = render(
+      <MentionsContext.Provider value={value}>
+        <div className="entry-text entry-markdown">
+          <Markdown text={text} />
+        </div>
+      </MentionsContext.Provider>,
+    );
+    const root = result.container.querySelector<HTMLElement>('.entry-markdown')!;
+    const buttons = () => [...root.querySelectorAll<HTMLButtonElement>('button.md-mention')];
+    return { ...result, root, open, buttons };
+  }
+
+  it('makes a named session a link button that opens it, in bold as written', () => {
+    const { root, open, buttons } = renderMentions('1. **pr-894** (website) needs you to pick A, B or C.');
+    expect(buttons().map((button) => [button.textContent, button.getAttribute('aria-label'), button.type])).toEqual([['pr-894', 'Open session pr-894', 'button']]);
+    expect(buttons()[0]!.parentElement!.tagName).toBe('STRONG');
+    expect(root.querySelector('a')).toBeNull();
+    fireEvent.click(buttons()[0]!);
+    expect(open).toHaveBeenCalledWith({ kind: 'session', sessionId: named.sessionId, name: 'pr-894' });
+  });
+
+  it('links a generic name only when it’s bold on its own', () => {
+    const { buttons } = renderMentions('The website repo: **website** and *the website*.');
+    expect(buttons().map((button) => button.textContent)).toEqual(['website']);
+    expect(buttons()[0]!.parentElement!.tagName).toBe('STRONG');
+  });
+
+  it('never links in code, a code block or a link’s text', () => {
+    const { buttons, root } = renderMentions('`pr-894` and [pr-894](https://example.com/pr-894)\n\n```\npr-894\n```');
+    expect(buttons()).toEqual([]);
+    expect(root.querySelector('code')!.textContent).toBe('pr-894');
+  });
+
+  it('links in lists, quotes, headings and tables, and a PR by owner/name#n', () => {
+    const { buttons, open } = renderMentions('# pr-894\n\n- pr-894\n\n> pr-894\n\n| a |\n| - |\n| pr-894 |\n\nexample/demo-app#51');
+    expect(buttons().map((button) => button.getAttribute('aria-label'))).toEqual([...Array(4).fill('Open session pr-894'), 'Open pull request example/demo-app #51']);
+    fireEvent.click(buttons()[4]!);
+    expect(open).toHaveBeenCalledWith({ kind: 'pr', key: 'example/demo-app/51', name: 'example/demo-app #51' });
+  });
+
+  it('links nothing outside the supervisor’s view, with no context', () => {
+    const { root } = renderMarkdown('**pr-894**');
+    expect(root.querySelector('button')).toBeNull();
+    expect(root.textContent).toBe('pr-894');
   });
 });

@@ -3,7 +3,7 @@
 // view in the third column as ?supervisor, one history entry, in a session's place and back; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
 // reply as markdown; Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
-// goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
+// goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
 // starts nothing; and none with --no-supervisor. Made-up example/* content only.
 
 import { NAMES, SUPERVISOR_APPROVALS } from '../fixtures.js';
@@ -198,6 +198,38 @@ const part: Part = {
       await page.waitFor('Load earlier', `!!${SVIEW}.querySelector('.load-earlier')`);
       await page.click('Load earlier', `${SVIEW}.querySelector('.load-earlier')`);
       await page.waitFor('the older turns', `[...${SVIEW}.querySelectorAll('li.entry-user')].some((li) => li.textContent.includes('Which sessions need me, and why?'))`);
+    });
+
+    await t.step('names in its replies (W125): a session or PR it names is a link button that opens it, never in code', async () => {
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle' });
+      const reply = `[...${SVIEW}.querySelectorAll('li.entry-assistant')].find((li) => li.textContent.includes("I've drafted both"))`;
+      await page.waitFor('the reply that names them', `!!${reply}?.querySelector('button.md-mention')`);
+      const mentions = await page.evaluate<{ label: string | null; text: string | null; parent: string; tab: number }[]>(
+        `[...${reply}.querySelectorAll('button.md-mention')].map((b) => ({ label: b.getAttribute('aria-label'), text: b.textContent, parent: b.parentElement.tagName, tab: b.tabIndex }))`,
+      );
+      t.expectEqual(
+        mentions,
+        [
+          { label: 'Open session pitwall-test-review', text: 'pitwall-test-review', parent: 'STRONG', tab: 0 },
+          { label: 'Open pull request example/demo-app #57', text: 'example/demo-app#57', parent: 'P', tab: 0 },
+        ],
+        'the session, in bold as written, and the PR, each a Tab stop',
+      );
+      t.expectEqual(await page.evaluate(`${reply}.querySelector('code')?.querySelector('button') ?? null`), null, 'nothing in code');
+      // A link's look: the link colour, underlined, the text's own weight, and no chip.
+      const look = await page.evaluate<{ color: string; link: string; underline: string; weight: string; strong: string; background: string; border: string }>(
+        `(() => { const b = ${reply}.querySelector('button.md-mention'); const s = getComputedStyle(b); const probe = document.createElement('span'); probe.style.color = 'var(--pw-link)'; b.parentElement.append(probe); const link = getComputedStyle(probe).color; probe.remove(); return { color: s.color, link, underline: s.textDecorationLine, weight: s.fontWeight, strong: getComputedStyle(b.parentElement).fontWeight, background: s.backgroundColor, border: s.borderTopWidth }; })()`,
+      );
+      t.expectEqual([look.color, look.underline, look.weight, look.background, look.border], [look.link, 'underline', look.strong, 'rgba(0, 0, 0, 0)', '0px'], 'a link’s look, not a button chip');
+      await t.shot('mentions');
+      await page.click('pitwall-test-review', `${reply}.querySelector('button.md-mention')`);
+      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
+      t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), NAMES.asked, 'the session it named');
+      t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
+      await page.evaluate('history.back()');
+      await page.waitFor('back to the supervisor', `!!${reply}?.querySelector('[data-mention="pr"]')`);
+      await page.click('example/demo-app#57', `${reply}.querySelector('[data-mention="pr"]')`);
+      await page.waitFor('its PR view', `!${SVIEW} && new URLSearchParams(location.search).get('pr') === 'example/demo-app/57'`);
     });
 
     await t.step('Stop: while it works, Stop stops its turn, and focus goes to the box', async () => {
