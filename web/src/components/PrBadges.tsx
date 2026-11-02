@@ -23,15 +23,15 @@ export function PrStateBadges({ pr }: { pr: PullRequestSummary }) {
 }
 
 /**
- * The session row's PR badge (W106): "#42", then "+2" when the session owns more open PRs, in subtle
- * danger while the PR it names needs attention, subtle neutral otherwise. Its state, "CI failing", is
+ * The session row's PR badge (W106): "#42", then "+2" when the session owns more open PRs, in its
+ * state's colour (SessionPrBadge.look): red only for failing checks or conflicts. Its state, "CI failing", is
  * in its hidden text and its hover tooltip, and line 2 says it while the PR needs you: on line 1 it
  * cut the session's name beside the status badge in a 440 px list (#109's review). Not a control: the
  * session view's Pull requests tab has each PR.
  */
 export function SessionPrBadgeView({ badge }: { badge: SessionPrBadge }) {
   return (
-    <Badge look={badge.attention ? 'subtle-danger' : 'subtle-neutral'} hint={badge.hint} className="pr-badge">
+    <Badge look={badge.look} hint={badge.hint} className="pr-badge">
       <span className="visually-hidden">Pull request </span>#{badge.pr.number}
       {badge.state !== undefined && <span className="visually-hidden">, {badge.state}</span>}
       {badge.attention && <span className="visually-hidden">, needs attention</span>}

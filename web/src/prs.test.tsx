@@ -393,6 +393,13 @@ describe('sessions and PRs', () => {
     // Another author's failing checks are theirs to fix: no state, no attention.
     expect(sessionPrBadge([pr({ number: 3, relation: 'mentioned', checks: 'failing' })])?.state).toBeUndefined();
     expect(sessionPrBadge([quiet])?.state).toBeUndefined();
+    // Red only for failing checks or conflicts; amber for a review or changes requested; grey otherwise (Phil, 2026-11-02).
+    expect(badge?.look).toBe('subtle-danger');
+    expect(sessionPrBadge([pr({ number: 3, mergeable: 'conflicts' })])?.look).toBe('subtle-danger');
+    expect(sessionPrBadge([pr({ number: 3, review: 'changes-requested' })])?.look).toBe('subtle-warning');
+    expect(sessionPrBadge([pr({ number: 3, relation: 'review-requested', checks: 'failing' })])?.look).toBe('subtle-warning');
+    expect(sessionPrBadge([pr({ number: 3, relation: 'mentioned', checks: 'failing' })])?.look).toBe('subtle-neutral');
+    expect(sessionPrBadge([quiet])?.look).toBe('subtle-neutral');
     expect(badge?.hint.split('\n')).toEqual([
       'example/demo-app #42: A made-up change, number 42 (checks failing)',
       'example/demo-app #7: A made-up change, number 7',

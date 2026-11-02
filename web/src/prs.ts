@@ -464,6 +464,12 @@ export interface SessionPrBadge {
   state?: string;
   more: number;
   attention: boolean;
+  /**
+   * Its colour, from its most urgent highlighted state (Phil, 2026-11-02: red PR numbers "look like
+   * there's an error"): subtle danger for failing checks or conflicts, subtle warning for changes or a
+   * review requested, subtle neutral for one that needs nothing.
+   */
+  look: 'subtle-danger' | 'subtle-warning' | 'subtle-neutral';
   /** Its hover-only tooltip: each PR, by repo and number, its title, and its highlighted states. */
   hint: string;
 }
@@ -481,7 +487,8 @@ export function sessionPrBadge(owned: readonly PullRequestSummary[] | undefined)
   };
   const urgent = prStateBadges(first).find((badge) => badge.attention && prNeedsAttention(first));
   const state = urgent === undefined ? undefined : BADGE_STATES[urgent.state];
-  return { pr: first, ...(state === undefined ? {} : { state }), more: owned.length - 1, attention: prNeedsAttention(first), hint: owned.map(line).join('\n') };
+  const look = urgent?.look === 'subtle-danger' ? 'subtle-danger' : urgent === undefined ? 'subtle-neutral' : 'subtle-warning';
+  return { pr: first, ...(state === undefined ? {} : { state }), more: owned.length - 1, attention: prNeedsAttention(first), look, hint: owned.map(line).join('\n') };
 }
 
 /**
