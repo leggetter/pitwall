@@ -128,6 +128,9 @@ const part: Part = {
       const { sessionId } = server.world.byName(NAMES.asked);
       await page.navigate(`/?view=all&session=${sessionId}`);
       await page.waitFor(`the ${NAMES.asked} view`, `${viewName} === ${q(NAMES.asked)}`, 10_000);
+      // The open view may ask for its sub-agents as the list changes: a 404 for one no longer listed is the
+      // server's right answer, which the page handles (full app check, 2026-11-02, once at 375 light).
+      t.allow(new RegExp(`/api/sessions/${sessionId}/subagents$`), 'the 404 for sub-agents of a session no longer listed, which the view handles');
       server.world.unlist(sessionId);
       server.broadcast();
       await page.waitFor('the view to say it’s no longer listed', `${VIEW}?.textContent.includes('no longer listed')`);

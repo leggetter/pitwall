@@ -327,7 +327,7 @@ const part: Part = {
       // Its view says so too, the PR a link (W128).
       await openFromRow(t, NAMES.asked);
       const need = await page.evaluate<{ text: string; link: string } | null>(`(() => { const p = ${SESSION_VIEW}.querySelector('.session-view-pr-need'); return p ? { text: p.textContent, link: p.querySelector('button.pr-link')?.getAttribute('aria-label') ?? '' } : null; })()`);
-      t.expectEqual(need, { text: 'Needs you for example/event-relay#612: conflicts', link: 'Pull request example/event-relay #612' }, 'its view says why, the PR a link');
+      t.expectEqual(need, { text: 'Needs you for example/event-relay#612: conflicts', link: 'Pull request example/event-relay#612' }, 'its view says why, the PR a link');
       await t.shot('view-pr-need');
       await closeView();
       await page.click(`the toggle on ${NAMES.asked} again`, toggle);
