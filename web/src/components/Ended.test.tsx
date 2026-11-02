@@ -493,7 +493,7 @@ describe('the session view of an ended session', () => {
     renderDashboard();
     await open('demo-ended');
     // The width items too, in three columns.
-    expect(openMenu()).toEqual(['New session from here', '—', 'Copy session ID', 'Copy resume command', '—', 'Make view wider', 'Make view narrower', 'Reset view width', '—', 'Resume in background']);
+    expect(openMenu()).toEqual(['Copy session ID', 'Copy resume command', '—', 'Make view wider', 'Make view narrower', 'Reset view width', '—', 'Resume in background']);
   });
 
   it("says why there's no Copy command for one whose directory's path has a ' or \\, with Resume in background alone (W87)", async () => {
@@ -505,7 +505,7 @@ describe('the session view of an ended session', () => {
     // Its ' and \\ in code style, as literal values are.
     expect([...(note?.querySelectorAll('code') ?? [])].map((code) => code.textContent)).toEqual(["'", '\\']);
     expect([...footer()!.querySelectorAll('.ended-actions button')].map((each) => each.textContent)).toEqual(['Resume in background']);
-    expect(openMenu()).toEqual(['New session from here', '—', 'Copy session ID', '—', 'Make view wider', 'Make view narrower', 'Reset view width', '—', 'Resume in background']);
+    expect(openMenu()).toEqual(['Copy session ID', '—', 'Make view wider', 'Make view narrower', 'Reset view width', '—', 'Resume in background']);
   });
 
   it('says why one whose directory has gone can’t be resumed, with nothing to press', async () => {
@@ -514,7 +514,7 @@ describe('the session view of an ended session', () => {
     expect(footer()?.querySelector('.session-view-note')?.textContent).toBe(ENDED_GONE_NOTE);
     expect(footer()?.querySelector('.ended-actions')).toBeNull();
     expect(view().querySelector('.session-view-missing')?.textContent).toBe('Directory no longer exists');
-    expect(openMenu()).toEqual(['New session from here', '—', 'Copy session ID', '—', 'Make view wider', 'Make view narrower', 'Reset view width']);
+    expect(openMenu()).toEqual(['Copy session ID', '—', 'Make view wider', 'Make view narrower', 'Reset view width']);
     expect(posts(fetch)).toEqual([]);
   });
 

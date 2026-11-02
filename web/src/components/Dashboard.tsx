@@ -137,7 +137,6 @@ import type { ConnectionView } from '../connection.js';
 import { focusGesture, type FocusGesture } from '../focusGesture.js';
 import { useTerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
-import { draftText, type FromSession } from '../fromSession.js';
 import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } from '../groupBy.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
@@ -186,7 +185,7 @@ import {
 import { useSort } from '../sort.js';
 import { isTyping, shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
 import { useStarred } from '../starred.js';
-import { useOpenWhenListed } from '../spawn.js';
+import { newSessionDirectory, useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import { AppStrips } from './AppStrip.js';
 import { Button } from './Button.js';
@@ -325,13 +324,6 @@ type PrStart = { pr: PullRequestSummary; step: 'clone' } | { pr: PullRequestSumm
 const prSubtitle = (pr: PullRequestSummary) => (
   <>
     Starts a background session for <bdi>{plainText(prName(pr))}</bdi> with <code>claude --bg</code>. Its prompt names the pull request, so the session owns it until another acts on it.
-  </>
-);
-
-/** New session's subtitle from a session (W118): which one's directory it opens in. */
-const fromSessionSubtitle = (name: string) => (
-  <>
-    Starts a background session with <code>claude --bg</code> in <bdi>{plainText(name)}</bdi>&apos;s directory, which you can change.
   </>
 );
 
@@ -620,13 +612,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
   const overlaid = layout !== 'three-columns' && (openId !== undefined || prOpen !== undefined || supervisorOpen);
   const reposCovered = overlaid && overlayCoversRepos;
-  // The New session dialog, and the session it started, selected once it's listed (W63).
-  const [newSession, setNewSession] = useState(false);
+  // The New session dialog, and the session it started, selected once it's listed (W63). Opened with
+  // a session open, in that session's directory (#139, D27), taken as it opens.
+  const [newSession, setNewSession] = useState<{ cwd: string | undefined }>();
+  const openNewSessionDialog = () => setNewSession({ cwd: snapshot ? newSessionDirectory(listedOpen, snapshot.roots, tab) : undefined });
   // New session for a PR (W107): for a cloned repo, the dialog prefilled in its directory; for one
   // that isn't, Clone and start's confirmation first, then the dialog in the new clone.
   const [prStart, setPrStart] = useState<PrStart>();
-  // New session from here (W118): the dialog in a session's directory, with Draft from this session.
-  const [fromSession, setFromSession] = useState<FromSession>();
   const startPr = useCallback((pr: PullRequestSummary) => {
     if (pr.place?.kind === 'cloned') setPrStart({ pr, step: 'new', cwd: pr.place.key });
     else if (pr.place?.kind === 'not-cloned') setPrStart({ pr, step: 'clone' });
@@ -1142,7 +1134,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const openNewSession = (root: HTMLElement): boolean => {
     if (!snapshot) return false;
     closeMenus(root);
-    setNewSession(true);
+    openNewSessionDialog();
     return true;
   };
 
@@ -1566,7 +1558,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         sentence="Start one here, or start Claude Code in any terminal under these directories and it appears here."
         actions={
           <>
-            <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
+            <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={openNewSessionDialog}>
               New session
             </Button>
             {/* Every session under the roots is an older ended one (W67). */}
@@ -1725,7 +1717,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       terminalFocus={terminalFocus}
       polledAt={updatedAt}
       recaps={snapshot?.recaps}
-      onNewSession={snapshot ? setFromSession : undefined}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
         owned: work.owned.get(session.sessionId) ?? [],
@@ -1904,7 +1895,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         state={state}
         roots={snapshot?.roots}
         updatedAt={snapshot ? updatedAt : undefined}
-        onNewSession={snapshot ? () => setNewSession(true) : undefined}
+        onNewSession={snapshot ? openNewSessionDialog : undefined}
         onRepos={layout === 'drawer' ? () => setDrawerOpen(true) : undefined}
         reposOpen={drawerOpen}
         reposRef={reposButton}
@@ -2021,29 +2012,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         />
       )}
 
-      {fromSession && snapshot && (
-        <NewSessionDialog
-          snapshot={dialogSnapshot ?? snapshot}
-          tab={tab}
-          prefill={{ cwd: fromSession.cwd }}
-          subtitle={fromSessionSubtitle(fromSession.name)}
-          draft={{ text: draftText(fromSession) }}
-          onClose={() => setFromSession(undefined)}
-          onStarted={(session) => {
-            setFromSession(undefined);
-            started.wait(session);
-            toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
-          }}
-        />
-      )}
-
       {newSession && snapshot && (
         <NewSessionDialog
           snapshot={dialogSnapshot ?? snapshot}
           tab={tab}
-          onClose={() => setNewSession(false)}
+          prefill={newSession.cwd === undefined ? undefined : { cwd: newSession.cwd }}
+          onClose={() => setNewSession(undefined)}
           onStarted={(session) => {
-            setNewSession(false);
+            setNewSession(undefined);
             started.wait(session);
             toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}

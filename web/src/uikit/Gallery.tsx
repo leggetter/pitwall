@@ -110,7 +110,7 @@ const SECTIONS: Section[] = [
     id: 'new-session',
     title: 'New session dialog',
     intro:
-      'NewSessionDialog, on Dialog: empty, filled, the directory combobox (W70: its list, narrowed, loading, many, none to list, cut short and failed), with errors, starting, and after a failure; and files for the first prompt (W82): dragged over it, attached, uploading, failed, refused, not on this machine, and starting with them; and from a session (W118): text selected, drafted and nothing selected.',
+      'NewSessionDialog, on Dialog: empty, filled, the directory combobox (W70: its list, narrowed, loading, many, none to list, cut short and failed), with errors, starting, and after a failure; and files for the first prompt (W82): dragged over it, attached, uploading, failed, refused, not on this machine, and starting with them; and with a session open (#139), in its directory.',
     Content: Dialogs,
   },
   {

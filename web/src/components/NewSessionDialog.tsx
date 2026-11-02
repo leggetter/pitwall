@@ -31,12 +31,9 @@
 //   change, a subtitle that names the PR, and a notice at the top of the body, as after a clone, which
 //   says how to trust the new folder. What was typed is measured against the prefill, so a click on
 //   the backdrop still closes it until you change something.
-// - From a session (W118, fromSession.ts): New session from here opens it prefilled with that
-//   session's directory, added to the choices when no group has it, as a worktree's, and a blank
-//   prompt. Draft from this session, under the prompt, adds the text you selected in that session's
-//   conversation, quoted, after a line with the session's ID, never its name, at the prompt's start, and puts focus at the
-//   prompt's end; it's off, saying why beside it, with no selection, while the draft is in the prompt,
-//   or when it wouldn't fit.
+// - With a session open (#139, D27): + New session opens with that session's directory chosen,
+//   added to the choices when no group has it, as a worktree's (newSessionDirectory(), Dashboard),
+//   and the rest as usual. Nothing from its conversation goes in.
 
 import {
   useContext,
@@ -52,7 +49,6 @@ import {
 } from 'react';
 import { EFFORT_LEVELS, WORK_DEFAULT, type DirectoryList, type EffortLevel, type IndexSnapshot, type SpawnRequest, type WorkSettings } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { DRAFT_HINTS, DRAFT_LABEL, draftState, withDraft } from '../fromSession.js';
 import { ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
 import {
   directoryCount,
@@ -126,9 +122,9 @@ export const DIRECTORY_TEXT = {
   narrow: 'Keep typing to narrow them.',
 } as const;
 
-/** What the dialog opens with (W107): a PR's directory, name and prompt, each one you can change. */
+/** What the dialog opens with: a PR's directory, name and prompt (W107), or the open session's directory (#139), each one you can change. */
 export interface NewSessionPrefill {
-  /** Absolute: chosen in Directory, and added to its choices when no group has it, as a new clone. */
+  /** Absolute: chosen in Directory, and added to its choices when no group has it, as a new clone's or a worktree's. */
   cwd: string;
   name?: string;
   prompt?: string;
@@ -142,17 +138,12 @@ export interface NewSessionDialogProps {
   onStarted: (started: StartedSession, request: SpawnRequest) => void;
   /** With two or more roots, the open root tab, whose directories alone it offers (W38). */
   tab?: string | undefined;
-  /** Opened for a pull request (W107): the fields it starts with. */
+  /** Opened for a pull request (W107), or with a session open (#139): the fields it starts with. */
   prefill?: NewSessionPrefill | undefined;
   /** In place of the subtitle, as one that names the pull request. */
   subtitle?: ReactNode;
   /** At the top of the body: what happened before it opened, such as a clone, and what to do next. */
   notice?: ReactNode;
-  /**
-   * Opened from a session (W118): Draft from this session, under the prompt, adds `text`, the quoted
-   * selection and the line with the session's ID (draftText()), or is off when it's undefined.
-   */
-  draft?: { text: string | undefined } | undefined;
 }
 
 /**
@@ -196,13 +187,13 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
   return truncated ? `${count} Not every directory is listed.` : count;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice, draft }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
-  const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId(), draft: useId() };
+  const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
 
-  // A prefilled directory no group has, as a new clone, goes first.
+  // A prefilled directory no group has, as a new clone or a worktree, goes first.
   const prefilledCwd = prefill?.cwd;
   const choices = useMemo(() => {
     const listed = directoryChoices(snapshot, tab);
@@ -239,9 +230,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
   const fileList = useRef<HTMLUListElement>(null);
-  const promptField = useRef<HTMLTextAreaElement>(null);
-  // Set when Draft from this session adds the draft, so focus goes to the prompt's end once it's there.
-  const drafted = useRef(false);
   // After Remove or Try again, the row whose Remove takes focus, by its place in the list.
   const focusRow = useRef<number | undefined>(undefined);
   const busyNow = useRef(busy);
@@ -496,23 +484,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     event.target.value = '';
     if (!busy) attachments.add(files);
   };
-  // Draft from this session (W118): what it can do now, and adding the draft.
-  const draftNow = draft === undefined ? undefined : draftState(prompt, draft.text);
-  const addDraft = () => {
-    if (busy || draftNow !== 'ready' || draft?.text === undefined) return;
-    drafted.current = true;
-    setPrompt(withDraft(prompt, draft.text));
-  };
-  useEffect(() => {
-    if (!drafted.current) return;
-    drafted.current = false;
-    const field = promptField.current;
-    if (!field) return;
-    field.focus();
-    field.setSelectionRange(field.value.length, field.value.length);
-    field.scrollTop = field.scrollHeight;
-  }, [prompt]);
-
   const removeFile = (key: string) => {
     focusRow.current = attachments.items.findIndex((item) => item.key === key);
     attachments.remove(key);
@@ -710,7 +681,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
         </label>
         <div className="prompt-drop" ref={dropTarget}>
           <textarea
-            ref={promptField}
             id={ids.prompt}
             className="field-input field-prompt"
             rows={6}
@@ -754,16 +724,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
           <p className="field-problem" id={filesProblem}>
             {shown.attachments}
           </p>
-        )}
-        {draftNow !== undefined && (
-          <div className="attach-row draft-row">
-            <Button size="sm" icon="conversation" disabled={busy || draftNow !== 'ready'} aria-describedby={ids.draft} onClick={addDraft}>
-              {DRAFT_LABEL}
-            </Button>
-            <p className="field-hint" id={ids.draft}>
-              {DRAFT_HINTS[draftNow]}
-            </p>
-          </div>
         )}
         {/* There from the start, empty, so what each file comes to is announced; two taking turns, so a sentence said twice is read twice. */}
         {attachments.announcements.map((text, region) => (
