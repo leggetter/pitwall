@@ -65,7 +65,7 @@
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import type { Editor, EditorId, PullRequestSummary, RecapHealth, SessionSummary } from '../../../src/shared/protocol.js';
+import { prNeedsAttention, type Editor, type EditorId, type PullRequestSummary, type RecapHealth, type SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import type { BackgroundTab } from '../backgroundTab.js';
@@ -94,7 +94,7 @@ import { COPY_RESUME_COMMAND, EndedFooter, isDormant, RESUME_LABEL, useResume } 
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
-import { SessionPrLinks } from './PrBadges.js';
+import { PrNeedNote, SessionPrLinks } from './PrBadges.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
@@ -967,6 +967,8 @@ export function SessionView({
 
   // The Pull requests tab shows once the session owns an open PR or is strongly linked to one (W106). Then it stays, as Sub-agents does.
   const ownedPrs = prs?.owned ?? [];
+  // Why it needs you, when that's a PR it owns and not the session itself (W128), as its row says it.
+  const prNeed = needsAttention(session, notNeeded?.entries) ? undefined : ownedPrs.find(prNeedsAttention);
   const linkedPrs = prs?.linked ?? [];
   const hasPrs = ownedPrs.length > 0 || linkedPrs.length > 0;
   const [prsRevealed, setPrsRevealed] = useState(false);
@@ -1083,6 +1085,7 @@ export function SessionView({
             <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
           </p>
         )}
+        {prs && prNeed !== undefined && <PrNeedNote pr={prNeed} onOpen={prs.onOpen} />}
         {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
         {refused && (
           <p className="session-view-copy-fallback">

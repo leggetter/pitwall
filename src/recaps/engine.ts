@@ -10,6 +10,11 @@
 //                   has none) and it's been idle RECAP_DEBOUNCE_MS since activity newer than its
 //                   last recap's `throughAt`. pitwall's own sessions (the relay, recap calls) are
 //                   never listed, and sub-agents aren't sessions in the snapshot
+//   for its PR      a listed session that has finished or ended, isn't stale, has a readable
+//                   transcript and owns an open PR that needs you (prOwner(), prNeedsAttention(), as
+//                   the page's Needs you counts it, W106), by the PR list start() is given (W128):
+//                   a recap of its latest activity, so it says what's left while it sits in Needs
+//                   you, and none again until its transcript changes. No turn check: none runs
 //   on demand       refresh(), for any listed session with a transcript, ended ones included
 //
 // At most two calls at a time. Each session is queued at most once: on-demand requests first, then
@@ -57,7 +62,10 @@ import {
   RECAP_DEBOUNCE_MS,
   RECAP_FIELD_MAX,
   PLAN_TURNS_CAP,
+  prNeedsAttention,
+  prOwner,
   type IndexSnapshot,
+  type PullRequestList,
   type PlanStatus,
   type NeedsYou,
   type RecapHealth,
@@ -95,6 +103,12 @@ import {
 /** What the engine reads from the index. */
 export type RecapIndex = Pick<Indexer, 'latest' | 'subscribe' | 'conversation'>;
 
+/** What the engine reads of your open PRs (src/prs, PrSource), for a finished session's recap (W128). */
+export interface RecapPrs {
+  latest(): PullRequestList;
+  subscribe(listener: (list: PullRequestList) => void): () => void;
+}
+
 /** refresh()'s answer, which the route turns into a status (src/server/recapRoutes.ts). */
 export type RefreshResult =
   /** Queued, or already queued: the recap arrives in the snapshot. */
@@ -122,8 +136,11 @@ export type PlanStatusOutcome =
   | { kind: 'closed' };
 
 export interface RecapEngine {
-  /** Starts scheduling from the index's snapshots. Once; the server calls it when it's listening. */
-  start(index: RecapIndex): void;
+  /**
+   * Starts scheduling from the index's snapshots, and from the PR list when given, which a finished
+   * session's recap needs (W128). Once; the server calls it when it's listening.
+   */
+  start(index: RecapIndex, prs?: RecapPrs): void;
   /** The index's sessionFacts hook: what it read of each session's transcript on its latest poll. */
   observe(facts: ReadonlyMap<string, SessionFacts>): void;
   /**
@@ -266,6 +283,27 @@ export function recapsAutomatically(session: SessionSummary): boolean {
   return session.alive && session.ended !== true && !session.finished;
 }
 
+/**
+ * The sessions that own an open PR that needs you (W128), by id: each such PR's owner (prOwner()),
+ * over every session in the snapshot, as the page's Needs you counts them (web/src/work.ts).
+ */
+export function ownersNeedingYou(snapshot: IndexSnapshot, list: PullRequestList | undefined): Set<string> {
+  const owners = new Set<string>();
+  const needing = (list?.prs ?? []).filter(prNeedsAttention);
+  if (needing.length === 0) return owners;
+  const linked = snapshot.groups.flatMap((group) => group.sessions).filter((session) => session.prLinks !== undefined && session.prLinks.length > 0);
+  for (const pr of needing) {
+    const owner = prOwner(pr, linked);
+    if (owner !== undefined) owners.add(owner.sessionId);
+  }
+  return owners;
+}
+
+/** True for a finished session pitwall recaps once per activity (W128): not stale, and it owns an open PR that needs you. */
+export function recapsForItsPr(session: SessionSummary, owners: ReadonlySet<string>): boolean {
+  return session.finished && !session.stale && owners.has(session.sessionId);
+}
+
 export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine {
   const claudeBin = options.claudeBin ?? 'claude';
   const dir = path.resolve(options.dir ?? path.join(pitwallHome(), RECAP_DIR_NAME));
@@ -286,6 +324,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
 
   let index: RecapIndex | undefined;
   let unsubscribe: (() => void) | undefined;
+  let unsubscribePrs: (() => void) | undefined;
+  let prSource: RecapPrs | undefined;
   let closed = false;
   let changes = 0;
   const listeners = new Set<() => void>();
@@ -380,8 +420,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   }
 
   /** Whether the snapshot's `session` is due an automatic recap now. */
-  function due(session: SessionSummary, nowMs: number): boolean {
-    if (!recapsAutomatically(session) || session.transcript !== 'ok') return false;
+  function due(session: SessionSummary, nowMs: number, owners: ReadonlySet<string>): boolean {
+    const forPr = !recapsAutomatically(session) && recapsForItsPr(session, owners);
+    if ((!forPr && !recapsAutomatically(session)) || session.transcript !== 'ok') return false;
     const activity = parseMs(session.lastActivityAt);
     if (Number.isNaN(activity)) return false;
     const previous = recaps.get(session.sessionId);
@@ -389,7 +430,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const failed = failures.get(session.sessionId);
     if (failed !== undefined && failed.throughMs >= activity && nowMs - failed.atMs < RETRY_AFTER_FAILURE_MS) return false;
     if (nowMs - activity < debounceMs) return false;
-    return turnOver(session);
+    // A finished session has no turn running, whatever its transcript's last mark says.
+    return forPr || turnOver(session);
   }
 
   /** The turn has ended: by the transcript's mark, or, when it has none, by Claude Code's status. */
@@ -417,11 +459,12 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     if (!snapshot.source.ok) return pump();
     const nowMs = now();
     if (!spent() && nowMs >= pausedUntil) {
+      const owners = ownersNeedingYou(snapshot, prSource?.latest());
       const candidates: SessionSummary[] = [];
       for (const group of snapshot.groups) {
         for (const session of group.sessions) {
           if (running.has(session.sessionId) || queued(session.sessionId) !== undefined) continue;
-          if (due(session, nowMs)) candidates.push(session);
+          if (due(session, nowMs, owners)) candidates.push(session);
         }
       }
       candidates.sort((a, b) => parseMs(b.lastActivityAt) - parseMs(a.lastActivityAt));
@@ -753,10 +796,18 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   }
 
   return {
-    start(given) {
+    start(given, prs) {
       if (index !== undefined || closed) return;
       index = given;
       unsubscribe = given.subscribe((snapshot) => schedule(snapshot));
+      if (prs !== undefined) {
+        prSource = prs;
+        // A new PR list can make a finished session due (W128): scheduled again from the index's latest.
+        unsubscribePrs = prs.subscribe(() => {
+          const latest = given.latest();
+          if (latest !== undefined) schedule(latest);
+        });
+      }
       const latest = given.latest();
       if (latest !== undefined) schedule(latest);
     },
@@ -848,6 +899,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       if (closed) return;
       closed = true;
       unsubscribe?.();
+      unsubscribePrs?.();
       listeners.clear();
       demandQueue.length = 0;
       autoQueue.length = 0;

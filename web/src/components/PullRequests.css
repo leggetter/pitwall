@@ -191,6 +191,14 @@
   line-height: var(--pw-leading-s);
 }
 
+/* Why the session view's session needs you when that's its PR (W128): in --pw-text, as a row's line 2 says it. */
+.session-view-pr-need {
+  color: var(--pw-text);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
 .session-view-pr {
   display: inline-flex;
   align-items: center;
