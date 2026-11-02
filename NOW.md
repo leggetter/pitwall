@@ -17,6 +17,7 @@ Last updated: 2026-11-02, on `main`, as M5 merged.
 | --- | --- |
 | Move M5's detail from `PLAN.md` to `docs/plan-archive.md` (the "M5 - Supervisor" section and "M5 work breakdown", verbatim), leaving a one-line pointer, as M0 to M4 were | Not started; mechanical, a smaller model will do |
 | M5.1, efficiency | Not started |
+| [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory), Phil's UX feedback | Not started; small, a UI change with the `new-session` app-check part |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
@@ -26,8 +27,9 @@ Last updated: 2026-11-02, on `main`, as M5 merged.
 
 1. **Archive M5** (the first row above), on `main` or the new integration branch, before M5.1 adds to `PLAN.md`.
 2. **M5.1, efficiency:** work profiles, a Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Break it into W items in `PLAN.md` first, starting at W130.
-3. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
-4. **M6, triage,** on the coordination model: split work, shared state, graded oversight, and shared decisions first with a goal check at the end, with Peers part of it, show only (Phil, 2026-11-02): "M6 - Triage" and "Considering: Peers" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
+3. **[#139](https://github.com/leggetter/pitwall/issues/139)** (New session defaults to the selected session's directory): a quick UX fix, between M5.1's items or before them.
+4. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
+5. **M6, triage,** on the coordination model: split work, shared state, graded oversight, and shared decisions first with a goal check at the end, with Peers part of it, show only (Phil, 2026-11-02): "M6 - Triage" and "Considering: Peers" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
 ## Open questions for Phil
 
