@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-02, on `m5.1/new-session-default`: W130 built, in review.
+Last updated: 2026-11-02, on `m5.1/plan-notes`: W130 merged (#142), W131 next.
 
 ## Current milestone
 
@@ -17,7 +17,7 @@ Last updated: 2026-11-02, on `m5.1/new-session-default`: W130 built, in review.
 | --- | --- |
 | M5.1, efficiency | Not started |
 | [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you) | Fixed in the recap prompt ([#141](https://github.com/leggetter/pitwall/pull/141)), merged into `m5.1/integration`. Checked live on Haiku: an ended session, old prompt 3 of 3 "you", new 2 of 2 "nothing"; one that asks you something, or that's done with only part of the work, still "you" (2 of 2 each). A "Not needed" action is in "Nice to have, later" |
-| W130: [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory), and New session from here taken out (D27) | Built on `m5.1/new-session-default`, in review for `m5.1/integration` in [#142](https://github.com/leggetter/pitwall/pull/142): + New session and `n` start in the open session's directory (`newSessionDirectory()`, `web/src/spawn.ts`), a worktree's added first, falling back to the first choice with none open, its directory gone, outside the roots or tab, or the session unlisted; New session from here, Draft from this session and `web/src/fromSession.ts` removed. `npm test` passed; app check `new-session` and `open-in-editor` at 375, 900 and 1440 light, 84 of 84 steps. Fork this session is in `PLAN.md`'s "Later: forking a session" |
+| W131, the usage report ("M5.1 work breakdown") | Phil agreed (2026-11-02): every repo's transcripts, totals only in chat; the global efficiency rules wait for its numbers, then go into the global `AGENTS.md` |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
@@ -25,8 +25,8 @@ Last updated: 2026-11-02, on `m5.1/new-session-default`: W130 built, in review.
 
 ## Next, in order
 
-1. **W130** ([#139](https://github.com/leggetter/pitwall/issues/139), D27): review and merge into `m5.1/integration`.
-2. **M5.1, efficiency:** work profiles, a Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Break it into W items in "M5.1 work breakdown" first, starting at W131.
+1. **W131, the usage report** (`m5.1/usage-report`, in `.worktrees/usage-report`): build it, bring Phil the numbers, then draft the global efficiency rules from them for his approval.
+2. **The rest of M5.1:** work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`), as W items from W132, shaped by W131's numbers.
 3. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
 4. **M6, triage,** on the coordination model: split work, shared state, graded oversight, and shared decisions first with a goal check at the end, with Peers part of it, show only (Phil, 2026-11-02): "M6 - Triage" and "Considering: Peers" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
