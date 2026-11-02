@@ -1775,8 +1775,14 @@ export const SUPERVISOR_MODEL = 'claude-opus-5-5';
 /** An approval you don't answer is declined after this, inside the 30 minutes pitwall gives the supervisor's MCP calls (W115). */
 export const SUPERVISOR_APPROVAL_TIMEOUT_MS = 29 * 60 * 1000;
 
-/** The longest message you can send the supervisor, and the longest edit. */
+/** The longest message you can send the supervisor, and the longest edit of a message it proposes. */
 export const SUPERVISOR_MESSAGE_MAX = 20_000;
+
+/**
+ * The longest first prompt a new session takes (SpawnRequest's prompt, New session's dialog), and so
+ * the longest edit of a new session the supervisor proposes (W115).
+ */
+export const SPAWN_PROMPT_MAX = 16_384;
 
 /**
  * POST `{ text }`: a message to the supervisor, as you, starting or resuming it first if it isn't

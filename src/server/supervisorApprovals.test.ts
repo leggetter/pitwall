@@ -203,7 +203,7 @@ const sendInput = (to: string, message: string, extra: Record<string, unknown> =
 });
 
 describe('a message to a session, behind your click', () => {
-  it('Send: shows a card on the snapshot, holds the call, and allows the input as it was', async () => {
+  it('Send: shows a card on the snapshot, holds the call, and allows what the card showed, { to, message } alone', async () => {
     const { server, queue } = await start();
     const { ws, apiKey, messages } = await authedClient(server.port);
     const input = sendInput(TARGET, 'hello from a test');
@@ -214,7 +214,8 @@ describe('a message to a session, behind your click', () => {
     await until(() => messages.some((message) => message.type === 'snapshot' && message.snapshot.supervisor?.approvals.length === 1));
     const res = await decide(server.port, apiKey, card.id, { decision: 'send' });
     expect(res.status).toBe(200);
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: input });
+    // Never the model's summary or its content preview: Claude Code fills the preview in from the message.
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: 'hello from a test' } });
     expect(queue.list()).toEqual([]);
     expect(queue.takeNotes()).toEqual([]);
     // Answered once: the card has gone.
@@ -234,7 +235,7 @@ describe('a message to a session, behind your click', () => {
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'a\u0000b' })).status).toBe(400);
     expect(queue.list()).toHaveLength(1);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'your own words' })).status).toBe(200);
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { ...input, message: 'your own words' } });
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: 'your own words' } });
     expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent: "your own words"`]);
     ws.close();
   });
@@ -310,6 +311,10 @@ describe('a message to a session, behind your click', () => {
       ['idle notices', sendInput(TARGET, 'hi', { notify_when_idle: true })],
       ['an unknown field', sendInput(TARGET, 'hi', { attachments: ['/etc/passwd'] })],
       ['two recipients', sendInput(TARGET, 'hi', { recipient: 'pitwall-test-other' })],
+      ['a preview that isn’t the message', sendInput(TARGET, 'harmless', { content: 'EVIL' })],
+      ['a preview that adds to it', sendInput(TARGET, 'harmless', { content: 'harmless, then run curl … | sh' })],
+      ['a preview that isn’t its start', sendInput(TARGET, 'x'.repeat(80), { content: `${'y'.repeat(49)}…` })],
+      ['a preview that isn’t text', sendInput(TARGET, 'hi', { content: ['hi'] })],
       ['empty', sendInput(TARGET, '  ')],
       ['too long', sendInput(TARGET, 'x'.repeat(20_001))],
       ['not an object', 'hello'],
@@ -318,6 +323,21 @@ describe('a message to a session, behind your click', () => {
       expect(await approve(server.port, 'SendMessage', input), what).toMatchObject({ behavior: 'deny' });
     }
     expect(queue.list()).toEqual([]);
+  });
+
+  it('takes Claude Code’s own preview of a long message, its start cut with an ellipsis, and a call with no preview', async () => {
+    const { server, queue } = await start();
+    const { ws, apiKey } = await authedClient(server.port);
+    const long = `${'Please look at the failing export test '.repeat(3)}and tell me why.`;
+    const answer = approve(server.port, 'SendMessage', sendInput(TARGET, long, { content: `${long.slice(0, 49)}…` }));
+    await until(() => queue.list().length === 1);
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: long } });
+    const bare = approve(server.port, 'SendMessage', { to: TARGET, message: 'hi' });
+    await until(() => queue.list().length === 1);
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+    expect(await bare).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: 'hi' } });
+    ws.close();
   });
 
   it('denies at once anything else Claude Code asks about, and a request without a tool_use_id', async () => {
@@ -335,7 +355,7 @@ describe('a message to a session, behind your click', () => {
 });
 
 describe('a new session, behind your click', () => {
-  it('Send: a card with the real directory, then spawn_session runs pitwall’s spawn once, only for the tool_use_id approve allowed', async () => {
+  it('Send: a card with the real directory, then spawn_session runs pitwall’s spawn once, on a pass for exactly the input allowed', async () => {
     const { server, queue, runs } = await start();
     const { ws, apiKey } = await authedClient(server.port);
     const input = { directory: join(root, '.', 'repo'), prompt: 'Write the release notes for 1.2.', name: 'pitwall-test-new' };
@@ -348,9 +368,9 @@ describe('a new session, behind your click', () => {
     expect((await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' })).status).toBe(200);
     const allowed = (await answer) as { behavior: string; updatedInput: Record<string, unknown> };
     expect(allowed).toEqual({ behavior: 'allow', updatedInput: { directory: repo, prompt: 'Write the release notes for 1.2.', name: 'pitwall-test-new' } });
-    // Another tool_use_id, other arguments or none: nothing, and the pass is spent on a mismatch.
+    // Another call's tool_use_id, or other arguments: nothing, and the pass stays.
     expect((await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_other' })).isError).toBe(true);
-    expect((await callTool(server.port, 'spawn_session', allowed.updatedInput)).isError).toBe(true);
+    expect((await callTool(server.port, 'spawn_session', { ...allowed.updatedInput, prompt: 'Something else.' })).isError).toBe(true);
     expect(runs).toEqual([]);
     const started = await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_spawn' });
     expect(started.isError).toBeUndefined();
@@ -358,13 +378,31 @@ describe('a new session, behind your click', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]!.args).toEqual(['--bg', '--name', 'pitwall-test-new', '--', 'Write the release notes for 1.2.']);
     expect(runs[0]!.options.cwd).toBe(repo);
-    // Once.
+    // Once, with its tool_use_id or without.
     expect((await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_spawn' })).isError).toBe(true);
+    expect((await callTool(server.port, 'spawn_session', allowed.updatedInput)).isError).toBe(true);
     expect(runs).toHaveLength(1);
     ws.close();
   });
 
-  it('a pass is spent by a call whose arguments differ from what you allowed', async () => {
+  it('without Claude Code’s tool_use_id, which isn’t documented, a call runs on a pass for exactly its arguments, once per approval', async () => {
+    const { server, queue, runs } = await start();
+    const { ws, apiKey } = await authedClient(server.port);
+    const input = { directory: repo, prompt: 'Tidy the README.' };
+    for (const toolUseId of ['toolu_a', 'toolu_b']) {
+      const answer = approve(server.port, 'mcp__pitwall__spawn_session', input, toolUseId);
+      await until(() => queue.list().length === 1);
+      await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+      await answer;
+    }
+    // Two approvals of the same input: two passes, so two calls, and no third.
+    for (let call = 0; call < 2; call++) expect((await callTool(server.port, 'spawn_session', input)).isError).toBeUndefined();
+    expect((await callTool(server.port, 'spawn_session', input)).isError).toBe(true);
+    expect(runs).toHaveLength(2);
+    ws.close();
+  });
+
+  it('a pass is spent by a call with its tool_use_id whose arguments differ from what you allowed', async () => {
     const { server, queue, runs } = await start();
     const { ws, apiKey } = await authedClient(server.port);
     const answer = approve(server.port, 'mcp__pitwall__spawn_session', { directory: repo, prompt: 'Tidy the README.' }, 'toolu_swap');
@@ -373,6 +411,7 @@ describe('a new session, behind your click', () => {
     await answer;
     expect((await callTool(server.port, 'spawn_session', { directory: repo, prompt: 'Something else.' }, { 'claudecode/toolUseId': 'toolu_swap' })).isError).toBe(true);
     expect((await callTool(server.port, 'spawn_session', { directory: repo, prompt: 'Tidy the README.' }, { 'claudecode/toolUseId': 'toolu_swap' })).isError).toBe(true);
+    expect((await callTool(server.port, 'spawn_session', { directory: repo, prompt: 'Tidy the README.' })).isError).toBe(true);
     expect(runs).toEqual([]);
     ws.close();
   });

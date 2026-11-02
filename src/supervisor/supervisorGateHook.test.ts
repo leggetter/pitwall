@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSupervisorGate, supervisorGateScriptPath } from './gate.js';
-import { readRecipients, refusal, runHook } from './supervisorGateHook.mjs';
+import { isPreviewOf, readRecipients, refusal, runHook } from './supervisorGateHook.mjs';
 
 const TARGET = 'pitwall-test-target';
 const ID = 'a'.repeat(32);
@@ -40,10 +40,29 @@ describe('refusal()', () => {
     expect(refusal(plain(TARGET, { notify_when_idle: true }), names)).toMatch(/idle/);
     expect(refusal(plain(TARGET, { type: 'broadcast' }), names)).toMatch(/plain message/);
     expect(refusal(plain(TARGET, { extra: 1 }), names)).toMatch(/field/);
+    // A preview that isn't the message, or its start, could carry text the card never shows (W115's review).
+    expect(refusal(plain(TARGET, { content: 'EVIL' }), names)).toMatch(/preview/);
+    expect(refusal(plain(TARGET, { content: 'hello, and more' }), names)).toMatch(/preview/);
     expect(refusal(call({ to: TARGET }), names)).toMatch(/no message/);
     expect(refusal(call({ message: 'x' }), names)).toMatch(/names no session/);
     expect(refusal(plain(TARGET), undefined)).toMatch(/no list/);
     expect(refusal({ hook_event_name: 'Stop' }, names)).toBeDefined();
+  });
+});
+
+describe('isPreviewOf()', () => {
+  it('is the message, or its start cut with an ellipsis, as Claude Code makes it, and nothing else', () => {
+    const long = 'Please look at the failing export test and tell me why it fails.';
+    expect(isPreviewOf(undefined, 'hi')).toBe(true);
+    expect(isPreviewOf('hi', 'hi')).toBe(true);
+    expect(isPreviewOf(`${long.slice(0, 49)}…`, long)).toBe(true);
+    expect(isPreviewOf(`${long.slice(0, 49)} …`, long)).toBe(true);
+    expect(isPreviewOf('EVIL', 'harmless')).toBe(false);
+    expect(isPreviewOf('Please look…', 'Please')).toBe(false);
+    expect(isPreviewOf('…', long)).toBe(false);
+    expect(isPreviewOf(`${long}…`, long)).toBe(false);
+    expect(isPreviewOf(`${'x'.repeat(300)}…`, 'x'.repeat(400))).toBe(false);
+    expect(isPreviewOf(['hi'], 'hi')).toBe(false);
   });
 });
 

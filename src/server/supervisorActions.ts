@@ -10,20 +10,23 @@
 //                   other tool, or input that fails a check, is denied at once, and no card is shown.
 //                   Its answer is the documented JSON: `{ behavior: 'allow', updatedInput }` or
 //                   `{ behavior: 'deny', message }`
-//   decide          POST supervisorApprovalPath(id), from your card: Send allows the input as it
-//                   was; Edit allows it with your text in place of the message or the prompt, checked
-//                   again; Don't send denies it. Each is checked again first, against the list as it
+//   decide          POST supervisorApprovalPath(id), from your card: Send allows what the card showed;
+//                   Edit allows it with your text in place of the message or the prompt, checked
+//                   again; Don't send denies it. A message is allowed as `{ to, message }` alone,
+//                   rebuilt from what was checked, never the model's `summary` or `content`. Each is checked again first, against the list as it
 //                   is then: a recipient that has ended since denies it, saying why
 //   spawn_session   runs pitwall's own spawn (actions.ts, the New session dialog's checks and limits)
-//                   only for a tool_use_id approve just allowed, with exactly the input it allowed,
-//                   once (approvals.ts' passes). A call that skipped approval starts nothing
+//                   only on a one-time pass for exactly the input an approval just allowed, within a
+//                   minute, and, when Claude Code gives the call's tool_use_id, only on that call's own
+//                   approval's pass (approvals.ts' passes). A call that skipped approval starts nothing
 //
 // The checks, before a card shows and again on Send or Edit:
 //
 //   a message       to: exactly the name of one running session pitwall lists, never an ended one,
 //                   one whose name another running one shares, or pitwall's own (relay, recap
 //                   calls, the supervisor); only the fields pitwall knows; a plain message, no idle
-//                   notices; text not blank, no NUL, at most SUPERVISOR_MESSAGE_MAX
+//                   notices; a `content` preview that is the message or its start, never other text;
+//                   text not blank, no NUL, at most SUPERVISOR_MESSAGE_MAX
 //   a new session   directory: an existing directory under a root, by its real path, as New session
 //                   requires (checkDirectory()); name: NAME_PATTERN; prompt: not blank, no NUL, at
 //                   most MAX_PROMPT_LENGTH, not just a claude command; no other field
@@ -37,7 +40,7 @@
 import { isRecord } from '../index/guards.js';
 import { MCP_TOOLS, SUPERVISOR_MESSAGE_MAX, type IndexSnapshot, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
-import { KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
+import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
 import { MAX_PROMPT_LENGTH, validateSpawnRequest, type SpawnRunner, type ValidSpawn } from './actions.js';
 import type { McpTool, McpToolResult } from './mcp.js';
@@ -47,7 +50,11 @@ import { nameKey } from './relayPrompt.js';
 export const MESSAGE_TOOL = 'SendMessage';
 export const SPAWN_TOOL = mcpToolName(MCP_TOOLS.spawnSession);
 
-/** The `_meta` key Claude Code puts a call's tool_use_id under, in tools/call. Not documented: without it, spawn_session starts nothing. */
+/**
+ * The `_meta` key Claude Code puts a call's tool_use_id under, in tools/call. Not documented, so
+ * spawn_session doesn't rely on it alone: a call runs on a pass for exactly the input you allowed,
+ * and when this is present, only on that call's own approval's pass.
+ */
 export const TOOL_USE_ID_META = 'claudecode/toolUseId';
 
 /** A tool_use_id as Claude Code makes them. */
@@ -111,6 +118,9 @@ export function checkMessage(input: unknown, snapshot: IndexSnapshot | undefined
   if (OWN_NAMES.has(nameKey(to.trim()))) return { ok: false, error: 'pitwall’s own sessions can’t be messaged.' };
   const text = checkText(input.message, SUPERVISOR_MESSAGE_MAX, 'message');
   if (!text.ok) return text;
+  // Claude Code's preview of the message: anything but the message or its start could carry text
+  // the card never shows (W115's review).
+  if (!isPreviewOf(input.content, text.value)) return { ok: false, error: 'The call’s preview (content) isn’t its message.' };
   if (snapshot === undefined) return { ok: false, error: 'pitwall hasn’t listed the sessions yet.' };
   if (!recipientNames(snapshot, own).includes(to)) {
     const named = snapshot.groups.flatMap((group) => group.sessions).filter((session) => nameKey(session.name) === nameKey(to) && !own.has(session.sessionId));
@@ -135,6 +145,16 @@ export async function checkSpawn(input: unknown, snapshot: IndexSnapshot | undef
   const validation = await validateSpawnRequest({ cwd: input.directory, prompt: prompt.value, ...(input.name === undefined ? {} : { name: input.name }) }, snapshot.roots);
   if (!validation.ok) return { ok: false, error: validation.error };
   return { ok: true, value: validation.spawn };
+}
+
+/**
+ * The input SendMessage runs with, once allowed: `to` and `message`, as the card showed them, and
+ * nothing else. Claude Code's schema needs only those; it fills in `type`, `recipient`,
+ * `recipient_kind` and the `content` preview from them, and the model's `summary`, a label for its
+ * own transcript that the card doesn't show, is left out (W115's review).
+ */
+export function messageInput(to: string, text: string): Record<string, unknown> {
+  return { to, message: text };
 }
 
 /** The input spawn_session runs with, once allowed: the real path, the prompt, the name if any. */
@@ -183,7 +203,7 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
         const checked = checkMessage(input, sources.snapshots.latest(), own());
         if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
         draft = { kind: 'message', to: checked.value.to, text: checked.value.text };
-        runInput = input;
+        runInput = messageInput(checked.value.to, checked.value.text);
       } else {
         const checked = await checkSpawn(input, sources.snapshots.latest());
         if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
@@ -272,7 +292,8 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
     }
     const own = sources.ownSessionIds?.() ?? new Set<string>();
     if (approval.kind === 'message') {
-      const next = decision.decision === 'edit' ? { ...input, message: decision.text } : input;
+      // Rebuilt from what the card showed, or your edit: never a field the card didn't show.
+      const next = messageInput(approval.to, decision.decision === 'edit' ? decision.text : approval.text);
       if (decision.decision === 'edit') {
         const text = checkText(decision.text, SUPERVISOR_MESSAGE_MAX, 'message');
         if (!text.ok) return { status: 400, error: text.error };
@@ -302,9 +323,9 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
     }
     const updatedInput = spawnInput(checked.value);
     // The pass first, so the call Claude Code makes once it reads the allow finds it.
-    sources.approvals.grantPass(pending.toolUseId, updatedInput);
+    const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput);
     if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput })) {
-      sources.approvals.takePass(pending.toolUseId, updatedInput);
+      sources.approvals.revokePass(pass);
       return gone();
     }
     if (decision.decision === 'edit' && decision.text !== approval.prompt) sources.approvals.note(editNote(approval, decision.text));

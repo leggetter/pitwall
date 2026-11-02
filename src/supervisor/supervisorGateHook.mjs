@@ -15,7 +15,7 @@
 // `onFailure: "block"` turns into a denial.
 //
 // What passes: a SendMessage whose input has only the fields pitwall knows, a plain message, no
-// idle notices, and `to` exactly one of the names in <dir>/<gate id>.recipients, which pitwall
+// idle notices, a `content` preview that is the message or its start (isPreviewOf()), and `to` exactly one of the names in <dir>/<gate id>.recipients, which pitwall
 // rewrites as its list changes: the live, listed sessions with a name no other live one has, never
 // pitwall's own. With no such file, or one that isn't well formed, every call is denied.
 //
@@ -52,6 +52,23 @@ export const OWN_NAMES = new Set(['pitwall-relay', 'pitwall-recap', 'pitwall-sup
  * with any other field is denied, because the gate can't tell what it does.
  */
 export const KNOWN_INPUT_FIELDS = new Set(['to', 'recipient', 'recipient_kind', 'message', 'content', 'summary', 'type', 'notify_when_idle']);
+
+/** The longest preview (`content`) taken, in UTF-16 code units: Claude Code cuts it at 50 columns. */
+const MAX_PREVIEW_LENGTH = 200;
+
+/**
+ * Whether `content` is what Claude Code makes of `message` for SendMessage's `content` field: the
+ * message itself, or its start cut with an ellipsis (`…`), about 50 columns. Anything else could
+ * carry text you never saw on the card, so it's refused (W115's review).
+ * @param {unknown} content
+ * @param {string} message
+ */
+export function isPreviewOf(content, message) {
+  if (content === undefined || content === message) return true;
+  if (typeof content !== 'string' || content.length > MAX_PREVIEW_LENGTH || !content.endsWith('…')) return false;
+  const head = content.slice(0, -1);
+  return head.trim() !== '' && message.length > head.length && message.startsWith(head.trimEnd());
+}
 
 /**
  * @param {string} dir
@@ -106,6 +123,7 @@ export function refusal(input, recipients) {
   if (call.type !== undefined && call.type !== 'message') return 'the call isn’t a plain message';
   if (call.notify_when_idle !== undefined && call.notify_when_idle !== false) return 'the call asks to be told when the session goes idle';
   if (typeof call.message !== 'string') return 'the call has no message';
+  if (!isPreviewOf(call.content, call.message)) return 'the call’s preview isn’t its message';
   const to = call.to;
   if (typeof to !== 'string' || to === '') return 'the call names no session';
   if (call.recipient !== undefined && call.recipient !== to) return 'the call names two different recipients';

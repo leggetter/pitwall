@@ -8,6 +8,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  SPAWN_PROMPT_MAX,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
   SUPERVISOR_MESSAGE_PATH,
@@ -567,6 +568,19 @@ describe('its draft cards', () => {
     expect(within(cards()[0]!).getByRole('button', { name: 'Send edit' }).getAttribute('aria-disabled')).toBe('true');
     fireEvent.change(editor, { target: { value: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 2) } });
     expect(cards()[0]!.querySelector('.relay-count.over')?.textContent).toBe('2 characters over the 20,000 limit');
+  });
+
+  it('caps a new session’s first prompt at SPAWN_PROMPT_MAX, New session’s own limit, not a message’s (W115)', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [spawn] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the first prompt' });
+    fireEvent.change(editor, { target: { value: 'x'.repeat(SPAWN_PROMPT_MAX) } });
+    expect(within(cards()[0]!).getByRole('button', { name: 'Send edit' }).getAttribute('aria-disabled')).not.toBe('true');
+    fireEvent.change(editor, { target: { value: 'x'.repeat(SPAWN_PROMPT_MAX + 1) } });
+    expect(cards()[0]!.querySelector('.relay-count.over')?.textContent).toBe('1 character over the 16,384 limit');
+    expect(within(cards()[0]!).getByRole('button', { name: 'Send edit' }).getAttribute('aria-disabled')).toBe('true');
   });
 
   it('says so when a card has gone, and when a decision fails, in pitwall’s words', async () => {

@@ -11,6 +11,7 @@ import {
   removePath,
   resumePath,
   SPAWN_PATH,
+  SPAWN_PROMPT_MAX,
   stopPath,
   type EndSessionRequest,
   type EndSessionWorking,
@@ -27,7 +28,7 @@ import { couldNot, shortenHome, tryAgainIn } from './format.js';
 export const NAME_PATTERN = /^[A-Za-z0-9._](?:[A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])?$/;
 /** A short model alias: letters, digits, `-` and `.`, at most 40, not starting with `-`. */
 export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,39}$/;
-export const MAX_PROMPT_LENGTH = 16_384;
+export const MAX_PROMPT_LENGTH = SPAWN_PROMPT_MAX;
 
 /** A session the server started. It shows up in the list on a later poll. */
 export interface StartedSession {
