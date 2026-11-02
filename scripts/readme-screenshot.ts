@@ -44,9 +44,12 @@ const job = (repo: string, name: string, minutes: number, extra: Partial<Session
 
 // The open session's made-up recap (W111), made after its last turn, so it's current.
 const docsRecap: SessionRecap = {
-  why: 'You asked it to check the docs for broken links, and to say what it found before fixing anything.',
-  now: 'It built the docs site and checked all 1,284 links: one moved in the API reference, and one points at the removed SDK page.',
-  next: 'Say whether to fix both links now, or open an issue for each.',
+  summary:
+    'You asked it to check the docs for broken links, and to say what it found before fixing anything. It checked all 1,284 links: one moved in the API reference, and one points at the removed SDK page.',
+  todos: [
+    { text: 'Say whether to fix both links now, or open an issue for each', owner: 'you' },
+    { text: 'Fix the links or open the issues, as you say', owner: 'session' },
+  ],
   waitingOn: 'you',
   title: 'Find broken links in the docs',
   at: ago(1.5),
@@ -59,7 +62,7 @@ const docs = make('quickstarts', 'Docs link check', 2, {
   lastUserPrompt: 'Check the docs for broken links, and tell me what you find before fixing anything.',
   title: docsRecap.title,
   titleSource: 'pitwall',
-  recap: { waitingOn: 'you', title: docsRecap.title, next: docsRecap.next, at: docsRecap.at, source: 'pitwall' },
+  recap: { waitingOn: 'you', title: docsRecap.title, forYou: 1, next: docsRecap.todos[0]!.text, at: docsRecap.at, source: 'pitwall' },
 });
 const recapHealth: RecapHealth = { calls: 23, budget: 200, costUsd: 0.025 };
 const starred = [
@@ -83,7 +86,7 @@ const starred = [
   make('hookdeck-typescript-sdk', 'Build fix', 25, {
     lastUserPrompt: 'Open the PR once the build passes.',
     // Its made-up recap says it waits on CI, which its row says quietly (W111).
-    recap: { waitingOn: 'CI', title: 'Fix the ESM build', at: ago(20), source: 'pitwall' },
+    recap: { waitingOn: 'CI', title: 'Fix the ESM build', forYou: 0, at: ago(20), source: 'pitwall' },
     title: 'Fix the ESM build',
     titleSource: 'pitwall',
     // It opened the made-up #128, below, so its row has the PR's badge.

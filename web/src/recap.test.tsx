@@ -1,11 +1,11 @@
-// Recaps outside the strip (M5, W111): reading a recap defensively, the headline and the lines, the
+// Recaps outside the strip (M5, W111, W121): reading a recap defensively, the to-dos' tags and count, the
 // collapsed setting's storage, Needs you's 'recap' reason on a row's badge and line 2, the quiet
 // reason for what an idle session waits on otherwise, the app strip's recap line, and the Dashboard
 // passing the snapshot's recaps through. Made-up sessions and recaps only.
 
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { RECAP_DAILY_BUDGET, RECAP_FIELD_MAX, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../src/shared/protocol.js';
+import { RECAP_DAILY_BUDGET, RECAP_FIELD_MAX, RECAP_TODOS_MAX, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../src/shared/protocol.js';
 import { AppStrips } from './components/AppStrip.js';
 import { Dashboard } from './components/Dashboard.js';
 import { SessionRow } from './components/SessionRow.js';
@@ -15,22 +15,29 @@ import {
   budgetText,
   cutText,
   finishedWaitingOnYou,
+  forYouText,
   parseRecap,
   quietWaitingOn,
   readRecapCollapsed,
   RECAP_COLLAPSED_KEY,
-  recapHeadline,
-  recapLines,
   recapsStripText,
+  TODO_OWNER_TEXT,
+  todoOwnerLook,
+  todosForYou,
   writeRecapCollapsed,
 } from './recap.js';
 import { countAttention, needsAttention, rowStatusBadge, statusBadge } from './sessions.js';
 import { group, minutesAgo, session, snapshot } from './test/fixtures.js';
 
+const NEXT = 'Say whether to mark #42 ready';
 const RECAP: SessionRecap = {
-  why: 'You asked it to fix the made-up export.',
-  now: 'It opened draft PR #42.',
-  next: 'Say whether to mark #42 ready.',
+  summary: 'You asked it to fix the made-up export. It opened draft PR #42.',
+  todos: [
+    { text: 'Finish the checks on #42', owner: 'CI' },
+    { text: NEXT, owner: 'you' },
+    { text: 'Open a backport PR', owner: 'session' },
+    { text: 'Say whether to close #40', owner: 'you' },
+  ],
   waitingOn: 'you',
   title: 'Fix the made-up export',
   at: minutesAgo(4),
@@ -38,47 +45,63 @@ const RECAP: SessionRecap = {
   source: 'pitwall',
 };
 
-const summary = (extra: Partial<RecapSummary> = {}): RecapSummary => ({ waitingOn: 'you', title: 'Fix the made-up export', at: minutesAgo(4), source: 'pitwall', ...extra });
+const summary = (extra: Partial<RecapSummary> = {}): RecapSummary => ({ waitingOn: 'you', title: 'Fix the made-up export', forYou: 2, at: minutesAgo(4), source: 'pitwall', ...extra });
 const HEALTH: RecapHealth = { calls: 3, budget: RECAP_DAILY_BUDGET, costUsd: 0.003 };
 
 describe('parseRecap', () => {
   it('reads a recap', () => {
     expect(parseRecap(RECAP)).toEqual(RECAP);
     expect(parseRecap({ ...RECAP, stale: true })).toEqual({ ...RECAP, stale: true });
+    expect(parseRecap({ ...RECAP, todos: [], waitingOn: 'nothing' })?.todos).toEqual([]);
   });
 
   it('refuses anything that isn’t one', () => {
-    for (const bad of [null, [], 'recap', { ...RECAP, waitingOn: 'the moon' }, { ...RECAP, source: 'model' }, { ...RECAP, at: 'yesterday' }, { ...RECAP, why: 3 }, { ...RECAP, stale: false }, { ...RECAP, throughAt: undefined }]) {
-      expect(parseRecap(bad)).toBeUndefined();
+    for (const bad of [
+      null,
+      [],
+      'recap',
+      { ...RECAP, waitingOn: 'the moon' },
+      { ...RECAP, source: 'model' },
+      { ...RECAP, at: 'yesterday' },
+      { ...RECAP, summary: 3 },
+      { ...RECAP, stale: false },
+      { ...RECAP, throughAt: undefined },
+      { ...RECAP, todos: undefined },
+      { ...RECAP, todos: 'Mark #42 ready' },
+      { ...RECAP, todos: [{ text: 'a', owner: 'me' }] },
+      { ...RECAP, todos: [{ text: 1, owner: 'you' }] },
+      { ...RECAP, todos: [{ text: 'a', owner: 'you', extra: true }] },
+      { ...RECAP, todos: [null] },
+      { why: 'the old shape', now: 'b', next: 'c', waitingOn: 'you', title: 'd', at: RECAP.at, throughAt: RECAP.throughAt, source: 'pitwall' },
+    ]) {
+      expect(parseRecap(bad), JSON.stringify(bad)).toBeUndefined();
     }
   });
 
-  it('cuts a field longer than RECAP_FIELD_MAX, never splitting a surrogate pair', () => {
-    const long = parseRecap({ ...RECAP, why: 'a'.repeat(RECAP_FIELD_MAX + 50) });
-    expect(long?.why.length).toBe(RECAP_FIELD_MAX);
-    expect(long?.why.endsWith('…')).toBe(true);
+  it('cuts a text longer than RECAP_FIELD_MAX, never splitting a surrogate pair, and keeps at most RECAP_TODOS_MAX to-dos', () => {
+    const long = parseRecap({ ...RECAP, summary: 'a'.repeat(RECAP_FIELD_MAX + 50), todos: [{ text: 'b'.repeat(RECAP_FIELD_MAX + 1), owner: 'you' }] });
+    expect(long?.summary.length).toBe(RECAP_FIELD_MAX);
+    expect(long?.summary.endsWith('…')).toBe(true);
+    expect(long?.todos[0]?.text.length).toBe(RECAP_FIELD_MAX);
+    const many = parseRecap({ ...RECAP, todos: Array.from({ length: RECAP_TODOS_MAX + 2 }, (_, i) => ({ text: `step ${i}`, owner: 'session' })) });
+    expect(many?.todos).toHaveLength(RECAP_TODOS_MAX);
     const emoji = cutText(`${'a'.repeat(8)}😀😀`, 10);
     expect(emoji).toBe(`${'a'.repeat(8)}…`);
   });
 });
 
-describe('the headline and the lines', () => {
-  it('chooses its label, tone and field by what the recap waits on', () => {
-    expect(recapHeadline(RECAP)).toEqual({ label: 'You need to', look: 'subtle-warning', field: 'next', text: RECAP.next });
-    expect(recapHeadline({ ...RECAP, waitingOn: 'CI' })).toEqual({ label: 'Waiting on CI', look: 'subtle-neutral', field: 'next', text: RECAP.next });
-    expect(recapHeadline({ ...RECAP, waitingOn: 'nothing' })).toEqual({ label: 'Done', look: 'subtle-success', field: 'now', text: RECAP.now });
-    expect(recapHeadline({ ...RECAP, source: 'claude-code', waitingOn: 'nothing' })).toMatchObject({ label: 'Now', field: 'now' });
+describe('the to-dos', () => {
+  it('tags each owner, yours in the Needs you tone, the rest quiet', () => {
+    expect(TODO_OWNER_TEXT).toEqual({ you: 'You', session: 'Session', CI: 'CI', 'someone else': 'Someone else' });
+    expect(todoOwnerLook('you')).toBe('subtle-warning');
+    for (const owner of ['session', 'CI', 'someone else'] as const) expect(todoOwnerLook(owner)).toBe('subtle-neutral');
   });
 
-  it('falls back to the other field when its own is empty', () => {
-    expect(recapHeadline({ ...RECAP, next: '' })).toMatchObject({ label: 'You need to', field: 'now', text: RECAP.now });
-    expect(recapHeadline({ ...RECAP, waitingOn: 'nothing', now: ' ' })).toMatchObject({ label: 'Done', field: 'next', text: RECAP.next });
-  });
-
-  it('lists Why, then whichever of Now and Next the headline didn’t show, leaving out empty ones', () => {
-    expect(recapLines(RECAP, { field: 'next' }).map((line) => line.label)).toEqual(['Why', 'Now']);
-    expect(recapLines(RECAP, { field: 'now' }).map((line) => line.label)).toEqual(['Why', 'Next']);
-    expect(recapLines({ ...RECAP, why: '', next: '' }, { field: 'now' })).toEqual([]);
+  it('counts yours, for the collapsed strip', () => {
+    expect(todosForYou(RECAP)).toBe(2);
+    expect(todosForYou({ todos: [] })).toBe(0);
+    expect(forYouText(1)).toBe('1 for you');
+    expect(forYouText(2)).toBe('2 for you');
   });
 });
 
@@ -111,7 +134,7 @@ function renderRow(s: SessionSummary) {
 
 describe("Needs you's 'recap' reason", () => {
   const waiting = (extra: Partial<SessionSummary> = {}) =>
-    session({ status: 'idle', recap: summary({ next: RECAP.next }), needsYou: { reason: 'recap', text: RECAP.next }, lastUserPrompt: 'Run the made-up export.', ...extra });
+    session({ status: 'idle', recap: summary({ next: NEXT }), needsYou: { reason: 'recap', text: NEXT }, lastUserPrompt: 'Run the made-up export.', ...extra });
 
   it('needs you, with Waiting on you in Done’s place on a job Claude Code calls done', () => {
     const job = waiting({ kind: 'background', shortId: 'pt111a', status: 'idle', state: 'done' });
@@ -121,16 +144,16 @@ describe("Needs you's 'recap' reason", () => {
     expect(rowStatusBadge(waiting())?.label).toBe('Waiting on you');
   });
 
-  it('says on line 2 what the recap says you need to do, after "Next:", as Asked and Needs have theirs', () => {
+  it('says on line 2 its first to-do for you, after "Next:", as Asked and Needs have theirs', () => {
     const row = renderRow(waiting());
-    expect(row.querySelector('.session-what-text')?.textContent).toBe(`Next: ${RECAP.next}`);
+    expect(row.querySelector('.session-what-text')?.textContent).toBe(`Next: ${NEXT}`);
     expect(row.querySelector('.asked-label')?.textContent).toBe('Next:');
     expect(row.querySelector('[data-status]')?.textContent).toBe('Waiting on you');
     expect(row.dataset.attention).toBe('true');
   });
 
   it('says what it did last when the recap gives no next: the badge says the rest', () => {
-    const row = renderRow(waiting({ needsYou: { reason: 'recap' }, recap: summary() }));
+    const row = renderRow(waiting({ needsYou: { reason: 'recap' }, recap: summary({ forYou: 0 }) }));
     expect(row.querySelector('.session-what-text')?.textContent).toBe('You: Run the made-up export.');
   });
 
@@ -140,14 +163,14 @@ describe("Needs you's 'recap' reason", () => {
   });
 
   it('is an outline Waiting on you on a finished or ended row, which never needs you, as a finished Asked you is', () => {
-    const finished = session({ kind: 'background', shortId: 'pt111c', status: undefined, state: 'done', alive: false, pid: undefined, finished: true, recap: summary({ next: RECAP.next }) });
+    const finished = session({ kind: 'background', shortId: 'pt111c', status: undefined, state: 'done', alive: false, pid: undefined, finished: true, recap: summary({ next: NEXT }) });
     expect(needsAttention(finished)).toBe(false);
     expect(finishedWaitingOnYou(finished)).toBe(true);
     const row = renderRow(finished);
     const badge = [...row.querySelectorAll('.badge-outline')].find((each) => each.textContent === 'Waiting on you');
     expect(badge).toBeTruthy();
     expect(row.dataset.attention).toBeUndefined();
-    const ended = session({ ended: true, finished: true, alive: false, pid: undefined, status: undefined, recap: summary({ next: RECAP.next }) });
+    const ended = session({ ended: true, finished: true, alive: false, pid: undefined, status: undefined, recap: summary({ next: NEXT }) });
     expect(finishedWaitingOnYou(ended)).toBe(true);
     // Not from a stale recap, nor beside a finished Asked you.
     expect(finishedWaitingOnYou({ ...ended, recap: summary({ stale: true }) })).toBe(false);

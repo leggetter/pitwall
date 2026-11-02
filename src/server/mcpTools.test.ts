@@ -64,9 +64,11 @@ const pr = (number: number, extra: Partial<PullRequestSummary> = {}): PullReques
 });
 
 const RECAP: SessionRecap = {
-  why: 'You asked it to fix the export.',
-  now: 'It fixed it.',
-  next: 'Say whether to merge #42.',
+  summary: 'You asked it to fix the export, and it fixed it.',
+  todos: [
+    { text: 'Say whether to merge #42', owner: 'you' },
+    { text: 'Open a backport PR', owner: 'session' },
+  ],
   waitingOn: 'you',
   title: 'Fix the export',
   at: new Date(NOW - 30_000).toISOString(),
@@ -154,7 +156,7 @@ describe('list_sessions', () => {
       askedYou: { reason: 'question', excerpt: `Should I ${INJECTION}?` },
       prLinks: [{ kind: 'opened', repo: 'made-up/repo', number: 42, lastAt: new Date(NOW - 7_200_000).toISOString() }],
     });
-    const made = tools({ sessions: [session('b'), asked], recaps: new Map([['a', { ...RECAP, next: INJECTION }]]), prs: { prs: [pr(42)] } });
+    const made = tools({ sessions: [session('b'), asked], recaps: new Map([['a', { ...RECAP, todos: [{ text: INJECTION, owner: 'you' }, RECAP.todos[1]!] }]]), prs: { prs: [pr(42)] } });
     const { json } = await call(made.list_sessions!);
     expect(json.note).toBe(UNTRUSTED_NOTE);
     expect(json.now).toBe('2026-10-29T12:00:00.000Z');
@@ -175,7 +177,7 @@ describe('list_sessions', () => {
         repo: 'repo',
         directory: '/made-up/work/repo',
         needsYou: `Should I ${INJECTION}?`,
-        recap: { why: RECAP.why, now: RECAP.now, next: INJECTION, title: RECAP.title },
+        recap: { title: RECAP.title, summary: RECAP.summary, todos: [{ text: INJECTION, owner: 'you' }, RECAP.todos[1]] },
       },
     });
     // Nothing a session wrote is outside `untrusted`: only pitwall's own words, ids, enums and times.
@@ -210,14 +212,15 @@ describe('list_sessions', () => {
 
   it('stays within its cap, saying how many it left out', async () => {
     const many = Array.from({ length: 300 }, (_, index) => session(`s${index}`, { title: 'x'.repeat(500), needsYou: { reason: 'claude-code', text: 'y'.repeat(500) } }));
-    const { text, json } = await call(tools({ sessions: many, recaps: new Map(many.map((each) => [each.sessionId, { ...RECAP, why: 'w'.repeat(1000) }])) }).list_sessions!);
+    const { text, json } = await call(tools({ sessions: many, recaps: new Map(many.map((each) => [each.sessionId, { ...RECAP, summary: 'w'.repeat(1000), todos: Array.from({ length: 6 }, () => ({ text: 't'.repeat(1000), owner: 'you' as const })) }])) }).list_sessions!);
     expect(text.length).toBeLessThanOrEqual(ANSWER_MAX_CHARS);
     expect(json.shown as number).toBeLessThanOrEqual(LIST_MAX_ITEMS);
     expect((json.shown as number) + (json.omitted as number)).toBe(300);
     expect((json.omitted as number) > 0).toBe(true);
-    const first = (json.sessions as { untrusted: { title: string; recap: { why: string } } }[])[0]!;
+    const first = (json.sessions as { untrusted: { title: string; recap: { summary: string; todos: { text: string }[] } } }[])[0]!;
     expect(first.untrusted.title.length).toBeLessThanOrEqual(300);
-    expect(first.untrusted.recap.why.length).toBeLessThanOrEqual(400);
+    expect(first.untrusted.recap.summary.length).toBeLessThanOrEqual(400);
+    for (const todo of first.untrusted.recap.todos) expect(todo.text.length).toBeLessThanOrEqual(400);
   });
 
   it('says recaps are off with --no-recaps, and gives none', async () => {
@@ -332,8 +335,13 @@ describe('get_recap', () => {
   it('gives the whole recap, its words untrusted, or says why there’s none', async () => {
     const made = tools({ sessions: [session('a'), session('b')], recaps: new Map([['a', { ...RECAP, stale: true }]]) });
     const { json } = await call(made.get_recap!, { id: 'a' });
-    expect(json).toMatchObject({ id: 'a', recap: { waitingOn: 'you', at: RECAP.at, throughAt: RECAP.throughAt, source: 'pitwall', stale: true }, untrusted: { why: RECAP.why, now: RECAP.now, next: RECAP.next, title: RECAP.title } });
+    expect(json).toMatchObject({ id: 'a', recap: { waitingOn: 'you', at: RECAP.at, throughAt: RECAP.throughAt, source: 'pitwall', stale: true }, untrusted: { title: RECAP.title, summary: RECAP.summary, todos: RECAP.todos } });
     expect((await call(made.get_recap!, { id: 'b' })).json).toMatchObject({ recap: null, reason: 'pitwall has no recap of this session yet.' });
+    // Claude Code's own recap: a summary, no to-dos and no title.
+    const away: SessionRecap = { summary: 'Waiting on the backport.', todos: [], waitingOn: 'nothing', title: '', at: RECAP.at, throughAt: RECAP.at, source: 'claude-code' };
+    const fallback = (await call(tools({ sessions: [session('a')], recaps: new Map([['a', away]]) }).get_recap!, { id: 'a' })).json;
+    expect(fallback).toMatchObject({ recap: { waitingOn: 'nothing', source: 'claude-code' }, untrusted: { summary: 'Waiting on the backport.', todos: [] } });
+    expect(fallback.untrusted).not.toHaveProperty('title');
     expect((await call(tools({ sessions: [session('a')], recaps: 'off' }).get_recap!, { id: 'a' })).json).toMatchObject({ recap: null, reason: expect.stringContaining('--no-recaps') });
   });
 });

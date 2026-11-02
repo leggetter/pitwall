@@ -1,17 +1,20 @@
-// The recap strip (M5, W111; docs/design-system.md, 4: Recap strip): in the session view between its
-// header and its tabs, on every tab, so it's there whatever the view shows (Phil agreed, 2026-10-29:
-// "a collapsible strip in the session view between the header and the tabs, not in the terminal or
-// the conversation"). Phil, 2026-10-29: "Can you give me a status update? Where are we?"
+// The recap strip (M5, W111, W121; docs/design-system.md, 4: Recap strip): in the session view between
+// its header and its tabs, on every tab, so it's there whatever the view shows (Phil agreed,
+// 2026-10-29: "a collapsible strip in the session view between the header and the tabs, not in the
+// terminal or the conversation"). Phil, 2026-10-29: "Can you give me a status update? Where are we?";
+// and 2026-11-02: "just an updated version of what we're working on... Then, what's next? What are
+// the outstanding actions? I'm not sure we need the breakdown."
 //
 // - **Line 1:** the disclosure button, "Recap", or "Claude Code's recap" when only Claude Code's
 //   `away_summary` is there, with aria-expanded; how old it is, and "May be out of date" beside it
-//   while it's older than the session's latest turn, so the headline keeps its width at 375 px; and
-//   Refresh, an icon button, busy while a new one is coming and off, saying why, while the day's
-//   budget is spent.
-// - **The headline,** always shown, collapsed too: one line chosen by what it waits on (recap.ts,
-//   recapHeadline()): "You need to" and what's next, in the Needs you tone; "Waiting on CI" and the
-//   like, quiet; "Done" and where it is, quiet success.
-// - **Then, while it's open:** Why, and whichever of Now and Next the headline didn't show.
+//   while it's older than the session's latest turn; and Refresh, an icon button, busy while a new
+//   one is coming and off, saying why, while the day's budget is spent.
+// - **The summary,** always shown: why it was started and where it is now. Collapsed, its first line
+//   with an ellipsis, its whole in a tooltip when it's cut, and "2 for you" after it while any to-do
+//   is yours.
+// - **Then, while it's open:** the to-dos, in order, each with its owner as a small tag, yours in the
+//   Needs you tone and your to-dos' text in full colour; or "Nothing left to do." with none. Claude
+//   Code's recap has a summary only, so it has nothing to open.
 // - **While the first is on its way,** the strip's line 1 at once, so the tabs don't move twice, and
 //   skeleton bars after --pw-delay-spinner; "No recap yet." once none is coming, with why when pitwall
 //   can say; and "Couldn't load the recap." with Try again when fetching it failed.
@@ -22,18 +25,20 @@
 // text from the recap is plain text, in <bdi>, since it names files, PRs and people.
 
 import { useContext, useId, useRef } from 'react';
-import type { RecapHealth, RecapSummary, SessionRecap, SessionSummary } from '../../../src/shared/protocol.js';
+import type { RecapHealth, RecapTodo, SessionRecap, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { plainText } from '../format.js';
 import {
-  recapHeadline,
-  recapLines,
+  forYouText,
+  NOTHING_LEFT_TEXT,
   REFRESH_RECAP_BUSY,
   REFRESH_RECAP_LABEL,
+  TODO_OWNER_TEXT,
+  todoOwnerLook,
+  todosForYou,
   useRecap,
   useRecapCollapsed,
   type RecapController,
-  type RecapHeadline,
 } from '../recap.js';
 import type { StorageSource } from '../groupState.js';
 import { Badge } from './Badge.js';
@@ -44,7 +49,7 @@ import { useToast } from './Toast.js';
 import { Tooltip } from './Tooltip.js';
 import { useWaiting } from './Waiting.js';
 
-/** The headline's first badge while the recap is older than the session's latest turn, and its hint. */
+/** The badge on line 1 while the recap is older than the session's latest turn, and its hint. */
 export const STALE_LABEL = 'May be out of date';
 export const STALE_RECAP_HINT = "It's older than the session's latest turn.";
 
@@ -82,10 +87,9 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
   const summary = state.kind === 'loading' ? state.summary : undefined;
   const source = shown?.source ?? summary?.source ?? 'pitwall';
   const at = shown?.at ?? summary?.at;
-  const headline = shown ? recapHeadline(shown) : summary ? summaryHeadline(summary) : undefined;
-  const lines = shown && headline ? recapLines(shown, headline) : [];
-  // Something under the headline to open: its lines, or, while it loads, the lines it will have. Claude Code's says only where it is.
-  const openable = lines.length > 0 || (summary !== undefined && summary.source === 'pitwall');
+  // Something under the summary to open: pitwall's to-dos, or its note that none are left, or, while
+  // it loads, the list it will have. Claude Code's says only where it is.
+  const openable = source === 'pitwall' && (shown !== undefined || summary !== undefined);
   const open = openable && !collapsed;
   const title = RECAP_TITLES[source];
 
@@ -111,14 +115,14 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
         <RefreshButton recap={recap} />
       </div>
 
-      {headline ? (
-        <Headline headline={headline} />
+      {shown ? (
+        <Summary recap={shown} collapsed={openable && collapsed} />
       ) : state.kind === 'loading' ? (
         <>
           <span className="visually-hidden">Loading the recap</span>
           {waiting.shown && (
             <span className="recap-skeleton" aria-hidden="true">
-              <span className="skeleton-bar recap-skeleton-headline" />
+              <span className="skeleton-bar recap-skeleton-summary" />
             </span>
           )}
         </>
@@ -138,16 +142,11 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
       {openable && (
         <div className="recap-body" id={bodyId} hidden={!open}>
           {shown ? (
-            <dl className="recap-lines">
-              {lines.map((line) => (
-                <div className="recap-line" key={line.label}>
-                  <dt>{line.label}</dt>
-                  <dd>
-                    <bdi>{plainText(line.text)}</bdi>
-                  </dd>
-                </div>
-              ))}
-            </dl>
+            shown.todos.length > 0 ? (
+              <Todos todos={shown.todos} />
+            ) : (
+              <p className="recap-note">{NOTHING_LEFT_TEXT}</p>
+            )
           ) : (
             waiting.shown && (
               <span className="recap-skeleton" aria-hidden="true">
@@ -163,32 +162,51 @@ export function RecapStrip({ session, health, listed, hidden = false, storage }:
 }
 
 /**
- * The headline from the snapshot's summary alone, while the whole recap is on its way: the summary
- * carries `next` only when the recap waits on you (D14), so that's the only one it can show.
+ * The summary: one paragraph, wrapping while the strip is open; collapsed, on one line with an
+ * ellipsis, its whole in a tooltip when it's cut, and "2 for you" after it while any to-do is yours.
  */
-function summaryHeadline(summary: RecapSummary): RecapHeadline | undefined {
-  if (summary.source !== 'pitwall' || summary.waitingOn !== 'you' || summary.next === undefined || summary.next.trim() === '') return undefined;
-  return recapHeadline({ source: 'pitwall', waitingOn: 'you', now: '', next: summary.next });
+function Summary({ recap, collapsed }: { recap: SessionRecap; collapsed: boolean }) {
+  const text = plainText(recap.summary);
+  const forYou = todosForYou(recap);
+  return (
+    <Tooltip content={text} relation="none" onlyIfCut>
+      <p className="recap-summary">
+        <span className="recap-summary-text">
+          <bdi>{text}</bdi>
+        </span>
+        {collapsed && forYou > 0 && (
+          <>
+            <span className="visually-hidden">. </span>
+            <Badge look="subtle-warning" className="recap-for-you">
+              {forYouText(forYou)}
+            </Badge>
+          </>
+        )}
+      </p>
+    </Tooltip>
+  );
 }
 
 /**
- * The headline: the label as a badge in its tone, then the text, one line with an ellipsis while the
- * strip is collapsed, its whole in a tooltip when it's cut. Screen readers hear "You need to: …".
+ * The to-dos, in order, as a numbered list: each its text, then its owner as a small tag. Yours are
+ * in the Needs you tone and full colour; the rest quiet. Screen readers hear "Say whether to mark #42
+ * ready, you" from visually hidden punctuation.
  */
-function Headline({ headline }: { headline: RecapHeadline }) {
-  const text = plainText(headline.text);
+function Todos({ todos }: { todos: RecapTodo[] }) {
   return (
-    <Tooltip content={text} relation="none" onlyIfCut>
-      <p className="recap-headline" data-headline={headline.field}>
-        <Badge look={headline.look} className="recap-label">
-          {headline.label}
-        </Badge>
-        <span className="visually-hidden">: </span>
-        <span className="recap-headline-text">
-          <bdi>{text}</bdi>
-        </span>
-      </p>
-    </Tooltip>
+    <ol className="recap-todos" aria-label="To-dos">
+      {todos.map((todo, index) => (
+        <li className="recap-todo" key={index} data-owner={todo.owner}>
+          <span className="recap-todo-text">
+            <bdi>{plainText(todo.text)}</bdi>
+          </span>
+          <span className="visually-hidden">, </span>
+          <Badge look={todoOwnerLook(todo.owner)} className="recap-owner">
+            {TODO_OWNER_TEXT[todo.owner]}
+          </Badge>
+        </li>
+      ))}
+    </ol>
   );
 }
 

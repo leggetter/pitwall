@@ -80,7 +80,8 @@ function fakeIndexer(initial: IndexSnapshot): Indexer & { push(next: IndexSnapsh
   };
 }
 
-const RECAP = { why: 'You asked it to fix the export.', now: 'It fixed it.', next: 'It waits for you to merge #42.', waitingOn: 'you', title: 'Fix the export' };
+const NEXT = 'Merge #42';
+const RECAP = { summary: 'You asked it to fix the export, and it fixed it.', todos: [{ text: NEXT, owner: 'you' }], waitingOn: 'you', title: 'Fix the export' };
 
 /** A real engine with a fake claude, which holds each call until the test answers it. */
 function engineWithFakeClaude(options: { budget?: number } = {}) {
@@ -279,13 +280,13 @@ describe('the snapshot with recaps', () => {
     expect(a).toMatchObject({
       title: 'Fix the export',
       titleSource: 'pitwall',
-      recap: { waitingOn: 'you', title: 'Fix the export', next: RECAP.next, source: 'pitwall' },
-      needsYou: { reason: 'recap', text: RECAP.next },
+      recap: { waitingOn: 'you', title: 'Fix the export', forYou: 1, next: NEXT, source: 'pitwall' },
+      needsYou: { reason: 'recap', text: NEXT },
     });
     expect(after.groups[0]?.sessions[0]?.sessionId).toBe('a');
     expect(after.recaps).toEqual({ calls: 1, budget: 200, costUsd: 0.001 });
-    // The whole recap only from GET recapPath(): the list's snapshot has no why or now (D14).
-    expect(JSON.stringify(after)).not.toContain(RECAP.why);
+    // The whole recap only from GET recapPath(): the list's snapshot has no summary (D14).
+    expect(JSON.stringify(after)).not.toContain(RECAP.summary);
     ws.close();
   });
 });

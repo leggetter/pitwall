@@ -1,6 +1,6 @@
-// Recaps (M5, W111; docs/design-system.md, 4: Recap strip): the strip between the session view's
-// header and its tabs, on every tab, with its headline by what the recap waits on, Why and Now or
-// Next; collapsed, and kept so after a reload; a stale recap, and a session with none, asking for one
+// Recaps (M5, W111, W121; docs/design-system.md, 4: Recap strip): the strip between the session view's
+// header and its tabs, on every tab, with its summary and its to-dos in order, each with its owner's
+// tag; collapsed, the summary's first line and how many are yours, and kept so after a reload; a stale recap, and a session with none, asking for one
 // once as the view opens, an ended session's included (D26); Refresh, busy until the new one comes,
 // and off while the day's budget is spent; Claude Code's recap; the rows' recap reasons on line 2,
 // and an outline Waiting on you on an ended one; the app strip's recap lines; and, with recaps off,
@@ -22,13 +22,16 @@ const strip = `(() => {
   const toggle = strip.querySelector('.recap-toggle');
   const body = strip.querySelector('.recap-body');
   const refresh = strip.querySelector('[data-recap-refresh]');
-  const text = strip.querySelector('.recap-headline-text');
+  const text = strip.querySelector('.recap-summary-text');
+  const forYou = strip.querySelector('.recap-for-you');
   return {
     kind: strip.dataset.recap,
     title: strip.querySelector('h3')?.textContent ?? null,
     expanded: toggle?.getAttribute('aria-expanded') ?? null,
-    headline: strip.querySelector('.recap-headline')?.textContent ?? null,
-    lines: [...strip.querySelectorAll('.recap-line dt')].map((dt) => dt.textContent),
+    summary: text?.textContent ?? null,
+    forYou: forYou?.textContent ?? null,
+    forYouInside: forYou ? forYou.getBoundingClientRect().right <= box.right + 0.5 : null,
+    todos: [...strip.querySelectorAll('.recap-todo')].map((li) => [li.querySelector('.recap-todo-text')?.textContent ?? '', li.querySelector('.recap-owner')?.textContent ?? '']),
     bodyHidden: body ? body.hidden : null,
     stale: !!strip.querySelector('.recap-stale'),
     staleOnLine1: !!strip.querySelector('.recap-head .recap-age + .recap-stale'),
@@ -46,8 +49,10 @@ type Strip = {
   kind: string;
   title: string | null;
   expanded: string | null;
-  headline: string | null;
-  lines: string[];
+  summary: string | null;
+  forYou: string | null;
+  forYouInside: boolean | null;
+  todos: [string, string][];
   bodyHidden: boolean | null;
   stale: boolean;
   staleOnLine1: boolean;
@@ -66,7 +71,7 @@ const badge = (name: string) => `(${row(name)})?.closest('li.session')?.querySel
 
 const part: Part = {
   name: 'recaps',
-  title: 'Recaps: the strip between the header and the tabs, its headline, collapsed, asking once, Refresh, the budget, Claude Code’s recap, the rows’ reasons and the app strip',
+  title: 'Recaps: the strip between the header and the tabs, its summary and to-dos, collapsed, asking once, Refresh, the budget, Claude Code’s recap, the rows’ reasons and the app strip',
   async run(t) {
     const { page, server } = t;
     const asked = (name: string) => server.records.recapRefreshes.filter((each) => each.name === name);
@@ -82,12 +87,21 @@ const part: Part = {
       return page.waitFor<Strip>(`its recap strip, ${kind}`, `(() => { const s = ${strip}; return s && s.kind === ${JSON.stringify(kind)} ? s : null; })()`);
     };
 
-    await t.step('the strip: what you need to do, then why it started and where it is, between the header and the tabs', async () => {
+    await t.step('the strip: the summary, then the to-dos in order with their owners, between the header and the tabs', async () => {
       await t.fresh({ search: '?view=all', recaps: 'ok' });
       const shown = await open(NAMES.conversation);
       t.expectEqual(shown.title, 'Recap', 'its title');
-      t.expect(shown.headline?.startsWith('You need to: Say whether to fix the lint errors on #51') ?? false, 'the headline: what you need to do', shown.headline);
-      t.expectEqual(shown.lines, ['Why', 'Now'], 'then Why and Now');
+      t.expect(shown.summary?.startsWith('You asked it to add a made-up health route') ?? false, 'the summary: why it started and where it is', shown.summary);
+      t.expectEqual(
+        shown.todos,
+        [
+          ['Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up', 'You'],
+          ['Fix the lint errors, if you say now', 'Session'],
+          ['Say whether to mark #51 ready', 'You'],
+        ],
+        'then the to-dos, in order, each with its owner',
+      );
+      t.expectEqual(shown.forYou, null, 'no count while it is open: the list shows them');
       t.expectEqual(shown.expanded, 'true', 'open, by default');
       t.expect(shown.between && shown.inside, 'between the header and the tabs, inside the view', shown);
       t.expect(shown.share <= 0.36, 'at most 35% of the view', shown.share);
@@ -101,11 +115,13 @@ const part: Part = {
       await t.shot('strip');
     });
 
-    await t.step('collapsed, it keeps the headline alone, and stays collapsed after a reload', async () => {
+    await t.step('collapsed, it keeps the summary’s first line and how many to-dos are yours, and stays collapsed after a reload', async () => {
       await page.click('the Recap toggle', `${STRIP}?.querySelector('.recap-toggle')`);
       const collapsed = await page.waitFor<Strip>('the strip to collapse', `(() => { const s = ${strip}; return s && s.expanded === 'false' ? s : null; })()`);
-      t.expect(collapsed.bodyHidden === true && collapsed.headline !== null, 'Why and Now hidden, the headline kept', collapsed);
-      t.expectEqual(collapsed.oneLine, true, 'the headline on one line');
+      t.expect(collapsed.bodyHidden === true && collapsed.summary !== null, 'the to-dos hidden, the summary kept', collapsed);
+      t.expectEqual(collapsed.oneLine, true, 'the summary on one line');
+      t.expectEqual(collapsed.forYou, '2 for you', 'how many to-dos are yours');
+      t.expectEqual(collapsed.forYouInside, true, 'the count inside the strip, however narrow');
       t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.recap-collapsed.v1')`), 'true', 'kept as a boolean');
       await t.shot('collapsed');
       await page.reload();
@@ -122,17 +138,24 @@ const part: Part = {
       const shown = await open(RECAPPED.ci);
       await page.waitFor('the terminal to attach', `${attachStatus} === 'attached'`);
       const onTerminal = await page.evaluate<Strip>(strip);
-      t.expect(onTerminal.headline?.startsWith('Waiting on CI: The made-up CI run on its branch to finish.') ?? false, 'the headline: what it waits on', onTerminal.headline);
+      t.expectEqual(
+        onTerminal.todos,
+        [
+          ['Finish the made-up CI run on its branch', 'CI'],
+          ['Say whether to open the PR once it passes', 'You'],
+        ],
+        'CI’s to-do first, then yours',
+      );
       t.expect(onTerminal.between, 'still between the header and the tabs', onTerminal);
-      t.expectEqual(shown.lines, ['Why', 'Now'], 'then Why and Now');
+      t.expect(shown.summary?.startsWith('You asked it to make the made-up retry worker back off.') ?? false, 'its summary', shown.summary);
       await t.shot('terminal');
     });
 
-    await t.step('Claude Code’s recap: where it is, with nothing to open', async () => {
+    await t.step('Claude Code’s recap: a summary only, with nothing to open', async () => {
       const shown = await open(RECAPPED.claudeCode);
       t.expectEqual(shown.title, "Claude Code's recap", 'its title says whose it is');
-      t.expect(shown.expanded === null && shown.lines.length === 0, 'no disclosure button, and no lines', shown);
-      t.expect(shown.headline?.startsWith('Now: The made-up index rebuild') ?? false, 'the headline: where it is', shown.headline);
+      t.expect(shown.expanded === null && shown.todos.length === 0 && shown.note === null, 'no disclosure button, no to-dos and no note', shown);
+      t.expect(shown.summary?.startsWith('The made-up index rebuild') ?? false, 'the summary: where it is', shown.summary);
     });
 
     await t.step('a stale recap: the view asks for a new one once, and shows it', async () => {
@@ -145,7 +168,7 @@ const part: Part = {
     await t.step('a session with none: the strip says one is coming, asks once, and shows it', async () => {
       await open(NAMES.waiting, 'loading');
       const shown = await page.waitFor<Strip>('its first recap', `(() => { const s = ${strip}; return s && s.kind === 'shown' ? s : null; })()`, 8_000);
-      t.expect(shown.headline?.startsWith('You need to: Answer its permission prompt') ?? false, 'the headline', shown.headline);
+      t.expectEqual(shown.todos, [['Answer its permission prompt to run the made-up docs build', 'You']], 'its to-do');
       await page.settle(1_000);
       t.expectEqual(asked(NAMES.waiting).length, 1, 'asked once');
     });
@@ -156,7 +179,7 @@ const part: Part = {
       await page.waitFor('All sessions', `!!document.querySelector('.session-list .finished-toggle')`, 15_000);
       await openFinished(t);
       const shown = await open(NAMES.ended);
-      t.expect(shown.headline?.startsWith('You need to: Say whether to publish the made-up release notes.') ?? false, 'its first recap', shown.headline);
+      t.expect(shown.summary?.startsWith('You asked it to tidy the made-up release notes.') ?? false, 'its first recap', shown.summary);
       await page.settle(1_000);
       t.expectEqual(asked(NAMES.ended), [{ name: NAMES.ended, status: 200 }], 'asked once, as it opened');
       t.expectEqual(await page.evaluate(`${VIEW}?.querySelector('.session-view-meta .badge-outline')?.textContent ?? null`), 'Waiting on you', 'an outline Waiting on you in its header, as a finished Asked you is');
@@ -167,6 +190,12 @@ const part: Part = {
       );
       t.expectEqual(await page.evaluate(`(${row(NAMES.ended)})?.closest('li.session')?.dataset.attention ?? null`), null, 'no bar');
       await t.shot('ended');
+    });
+
+    await t.step('a finished session with nothing left to do: the summary, then a note', async () => {
+      const shown = await open(RECAPPED.done);
+      t.expectEqual(shown.todos, [], 'no to-dos');
+      t.expectEqual(shown.note, 'Nothing left to do.', 'a note says so');
     });
 
     await t.step('Refresh: busy until the new recap comes', async () => {
@@ -199,7 +228,7 @@ const part: Part = {
       await t.fresh({ search: '?view=all', recaps: 'spent' });
       t.expect((await page.evaluate<string | null>(APP_STRIP))?.startsWith("Today's 200 recaps are used up") ?? false, 'the app strip', await page.evaluate(APP_STRIP));
       const shown = await open(RECAPPED.stale);
-      t.expect(shown.stale && shown.staleOnLine1 && shown.headline?.startsWith('You need to:') === true, 'its stale recap, which says so on line 1, beside its age', shown);
+      t.expect(shown.stale && shown.staleOnLine1 && shown.summary?.startsWith('You asked it to review the made-up retry change.') === true, 'its stale recap, which says so on line 1, beside its age', shown);
       t.expectEqual(shown.off, true, 'Refresh is off');
       await page.click('Refresh the recap', `${STRIP}?.querySelector('[data-recap-refresh]')`);
       await page.settle(1_000);
