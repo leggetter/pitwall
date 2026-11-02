@@ -930,6 +930,11 @@ export class World {
     this.#sessions.set(sessionId, { ...open, pid: 42_001, alive: true, status: 'idle', finished: false, lastActivityAt: new Date().toISOString() });
   }
 
+  /** Until the next reset, the session isn't listed, as after its transcript went (W118: an open view keeps what it showed). */
+  unlist(sessionId: string): void {
+    this.#sessions.delete(sessionId);
+  }
+
   /**
    * Until the next reset, the session's directory is `cwd`, as for one whose path has a `'` (W87). A
    * path under its group's `.claude/` keeps it in that group, as a worktree's does.

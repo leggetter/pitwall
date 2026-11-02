@@ -32,7 +32,7 @@
 // - From a session (W118, fromSession.ts): New session from here opens it prefilled with that
 //   session's directory, added to the choices when no group has it, as a worktree's, and a blank
 //   prompt. Draft from this session, under the prompt, adds the text you selected in that session's
-//   conversation, quoted, after a line naming the session, at the prompt's start, and puts focus at the
+//   conversation, quoted, after a line with the session's ID, never its name, at the prompt's start, and puts focus at the
 //   prompt's end; it's off, saying why beside it, with no selection, while the draft is in the prompt,
 //   or when it wouldn't fit.
 
@@ -147,7 +147,7 @@ export interface NewSessionDialogProps {
   notice?: ReactNode;
   /**
    * Opened from a session (W118): Draft from this session, under the prompt, adds `text`, the quoted
-   * selection and the line naming the session (draftText()), or is off when it's undefined.
+   * selection and the line with the session's ID (draftText()), or is off when it's undefined.
    */
   draft?: { text: string | undefined } | undefined;
 }

@@ -359,13 +359,13 @@ const DIALOG_CASES: DialogCase[] = [
     title: 'From a session: text selected',
     note: "New session from here (W118), with text selected in the session's conversation: its directory chosen, the prompt blank, and Draft from this session on, saying what it adds.",
     frame: 'dialog-tall',
-    from: { cwd: JOBS_DIR, name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
+    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
   },
   {
     title: 'From a session: drafted',
-    note: 'After Draft from this session: the line naming the session and the selection, quoted, at the start of the prompt, with focus at its end. The button is off while the draft is there.',
+    note: "After Draft from this session: the line with the session's ID and the selection, quoted, at the start of the prompt, with focus at its end. The button is off while the draft is there.",
     frame: 'dialog-tall',
-    from: { cwd: JOBS_DIR, name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
+    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
     run: async (root) => {
       await press(root, DRAFT_LABEL);
       await text(root, DRAFT_HINTS.added);
@@ -375,7 +375,7 @@ const DIALOG_CASES: DialogCase[] = [
     title: 'From a session: nothing selected',
     note: 'With no text selected in its conversation, Draft from this session is off, and says to select text there first.',
     frame: 'dialog-tall',
-    from: { cwd: JOBS_DIR, name: 'pitwall-test-nightly-export', selection: '' },
+    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: '' },
   },
 ];
 

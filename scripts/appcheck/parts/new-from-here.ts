@@ -2,9 +2,10 @@
 // actions menu, and 4: Dialogs, the New session dialog): first in a session's actions menu, it opens
 // New session in that session's directory with a blank prompt; text selected in the conversation
 // survives a real click on the menu's button, and Draft from this session puts it in the prompt,
-// quoted, after a line naming the session; with nothing selected the button is off and says to select
-// text first; the start sends the directory and the prompt as shown; an ended session's works, and
-// one whose directory has gone has it off, saying why; and the keyboard reaches and uses it.
+// quoted, after a line with the session's id; with nothing selected the button is off and says to select
+// text first; the start sends the directory and the prompt as shown, which names the session by its
+// id, never its name; an ended session's works, and one whose directory has gone, or that's no longer
+// listed, has it off, saying why; and the keyboard reaches and uses it.
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -74,7 +75,8 @@ const part: Part = {
       await page.waitFor('the dialog', `${dialogName} === 'New session'`);
       t.expectEqual(await page.evaluate(`${DRAFT_BUTTON}?.getAttribute('aria-disabled')`), null, 'Draft from this session is on');
       await page.click(DRAFT, DRAFT_BUTTON);
-      const draft = `From my session "${NAMES.conversation}":\n\n> ${SELECTED}\n\n`;
+      // The session by its id, never its name (#120's review), which the subtitle shows and isn't sent.
+      const draft = `From my session ${server.world.byName(NAMES.conversation).sessionId}:\n\n> ${SELECTED}\n\n`;
       await page.waitFor('the draft in the prompt', `${PROMPT}.value === ${q(draft)}`);
       t.expect(await page.evaluate(`document.activeElement === ${PROMPT}`), 'focus is in the prompt', await page.evaluate(focused));
       t.expectEqual(await page.evaluate(`${PROMPT}.selectionStart === ${PROMPT}.value.length`), true, 'at its end');
@@ -117,6 +119,22 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`${menuItem(LABEL)}?.getAttribute('aria-disabled')`), 'true', 'off where the directory has gone');
       t.expect((await page.evaluate<string>(described(menuItem(LABEL)))).includes('no longer exists'), 'saying why', await page.evaluate(described(menuItem(LABEL))));
       await t.shot('gone');
+      await page.click(LABEL, menuItem(LABEL));
+      await page.settle();
+      t.expect(!(await page.evaluate<boolean>(`!!${DIALOG}`)), 'and it opens nothing');
+    });
+
+    await t.step('one no longer listed has it off, saying why', async () => {
+      const { sessionId } = server.world.byName(NAMES.asked);
+      await page.navigate(`/?view=all&session=${sessionId}`);
+      await page.waitFor(`the ${NAMES.asked} view`, `${viewName} === ${q(NAMES.asked)}`, 10_000);
+      server.world.unlist(sessionId);
+      server.broadcast();
+      await page.waitFor('the view to say it’s no longer listed', `${VIEW}?.textContent.includes('no longer listed')`);
+      await openMenu();
+      t.expectEqual(await page.evaluate(`${menuItem(LABEL)}?.getAttribute('aria-disabled')`), 'true', 'off once it has left the list');
+      t.expect((await page.evaluate<string>(described(menuItem(LABEL)))).includes("It's no longer listed"), 'saying why', await page.evaluate(described(menuItem(LABEL))));
+      await t.shot('unlisted');
       await page.click(LABEL, menuItem(LABEL));
       await page.settle();
       t.expect(!(await page.evaluate<boolean>(`!!${DIALOG}`)), 'and it opens nothing');
