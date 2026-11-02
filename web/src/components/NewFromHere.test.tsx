@@ -139,6 +139,10 @@ describe('the draft', () => {
     expect(draftState('x > a y', '> a')).toBe('added');
     expect(draftState('x'.repeat(MAX_PROMPT_LENGTH - 3), '> a')).toBe('tooLong');
     expect(draftState('', '> a')).toBe('ready');
+    // A selection that carries what doesn't show isn't quoted (W120).
+    expect(draftState('', '> a\u200bb')).toBe('hidden');
+    expect(draftState('', `> a${String.fromCodePoint(0xe0041)}`)).toBe('hidden');
+    expect(draftState('', '> ⚠️ café')).toBe('ready');
   });
 
   it('reads a selection only when it starts and ends in the conversation’s entries, never pitwall’s own text around them', () => {

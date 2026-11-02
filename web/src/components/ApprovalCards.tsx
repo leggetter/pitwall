@@ -1,8 +1,14 @@
 // The supervisor's approvals (M5, W114, W115; docs/design-system.md, 4: Supervisor): a draft card for
 // each thing it wants to do that waits on your click, oldest first, above its message box. A message to
-// a session, or a new session in a directory, with the text it would send, as plain text in <bdi>,
-// never markdown, since it's the model's and may quote a transcript; when it runs out; and Send, Edit
-// and Don't send. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX for a message and
+// a session, or a new session in a directory, with the text it would send, as text in <bdi>, never
+// markdown, since it's the model's and may quote a transcript; when it runs out; and Send, Edit and
+// Don't send.
+//
+// - What the card shows is what goes (W120, W116's F1): the exact string, never through a filter that
+//   removes text, as plainText() would. The server refuses text with a character that wouldn't show
+//   as itself (src/shared/hiddenText.ts); anything unusual left, such as a no-break space, is drawn as
+//   its code, U+00A0, with a note naming it. Taller than the box shows (8 lines, 4 on a short
+//   window), the card says how many lines and characters it has, to scroll through before Send. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
 //
 // - Each decision POSTs a SupervisorDecision to supervisorApprovalPath(). The card stays busy until the
@@ -18,12 +24,13 @@ import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type K
 import { SPAWN_PROMPT_MAX, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
+import { visibleParts, type VisiblePart } from '../../../src/shared/hiddenText.js';
 import { plainText } from '../format.js';
 import { characterCount } from '../relay.js';
 import { APPROVAL_GONE, approvalText, approvalTitle, decideApproval, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
 import { Alert } from './Alert.js';
 import { Button } from './Button.js';
-import { ScrollBox } from './ScrollBox.js';
+import { ScrollBox, useOverflowing } from './ScrollBox.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 
@@ -45,6 +52,40 @@ export function editLimit(kind: SupervisorApproval['kind']): number {
 
 /** What each kind's text is, as the card labels it. */
 const TEXT_LABELS = { message: 'Message', spawn: 'First prompt' } as const;
+
+/** The most lines the card's text box shows before it scrolls, on a tall window (supervisor.css). */
+export const APPROVAL_TEXT_LINES = 8;
+
+/** What the card says under text taller than its box. */
+export function lengthNote(text: string): string {
+  const lines = text.split('\n').length;
+  const chars = text.length;
+  return `${lines.toLocaleString('en')} ${lines === 1 ? 'line' : 'lines'}, ${chars.toLocaleString('en')} ${chars === 1 ? 'character' : 'characters'}: scroll to read it all before you send it.`;
+}
+
+/** What the card says under text with characters it draws as their codes. */
+export function hiddenNote(parts: readonly VisiblePart[]): string | undefined {
+  const named = [...new Set(parts.flatMap((part) => (part.kind === 'hidden' ? [part.description] : [])))];
+  if (named.length === 0) return undefined;
+  return `Drawn as their codes, since they don't show as themselves: ${named.join('; ')}.`;
+}
+
+/** The text as it goes, each character that wouldn't show as itself drawn as its code. */
+function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.kind === 'text' ? (
+          part.text
+        ) : (
+          <span key={index} className="approval-hidden">
+            {part.label}
+          </span>
+        ),
+      )}
+    </>
+  );
+}
 
 /** What a spawn card adds under its heading: how the session starts. */
 export const SPAWN_NOTE = 'Starts a background session there with claude --bg, its first prompt as below.';
@@ -115,7 +156,9 @@ type Phase = { kind: 'idle' } | { kind: 'deciding'; decision: SupervisorDecision
 
 function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const api = useContext(ApiContext);
-  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId() };
+  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId() };
+  const [textBox, setTextBox] = useState<HTMLElement | null>(null);
+  const overflowing = useOverflowing(textBox);
   const alive = useRef(true);
   const requests = useRef<AbortController | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
@@ -211,6 +254,9 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const busyWith = (decision: SupervisorDecision['decision']) => phase.kind !== 'idle' && phase.decision === decision;
   const title = approvalTitle(approval);
   const directory = approval.kind === 'spawn' ? plainText(approval.directory) : undefined;
+  const text = approvalText(approval);
+  const parts = visibleParts(text);
+  const notes = [overflowing || text.split('\n').length > APPROVAL_TEXT_LINES ? lengthNote(text) : undefined, hiddenNote(parts)].filter((note) => note !== undefined);
   return (
     <li className="approval-card" data-approval={approval.id} data-kind={approval.kind} aria-labelledby={ids.heading} aria-busy={busy || undefined}>
       {/* Takes focus when the card before it goes (above), with no ring of its own, as the view's heading. */}
@@ -236,10 +282,17 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
           <p className="approval-label" id={ids.text}>
             {TEXT_LABELS[approval.kind]}
           </p>
-          {/* The model's text, as text: three to eight lines, then it scrolls, a Tab stop while it does. */}
-          <ScrollBox as="p" className="approval-text" label={TEXT_LABELS[approval.kind]}>
-            <bdi>{plainText(approvalText(approval))}</bdi>
+          {/* The model's text, exactly as it goes: three to eight lines, then it scrolls, a Tab stop while it does. */}
+          <ScrollBox ref={setTextBox} as="p" className="approval-text" label={TEXT_LABELS[approval.kind]} aria-describedby={notes.length > 0 ? ids.notes : undefined}>
+            <bdi>
+              <ExactText parts={parts} />
+            </bdi>
           </ScrollBox>
+          {notes.length > 0 && (
+            <p className="approval-length" id={ids.notes}>
+              {notes.join(' ')}
+            </p>
+          )}
         </div>
       ) : (
         <div className="approval-body approval-editing">

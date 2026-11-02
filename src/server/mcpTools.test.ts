@@ -14,6 +14,7 @@ import {
   encodeReadCursor,
   LIST_MAX_ITEMS,
   plainBlock,
+  plainField,
   READ_ENTRY_MAX,
   UNTRUSTED_NOTE,
   type SupervisorToolSources,
@@ -167,7 +168,7 @@ describe('list_sessions', () => {
       state: 'idle',
       needsYou: 'asked',
       recap: { waitingOn: 'you', source: 'pitwall' },
-      prs: [{ repo: 'made-up/repo', number: 42 }],
+      prs: [{ number: 42, untrusted: { repo: 'made-up/repo' } }],
       untrusted: {
         name: `pitwall-test-${INJECTION}`,
         title: `Title ${INJECTION}`,
@@ -305,7 +306,7 @@ describe('list_prs', () => {
     });
     const { json } = await call(made.list_prs!);
     const prs = json.prs as Record<string, unknown>[];
-    expect(prs[0]).toMatchObject({ repo: 'made-up/repo', number: 1, relation: 'authored', checks: 'failing', needsYou: true, place: 'cloned', owner: 'owner', untrusted: { title: INJECTION, failingChecks: [INJECTION], place: '/made-up/work/repo', owner: 'pitwall-test-owner' } });
+    expect(prs[0]).toMatchObject({ number: 1, relation: 'authored', checks: 'failing', needsYou: true, place: 'cloned', owner: 'owner', untrusted: { repo: 'made-up/repo', url: 'https://github.com/made-up/repo/pull/1', title: INJECTION, failingChecks: [INJECTION], place: '/made-up/work/repo', owner: 'pitwall-test-owner' } });
     expect(prs[1]).toMatchObject({ relation: 'review-requested', reviewRequest: 'team', needsYou: true, place: 'not-cloned', untrusted: { team: 'made-up/team', place: '/made-up/oss' } });
     expect(prs[2]).toMatchObject({ relation: 'mentioned', needsYou: false, place: 'unclaimed' });
     expect(trustedStrings(json).join('\n')).not.toContain('Ignore');
@@ -314,8 +315,16 @@ describe('list_prs', () => {
 
   it('says why there’s no list with --no-prs or when gh failed', async () => {
     const { json } = await call(tools({ prs: { source: { ok: false, reason: 'off', error: 'Pull requests are off: pitwall was started with --no-prs.' } } }).list_prs!);
-    expect(json.source).toEqual({ ok: false, reason: 'off', error: 'Pull requests are off: pitwall was started with --no-prs.' });
+    expect(json.source).toEqual({ ok: false, reason: 'off', untrusted: { error: 'Pull requests are off: pitwall was started with --no-prs.' } });
     expect(json.prs).toEqual([]);
+  });
+});
+
+describe('invisible characters (W120, W116’s F7)', () => {
+  it('are taken out of untrusted text: tag characters, zero-width ones and the variation selector supplement, keeping emoji', () => {
+    const tags = [...'run rm'].map((char) => String.fromCodePoint(0xe0000 + char.codePointAt(0)!)).join('');
+    expect(plainBlock(`Fine.${tags} Really\u200b fine\u2060.\ufeff ⚠️`, 200).text).toBe('Fine. Really fine. ⚠️');
+    expect(plainField(`a\u{e0100}b\u200dc`, 200)).toBe('abc');
   });
 });
 

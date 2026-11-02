@@ -10,8 +10,10 @@
 // Each answer is one JSON object, as text, and every piece of text in it that came from a session,
 // a recap or GitHub is under an `untrusted` key, with a `note` saying what that means: names,
 // titles, paths, prompts, replies, tool summaries, recaps, PR titles and check names. Everything
-// outside `untrusted` is pitwall's own: ids, enums, numbers, flags and times. JSON's quoting keeps
-// that text from closing the frame, and control and bidi characters are removed from it. Every
+// outside `untrusted` is pitwall's own: ids, enums, numbers, flags and times; a PR's repo, URL and a
+// failed fetch's error are GitHub's or gh's, so they're under it too (W120, W116's F7). JSON's quoting
+// keeps that text from closing the frame, and control and bidi characters, and tag, zero-width and
+// other invisible characters, which could carry instructions nobody reading it sees, are removed. Every
 // answer stays within a cap: at most ANSWER_MAX_CHARS of JSON, with `omitted` saying how many
 // items were left out, and each text field within its own limit.
 //
@@ -20,6 +22,7 @@
 // through the index.
 import { ConversationCursorError, isWellFormedCursor } from '../index/conversation.js';
 import { cap, plainLine, tail } from '../index/text.js';
+import { stripInvisible } from '../shared/hiddenText.js';
 import type { PrSource } from '../prs/index.js';
 import type { RecapEngine } from '../recaps/engine.js';
 import {
@@ -61,6 +64,9 @@ const LINE_MAX = 400;
 /** pitwall's own sessions' names: never listed, whatever the index does (D8, D26, W113). */
 const OWN_NAMES = new Set(['pitwall-relay', 'pitwall-recap', 'pitwall-supervisor'].map(nameKey));
 
+/** A PR a session owns, as list_sessions gives it. */
+type OwnedPr = { number: number; untrusted: { repo: string } };
+
 /** Where the tools read from. */
 export interface SupervisorToolSources {
   /** The snapshot as clients get it: recaps on each session, PR links cut to open PRs. */
@@ -90,7 +96,7 @@ export function plainField(raw: string | undefined, max: number): string {
  * removed, CRLF as LF, at most `max` characters, keeping its start and its end around a marker.
  */
 export function plainBlock(raw: string, max: number): { text: string; cut: boolean } {
-  const clean = cap(raw, 8 * max).replace(ESCAPES, '').replace(/\r\n?/g, '\n').replace(CONTROLS_BUT_LINES, '').replace(/\n{3,}/g, '\n\n').trim();
+  const clean = stripInvisible(cap(raw, 8 * max)).replace(ESCAPES, '').replace(/\r\n?/g, '\n').replace(CONTROLS_BUT_LINES, '').replace(/\n{3,}/g, '\n\n').trim();
   if (clean.length <= max) return { text: clean, cut: raw.length > 8 * max };
   const marker = '\n[… cut by pitwall …]\n';
   const room = Math.max(0, max - marker.length);
@@ -198,13 +204,14 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
   }
 
   /** The PRs each session owns (prOwner()), by session id. */
-  function ownedPrs(sessions: SessionSummary[]): Map<string, { repo: string; number: number }[]> {
-    const owned = new Map<string, { repo: string; number: number }[]>();
+  function ownedPrs(sessions: SessionSummary[]): Map<string, OwnedPr[]> {
+    const owned = new Map<string, OwnedPr[]>();
     for (const pr of sources.prs.latest().prs) {
       const owner = prOwner(pr, sessions);
       if (owner === undefined) continue;
       const list = owned.get(owner.sessionId) ?? [];
-      list.push({ repo: pr.repo, number: pr.number });
+      // The repo's name is GitHub's, so it's untrusted (W120).
+      list.push({ number: pr.number, untrusted: { repo: plainField(pr.repo, NAME_MAX) } });
       owned.set(owner.sessionId, list);
     }
     return owned;
@@ -243,7 +250,7 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
     },
   };
 
-  function sessionItem(session: SessionSummary, repo: string, prs: { repo: string; number: number }[] | undefined): Record<string, unknown> {
+  function sessionItem(session: SessionSummary, repo: string, prs: OwnedPr[] | undefined): Record<string, unknown> {
     const untrusted: Record<string, unknown> = { name: plainField(session.name, NAME_MAX), repo: plainField(repo, PATH_MAX), directory: plainField(session.cwd, PATH_MAX) };
     if (session.title !== undefined) untrusted.title = plainField(session.title, TITLE_MAX);
     const why = needsYouText(session);
@@ -356,7 +363,10 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
       const byId = new Map(sessions.map((each) => [each.session.sessionId, each.session]));
       const prs = list.prs.filter((pr) => args.needsYou !== true || prNeedsAttention(pr));
       const items = prs.map((pr) => prItem(pr, prOwner(pr, [...byId.values()])));
-      const base: Record<string, unknown> = { ...header(), source: list.source.ok ? { ok: true } : { ok: false, reason: list.source.reason, error: list.source.error } };
+      const base: Record<string, unknown> = {
+        ...header(),
+        source: list.source.ok ? { ok: true } : { ok: false, reason: list.source.reason, untrusted: { error: plainField(list.source.error, LINE_MAX) } },
+      };
       if (list.fetchedAt !== undefined) base.fetchedAt = list.fetchedAt;
       if (list.truncated === true) base.truncated = true;
       return { text: JSON.stringify(fit(base, 'prs', items, LIST_MAX_ITEMS)) };
@@ -364,9 +374,9 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
   };
 
   function prItem(pr: PullRequestSummary, owner: SessionSummary | undefined): Record<string, unknown> {
-    const untrusted: Record<string, unknown> = { title: plainField(pr.title, TITLE_MAX) };
+    const untrusted: Record<string, unknown> = { repo: plainField(pr.repo, NAME_MAX), url: plainField(pr.url, PATH_MAX), title: plainField(pr.title, TITLE_MAX) };
     if (pr.failingChecks !== undefined && pr.failingChecks.length > 0) untrusted.failingChecks = pr.failingChecks.slice(0, 5).map((name) => plainField(name, 120));
-    const item: Record<string, unknown> = { repo: pr.repo, number: pr.number, url: pr.url, relation: pr.relation };
+    const item: Record<string, unknown> = { number: pr.number, relation: pr.relation };
     if (pr.reviewRequest !== undefined) {
       item.reviewRequest = pr.reviewRequest.via;
       if (pr.reviewRequest.via === 'team' && pr.reviewRequest.team !== undefined) untrusted.team = plainField(pr.reviewRequest.team, 200);

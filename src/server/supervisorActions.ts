@@ -24,27 +24,40 @@
 //
 //   a message       to: exactly the name of one running session pitwall lists, never an ended one,
 //                   one whose name another running one shares, or pitwall's own (relay, recap
-//                   calls, the supervisor); only the fields pitwall knows; a plain message, no idle
-//                   notices; a `content` preview that is the message or its start, never other text;
-//                   text not blank, no NUL, at most SUPERVISOR_MESSAGE_MAX
+//                   calls, the supervisor); a name the relay could address (isAddressable()), with
+//                   no `:` or `/`, which would make it an address rather than a name; and, by a
+//                   fresh `claude agents --json --all`, unfiltered, as the relay checks (W120, W116's
+//                   F2), the one live session of that name, ignoring case, wherever it runs, so a
+//                   name shared with a session outside the roots is refused; only the fields pitwall
+//                   knows; a plain message, no idle notices; a `content` preview that is the message
+//                   or its start, never other text; text not blank, at most SUPERVISOR_MESSAGE_MAX
 //   a new session   directory: an existing directory under a root, by its real path, as New session
-//                   requires (checkDirectory()); name: NAME_PATTERN; prompt: not blank, no NUL, at
-//                   most MAX_PROMPT_LENGTH, not just a claude command; no other field
+//                   requires (checkDirectory()); name: NAME_PATTERN, never one of pitwall's own
+//                   (OWN_NAMES); prompt: not blank, at most MAX_PROMPT_LENGTH, not just a claude
+//                   command; no other field
+//   all text        no character that doesn't show as itself (hiddenTextProblem(), W120, W116's
+//                   F1): no C0 or C1 control but tab and newline, so no terminal escape; no bidi
+//                   control, zero-width or tag character, or other format or default-ignorable
+//                   character. In the message, the prompt, the recipient, the name and the directory
 //
 // The recipient gate (src/supervisor/gate.ts) checks a message's `to` again before Claude Code asks,
 // against recipientNames(), as defence in depth.
 //
-// The text on a card is the model's, so the page shows it as plain text, and what goes is exactly
-// what the card showed, or your edit: pitwall adds nothing to it (D25's rule: a prompt pitwall fills
-// in goes as typed by you, and here you read it, whole, before it goes).
+// What goes is exactly what the card showed, or your edit: pitwall adds nothing to it (D25's rule: a
+// prompt pitwall fills in goes as typed by you, and here you read it, whole, before it goes). The card
+// shows the string itself, never through a filter that removes text, and since the checks above
+// refuse every character that wouldn't show, there is nothing on it you can't read; anything unusual
+// left, such as a no-break space, it draws as its code (web/src/components/ApprovalCards.tsx).
+import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
+import { hiddenTextProblem } from '../shared/hiddenText.js';
 import { MCP_TOOLS, SUPERVISOR_MESSAGE_MAX, type IndexSnapshot, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
 import { MAX_PROMPT_LENGTH, validateSpawnRequest, type SpawnRunner, type ValidSpawn } from './actions.js';
 import type { McpTool, McpToolResult } from './mcp.js';
-import { nameKey } from './relayPrompt.js';
+import { isAddressable, nameKey } from './relayPrompt.js';
 
 /** The tools approve may allow, as Claude Code names them. */
 export const MESSAGE_TOOL = 'SendMessage';
@@ -70,6 +83,11 @@ export interface SupervisorActionSources {
   spawner: Pick<SpawnRunner, 'start'>;
   /** Called after spawn_session started a session, so the list picks it up. */
   onSpawned?: () => void;
+  /**
+   * A fresh `claude agents --json --all`, unfiltered, for the recipient check (W120): the snapshot
+   * leaves out sessions outside the roots and pitwall's own. The server passes the index's source.
+   */
+  agents: Pick<AgentsSource, 'list'>;
 }
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -82,10 +100,14 @@ function messageable(session: SessionSummary, own: ReadonlySet<string>): boolean
 
 /**
  * The names the supervisor may message, for the recipient gate: each running, listed session's
- * name that no other running one shares, ignoring case, never pitwall's own.
+ * name that no other running one shares, ignoring case, never pitwall's own. With `rows`, the
+ * index's last `claude agents --json --all`, unfiltered (Indexer.liveRows()), a name that another
+ * live session shares, one outside the roots included, is left out too (W120, W116's F2).
  */
-export function recipientNames(snapshot: IndexSnapshot | undefined, own: ReadonlySet<string> = new Set()): string[] {
+export function recipientNames(snapshot: IndexSnapshot | undefined, own: ReadonlySet<string> = new Set(), rows?: readonly Pick<AgentRow, 'name' | 'pid'>[]): string[] {
   if (snapshot === undefined) return [];
+  const liveByKey = new Map<string, number>();
+  for (const row of rows ?? []) if (row.pid !== undefined) liveByKey.set(nameKey(row.name), (liveByKey.get(nameKey(row.name)) ?? 0) + 1);
   const byKey = new Map<string, string[]>();
   for (const group of snapshot.groups) {
     for (const session of group.sessions) {
@@ -94,15 +116,28 @@ export function recipientNames(snapshot: IndexSnapshot | undefined, own: Readonl
       byKey.set(key, [...(byKey.get(key) ?? []), session.name]);
     }
   }
-  return [...byKey.values()].filter((names) => names.length === 1).map((names) => names[0]!).sort();
+  return [...byKey.entries()]
+    .filter(([key, names]) => names.length === 1 && (rows === undefined || liveByKey.get(key) === 1))
+    .map(([, names]) => names[0]!)
+    .sort();
 }
 
 /** The text of a message or a prompt, or why it isn't one. */
 function checkText(text: unknown, max: number, what: string): Checked<string> {
   if (typeof text !== 'string' || text.trim() === '') return { ok: false, error: `The ${what} is empty.` };
   if (text.length > max) return { ok: false, error: `The ${what} can be at most ${max.toLocaleString('en-US')} characters.` };
-  if (text.includes('\u0000')) return { ok: false, error: `The ${what} contains a NUL character.` };
+  const hidden = hiddenTextProblem(text, what);
+  if (hidden !== undefined) return { ok: false, error: hidden };
   return { ok: true, value: text };
+}
+
+/** Whether `to` could be a session's name, as the relay addresses one, and nothing that reads as an address. */
+function checkTo(to: string): Checked<string> {
+  const hidden = hiddenTextProblem(to, 'recipient');
+  if (hidden !== undefined) return { ok: false, error: hidden };
+  if (!isAddressable(to)) return { ok: false, error: 'pitwall can’t address a session by that name: it has line breaks, < or >, a space at either end, or is too long.' };
+  if (/[:/]/.test(to)) return { ok: false, error: 'Send a message to a session by its name alone: a name with “:” or “/” reads as an address, which pitwall doesn’t send to.' };
+  return { ok: true, value: to };
 }
 
 /** A SendMessage call's input, checked against the list as it is now. */
@@ -116,6 +151,8 @@ export function checkMessage(input: unknown, snapshot: IndexSnapshot | undefined
   if (input.recipient !== undefined && input.recipient !== to) return { ok: false, error: 'The message names two different recipients.' };
   if (input.recipient_kind !== undefined && input.recipient_kind !== 'name') return { ok: false, error: 'Send a message to a session by its name, as list_sessions gives it.' };
   if (OWN_NAMES.has(nameKey(to.trim()))) return { ok: false, error: 'pitwall’s own sessions can’t be messaged.' };
+  const addressable = checkTo(to);
+  if (!addressable.ok) return addressable;
   const text = checkText(input.message, SUPERVISOR_MESSAGE_MAX, 'message');
   if (!text.ok) return text;
   // Claude Code's preview of the message: anything but the message or its start could carry text
@@ -133,6 +170,29 @@ export function checkMessage(input: unknown, snapshot: IndexSnapshot | undefined
   return { ok: true, value: { to, text: text.value } };
 }
 
+/**
+ * A message's recipient checked again by a fresh `claude agents --json --all`, unfiltered, as the
+ * relay checks a name (relay.ts' checkName()): exactly one live session, wherever it runs, has the
+ * name, ignoring case, and it's the listed session `to` named. A name a session outside the roots
+ * shares, which the snapshot never shows, is refused (W120, W116's F2).
+ */
+export async function checkLiveRecipient(to: string, snapshot: IndexSnapshot | undefined, agents: Pick<AgentsSource, 'list'>, own: ReadonlySet<string> = new Set()): Promise<Checked<true>> {
+  const listedSession = snapshot?.groups.flatMap((group) => group.sessions).find((session) => session.name === to && messageable(session, own));
+  if (listedSession === undefined) return { ok: false, error: 'No running session pitwall lists has that name now.' };
+  const listed = await agents.list();
+  if (!listed.ok) return { ok: false, error: `pitwall couldn’t check that no other session has that name, so it won’t send it: ${listed.error}` };
+  const key = nameKey(to);
+  const live = listed.rows.filter((row) => row.pid !== undefined && nameKey(row.name) === key);
+  if (live.length === 0) return { ok: false, error: 'No running session has that name now.' };
+  if (live.length > 1) {
+    return { ok: false, error: 'More than one running session has that name, counting sessions outside the user’s roots, which pitwall doesn’t list, so a message could reach the wrong one. Ask the user to rename one.' };
+  }
+  const row = live[0]!;
+  if (row.sessionId !== listedSession.sessionId || own.has(row.sessionId)) return { ok: false, error: 'That name now belongs to another session.' };
+  if (row.name !== to) return { ok: false, error: 'That session’s name has just changed.' };
+  return { ok: true, value: true };
+}
+
 /** spawn_session's arguments, checked as New session checks a request: the directory by its real path under a root. */
 export async function checkSpawn(input: unknown, snapshot: IndexSnapshot | undefined): Promise<Checked<ValidSpawn>> {
   if (!isRecord(input)) return { ok: false, error: 'The call has no arguments.' };
@@ -141,6 +201,11 @@ export async function checkSpawn(input: unknown, snapshot: IndexSnapshot | undef
   }
   const prompt = checkText(input.prompt, MAX_PROMPT_LENGTH, 'first prompt');
   if (!prompt.ok) return prompt;
+  for (const [field, what] of [['directory', 'directory'], ['name', 'name']] as const) {
+    const value = input[field];
+    const hidden = typeof value === 'string' ? hiddenTextProblem(value, what) : undefined;
+    if (hidden !== undefined) return { ok: false, error: hidden };
+  }
   if (snapshot === undefined) return { ok: false, error: 'pitwall hasn’t listed the sessions yet, so it doesn’t know the roots.' };
   const validation = await validateSpawnRequest({ cwd: input.directory, prompt: prompt.value, ...(input.name === undefined ? {} : { name: input.name }) }, snapshot.roots);
   if (!validation.ok) return { ok: false, error: validation.error };
@@ -202,6 +267,8 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
       if (toolName === MESSAGE_TOOL) {
         const checked = checkMessage(input, sources.snapshots.latest(), own());
         if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
+        const live = await checkLiveRecipient(checked.value.to, sources.snapshots.latest(), sources.agents, own());
+        if (!live.ok) return deny(`${live.error} Nothing was shown to the user.`);
         draft = { kind: 'message', to: checked.value.to, text: checked.value.text };
         runInput = messageInput(checked.value.to, checked.value.text);
       } else {
@@ -298,8 +365,10 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
         const text = checkText(decision.text, SUPERVISOR_MESSAGE_MAX, 'message');
         if (!text.ok) return { status: 400, error: text.error };
       }
-      const checked = checkMessage(next, sources.snapshots.latest(), own);
-      if (!checked.ok || checked.value.to !== approval.to) {
+      const message = checkMessage(next, sources.snapshots.latest(), own);
+      const live = message.ok ? await checkLiveRecipient(message.value.to, sources.snapshots.latest(), sources.agents, own) : undefined;
+      const checked = live !== undefined && !live.ok ? live : message;
+      if (!checked.ok || (message.ok && message.value.to !== approval.to)) {
         const why = checked.ok ? 'it no longer names the same session' : checked.error;
         sources.approvals.settle(id, { behavior: 'deny', message: `pitwall checked this again when the user answered, and didn't send it: ${why}` });
         return { status: 409, error: `pitwall didn't send it: ${checked.ok ? 'it no longer names the same session.' : checked.error}` };

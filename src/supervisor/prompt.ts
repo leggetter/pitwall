@@ -5,7 +5,8 @@
 // on stdin and stdout, as it runs the relay (D8):
 //
 //   claude -p --input-format stream-json --output-format stream-json --verbose --include-hook-events
-//     --name pitwall-supervisor --model SUPERVISOR_MODEL --tools SendMessage --permission-mode default
+//     --name pitwall-supervisor --model SUPERVISOR_MODEL --max-turns SUPERVISOR_MAX_TURNS
+//     --tools SendMessage --permission-mode default
 //     --permission-prompt-tool mcp__pitwall__approve
 //     --setting-sources "" --strict-mcp-config --mcp-config <0600 file>
 //     --allowed-tools mcp__pitwall__list_sessions,mcp__pitwall__read_session,mcp__pitwall__list_prs,mcp__pitwall__get_recap
@@ -62,6 +63,19 @@ export const SUPERVISOR_ASK_TOOLS: readonly string[] = ['SendMessage', mcpToolNa
 
 /** The permission prompt tool (`--permission-prompt-tool`), which Claude Code calls itself and leaves out of the model's tools. */
 export const SUPERVISOR_PROMPT_TOOL = mcpToolName(MCP_TOOLS.approve);
+
+/**
+ * The most agentic turns one of your messages may take (`--max-turns`, W120, W116's F5): each model
+ * call, with the tool calls it asks for, is one. Claude Code documents the flag for print mode, and
+ * with `--input-format stream-json` the count starts over for each message, and a session past it
+ * stays alive and takes the next one ([CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags),
+ * [agent loop](https://code.claude.com/docs/en/agent-sdk/agent-loop#turns-and-budget)); the turn ends
+ * with a `result` of subtype `error_max_turns`. Chosen over counting MCP calls in pitwall because it
+ * is documented and counts every step, SendMessage's included. 30 leaves room for an overview (the
+ * list, a few sessions' turns and recaps, the PRs) and a few proposals, which spike 009 did in under
+ * 10, while a turn a transcript has steered into a loop stops within minutes.
+ */
+export const SUPERVISOR_MAX_TURNS = 30;
 
 /** The permission mode it runs in: `default`, so the `ask` rules reach the prompt tool. */
 export const SUPERVISOR_PERMISSION_MODE = 'default';
@@ -165,6 +179,8 @@ export function supervisorArgs(options: { mcpConfig: string; settings: string; r
     SUPERVISOR_NAME,
     // SUPERVISOR_MODEL unless the config file or the app chose another (W119): none for WORK_DEFAULT.
     ...workArgs({ model: options.model ?? SUPERVISOR_MODEL, ...(options.effort === undefined ? {} : { effort: options.effort }) }),
+    '--max-turns',
+    String(SUPERVISOR_MAX_TURNS),
     '--tools',
     SUPERVISOR_BUILTIN_TOOLS.join(','),
     '--permission-mode',

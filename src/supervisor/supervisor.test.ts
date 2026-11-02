@@ -11,7 +11,7 @@ import { SUPERVISOR_MODEL, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import type { RelayChild, RelayChildEvents } from '../server/relay.js';
 import { createApprovalQueue } from './approvals.js';
-import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_ASK_TOOLS, SUPERVISOR_NAME } from './prompt.js';
+import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_ASK_TOOLS, SUPERVISOR_MAX_TURNS, SUPERVISOR_NAME } from './prompt.js';
 import { markReady, readRecipients } from './supervisorGateHook.mjs';
 import { memoryState, type SupervisorRecord } from './state.js';
 import { createSupervisor, heldBy, heldError, sweepMcpConfigs, turnCost, withNotes, type Supervisor, type SupervisorOptions } from './supervisor.js';
@@ -594,6 +594,22 @@ describe('what it can do', () => {
   });
 });
 
+describe('a turn past --max-turns', () => {
+  it('keeps the supervisor running, and tells it before your next message that its last turn reached the limit (W120)', async () => {
+    const { supervisor, children } = harness();
+    await supervisor.start();
+    await supervisor.send('first');
+    children[0]!.init();
+    children[0]!.result({ subtype: 'error_max_turns', is_error: true });
+    await until(() => supervisor.state().status === 'idle');
+    await supervisor.send('second');
+    await until(() => children[0]!.messages().length === 2);
+    expect(children[0]!.messages()[1]).toBe(
+      `[pitwall: your last turn reached pitwall's limit of ${SUPERVISOR_MAX_TURNS} steps for one message, so it ended before you answered. Answer with what you have, or say what you'd still read.]\n\nsecond`,
+    );
+  });
+});
+
 describe('withNotes()', () => {
   it('puts each note on a line of its own in brackets before your text, and leaves it alone with none', () => {
     expect(withNotes([], 'hello')).toBe('hello');
@@ -602,13 +618,17 @@ describe('withNotes()', () => {
 });
 
 describe('hidden from the index', () => {
-  it('is its own by pid, folder, its name on an interactive row, and its session id on a row with no process; a background session with its id stays listed', async () => {
+  it('is its own by pid, folder, its name on an interactive row in a supervisor’s folder, and its session id on a row with no process; a background session with its id stays listed', async () => {
     const { supervisor, children, sessionDir } = harness({ record: { sessionId: SESSION, promptVersion: 1 } });
     await supervisor.start();
     const base = { sessionId: OTHER_SESSION, name: 'pitwall-test-other', kind: 'interactive' as const, cwd: '/made-up/work/repo' };
     expect(supervisor.isOwn({ ...base, pid: children[0]!.pid })).toBe(true);
     expect(supervisor.isOwn({ ...base, cwd: realpathSync(sessionDir) })).toBe(true);
-    expect(supervisor.isOwn({ ...base, name: ' Pitwall-Supervisor ' })).toBe(true);
+    // Another pitwall's supervisor, on another home: hidden by its name in a supervisor's folder.
+    expect(supervisor.isOwn({ ...base, name: ' Pitwall-Supervisor ', cwd: '/made-up/home/.pitwall-dev/supervisor/session' })).toBe(true);
+    // A session of yours that took the name anywhere else stays listed (W120, W116's F4).
+    expect(supervisor.isOwn({ ...base, name: ' Pitwall-Supervisor ' })).toBe(false);
+    expect(supervisor.isOwn({ ...base, name: SUPERVISOR_NAME, cwd: '/made-up/work/supervisor' })).toBe(false);
     expect(supervisor.isOwn({ ...base, sessionId: SESSION })).toBe(true);
     expect(supervisor.isOwn(base)).toBe(false);
     expect(supervisor.isOwn({ ...base, pid: 1234 })).toBe(false);

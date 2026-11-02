@@ -286,8 +286,11 @@ export interface ResetOptions {
   recaps?: RecapsState;
   /** The supervisor (W114): 'none', as with --no-supervisor, by default. */
   supervisor?: SupervisorWorldState;
-  /** Whether it has made-up drafts waiting on you, a message and a new session (W114). */
-  approvals?: boolean;
+  /**
+   * Whether it has made-up drafts waiting on you, a message and a new session (W114), or 'long', one
+   * message of 14 lines with a no-break space, which the card draws as its code (W120).
+   */
+  approvals?: boolean | 'long';
   /** Whether its conversation has made-up turns already, with a page behind Load earlier, or none, a new one. */
   supervisorHistory?: boolean;
 }
@@ -367,7 +370,7 @@ export class World {
     this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
     this.#supervisorTurn += 1;
     this.#supervisor = options.supervisor ?? 'none';
-    this.#approvals = options.approvals ? this.#baseApprovals() : [];
+    this.#approvals = options.approvals === 'long' ? [this.#longApproval()] : options.approvals ? this.#baseApprovals() : [];
     const history = options.supervisorHistory ?? (this.#supervisor !== 'none' && this.#supervisor !== 'off');
     this.#supervisorEntries = history ? this.#supervisorTurns() : [];
     this.#supervisorOlder = history ? this.#supervisorOlderTurns() : [];
@@ -492,6 +495,19 @@ export class World {
         expiresAt: this.#ago(-27),
       },
     ];
+  }
+
+  /** A message taller than its card shows, with a character drawn as its code (W120). */
+  #longApproval(): SupervisorApproval {
+    const steps = Array.from({ length: 12 }, (_, index) => `${index + 1}. Check the made-up step ${index + 1} of the nightly batch.`);
+    return {
+      id: SUPERVISOR_APPROVALS.message,
+      kind: 'message',
+      to: NAMES.asked,
+      text: ['Please work through these before tonight\u00a0and tell me what failed:', ...steps, 'Thanks.'].join('\n'),
+      at: this.#ago(3),
+      expiresAt: this.#ago(-26),
+    };
   }
 
   #supervisorTurns(): ConversationEntry[] {

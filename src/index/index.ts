@@ -75,6 +75,12 @@ export interface IndexerOptions {
 export interface Indexer {
   /** The latest snapshot, or undefined before the first poll completes. */
   latest(): IndexSnapshot | undefined;
+  /**
+   * The rows of the last `claude agents --json --all` that succeeded, unfiltered: sessions outside
+   * the roots and pitwall's own included, which the snapshot leaves out. For the supervisor's
+   * recipient gate (W120). Undefined before the first. Optional, so a stand-in can leave it out.
+   */
+  liveRows?(): readonly AgentRow[] | undefined;
   /** Called with every new snapshot. Returns an unsubscribe function. */
   subscribe(listener: (snapshot: IndexSnapshot) => void): () => void;
   /**
@@ -209,6 +215,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   let latest: IndexSnapshot | undefined;
+  /** The last successful listing's rows, unfiltered (liveRows()). */
+  let liveRows: readonly AgentRow[] | undefined;
   /** The session ids in `latest`: the only ones conversation() answers for. */
   let current = new Set<string>();
   /** Where the relay's messages came from, per transcript, for the conversation's 'to-pitwall' entries. */
@@ -226,8 +234,9 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
     try {
       let snapshot: IndexSnapshot;
       let facts: Map<string, SessionFacts> | undefined;
+      let rows: readonly AgentRow[] | undefined;
       try {
-        ({ snapshot, facts } = await poll(options, deps, latest, restarts));
+        ({ snapshot, facts, rows } = await poll(options, deps, latest, restarts));
       } catch (err) {
         // poll() handles every expected failure itself; this guards against bugs.
         const message = oneLine(err instanceof Error ? err.message : String(err));
@@ -248,6 +257,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
         calls(() => options.sessionFacts?.(told), undefined);
       }
       latest = snapshot;
+      if (rows !== undefined) liveRows = rows;
       current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
       relayBook?.retain(current);
       for (const listener of [...listeners]) {
@@ -290,6 +300,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
 
   return {
     latest: () => latest,
+    liveRows: () => liveRows,
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -390,7 +401,7 @@ async function poll(
   deps: IndexerDeps,
   previous: IndexSnapshot | undefined,
   restarts: Map<string, number>,
-): Promise<{ snapshot: IndexSnapshot; facts?: Map<string, SessionFacts> }> {
+): Promise<{ snapshot: IndexSnapshot; facts?: Map<string, SessionFacts>; rows?: readonly AgentRow[] }> {
   const resolvedRoots = await resolveRoots(options.roots, deps.realpath);
   const result = await deps.agents.list();
   const nowMs = deps.now();
@@ -445,7 +456,7 @@ async function poll(
 
   for (const id of facts.keys()) if (!keptIds.has(id)) facts.delete(id);
 
-  return { snapshot: { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } }, facts };
+  return { snapshot: { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } }, facts, rows: result.rows };
 }
 
 /** SessionFacts from a session's transcript file and what was read of it. */

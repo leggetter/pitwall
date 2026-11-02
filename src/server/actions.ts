@@ -9,6 +9,8 @@
 //   POST SPAWN_PATH               body: SpawnRequest as JSON           answers: SpawnResult
 //     201  started: { ok: true, shortId, name }
 //     400  the body isn't a valid SpawnRequest, `cwd` isn't a directory at or under a root, the
+//          name is one of pitwall's own, `pitwall-supervisor`, `pitwall-relay` or `pitwall-recap`,
+//          ignoring case (W120), the
 //          prompt is just the name of a claude subcommand, which `claude --bg` could run instead,
 //          or `attachments` has more than ATTACHMENTS_MAX_PER_SESSION, the same id twice, or an id
 //          that's unknown, already used, expired, being used by a spawn that's starting, or whose
@@ -101,6 +103,7 @@ import {
   WORK_DEFAULT,
 } from '../shared/protocol.js';
 import { UNKNOWN_ATTACHMENT_ERROR, type AttachmentFile, type AttachmentStore } from './attachments.js';
+import { OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
@@ -240,6 +243,8 @@ export async function validateSpawnRequest(
   if (name !== undefined && (typeof name !== 'string' || !NAME_PATTERN.test(name))) {
     return invalid('The name can have letters, digits, spaces, ".", "_" and "-", at most 64, and must start with a letter, digit, "." or "_".');
   }
+  // pitwall hides and refuses to message sessions by these names, so a new one can't take one (W120, W116's F3).
+  if (typeof name === 'string' && OWN_NAMES.has(name.trim().toLowerCase())) return invalid(`The name ${name} is pitwall's own. Choose another.`);
   if (model !== undefined && model !== WORK_DEFAULT && !isWorkModel(model)) return invalid(`The model ${modelProblem('session')}.`);
   if (effort !== undefined && effort !== WORK_DEFAULT && !isEffortLevel(effort)) return invalid(`The effort ${EFFORT_PROBLEM}.`);
   if (ids !== undefined) {
