@@ -1,6 +1,7 @@
 // What the supervisor can do, behind your click (M5, W115; spike 009, finding 6; D4): its messages
-// to sessions (Claude Code's SendMessage) and new sessions (spawn_session, on pitwall's MCP server),
-// each held by Claude Code until the permission prompt tool, approve, answers.
+// to sessions (Claude Code's SendMessage), new sessions (spawn_session, on pitwall's MCP server) and
+// finished sessions resumed with a message (resume_session, W127; spike 011), each held by Claude
+// Code until the permission prompt tool, approve, answers.
 //
 //   approve         Claude Code calls it itself (`--permission-prompt-tool mcp__pitwall__approve`),
 //                   with `{ tool_name, input, tool_use_id }`, and leaves it out of the model's tools.
@@ -19,6 +20,9 @@
 //                   only on a one-time pass for exactly the input an approval just allowed, within a
 //                   minute, and, when Claude Code gives the call's tool_use_id, only on that call's own
 //                   approval's pass (approvals.ts' passes). A call that skipped approval starts nothing
+//   resume_session  runs pitwall's own resume (actions.ts' ResumeRunner, the Resume route's checks and
+//                   limits) with your message as the resumed session's next turn, on the same kind of
+//                   pass (W127). A copy Claude Code started instead is reported, never hidden
 //
 // The checks, before a card shows and again on Send or Edit:
 //
@@ -35,6 +39,14 @@
 //                   requires (checkDirectory()); name: NAME_PATTERN, never one of pitwall's own
 //                   (OWN_NAMES); prompt: not blank, at most MAX_PROMPT_LENGTH, not just a claude
 //                   command; no other field
+//   a resume        id: a listed session's, resolved from the index's snapshot, and only its own
+//                   UUID, directory and name used after, never the input (W66's rule); not one of
+//                   pitwall's own; not running, which takes a message instead; an interactive session
+//                   that has ended or a background one that isn't running, not stale, with a UUID
+//                   (resumeProblem()); its directory still at or under a root by its real path
+//                   (checkDirectory()). The runner checks a fresh `claude agents` and the directory
+//                   again just before it runs, and Claude Code refuses a workspace it doesn't trust.
+//                   message: as a message's; no other field
 //   all text        no character that doesn't show as itself (hiddenTextProblem(), W120, W116's
 //                   F1): no C0 or C1 control but tab and newline, so no terminal escape; no bidi
 //                   control, zero-width or tag character, or other format or default-ignorable
@@ -55,13 +67,16 @@ import { MCP_TOOLS, SUPERVISOR_MESSAGE_MAX, type IndexSnapshot, type SessionSumm
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
-import { MAX_PROMPT_LENGTH, validateSpawnRequest, type SpawnRunner, type ValidSpawn } from './actions.js';
+import { checkDirectory, MAX_PROMPT_LENGTH, resumeProblem, validateSpawnRequest, type ResumeRunner, type SpawnRunner, type ValidSpawn } from './actions.js';
 import type { McpTool, McpToolResult } from './mcp.js';
 import { isAddressable, nameKey } from './relayPrompt.js';
+import { findSession } from './sessions.js';
+import { isSafeSessionId } from '../index/index.js';
 
 /** The tools approve may allow, as Claude Code names them. */
 export const MESSAGE_TOOL = 'SendMessage';
 export const SPAWN_TOOL = mcpToolName(MCP_TOOLS.spawnSession);
+export const RESUME_TOOL = mcpToolName(MCP_TOOLS.resumeSession);
 
 /**
  * The `_meta` key Claude Code puts a call's tool_use_id under, in tools/call. Not documented, so
@@ -83,6 +98,8 @@ export interface SupervisorActionSources {
   spawner: Pick<SpawnRunner, 'start'>;
   /** Called after spawn_session started a session, so the list picks it up. */
   onSpawned?: () => void;
+  /** pitwall's resume, with the Resume route's checks and limits (W127). Without one, resume_session is refused. */
+  resumer?: Pick<ResumeRunner, 'resume'>;
   /**
    * A fresh `claude agents --json --all`, unfiltered, for the recipient check (W120): the snapshot
    * leaves out sessions outside the roots and pitwall's own. The server passes the index's source.
@@ -212,6 +229,55 @@ export async function checkSpawn(input: unknown, snapshot: IndexSnapshot | undef
   return { ok: true, value: validation.spawn };
 }
 
+/** A resume, checked: the listed session, by the index's own summary, and the message. */
+export interface CheckedResume {
+  session: SessionSummary;
+  /** The session's directory by its real path, as checkDirectory() found it now. */
+  directory: string;
+  text: string;
+}
+
+/**
+ * resume_session's arguments, checked against the list as it is now (W127): `id` must be a listed
+ * session's, and from here on only that session's own summary is used, its UUID, name and directory,
+ * never the input, as the Resume route uses the resolved summary (W66). Not pitwall's own; not
+ * running, since a running session takes a message (SendMessage) and a resume would start a copy;
+ * one resumeProblem() allows, not stale; its directory still under a root by its real path; and the
+ * message as a message's. The runner checks a fresh `claude agents` and the directory again just
+ * before it runs.
+ */
+export async function checkResume(input: unknown, snapshot: IndexSnapshot | undefined, own: ReadonlySet<string> = new Set()): Promise<Checked<CheckedResume>> {
+  if (!isRecord(input)) return { ok: false, error: 'The call has no arguments.' };
+  for (const key of Object.keys(input)) {
+    if (key !== 'id' && key !== 'message') return { ok: false, error: `Unknown argument: ${key.slice(0, 40)}.` };
+  }
+  const { id } = input;
+  if (typeof id !== 'string' || id === '') return { ok: false, error: 'The call names no session: pass its id from list_sessions.' };
+  const hidden = hiddenTextProblem(id, 'id');
+  if (hidden !== undefined) return { ok: false, error: hidden };
+  if (!isSafeSessionId(id)) return { ok: false, error: 'That isn’t a session id: pass the id list_sessions gives.' };
+  const text = checkText(input.message, SUPERVISOR_MESSAGE_MAX, 'message');
+  if (!text.ok) return text;
+  if (snapshot === undefined) return { ok: false, error: 'pitwall hasn’t listed the sessions yet.' };
+  const session = findSession(snapshot, id);
+  if (session === undefined) return { ok: false, error: 'No session pitwall lists has that id. Call list_sessions with finished: true for the ids of finished ones.' };
+  if (own.has(session.sessionId) || OWN_NAMES.has(nameKey(session.name.trim()))) return { ok: false, error: 'pitwall’s own sessions can’t be resumed.' };
+  if (session.alive || session.pid !== undefined) {
+    return { ok: false, error: `${JSON.stringify(session.name)} is running, so it takes a message instead: propose it with SendMessage, to that name.` };
+  }
+  if (session.stale) return { ok: false, error: 'That session has been blocked for over a week, so pitwall won’t resume it for you. The user can open it from the list.' };
+  const problem = resumeProblem(session);
+  if (problem !== undefined) return { ok: false, error: problem };
+  const dir = await checkDirectory(session.cwd, snapshot.roots);
+  if (!dir.ok) return { ok: false, error: dir.error };
+  return { ok: true, value: { session, directory: dir.path, text: text.value } };
+}
+
+/** The input resume_session runs with, once allowed: the listed session's own id, and the message as the card showed it or your edit. */
+function resumeInput(sessionId: string, text: string): Record<string, unknown> {
+  return { id: sessionId, message: text };
+}
+
 /**
  * The input SendMessage runs with, once allowed: `to` and `message`, as the card showed them, and
  * nothing else. Claude Code's schema needs only those; it fills in `type`, `recipient`,
@@ -258,8 +324,8 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
       const input = args.input;
       const toolUseId = args.tool_use_id;
       if (typeof toolName !== 'string' || !isRecord(input)) return deny('this permission request isn’t one pitwall can read, so it was denied.');
-      if (toolName !== MESSAGE_TOOL && toolName !== SPAWN_TOOL) {
-        return deny('the supervisor can only propose messages to sessions and new sessions. Nothing else was asked of the user.');
+      if (toolName !== MESSAGE_TOOL && toolName !== SPAWN_TOOL && toolName !== RESUME_TOOL) {
+        return deny('the supervisor can only propose messages to sessions, new sessions and resuming finished ones. Nothing else was asked of the user.');
       }
       if (typeof toolUseId !== 'string' || !TOOL_USE_ID.test(toolUseId)) return deny('this permission request has no tool_use_id pitwall can use, so it was denied.');
       let draft: ApprovalDraft;
@@ -271,6 +337,13 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
         if (!live.ok) return deny(`${live.error} Nothing was shown to the user.`);
         draft = { kind: 'message', to: checked.value.to, text: checked.value.text };
         runInput = messageInput(checked.value.to, checked.value.text);
+      } else if (toolName === RESUME_TOOL) {
+        if (sources.resumer === undefined) return deny('pitwall can’t resume sessions here. Nothing was shown to the user.');
+        const checked = await checkResume(input, sources.snapshots.latest(), own());
+        if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
+        const { session, directory, text } = checked.value;
+        draft = { kind: 'resume', sessionId: session.sessionId, name: session.name, directory, text };
+        runInput = resumeInput(session.sessionId, text);
       } else {
         const checked = await checkSpawn(input, sources.snapshots.latest());
         if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
@@ -324,6 +397,67 @@ export function createSpawnSessionTool(sources: SupervisorActionSources): McpToo
   };
 }
 
+/** What resume_session says to the supervisor when it didn't run. */
+function notResumed(error: string): McpToolResult {
+  return { text: `pitwall: the session wasn't resumed, so the message wasn't sent: ${error}`, isError: true };
+}
+
+/**
+ * resume_session (W127): resumes a finished session with your message as its next turn, only for a
+ * call approve just allowed, through pitwall's own resume (the Resume route's checks and limits).
+ */
+export function createResumeSessionTool(sources: SupervisorActionSources): McpTool {
+  const own = () => sources.ownSessionIds?.() ?? new Set<string>();
+  return {
+    name: MCP_TOOLS.resumeSession,
+    description:
+      'Proposes resuming one of the user’s finished sessions, an interactive one that has ended or a background one that isn’t running, with a message it reads as its next turn, so work goes on in the session that has the context. id is its id from list_sessions (finished: true lists them); message is the whole text. A running session takes SendMessage instead. The user sees it as a draft in pitwall and may send it, edit the message, or decline; nothing is resumed until they do. Say in your reply what you propose and why before calling it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The session’s id, as list_sessions gives it.' },
+        message: { type: 'string', description: `The whole message, at most ${SUPERVISOR_MESSAGE_MAX.toLocaleString('en-US')} characters.` },
+      },
+      required: ['id', 'message'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async call(args, context) {
+      const meta = context?.meta?.[TOOL_USE_ID_META];
+      const allowed = sources.approvals.takePass(typeof meta === 'string' ? meta : undefined, args);
+      if (allowed === undefined) {
+        return { text: 'pitwall: resuming this session wasn’t approved by the user, so nothing was resumed or sent.', isError: true };
+      }
+      if (sources.resumer === undefined) return notResumed('pitwall can’t resume sessions here.');
+      // Checked once more, now: it may have started again, or its directory gone, since you approved it.
+      const checked = await checkResume(allowed, sources.snapshots.latest(), own());
+      if (!checked.ok) return notResumed(checked.error);
+      const { session, text } = checked.value;
+      const outcome = await sources.resumer.resume(session, text);
+      const { result } = outcome;
+      if (result.ok) {
+        sources.approvals.handoff({ kind: 'resume', name: session.name, sessionId: session.sessionId, shortId: result.shortId });
+        return { text: JSON.stringify({ resumed: true, name: session.name, shortId: result.shortId, messageSent: true }) };
+      }
+      if (result.copyShortId !== undefined) {
+        // Claude Code started a copy, and the message went to it (spike 011): said, never hidden.
+        sources.approvals.handoff({ kind: 'resume', name: session.name, shortId: result.copyShortId, copy: true });
+        return {
+          text: JSON.stringify({
+            resumed: false,
+            copy: true,
+            copyShortId: result.copyShortId,
+            note: `${session.name} was open in another Claude Code process, so Claude Code started a copy of its conversation as ${result.copyShortId}, and the message went to the copy, not to ${session.name}, which is unchanged. Tell the user, who can stop and remove the copy.`,
+          }),
+        };
+      }
+      if (outcome.running === true) return notResumed(`${result.error} It's running now: propose a message to it with SendMessage instead.`);
+      const hint = result.hint === undefined ? '' : ` The user can run this to fix it: ${result.hint}`;
+      return notResumed(`${result.error}${hint}`);
+    },
+  };
+}
+
 /** The id of the one running, listed session named `to`, ignoring case, as checkMessage() checked it. */
 function recipientOf(to: string, snapshot: IndexSnapshot | undefined, own: ReadonlySet<string>): string | undefined {
   const key = nameKey(to);
@@ -337,6 +471,7 @@ export type DecisionAnswer = { status: 200 } | { status: 400 | 404 | 409; error:
 /** The note the supervisor reads before your next message, after you edited what it proposed. */
 export function editNote(draft: ApprovalDraft, sent: string): string {
   if (draft.kind === 'message') return `the user edited your message to ${JSON.stringify(draft.to)} before it was sent. What was sent: ${JSON.stringify(sent)}`;
+  if (draft.kind === 'resume') return `the user edited your message to ${JSON.stringify(draft.name)}, which pitwall resumed with it, before it was sent. What was sent: ${JSON.stringify(sent)}`;
   return `the user edited the first prompt of your new session in ${JSON.stringify(draft.directory)} before it started. What was sent: ${JSON.stringify(sent)}`;
 }
 
@@ -387,6 +522,28 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
       // So the panel can open the session it went to (W124): the one running session of that name, as checked.
       const recipient = recipientOf(approval.to, sources.snapshots.latest(), own);
       sources.approvals.handoff({ kind: 'message', name: approval.to, ...(recipient === undefined ? {} : { sessionId: recipient }) });
+      return { status: 200 };
+    }
+    if (approval.kind === 'resume') {
+      const text = decision.decision === 'edit' ? decision.text : approval.text;
+      if (decision.decision === 'edit') {
+        const checkedText = checkText(text, SUPERVISOR_MESSAGE_MAX, 'message');
+        if (!checkedText.ok) return { status: 400, error: checkedText.error };
+      }
+      // Rebuilt from the card's own session, never a field the card didn't show.
+      const checked = await checkResume(resumeInput(approval.sessionId, text), sources.snapshots.latest(), own);
+      if (!checked.ok) {
+        sources.approvals.settle(id, { behavior: 'deny', message: `pitwall checked this again when the user answered, and didn't resume it: ${checked.error}` });
+        return { status: 409, error: `pitwall didn't resume it: ${checked.error}` };
+      }
+      const updatedInput = resumeInput(checked.value.session.sessionId, checked.value.text);
+      // The pass first, so the call Claude Code makes once it reads the allow finds it.
+      const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput);
+      if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput })) {
+        sources.approvals.revokePass(pass);
+        return gone();
+      }
+      if (decision.decision === 'edit' && decision.text !== approval.text) sources.approvals.note(editNote(approval, decision.text));
       return { status: 200 };
     }
     // A new session.

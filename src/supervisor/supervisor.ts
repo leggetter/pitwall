@@ -1,7 +1,8 @@
 // The supervisor (M5, W113, W115; spike 009; D4): one headless `claude -p` session that pitwall
 // starts, owns and resumes, with stream-json on stdin and stdout, on SUPERVISOR_MODEL. It reads
 // through the read-only tools of pitwall's own MCP server (W112), and can propose a message to a
-// session (SendMessage) or a new session (the MCP server's spawn_session), each sent only after your
+// session (SendMessage), a new session (the MCP server's spawn_session) or resuming a finished one
+// with a message (resume_session, W127), each sent only after your
 // click: Claude Code asks pitwall's permission prompt tool, approve, before each call, and approve
 // holds the call as a card until you decide (approvals.ts, src/server/supervisorActions.ts). It
 // can't run a command or change a file.

@@ -711,6 +711,68 @@ describe('what it sent and started (W124)', () => {
   });
 });
 
+describe('a finished session resumed with a message (W127)', () => {
+  const finished = session({ sessionId: '00000000-0000-4000-8000-00000000a127', name: 'pitwall-test-precision', kind: 'interactive', ended: true, finished: true, alive: false });
+  const resumed = session({ sessionId: finished.sessionId, name: 'pitwall-test-precision', kind: 'background', shortId: '00000000', status: 'busy', state: 'working' });
+  const copy = session({ sessionId: '00000000-0000-4000-8000-00000000b127', name: 'reply-copy-made-up', kind: 'background', shortId: 'b821060d', status: 'busy', state: 'working' });
+  const resumeCard: SupervisorApproval = {
+    id: 'r1',
+    kind: 'resume',
+    sessionId: finished.sessionId,
+    name: finished.name,
+    directory: `${ROOT}/demo-app`,
+    text: 'The user asked me to pass this on: finish the precision fix.',
+    at: minutesAgo(1),
+    expiresAt: minutesAgo(-28),
+  };
+  const resumeSnap = (state: SupervisorState, sessions = [alpha, beta, finished]) => snapshot([group({ key: `${ROOT}/demo-app`, label: 'demo-app', sessions })], { roots: [ROOT], supervisor: state });
+
+  it('a card: “Resume <name> and send”, how it comes back, the message, and Send, Edit and Don’t send', async () => {
+    renderDashboard(resumeSnap({ status: 'idle', approvals: [resumeCard] }), { search: '?view=all&supervisor' });
+    await settle();
+    const card = view()!.querySelector<HTMLElement>('li.approval-card')!;
+    expect(card.dataset.kind).toBe('resume');
+    expect(within(card).getByRole('heading', { level: 4 }).textContent).toBe('Resume pitwall-test-precision and send');
+    expect(card.querySelector('.approval-note')?.textContent).toContain('claude --resume');
+    expect(card.querySelector('.approval-label')?.textContent).toBe('Message');
+    expect(card.querySelector('.approval-text bdi')?.textContent).toBe(resumeCard.text);
+    expect(within(card).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual(['Send', 'Edit', "Don't send"]);
+    fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
+    expect(within(card).getByLabelText('Edit the message')).toBeDefined();
+  });
+
+  it('a hand-off: “Resumed <name>”, Starting… until the index lists it, then its state and Open', async () => {
+    const state: SupervisorState = { status: 'idle', approvals: [], handoffs: [{ id: 'h1', kind: 'resume', name: finished.name, sessionId: finished.sessionId, shortId: '00000000', at: minutesAgo(0) }] };
+    const { update } = renderDashboard(resumeSnap(state, [alpha, beta]), { search: '?view=all&supervisor' });
+    await settle();
+    const region = () => viewOf().getByRole('region', { name: /Sent and started/ });
+    expect(region().querySelector('.supervisor-handoff-what')?.textContent).toBe('Resumed pitwall-test-precision');
+    expect(within(region()).getByText('Starting…')).toBeDefined();
+    update(resumeSnap(state, [alpha, beta, resumed]));
+    await settle();
+    expect(within(region()).getByText('Busy')).toBeDefined();
+    expect(within(region()).getByRole('button', { name: 'Open pitwall-test-precision' })).toBeDefined();
+  });
+
+  it('a copy: “Resumed a copy of <name>”, where the message went, and Open the copy, by its short id', async () => {
+    const state: SupervisorState = { status: 'idle', approvals: [], handoffs: [{ id: 'h1', kind: 'resume', name: finished.name, shortId: 'b821060d', copy: true, at: minutesAgo(0) }] };
+    const { history } = renderDashboard(resumeSnap(state, [alpha, beta, finished, copy]), { search: '?view=all&supervisor' });
+    await settle();
+    const region = viewOf().getByRole('region', { name: /Sent and started/ });
+    expect(region.querySelector('.supervisor-handoff-what')?.textContent).toBe('Resumed a copy of pitwall-test-precision');
+    expect(region.querySelector('[data-handoff-copy]')?.textContent).toContain('the message went to the copy');
+    fireEvent.click(within(region).getByRole('button', { name: 'Open the copy' }));
+    await settle();
+    expect(history!.location.search).toBe(`?view=all&session=${copy.sessionId}`);
+  });
+
+  it('reads a copy only by its short id, never the original’s session id', async () => {
+    const { asSupervisorState } = await import('../supervisor.js');
+    const state = asSupervisorState({ status: 'idle', approvals: [], handoffs: [{ id: 'h1', kind: 'resume', name: 'pitwall-test-a', sessionId: finished.sessionId, shortId: 'b821060d', copy: true, at: minutesAgo(0) }] });
+    expect(state?.handoffs).toEqual([{ id: 'h1', kind: 'resume', name: 'pitwall-test-a', shortId: 'b821060d', copy: true, at: minutesAgo(0) }]);
+  });
+});
+
 describe('reading hand-offs (W124)', () => {
   it('keeps only well-formed ones, and none at all is no handoffs', async () => {
     const { asSupervisorState } = await import('../supervisor.js');

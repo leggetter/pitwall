@@ -1,6 +1,6 @@
 // The supervisor's approvals (M5, W115; spike 009, finding 6 and its recommendation): what it wants
 // to do that waits on your click, in memory only. Claude Code asks pitwall's permission prompt tool,
-// mcp__pitwall__approve, before each SendMessage and spawn_session call (src/server/supervisorActions.ts
+// mcp__pitwall__approve, before each SendMessage, spawn_session and resume_session (W127) call (src/server/supervisorActions.ts
 // checks it and adds a card here); the call waits until you decide, the card runs out, the request
 // goes away or pitwall closes. Every way out but your Send or Edit is a denial.
 //
@@ -14,9 +14,10 @@
 //
 // Two more things live here, both for one call or one message:
 //
-//   passes     a spawn_session call runs only with exactly the input an approval just allowed: each
-//              allow adds one pass, keyed on that input in canonical JSON (the directory's real path,
-//              the name, the prompt), each call takes one, and a pass lasts PASS_MS. When the call
+//   passes     a spawn_session or resume_session call runs only with exactly the input an approval
+//              just allowed: each allow adds one pass, keyed on that input in canonical JSON (the
+//              directory's real path, the name, the prompt; or the session id and the message, W127,
+//              whose keys a spawn's never has), each call takes one, and a pass lasts PASS_MS. When the call
 //              carries Claude Code's tool_use_id, it must be the approval's too (grantPass(), takePass())
 //   notes      after an Edit, what was actually sent, for pitwall to put before your next message to
 //              the supervisor, so it isn't left believing its own text went (note(), takeNotes())
@@ -29,12 +30,15 @@ import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type Superviso
 export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string };
 
 /** What a card shows, before it has an id and times. */
-export type ApprovalDraft = { kind: 'message'; to: string; text: string } | { kind: 'spawn'; directory: string; name?: string; prompt: string };
+export type ApprovalDraft =
+  | { kind: 'message'; to: string; text: string }
+  | { kind: 'spawn'; directory: string; name?: string; prompt: string }
+  | { kind: 'resume'; sessionId: string; name: string; directory: string; text: string };
 
 /** One card waiting, with the call it's for. */
 export interface PendingApproval {
   approval: SupervisorApproval;
-  /** As Claude Code named it: `SendMessage` or `mcp__pitwall__spawn_session`. */
+  /** As Claude Code named it: `SendMessage`, `mcp__pitwall__spawn_session` or `mcp__pitwall__resume_session`. */
   toolName: string;
   toolUseId: string;
   /** The call's input as Claude Code gave it, which Send allows as it is. */
@@ -44,7 +48,7 @@ export interface PendingApproval {
 /** The most cards waiting at once; one more is denied at once. */
 export const MAX_PENDING_APPROVALS = 10;
 
-/** How long a spawn_session call has, after its approval allowed it, to run. */
+/** How long a spawn_session or resume_session call has, after its approval allowed it, to run. */
 export const PASS_MS = 60_000;
 
 /** The most notes kept for the next message. */
@@ -72,7 +76,7 @@ export interface ApprovalQueue {
   settle(id: string, answer: PermissionAnswer): boolean;
   /** Denies every card with `message`. */
   cancelAll(message: string): void;
-  /** Lets one spawn_session call with exactly this input run, within PASS_MS. Returns what revokePass() takes. */
+  /** Lets one spawn_session or resume_session call with exactly this input run, within PASS_MS. Returns what revokePass() takes. */
   grantPass(toolUseId: string, input: Record<string, unknown>): number;
   /** Takes back a pass grantPass() gave, unused. */
   revokePass(pass: number): void;
@@ -82,7 +86,7 @@ export interface ApprovalQueue {
    * approval's pass is spent even when the arguments differ.
    */
   takePass(toolUseId: string | undefined, args: Record<string, unknown>): Record<string, unknown> | undefined;
-  /** Records something you approved that went (W124): a message sent, or a session started. */
+  /** Records something you approved that went (W124): a message sent, a session started, or one resumed (W127). */
   handoff(done: Omit<SupervisorHandoff, 'id' | 'at'>): void;
   /** What handoff() recorded, oldest first, at most SUPERVISOR_HANDOFFS_MAX. */
   handoffs(): SupervisorHandoff[];
@@ -164,7 +168,9 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
       const approval: SupervisorApproval =
         request.draft.kind === 'message'
           ? { id, kind: 'message', to: request.draft.to, text: request.draft.text, ...times }
-          : { id, kind: 'spawn', directory: request.draft.directory, ...(request.draft.name === undefined ? {} : { name: request.draft.name }), prompt: request.draft.prompt, ...times };
+          : request.draft.kind === 'resume'
+            ? { id, kind: 'resume', sessionId: request.draft.sessionId, name: request.draft.name, directory: request.draft.directory, text: request.draft.text, ...times }
+            : { id, kind: 'spawn', directory: request.draft.directory, ...(request.draft.name === undefined ? {} : { name: request.draft.name }), prompt: request.draft.prompt, ...times };
       let resolve!: (answer: PermissionAnswer) => void;
       const answer = new Promise<PermissionAnswer>((done) => {
         resolve = done;

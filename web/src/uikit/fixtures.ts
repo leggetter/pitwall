@@ -1032,7 +1032,7 @@ export const SUPERVISOR_CONVERSATION: ConversationEntry[] = [
   { kind: 'assistant', at: ago(2.9), markdown: true, text: "I've drafted that message for you. It's in the card below, and goes only when you send it." },
 ];
 
-/** Its drafts: a message to a session, and a new session, oldest first. */
+/** Its drafts: a message to a session, a new session, and a resume (W127), oldest first. */
 export const SUPERVISOR_MESSAGE: SupervisorApproval = {
   id: 'pitwall-test-approval-1',
   kind: 'message',
@@ -1040,6 +1040,17 @@ export const SUPERVISOR_MESSAGE: SupervisorApproval = {
   text: 'Please retry the made-up failed batch tonight, in the nightly window, not now. Tell me in this session when it has run.',
   at: ago(2.9),
   expiresAt: ago(-26),
+};
+/** W127: a finished session resumed with a message as its next turn. */
+export const SUPERVISOR_RESUME: SupervisorApproval = {
+  id: 'pitwall-test-approval-3',
+  kind: 'resume',
+  sessionId: '00000000-0000-4000-8000-000000000127',
+  name: 'pitwall-test-precision',
+  directory: `${ROOT}/pitwall-test-app`,
+  text: 'The user asked me to pass this on: please carry on with the made-up integer precision fix, then update its PR.',
+  at: ago(0.5),
+  expiresAt: ago(-29),
 };
 export const SUPERVISOR_SPAWN: SupervisorApproval = {
   id: 'pitwall-test-approval-2',

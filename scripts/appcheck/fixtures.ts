@@ -286,6 +286,7 @@ export const SUPERVISOR_REPLY =
 export const SUPERVISOR_APPROVALS = {
   message: 'pt114-approval-message',
   spawn: 'pt114-approval-spawn',
+  resume: 'pt127-approval-resume',
 } as const;
 
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
@@ -311,7 +312,7 @@ export interface ResetOptions {
    * Whether it has made-up drafts waiting on you, a message and a new session (W114), or 'long', one
    * message of 14 lines with a no-break space, which the card draws as its code (W120).
    */
-  approvals?: boolean | 'long';
+  approvals?: boolean | 'long' | 'resume';
   /** Whether its conversation has made-up turns already, with a page behind Load earlier, or none, a new one. */
   supervisorHistory?: boolean;
 }
@@ -399,7 +400,7 @@ export class World {
     this.#supervisorTurn += 1;
     this.#supervisor = options.supervisor ?? 'none';
     this.#handoffs = [];
-    this.#approvals = options.approvals === 'long' ? [this.#longApproval()] : options.approvals ? this.#baseApprovals() : [];
+    this.#approvals = options.approvals === 'long' ? [this.#longApproval()] : options.approvals === 'resume' ? [this.#resumeApproval()] : options.approvals ? this.#baseApprovals() : [];
     const history = options.supervisorHistory ?? (this.#supervisor !== 'none' && this.#supervisor !== 'off');
     this.#supervisorEntries = history ? this.#supervisorTurns() : [];
     this.#supervisorOlder = history ? this.#supervisorOlderTurns() : [];
@@ -493,7 +494,8 @@ export class World {
       done: () => {
         this.#approvals = this.#approvals.filter((each) => each.id !== id);
         const what = decision.decision === 'decline' ? "You didn't send it." : decision.decision === 'edit' ? 'You sent your edit.' : 'You sent it.';
-        this.#supervisorEntries.push({ kind: 'notice', text: `${approval.kind === 'message' ? `Message to ${approval.to}` : `New session in ${approval.directory}`}: ${what}`, at: new Date().toISOString() });
+        const named = approval.kind === 'message' ? `Message to ${approval.to}` : approval.kind === 'resume' ? `Resume ${approval.name}` : `New session in ${approval.directory}`;
+        this.#supervisorEntries.push({ kind: 'notice', text: `${named}: ${what}`, at: new Date().toISOString() });
         // What went, for the panel's Sent and started (W124): a message to the session of that name, or
         // a new background session, listed at once, that needs you, as one that has a question would.
         if (decision.decision !== 'decline') {
@@ -501,6 +503,17 @@ export class World {
           if (approval.kind === 'message') {
             const to = [...this.#sessions.values()].find((each) => each.name === approval.to);
             this.#handoffs.push({ id: `pt124-handoff-${this.#handoffs.length + 1}`, kind: 'message', name: approval.to, at, ...(to === undefined ? {} : { sessionId: to.sessionId }) });
+          } else if (approval.kind === 'resume') {
+            // W127: resumed with the message as its next turn, so it's working, not waiting for a prompt.
+            const resumed = this.resume(approval.sessionId);
+            resumed.list();
+            const now = this.#sessions.get(approval.sessionId);
+            if (now !== undefined) {
+              const working: SessionSummary = { ...now, status: 'busy', state: 'working' };
+              delete working.needsYou;
+              this.#sessions.set(approval.sessionId, working);
+            }
+            this.#handoffs.push({ id: `pt127-handoff-${this.#handoffs.length + 1}`, kind: 'resume', name: approval.name, sessionId: approval.sessionId, shortId: resumed.shortId, at });
           } else {
             const started = this.spawn({ cwd: approval.directory, prompt: approval.prompt, ...(approval.name === undefined ? {} : { name: approval.name }) }, CODE);
             started.summary.needsYou = { reason: 'claude-code', text: 'Which base branch should the made-up review compare against?' };
@@ -540,6 +553,21 @@ export class World {
         expiresAt: this.#ago(-27),
       },
     ];
+  }
+
+  /** W127: NAMES.ended, a finished session, resumed with a message as its next turn. */
+  #resumeApproval(): SupervisorApproval {
+    const ended = this.byName(NAMES.ended);
+    return {
+      id: SUPERVISOR_APPROVALS.resume,
+      kind: 'resume',
+      sessionId: ended.sessionId,
+      name: ended.name,
+      directory: ended.cwd,
+      text: 'The user asked me to pass this on: please finish the made-up guide’s last section, then open a draft PR for it.',
+      at: this.#ago(1),
+      expiresAt: this.#ago(-28),
+    };
   }
 
   /** A message taller than its card shows, with a character drawn as its code (W120). */

@@ -168,6 +168,11 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
     if (name !== undefined && !isText(name)) return undefined;
     return name === undefined || name.trim() === '' ? { id, kind, directory, prompt, at, expiresAt } : { id, kind, directory, name, prompt, at, expiresAt };
   }
+  if (kind === 'resume') {
+    const { sessionId, name, directory, text } = value;
+    if (!isId(sessionId) || !isText(name) || name.trim() === '' || !isText(directory) || directory === '' || !isText(text)) return undefined;
+    return { id, kind, sessionId, name, directory, text, at, expiresAt };
+  }
   return undefined;
 }
 
@@ -177,10 +182,12 @@ const HANDOFFS_READ_MAX = 50;
 /** One hand-off (W124), or undefined when it isn't one this page knows how to show. */
 function asHandoff(value: unknown): SupervisorHandoff | undefined {
   if (!isRecord(value)) return undefined;
-  const { id, kind, name, at, sessionId, shortId } = value;
-  if (!isId(id) || (kind !== 'message' && kind !== 'spawn') || !isText(name) || name.trim() === '' || !isTime(at)) return undefined;
+  const { id, kind, name, at, sessionId, shortId, copy } = value;
+  if (!isId(id) || (kind !== 'message' && kind !== 'spawn' && kind !== 'resume') || !isText(name) || name.trim() === '' || !isTime(at)) return undefined;
   const handoff: SupervisorHandoff = { id, kind, name, at };
-  if (isId(sessionId)) handoff.sessionId = sessionId;
+  // A copy (W127) is matched by its own short id alone, never the original's session id.
+  if (copy === true && kind === 'resume') handoff.copy = true;
+  else if (isId(sessionId)) handoff.sessionId = sessionId;
   if (isId(shortId)) handoff.shortId = shortId;
   return handoff;
 }
@@ -226,7 +233,7 @@ export interface HandoffRow {
   needs?: string;
 }
 
-/** The listed session a hand-off went to: by its session id, or a started one by its short id. */
+/** The listed session a hand-off went to: by its session id, or a started one, or a copy (W127), by its short id. */
 export function handoffSession(handoff: SupervisorHandoff, sessions: readonly SessionSummary[]): SessionSummary | undefined {
   if (handoff.sessionId !== undefined) {
     const found = sessions.find((session) => session.sessionId === handoff.sessionId);
@@ -247,12 +254,16 @@ export function needsReason(session: SessionSummary, badge: StatusBadge = status
 /** The longest reason a needs-you notice gives, in characters. */
 export const NEEDS_REASON_MAX = 160;
 
-/** The name a row shows: the session's own, once listed, else the one the hand-off has. */
-export const handoffName = (row: HandoffRow) => visibleString(row.session?.name ?? row.handoff.name);
+/**
+ * The name a row shows: the session's own, once listed, else the one the hand-off has. A copy's row
+ * names the session it copied (W127), since Claude Code gives the copy a name of its own.
+ */
+export const handoffName = (row: HandoffRow) => visibleString(row.handoff.copy === true ? row.handoff.name : (row.session?.name ?? row.handoff.name));
 
 /**
  * The rows: one per session, its newest hand-off, those that need you first, then newest first. A
- * session started and then messaged is one row, "Started", since that's where it came from.
+ * session started and then messaged is one row, "Started", since that's where it came from, and so is
+ * one resumed and then messaged, "Resumed" (W127).
  */
 export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, sessions: readonly SessionSummary[], notNeeded?: NotNeeded): HandoffRow[] {
   const byKey = new Map<string, { row: HandoffRow; order: number; started: boolean }>();
@@ -260,7 +271,8 @@ export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, 
     const session = handoffSession(handoff, sessions);
     const key = session !== undefined ? `s:${session.sessionId}` : handoff.shortId !== undefined ? `b:${handoff.shortId}` : `h:${handoff.id}`;
     const before = byKey.get(key);
-    const started = (before?.started ?? false) || handoff.kind === 'spawn';
+    // Started, or resumed (W127): that's where it came from, so a message after keeps the row's verb.
+    const started = (before?.started ?? false) || handoff.kind === 'spawn' || handoff.kind === 'resume';
     const kept = started && handoff.kind === 'message' && before !== undefined ? before.row.handoff : handoff;
     const row: HandoffRow = { handoff: kept };
     if (session !== undefined) {
@@ -275,7 +287,14 @@ export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, 
 }
 
 /** What a row says it did. */
-export const handoffVerb = (handoff: SupervisorHandoff) => (handoff.kind === 'spawn' ? 'Started' : 'Message approved for');
+export function handoffVerb(handoff: SupervisorHandoff): string {
+  if (handoff.kind === 'spawn') return 'Started';
+  if (handoff.kind === 'resume') return handoff.copy === true ? 'Resumed a copy of' : 'Resumed';
+  return 'Message approved for';
+}
+
+/** What a copy's row says under it (W127): where the message went, and what's left to do. */
+export const HANDOFF_COPY_NOTE = 'It was open in another Claude Code process, so Claude Code started a copy of its conversation and the message went to the copy. The original is unchanged; stop and remove the copy if you don’t need it.';
 
 /** How many approvals wait on you: each counts in Needs you's total and the page title (SupervisorState.approvals). */
 export function approvalsWaiting(state: SupervisorState | undefined): number {
@@ -350,19 +369,21 @@ export function heldCommand(error: string | undefined): string | undefined {
   return match ? `claude stop ${match[1]}` : undefined;
 }
 
-/** A spawn approval's directory as the card shows it: home as ~. */
-export const approvalDirectory = (approval: Extract<SupervisorApproval, { kind: 'spawn' }>) => shortenHome(visibleString(approval.directory));
+/** A spawn or resume approval's directory as the card shows it: home as ~. */
+export const approvalDirectory = (approval: Extract<SupervisorApproval, { kind: 'spawn' | 'resume' }>) => shortenHome(visibleString(approval.directory));
 
 /** What an approval would send or start, as its card's heading says it, in plain text. */
 export function approvalTitle(approval: SupervisorApproval): string {
   // As they are, with anything that wouldn't show as its code (W120): never a filter that removes text.
   if (approval.kind === 'message') return `Message to ${visibleString(approval.to)}`;
+  // W127: the listed session's own name, as pitwall resolved its id.
+  if (approval.kind === 'resume') return `Resume ${visibleString(approval.name)} and send`;
   const named = approval.name === undefined ? '' : `, named ${visibleString(approval.name)}`;
   return `New session in ${approvalDirectory(approval)}${named}`;
 }
 
 /** The text an approval would send: a message's, or a new session's first prompt. */
-export const approvalText = (approval: SupervisorApproval) => (approval.kind === 'message' ? approval.text : approval.prompt);
+export const approvalText = (approval: SupervisorApproval) => (approval.kind === 'spawn' ? approval.prompt : approval.text);
 
 // --- The working line ------------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 // pitwall's MCP server (M5, W112, W115): MCP's JSON-RPC over HTTP POST at MCP_PATH, on pitwall's own
 // server, for the supervisor alone (src/supervisor/), with read-only tools (mcpTools.ts), and
-// spawn_session and the permission prompt tool, approve (supervisorActions.ts). Written by hand in a
+// spawn_session, resume_session (W127) and the permission prompt tool, approve (supervisorActions.ts). Written by hand in a
 // few lines rather than with an SDK (AGENTS.md: a few lines over a dependency).
 //
 // What Claude Code 2.1.312's HTTP transport sends (a probe on 2026-10-29 that sent no prompt, so

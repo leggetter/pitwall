@@ -92,7 +92,7 @@ import {
   WS_PATH,
   type ConversationPage,
 } from '../shared/protocol.js';
-import { checkDirectory, CommandSlots, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
+import { checkDirectory, CommandSlots, createResumeRunner, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { createCloneRoute, type CloneOptions } from './clone.js';
@@ -107,7 +107,7 @@ import { registerRecaps } from './recapRoutes.js';
 import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
 import { createRecapView } from './snapshotRecaps.js';
 import { createSupervisorView } from './snapshotSupervisor.js';
-import { createApproveTool, createSpawnSessionTool, recipientNames, type SupervisorActionSources } from './supervisorActions.js';
+import { createApproveTool, createResumeSessionTool, createSpawnSessionTool, recipientNames, type SupervisorActionSources } from './supervisorActions.js';
 import { registerSupervisor } from './supervisorRoutes.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
 import { createRelayManager } from './relay.js';
@@ -270,6 +270,8 @@ export async function startServerWithInternals(
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
   const actionOptions: ActionOptions = { token, spawned, resumed, work, started, ...internals.actions, slots: commandSlots, attachments };
   const spawner = internals.actions?.spawner ?? createSpawnRunner(actionOptions);
+  // Resuming, from the Resume route and the supervisor's resume_session (W127): one set of checks and limits.
+  const resumer = internals.actions?.resumer ?? createResumeRunner(indexer, { ...actionOptions, slots: commandSlots, limiter: spawner.limiter });
   // What the supervisor can do behind your click (W115): its approvals, checked against this snapshot.
   const supervisorActions: SupervisorActionSources | undefined =
     supervisor === undefined
@@ -280,11 +282,12 @@ export async function startServerWithInternals(
           approvals: supervisor.approvals(),
           spawner,
           onSpawned: () => indexer.pollSoon(),
+          resumer,
           // The recipient's fresh, unfiltered check (W120), as the relay's and resume's.
           agents: internals.actions?.agents ?? createAgentsSource(internals.actions?.claudeBin === undefined ? {} : { claudeBin: internals.actions.claudeBin }),
         };
   // pitwall's MCP server, for the supervisor alone (W112, W115): read-only tools over what pitwall
-  // already has, spawn_session, and approve, the permission prompt tool.
+  // already has, spawn_session, resume_session (W127), and approve, the permission prompt tool.
   const mcp =
     supervisor === undefined || supervisorActions === undefined
       ? undefined
@@ -300,6 +303,7 @@ export async function startServerWithInternals(
               ownSessionIds: () => supervisor.ownSessionIds(),
             }),
             createSpawnSessionTool(supervisorActions),
+            createResumeSessionTool(supervisorActions),
             createApproveTool(supervisorActions),
           ],
         };
@@ -323,7 +327,7 @@ export async function startServerWithInternals(
     registerPrs(app, prs);
     clone.register(app);
     registerAttachments(app, attachments);
-    registerActions(app, indexer, { ...actionOptions, spawner });
+    registerActions(app, indexer, { ...actionOptions, spawner, resumer });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
     registerEndSession(app, indexer, {
       isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,

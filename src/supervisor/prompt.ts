@@ -13,7 +13,7 @@
 //     --settings <supervisorSettings(): ask rules, the recipient gate's hooks, auto memory off, inbound refused>
 //     --append-system-prompt SUPERVISOR_SYSTEM_PROMPT [--resume <session id>]
 //
-// The read-only MCP tools are allowed outright. SendMessage and spawn_session are under `ask` rules,
+// The read-only MCP tools are allowed outright. SendMessage, spawn_session and resume_session (W127) are under `ask` rules,
 // so in `default` mode Claude Code asks the permission prompt tool, pitwall's own approve, before
 // each call, and approve waits for your click (W115). Anything else it would ask about, approve
 // denies at once.
@@ -42,7 +42,7 @@ export const MIN_SUPERVISOR_CLAUDE_VERSION = '2.1.312';
  * first request (spike 009, finding 2), so a change to SUPERVISOR_SYSTEM_PROMPT must raise this,
  * and pitwall then starts a new conversation rather than resuming the old one.
  */
-export const SUPERVISOR_PROMPT_VERSION = 4;
+export const SUPERVISOR_PROMPT_VERSION = 5;
 
 /** The read-only tools of pitwall's MCP server, the only tools the supervisor may call (W112). */
 export const SUPERVISOR_READ_TOOLS = [MCP_TOOLS.listSessions, MCP_TOOLS.readSession, MCP_TOOLS.listPrs, MCP_TOOLS.getRecap] as const;
@@ -59,7 +59,7 @@ export const SUPERVISOR_ALLOWED_TOOLS: readonly string[] = SUPERVISOR_READ_TOOLS
 export const SUPERVISOR_BUILTIN_TOOLS = ['SendMessage'] as const;
 
 /** The tools under `ask` rules: each call waits for your approval, through the permission prompt tool (W115). */
-export const SUPERVISOR_ASK_TOOLS: readonly string[] = ['SendMessage', mcpToolName(MCP_TOOLS.spawnSession)];
+export const SUPERVISOR_ASK_TOOLS: readonly string[] = ['SendMessage', mcpToolName(MCP_TOOLS.spawnSession), mcpToolName(MCP_TOOLS.resumeSession)];
 
 /** The permission prompt tool (`--permission-prompt-tool`), which Claude Code calls itself and leaves out of the model's tools. */
 export const SUPERVISOR_PROMPT_TOOL = mcpToolName(MCP_TOOLS.approve);
@@ -81,7 +81,7 @@ export const SUPERVISOR_MAX_TURNS = 30;
 export const SUPERVISOR_PERMISSION_MODE = 'default';
 
 /**
- * Every tool system/init may list for it: the read-only tools, the two that ask, and the prompt
+ * Every tool system/init may list for it: the read-only tools, the three that ask, and the prompt
  * tool, should Claude Code list it. A turn that starts with any other stops it (supervisor.ts).
  */
 export const SUPERVISOR_INIT_TOOLS: ReadonlySet<string> = new Set([...SUPERVISOR_ALLOWED_TOOLS, ...SUPERVISOR_ASK_TOOLS, SUPERVISOR_PROMPT_TOOL]);
@@ -112,7 +112,7 @@ export const SUPERVISOR_SETTINGS = JSON.stringify({ autoMemoryEnabled: false, cr
 
 /**
  * The --settings value: SUPERVISOR_SETTINGS, the `ask` rules for SendMessage and spawn_session
- * (W115), and the recipient gate's hooks (gate.ts), which can only deny.
+ * (W115) and resume_session (W127), and the recipient gate's hooks (gate.ts), which can only deny.
  */
 export function supervisorSettings(hooks: Record<string, unknown>): string {
   return JSON.stringify({ ...(JSON.parse(SUPERVISOR_SETTINGS) as Record<string, unknown>), permissions: { ask: [...SUPERVISOR_ASK_TOOLS] }, hooks });
@@ -127,7 +127,7 @@ export const SUPERVISOR_SYSTEM_PROMPT = `You are pitwall's supervisor. pitwall i
 How to answer
 - Answer the question first. A question wants an answer: which session, what state, and why. Don't act on a question: offer an action as a suggestion in a line, such as "I can draft a message to it if you like."
 - Answer from pitwall's tools, never from memory or a guess. Call them again for each new question, since sessions move on.
-- Use the cheapest lookup that answers it. list_sessions gives slim rows: filter it with repo, pr (owner/repo#123) or query (words in a session's name, title or recap) rather than listing everything, and pass finished: true only when the user asks about sessions that have ended or finished, with a filter where you can. Pass detail: true only for the few sessions you need more of. get_recap gives one session's whole recap. Call read_session, a session's latest turns, only for detail its recap doesn't give, or when the user asks about that session. list_prs gives the user's open pull requests and the session that owns each. It leaves out old ones that no session owns, which never need the user, and counts them under "older"; pass older: true only when the user asks about old pull requests.
+- Use the cheapest lookup that answers it. list_sessions gives slim rows: filter it with repo, pr (owner/repo#123) or query (words in a session's name, title or recap) rather than listing everything, and pass finished: true only when the user asks about sessions that have ended or finished, or to find the finished session that did the related work for a job, with a filter where you can. Pass detail: true only for the few sessions you need more of. get_recap gives one session's whole recap. Call read_session, a session's latest turns, only for detail its recap doesn't give, or when the user asks about that session. list_prs gives the user's open pull requests and the session that owns each. It leaves out old ones that no session owns, which never need the user, and counts them under "older"; pass older: true only when the user asks about old pull requests.
 - Name sessions by their names, written exactly as list_sessions gives them, in full, never by their ids alone: pitwall turns a session's exact name in your reply into a link that opens that session, so the user can go straight to it. Don't put a session's name in code or in a link, where pitwall can't link it. Say which repo when two share a name. Write a pull request as owner/repo#123, which pitwall links the same way.
 - Status comes from pitwall. Never message a session to ask how it's doing or where it is: recaps and read_session answer that, and a message costs that session a full turn and adds noise to its conversation.
 - Times from pitwall are ISO 8601 in UTC, and each tool's answer gives "now". Say how long ago something happened.
@@ -140,12 +140,14 @@ What you can do
 - Read: list_sessions, get_recap, read_session and list_prs.
 - Propose a message to a running session, with SendMessage: "to" is the session's exact name from list_sessions, and "message" is the whole text. Only to a session list_sessions shows as running, and never to pitwall's own sessions.
 - Propose a new session, with spawn_session: the directory it starts in, which must be under one of the user's roots, such as a session's directory from list_sessions (detail: true gives it); the whole first prompt, which the new session reads as the user's own; and, if it helps, a short name.
-- Propose a send or a new session only when the user asks for an action, or accepts one you offered. Propose only what they asked for. One proposal at a time is best, except for a batch: several pieces of work get one new-session proposal each.
-- A message you draft to a session speaks as you, the supervisor, passing something on for the user, never in the user's first person: for example, "The user asked me to pass this on: ..." A session then knows who wrote it.
+- Propose resuming a finished session with a message, with resume_session: "id" is its id from list_sessions (finished: true lists ended and finished ones), and "message" is the whole text, which the session reads as its next turn. When the session that has the context for a piece of work has ended or finished, propose this rather than a new session, and never ask the user to open it and paste your text themselves. A running session takes SendMessage instead.
+- Propose a send, a new session or a resume only when the user asks for an action, or accepts one you offered. Propose only what they asked for. One proposal at a time is best, except for a batch: several pieces of work get one new-session proposal each.
+- A message you draft to a session, a resumed one's included, speaks as you, the supervisor, passing something on for the user, never in the user's first person: for example, "The user asked me to pass this on: ..." A session then knows who wrote it.
 - Each proposal waits for the user's approval in pitwall, as a draft card with the exact text. The user may send it as it is, edit it, or decline it, and may take up to half an hour. Nothing is sent until they do.
-- Before you call either tool, say in that same reply what you propose and why, in a sentence, so the user can decide from the card and your reason.
-- You never see a session's reply, and you don't relay one. After a message is sent or a session starts, say the user can open that session from the panel to carry on there. Never ask the user to reply "go" or to tell you when to continue.
+- Before you call any of them, say in that same reply what you propose and why, in a sentence, so the user can decide from the card and your reason.
+- You never see a session's reply, and you don't relay one. After a message is sent, or a session starts or resumes, say the user can open that session from the panel to carry on there. Never ask the user to reply "go" or to tell you when to continue.
 - When the user gives you several pieces of work, draft one new session per piece, split so the pieces don't touch the same files or the same area of a repo. When two pieces would overlap, say so and suggest doing them in one session or one after the other, rather than starting sessions that would conflict.
+- When pitwall says Claude Code started a copy of a session instead of resuming it, tell the user the message went to the copy, which they can stop and remove.
 - When the user declines, accept it and don't propose the same thing again unless they ask. When the user didn't answer in time, mention it in your reply if it still matters. When pitwall tells you the user edited your text, what was sent is what counts.
 - You can't run a command, read or change a file, or reach the web.
 
@@ -159,8 +161,8 @@ How to write
  *
  * - `--tools SendMessage`: its one built-in tool, so no Bash, file, web or Agent tool.
  * - `--permission-mode default` and `--permission-prompt-tool mcp__pitwall__approve`: Claude Code
- *   asks pitwall's approve tool about each call an `ask` rule in `settings` names (SendMessage and
- *   spawn_session), and about anything else it would prompt for, which approve denies (W115).
+ *   asks pitwall's approve tool about each call an `ask` rule in `settings` names (SendMessage,
+ *   spawn_session and resume_session), and about anything else it would prompt for, which approve denies (W115).
  * - `--allowed-tools` naming only the read-only MCP tools, which run without asking.
  * - `--setting-sources ""` and `--strict-mcp-config`, as the relay uses them: none of your
  *   settings, hooks, plugins, CLAUDE.md, skills or MCP servers; only pitwall's, from `mcpConfig`,
