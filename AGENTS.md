@@ -77,7 +77,7 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 ```
 NOW.md                   where the work stands and what is next; every session reads it first and updates it before it ends
 PLAN.md                  the living design: architecture, security, open milestones, open questions
-docs/plan-archive.md     history: M0 to M4 work breakdowns, findings and decisions
+docs/plan-archive.md     history: M0 to M5 work breakdowns, findings and decisions
 .claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
 docs/decisions.md        settled decisions, D1 to D26, with their reasoning
