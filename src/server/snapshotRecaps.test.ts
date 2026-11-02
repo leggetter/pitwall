@@ -39,7 +39,7 @@ function fakeEngine() {
   const engine: Pick<RecapEngine, 'decorate' | 'health' | 'version' | 'subscribe'> = {
     decorate(s) {
       if (!waiting.has(s.sessionId)) return s;
-      return { ...s, title: 'From the recap', titleSource: 'pitwall', recap: { waitingOn: 'you', title: 'From the recap', next: 'Answer it.', at: AT, source: 'pitwall' }, needsYou: { reason: 'recap', text: 'Answer it.' } };
+      return { ...s, title: 'From the recap', titleSource: 'pitwall', recap: { waitingOn: 'you', title: 'From the recap', forYou: 1, next: 'Answer it.', at: AT, source: 'pitwall' }, needsYou: { reason: 'recap', text: 'Answer it.' } };
     },
     health: () => ({ ...health }),
     version: () => version,

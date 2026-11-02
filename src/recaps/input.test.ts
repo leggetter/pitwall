@@ -232,8 +232,8 @@ describe('the input', () => {
     expect(input).toContain('<first-prompt>\nhello world\nnext\n</first-prompt>');
   });
 
-  it("frames an update: the first prompt, the previous recap's JSON and the turns since", () => {
-    const previous = { why: 'why', now: 'now', next: 'next', waitingOn: 'CI' as const, title: 'A title' };
+  it("frames an update: the first prompt, the previous recap's JSON and the turns since, asking for a revision", () => {
+    const previous = { summary: 'It fixed the export in #42.', todos: [{ text: 'Finish the checks on #42', owner: 'CI' as const }], waitingOn: 'CI' as const, title: 'A title' };
     const input = updateRecapInput({ firstPrompt: 'Fix it.', previous, turns: '[10-28 15:50] Claude: CI passed.' }, fixedId);
     expect(input.split('\n').slice(1)).toEqual([
       '<session-3f9a1c2e3f9a1c2e>',
@@ -241,13 +241,13 @@ describe('the input', () => {
       'Fix it.',
       '</first-prompt>',
       '<previous-recap>',
-      '{"why":"why","now":"now","next":"next","waitingOn":"CI","title":"A title"}',
+      '{"summary":"It fixed the export in #42.","todos":[{"text":"Finish the checks on #42","owner":"CI"}],"waitingOn":"CI","title":"A title"}',
       '</previous-recap>',
       '<turns-since-previous-recap>',
       '[10-28 15:50] Claude: CI passed.',
       '</turns-since-previous-recap>',
       '</session-3f9a1c2e3f9a1c2e>',
-      'Update the previous recap with what the newer turns show. Answer with the JSON object only.',
+      'Revise the previous recap with what the newer turns show: keep its summary steady, changing only what they change, and drop the to-dos they finished. Answer with the JSON object only.',
     ]);
   });
 

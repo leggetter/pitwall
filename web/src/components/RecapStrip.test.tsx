@@ -1,7 +1,7 @@
-// The recap strip (M5, W111; docs/design-system.md, 4: Recap strip): when it shows, what it fetches
-// and when, the one request for a new recap as a view opens on a stale recap or none, never in a
-// loop, the headline by what it waits on, the lines under it, collapsed and open, Refresh and its
-// answers, and its loading and failed states. Made-up sessions and recaps only.
+// The recap strip (M5, W111, W121; docs/design-system.md, 4: Recap strip): when it shows, what it
+// fetches and when, the one request for a new recap as a view opens on a stale recap or none, never in
+// a loop, the summary and the to-dos under it, collapsed and open, Refresh and its answers, and its
+// loading and failed states. Made-up sessions and recaps only.
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,11 +17,18 @@ const SID = '00000000-0000-4000-8000-000000000111';
 const HEALTH: RecapHealth = { calls: 12, budget: RECAP_DAILY_BUDGET, costUsd: 0.01 };
 const SPENT: RecapHealth = { calls: RECAP_DAILY_BUDGET, budget: RECAP_DAILY_BUDGET, costUsd: 0.2 };
 
+const SUMMARY = 'You asked it to fix the made-up export on large files. It opened draft PR #42 with a fix and a test.';
+
 function full(extra: Partial<SessionRecap> = {}): SessionRecap {
   return {
-    why: 'You asked it to fix the made-up export on large files.',
-    now: 'It opened draft PR #42 with a fix and a test.',
-    next: 'Say whether to mark #42 ready.',
+    summary: SUMMARY,
+    todos: [
+      { text: 'Say whether to mark #42 ready', owner: 'you' },
+      { text: 'Open a backport PR, if you say yes', owner: 'session' },
+      { text: 'Finish the checks on #42', owner: 'CI' },
+      { text: 'Say whether to close #40', owner: 'you' },
+      { text: 'Review #42', owner: 'someone else' },
+    ],
     waitingOn: 'you',
     title: 'Fix the made-up export',
     at: minutesAgo(4),
@@ -32,12 +39,14 @@ function full(extra: Partial<SessionRecap> = {}): SessionRecap {
 }
 
 function summaryOf(recap: SessionRecap): RecapSummary {
+  const yours = recap.todos.filter((todo) => todo.owner === 'you');
   return {
     waitingOn: recap.waitingOn,
     title: recap.title,
+    forYou: yours.length,
     at: recap.at,
     source: recap.source,
-    ...(recap.waitingOn === 'you' ? { next: recap.next } : {}),
+    ...(yours[0] === undefined ? {} : { next: yours[0].text }),
     ...(recap.stale ? { stale: true as const } : {}),
   };
 }
@@ -95,8 +104,10 @@ function renderStrip(props: { session: SessionSummary; health?: RecapHealth | un
 const strip = () => document.querySelector<HTMLElement>('.session-recap');
 const toggle = () => document.querySelector<HTMLButtonElement>('.recap-toggle');
 const refreshButton = () => document.querySelector<HTMLButtonElement>('[data-recap-refresh]');
-const headline = () => document.querySelector('.recap-headline')?.textContent;
-const lines = () => [...document.querySelectorAll('.recap-line')].map((line) => [line.querySelector('dt')?.textContent, line.querySelector('dd')?.textContent]);
+const summaryText = () => document.querySelector('.recap-summary-text')?.textContent;
+const forYou = () => document.querySelector('.recap-for-you')?.textContent;
+const todos = () => [...document.querySelectorAll('.recap-todo')].map((todo) => [todo.querySelector('.recap-todo-text')?.textContent, todo.querySelector('.recap-owner')?.textContent]);
+const note = () => document.querySelector('.recap-body .recap-note')?.textContent;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -123,12 +134,13 @@ describe('when there is a strip', () => {
     expect(strip()?.dataset.recap).toBe('loading');
     await pastAskDelay();
     expect(server.post).toHaveBeenCalledTimes(1);
-    const recap = full({ waitingOn: 'nothing', next: 'Nothing is left to do.' });
+    const recap = full({ waitingOn: 'nothing', todos: [] });
     server.setRecap(recap);
     view.update({ session: ended(recap) });
     await settle();
     expect(strip()?.dataset.recap).toBe('shown');
-    expect(headline()).toBe('Done: It opened draft PR #42 with a fix and a test.');
+    expect(summaryText()).toBe(SUMMARY);
+    expect(note()).toBe('Nothing left to do.');
     expect(server.post).toHaveBeenCalledTimes(1);
   });
 
@@ -191,12 +203,12 @@ describe('what it fetches, and when', () => {
     await settle();
     expect(server.get).toHaveBeenCalledTimes(1);
     // A new one: fetched.
-    const second = full({ at: minutesAgo(0.5), now: 'It marked #42 ready.' });
+    const second = full({ at: minutesAgo(0.5), summary: 'It marked #42 ready.' });
     server.setRecap(second);
     view.update({ session: target(second) });
     await settle();
     expect(server.get).toHaveBeenCalledTimes(2);
-    expect(lines()).toContainEqual(['Now', 'It marked #42 ready.']);
+    expect(summaryText()).toBe('It marked #42 ready.');
   });
 
   it('fetches nothing for a session with no recap, which has none to fetch', async () => {
@@ -303,7 +315,7 @@ describe('asking for a new recap as the view opens', () => {
   });
 });
 
-describe('the headline and the lines', () => {
+describe('the summary and the to-dos', () => {
   async function shown(recap: SessionRecap) {
     const server = fakeApi({ recap });
     const view = renderStrip({ session: target(recap) }, server.api);
@@ -311,60 +323,57 @@ describe('the headline and the lines', () => {
     return view;
   }
 
-  it('says what you need to do, then Why and Now, while it waits on you', async () => {
+  it('says why it started and where it is, then lists the to-dos in order, each with its owner as a tag', async () => {
     await shown(full());
-    expect(headline()).toBe('You need to: Say whether to mark #42 ready.');
-    expect(document.querySelector('.recap-label')?.className).toContain('badge-subtle-warning');
-    expect(lines()).toEqual([
-      ['Why', 'You asked it to fix the made-up export on large files.'],
-      ['Now', 'It opened draft PR #42 with a fix and a test.'],
+    expect(summaryText()).toBe(SUMMARY);
+    expect(todos()).toEqual([
+      ['Say whether to mark #42 ready', 'You'],
+      ['Open a backport PR, if you say yes', 'Session'],
+      ['Finish the checks on #42', 'CI'],
+      ['Say whether to close #40', 'You'],
+      ['Review #42', 'Someone else'],
     ]);
+    expect(screen.getByRole('list', { name: 'To-dos' }).tagName).toBe('OL');
+    // Yours in the Needs you tone; the rest quiet.
+    const tags = [...document.querySelectorAll('.recap-owner')].map((tag) => tag.className);
+    expect(tags[0]).toContain('badge-subtle-warning');
+    expect(tags[3]).toContain('badge-subtle-warning');
+    for (const index of [1, 2, 4]) expect(tags[index]).toContain('badge-subtle-neutral');
+    expect([...document.querySelectorAll('.recap-todo')].map((todo) => (todo as HTMLElement).dataset.owner)).toEqual(['you', 'session', 'CI', 'you', 'someone else']);
+    // Open, the list shows yours, so there's no count.
+    expect(forYou()).toBeUndefined();
   });
 
-  it('says what it waits on, quietly, for CI, another session or someone else', async () => {
-    for (const [waitingOn, label] of [
-      ['CI', 'Waiting on CI'],
-      ['another session', 'Waiting on another session'],
-      ['someone else', 'Waiting on someone else'],
-    ] as const) {
-      const view = await shown(full({ waitingOn, next: 'It waits for the made-up run.' }));
-      expect(headline()).toBe(`${label}: It waits for the made-up run.`);
-      expect(document.querySelector('.recap-label')?.className).toContain('badge-subtle-neutral');
-      expect(lines().map(([name]) => name)).toEqual(['Why', 'Now']);
-      view.unmount();
-    }
+  it('says there is nothing left to do when there are no to-dos', async () => {
+    await shown(full({ waitingOn: 'nothing', todos: [] }));
+    expect(todos()).toEqual([]);
+    expect(note()).toBe('Nothing left to do.');
   });
 
-  it('says it is done with where it is, then Why, and Next only when there is one', async () => {
-    await shown(full({ waitingOn: 'nothing', next: '' }));
-    expect(headline()).toBe('Done: It opened draft PR #42 with a fix and a test.');
-    expect(document.querySelector('.recap-label')?.className).toContain('badge-subtle-success');
-    expect(lines().map(([name]) => name)).toEqual(['Why']);
-  });
-
-  it('shows Claude Code’s recap, which says only where it is, with nothing to open', async () => {
-    await shown(full({ source: 'claude-code', why: '', next: '', waitingOn: 'nothing', now: 'The made-up fix is in #42.' }));
+  it('shows Claude Code’s recap as a summary alone, with nothing to open', async () => {
+    await shown(full({ source: 'claude-code', todos: [], title: '', waitingOn: 'nothing', summary: 'The made-up fix is in #42.' }));
     expect(screen.getByRole('heading', { name: "Claude Code's recap" })).toBeTruthy();
-    expect(headline()).toBe('Now: The made-up fix is in #42.');
+    expect(summaryText()).toBe('The made-up fix is in #42.');
     expect(toggle()).toBeNull();
-    expect(lines()).toEqual([]);
+    expect(todos()).toEqual([]);
+    expect(document.querySelector('.recap-body')).toBeNull();
   });
 
-  it('says a stale recap may be out of date, on line 1 beside its age, so the headline keeps its width', async () => {
+  it('says a stale recap may be out of date, on line 1 beside its age, so the summary keeps its width', async () => {
     const stale = full({ stale: true });
     const server = fakeApi({ recap: stale, posts: ['pending'] });
     renderStrip({ session: target(stale) }, server.api);
     await settle();
     expect(document.querySelector('.recap-head .recap-stale')?.textContent).toBe(STALE_LABEL);
     expect(document.querySelector('.recap-age + .recap-stale')).not.toBeNull();
-    expect(headline()).toBe('You need to: Say whether to mark #42 ready.');
+    expect(summaryText()).toBe(SUMMARY);
   });
 
   it('shows the recap’s text as text, and its age', async () => {
-    await shown(full({ why: '<b>not bold</b>\u001b[31m', next: '**not bold**' }));
-    expect(lines()[0]).toEqual(['Why', '<b>not bold</b>']);
-    expect(document.querySelector('.recap-line b')).toBeNull();
-    expect(headline()).toBe('You need to: **not bold**');
+    await shown(full({ summary: '<b>not bold</b>\u001b[31m', todos: [{ text: '**not bold**', owner: 'you' }] }));
+    expect(summaryText()).toBe('<b>not bold</b>');
+    expect(document.querySelector('.recap-summary b')).toBeNull();
+    expect(todos()).toEqual([['**not bold**', 'You']]);
     expect(document.querySelector('.recap-age')?.getAttribute('datetime')).toBe(full().at);
   });
 
@@ -376,7 +385,7 @@ describe('the headline and the lines', () => {
 });
 
 describe('collapsed', () => {
-  it('keeps the headline alone, and remembers the choice as a boolean', async () => {
+  it('keeps the summary and how many to-dos are yours, and remembers the choice as a boolean', async () => {
     const recap = full();
     const server = fakeApi({ recap });
     const view = renderStrip({ session: target(recap) }, server.api);
@@ -388,7 +397,10 @@ describe('collapsed', () => {
     fireEvent.click(button);
     expect(button.getAttribute('aria-expanded')).toBe('false');
     expect(body.hidden).toBe(true);
-    expect(headline()).toBe('You need to: Say whether to mark #42 ready.');
+    expect(strip()?.dataset.collapsed).toBe('true');
+    expect(summaryText()).toBe(SUMMARY);
+    expect(forYou()).toBe('2 for you');
+    expect(document.querySelector('.recap-for-you')?.className).toContain('badge-subtle-warning');
     expect(window.localStorage.getItem(RECAP_COLLAPSED_KEY)).toBe('true');
     // Another view, opened later, starts collapsed.
     view.unmount();
@@ -397,6 +409,15 @@ describe('collapsed', () => {
     expect(toggle()?.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle()!);
     expect(window.localStorage.getItem(RECAP_COLLAPSED_KEY)).toBe('false');
+  });
+
+  it('has no count when no to-do is yours', async () => {
+    window.localStorage.setItem(RECAP_COLLAPSED_KEY, 'true');
+    const recap = full({ waitingOn: 'CI', todos: [{ text: 'Finish the checks on #42', owner: 'CI' }] });
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    expect(toggle()?.getAttribute('aria-expanded')).toBe('false');
+    expect(forYou()).toBeUndefined();
   });
 
   it('reads anything but "true" as open', async () => {
@@ -438,14 +459,14 @@ describe('Refresh', () => {
     await settle();
     let answer: (result: ApiResult) => void = () => {};
     server.setRecap(new Promise<ApiResult>((resolve) => (answer = resolve)));
-    const next = full({ at: minutesAgo(0.2), now: 'It marked #42 ready.' });
+    const next = full({ at: minutesAgo(0.2), summary: 'It marked #42 ready.' });
     view.update({ session: target(next) });
     await settle();
     expect(refreshButton()?.getAttribute('aria-busy')).toBe('true');
     answer(ok(next));
     await settle();
     expect(refreshButton()?.getAttribute('aria-busy')).toBeNull();
-    expect(lines()).toContainEqual(['Now', 'It marked #42 ready.']);
+    expect(summaryText()).toBe('It marked #42 ready.');
   });
 
   it('stays busy through an error from before it asked, and stops at one after (errorAt)', async () => {
@@ -570,12 +591,15 @@ describe('Refresh', () => {
 });
 
 describe('loading and failing', () => {
-  it('shows the headline from the snapshot while the recap is on its way, when it waits on you', async () => {
+  it('shows its age from the snapshot while the recap is on its way, and skeleton bars, never its words', async () => {
     const recap = full();
     renderStrip({ session: target(recap) }, fakeApi({ recap: 'pending' }).api);
     await settle();
     expect(strip()?.dataset.recap).toBe('loading');
-    expect(headline()).toBe('You need to: Say whether to mark #42 ready.');
+    expect(document.querySelector('.recap-age')?.getAttribute('datetime')).toBe(recap.at);
+    expect(toggle()).not.toBeNull();
+    expect(summaryText()).toBeUndefined();
+    expect(strip()?.textContent).toContain('Loading the recap');
   });
 
   it('says it couldn’t load the recap, and Try again fetches it again', async () => {

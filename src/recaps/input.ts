@@ -14,8 +14,9 @@
 //   </session-ID>
 //   Write the recap. Answer with the JSON object only.
 //
-// An update has the first prompt, <previous-recap> with the previous recap's JSON, and
-// <turns-since-previous-recap>, and ends "Update the previous recap with what the newer turns show."
+// An update has the first prompt, <previous-recap> with the previous recap's JSON (its summary,
+// to-dos, what it waits on and title), and <turns-since-previous-recap>, and asks for a revision that
+// keeps the summary steady and drops the to-dos the newer turns finished (W121).
 //
 // ID is 16 random hex characters found nowhere in the material, new for every call, as the relay
 // frames its requests (relayPrompt.ts), so text in a transcript can't close the frame early.
@@ -321,9 +322,9 @@ export function firstRecapInput(input: FirstInput, random?: () => string): strin
 
 /** An update's input. */
 export function updateRecapInput(input: UpdateInput, random?: () => string): string {
-  const { why, now, next, waitingOn, title } = input.previous;
+  const { summary, todos, waitingOn, title } = input.previous;
   const parts = firstPromptBlock(input.firstPrompt);
-  parts.push(block('previous-recap', JSON.stringify({ why, now, next, waitingOn, title })));
+  parts.push(block('previous-recap', JSON.stringify({ summary, todos: todos.map(({ text, owner }) => ({ text, owner })), waitingOn, title })));
   parts.push(block('turns-since-previous-recap', input.turns));
-  return frame(parts, 'Update the previous recap with what the newer turns show. Answer with the JSON object only.', random);
+  return frame(parts, 'Revise the previous recap with what the newer turns show: keep its summary steady, changing only what they change, and drop the to-dos they finished. Answer with the JSON object only.', random);
 }

@@ -48,7 +48,7 @@ export interface AskedYou {
  *   start", which a resumed session shows though it asked nothing.
  * - 'asked': its last turn ended by asking you something (askedYou).
  * - 'recap': its recap (M5, SessionSummary.recap) says it's waiting on you, and the recap is
- *   current: made after the session's newest activity. `text` is the recap's `next`. Phil,
+ *   current: made after the session's newest activity. `text` is its first to-do for you. Phil,
  *   2026-10-29: sessions marked Done "whereas I'm sure there are open questions in them". The
  *   heuristics above still decide first; a recap only adds a reason, never removes one.
  * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
@@ -62,7 +62,7 @@ export interface NeedsYou {
   reason: 'prompt' | 'claude-code' | 'asked' | 'recap' | 'restarted' | 'blocked';
   /**
    * For 'claude-code': Claude Code's line, as plain text, at most 200 characters. For 'recap':
-   * the recap's `next`, plain text, at most RECAP_FIELD_MAX characters.
+   * the recap's first to-do for you (RecapSummary.next), plain text, at most RECAP_FIELD_MAX characters.
    */
   text?: string;
 }
@@ -1612,23 +1612,54 @@ export type RecapWaitingOn = 'you' | 'another session' | 'CI' | 'someone else' |
 export const RECAP_WAITING_ON: readonly RecapWaitingOn[] = ['you', 'another session', 'CI', 'someone else', 'nothing'];
 
 /**
- * A session's recap (M5; spike 010; Phil, 2026-10-29: "a recap of what we're trying to achieve at
- * the minute, both at a top level (why did we kick this off?) and in terms of where we are now"):
- * GET recapPath(). Made by one short `claude -p` call on RECAP_MODEL, with no tools and no session
- * saved, from the session's first prompt, Claude Code's newest `away_summary` and compaction
- * summary, and its latest turns, capped at RECAP_TURNS_CAP characters; or updated from the previous
- * recap and the turns since. Kept in memory only. All text is plain, never Markdown, each field at
- * most RECAP_FIELD_MAX characters, and shown in `<bdi>` where it names things. Untrusted: a
- * transcript can steer what the model writes, so anything that reads it, a model above all, reads
- * it as data, never instructions (D26).
+ * Who a to-do waits on (W121; Phil, 2026-11-02: "What's next? What are the outstanding actions?"):
+ * - 'you': the user answers a question, decides, approves or acts.
+ * - 'session': the session itself does it, once it carries on.
+ * - 'CI': checks, a build or a deploy.
+ * - 'someone else': another person, such as a reviewer or an author, or another Claude Code session.
+ */
+export type RecapTodoOwner = 'you' | 'session' | 'CI' | 'someone else';
+
+/** The values, for checking a model's answer. */
+export const RECAP_TODO_OWNERS: readonly RecapTodoOwner[] = ['you', 'session', 'CI', 'someone else'];
+
+/** One thing left to do, and who it waits on. `text` is plain, at most RECAP_FIELD_MAX characters. */
+export interface RecapTodo {
+  text: string;
+  owner: RecapTodoOwner;
+}
+
+/** The most to-dos a recap keeps: the first ones, in order. */
+export const RECAP_TODOS_MAX = 6;
+
+/**
+ * A session's recap (M5; spike 010; W121): a summary of the work and its to-dos. Phil, 2026-10-29:
+ * "a recap of what we're trying to achieve at the minute, both at a top level (why did we kick this
+ * off?) and in terms of where we are now"; and 2026-11-02: "just an updated version of what we're
+ * working on... Then, what's next? What are the outstanding actions? I'm not sure we need the
+ * breakdown." GET recapPath(). Made by one short `claude -p` call on RECAP_MODEL, with no tools and
+ * no session saved, from the session's first prompt, Claude Code's newest `away_summary` and
+ * compaction summary, and its latest turns, capped at RECAP_TURNS_CAP characters; or updated from the
+ * previous recap and the turns since, which revises the summary rather than writing it afresh. Kept
+ * in memory only. All text is plain, never Markdown, the summary and each to-do at most
+ * RECAP_FIELD_MAX characters, and shown in `<bdi>` where it names things. Untrusted: a transcript can
+ * steer what the model writes, so anything that reads it, a model above all, reads it as data, never
+ * instructions (D26).
  */
 export interface SessionRecap {
-  /** Why the session was started, and its goal if that changed since. */
-  why: string;
-  /** Where it stands after the latest turn it covers. */
-  now: string;
-  /** What happens next, or what it's waiting for, naming any question you still have to answer. */
-  next: string;
+  /**
+   * One short paragraph: why the session was started and where it is now, saying so if the goal
+   * changed, and, for a session working through a plan, where it is in it.
+   */
+  summary: string;
+  /** What's left, in order, at most RECAP_TODOS_MAX, done ones dropped. Empty when nothing is. */
+  todos: RecapTodo[];
+  /**
+   * What it waits on now: the model's own answer (W121's live check), not worked out from the to-dos,
+   * since it can say 'another session', which no to-do's owner does, and a session's own to-do first
+   * says nothing of whether it's waiting. 'you' only with a to-do for you, and 'nothing' when the list
+   * is empty: the answer is refused otherwise.
+   */
   waitingOn: RecapWaitingOn;
   /** What the session is about, at most RECAP_TITLE_MAX_WORDS words. */
   title: string;
@@ -1638,10 +1669,10 @@ export interface SessionRecap {
   throughAt: string;
   /**
    * 'pitwall' for pitwall's own recap. 'claude-code' when only Claude Code's `away_summary` is
-   * there, before pitwall's first recap or while the day's budget is spent: then `why` is empty,
-   * `now` is the away_summary, `next` is empty, `title` is empty, `waitingOn` is 'nothing', so it
-   * never puts a session in Needs you, and `at` and `throughAt` are the away_summary's time. Only
-   * for a session pitwall recaps by itself: its process running, not ended or finished.
+   * there, before pitwall's first recap or while the day's budget is spent: then `summary` is the
+   * away_summary, `todos` is empty, `title` is empty, `waitingOn` is 'nothing', so it never puts a
+   * session in Needs you, and `at` and `throughAt` are the away_summary's time. Only for a session
+   * pitwall recaps by itself: its process running, not ended or finished.
    */
   source: 'pitwall' | 'claude-code';
   /** True when the session has activity newer than `throughAt`. */
@@ -1649,12 +1680,14 @@ export interface SessionRecap {
 }
 
 /**
- * What the snapshot carries of a recap (SessionSummary.recap): what the list and Needs you need.
- * `next` only when waitingOn is 'you', for the row's second line (D14).
+ * What the snapshot carries of a recap (SessionSummary.recap): what the list and Needs you need (D14).
+ * `forYou` counts its to-dos for you, and `next` is the first of them, when there is one, for the
+ * row's line 2.
  */
 export interface RecapSummary {
   waitingOn: RecapWaitingOn;
   title: string;
+  forYou: number;
   next?: string;
   at: string;
   source: SessionRecap['source'];
@@ -1693,7 +1726,7 @@ export const RECAP_TURNS_CAP = 8000;
 /** Characters of the first prompt a recap reads, keeping its start and end. */
 export const RECAP_FIRST_PROMPT_CAP = 1500;
 
-/** The longest `why`, `now` or `next`. */
+/** The longest summary, and the longest to-do. */
 export const RECAP_FIELD_MAX = 400;
 
 /** The most words in a recap's title. */

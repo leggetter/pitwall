@@ -1,10 +1,10 @@
-// Recaps (M5, W111): the real RecapStrip in every state, in the session view and alone at its width,
+// Recaps (M5, W111, W121): the real RecapStrip in every state, in the session view and alone at its width,
 // the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
 // API (stubs.ts) holding its made-up recap, and its own collapsed setting in memory, so pressing one
 // changes none of the others. Every recap here is made up, as spike 010's examples are.
 
 import { useState, type ReactNode } from 'react';
-import { RECAP_DAILY_BUDGET, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../../src/shared/protocol.js';
+import { RECAP_DAILY_BUDGET, type RecapHealth, type RecapSummary, type RecapTodo, type SessionRecap, type SessionSummary } from '../../../src/shared/protocol.js';
 import { AppStrips } from '../components/AppStrip.js';
 import { RecapStrip } from '../components/RecapStrip.js';
 import { SessionView } from '../components/SessionView.js';
@@ -26,15 +26,22 @@ const SPENT: RecapHealth = { calls: RECAP_DAILY_BUDGET, budget: RECAP_DAILY_BUDG
 /** The latest call failed, in pitwall's made-up words. */
 const FAILING: RecapHealth = { calls: 41, budget: RECAP_DAILY_BUDGET, costUsd: 0.04, error: "Made up: claude -p didn't answer within 60 seconds." };
 
-const WHY = 'You asked it to find out why the made-up nightly export fails on files over 2 GB, and to fix it.';
-const NOW = 'It found the cause, a 32-bit size field in the upload step, and opened draft PR #42 with a fix and a test. CI passes.';
+const SUMMARY =
+  'You asked it to find out why the made-up nightly export fails on files over 2 GB, and to fix it. It found a 32-bit size field in the upload step and opened draft PR #42 with a fix and a test. CI passes.';
+
+/** The to-dos of a made-up recap that waits on you: yours first, then its own. */
+const TODOS: RecapTodo[] = [
+  { text: 'Say whether to mark #42 ready', owner: 'you' },
+  { text: 'Say whether it should open a backport PR for the 1.x branch', owner: 'you' },
+  { text: 'Open the backport PR, if you say yes', owner: 'session' },
+  { text: 'Review #42 once it is ready', owner: 'someone else' },
+];
 
 /** A made-up recap, made 4 minutes ago, through its last turn, waiting on you unless `extra` says otherwise. */
 function recap(extra: Partial<SessionRecap> = {}): SessionRecap {
   return {
-    why: WHY,
-    now: NOW,
-    next: 'Say whether to mark #42 ready, and whether it should open a backport PR for the 1.x branch.',
+    summary: SUMMARY,
+    todos: TODOS,
     waitingOn: 'you',
     title: 'Fix the made-up export on large files',
     at: ago(4),
@@ -44,26 +51,34 @@ function recap(extra: Partial<SessionRecap> = {}): SessionRecap {
   };
 }
 
-/** What the snapshot carries of `full` (D14): `next` only while it waits on you. */
+/** The first to-do for you, or undefined. */
+function nextOf(full: SessionRecap): string | undefined {
+  return full.todos.find((todo) => todo.owner === 'you')?.text;
+}
+
+/** What the snapshot carries of `full` (D14): how many to-dos are yours, and the first of them as `next`. */
 function summaryOf(full: SessionRecap): RecapSummary {
+  const next = nextOf(full);
   return {
     waitingOn: full.waitingOn,
     title: full.title,
+    forYou: full.todos.filter((todo) => todo.owner === 'you').length,
     at: full.at,
     source: full.source,
-    ...(full.waitingOn === 'you' ? { next: full.next } : {}),
+    ...(next === undefined ? {} : { next }),
     ...(full.stale ? { stale: true as const } : {}),
   };
 }
 
 /** A session with `full` as its recap, its title from it, and, waiting on you, Needs you's 'recap' reason. */
 function recapped(name: string, full: SessionRecap | undefined, extra: Partial<SessionSummary> = {}): { session: SessionSummary; full: SessionRecap | undefined } {
-  const needs = full && full.waitingOn === 'you' && !full.stale && full.source === 'pitwall';
+  const next = full ? nextOf(full) : undefined;
+  const needs = full && full.waitingOn === 'you' && !full.stale && full.source === 'pitwall' && next !== undefined;
   return {
     session: session(name, {
       lastActivityAt: ago(5),
       ...(full ? { recap: summaryOf(full), title: full.title, titleSource: 'pitwall' as const } : {}),
-      ...(needs ? { needsYou: { reason: 'recap' as const, text: full.next } } : {}),
+      ...(needs ? { needsYou: { reason: 'recap' as const, text: next } } : {}),
       ...extra,
     }),
     full,
@@ -106,12 +121,43 @@ function Strip({
 
 const IN_VIEW = recapped('recap-view', recap());
 const YOU = recapped('recap-you', recap());
-const CI = recapped('recap-ci', recap({ waitingOn: 'CI', next: 'The made-up e2e run on #42 to finish, before it marks #42 ready.' }));
-const SESSION = recapped('recap-session', recap({ waitingOn: 'another session', next: 'pitwall-test-api to finish the made-up migration it asked for.' }));
-const SOMEONE = recapped('recap-someone', recap({ waitingOn: 'someone else', next: "The made-up author's fix for the review's comments on #42." }));
-const DONE = recapped('recap-done', recap({ waitingOn: 'nothing', now: 'It fixed the made-up export, #42 merged, and the nightly run passed with a 3 GB file.', next: 'Nothing is left to do.' }));
+const CI = recapped(
+  'recap-ci',
+  recap({
+    waitingOn: 'CI',
+    todos: [
+      { text: 'Finish the made-up e2e run on #42', owner: 'CI' },
+      { text: 'Mark #42 ready once it passes', owner: 'session' },
+      { text: 'Say whether to open a backport PR for the 1.x branch', owner: 'you' },
+    ],
+  }),
+);
+const SESSION = recapped(
+  'recap-session',
+  recap({
+    waitingOn: 'another session',
+    todos: [
+      { text: 'Finish the made-up migration pitwall-test-api asked for', owner: 'someone else' },
+      { text: 'Rerun the export against the migrated schema', owner: 'session' },
+    ],
+  }),
+);
+const SOMEONE = recapped(
+  'recap-someone',
+  recap({
+    waitingOn: 'someone else',
+    todos: [
+      { text: "Fix the review's comments on #42", owner: 'someone else' },
+      { text: 'Check the fixes and push', owner: 'session' },
+    ],
+  }),
+);
+const DONE = recapped(
+  'recap-done',
+  recap({ waitingOn: 'nothing', todos: [], summary: 'You asked it to fix the made-up nightly export on files over 2 GB. It did: #42 merged, and the nightly run passed with a 3 GB file.' }),
+);
 const STALE = recapped('recap-stale', recap({ stale: true }), { lastActivityAt: ago(1) });
-const CLAUDE = recapped('recap-claude-code', recap({ source: 'claude-code', why: '', next: '', waitingOn: 'nothing', now: 'The export fix is in draft PR #42 with green CI. Next, you decide whether to mark it ready.' }));
+const CLAUDE = recapped('recap-claude-code', recap({ source: 'claude-code', todos: [], title: '', waitingOn: 'nothing', summary: 'The export fix is in draft PR #42 with green CI. Next, you decide whether to mark it ready.' }));
 const COLLAPSED = recapped('recap-collapsed', recap());
 const REFRESHING = recapped('recap-refreshing', recap());
 const SPENT_RECAP = recapped('recap-budget', recap({ stale: true }), { lastActivityAt: ago(1) });
@@ -123,8 +169,15 @@ const FETCH_FAILED = recapped('recap-fetch-failed', recap());
 const LONG = recapped(
   'recap-long',
   recap({
-    why: `${WHY} Then you asked it to check the other jobs that upload files, the made-up thumbnails and archive jobs, for the same 32-bit field.`,
-    next: 'Say whether to mark #42 ready; whether it should open a backport PR for the 1.x branch; and whether the made-up archive job, which has the same field, gets its own PR or joins #42.',
+    summary: `${SUMMARY} You then asked it to check the made-up thumbnails and archive jobs for the same field; it's on step 2 of its 3-step plan, the archive job.`,
+    todos: [
+      { text: 'Say whether to mark #42 ready', owner: 'you' },
+      { text: 'Say whether the made-up archive job, which has the same field, gets its own PR or joins #42', owner: 'you' },
+      { text: 'Fix the archive job', owner: 'session' },
+      { text: 'Check the thumbnails job for the same field', owner: 'session' },
+      { text: 'Finish the checks on #42 and the archive fix', owner: 'CI' },
+      { text: 'Review #42 and the archive fix', owner: 'someone else' },
+    ],
   }),
 );
 
@@ -138,7 +191,7 @@ const ROW_DONE_JOB = background('row-recap-done-job', {
   recap: summaryOf(recap()),
   title: 'Fix the made-up export on large files',
   titleSource: 'pitwall',
-  needsYou: { reason: 'recap', text: recap().next },
+  needsYou: { reason: 'recap', text: TODOS[0]!.text },
 });
 const ROW_CI = recapped('row-recap-ci', recap({ waitingOn: 'CI' }), { lastUserPrompt: 'Push it and wait for CI.' }).session;
 const ROW_SESSION = recapped('row-recap-session', recap({ waitingOn: 'another session' }), { lastUserPrompt: 'Ask pitwall-test-api for the migration.' }).session;
@@ -162,7 +215,7 @@ export function RecapSpecimens() {
     <>
       <Specimen
         title="In the session view"
-        note="Between the header and the tabs, on every tab: line 1 is the disclosure button, how old the recap is and Refresh; then the headline, chosen by what it waits on; then Why, and Now or Next. The title in the header is the recap's, pitwall's, with where it came from in its tooltip."
+        note="Between the header and the tabs, on every tab: line 1 is the disclosure button, how old the recap is and Refresh; then the summary, why it was started and where it is now; then the to-dos in order, each with who it waits on as a tag, yours in the Needs you tone. The title in the header is the recap's, pitwall's, with where it came from in its tooltip."
         frame="view"
       >
         <Stubbed options={{ recaps: { [IN_VIEW.session.sessionId]: IN_VIEW.full! } }}>
@@ -178,37 +231,40 @@ export function RecapSpecimens() {
           <SessionView session={VIEW_ENDED} listed onClose={noop} recaps={HEALTHY} />
         </Stubbed>
       </Specimen>
-      <StripSpecimen title="You need to" note="It waits on you: the headline is what's next, in the Needs you tone, subtle warning, as Asked you; then Why and Now. The session needs you, for Needs you's reason 'recap'.">
+      <StripSpecimen title="Waiting on you" note="The summary, then the to-dos in order: yours with a You tag in the Needs you tone, subtle warning, as Asked you, and their text in full colour; the rest quiet, subtle neutral tags and muted text. The session needs you, for Needs you's reason 'recap', with your first to-do on its row's line 2.">
         <Strip of={YOU} />
       </StripSpecimen>
-      <StripSpecimen title="Waiting on CI" note="Quiet, subtle neutral: the headline is what's next, then Why and Now. It never counts as needing you.">
+      <StripSpecimen title="Waiting on CI" note="The to-dos in their order, CI's first: yours comes later, still in the Needs you tone. It never counts as needing you.">
         <Strip of={CI} />
       </StripSpecimen>
-      <StripSpecimen title="Waiting on another session" note="As Waiting on CI.">
+      <StripSpecimen title="Waiting on another session" note="Another session's to-do is Someone else's.">
         <Strip of={SESSION} />
       </StripSpecimen>
-      <StripSpecimen title="Waiting on someone else" note="As Waiting on CI: a reviewer or an author, M6's blocked on someone else.">
+      <StripSpecimen title="Waiting on someone else" note="A reviewer or an author, M6's blocked on someone else.">
         <Strip of={SOMEONE} />
       </StripSpecimen>
-      <StripSpecimen title="Done" note="Nothing pending: the headline is where it is, quiet success, then Why and Next.">
+      <StripSpecimen title="Nothing left" note="No to-dos: the summary, then Nothing left to do.">
         <Strip of={DONE} />
       </StripSpecimen>
       <StripSpecimen
         title="May be out of date"
-        note="Older than the session's latest turn, on line 1 beside its age, so the headline keeps its width. The view asked for a new one once as it opened, which this stub refuses quietly; Refresh asks again. Its hint: It's older than the session's latest turn."
+        note="Older than the session's latest turn, on line 1 beside its age, so the summary keeps its width. The view asked for a new one once as it opened, which this stub refuses quietly; Refresh asks again. Its hint: It's older than the session's latest turn."
       >
         <Strip of={STALE} options={{ recapRefresh: 'failed' }} />
       </StripSpecimen>
-      <StripSpecimen title="Claude Code's recap" note="Before pitwall's first recap, or while the day's budget is spent: Claude Code's own away_summary, which says only where it is. Nothing to open, so no disclosure button.">
+      <StripSpecimen title="Claude Code's recap" note="Before pitwall's first recap, or while the day's budget is spent: Claude Code's own away_summary, as the summary alone, with no to-dos. Nothing to open, so no disclosure button.">
         <Strip of={CLAUDE} />
       </StripSpecimen>
-      <StripSpecimen title="Collapsed" note="The headline alone, on one line, its whole in a tooltip when it's cut. The choice is kept per viewer, as a boolean, in pitwall.recap-collapsed.v1.">
+      <StripSpecimen title="Collapsed" note="The summary's first line, its whole in a tooltip when it's cut, and how many to-dos are yours, 2 for you, in the Needs you tone. The choice is kept per viewer, as a boolean, in pitwall.recap-collapsed.v1.">
         <Strip of={COLLAPSED} collapsed />
       </StripSpecimen>
-      <StripSpecimen title="Collapsed, the headline cut" note="A long headline ends in an ellipsis while it's collapsed.">
+      <StripSpecimen title="Collapsed, nothing for you" note="No to-do is yours, so no count: the summary's first line alone.">
+        <Strip of={SOMEONE} collapsed />
+      </StripSpecimen>
+      <StripSpecimen title="Collapsed, the summary cut" note="A long summary ends in an ellipsis while it's collapsed.">
         <Strip of={LONG} collapsed />
       </StripSpecimen>
-      <StripSpecimen title="Open, a long recap" note="Open, everything wraps; past 35% of the view's height it scrolls inside itself.">
+      <StripSpecimen title="Open, a long recap" note="Six to-dos, the most a recap keeps, for each owner. Open, everything wraps; past 35% of the view's height it scrolls inside itself.">
         <Strip of={LONG} />
       </StripSpecimen>
       <StripSpecimen title="Refreshing" note="Refresh pressed: its spinner until the snapshot's recap changes, or a minute passes, or a call fails.">
@@ -221,7 +277,7 @@ export function RecapSpecimens() {
           <Strip of={SPENT_RECAP} health={SPENT} />
         </Scenario>
       </StripSpecimen>
-      <Specimen title="Loading, from the snapshot's summary" note="The whole recap is on its way: the headline from the snapshot's summary, which carries what's next while it waits on you, and skeleton bars for the rest after --pw-delay-spinner." waited="shown">
+      <Specimen title="Loading, from the snapshot's summary" note="The whole recap is on its way: its age from the snapshot's summary, and skeleton bars for the summary and the to-dos after --pw-delay-spinner." waited="shown">
         <Strip of={LOADING_SUMMARY} options={{ recapFetch: 'loading' }} />
       </Specimen>
       <Specimen title="Loading, the first on its way" note="No recap yet: the view asks for one once, and the strip's line 1 is there at once, with skeleton bars after --pw-delay-spinner." waited="shown">
@@ -238,7 +294,7 @@ export function RecapSpecimens() {
       </StripSpecimen>
       <Specimen
         title="Session rows"
-        note="Needs you's 'recap' reason: Waiting on you, subtle warning, in Done's place on a job Claude Code calls done, and on line 2 Next: and what's next. Then what an idle session's current recap says it waits on otherwise, quiet, first on line 2; a stale recap's says nothing. Last, an ended session whose recap waits on you: an outline Waiting on you, which never needs you, as a finished Asked you is."
+        note="Needs you's 'recap' reason: Waiting on you, subtle warning, in Done's place on a job Claude Code calls done, and on line 2 Next: and the recap's first to-do for you. Then what an idle session's current recap says it waits on otherwise, quiet, first on line 2; a stale recap's says nothing. Last, an ended session whose recap waits on you: an outline Waiting on you, which never needs you, as a finished Asked you is."
       >
         <Rows rows={inGroup('pitwall-test-app', [ROW_YOU, ROW_DONE_JOB, ROW_CI, ROW_SESSION, ROW_SOMEONE, ROW_STALE_CI, ROW_ENDED])} />
       </Specimen>

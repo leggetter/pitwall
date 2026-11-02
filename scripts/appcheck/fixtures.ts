@@ -623,11 +623,13 @@ export class World {
   #withRecap(session: SessionSummary): SessionSummary {
     const recap = this.#recapsState === 'off' ? undefined : this.recap(session.sessionId);
     if (!recap) return session;
-    const summary = { waitingOn: recap.waitingOn, title: recap.title, at: recap.at, source: recap.source, ...(recap.waitingOn === 'you' ? { next: recap.next } : {}), ...(recap.stale ? { stale: true as const } : {}) };
+    const yours = recap.todos.filter((todo) => todo.owner === 'you');
+    const next = yours[0]?.text;
+    const summary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source, ...(next === undefined ? {} : { next }), ...(recap.stale ? { stale: true as const } : {}) };
     const listed: SessionSummary = { ...session, recap: summary };
     if (recap.source === 'pitwall') Object.assign(listed, { title: recap.title, titleSource: 'pitwall' });
-    const needs = recap.source === 'pitwall' && recap.waitingOn === 'you' && !recap.stale && !session.stale && !session.finished && session.needsYou === undefined;
-    return needs ? { ...listed, needsYou: { reason: 'recap', text: recap.next } } : listed;
+    const needs = recap.source === 'pitwall' && recap.waitingOn === 'you' && next !== undefined && !recap.stale && !session.stale && !session.finished && session.needsYou === undefined;
+    return needs ? { ...listed, needsYou: { reason: 'recap', text: next } } : listed;
   }
 
   /** Older than the session's latest activity. */
@@ -641,9 +643,12 @@ export class World {
     const made = (name: string, extra: Partial<SessionRecap>): { name: string; recap: SessionRecap } => ({
       name,
       recap: {
-        why: 'You asked it to add a made-up health route to the API, with a test.',
-        now: 'The route and its test are in, and the made-up CI run on #51 is red on lint.',
-        next: 'Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up.',
+        summary: 'You asked it to add a made-up health route to the API, with a test. The route and its test are in, and the made-up CI run on #51 is red on lint.',
+        todos: [
+          { text: 'Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up', owner: 'you' },
+          { text: 'Fix the lint errors, if you say now', owner: 'session' },
+          { text: 'Say whether to mark #51 ready', owner: 'you' },
+        ],
         waitingOn: 'you',
         title: 'Add a made-up health route',
         at: through(name),
@@ -655,18 +660,38 @@ export class World {
     return [
       made(RECAPPED.you, {}),
       made(RECAPPED.stale, {
-        why: 'You asked it to review the made-up retry change.',
-        now: 'It reviewed the retry change and asked whether to retry the failed batch now.',
-        next: 'Say whether to retry the made-up failed batch now, or wait for tonight.',
+        summary: 'You asked it to review the made-up retry change. It reviewed it and asked whether to retry the failed batch now.',
+        todos: [{ text: 'Say whether to retry the made-up failed batch now, or wait for tonight', owner: 'you' }],
         title: 'Review the made-up retry change',
         at: this.#ago(19),
         throughAt: this.#ago(20),
       }),
-      made(RECAPPED.someoneElse, { why: 'You asked it to tidy both made-up services.', now: 'It pushed #19 and asked for a review.', next: "The made-up reviewer's approval on #19.", waitingOn: 'someone else', title: 'Tidy both made-up services' }),
-      made(RECAPPED.anotherSession, { why: 'You asked it to add a made-up route.', now: 'Its sub-agents are drafting the route and its tests.', next: "pitwall-test-api's made-up health route to land first.", waitingOn: 'another session', title: 'Add a made-up route' }),
-      made(RECAPPED.ci, { why: 'You asked it to make the made-up retry worker back off.', now: 'It pushed the backoff to its branch.', next: 'The made-up CI run on its branch to finish.', waitingOn: 'CI', title: 'Back off the made-up retry worker' }),
-      made(RECAPPED.done, { why: 'You asked it to run the made-up migration.', now: 'The made-up migration ran, and every table checks out.', next: 'Nothing is left to do.', waitingOn: 'nothing', title: 'Run the made-up migration' }),
-      made(RECAPPED.claudeCode, { why: '', now: 'The made-up index rebuild is half done; it runs until the last shard is in.', next: '', waitingOn: 'nothing', title: '', source: 'claude-code' }),
+      made(RECAPPED.someoneElse, {
+        summary: 'You asked it to tidy both made-up services. It pushed #19 and asked for a review.',
+        todos: [{ text: 'Approve #19', owner: 'someone else' }],
+        waitingOn: 'someone else',
+        title: 'Tidy both made-up services',
+      }),
+      made(RECAPPED.anotherSession, {
+        summary: 'You asked it to add a made-up route. Its sub-agents are drafting the route and its tests.',
+        todos: [
+          { text: "Land pitwall-test-api's made-up health route first", owner: 'someone else' },
+          { text: 'Add the route on top of it', owner: 'session' },
+        ],
+        waitingOn: 'another session',
+        title: 'Add a made-up route',
+      }),
+      made(RECAPPED.ci, {
+        summary: 'You asked it to make the made-up retry worker back off. It pushed the backoff to its branch.',
+        todos: [
+          { text: 'Finish the made-up CI run on its branch', owner: 'CI' },
+          { text: 'Say whether to open the PR once it passes', owner: 'you' },
+        ],
+        waitingOn: 'CI',
+        title: 'Back off the made-up retry worker',
+      }),
+      made(RECAPPED.done, { summary: 'You asked it to run the made-up migration. It ran, and every table checks out.', todos: [], waitingOn: 'nothing', title: 'Run the made-up migration' }),
+      made(RECAPPED.claudeCode, { summary: 'The made-up index rebuild is half done; it runs until the last shard is in.', todos: [], waitingOn: 'nothing', title: '', source: 'claude-code' }),
     ];
   }
 
@@ -675,12 +700,24 @@ export class World {
     const now = new Date().toISOString();
     const base = { at: now, throughAt: now, source: 'pitwall' as const };
     if (session.name === NAMES.waiting) {
-      return { ...base, why: 'You asked it to update the made-up getting started guide.', now: 'It rewrote the install steps and wants to run the made-up docs build.', next: 'Answer its permission prompt to run the made-up docs build.', waitingOn: 'you', title: 'Update the getting started guide' };
+      return {
+        ...base,
+        summary: 'You asked it to update the made-up getting started guide. It rewrote the install steps and wants to run the made-up docs build.',
+        todos: [{ text: 'Answer its permission prompt to run the made-up docs build', owner: 'you' }],
+        waitingOn: 'you',
+        title: 'Update the getting started guide',
+      };
     }
     if (session.ended) {
-      return { ...base, why: 'You asked it to tidy the made-up release notes.', now: 'It tidied the made-up release notes, and the session ended before you said whether to publish them.', next: 'Say whether to publish the made-up release notes.', waitingOn: 'you', title: 'Tidy the made-up release notes' };
+      return {
+        ...base,
+        summary: 'You asked it to tidy the made-up release notes. It tidied them, and the session ended before you said whether to publish them.',
+        todos: [{ text: 'Say whether to publish the made-up release notes', owner: 'you' }],
+        waitingOn: 'you',
+        title: 'Tidy the made-up release notes',
+      };
     }
-    return { ...base, why: `You asked it to tidy the made-up export job, in ${session.name}.`, now: 'The made-up export job retries three times now, with backoff.', next: 'Nothing is left to do.', waitingOn: 'nothing', title: 'Tidy the made-up export job' };
+    return { ...base, summary: `You asked it to tidy the made-up export job, in ${session.name}. It retries three times now, with backoff.`, todos: [], waitingOn: 'nothing', title: 'Tidy the made-up export job' };
   }
 
   /**

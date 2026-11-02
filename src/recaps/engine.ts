@@ -1,5 +1,6 @@
-// The recap engine (M5, W110; spike 010): a short `claude -p` call per session that says why it was
-// started, where it is now, and what's next or what it's waiting on, kept in memory only.
+// The recap engine (M5, W110; spike 010; W121): a short `claude -p` call per session that sums up
+// why it was started and where it is now, and lists its to-dos in order, each with who it waits on,
+// kept in memory only.
 //
 // Which sessions, and when:
 //
@@ -29,9 +30,11 @@
 // and it binds a messaging socket (spike 010, finding 1), so isOwn() leaves it out of the index, as
 // isRelay() does the relay: by its directory, its name and its pid.
 //
-// What the snapshot shows (decorate()): each session's recap (RecapSummary), its title from the
-// recap, and Needs you's 'recap' reason (protocol.ts NeedsYou) when the recap is current, says it's
-// waiting on you, and no earlier reason holds; never for a working, stale or finished session.
+// What the snapshot shows (decorate()): each session's recap (RecapSummary: what it waits on, its
+// title, how many to-dos are yours and the first of them), its title from the recap, and Needs you's
+// 'recap' reason (protocol.ts NeedsYou), with that first to-do for you, when the recap is current,
+// says it's waiting on you, and no earlier reason holds; never for a working, stale or finished
+// session.
 // Before pitwall's first recap of a session, and while the day's budget is spent, Claude Code's own
 // `away_summary` stands in for it (source 'claude-code'), which never sets Needs you.
 import { realpathSync } from 'node:fs';
@@ -592,26 +595,29 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     let chosen = ours;
     if (away !== undefined && (ours === undefined || (isStale(ours) && spent() && parseMs(away.at) > parseMs(ours.throughAt)))) {
       const text = plainField(away.text, RECAP_FIELD_MAX);
-      if (text !== '') chosen = { why: '', now: text, next: '', waitingOn: 'nothing', title: '', at: away.at, throughAt: away.at, source: 'claude-code' };
+      // A summary only, with no to-dos (W121): Claude Code's says where it is, never what's left.
+      if (text !== '') chosen = { summary: text, todos: [], waitingOn: 'nothing', title: '', at: away.at, throughAt: away.at, source: 'claude-code' };
     }
     if (chosen === undefined) return undefined;
     return isStale(chosen) ? { ...chosen, stale: true } : { ...chosen };
   }
 
   function summaryOf(recap: SessionRecap): RecapSummary {
-    const summary: RecapSummary = { waitingOn: recap.waitingOn, title: recap.title, at: recap.at, source: recap.source };
-    if (recap.waitingOn === 'you' && recap.next !== '') summary.next = recap.next;
+    const yours = recap.todos.filter((todo) => todo.owner === 'you');
+    const summary: RecapSummary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source };
+    if (yours[0] !== undefined) summary.next = yours[0].text;
     if (recap.stale === true) summary.stale = true;
     return summary;
   }
 
   /** Needs you's 'recap' reason, when it holds and no earlier reason does (NeedsYou's order). */
   function needsYouOf(session: SessionSummary, recap: SessionRecap): NeedsYou | undefined {
-    if (recap.source !== 'pitwall' || recap.stale === true || recap.waitingOn !== 'you' || recap.next === '') return undefined;
+    const next = recap.todos.find((todo) => todo.owner === 'you')?.text;
+    if (recap.source !== 'pitwall' || recap.stale === true || recap.waitingOn !== 'you' || next === undefined || next === '') return undefined;
     if (session.stale || session.finished || working(session)) return undefined;
     const reason = session.needsYou?.reason;
     if (reason !== undefined && reason !== 'restarted' && reason !== 'blocked') return undefined;
-    return { reason: 'recap', text: recap.next };
+    return { reason: 'recap', text: next };
   }
 
   return {
@@ -696,7 +702,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
 
 /** A stored recap's answer fields, for an update's input. */
 function answerOf(recap: SessionRecap): RecapAnswer {
-  return { why: recap.why, now: recap.now, next: recap.next, waitingOn: recap.waitingOn, title: recap.title };
+  return { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title };
 }
 
 /** What a call's process gave: a recap, or why not, in pitwall's words, with its cost when it reported one. */

@@ -1,7 +1,8 @@
-// Recaps in the web UI (M5, W111; docs/design-system.md, 4: Recap strip). A recap says why a session
-// was started, where it is now and what's next or what it's waiting on (spike 010). The snapshot
-// carries a summary of each (SessionSummary.recap: what the list and Needs you need, D14); the session
-// view fetches the whole of it with recapPath(), and asks for a new one with recapRefreshPath().
+// Recaps in the web UI (M5, W111, W121; docs/design-system.md, 4: Recap strip). A recap is a summary,
+// why a session was started and where it is now, and its to-dos in order, each with who it waits on
+// (spike 010; Phil, 2026-11-02). The snapshot carries what the list and Needs you need of each
+// (SessionSummary.recap, D14); the session view fetches the whole of it with recapPath(), and asks for
+// a new one with recapRefreshPath().
 //
 // What this module decides, for the strip (RecapStrip.tsx), the rows (SessionRow.tsx) and the app
 // strip (AppStrip.tsx):
@@ -28,11 +29,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   RECAP_DAILY_BUDGET,
   RECAP_FIELD_MAX,
+  RECAP_TODO_OWNERS,
+  RECAP_TODOS_MAX,
   RECAP_WAITING_ON,
   recapPath,
   recapRefreshPath,
   type RecapHealth,
   type RecapSummary,
+  type RecapTodo,
+  type RecapTodoOwner,
   type RecapWaitingOn,
   type SessionRecap,
   type SessionSummary,
@@ -77,7 +82,7 @@ export function useRecapCollapsed(storage: StorageSource = browserStorage): [boo
   return [collapsed, set];
 }
 
-/** What a session waits on, other than nothing, as the strip and line 2 say it. */
+/** What a session waits on, other than nothing, as line 2 says it. */
 export const WAITING_ON_TEXT: Readonly<Record<Exclude<RecapWaitingOn, 'nothing'>, string>> = {
   you: 'Waiting on you',
   CI: 'Waiting on CI',
@@ -102,23 +107,33 @@ export function cutText(text: string, max: number): string {
   return `${text.slice(0, end)}…`;
 }
 
+/** A to-do from recapPath()'s body: exactly a string text and a known owner, the text cut to RECAP_FIELD_MAX. */
+function parseTodo(raw: unknown): RecapTodo | undefined {
+  if (!isRecord(raw) || Object.keys(raw).length !== 2) return undefined;
+  const { text, owner } = raw;
+  if (typeof text !== 'string' || typeof owner !== 'string' || !(RECAP_TODO_OWNERS as readonly string[]).includes(owner)) return undefined;
+  return { text: cutText(text, RECAP_FIELD_MAX), owner: owner as RecapTodoOwner };
+}
+
 /**
  * A recap from recapPath()'s body, read defensively: every field of SessionRecap with its type, a
- * known `waitingOn` and `source`, and times that are times; anything else is no recap. Each text is
- * cut to RECAP_FIELD_MAX, and the title to the same, as the server should already have them.
+ * known `waitingOn`, `source` and owner for each to-do, and times that are times; anything else is no
+ * recap. The summary, each to-do and the title are cut to RECAP_FIELD_MAX, and the to-dos to
+ * RECAP_TODOS_MAX, as the server should already have them.
  */
 export function parseRecap(body: unknown): SessionRecap | undefined {
   if (!isRecord(body)) return undefined;
-  const { why, now, next, waitingOn, title, at, throughAt, source, stale } = body;
-  if (typeof why !== 'string' || typeof now !== 'string' || typeof next !== 'string' || typeof title !== 'string') return undefined;
+  const { summary, todos, waitingOn, title, at, throughAt, source, stale } = body;
+  if (typeof summary !== 'string' || typeof title !== 'string' || !Array.isArray(todos)) return undefined;
   if (typeof waitingOn !== 'string' || !(RECAP_WAITING_ON as readonly string[]).includes(waitingOn)) return undefined;
   if (source !== 'pitwall' && source !== 'claude-code') return undefined;
   if (!isTime(at) || !isTime(throughAt)) return undefined;
   if (stale !== undefined && stale !== true) return undefined;
+  const parsed = todos.slice(0, RECAP_TODOS_MAX).map(parseTodo);
+  if (parsed.some((todo) => todo === undefined)) return undefined;
   const recap: SessionRecap = {
-    why: cutText(why, RECAP_FIELD_MAX),
-    now: cutText(now, RECAP_FIELD_MAX),
-    next: cutText(next, RECAP_FIELD_MAX),
+    summary: cutText(summary, RECAP_FIELD_MAX),
+    todos: parsed as RecapTodo[],
     waitingOn: waitingOn as RecapWaitingOn,
     title: cutText(title, RECAP_FIELD_MAX),
     at,
@@ -129,39 +144,29 @@ export function parseRecap(body: unknown): SessionRecap | undefined {
   return recap;
 }
 
-/**
- * The strip's first line, chosen by what it waits on (Phil, 2026-10-29: "Sometimes it's like, 'Here's
- * what needs to be done.' Otherwise, it's just, 'Here's what was done,' or 'Here's what we're waiting
- * on.'"), with the field it shows, so the line below it shows the other:
- * - 'you': "You need to", and `next`, in the Needs you tone, subtle warning, as Asked you;
- * - 'CI', 'another session', 'someone else': "Waiting on CI" and the like, and `next`, quiet;
- * - 'nothing': "Done", and `now`, quiet success;
- * - Claude Code's own recap, which says only where it is: "Now", and `now`, quiet.
- * A field that's empty gives way to the other, so the line always says something.
- */
-export interface RecapHeadline {
-  label: string;
-  look: BadgeLook;
-  field: 'now' | 'next';
-  text: string;
+/** A to-do's owner as its tag says it (W121). The session is "Session": the tag is a label, not a sentence. */
+export const TODO_OWNER_TEXT: Readonly<Record<RecapTodoOwner, string>> = {
+  you: 'You',
+  session: 'Session',
+  CI: 'CI',
+  'someone else': 'Someone else',
+};
+
+/** A to-do's tag: yours in the Needs you tone, subtle warning, as Asked you is; the rest quiet. */
+export function todoOwnerLook(owner: RecapTodoOwner): BadgeLook {
+  return owner === 'you' ? 'subtle-warning' : 'subtle-neutral';
 }
 
-export function recapHeadline(recap: Pick<SessionRecap, 'waitingOn' | 'now' | 'next' | 'source'>): RecapHeadline {
-  const pick = (field: 'now' | 'next'): Pick<RecapHeadline, 'field' | 'text'> => {
-    const other = field === 'now' ? 'next' : 'now';
-    return recap[field].trim() !== '' || recap[other].trim() === '' ? { field, text: recap[field] } : { field: other, text: recap[other] };
-  };
-  if (recap.source === 'claude-code') return { label: 'Now', look: 'subtle-neutral', ...pick('now') };
-  if (recap.waitingOn === 'nothing') return { label: 'Done', look: 'subtle-success', ...pick('now') };
-  if (recap.waitingOn === 'you') return { label: 'You need to', look: 'subtle-warning', ...pick('next') };
-  return { label: WAITING_ON_TEXT[recap.waitingOn], look: 'subtle-neutral', ...pick('next') };
+/** How many of a recap's to-dos are yours. */
+export function todosForYou(recap: Pick<SessionRecap, 'todos'>): number {
+  return recap.todos.filter((todo) => todo.owner === 'you').length;
 }
 
-/** The strip's lines under its headline: Why, then whichever of Now and Next it didn't show, each left out when empty. */
-export function recapLines(recap: Pick<SessionRecap, 'why' | 'now' | 'next'>, headline: Pick<RecapHeadline, 'field'>): { label: 'Why' | 'Now' | 'Next'; text: string }[] {
-  const rest = headline.field === 'next' ? ({ label: 'Now', text: recap.now } as const) : ({ label: 'Next', text: recap.next } as const);
-  return [{ label: 'Why' as const, text: recap.why }, rest].filter((line) => line.text.trim() !== '');
-}
+/** The collapsed strip's count of your to-dos: "1 for you", "2 for you". */
+export const forYouText = (count: number) => `${count.toLocaleString('en-US')} for you`;
+
+/** The strip's note when pitwall's recap has no to-dos. */
+export const NOTHING_LEFT_TEXT = 'Nothing left to do.';
 
 /** Whether the day's recap budget is spent, by the snapshot (RecapHealth). */
 export function budgetSpent(health: RecapHealth | undefined): boolean {

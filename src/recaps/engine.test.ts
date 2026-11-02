@@ -27,10 +27,14 @@ interface FakeCall {
   signals: NodeJS.Signals[];
 }
 
+const NEXT = 'Say whether to mark #42 ready';
 const answer = (overrides: Record<string, unknown> = {}) => ({
-  why: 'You asked it to fix the nightly export.',
-  now: 'It opened draft PR #42 with a fix, and CI passes.',
-  next: 'Say whether to mark #42 ready.',
+  summary: 'You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.',
+  todos: [
+    { text: 'Open a backport PR for 1.x', owner: 'session' },
+    { text: NEXT, owner: 'you' },
+    { text: 'Say whether to close #40', owner: 'you' },
+  ],
   waitingOn: 'you',
   title: 'Fix the nightly export',
   ...overrides,
@@ -246,14 +250,15 @@ describe('when a session is recapped', () => {
     await h.poll([a]);
     expect(h.calls).toHaveLength(2);
     const input = h.calls[1]!.input!;
-    expect(input).toContain('<previous-recap>\n{"why":"You asked it to fix the nightly export."');
+    expect(input).toContain('<previous-recap>\n{"summary":"You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.","todos":[{"text":"Open a backport PR for 1.x","owner":"session"}');
     expect(input).toContain('<turns-since-previous-recap>');
     expect(input).toContain('User: Yes, open it.');
     expect(input).not.toContain('Please fix a.');
-    expect(input).toContain('Update the previous recap with what the newer turns show.');
+    expect(input).toContain('Revise the previous recap with what the newer turns show: keep its summary steady');
     expect(input).not.toContain('<latest-turns>');
-    await h.reply(h.calls[1], envelope(answer({ now: 'It opened #43.', waitingOn: 'someone else' })));
-    expect(h.engine.recap(a)).toMatchObject({ now: 'It opened #43.', waitingOn: 'someone else', throughAt: newer });
+    const reviewed = [{ text: 'Review #43', owner: 'someone else' }];
+    await h.reply(h.calls[1], envelope(answer({ summary: 'It opened #43.', todos: reviewed, waitingOn: 'someone else' })));
+    expect(h.engine.recap(a)).toMatchObject({ summary: 'It opened #43.', todos: reviewed, waitingOn: 'someone else', throughAt: newer });
     expect(Date.parse(newer)).toBeGreaterThan(Date.parse(firstThrough));
 
     // Activity with nothing the input shows, such as a tool's result: no call, and the recap holds through it.
@@ -402,7 +407,7 @@ describe('failures', () => {
     h.start();
     const a = h.add('a');
     await h.poll([a]);
-    await h.reply(h.calls[0], envelope('Sure! Here is your recap: {"why": "a"}'));
+    await h.reply(h.calls[0], envelope('Sure! Here is your recap: {"summary": "a"}'));
     // errorAt is when the error was set, so a page can tell a failure since its ask from an older one (W111's review).
     expect(h.engine.health()).toEqual({ calls: 1, budget: RECAP_DAILY_BUDGET, costUsd: 0.0011, error: ANSWER_INVALID, errorAt: new Date(h.clock.now).toISOString() });
     expect(JSON.stringify(h.engine.health())).not.toContain('Sure!');
@@ -541,13 +546,17 @@ describe('what the snapshot shows', () => {
     return { h, a };
   }
 
-  it('gives the session its recap, `next` only when it waits on you, and the title from the recap', async () => {
+  it('gives the session its recap: what it waits on, how many to-dos are yours, the first of them as `next`, and the title', async () => {
     const { h, a } = await recapped();
     const decorated = h.engine.decorate({ ...a, title: 'Claude Code’s title', titleSource: 'claude-code' });
-    expect(decorated.recap).toEqual({ waitingOn: 'you', title: 'Fix the nightly export', next: answer().next, at: new Date(h.clock.now).toISOString(), source: 'pitwall' });
+    expect(decorated.recap).toEqual({ waitingOn: 'you', title: 'Fix the nightly export', forYou: 2, next: NEXT, at: new Date(h.clock.now).toISOString(), source: 'pitwall' });
     expect(decorated).toMatchObject({ title: 'Fix the nightly export', titleSource: 'pitwall' });
-    const ci = await recapped({ waitingOn: 'CI' });
-    expect(ci.h.engine.decorate(ci.a).recap).not.toHaveProperty('next');
+    // Your first to-do is `next` whatever it waits on now, for the strip; only Needs you depends on 'you'.
+    const ci = await recapped({ waitingOn: 'CI', todos: [{ text: 'Finish the checks on #42', owner: 'CI' }, { text: NEXT, owner: 'you' }] });
+    expect(ci.h.engine.decorate(ci.a).recap).toMatchObject({ waitingOn: 'CI', forYou: 1, next: NEXT });
+    const none = await recapped({ waitingOn: 'CI', todos: [{ text: 'Finish the checks on #42', owner: 'CI' }] });
+    expect(none.h.engine.decorate(none.a).recap).toMatchObject({ forYou: 0 });
+    expect(none.h.engine.decorate(none.a).recap).not.toHaveProperty('next');
     // A title that says no more than the name isn't shown.
     const same = await recapped({ title: 'pitwall-test-a' });
     expect(same.h.engine.decorate(same.a)).not.toHaveProperty('title');
@@ -555,13 +564,14 @@ describe('what the snapshot shows', () => {
 
   it("adds Needs you's 'recap' when the recap is current and waits on you, and no earlier reason holds", async () => {
     const { h, a } = await recapped();
-    expect(h.engine.decorate(a).needsYou).toEqual({ reason: 'recap', text: answer().next });
+    // Its text is the first to-do for you, not the first to-do.
+    expect(h.engine.decorate(a).needsYou).toEqual({ reason: 'recap', text: NEXT });
     // It comes after a prompt, Claude Code's line and a question asked, and before a restart and a bare blocked.
     for (const reason of ['prompt', 'claude-code', 'asked'] as const) {
       const needsYou = reason === 'claude-code' ? { reason, text: 'Approve the deploy' } : { reason };
       expect(h.engine.decorate({ ...a, needsYou }).needsYou, reason).toEqual(needsYou);
     }
-    for (const reason of ['restarted', 'blocked'] as const) expect(h.engine.decorate({ ...a, needsYou: { reason } }).needsYou).toEqual({ reason: 'recap', text: answer().next });
+    for (const reason of ['restarted', 'blocked'] as const) expect(h.engine.decorate({ ...a, needsYou: { reason } }).needsYou).toEqual({ reason: 'recap', text: NEXT });
   });
 
   it('never for a working, stale or finished session, a stale recap, or one that waits on anyone else', async () => {
@@ -590,9 +600,10 @@ describe('what the snapshot shows', () => {
     const away = { text: 'Waiting for your answer on the backport.', at: new Date(h.clock.now - 3 * MINUTE).toISOString() };
     const a = h.add('a', {}, { turnEnded: true, awaySummary: away });
     h.engine.observe(new Map(h.facts));
-    const fallback = { why: '', now: away.text, next: '', waitingOn: 'nothing', title: '', at: away.at, throughAt: away.at, source: 'claude-code' };
+    // A summary only, with no to-dos (W121).
+    const fallback = { summary: away.text, todos: [], waitingOn: 'nothing', title: '', at: away.at, throughAt: away.at, source: 'claude-code' };
     expect(h.engine.recap(a)).toEqual(fallback);
-    expect(h.engine.decorate(a)).toMatchObject({ recap: { source: 'claude-code', waitingOn: 'nothing', title: '' } });
+    expect(h.engine.decorate(a)).toMatchObject({ recap: { source: 'claude-code', waitingOn: 'nothing', title: '', forYou: 0 } });
     expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
     expect(h.engine.decorate(a)).not.toHaveProperty('titleSource');
     // Not for a session pitwall doesn't recap by itself.
@@ -606,7 +617,7 @@ describe('what the snapshot shows', () => {
     h.facts.set('a', { file: '/made-up/projects/a.jsonl', turnEnded: true, awaySummary: { text: 'Merged.', at: later } });
     h.engine.observe(new Map(h.facts));
     const moved = { ...a, lastActivityAt: new Date(h.clock.now + MINUTE).toISOString() };
-    expect(h.engine.recap(moved)).toMatchObject({ source: 'claude-code', now: 'Merged.' });
+    expect(h.engine.recap(moved)).toMatchObject({ source: 'claude-code', summary: 'Merged.', todos: [] });
     expect(h.engine.recap(moved)).not.toHaveProperty('stale');
     expect(h.engine.decorate(moved)).not.toHaveProperty('needsYou');
   });

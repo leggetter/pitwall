@@ -2567,8 +2567,8 @@ mark.match {
 /*
  * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
  * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
- * age, "May be out of date" while it's stale, and Refresh. Then the headline, always, on one line with an ellipsis while it's collapsed; then,
- * while it's open, Why and Now or Next. At most 35% of the view's height, scrolling inside itself
+ * age, "May be out of date" while it's stale, and Refresh. Then the summary, always, on one line with an
+ * ellipsis while it's collapsed; then, while it's open, the to-dos (W121). At most 35% of the view's height, scrolling inside itself
  * past that, as the footer does at half, so the body always keeps its room.
  */
 .session-recap {
@@ -2649,7 +2649,7 @@ mark.match {
   font-variant-numeric: tabular-nums;
 }
 
-/* "May be out of date", beside the age, so the headline keeps its width. */
+/* "May be out of date", beside the age, so the summary keeps its width. */
 .recap-head .badge.recap-stale {
   flex: none;
 }
@@ -2661,8 +2661,8 @@ mark.match {
   margin-left: auto;
 }
 
-/* The headline: its badges, then the text, which wraps while the strip is open. */
-.recap-headline {
+/* The summary: one paragraph, wrapping while the strip is open; collapsed, "2 for you" after it. */
+.recap-summary {
   display: flex;
   align-items: baseline;
   gap: var(--pw-space-1-5);
@@ -2670,43 +2670,51 @@ mark.match {
   margin: 0;
 }
 
-.recap-headline .badge {
+.recap-summary .badge {
   flex: none;
 }
 
-.recap-headline-text {
+.recap-summary-text {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-/* Collapsed: the headline alone, on one line, its whole in a tooltip when it's cut. */
-.session-recap[data-collapsed='true'] .recap-headline-text {
+/* Collapsed: the summary's first line, its whole in a tooltip when it's cut. */
+.session-recap[data-collapsed='true'] .recap-summary-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Why, and Now or Next: the labels in a column of their own, the text wrapping beside them. */
-.recap-lines {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--pw-space-1) var(--pw-space-3);
+/*
+ * The to-dos (W121): a numbered list in order, each its text, then its owner as a small tag. Yours in
+ * --pw-text, the Needs you tone on its tag; the rest in --pw-text-muted with quiet tags.
+ */
+.recap-todos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
   margin: var(--pw-space-1) 0 0;
-}
-
-.recap-line {
-  display: contents;
-}
-
-.recap-line dt {
-  color: var(--pw-text-subtle);
-  font-weight: var(--pw-weight-medium);
-}
-
-.recap-line dd {
-  margin: 0;
+  padding-left: var(--pw-space-5);
   color: var(--pw-text-muted);
+}
+
+.recap-todos ::marker {
+  color: var(--pw-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.recap-todo {
   overflow-wrap: anywhere;
+}
+
+.recap-todo[data-owner='you'] {
+  color: var(--pw-text);
+}
+
+.recap-todo .badge.recap-owner {
+  margin-left: var(--pw-space-1-5);
+  vertical-align: baseline;
 }
 
 .recap-note {
@@ -2726,7 +2734,7 @@ mark.match {
   background: var(--pw-surface-strong);
 }
 
-.skeleton-bar.recap-skeleton-headline {
+.skeleton-bar.recap-skeleton-summary {
   width: 70%;
 }
 
