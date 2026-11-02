@@ -15,7 +15,8 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 
 | Item | State |
 | --- | --- |
-| M5 try-out | Phil's, on port 4519; not started |
+| W124, the supervisor's v3 prompt, cheaper lookups and Open hand-offs (Phil's first use) | In review, into `m5/integration` |
+| M5 try-out | Phil's, on port 4519; started, W124 came from it |
 | Merge `m5/integration` into `main` | Waits on Phil's word after the try-out |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Investigating; Phil retries on M3.1's build in Dia, then with Grammarly off, and in another field |
@@ -24,19 +25,18 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 
 ## Next, in order
 
-1. **Phil tries M5** on port 4519. Fix what he finds on `m5/integration`.
+1. **Phil tries M5** on port 4519. Fix what he finds on `m5/integration`: W124 is the first round ("M5 work breakdown" in `PLAN.md`).
 2. **Merge `m5/integration` into `main`**, on Phil's word, after the full app check.
 3. **Handoff:** this coordinator session ends (the `handoff` skill) and a new one starts with "Read NOW.md".
 4. **M5.1, efficiency** (work profiles, a Usage view with a run rate, the supervisor applying them): "M5.1 - Efficiency" in `PLAN.md`.
 5. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old. **W89** stays open until Phil has retried.
-6. **M6, triage.** Then the considerations: Peers, chatting with a session, a session asking the supervisor to spin off work.
+6. **M6, triage,** on the observer model (Phil, 2026-11-02), with Peers part of it: "M6 - Triage" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
 ## Open questions for Phil
 
 - **Is M5 ready for `main`?** It waits on your try-out (port 4519) and your word. Lean: merge once the try-out is clean.
 - **W89, the lost first paste:** is it pitwall or the browser? Needs you to retry on M3.1's build in Dia, with Grammarly off, and in another field. No lean; the app check's traces showed none of pitwall's handlers blocking it.
 - **Should the supervisor survive pitwall restarts?** Lean: yes. It stops with pitwall and pitwall resumes its conversation by session id on the next run; spike 009 checked that `--resume` keeps the conversation, and W113 built it. Listed as open in `PLAN.md`; say if it can be closed.
-- **Peers ([#99](https://github.com/leggetter/pitwall/issues/99), Peers: sessions talking to each other):** build it at all? Undecided. The name is settled. #99's lean: "To *name*" entries and links in the conversation, a Peers tab after Sub-agents, and "waiting on a peer" as one of M6's reasons.
 - **Cursor's Claude Code extension panel:** do you use it? Its sessions keep a separate list and may not appear in `claude agents --json`. No lean.
 
 ## Standing context
