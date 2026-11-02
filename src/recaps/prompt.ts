@@ -232,7 +232,7 @@ function hasExactly(value: Record<string, unknown>, keys: readonly string[]): bo
 }
 
 /** Which check refused a recap's answer (W126): a code for tests and the log, never the model's text. */
-export type RecapRefusal = 'text-around' | 'not-json' | 'keys' | 'todos' | 'waiting-on' | 'owner' | 'not-text' | 'empty-text' | 'hidden-character';
+export type RecapRefusal = 'text-around' | 'not-json' | 'keys' | 'todos' | 'waiting-on' | 'owner' | 'not-text' | 'empty-text' | 'hidden-character' | 'empty-fence';
 
 /** What pitwall repaired in an answer instead of refusing it (W126). */
 export type RecapRepair = 'fence' | 'waiting-on';
@@ -248,6 +248,7 @@ export const RECAP_REFUSALS: Readonly<Record<RecapRefusal, string>> = {
   'not-text': "The recap call's answer had a field that wasn't text, which pitwall refuses.",
   'empty-text': "The recap call's answer had an empty field, which pitwall refuses.",
   'hidden-character': "The recap call's answer had a hidden character, which pitwall refuses.",
+  'empty-fence': "The recap call's answer was an empty code fence, which pitwall refuses.",
 };
 
 /** A text the model wrote, or why it's refused: not a string, empty once made plain, or with a hidden character. */
@@ -260,15 +261,32 @@ function answerText(raw: unknown, plain: (text: string) => string): { text: stri
   return text === '' ? { refusal: 'empty-text' } : { text };
 }
 
+/**
+ * What a single ```json or ``` fence around the whole of `text` holds, trimmed, or undefined when
+ * `text` isn't exactly one such fence: another language, no line break after the opening, or a
+ * fence inside it.
+ */
+function fencedText(text: string): string | undefined {
+  if (text.length < 6 || !text.startsWith('```') || !text.endsWith('```')) return undefined;
+  const lineEnd = text.indexOf('\n');
+  if (lineEnd === -1 || lineEnd > text.length - 3) return undefined;
+  const info = text.slice(3, lineEnd).trim().toLowerCase();
+  if (info !== '' && info !== 'json') return undefined;
+  const inner = text.slice(lineEnd + 1, text.length - 3);
+  return inner.includes('```') ? undefined : inner.trim();
+}
+
 /** `text` as the one JSON object it holds, or the refusal. A single code fence around it is stripped (`repaired`). */
 function objectText(text: string): { json: string; repaired: boolean } | { refusal: RecapRefusal } {
   let json = text.trim();
   let repaired = false;
   // One Markdown code fence, ```json or ```, around nothing but the object (W126). Anything else
   // around it, a second fence included, stays refused.
-  const fence = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?[ \t]*```$/i.exec(json);
-  if (fence?.[1] !== undefined && !fence[1].includes('```')) {
-    json = fence[1].trim();
+  // String operations, not a regex: a lazy match backtracked quadratically on a long run of spaces (#128's review).
+  const inner = fencedText(json);
+  if (inner !== undefined) {
+    if (inner === '') return { refusal: 'empty-fence' };
+    json = inner;
     repaired = true;
   }
   if (!json.startsWith('{') || !json.endsWith('}')) return { refusal: 'text-around' };
@@ -338,7 +356,8 @@ function agreedWaitingOn(waitingOn: RecapWaitingOn, todos: readonly RecapTodo[])
   if (first === undefined) return 'nothing';
   const forYou = todos.some((todo) => todo.owner === 'you');
   if (waitingOn === 'nothing') return forYou ? 'you' : waitingOn;
-  if (waitingOn === 'you' && !forYou) return WAITING_ON_FOR_OWNER[first.owner];
+  // The first to-do someone other than the session owns says what it waits on (#128's review: [session, CI] is CI).
+  if (waitingOn === 'you' && !forYou) return WAITING_ON_FOR_OWNER[(todos.find((todo) => todo.owner !== 'session') ?? first).owner];
   return waitingOn;
 }
 
