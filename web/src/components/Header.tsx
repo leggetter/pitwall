@@ -85,7 +85,7 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
         {onNewSession && (
           // Its name is its label, which the tooltip repeats only to show the shortcut.
           <Tooltip content={shortcuts.on ? 'New session' : undefined} keys={SHORTCUT_KEYS.newSession} relation="label">
-            <Button variant="primary" icon="add" aria-haspopup="dialog" aria-keyshortcuts={shortcuts.on ? 'n' : undefined} onClick={onNewSession}>
+            <Button icon="add" aria-haspopup="dialog" aria-keyshortcuts={shortcuts.on ? 'n' : undefined} onClick={onNewSession}>
               New session
             </Button>
           </Tooltip>
