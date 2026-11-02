@@ -1,5 +1,6 @@
 // Plain-text helpers for transcript text: truncating it, finding its fenced
 // code blocks, and stripping markdown syntax so a row reads as prose. All pure.
+import { stripInvisible } from '../shared/hiddenText.js';
 
 /**
  * At most `max` characters. A cut text ends with `…`, within the limit, and
@@ -33,11 +34,12 @@ const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u20
 
 /**
  * Text from an internal file as one line of plain text: terminal escapes, control characters and
- * bidi controls removed, line breaks and tabs as spaces, whitespace collapsed, trimmed, and at most
- * `max` characters (truncate()). Bounded first, so a huge value isn't scanned in full.
+ * bidi controls removed, and tag, zero-width and other invisible characters (stripInvisible(), W120),
+ * line breaks and tabs as spaces, whitespace collapsed, trimmed, and at most `max` characters
+ * (truncate()). Bounded first, so a huge value isn't scanned in full.
  */
 export function plainLine(raw: string, max: number): string {
-  const plain = cap(raw, 8 * max).replace(ESCAPES, '').replace(/[\t\n\v\f\r]+/g, ' ').replace(CONTROLS, '');
+  const plain = stripInvisible(cap(raw, 8 * max)).replace(ESCAPES, '').replace(/[\t\n\v\f\r]+/g, ' ').replace(CONTROLS, '');
   return truncate(plain.replace(/\s+/g, ' ').trim(), max);
 }
 

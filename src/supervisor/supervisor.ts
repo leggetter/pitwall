@@ -81,6 +81,7 @@ import {
   SUPERVISOR_NAME,
   SUPERVISOR_PERMISSION_MODE,
   SUPERVISOR_PROMPT_VERSION,
+  SUPERVISOR_MAX_TURNS,
   SUPERVISOR_SESSION_DIR_NAME,
   supervisorArgs,
   supervisorEnvironment,
@@ -791,6 +792,11 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     const total = event.total_cost_usd;
     if (typeof total === 'number' && Number.isFinite(total) && total >= 0) p.lastTotalCost = total;
     if (cost !== undefined) costUsd = (costUsd ?? 0) + cost;
+    // Past SUPERVISOR_MAX_TURNS (W120): the turn ended with no answer. It's told before your next message.
+    if (event.subtype === 'error_max_turns') {
+      log(`a turn reached its limit of ${SUPERVISOR_MAX_TURNS} steps, so Claude Code ended it.`);
+      approvals.note(`your last turn reached pitwall's limit of ${SUPERVISOR_MAX_TURNS} steps for one message, so it ended before you answered. Answer with what you have, or say what you'd still read.`);
+    }
     // A model Claude Code refused (W119): every turn would fail the same way, so it stops, saying which setting to change.
     if (event.is_error === true && typeof event.result === 'string' && isModelRejection(event.result)) return trip(p, modelRejectedMessage('supervisor'));
     changed();
@@ -873,7 +879,10 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     isOwn(row) {
       if (row.pid !== undefined && pids.has(row.pid)) return true;
       if (dirs.has(path.resolve(row.cwd))) return true;
-      if (row.kind === 'interactive' && nameKey(row.name.trim()) === nameKey(SUPERVISOR_NAME)) return true;
+      // By its name only in a supervisor's folder, another pitwall's included (an `npm run dev` one on
+      // another PITWALL_HOME), as recaps limit theirs (D26): a session of yours that took the name
+      // anywhere else stays listed (W120, W116's F4).
+      if (row.kind === 'interactive' && nameKey(row.name.trim()) === nameKey(SUPERVISOR_NAME) && isSupervisorFolder(row.cwd)) return true;
       return row.pid === undefined && sessionIds.has(row.sessionId);
     },
     async conversation(before) {
@@ -996,6 +1005,15 @@ export function heldBy(stderr: string): { id?: string } | undefined {
   if (match === null) return /running in the background/i.test(stderr) ? {} : undefined;
   const id = match[1]!;
   return /^[A-Za-z0-9_-]{4,64}$/.test(id) ? { id } : {};
+}
+
+/**
+ * Whether `cwd` is shaped like a supervisor's folder, `<pitwall home>/supervisor/session`, which
+ * pitwall makes empty and at 0700 and runs nothing else in.
+ */
+export function isSupervisorFolder(cwd: string): boolean {
+  const resolved = path.resolve(cwd);
+  return path.basename(resolved) === SUPERVISOR_SESSION_DIR_NAME && path.basename(path.dirname(resolved)) === SUPERVISOR_DIR_NAME;
 }
 
 /**

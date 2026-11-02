@@ -9,6 +9,7 @@ import {
   SUPERVISOR_INIT_TOOLS,
   SUPERVISOR_MCP_TIMEOUT_MS,
   SUPERVISOR_PROMPT_TOOL,
+  SUPERVISOR_MAX_TURNS,
   SUPERVISOR_NAME,
   SUPERVISOR_PROMPT_VERSION,
   SUPERVISOR_SYSTEM_PROMPT,
@@ -36,6 +37,7 @@ describe('supervisorArgs()', () => {
     const args = supervisorArgs({ mcpConfig: '/made-up/home/supervisor/mcp.json', settings });
     const value = (flag: string) => args[args.indexOf(flag) + 1];
     expect(value('--tools')).toBe('SendMessage');
+    expect(value('--max-turns')).toBe(String(SUPERVISOR_MAX_TURNS));
     expect(value('--permission-mode')).toBe('default');
     expect(value('--permission-prompt-tool')).toBe('mcp__pitwall__approve');
     expect(value('--allowed-tools')).toBe(SUPERVISOR_ALLOWED_TOOLS.join(','));

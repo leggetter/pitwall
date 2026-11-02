@@ -73,6 +73,7 @@ import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { readFileSync } from 'node:fs';
+import { createAgentsSource } from '../index/agents.js';
 import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
 import { prsOff } from '../prs/index.js';
 import {
@@ -269,7 +270,15 @@ export async function startServerWithInternals(
   const supervisorActions: SupervisorActionSources | undefined =
     supervisor === undefined
       ? undefined
-      : { snapshots, ownSessionIds: () => supervisor.ownSessionIds(), approvals: supervisor.approvals(), spawner, onSpawned: () => indexer.pollSoon() };
+      : {
+          snapshots,
+          ownSessionIds: () => supervisor.ownSessionIds(),
+          approvals: supervisor.approvals(),
+          spawner,
+          onSpawned: () => indexer.pollSoon(),
+          // The recipient's fresh, unfiltered check (W120), as the relay's and resume's.
+          agents: internals.actions?.agents ?? createAgentsSource(internals.actions?.claudeBin === undefined ? {} : { claudeBin: internals.actions.claudeBin }),
+        };
   // pitwall's MCP server, for the supervisor alone (W112, W115): read-only tools over what pitwall
   // already has, spawn_session, and approve, the permission prompt tool.
   const mcp =
@@ -295,7 +304,7 @@ export async function startServerWithInternals(
     supervisor === undefined
       ? undefined
       : (() => {
-          const update = () => supervisor.setRecipients(recipientNames(snapshots.latest(), supervisor.ownSessionIds()));
+          const update = () => supervisor.setRecipients(recipientNames(snapshots.latest(), supervisor.ownSessionIds(), indexer.liveRows?.()));
           update();
           return snapshots.subscribe(update);
         })();

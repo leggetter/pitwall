@@ -218,6 +218,28 @@
   box-shadow: var(--pw-ring-focus-inset);
 }
 
+/* A character that wouldn't show as itself, drawn as its code (W120). */
+.approval-hidden {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 0 var(--pw-space-1);
+  border: 1px solid var(--pw-warning-border);
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-warning-tint);
+  font-family: var(--pw-font-mono);
+  font-size: var(--pw-text-xs);
+  line-height: var(--pw-leading-s);
+  color: var(--pw-warning-tint-fg);
+  white-space: nowrap;
+}
+
+/* Under text taller than its box, or with codes in it: how long it is, and what they are. */
+.approval-length {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
 /* The editor: three lines to eight, as the message box's text box grows. */
 .approval-editor {
   min-height: calc(3 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));

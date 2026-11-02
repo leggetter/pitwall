@@ -27,6 +27,7 @@ import {
 } from '../../src/shared/protocol.js';
 import type { ApiClient, ApiResult } from './api.js';
 import { couldNot, plainText, shortenHome } from './format.js';
+import { visibleString } from '../../src/shared/hiddenText.js';
 import { PR_PARAM, SESSION_PARAM, SUPERVISOR_PARAM, withoutParams, type HistoryMode } from './openSession.js';
 import { outgoingText } from './relay.js';
 import { browserNavigation, type NavigationEnv } from './selection.js';
@@ -265,12 +266,13 @@ export function heldCommand(error: string | undefined): string | undefined {
 }
 
 /** A spawn approval's directory as the card shows it: home as ~. */
-export const approvalDirectory = (approval: Extract<SupervisorApproval, { kind: 'spawn' }>) => shortenHome(plainText(approval.directory));
+export const approvalDirectory = (approval: Extract<SupervisorApproval, { kind: 'spawn' }>) => shortenHome(visibleString(approval.directory));
 
 /** What an approval would send or start, as its card's heading says it, in plain text. */
 export function approvalTitle(approval: SupervisorApproval): string {
-  if (approval.kind === 'message') return `Message to ${plainText(approval.to)}`;
-  const named = approval.name === undefined ? '' : `, named ${plainText(approval.name)}`;
+  // As they are, with anything that wouldn't show as its code (W120): never a filter that removes text.
+  if (approval.kind === 'message') return `Message to ${visibleString(approval.to)}`;
+  const named = approval.name === undefined ? '' : `, named ${visibleString(approval.name)}`;
   return `New session in ${approvalDirectory(approval)}${named}`;
 }
 

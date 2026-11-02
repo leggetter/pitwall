@@ -10,12 +10,17 @@
 //   you (D25's rule), so the draft is only what you selected, and the session's id in pitwall's fixed
 //   words. The readable name is in the dialog's subtitle, which isn't sent. It all goes into the
 //   prompt field, where you see and can change it before Start session.
+// - A selection with a character that wouldn't show as itself in the prompt field, such as a
+//   zero-width or tag character, which a transcript can carry unseen, isn't quoted: Draft from this
+//   session is off, saying why. The rule the server applies to the supervisor's proposals
+//   (src/shared/hiddenText.ts, W120, W116's F1), so a prompt pitwall fills in holds nothing you can't read.
 // - The selection is read when the actions menu's button is pressed, and as the menu opens when no
 //   press came first, as from a screen reader's click (SessionView), and only when both its ends are in
 //   that view's entries (`ol.conversation`): never pitwall's own text around them, such as an alert,
 //   Load earlier, the status line or Jump to latest. Text selected anywhere else, or none, leaves Draft
 //   from this session off, saying to select text there first.
 
+import { hiddenCharacter } from '../../src/shared/hiddenText.js';
 import { plainText } from './format.js';
 import { MAX_PROMPT_LENGTH } from './spawn.js';
 
@@ -34,6 +39,7 @@ export const DRAFT_HINTS = {
   ready: "Adds the text you selected in its conversation to the prompt, quoted, after a line with the session's ID.",
   none: 'To quote it, select text in its conversation, then choose New session from here again.',
   added: "The text you selected is in the prompt. Delete it from there to add it again.",
+  hidden: "The text you selected has characters that don't show on screen, such as zero-width or tag characters, which could hide words you never read, so pitwall won't quote it. Select text without them, or type it.",
   tooLong: `The text you selected doesn't fit in the prompt with what's there: at most ${MAX_PROMPT_LENGTH.toLocaleString('en')} characters. Select less of it.`,
 } as const;
 
@@ -97,6 +103,7 @@ export function withDraft(prompt: string, draft: string): string {
 /** Whether Draft from this session can add `draft` to `prompt`, and why not when it can't. */
 export function draftState(prompt: string, draft: string | undefined): 'ready' | keyof Omit<typeof DRAFT_HINTS, 'ready'> {
   if (draft === undefined) return 'none';
+  if (hiddenCharacter(draft) !== undefined) return 'hidden';
   if (prompt.includes(draft)) return 'added';
   if (withDraft(prompt, draft).length > MAX_PROMPT_LENGTH) return 'tooLong';
   return 'ready';

@@ -150,7 +150,19 @@ const part: Part = {
       if (t.layout !== 'drawer') t.expectEqual(await page.evaluate<number>(NEEDS_YOU), counts.needs - 2, 'and so does Needs you');
     });
 
+    await t.step('a long draft: the exact text, its length said, and a no-break space drawn as its code (W120)', async () => {
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: 'long' });
+      await page.waitFor('one card', `${CARDS}.length === 1`);
+      const card = `${CARDS}[0]`;
+      t.expect(await page.evaluate<boolean>(`(() => { const box = ${card}.querySelector('.approval-text'); return box.scrollHeight > box.clientHeight + 1; })()`), 'its text is taller than the box');
+      t.expectEqual(await page.evaluate(`${card}.querySelector('.approval-length')?.textContent ?? null`), "14 lines, 679 characters: scroll to read it all before you send it. Drawn as their codes, since they don't show as themselves: U+00A0 NO-BREAK SPACE.", 'its length and the code, said under it');
+      t.expectEqual(await page.evaluate(`[...${card}.querySelectorAll('.approval-hidden')].map((each) => each.textContent)`), ['U+00A0'], 'the no-break space as its code');
+      t.expect(await page.evaluate<boolean>(`${card}.querySelector('.approval-text').getAttribute('role') === 'region'`), 'a Tab stop while it scrolls');
+      await t.shot('long-draft');
+    });
+
     await t.step('Load earlier: its older turns', async () => {
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle' });
       await page.waitFor('Load earlier', `!!${SVIEW}.querySelector('.load-earlier')`);
       await page.click('Load earlier', `${SVIEW}.querySelector('.load-earlier')`);
       await page.waitFor('the older turns', `[...${SVIEW}.querySelectorAll('li.entry-user')].some((li) => li.textContent.includes('Which sessions need me, and why?'))`);
