@@ -109,7 +109,8 @@ src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p sess
                          with --no-supervisor
 src/usage/               the usage report's reads and totals (M5.1, W131): scan.ts streams transcripts and keeps
                          numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
-                         prices.ts has the API list prices behind its stand-in cost, format.ts the text tables
+                         prices.ts has the API list prices behind its stand-in cost, format.ts the text tables.
+                         Under src/, so built, because M5.1's Usage view will reuse it from the server
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side, and `work`,
