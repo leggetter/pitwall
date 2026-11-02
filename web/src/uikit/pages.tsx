@@ -15,6 +15,7 @@ import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, type Pr
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
+import { DRAFT_HINTS, DRAFT_LABEL, draftText, type FromSession } from '../fromSession.js';
 import type { GroupBy } from '../groupBy.js';
 import { PANEL_WIDTH_KEY } from '../panelWidth.js';
 import { memoryNavigation } from '../selection.js';
@@ -171,6 +172,8 @@ interface DialogCase {
   /** A waiting state's spinner shows at once. */
   waited?: 'shown';
   run?: (root: HTMLElement) => Promise<unknown>;
+  /** Opened from a session's New session from here (W118): its directory, name and the text selected in its conversation. */
+  from?: FromSession;
 }
 
 const DIALOG_CASES: DialogCase[] = [
@@ -352,6 +355,28 @@ const DIALOG_CASES: DialogCase[] = [
       await text(root, 'Starting…');
     },
   },
+  {
+    title: 'From a session: text selected',
+    note: "New session from here (W118), with text selected in the session's conversation: its directory chosen, the prompt blank, and Draft from this session on, saying what it adds.",
+    frame: 'dialog-tall',
+    from: { cwd: JOBS_DIR, name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
+  },
+  {
+    title: 'From a session: drafted',
+    note: 'After Draft from this session: the line naming the session and the selection, quoted, at the start of the prompt, with focus at its end. The button is off while the draft is there.',
+    frame: 'dialog-tall',
+    from: { cwd: JOBS_DIR, name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
+    run: async (root) => {
+      await press(root, DRAFT_LABEL);
+      await text(root, DRAFT_HINTS.added);
+    },
+  },
+  {
+    title: 'From a session: nothing selected',
+    note: 'With no text selected in its conversation, Draft from this session is off, and says to select text there first.',
+    frame: 'dialog-tall',
+    from: { cwd: JOBS_DIR, name: 'pitwall-test-nightly-export', selection: '' },
+  },
 ];
 
 export function Dialogs() {
@@ -362,7 +387,12 @@ export function Dialogs() {
           <Stubbed options={dialog.options}>
             <Reopenable>
               {(close) => {
-                const shown = <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} />;
+                const from = dialog.from;
+                const shown = from ? (
+                  <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} prefill={{ cwd: from.cwd }} draft={{ text: draftText(from) }} />
+                ) : (
+                  <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} />
+                );
                 return dialog.run ? <Scenario run={dialog.run}>{shown}</Scenario> : shown;
               }}
             </Reopenable>

@@ -54,6 +54,11 @@
 // It shows once the session owns one or is strongly linked to one, and stays, as Sub-agents does. The
 // header's PR links (W95) name the ones it owns.
 //
+// New session from here (W118, fromSession.ts), first in the actions menu, opens New session in the
+// session's directory, with a blank prompt and Draft from this session, which quotes the text that
+// was selected in this view's conversation as the menu's button was pressed. It's there for live and
+// ended sessions alike, off, saying why, while the directory has gone or the session isn't listed.
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
@@ -68,6 +73,7 @@ import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
 import { DraftStorageContext, hasStoredDraft } from '../drafts.js';
 import { EditorsContext, openInEditor, openLabel, openToast } from '../editors.js';
 import { focusGesture, spendGesture, type FocusGesture } from '../focusGesture.js';
+import { conversationSelection, NEW_FROM_HERE_HINTS, NEW_FROM_HERE_LABEL, type FromSession } from '../fromSession.js';
 import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
@@ -408,6 +414,12 @@ export interface SessionViewProps {
    * gallery and the tests of a view alone, it follows the session's activity instead.
    */
   polledAt?: string | undefined;
+  /**
+   * New session from here (W118): the actions menu's first item, which gives the session's directory
+   * and name, and the text selected in its conversation. Left out, as in the gallery and the tests of
+   * a view alone, there's no such item.
+   */
+  onNewSession?: ((from: FromSession) => void) | undefined;
 }
 
 type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
@@ -440,13 +452,15 @@ export function SessionView({
   backLabel,
   prs,
   recaps,
+  onNewSession,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
+  const conversationPanelId = useId();
   const ids = {
     title: useId(),
     conversationTab: useId(),
-    conversationPanel: useId(),
+    conversationPanel: conversationPanelId,
     terminalTab: useId(),
     terminalPanel: useId(),
     subagentsTab: useId(),
@@ -459,6 +473,22 @@ export function SessionView({
   const heading = headingRef ?? ownHeading;
   const menuButton = useRef<HTMLButtonElement>(null);
   const returnFocusToMenu = useCallback(() => focusQuietly(menuButton.current), []);
+  // The text selected in the conversation as the menu's button is pressed, by pointer or key, before
+  // the press can move it: what New session from here's Draft from this session quotes (W118).
+  const pressedSelection = useRef('');
+  useEffect(() => {
+    const button = menuButton.current;
+    if (!button) return;
+    const read = () => {
+      pressedSelection.current = conversationSelection(document.getElementById(conversationPanelId));
+    };
+    button.addEventListener('pointerdown', read, true);
+    button.addEventListener('keydown', read, true);
+    return () => {
+      button.removeEventListener('pointerdown', read, true);
+      button.removeEventListener('keydown', read, true);
+    };
+  }, [conversationPanelId]);
   const conversationTab = useRef<HTMLButtonElement>(null);
   const terminalTab = useRef<HTMLButtonElement>(null);
   const subagentsTab = useRef<HTMLButtonElement>(null);
@@ -801,7 +831,22 @@ export function SessionView({
           },
         ]
       : [];
+  // New session from here (W118), first, for a live or ended session, off while its directory has gone or it isn't listed.
+  const newFromHereEntries: MenuEntry[] = onNewSession
+    ? [
+        {
+          id: 'new-from-here',
+          label: NEW_FROM_HERE_LABEL,
+          icon: 'add',
+          disabled: !listed || session.cwdMissing === true,
+          hint: session.cwdMissing ? NEW_FROM_HERE_HINTS.missing : NEW_FROM_HERE_HINTS.unlisted,
+          onSelect: () => onNewSession({ cwd: session.cwd, name: session.name, selection: pressedSelection.current }),
+        },
+        { kind: 'separator', id: 'new-from-here-separator' },
+      ]
+    : [];
   const entries: MenuEntry[] = [
+    ...newFromHereEntries,
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),
