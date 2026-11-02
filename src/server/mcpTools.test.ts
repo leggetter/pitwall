@@ -13,6 +13,7 @@ import {
   decodeReadCursor,
   encodeReadCursor,
   LIST_MAX_ITEMS,
+  LIST_SLIM_MAX_CHARS,
   plainBlock,
   plainField,
   READ_ENTRY_MAX,
@@ -157,10 +158,10 @@ describe('list_sessions', () => {
       prLinks: [{ kind: 'opened', repo: 'made-up/repo', number: 42, lastAt: new Date(NOW - 7_200_000).toISOString() }],
     });
     const made = tools({ sessions: [session('b'), asked], recaps: new Map([['a', { ...RECAP, todos: [{ text: INJECTION, owner: 'you' }, RECAP.todos[1]!] }]]), prs: { prs: [pr(42)] } });
-    const { json } = await call(made.list_sessions!);
+    const { json } = await call(made.list_sessions!, { detail: true });
     expect(json.note).toBe(UNTRUSTED_NOTE);
     expect(json.now).toBe('2026-10-29T12:00:00.000Z');
-    expect(json.counts).toEqual({ listed: 2, needYou: 1, finished: 0 });
+    expect(json.counts).toEqual({ listed: 2, needYou: 1, finished: 0, matched: 2 });
     const sessions = json.sessions as Record<string, unknown>[];
     // Needs you first.
     expect(sessions.map((each) => each.id)).toEqual(['a', 'b']);
@@ -207,13 +208,15 @@ describe('list_sessions', () => {
       ['ended', 'ended'],
     ]);
     const needs = (await call(made.list_sessions!, { needsYou: true })).json.sessions as Record<string, unknown>[];
-    expect(needs).toEqual([expect.objectContaining({ id: 'needs', needsYou: 'prompt', waitingFor: 'permission prompt', untrusted: expect.objectContaining({ needsYou: 'permission prompt' }) })]);
+    expect(needs).toEqual([expect.objectContaining({ id: 'needs', needsYou: 'prompt', untrusted: expect.objectContaining({ needsYou: 'permission prompt' }) })]);
   });
 
   it('stays within its cap, saying how many it left out', async () => {
     const many = Array.from({ length: 300 }, (_, index) => session(`s${index}`, { title: 'x'.repeat(500), needsYou: { reason: 'claude-code', text: 'y'.repeat(500) } }));
-    const { text, json } = await call(tools({ sessions: many, recaps: new Map(many.map((each) => [each.sessionId, { ...RECAP, summary: 'w'.repeat(1000), todos: Array.from({ length: 6 }, () => ({ text: 't'.repeat(1000), owner: 'you' as const })) }])) }).list_sessions!);
+    const { text, json } = await call(tools({ sessions: many, recaps: new Map(many.map((each) => [each.sessionId, { ...RECAP, summary: 'w'.repeat(1000), todos: Array.from({ length: 6 }, () => ({ text: 't'.repeat(1000), owner: 'you' as const })) }])) }).list_sessions!, { detail: true });
     expect(text.length).toBeLessThanOrEqual(ANSWER_MAX_CHARS);
+    expect(json.truncated).toBe(true);
+    expect(json.hint).toContain('Narrow it with repo, pr, query or needsYou');
     expect(json.shown as number).toBeLessThanOrEqual(LIST_MAX_ITEMS);
     expect((json.shown as number) + (json.omitted as number)).toBe(300);
     expect((json.omitted as number) > 0).toBe(true);
@@ -221,6 +224,83 @@ describe('list_sessions', () => {
     expect(first.untrusted.title.length).toBeLessThanOrEqual(300);
     expect(first.untrusted.recap.summary.length).toBeLessThanOrEqual(400);
     for (const todo of first.untrusted.recap.todos) expect(todo.text.length).toBeLessThanOrEqual(400);
+  });
+
+  it('gives slim rows by default: id, name, repo, state, Needs you, last activity, PRs and the recap’s summary, nothing more (W124)', async () => {
+    const one = session('a', { title: 'A title', needsYou: { reason: 'claude-code', text: 'Needs a decision' }, prLinks: [{ kind: 'opened', repo: 'made-up/repo', number: 42, lastAt: new Date(NOW).toISOString() }] });
+    const { json } = await call(tools({ sessions: [one], recaps: new Map([['a', RECAP]]), prs: { prs: [pr(42)] } }).list_sessions!);
+    expect((json.sessions as unknown[])[0]).toEqual({
+      id: 'a',
+      state: 'idle',
+      needsYou: 'claude-code',
+      lastActivityAt: one.lastActivityAt,
+      prs: [{ number: 42, untrusted: { repo: 'made-up/repo' } }],
+      untrusted: { name: 'pitwall-test-a', repo: 'repo', needsYou: 'Needs a decision', recap: RECAP.summary },
+    });
+  });
+
+  it('keeps slim rows within LIST_SLIM_MAX_CHARS, saying it cut them and how to narrow it (W124)', async () => {
+    const many = Array.from({ length: 300 }, (_, index) => session(`s${index}`, { needsYou: { reason: 'claude-code', text: 'y'.repeat(500) } }));
+    const { text, json } = await call(tools({ sessions: many, recaps: new Map(many.map((each) => [each.sessionId, { ...RECAP, summary: 'w'.repeat(1000) }])) }).list_sessions!);
+    expect(text.length).toBeLessThanOrEqual(LIST_SLIM_MAX_CHARS);
+    expect(json).toMatchObject({ truncated: true, counts: { matched: 300 } });
+    expect((json.shown as number) + (json.omitted as number)).toBe(300);
+    const first = (json.sessions as { untrusted: { recap: string; needsYou: string } }[])[0]!;
+    expect(first.untrusted.recap.length).toBeLessThanOrEqual(240);
+    expect(first.untrusted.needsYou.length).toBeLessThanOrEqual(240);
+    // Small answers say nothing about cutting.
+    const small = (await call(tools({ sessions: [session('a')] }).list_sessions!)).json;
+    expect(small.truncated).toBeUndefined();
+    expect(small.hint).toBeUndefined();
+  });
+
+  it('filters by repo, by its name or owner/name, or a PR it owns (W124)', async () => {
+    const sessions = [session('a'), session('b')];
+    const snapshot: IndexSnapshot = {
+      ...snapshotOf([]),
+      groups: [
+        { key: '/made-up/work/repo', label: 'repo', kind: 'git', root: '/made-up/work', sessions: [sessions[0]!] },
+        { key: '/made-up/work/other', label: 'other', kind: 'git', root: '/made-up/work', sessions: [sessions[1]!] },
+      ],
+    };
+    const made = createSupervisorTools({ snapshots: { latest: () => snapshot }, conversation: async () => undefined, prs: { latest: () => ({ source: { ok: true }, refreshing: false, prs: [] }) }, now: () => NOW });
+    const listSessions = made.find((tool) => tool.name === 'list_sessions')!;
+    const ids = async (args: Record<string, unknown>) => ((await call(listSessions, args)).json.sessions as { id: string }[]).map((each) => each.id);
+    expect(await ids({ repo: 'repo' })).toEqual(['a']);
+    expect(await ids({ repo: 'Made-Up/Other' })).toEqual(['b']);
+    expect(await ids({ repo: 'nowhere' })).toEqual([]);
+    expect(await call(listSessions, { repo: ' ' })).toMatchObject({ isError: true });
+  });
+
+  it('filters by PR through the sessions’ links, the owner first, finished ones included (W124)', async () => {
+    const at = new Date(NOW - 60_000).toISOString();
+    const owner = session('owner', { ended: true, finished: true, alive: false, prLinks: [{ kind: 'opened', repo: 'made-up/repo', number: 42, lastAt: at }] });
+    const mentioned = session('mentioned', { prLinks: [{ kind: 'mentioned', repo: 'made-up/repo', number: 42, lastAt: at }] });
+    const pushed = session('pushed', { prLinks: [{ kind: 'pushed', repo: 'made-up/repo', branch: 'fix', lastAt: at }] });
+    const other = session('other', { prLinks: [{ kind: 'opened', repo: 'made-up/repo', number: 7, lastAt: at }] });
+    const made = tools({ sessions: [mentioned, other, pushed, owner], prs: { prs: [pr(42, { head: { repo: 'made-up/repo', branch: 'fix' } })] } });
+    const { json } = await call(made.list_sessions!, { pr: 'Made-Up/repo#42' });
+    const rows = json.sessions as { id: string; prLink: string; prOwner?: true }[];
+    expect(rows.map((row) => [row.id, row.prLink, row.prOwner ?? false])).toEqual([
+      ['owner', 'opened', true],
+      ['pushed', 'pushed', false],
+      ['mentioned', 'mentioned', false],
+    ]);
+    expect(((await call(made.list_sessions!, { pr: 'made-up/repo#42', finished: false })).json.sessions as { id: string }[]).map((row) => row.id)).not.toContain('owner');
+    // A PR pitwall doesn't list as open: by repo and number alone, and it says so.
+    const closed = await call(made.list_sessions!, { pr: 'https://github.com/made-up/repo/pull/7' });
+    expect(closed.json.prOpen).toBe(false);
+    expect((closed.json.sessions as { id: string }[]).map((row) => row.id)).toEqual(['other']);
+    expect(await call(made.list_sessions!, { pr: 'repo 42' })).toMatchObject({ isError: true });
+  });
+
+  it('filters by query: every word, ignoring case, in a name, title or recap (W124)', async () => {
+    const made = tools({ sessions: [session('a', { name: 'export-fix' }), session('b', { title: 'Docs for the CLI' }), session('c')], recaps: new Map([['c', { ...RECAP, summary: 'Rewrote the CLI export' }]]) });
+    const ids = async (query: string) => ((await call(made.list_sessions!, { query })).json.sessions as { id: string }[]).map((each) => each.id).sort();
+    expect(await ids('EXPORT')).toEqual(['a', 'c']);
+    expect(await ids('cli export')).toEqual(['c']);
+    expect(await ids('cli')).toEqual(['b', 'c']);
+    expect(await call(made.list_sessions!, { query: '   ' })).toMatchObject({ isError: true });
   });
 
   it('says recaps are off with --no-recaps, and gives none', async () => {
