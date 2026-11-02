@@ -335,7 +335,7 @@ describe('New session: starting one', () => {
     fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: '\u0000other' } });
     fireEvent.change(within(dialog).getByLabelText('Directory path'), { target: { value: `  ${ROOT}/new-thing  ` } });
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: '\u0000other' } });
-    fireEvent.change(within(dialog).getByLabelText('Model alias'), { target: { value: 'claude-haiku-4-5' } });
+    fireEvent.change(within(dialog).getByLabelText('Model alias or full name'), { target: { value: 'claude-haiku-4-5' } });
     fill(dialog, { prompt: 'second' });
     await submit(dialog);
 
@@ -376,8 +376,8 @@ describe('New session: starting one', () => {
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: '\u0000other' } });
     await submit(dialog);
     expect(within(dialog).getByText('Type a model alias, or choose the default.')).toBeTruthy();
-    fireEvent.change(within(dialog).getByLabelText('Model alias'), { target: { value: 'opus 4' } });
-    expect(within(dialog).getByText(/A short alias such as sonnet/)).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText('Model alias or full name'), { target: { value: 'opus 4' } });
+    expect(within(dialog).getByText(/A Claude Code alias, such as sonnet/)).toBeTruthy();
 
     expect(posts(server)).toEqual([]);
   });
@@ -402,7 +402,7 @@ describe('New session: starting one', () => {
     const close = within(dialog).getByRole('button', { name: 'Close' });
     expect(close.getAttribute('aria-disabled')).toBe('true');
     const prompt = within(dialog).getByLabelText('First prompt') as HTMLTextAreaElement;
-    for (const field of [within(dialog).getByLabelText('Directory'), within(dialog).getByLabelText(/^Name/), within(dialog).getByLabelText(/^Model/), prompt]) {
+    for (const field of [within(dialog).getByLabelText('Directory'), within(dialog).getByLabelText(/^Name/), within(dialog).getByLabelText(/^Model/), within(dialog).getByLabelText(/^Effort/), prompt]) {
       expect(field.getAttribute('aria-disabled')).toBe('true');
     }
     expect(prompt.readOnly).toBe(true);
@@ -417,7 +417,8 @@ describe('New session: starting one', () => {
     fireEvent.click(document.querySelector('.dialog-backdrop')!);
     fireEvent.submit(dialog.querySelector('form')!);
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
-    expect(server).toHaveBeenCalledTimes(1);
+    // One POST: the dialog's other request is its GET of the defaults for sessions (W119).
+    expect(server.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1);
 
     answer(new Response(JSON.stringify(started.body), { status: 201 }));
     await settle();
@@ -540,8 +541,8 @@ describe('spawn helpers', () => {
     expect(directoryProblem('/r/\u0007', ['/r'])).toMatch(/control/);
     for (const name of ['', 'pitwall-test-spawn', 'Fix the docs 2.0', '_x', 'x'.repeat(64)]) expect(nameProblem(name), name).toBeUndefined();
     for (const name of ['-h', ' x', 'x ', 'a;b', 'naïve', 'x'.repeat(65)]) expect(nameProblem(name), name).toBeDefined();
-    for (const model of ['', 'haiku', 'claude-haiku-4-5', 'x'.repeat(40)]) expect(modelProblem(model), model).toBeUndefined();
-    for (const model of ['-x', 'opus 4', 'sonnet[1m]', 'x'.repeat(41)]) expect(modelProblem(model), model).toBeDefined();
+    for (const model of ['', 'haiku', 'fable', 'opusplan', 'sonnet[1m]', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'claude-opus-5-5']) expect(modelProblem(model), model).toBeUndefined();
+    for (const model of ['-x', 'opus 4', 'x'.repeat(40), 'claude-gpt-5', 'claude-opus', 'claude-opus-5-5 --x']) expect(modelProblem(model), model).toBeDefined();
     expect(promptProblem(' \n')).toBeDefined();
     expect(promptProblem('x'.repeat(16_384))).toBeUndefined();
     expect(promptProblem('x'.repeat(16_385))).toBeDefined();

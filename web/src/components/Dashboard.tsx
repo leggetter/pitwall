@@ -2054,6 +2054,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           onBackgroundTab={setBackgroundTab}
           terminalFocus={terminalFocus}
           onTerminalFocus={setTerminalFocus}
+          {...(snapshot?.recaps === undefined ? {} : { recaps: snapshot.recaps })}
+          {...(snapshot?.supervisor === undefined ? {} : { supervisor: snapshot.supervisor })}
         />
       )}
 

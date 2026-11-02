@@ -7,6 +7,12 @@
 // over the default. Roots given as arguments replace the file's, but each still
 // gets its `github` settings when its real path is a configured root's.
 //
+// `work` (W119) sets the model and effort for each kind of work pitwall starts:
+// `session`, `subagents`, `supervisor`, `recaps` and `relay`, each
+// `{ "model"?, "effort"? }`, checked against what Claude Code takes
+// (server/work.ts), never passed on as free text. The app's overrides
+// (Preferences) are kept by the server for its run and never written here.
+//
 // Security (D24):
 // - It never holds the token. A key named like one, or a GitHub token, anywhere
 //   in the file, is an error: PITWALL_TOKEN comes from the environment only,
@@ -24,7 +30,8 @@ import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, type
 import os from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { type DirCheckContext, pitwallHome } from './server/launch.js';
-import { GITHUB_OWNER_PATTERN, type RootOwners } from './shared/protocol.js';
+import { parseWorkChoices } from './server/work.js';
+import { GITHUB_OWNER_PATTERN, type RootOwners, type WorkChoices } from './shared/protocol.js';
 
 /** The config file's name in pitwall's folder (PITWALL_HOME, default ~/.pitwall). */
 export const CONFIG_FILE_NAME = 'config.json';
@@ -68,6 +75,8 @@ export interface LoadedConfig {
   found: boolean;
   /** Absent when the file has no `roots`, or there's no file. */
   roots?: ConfiguredRoot[];
+  /** The `work` block (W119), checked: each kind's model and effort. Absent when the file has none. */
+  work?: WorkChoices;
   /** One line for each unknown key, to print on stderr. */
   warnings: string[];
 }
@@ -177,7 +186,7 @@ export function parseConfig(
   text: string,
   file: string,
   options: Pick<LoadConfigOptions, 'home' | 'realpath'> = {},
-): { roots?: ConfiguredRoot[]; warnings: string[] } {
+): { roots?: ConfiguredRoot[]; work?: WorkChoices; warnings: string[] } {
   const invalid = (at: number) =>
     new ConfigError(`${file} isn't valid JSON${at === -1 ? '' : ` at ${lineAndColumn(text, at)}`}. Comments and trailing commas are allowed.`);
   let stripped: string;
@@ -213,8 +222,9 @@ export function parseConfig(
     throw new ConfigError(`${file}: ${quote(key)} ${message}`);
   };
 
-  for (const key of Object.keys(value)) if (key !== 'roots') unknown(key);
-  if (!Object.hasOwn(value, 'roots')) return { warnings };
+  for (const key of Object.keys(value)) if (key !== 'roots' && key !== 'work') unknown(key);
+  const work = Object.hasOwn(value, 'work') ? { work: parseWorkChoices(value.work, 'work', fail, unknown) } : {};
+  if (!Object.hasOwn(value, 'roots')) return { ...work, warnings };
   const list = value.roots;
   if (!Array.isArray(list)) return fail('roots', 'must be a list of roots, each a path or { "path": ... }');
   if (list.length === 0) return fail('roots', 'is empty. List at least one root, or leave "roots" out to watch the current directory.');
@@ -249,7 +259,7 @@ export function parseConfig(
     roots.push({ key, path, real, ...(owners === undefined ? {} : { owners }) });
   });
   checkOwnersOnce(roots, fail);
-  return { roots, warnings };
+  return { roots, ...work, warnings };
 }
 
 /** `github`: an object whose `owners` is a list of GitHub owners, 'all' or 'none'. Absent when it has no `owners`. */

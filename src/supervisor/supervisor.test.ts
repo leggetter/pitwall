@@ -7,7 +7,8 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentRow } from '../index/agents.js';
 import { encodeProjectDir } from '../index/transcripts.js';
-import { SUPERVISOR_MODEL } from '../shared/protocol.js';
+import { SUPERVISOR_MODEL, type WorkChoice } from '../shared/protocol.js';
+import { modelRejectedMessage } from '../server/work.js';
 import type { RelayChild, RelayChildEvents } from '../server/relay.js';
 import { createApprovalQueue } from './approvals.js';
 import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_ASK_TOOLS, SUPERVISOR_NAME } from './prompt.js';
@@ -662,5 +663,32 @@ describe('heldBy() and heldError()', () => {
     expect(heldError('ab12cd34', 'background')).toContain('Run `claude stop ab12cd34` to hand it back');
     expect(heldError(undefined, 'interactive')).toContain('Exit that session');
     expect(heldError(undefined, 'interactive', 'pitwall-supervisor')).toBe("Another pitwall, or a terminal where you resumed it, is running the supervisor's conversation, so this one can't resume it. Close that, then press Start.");
+  });
+});
+
+describe('its model and effort (W119)', () => {
+  it("reads the store's choice at each start, so a change in Preferences reaches its next start", async () => {
+    let choice: WorkChoice = { model: 'sonnet', effort: 'high' };
+    const { supervisor, children } = harness({ work: () => choice });
+    await supervisor.start();
+    expect(flag(children[0]!.args, '--model')).toBe('sonnet');
+    expect(flag(children[0]!.args, '--effort')).toBe('high');
+    // An inherited CLAUDE_CODE_EFFORT_LEVEL, which Claude Code puts first, never reaches it.
+    expect(children[0]!.options.env.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
+    await supervisor.close();
+    choice = { model: 'default', effort: 'default' };
+    const second = harness({ work: () => choice });
+    await second.supervisor.start();
+    expect(second.children[0]!.args).not.toContain('--model');
+    expect(second.children[0]!.args).not.toContain('--effort');
+  });
+
+  it("stops, in pitwall's words, when Claude Code refuses its model", async () => {
+    const { supervisor, children } = harness({ work: () => ({ model: 'claude-opus-9-9' }) });
+    await supervisor.start();
+    children[0]!.init();
+    children[0]!.result({ is_error: true, result: "There's an issue with the selected model (claude-opus-9-9). It may not exist or you may not have access to it." });
+    await until(() => supervisor.state().status === 'failed');
+    expect(supervisor.state().error).toBe(modelRejectedMessage('supervisor'));
   });
 });

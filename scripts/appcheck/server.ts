@@ -57,19 +57,22 @@ import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
 type Protocol = typeof import('../../src/shared/protocol.js');
+type Work = typeof import('../../src/server/work.js');
 
 /** pitwall's own modules, from the build. */
 export interface Built {
   security: Security;
   static: Static;
   protocol: Protocol;
+  /** The model and effort store and its checks (W119), so the fake server answers WORK_PATH as the real one. */
+  work: Work;
 }
 
-/** Imports the three modules the fake server uses from a server build, such as dist. */
+/** Imports the four modules the fake server uses from a server build, such as dist. */
 export async function importBuilt(dist: string): Promise<Built> {
   const load = (path: string) => import(pathToFileURL(join(dist, path)).href);
-  const [security, staticFiles, protocol] = await Promise.all([load('server/security.js'), load('server/static.js'), load('shared/protocol.js')]);
-  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol };
+  const [security, staticFiles, protocol, work] = await Promise.all([load('server/security.js'), load('server/static.js'), load('shared/protocol.js'), load('server/work.js')]);
+  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work };
 }
 
 export interface Records {
@@ -80,7 +83,9 @@ export interface Records {
   /** Every size the page gave an attached session, in order: its `open`'s, then each resize's (W74). */
   sizes: Array<{ name: string; from: 'open' | 'resize' } & TerminalSize>;
   /** `attachments` only when the request had them (W82). */
-  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; effort?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  /** Each POST of WORK_PATH (W119): the overrides sent, and the status they got. */
+  workPosts: Array<{ overrides: unknown; status: number }>;
   /**
    * Each upload to ATTACHMENTS_PATH (W82), in the order they were answered: its name, type and size,
    * the status it got, and its id when kept. `aborted` is one the page gave up on before its answer.
@@ -119,6 +124,7 @@ const emptyRecords = (): Records => ({
   inputs: [],
   sizes: [],
   spawns: [],
+  workPosts: [],
   relays: [],
   actions: [],
   resumes: [],
@@ -246,6 +252,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const world = new World();
   world.setRecapBudget(protocol.RECAP_DAILY_BUDGET);
   let records = emptyRecords();
+  // The model and effort (W119): a made-up config file's defaults, sessions on opus at high and their sub-agents on haiku.
+  const madeUpWork = () =>
+    built.work.createWorkStore({
+      config: { ...built.work.emptyChoices(), session: { model: 'opus', effort: 'high' }, subagents: { model: 'haiku' } },
+      configFile: '/Users/example/.pitwall/config.json',
+    });
+  let work = madeUpWork();
   // The uploads kept (W82), by id, and the names that have had their one failure.
   const uploaded = new Map<string, { used: boolean }>();
   const failedOnce = new Set<string>();
@@ -309,6 +322,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.PRS_PATH) return json(res, 200, world.prList() satisfies PullRequestList);
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
     if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
+    if (method === 'GET' && url.pathname === protocol.WORK_PATH) return json(res, 200, work.settings());
+    if (method === 'POST' && url.pathname === protocol.WORK_PATH) {
+      const body = await readJson(req);
+      const result = work.update(body);
+      records.workPosts.push({ overrides: isRecord(body) ? body.overrides : undefined, status: result.ok ? 200 : 400 });
+      return result.ok ? json(res, 200, result.settings) : json(res, 400, { error: result.error });
+    }
     if (url.pathname.startsWith('/api/supervisor/')) return supervisor(req, res, method, url);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
     if (method === 'POST' && url.pathname === protocol.ATTACHMENTS_PATH) return upload(req, res);
@@ -771,9 +791,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       prompt: body.prompt,
       ...(typeof body.name === 'string' ? { name: body.name } : {}),
       ...(typeof body.model === 'string' ? { model: body.model } : {}),
+      ...(typeof body.effort === 'string' && (protocol.EFFORT_LEVELS as readonly string[]).includes(body.effort) ? { effort: body.effort as SpawnRequest['effort'] } : {}),
       ...(attachments ? { attachments } : {}),
     };
-    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, promptLength: request.prompt.length, attachments: request.attachments });
+    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, effort: request.effort, promptLength: request.prompt.length, attachments: request.attachments });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
     later(options.listDelayMs ?? 800, () => {
@@ -905,6 +926,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       for (const ws of [...indexSockets, ...attachSockets]) ws.terminate();
       world.reset(resetOptions);
       records = emptyRecords();
+      work = madeUpWork();
       uploaded.clear();
       failedOnce.clear();
       resumeOrder.listedFirst = false;

@@ -132,7 +132,7 @@ node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>]
 
 ### Configuration
 
-With `--config <path>`, pitwall reads that file, which must exist. Without it, pitwall reads `config.json` in `~/.pitwall`, or in `PITWALL_HOME` when that's set, if it's there; with no file, every setting is its default. It's JSON, with `//` and `/* */` comments and trailing commas allowed. For now it holds the roots, and each root's GitHub owners:
+With `--config <path>`, pitwall reads that file, which must exist. Without it, pitwall reads `config.json` in `~/.pitwall`, or in `PITWALL_HOME` when that's set, if it's there; with no file, every setting is its default. It's JSON, with `//` and `/* */` comments and trailing commas allowed. For now it holds the roots, each root's GitHub owners, and the model and effort for each kind of work pitwall starts:
 
 ```jsonc
 {
@@ -142,11 +142,24 @@ With `--config <path>`, pitwall reads that file, which must exist. Without it, p
     // Or an object, with the GitHub owners whose pull requests it lists
     { "path": "~/work", "github": { "owners": ["example-co"] } },
   ],
+  // Each optional, and each field in it
+  "work": {
+    "session":    { "model": "opus", "effort": "high" },
+    "subagents":  { "model": "sonnet" },
+    "supervisor": { "model": "claude-opus-5-5", "effort": "medium" },
+    "recaps":     { "effort": "low" },
+  },
 }
 ```
 
 - **`roots`:** the roots to watch when you give none as arguments. Each is a path, absolute or starting with `~/`, or an object with a `path` and `github`.
 - **`github.owners`:** whose pull requests a root lists for repos it has no clone of: a list of GitHub users and organizations, `"all"` for every owner no other root lists, or `"none"` for pull requests in its own clones only. Without it, each owner goes to the root with the most clones whose `origin` remote points at it; another remote, such as `upstream`, never counts, since it can name anyone, and a stranger's pull request that mentions you would then be offered for Clone. List an owner here to claim it anyway. An owner can be listed for one root only, and only one root can have `"all"`. The page lists each pull request under its clone's group, or under the root that claims its owner as a repo that isn't cloned.
+- **`work`:** the model and effort for each kind of work pitwall starts, each `{ "model", "effort" }`, both optional:
+  - **`session`:** a session from New session or Resume, as `--model` and `--effort` on `claude --bg`.
+  - **`subagents`:** that session's sub-agents' model, as `CLAUDE_CODE_SUBAGENT_MODEL` on its environment, for sub-agents whose definition names no model. Model only: Claude Code has no effort setting for sub-agents apart from the session's own, so an `effort` here is an error.
+  - **`supervisor`, `recaps` and `relay`:** `--model` and `--effort` on their `claude -p`.
+  - **Values:** a model is one of Claude Code's aliases (`opus`, `sonnet`, `haiku`, `fable`, `best`, `opusplan`, `opus[1m]`, `sonnet[1m]`; sub-agents take the first four) or a full model name such as `claude-opus-5-5`; an effort is `low`, `medium`, `high`, `xhigh` or `max`; `"default"` for either means Claude Code's own, with no flag. pitwall checks each against these before passing it on, never as free text. Without them: no flags for sessions, as before, the supervisor on Opus 5.5, recaps on Haiku 5.5 and the relay on `haiku`, each at its model's default effort.
+  - **In the app:** Preferences' Models and effort changes any of them for the run, and New session's Model and Effort for one session. pitwall's server keeps those until it stops; they don't change the file. Preferences shows what recaps cost today and the supervisor this run. A change reaches the next session, recap or start of the supervisor or relay, never one that's running. If Claude Code refuses a model all the same, recaps and the supervisor say so in pitwall's words, naming the setting to change.
 - **Precedence:** a flag, then an environment variable, then the file, then the default. Roots you give as arguments replace the file's, not add to them, but each still keeps its `github` settings when it's the same directory as a root in the file, by its real path, so `pitwall ~/work` alone keeps `~/work`'s owners.
 - **Mistakes:** a bad value stops pitwall with a message naming the key and the file, as a bad flag does. An unknown key is a warning, so an older pitwall can read a newer file.
 - **Security** ([D24](docs/decisions.md#d24---a-config-file-beside-the-flags)): the file decides which directories pitwall reads, so on macOS and Linux it must be yours and not writable by group or others, or pitwall refuses it. It never holds a token: a key named like one, or a GitHub token anywhere in it, is an error, since `PITWALL_TOKEN` comes from the environment only and GitHub's stays in `gh`. No message quotes a value from the file. Nothing in it can turn off the token, the `Host` and `Origin` checks or listening on 127.0.0.1 alone, and pitwall reads no config file from inside a repo.
@@ -159,7 +172,7 @@ With `--config <path>`, pitwall reads that file, which must exist. Without it, p
 - **Finished and ended sessions** sit in a Finished section at the end of each list. Not needed now takes a session out of Needs you until what it needs changes.
 - **Pull requests** are listed with the session that worked on them last, or as rows of their own, under their repos. A pull request with no session has a New session button on its row and in its view, which opens New session in its clone, named `pr-<number>`, with a first prompt that names the pull request and why it needs you, all of which you can change; the new session then owns it. For a repo you haven't cloned, Clone and start says where it will clone it first, then opens New session there. A finished or ended session that owns an open pull request stays in the list, with Resume on its row.
 - **Keyboard:** `/` filters, `n` starts a session, `j` and `k` step to the next or previous session, `s` stars the open session and `?` lists every shortcut. F6 leaves the terminal. The shortcuts dialog can turn the single-key ones off.
-- **Preferences:** how to group sessions (by main repo, where they started, or every repo they worked in), which tab a running background session opens on, and whether the terminal takes the keyboard. The header's theme switch follows the system, or sets light or dark.
+- **Preferences:** how to group sessions (by main repo, where they started, or every repo they worked in), which tab a running background session opens on, whether the terminal takes the keyboard, and the model and effort for each kind of work, with what recaps and the supervisor have cost. The header's theme switch follows the system, or sets light or dark.
 
 ## How it works
 

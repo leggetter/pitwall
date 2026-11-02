@@ -39,3 +39,47 @@
   font-weight: var(--pw-weight-bold);
   line-height: var(--pw-leading-m);
 }
+
+/*
+ * Models and effort (W119): a row per kind of work, its name in label type, its hint and cost in meta
+ * type, then its Model and Effort selects side by side, each half the row, stacked below 480 px. The
+ * selects fill their half, so a long default ("Default: claude-haiku-5-5") stays readable.
+ */
+.work-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+}
+
+.work-row-name {
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-bold);
+  line-height: var(--pw-leading-s);
+}
+
+.work-row-cost {
+  color: var(--pw-text);
+}
+
+.work-row-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pw-space-3);
+  margin-top: var(--pw-space-1);
+}
+
+.work-row-fields .select {
+  display: flex;
+}
+
+.work-row-fields .select-input {
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 479px) {
+  .work-row-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

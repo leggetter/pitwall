@@ -16,6 +16,7 @@ import {
   resumePath,
   SPAWN_PATH,
   stopPath,
+  WORK_PATH,
   WS_PATH,
   type IndexSnapshot,
   type ServerMessage,
@@ -33,11 +34,13 @@ import {
   RateWindow,
   SpawnLimiter,
   trustHint,
+  withSessionWork,
   type ActionOptions,
 } from './actions.js';
 import type { CommandOptions, CommandResult, RunCommand } from './command.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
+import { createWorkStore, emptyChoices, type WorkStore } from './work.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
@@ -436,12 +439,16 @@ describe('spawn: validation', () => {
     }
   });
 
-  it('refuses a model that is not a short alias', async () => {
-    for (const model of ['opus 4', '-x', 'sonnet[1m]', 'a/b', 'x'.repeat(41), '', 7]) await expect400({ ...valid(), model }, /model/);
+  it("refuses a model that isn't a Claude Code alias or full model name (W119)", async () => {
+    for (const model of ['opus 4', '-x', 'sonnet[2m]', 'a/b', 'x'.repeat(40), 'claude-gpt-5', 'claude-opus', '', 7]) await expect400({ ...valid(), model }, /model must be a Claude Code model/);
   });
 
-  it('accepts short aliases and full model names', async () => {
-    for (const model of ['haiku', 'sonnet', 'opus', 'claude-haiku-4-5', 'x'.repeat(40)]) {
+  it('refuses an effort Claude Code would ignore (W119)', async () => {
+    for (const effort of ['ultracode', 'auto', 'High', '', 3, '--x']) await expect400({ ...valid(), effort }, /effort must be low, medium, high, xhigh or max/);
+  });
+
+  it('accepts aliases and full model names', async () => {
+    for (const model of ['haiku', 'sonnet', 'opus', 'fable', 'best', 'opusplan', 'sonnet[1m]', 'default', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001']) {
       const started = await start();
       expect((await spawnAsPage(started, { ...valid(), model })).status, model).toBe(201);
     }
@@ -1352,6 +1359,7 @@ describe('helpers', () => {
 
   it('resumeArgs passes the session id and --bg, and no prompt', () => {
     expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg']);
+    expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', { model: 'default', effort: 'xhigh' })).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--effort', 'xhigh']);
   });
 
   it('spawnArgs always ends the options before the prompt', () => {
@@ -1386,5 +1394,162 @@ describe('helpers', () => {
     const second = limiter.acquire();
     expect(second.ok).toBe(true);
     expect(limiter.acquire().ok).toBe(false);
+  });
+});
+
+describe('model and effort for sessions and their sub-agents (W119)', () => {
+  /** A store as the CLI makes it from a config file whose `work` gives sessions opus at high, and sub-agents haiku. */
+  const configured = (): WorkStore =>
+    createWorkStore({ config: { ...emptyChoices(), session: { model: 'opus', effort: 'high' }, subagents: { model: 'haiku' } }, configFile: '/home/example/.pitwall/config.json' });
+
+  async function startWith(work: WorkStore, run = fakeRunner(backgrounded()), env: NodeJS.ProcessEnv = {}): Promise<Started> {
+    const server = await startServerWithInternals({ indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0, work }, { actions: { run, env, agents: fakeAgents() } });
+    running.push(server);
+    return { server, apiKey: await apiKeyOf(server.port), run };
+  }
+
+  function get(port: number, path: string, headers: Record<string, string>): Promise<HttpResult> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port, path, method: 'GET', headers, agent: false }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => (text += chunk));
+        res.on('end', () => {
+          let json: unknown;
+          try {
+            json = JSON.parse(text);
+          } catch {
+            json = undefined;
+          }
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text, json });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  it('spawn without a model or effort gets the defaults: --model, --effort, and CLAUDE_CODE_SUBAGENT_MODEL on its environment', async () => {
+    const started = await startWith(configured());
+    expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
+    const [call] = started.run.calls;
+    expect(call?.args).toEqual(['--bg', '--model', 'opus', '--effort', 'high', '--', 'go']);
+    expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+  });
+
+  it("the request wins over the app's override, which wins over the config file, field by field", async () => {
+    const work = configured();
+    expect(work.update({ overrides: { session: { effort: 'low' }, subagents: { model: 'sonnet' } } }).ok).toBe(true);
+    const started = await startWith(work, fakeRunner(backgrounded(), backgrounded(), backgrounded()));
+    await spawnAsPage(started, { cwd: repo, prompt: 'go' });
+    await spawnAsPage(started, { cwd: repo, prompt: 'go', model: 'haiku', effort: 'max' });
+    await spawnAsPage(started, { cwd: repo, prompt: 'go', model: 'default', effort: 'default' });
+    expect(started.run.calls.map((call) => call.args)).toEqual([
+      ['--bg', '--model', 'opus', '--effort', 'low', '--', 'go'],
+      ['--bg', '--model', 'haiku', '--effort', 'max', '--', 'go'],
+      // Claude Code's default, whatever pitwall's defaults say: no flags.
+      ['--bg', '--', 'go'],
+    ]);
+    expect(started.run.calls.map((call) => call.options.env.CLAUDE_CODE_SUBAGENT_MODEL)).toEqual(['sonnet', 'sonnet', 'sonnet']);
+  });
+
+  it("with no defaults, spawn passes no flags and leaves the inherited environment's sub-agent model and effort alone, as before W119", async () => {
+    const env = { PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'haiku', CLAUDE_CODE_EFFORT_LEVEL: 'low' };
+    const started = await startWith(createWorkStore(), fakeRunner(backgrounded()), env);
+    await spawnAsPage(started, { cwd: repo, prompt: 'go' });
+    const [call] = started.run.calls;
+    expect(call?.args).toEqual(['--bg', '--', 'go']);
+    expect(call?.options.env).toEqual({ ...env, PWD: repo });
+  });
+
+  it('an effort pitwall passes is not overridden by an inherited CLAUDE_CODE_EFFORT_LEVEL, which Claude Code puts first', async () => {
+    const env = { PATH: '/usr/bin', CLAUDE_CODE_EFFORT_LEVEL: 'max', claude_code_subagent_model: 'opus' };
+    const started = await startWith(configured(), fakeRunner(backgrounded()), env);
+    await spawnAsPage(started, { cwd: repo, prompt: 'go' });
+    expect(started.run.calls[0]?.options.env).toEqual({ PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'haiku', PWD: repo });
+  });
+
+  it("gives every start through the shared runner the defaults, the supervisor's spawn_session's included (W115)", () => {
+    const spawn = { cwd: repo, prompt: 'go' };
+    expect(withSessionWork(spawn, undefined)).toBe(spawn);
+    expect(withSessionWork(spawn, configured())).toEqual({ cwd: repo, prompt: 'go', model: 'opus', effort: 'high', subagentModel: 'haiku' });
+    expect(withSessionWork({ ...spawn, effort: 'low' }, configured())).toEqual({ cwd: repo, prompt: 'go', model: 'opus', effort: 'low', subagentModel: 'haiku' });
+  });
+
+  it('resume takes the defaults for sessions and their sub-agents', async () => {
+    const started = await startWith(configured(), fakeRunner(resumedOutput()));
+    expect((await postAsPage(started, resumePath(ENDED_ID))).status).toBe(200);
+    const [call] = started.run.calls;
+    expect(call?.args).toEqual(['--resume', ENDED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+    expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+  });
+
+  it('GET answers each layer and what applies; POST replaces the overrides and answers the same', async () => {
+    const started = await startWith(configured());
+    const port = started.server.port;
+    const read = await get(port, WORK_PATH, { authorization: `Bearer ${started.apiKey}`, origin: origin(port) });
+    expect(read.status).toBe(200);
+    expect(read.headers['cache-control']).toBe('no-store');
+    expect(read.json).toMatchObject({
+      builtIn: { session: {}, subagents: {}, supervisor: { model: 'claude-opus-5-5' }, recaps: { model: 'claude-haiku-5-5' }, relay: { model: 'haiku' } },
+      config: { session: { model: 'opus', effort: 'high' }, subagents: { model: 'haiku' } },
+      overrides: { session: {}, subagents: {}, supervisor: {}, recaps: {}, relay: {} },
+      effective: { session: { model: 'opus', effort: 'high' }, recaps: { model: 'claude-haiku-5-5' } },
+      configFile: '/home/example/.pitwall/config.json',
+    });
+    const write = await postAsPage(started, WORK_PATH, { overrides: { recaps: { effort: 'low' }, supervisor: { model: 'sonnet', effort: 'medium' } } });
+    expect(write.status).toBe(200);
+    expect(write.json).toMatchObject({
+      overrides: { recaps: { effort: 'low' }, supervisor: { model: 'sonnet', effort: 'medium' }, session: {} },
+      effective: { recaps: { model: 'claude-haiku-5-5', effort: 'low' }, supervisor: { model: 'sonnet', effort: 'medium' } },
+    });
+    // The whole set replaces the last.
+    const cleared = await postAsPage(started, WORK_PATH, { overrides: {} });
+    expect((cleared.json as { effective: { supervisor: unknown } }).effective.supervisor).toEqual({ model: 'claude-opus-5-5' });
+  });
+
+  it('POST refuses a value Claude Code would refuse or ignore, saying which, and keeps the overrides it had', async () => {
+    const work = configured();
+    const started = await startWith(work);
+    expect((await postAsPage(started, WORK_PATH, { overrides: { relay: { model: 'sonnet' } } })).status).toBe(200);
+    const cases: [unknown, RegExp][] = [
+      [{ overrides: { session: { model: 'opus --dangerously-skip-permissions' } } }, /"overrides.session.model" must be a Claude Code model/],
+      [{ overrides: { recaps: { effort: 'ultracode' } } }, /"overrides.recaps.effort" must be low, medium, high, xhigh or max/],
+      [{ overrides: { subagents: { effort: 'low' } } }, /"overrides.subagents.effort" can't be set: Claude Code has no effort setting for a session's sub-agents/],
+      [{ overrides: { subagents: { model: 'opusplan' } } }, /"overrides.subagents.model" must be a Claude Code model: opus, sonnet, haiku or fable/],
+      [{ overrides: { everything: { model: 'opus' } } }, /"overrides.everything" isn't a setting pitwall knows/],
+      [{ overrides: { session: { model: 'opus', temperature: 1 } } }, /"overrides.session.temperature" isn't a setting/],
+      [{ overrides: [] }, /"overrides" must be an object/],
+      [{}, /The body must be/],
+    ];
+    for (const [body, error] of cases) {
+      const res = await postAsPage(started, WORK_PATH, body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect((res.json as { error: string }).error).toMatch(error);
+    }
+    expect(work.choice('relay')).toEqual({ model: 'sonnet' });
+  });
+
+  it("POST needs the apiKey, this server's Origin and Host; GET the token or the apiKey", async () => {
+    const work = configured();
+    const started = await startWith(work);
+    const port = started.server.port;
+    const body = JSON.stringify({ overrides: { session: { model: 'haiku' } } });
+    const json = { 'content-type': 'application/json' };
+    // The raw token, even from this Origin; the apiKey without an Origin, or from another; no credential; another Host.
+    expect((await post(port, WORK_PATH, body, { ...json, authorization: `Bearer ${TOKEN}`, origin: origin(port) })).status).toBe(403);
+    for (const value of [undefined, 'http://evil.example', `http://localhost:${port}`]) {
+      const headers: Record<string, string> = { ...json, authorization: `Bearer ${started.apiKey}` };
+      if (value !== undefined) headers.origin = value;
+      expect((await post(port, WORK_PATH, body, headers)).status, String(value)).toBe(403);
+    }
+    expect((await post(port, WORK_PATH, body, { ...json, origin: origin(port) })).status).toBe(401);
+    expect((await post(port, WORK_PATH, body, { ...json, authorization: `Bearer ${started.apiKey}`, origin: origin(port), host: `localhost:${port}` })).status).toBe(403);
+    expect((await post(port, WORK_PATH, body, { authorization: `Bearer ${started.apiKey}`, origin: origin(port), 'content-type': 'text/plain' })).status).toBe(415);
+    expect(work.choice('session')).toEqual({ model: 'opus', effort: 'high' });
+    expect((await get(port, WORK_PATH, {})).status).toBe(401);
+    expect((await get(port, WORK_PATH, { authorization: `Bearer ${TOKEN}` })).status).toBe(200);
+    expect((await get(port, WORK_PATH, { authorization: `Bearer ${TOKEN}`, origin: 'http://evil.example' })).status).toBe(403);
+    expect((await get(port, WORK_PATH, { authorization: `Bearer ${TOKEN}`, host: `localhost:${port}` })).status).toBe(403);
   });
 });

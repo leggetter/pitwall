@@ -849,8 +849,14 @@ export interface SpawnRequest {
   prompt: string;
   /** Optional display name: letters, digits, space, `.`, `_` and `-`, at most 64 characters. */
   name?: string;
-  /** Optional model alias, such as `sonnet` or `haiku`. */
+  /**
+   * Optional model (W119): an alias, such as `sonnet` or `haiku`, or a full model name, as
+   * isWorkModel() allows, or WORK_DEFAULT for Claude Code's default whatever pitwall's defaults for
+   * sessions say. Absent: the defaults for sessions (WorkSettings.effective.session).
+   */
   model?: string;
+  /** Optional effort (W119): an EffortLevel, or WORK_DEFAULT. Absent: the defaults for sessions. */
+  effort?: EffortLevel | typeof WORK_DEFAULT;
   /**
    * Optional files for the first prompt (W79, spike 008): ids from
    * AttachmentResult, at most ATTACHMENTS_MAX_PER_SESSION, each used once.
@@ -1834,3 +1840,102 @@ export const MCP_TOOLS = {
   spawnSession: 'spawn_session',
   approve: 'approve',
 } as const;
+
+// ------------------------------------------------------------------ model and effort (W119, #114)
+
+/**
+ * The kinds of work pitwall starts, each with a model and an effort (W119): a session from New
+ * session or a resume (`claude --bg`), that session's sub-agents (CLAUDE_CODE_SUBAGENT_MODEL on the
+ * session's environment), the supervisor, recaps and the relay (each `claude -p`).
+ */
+export const WORK_KINDS = ['session', 'subagents', 'supervisor', 'recaps', 'relay'] as const;
+export type WorkKind = (typeof WORK_KINDS)[number];
+
+/**
+ * Claude Code's effort levels, as `--effort` takes them (code.claude.com/docs/en/model-config, "Adjust
+ * effort level"; `claude --help`, v2.1.316). Which a model supports varies: Claude Code runs a level a
+ * model lacks at the highest one below it. `ultracode` is left out: it also turns on workflows.
+ */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+/**
+ * Claude Code's documented model aliases (code.claude.com/docs/en/model-config, "Model aliases"),
+ * which `--model` takes. Each names the latest model of its kind on your provider.
+ */
+export const MODEL_ALIASES = ['opus', 'sonnet', 'haiku', 'fable', 'best', 'opusplan', 'opus[1m]', 'sonnet[1m]'] as const;
+
+/**
+ * The aliases a session's sub-agents can take: CLAUDE_CODE_SUBAGENT_MODEL accepts "a model alias or
+ * model ID" (code.claude.com/docs/en/sub-agents, "Choose a model"), and an agent definition's `model`
+ * the four below, so only those.
+ */
+export const SUBAGENT_MODEL_ALIASES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+
+/**
+ * A full model name, such as `claude-opus-5-5` or `claude-haiku-4-5-20251001`: `claude-`, a family,
+ * then numbers joined by `-`. Never free text on a command line: only these characters, at most 64.
+ */
+export const MODEL_ID_PATTERN = /^claude-(?:opus|sonnet|haiku|fable)(?:-[0-9]{1,8}){1,3}$/;
+
+/**
+ * "Claude Code's default": in an override, or in the config file, no `--model` or `--effort` at all,
+ * whatever pitwall's own default for that work is. For a model it's also Claude Code's own special
+ * value, "clears any model override and reverts to the runtime default" (model-config).
+ */
+export const WORK_DEFAULT = 'default';
+
+/** Whether `value` is a model pitwall passes to `--model` for `kind`: an alias, or a full model name. */
+export function isWorkModel(value: unknown, kind: WorkKind = 'session'): value is string {
+  if (typeof value !== 'string' || value.length > 64) return false;
+  const aliases: readonly string[] = kind === 'subagents' ? SUBAGENT_MODEL_ALIASES : MODEL_ALIASES;
+  return aliases.includes(value) || MODEL_ID_PATTERN.test(value);
+}
+
+export function isEffortLevel(value: unknown): value is EffortLevel {
+  return typeof value === 'string' && (EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * A model and an effort. Absent: the next layer down decides (an override, then the config file, then
+ * pitwall's own). WORK_DEFAULT: Claude Code's default, with no flag. A session's sub-agents have no
+ * effort of their own: Claude Code documents no way to set it apart from the session's.
+ */
+export interface WorkChoice {
+  model?: string;
+  effort?: EffortLevel | typeof WORK_DEFAULT;
+}
+
+/** Each kind of work's choice. */
+export type WorkChoices = Record<WorkKind, WorkChoice>;
+
+/**
+ * GET WORK_PATH, and POST WORK_PATH's answer (W119): each layer, and what applies. pitwall's server
+ * keeps `overrides` for its run only: they change processes it starts, and are never written to the
+ * config file. `effective` is, field by field, the override, else the config file's, else pitwall's
+ * own; a field it lacks, or WORK_DEFAULT, means no flag, so Claude Code's default.
+ */
+export interface WorkSettings {
+  /** pitwall's own: no flags for sessions and sub-agents, SUPERVISOR_MODEL, RECAP_MODEL and the relay's Haiku. */
+  builtIn: WorkChoices;
+  /** The config file's `work` block, each kind as given. Empty kinds when it has none. */
+  config: WorkChoices;
+  /** Set in the app, for this run. */
+  overrides: WorkChoices;
+  effective: WorkChoices;
+  /** The config file it read, for the words "in <file>". Absent when there's none. */
+  configFile?: string;
+}
+
+/**
+ * POST WORK_PATH's body: the whole set of overrides, which replaces the last. A kind or a field left
+ * out has no override. Each model must pass isWorkModel(), or be WORK_DEFAULT, and each effort
+ * isEffortLevel(), or WORK_DEFAULT; sub-agents take no effort. Else 400 with `{ error }`, in pitwall's
+ * words, and nothing changes.
+ */
+export interface WorkUpdate {
+  overrides: Partial<Record<WorkKind, WorkChoice>>;
+}
+
+/** The model and effort settings (W119). GET answers WorkSettings; POST takes a WorkUpdate. */
+export const WORK_PATH = '/api/work';
