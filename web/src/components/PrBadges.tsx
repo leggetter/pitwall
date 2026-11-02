@@ -5,7 +5,7 @@
 
 import type { PullRequestSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
-import { prKey, prName, prStateBadges, type SessionPrBadge } from '../prs.js';
+import { NEEDS_YOU_FOR, prKey, prName, prNeedState, prRef, prStateBadges, type SessionPrBadge } from '../prs.js';
 import { Badge } from './Badge.js';
 import { Tooltip } from './Tooltip.js';
 
@@ -79,5 +79,25 @@ export function SessionPrLinks({ linked, onOpen }: { linked: readonly PullReques
         </span>
       ))}
     </div>
+  );
+}
+
+/**
+ * The session view's line on why it needs you when that's a PR it owns, not the session itself
+ * (W128): "Needs you for example/demo-app#42: conflicts", the PR a link button that opens its PR
+ * view, as the line of PR links has it, and the PR badge's words for why (prNeedText()).
+ */
+export function PrNeedNote({ pr, onOpen }: { pr: PullRequestSummary; onOpen: (pr: PullRequestSummary) => void }) {
+  const state = prNeedState(pr);
+  return (
+    <p className="session-view-pr-need" data-pr-need={prKey(pr)}>
+      {NEEDS_YOU_FOR}{' '}
+      <Tooltip content={`${prName(pr)}: ${plainText(pr.title)}`} relation="description">
+        <button type="button" className="link-button pr-link" aria-label={prLinkLabel(pr)} onClick={() => onOpen(pr)}>
+          {prRef(pr)}
+        </button>
+      </Tooltip>
+      {state !== undefined && `: ${state}`}
+    </p>
   );
 }

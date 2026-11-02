@@ -6,11 +6,11 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFacts } from '../index/index.js';
 import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
-import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, type ConversationEntry, type ConversationPage, type IndexSnapshot, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
+import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
-import { createRecapEngine, OWN_NAME_MS, PAUSE_AFTER_FAILURES, PLAN_MAX_CONCURRENT, PLAN_MODEL_REJECTED, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
+import { createRecapEngine, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, PLAN_MAX_CONCURRENT, PLAN_MODEL_REJECTED, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
 import { CALL_FAILED, RECAP_REFUSALS, PLAN_STATUS_SYSTEM_PROMPT, planStatusArgs, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
@@ -69,6 +69,24 @@ const snapshotOf = (sessions: SessionSummary[], ok = true): IndexSnapshot => ({
   source: ok ? { ok: true } : { ok: false, error: 'claude agents --json timed out after 10s' },
 });
 
+/** A made-up open PR of yours, `example/demo-app#42`, healthy unless overridden. */
+const pullRequest = (overrides: Partial<PullRequestSummary> = {}): PullRequestSummary => ({
+  url: 'https://github.com/example/demo-app/pull/42',
+  repo: 'example/demo-app',
+  repoLabel: 'example/demo-app',
+  number: 42,
+  title: 'Fix the nightly export',
+  draft: true,
+  createdAt: '2026-10-01T12:00:00.000Z',
+  updatedAt: '2026-10-28T12:00:00.000Z',
+  checks: 'passing',
+  mergeable: 'clean',
+  relation: 'authored',
+  ...overrides,
+});
+const prList = (prs: PullRequestSummary[]): PullRequestList => ({ source: { ok: true }, refreshing: false, prs, fetchedAt: '2026-10-29T12:00:00.000Z' });
+const OPENED_42 = [{ kind: 'opened' as const, repo: 'example/demo-app', number: 42, lastAt: '2026-10-01T12:00:00.000Z' }];
+
 const tick = async (times = 10) => {
   for (let i = 0; i < times; i++) await new Promise((resolve) => setImmediate(resolve));
 };
@@ -126,6 +144,8 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
   });
   let changes = 0;
   engine.subscribe(() => changes++);
+  let prs: PullRequestList = prList([]);
+  const prListeners = new Set<(list: PullRequestList) => void>();
 
   /** A session the engine can recap: listed, with a transcript file, a page of turns and a first prompt. */
   function add(id: string, overrides: Partial<SessionSummary> = {}, fact: SessionFacts = { turnEnded: true }) {
@@ -159,7 +179,19 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
       await tick();
     },
     start() {
-      engine.start(index);
+      engine.start(index, {
+        latest: () => prs,
+        subscribe(listener) {
+          prListeners.add(listener);
+          return () => prListeners.delete(listener);
+        },
+      });
+    },
+    /** A new PR list, as the PR poller sends one. */
+    async setPrs(list: PullRequestSummary[]) {
+      prs = prList(list);
+      for (const listener of [...prListeners]) listener(prs);
+      await tick();
     },
     /** Answers a call as `claude -p --output-format json` would. */
     async reply(call: FakeCall | undefined, stdout: string, code: number | null = 0) {
@@ -224,6 +256,53 @@ describe('when a session is recapped', () => {
     await h.poll(sessions);
     expect(h.calls).toHaveLength(2);
     expect(h.calls[1]!.input).toContain('Fix recent.');
+  });
+
+  it('recaps a finished session that owns a PR that needs you, once per activity, from a new PR list too (W128)', async () => {
+    const h = harness();
+    h.start();
+    // Finished weeks after it opened its PR, its transcript's last mark a turn that never ended.
+    const old = new Date(h.clock.now - 3 * 24 * 60 * MINUTE).toISOString();
+    const done = h.add('done', { finished: true, alive: false, pid: undefined, lastActivityAt: old, prLinks: OPENED_42 }, { turnEnded: false });
+    const ended = h.add('ended', { finished: true, ended: true, alive: false, kind: 'interactive', lastActivityAt: old, prLinks: [{ ...OPENED_42[0]!, number: 43 }] });
+    const stale = h.add('stale', { stale: true, alive: false, lastActivityAt: old, prLinks: [{ ...OPENED_42[0]!, number: 44 }] });
+    const noTranscript = h.add('no-transcript', { finished: true, alive: false, transcript: 'missing', lastActivityAt: old, prLinks: [{ ...OPENED_42[0]!, number: 45 }] });
+    const sessions = [done, ended, stale, noTranscript];
+    // A healthy PR, a draft included, needs nothing: no recap.
+    await h.setPrs([pullRequest()]);
+    await h.poll(sessions);
+    expect(h.calls).toHaveLength(0);
+    // Conflicts on #42, and #43 is someone else's PR with failing checks, which isn't yours to fix.
+    await h.setPrs([
+      pullRequest({ mergeable: 'conflicts' }),
+      pullRequest({ number: 43, url: 'https://github.com/example/demo-app/pull/43', checks: 'failing', relation: 'mentioned' }),
+      ...[44, 45].map((number) => pullRequest({ number, url: `https://github.com/example/demo-app/pull/${number}`, checks: 'failing' })),
+    ]);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]!.input).toContain('Fix done.');
+    await h.reply(h.calls[0], envelope(answer()));
+    expect(h.engine.recap(done)?.source).toBe('pitwall');
+    // Nothing new in its transcript: none again, whatever the PR list does.
+    await h.setPrs([pullRequest({ mergeable: 'conflicts', checks: 'failing' })]);
+    await h.poll(sessions);
+    expect(h.calls).toHaveLength(1);
+    // Its transcript changes: one more, once it's been quiet RECAP_DEBOUNCE_MS.
+    const later = { ...done, lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS).toISOString() };
+    h.pages.get('done')!.push({ kind: 'user', text: 'Is the PR still needed?', at: later.lastActivityAt });
+    await h.poll([later, ended, stale, noTranscript]);
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it('finds the sessions that own a PR that needs you, as the page does (W128)', () => {
+    const mine = session('mine', { prLinks: OPENED_42 });
+    // Prompted with the PR's URL ranks below opening it, so it doesn't own it.
+    const prompted = session('prompted', { prLinks: [{ ...OPENED_42[0]!, kind: 'prompted', lastAt: '2026-10-28T12:00:00.000Z' }] });
+    const mentioned = session('mentioned', { prLinks: [{ ...OPENED_42[0]!, kind: 'mentioned', number: 46 }] });
+    const snapshot = snapshotOf([mine, prompted, mentioned]);
+    expect([...ownersNeedingYou(snapshot, prList([pullRequest({ checks: 'failing' })]))]).toEqual(['mine']);
+    expect([...ownersNeedingYou(snapshot, prList([pullRequest()]))]).toEqual([]);
+    expect([...ownersNeedingYou(snapshot, prList([pullRequest({ number: 46, url: 'https://github.com/example/demo-app/pull/46', checks: 'failing' })]))]).toEqual([]);
+    expect([...ownersNeedingYou(snapshot, undefined)]).toEqual([]);
   });
 
   it("doesn't schedule from a snapshot whose listing failed", async () => {

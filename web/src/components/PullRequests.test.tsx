@@ -224,7 +224,7 @@ describe('rows', () => {
   it("says why on line 2 and has the bar while a PR it owns needs attention, and is neutral while it doesn't", () => {
     const { again } = renderDashboard(prList(PRS), { search: '?view=all' });
     expect(sessionRow('alpha').classList.contains('attention')).toBe(true);
-    expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · CI is failing on #42');
+    expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · Needs you for example/demo-app#42: CI failing');
     // Its Not needed now toggle is for what the session needs, not its PRs.
     expect(sessionRow('alpha').querySelector('[data-not-needed-session]')).toBeNull();
     again(prList([approved]));
@@ -244,7 +244,17 @@ describe('rows', () => {
     await settle();
     expect(toastMessages()).toEqual([notNeededStaysText('kappa', 42)]);
     expect(notNeededStaysText('kappa', 42)).toBe('Marked kappa not needed now. It stays in Needs you while #42 needs you.');
-    expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe('more · Not needed now · CI is failing on #42');
+    expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe('more · Not needed now · Needs you for example/demo-app#42: CI failing');
+  });
+
+  it("says nothing of its PR in the session view while the session needs you itself (W128)", async () => {
+    const base = snap();
+    const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)] });
+    const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [kappa] })] };
+    render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you&session=pr-kappa')} storage={memory().source} />);
+    await settle();
+    expect(sessionView()!.querySelector('.session-view-prs')).not.toBeNull();
+    expect(sessionView()!.querySelector('.session-view-pr-need')).toBeNull();
   });
 
   it('moves a PR to the session that acted on it later, which takes its badge over', () => {
@@ -549,10 +559,15 @@ describe('sessions and PRs', () => {
     fireEvent.click(within(main()).getByRole('button', { name: 'alpha' }));
     await settle();
     expect(history.location.search).toBe('?view=prs&session=pr-alpha');
+    // It needs you only for #42 (W128): its header says so, and the PR is a link.
+    const need = sessionView()!.querySelector<HTMLElement>('.session-view-pr-need')!;
+    expect(need.textContent).toBe('Needs you for example/demo-app#42: CI failing');
+    expect(within(need).getByRole('button', { name: 'Pull request example/demo-app #42' }).textContent).toBe('example/demo-app#42');
     // Its header links to each open PR it owns, most urgent first.
-    const links = within(sessionView()!).getAllByRole('button', { name: /^Pull request / });
+    const links = within(sessionView()!.querySelector<HTMLElement>('.session-view-prs')!).getAllByRole('button', { name: /^Pull request / });
     expect(links.map((link) => link.getAttribute('aria-label'))).toEqual(['Pull request example/demo-app #42', 'Pull request example/demo-app #43']);
-    fireEvent.click(links[0]!);
+    // The note's link opens it, as the line of links does.
+    fireEvent.click(within(need).getByRole('button'));
     await settle();
     expect(history.location.search).toBe('?view=prs&pr=example/demo-app/42');
     const view = prView()!;

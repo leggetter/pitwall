@@ -407,8 +407,9 @@ export async function startServerWithInternals(
   attachments.start();
   // The first fetch of your open PRs, now that there's a server to show them.
   prs.start();
-  // Recaps from the index's snapshots, now that there's a server to show them.
-  recaps?.start(indexer);
+  // Recaps from the index's snapshots, now that there's a server to show them, and from the PR list,
+  // for a finished session that owns a PR that needs you (W128).
+  recaps?.start(indexer, prs);
   // The supervisor's MCP config names this server's MCP URL, now that its port is known. Nothing starts yet.
   supervisor?.bind({ mcpUrl: `http://${LOOPBACK_HOST}:${port}${MCP_PATH}` });
   clone.start();

@@ -1691,7 +1691,7 @@ export interface SessionRecap {
    * there, before pitwall's first recap or while the day's budget is spent: then `summary` is the
    * away_summary, `todos` is empty, `title` is empty, `waitingOn` is 'nothing', so it never puts a
    * session in Needs you, and `at` and `throughAt` are the away_summary's time. Only for a session
-   * pitwall recaps by itself: its process running, not ended or finished.
+   * whose process is running, not ended or finished.
    */
   source: 'pitwall' | 'claude-code';
   /** True when the session has activity newer than `throughAt`. */

@@ -9,8 +9,8 @@
 //
 // A session is a piece of work (W106, work.ts): its row carries the open pull requests it owns, the
 // most urgent as a badge, "#128 CI failing", with "+2" for more. It needs you when the session does
-// or when one of those PRs needs attention, and then line 2 says why, "CI is failing on #128", unless
-// the session needs you itself, which comes first. A finished or ended session that owns an open PR
+// or when one of those PRs needs attention, and then line 2 says so, "Needs you for example/demo-app#128:
+// CI failing" (W128), unless the session needs you itself, which comes first. A finished or ended session that owns an open PR
 // isn't finished work, so its row isn't muted; its badge still says Ended, and, where the list offers
 // it, its line 2 ends with Resume (W107, RowResume.tsx), where a session that needs you has its Not
 // needed now toggle: it resumes an ended interactive session, or a background one that isn't running.
@@ -26,7 +26,7 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { prNeedsAttention, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
-import { prReason, sessionPrBadge } from '../prs.js';
+import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
 import { groupLabel, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
@@ -187,7 +187,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const badge = rowStatusBadge(session, notNeeded);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
-  const reason = !own && prNeed !== undefined ? prReason(prNeed, true) : undefined;
+  const reason = !own && prNeed !== undefined ? prNeedText(prNeed) : undefined;
   const wants: { content: ReactNode; hint?: string } | undefined =
     reason !== undefined ? { content: <span className="asked pr-reason">{reason}</span>, hint: reason } : whatItWants(session);
   // What an idle session's recap says it waits on, when that isn't you (W111): quiet, first on line 2, never needing you.
