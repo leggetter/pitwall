@@ -18,7 +18,7 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 | W124, the supervisor's v3 prompt, cheaper lookups and Open hand-offs (Phil's first use) | In review, into `m5/integration` |
 | W125, session names in the supervisor's replies open the session; list_prs's old PRs don't need you | In review, into `m5/integration` |
 | W126, why a recap's answer was refused; a fence and a disagreeing waitingOn repaired (Phil's report, 2026-11-02) | In review, into `m5/integration` |
-| W127, the supervisor resumes a finished session and sends it a message (resume_session, spike 011, prompt v5) | In review, into `m5/integration` |
+| W127, the supervisor resumes a finished session and sends it a message (resume_session, spike 011, prompt v5) | In review, into `m5/integration` ([#131](https://github.com/leggetter/pitwall/pull/131)) |
 | W128, Needs you names the PR; a recap for a finished session whose PR needs you; Rename pushed to "Nice to have, later" | Merged ([#130](https://github.com/leggetter/pitwall/pull/130)) |
 | M5 try-out | Phil's, on port 4519; started, W124 came from it |
 | Merge `m5/integration` into `main` | Waits on Phil's word after the try-out |
