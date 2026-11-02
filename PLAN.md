@@ -478,6 +478,14 @@ Pitwall runs and owns one supervisor: a conversation with me, in pitwall's own c
 - **Status comes from pitwall's index** (D1 polling and transcripts), not from messaging sessions. Each relayed message costs a full turn on the receiving session's model and effort, which was Opus 5.5 at xhigh in spike 002.
 - **Don't subscribe to idle notices broadly.** Each subscription prints a notice in the watched session's terminal that names a raw socket address. Pitwall's own polling already sees busy-to-idle changes.
 
+### M5.1 - Efficiency (after M5)
+
+Phil, 2026-11-02: "My plan is to build pitwall with pitwall... I'd like this guidance applied to pitwall." The week's usage ran at about twice the rate the weekend needs: every agent on Opus, long contexts re-read every turn, and no view of the run rate until Phil checked. The working rules are in AGENTS.md's "Efficiency" section; this milestone builds them into pitwall:
+
+- **Work profiles** (extends W119): named profiles in the config file, for example Build (Opus, high), Review (Sonnet, high), Security review (Opus, xhigh) and Docs (Sonnet, medium), with a default sub-agent model, so a session's own reviewers can run on a smaller model. New session and the supervisor's `spawn_session` pick one.
+- **Usage you can see:** a Usage view with tokens per session, per model and per day, from the transcripts' own usage records (internal, behind the adapter, failing soft); a run rate against a weekly target you set, since Claude Code doesn't expose the plan's percentage; and a context-size badge on sessions whose every turn re-reads a very large context, suggesting `/compact` or a handoff.
+- **The supervisor applies it:** it proposes new sessions with a profile, watches the run rate, and suggests compaction or a pause when the week is ahead of pace, always through Phil's approval.
+
 ### M6 - Triage
 
 Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using the session index, the supervisor and M4's PR and CI state.
@@ -939,6 +947,7 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
 - [ ] Chatting with a session from the Conversation tab, and sessions pitwall hosts: later, after M5 ([#108](https://github.com/leggetter/pitwall/issues/108))
 - [ ] A session asking the supervisor to spin off work, as an approval card labelled with the session that asked: after M5 (Phil, 2026-10-29)
 - [ ] **Plan status** (W123), the first follow-up after M5: a button on the recap strip beside Refresh, named by Phil (2026-11-02), that shows where the session is in its overall plan: the milestones or work items done and still to do, where it is now, and any change to the plan the transcript records. A deeper recap call (about $0.002) over more of the transcript, compaction summaries included; nothing is sent to the session. The summary already carries a one-line plan position (W121)
+- [ ] M5.1: efficiency, after M5 (work profiles, a Usage view with a run rate, the supervisor applying them; Phil, 2026-11-02)
 - [ ] Model and effort for each kind of work (a session, its sub-agents, the supervisor, recaps, the relay): defaults in the config file, overrides in the app's settings; after this round of work, M4's merge and M5 ([#114](https://github.com/leggetter/pitwall/issues/114); Phil, 2026-10-30, after the week's usage limit stopped three agents)
 
 ---

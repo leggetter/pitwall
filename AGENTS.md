@@ -31,6 +31,18 @@ M5, the supervisor, is being built on `m5/integration`, branched from `m4/integr
 - **Worktrees go in `.worktrees/<name>`** inside the main checkout, which `.gitignore` ignores (Phil, 2026-10-27), not in folders beside it. ripgrep, the editors' search, vitest and tsc leave them alone, and New session's directory list skips hidden folders. A plain `git clean -fdx` skips them as nested repositories; only `-ff` would delete them.
 - **Write for a public repo.** It's going public (Phil, 2026-10-28), so don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
 
+## Efficiency
+
+Usage limits are weekly, and pitwall's own work should leave room for the weekend (Phil, 2026-11-02). These hold for every session working on pitwall, whether started from pitwall or a terminal.
+
+- **Checks while you work are targeted:** run the tests for the files you change, and the full `npm test` once, at the end. CI runs it again.
+- **The app check runs only for the parts a change touches,** at two or three widths (`--only`, `--widths`, `--themes`), through `scratch/run-locked.sh` under `caffeinate -i`. The full run is for a milestone merge.
+- **One agent at a time,** unless Phil asks for more in parallel.
+- **Match the model and effort to the work:** high effort for building and ordinary reviews, xhigh only for security reviews. Use a smaller model for mechanical work, such as plan and doc updates, where the session can choose.
+- **Small review fixes are made by the coordinating session,** not by another agent round. Resuming a big agent re-reads its whole context.
+- **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs.
+- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should write a handoff note to `PLAN.md`, then compact or start afresh.
+
 ## Commands
 
 Use Node 22 (CI runs 22.x) and npm.
