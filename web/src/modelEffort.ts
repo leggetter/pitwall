@@ -7,6 +7,7 @@ import {
   EFFORT_LEVELS,
   isEffortLevel,
   isWorkModel,
+  RECAP_EFFORT_LEVELS,
   SUBAGENT_MODEL_ALIASES,
   WORK_DEFAULT,
   WORK_KINDS,
@@ -29,10 +30,10 @@ export const WORK_LABELS: Readonly<Record<WorkKind, string>> = {
 
 /** What each kind is, and when a change reaches it. */
 export const WORK_HINTS: Readonly<Record<WorkKind, string>> = {
-  session: 'New session and resume. From the next session you start.',
+  session: 'New session, and resuming one pitwall started. From the next session you start.',
   subagents: "For sub-agents whose definition names no model, from the next session you start. Their effort is the session's: Claude Code has no separate setting for it.",
   supervisor: 'From its next start.',
-  recaps: 'From the next recap.',
+  recaps: 'From the next recap. At most high effort: a recap may write 4,096 tokens, thinking included.',
   relay: 'Passes on the messages you write to interactive sessions. From its next start.',
 };
 
@@ -55,7 +56,9 @@ function readChoice(value: unknown, kind: WorkKind): WorkChoice {
   if (!isRecord(value)) return {};
   const choice: WorkChoice = {};
   if (value.model === WORK_DEFAULT || isWorkModel(value.model, kind)) choice.model = value.model as string;
-  if (kind !== 'subagents' && (value.effort === WORK_DEFAULT || isEffortLevel(value.effort))) choice.effort = value.effort as WorkChoice['effort'];
+  if (kind !== 'subagents' && (value.effort === WORK_DEFAULT || isEffortLevel(value.effort)) && (kind !== 'recaps' || value.effort === WORK_DEFAULT || (RECAP_EFFORT_LEVELS as readonly unknown[]).includes(value.effort))) {
+    choice.effort = value.effort as WorkChoice['effort'];
+  }
   return choice;
 }
 
@@ -132,7 +135,8 @@ export function defaultText(settings: WorkSettings, kind: WorkKind, field: 'mode
 export function choiceValues(settings: WorkSettings | undefined, kind: WorkKind, field: 'model' | 'effort'): string[] {
   const fallback = settings === undefined ? undefined : defaultOf(settings, kind, field).value;
   const values: string[] = fallback === undefined || fallback === WORK_DEFAULT ? [] : [WORK_DEFAULT];
-  if (field === 'effort') return [...values, ...EFFORT_LEVELS];
+  // Recaps stop at high: a recap's output cap counts thinking (RECAP_EFFORT_LEVELS).
+  if (field === 'effort') return [...values, ...(kind === 'recaps' ? RECAP_EFFORT_LEVELS : EFFORT_LEVELS)];
   const named = settings === undefined ? [] : [settings.overrides, settings.config, settings.builtIn].map((layer) => layer[kind].model);
   const aliases: readonly string[] = kind === 'subagents' ? SUBAGENT_MODEL_ALIASES : OFFERED_MODELS;
   for (const value of [...aliases, ...named]) {

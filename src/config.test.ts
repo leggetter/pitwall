@@ -651,6 +651,7 @@ describe('work: the model and effort for each kind of work (W119)', () => {
     ['a model that is no Claude model', '{ "work": { "recaps": { "model": "gpt-5" } } }', '"work.recaps.model" must be a Claude Code model'],
     ['a sub-agent alias Claude Code documents only for sessions', '{ "work": { "subagents": { "model": "opusplan" } } }', '"work.subagents.model" must be a Claude Code model: opus, sonnet, haiku or fable'],
     ['an effort Claude Code ignores', '{ "work": { "supervisor": { "effort": "extreme" } } }', '"work.supervisor.effort" must be low, medium, high, xhigh or max'],
+    ['max for recaps, whose output cap counts thinking', '{ "work": { "recaps": { "effort": "max" } } }', '"work.recaps.effort" must be low, medium or high'],
     ['ultracode, which turns on workflows too', '{ "work": { "session": { "effort": "ultracode" } } }', '"work.session.effort" must be low, medium, high, xhigh or max'],
     ['an effort for sub-agents', '{ "work": { "subagents": { "effort": "low" } } }', "\"work.subagents.effort\" can't be set: Claude Code has no effort setting for a session's sub-agents"],
   ])('stops at %s, naming its key, never its value', (_, text, expected) => {

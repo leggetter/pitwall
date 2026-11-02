@@ -2,11 +2,11 @@
 // arguments are in actions.test.ts; the config file's block in config.test.ts; recaps' and the
 // supervisor's in their own tests.
 import { describe, expect, it } from 'vitest';
-import { recapArgs } from '../recaps/prompt.js';
+import { RECAP_MAX_OUTPUT_TOKENS, recapArgs } from '../recaps/prompt.js';
 import { isWorkModel, RECAP_MODEL, SUPERVISOR_MODEL } from '../shared/protocol.js';
 import { supervisorArgs } from '../supervisor/prompt.js';
 import { relayArgs } from './relayPrompt.js';
-import { BUILT_IN_WORK, createWorkStore, emptyChoices, isModelRejection, mergeChoices, withEffort, workArgs } from './work.js';
+import { BUILT_IN_WORK, RECAP_EFFORT_PROBLEM, createWorkStore, emptyChoices, isModelRejection, mergeChoices, withEffort, workArgs } from './work.js';
 
 const flagsOf = (args: string[]) => args.flatMap((arg, i) => (arg === '--model' || arg === '--effort' ? [arg, args[i + 1]] : []));
 
@@ -52,6 +52,18 @@ describe('precedence: the app, then the config file, then pitwall', () => {
     expect(workArgs(store.choice('supervisor'))).toEqual(['--effort', 'medium']);
     expect(store.update({ overrides: {} }).ok).toBe(true);
     expect(store.choice('supervisor')).toEqual({ model: 'sonnet', effort: 'medium' });
+  });
+
+  it('keeps recaps at high effort at most, since their output cap counts thinking, and says why', () => {
+    const store = createWorkStore();
+    for (const effort of ['low', 'medium', 'high', 'default']) expect(store.update({ overrides: { recaps: { effort } } }).ok, effort).toBe(true);
+    for (const effort of ['xhigh', 'max']) {
+      const result = store.update({ overrides: { recaps: { effort } } });
+      expect(result).toEqual({ ok: false, error: `"overrides.recaps.effort" ${RECAP_EFFORT_PROBLEM}.` });
+    }
+    // The other kinds take every level.
+    expect(store.update({ overrides: { supervisor: { effort: 'max' }, relay: { effort: 'xhigh' } } }).ok).toBe(true);
+    expect(RECAP_EFFORT_PROBLEM).toContain(RECAP_MAX_OUTPUT_TOKENS.toLocaleString('en'));
   });
 
   it('copies what it answers, so a caller changing it changes nothing', () => {

@@ -196,6 +196,11 @@ export function WorkPreferences({ recaps, supervisor, initial }: WorkPreferences
   const [error, setError] = useState<string>();
   // The overrides as last chosen, so two quick changes don't send the first one's stale set.
   const latest = useRef<WorkChoices | undefined>(initial?.overrides);
+  // What the server last confirmed, to go back to on a refusal; whether a save is out; and the set to
+  // send once it's answered. One save at a time, so the server can't apply them out of order (W119's review).
+  const confirmed = useRef<WorkSettings | undefined>(initial);
+  const saving = useRef(false);
+  const queued = useRef<WorkChoices | undefined>(undefined);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -206,31 +211,44 @@ export function WorkPreferences({ recaps, supervisor, initial }: WorkPreferences
       if (loaded === undefined) setFailed(true);
       else {
         latest.current = loaded.overrides;
+        confirmed.current = loaded;
         setSettings(loaded);
       }
     });
     return () => controller.abort();
   }, [api, initial]);
 
-  const change = (kind: WorkKind, field: 'model' | 'effort', value: string) => {
-    if (settings === undefined || latest.current === undefined) return;
-    const before = settings;
-    const overrides = withOverride(latest.current, kind, field, value);
-    latest.current = overrides;
-    setSettings({ ...settings, overrides });
-    setError(undefined);
+  /** Sends `overrides`, then whatever was chosen while it was out, so the last choice is the last sent. */
+  const save = (overrides: WorkChoices) => {
     if (!api) return;
+    saving.current = true;
     void saveWorkOverrides(api, overrides).then((outcome) => {
-      if (latest.current !== overrides) return;
+      saving.current = false;
+      const next = queued.current;
+      queued.current = undefined;
+      if (outcome.ok) confirmed.current = outcome.settings;
+      // A later choice replaces this one's whole set: send it, and show this answer only if it's the last.
+      if (next !== undefined) return save(next);
       if (outcome.ok) {
         latest.current = outcome.settings.overrides;
         setSettings(outcome.settings);
       } else {
-        latest.current = before.overrides;
-        setSettings(before);
+        const back = confirmed.current;
+        latest.current = back?.overrides;
+        setSettings(back);
         setError(outcome.error);
       }
     });
+  };
+
+  const change = (kind: WorkKind, field: 'model' | 'effort', value: string) => {
+    if (settings === undefined || latest.current === undefined) return;
+    const overrides = withOverride(latest.current, kind, field, value);
+    latest.current = overrides;
+    setSettings({ ...settings, overrides });
+    setError(undefined);
+    if (saving.current) queued.current = overrides;
+    else save(overrides);
   };
 
   const costs: Partial<Record<WorkKind, string>> = { recaps: recapCostText(recaps), supervisor: supervisorCostText(supervisor) };
