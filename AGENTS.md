@@ -6,7 +6,7 @@ Instructions for agents working in this repo.
 
 pitwall is the pit wall for the Claude Code sessions on this machine: it watches every one, lets you steer it, and starts new ones, from a local web UI. It lists them grouped by repo, and will have a supervisor session (M5) you can talk to instead of visiting each session.
 
-Read `PLAN.md` first. It says what exists, what's next and which decisions are still open.
+Read `NOW.md` first, then the `PLAN.md` sections it points to. `NOW.md` says where the work stands and what is next; `PLAN.md` has the design, the security rules and the open milestones; finished milestones are in `docs/plan-archive.md`.
 
 ## Status
 
@@ -21,7 +21,7 @@ M5, the supervisor, is being built on `m5/integration`, branched from `m4/integr
 ## Rules
 
 - **A UI change runs the app check:** `npm run build && npm run appcheck -- --out <dir>`, and adds or extends its part in `scripts/appcheck/parts/`. On macOS, never send key presses to Google Chrome's headless mode: it plays the user's alert sound for each key a page doesn't handle (W64). The harness refuses any browser but the pinned `chrome-headless-shell` there.
-- **The plan is the source of truth.** Update `PLAN.md` in the same commit as the work. A settled decision moves to `docs/decisions.md` with its reasoning, under the ID it had in the plan.
+- **The plan is the source of truth.** Update `NOW.md` in the same commit as the work, and `PLAN.md` where the design changed. A settled decision moves to `docs/decisions.md` with its reasoning, under the ID it had in the plan.
 - **Prefer documented Claude Code interfaces:** `claude agents --json`, `claude --bg`, `claude attach`, `claude logs`, and cross-session messaging. Anything internal goes behind one adapter module and fails soft: show "unavailable", never crash. That covers transcript JSONL, sub-agents' `subagents/` folders, `~/.claude/jobs/*/state.json` and the inbox socket wire format.
 - **Never touch a real session.** During development and tests, don't message, stop, attach to or remove a session the user didn't name. Spikes and tests use throwaway sessions named `pitwall-test-*`, and remove them afterwards.
 - **Keep the security rules in `PLAN.md`:** localhost only, a token on every API request and WebSocket, `Host` and `Origin` checks. Don't weaken them for convenience, including in dev mode.
@@ -41,7 +41,7 @@ Usage limits are weekly, and pitwall's own work should leave room for the weeken
 - **Match the model and effort to the work:** high effort for building and ordinary reviews, xhigh only for security reviews. Use a smaller model for mechanical work, such as plan and doc updates, where the session can choose.
 - **Small review fixes are made by the coordinating session,** not by another agent round. Resuming a big agent re-reads its whole context.
 - **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs.
-- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should write a handoff note to `PLAN.md`, then compact or start afresh.
+- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact.
 
 ## Commands
 
@@ -75,7 +75,10 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 ## Layout
 
 ```
-PLAN.md                  the living plan: status, decisions, milestones
+NOW.md                   where the work stands and what is next; every session reads it first and updates it before it ends
+PLAN.md                  the living design: architecture, security, open milestones, open questions
+docs/plan-archive.md     history: M0 to M4 work breakdowns, findings and decisions
+.claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
 docs/decisions.md        settled decisions, D1 to D26, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility

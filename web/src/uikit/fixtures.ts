@@ -955,7 +955,7 @@ export const SUBAGENTS: SubagentSummary[] = [
 const TASKS = ['Read', 'Check', 'Review', 'Search', 'Summarise', 'Draft', 'Test', 'Trace'];
 const THINGS = ['the made-up export job', 'the retry tests', 'the made-up routes', 'the batch writer', 'the made-up docs', 'the queue worker', 'the made-up changelog', 'the timeout handling', 'the CSV export'];
 
-/** 72 sub-agents, the most one of Phil's sessions started in a week (PLAN.md): three running, and every eighth started by another. */
+/** 72 sub-agents, the most one of Phil's sessions started in a week (docs/plan-archive.md): three running, and every eighth started by another. */
 export const MANY_SUBAGENTS: SubagentSummary[] = (() => {
   const made: SubagentSummary[] = [];
   for (let i = 0; i < 72; i++) {

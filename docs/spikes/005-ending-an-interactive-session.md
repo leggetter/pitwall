@@ -87,4 +87,4 @@ Ending an interactive session with SIGTERM is safe enough to build, with the gua
 - **SIGTERM only,** never SIGKILL. SIGINT exits 0, which a shell can't tell from a normal `/exit`; SIGTERM's 143 can be.
 - **Afterwards,** the view says how to resume: W67's Resume in background and Copy command already do.
 
-Whether to build it is Phil's call (`PLAN.md`, "Spike 005").
+Whether to build it is Phil's call (`docs/plan-archive.md`, "Spike 005").

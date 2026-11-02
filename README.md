@@ -277,7 +277,9 @@ Apache-2.0: see [`LICENSE`](LICENSE). The bundled fonts and icons keep their own
 ## More
 
 - **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D26, with their reasoning.
-- **[`PLAN.md`](PLAN.md):** the living plan: status, what's next, open questions, and each milestone's work.
+- **[`NOW.md`](NOW.md):** where the work stands and what is next.
+- **[`PLAN.md`](PLAN.md):** the living design: architecture, security rules, open milestones and open questions.
+- **[`docs/plan-archive.md`](docs/plan-archive.md):** history: the finished milestones M0 to M4, their work breakdowns and findings.
 - **[`docs/design-system.md`](docs/design-system.md):** the web UI's design system: tokens, layout, components, content and accessibility.
 - **[`docs/spikes/`](docs/spikes/):** the experiments behind the decisions, one write-up each.
 - **[`AGENTS.md`](AGENTS.md):** for contributors, people and agents alike: the repo's rules, its commands, such as `npm run dev` and `npm test`, and its layout.

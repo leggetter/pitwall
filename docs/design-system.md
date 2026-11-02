@@ -1808,7 +1808,7 @@ The composer in the session view's footer, for interactive sessions. Messages go
 
 ### Sub-agents
 
-The session view's Sub-agents tab (W77; Phil, 2026-10-23 and 2026-10-27; the coordinator's calls in `PLAN.md`, "M3.1 - After M3", item 4): the sub-agents a session started, as one list, and each one's transcript, read-only. `Subagents.tsx` (`web/src/components/`), with `useSubagents()`, `SubagentsPanel` and the list's rows; the list is fetched and checked in `web/src/subagents.ts`. The list stays out of the snapshot (D15): the snapshot carries only `subagentsRunning`, for the [row](#session-rows).
+The session view's Sub-agents tab (W77; Phil, 2026-10-23 and 2026-10-27; the coordinator's calls in `docs/plan-archive.md`, "M3.1 - After M3", item 4): the sub-agents a session started, as one list, and each one's transcript, read-only. `Subagents.tsx` (`web/src/components/`), with `useSubagents()`, `SubagentsPanel` and the list's rows; the list is fetched and checked in `web/src/subagents.ts`. The list stays out of the snapshot (D15): the snapshot carries only `subagentsRunning`, for the [row](#session-rows).
 
 - **When the list is asked for** (`subagentsPath()`):
   - **Once as the view opens,** after its conversation's first page has come back, so the two never wait on each other for the server's four reads at once, and a view only passed through with `j` or `k` asks nothing more. It's what says whether the tab shows. Or first when the tab is opened, as from a link.
@@ -2497,4 +2497,4 @@ Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They'
 
 ## 7. Open questions
 
-None open. Decisions made while writing this doc are recorded in `PLAN.md` under M3.
+None open. Decisions made while writing this doc are recorded in `docs/plan-archive.md` under M3.
