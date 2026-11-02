@@ -11,14 +11,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { AgentRow, AgentsResult } from '../index/agents.js';
 import type { Indexer } from '../index/index.js';
-import { MCP_PATH, supervisorApprovalPath, WS_PATH, type IndexSnapshot, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { MCP_PATH, supervisorApprovalPath, WS_PATH, type IndexSnapshot, type SavedPermission, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import { createApprovalQueue, DECLINED_MESSAGE, timeoutMessage, type ApprovalQueue } from '../supervisor/approvals.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { fakeSupervisor, type FakeSupervisor } from '../test/supervisor.js';
 import type { CommandOptions, CommandResult } from './command.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
-import { checkMessage, recipientNames } from './supervisorActions.js';
+import { checkMessage, recipientNames, sameNameCount } from './supervisorActions.js';
 import { validateSpawnRequest } from './actions.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
@@ -137,7 +137,7 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((server) => server.close()));
 });
 
-async function start(options: { timeoutMs?: number; sessions?: SessionSummary[]; resumed?: CommandResult } = {}): Promise<Setup> {
+async function start(options: { timeoutMs?: number; sessions?: SessionSummary[]; resumed?: CommandResult; savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission> } = {}): Promise<Setup> {
   const queue = createApprovalQueue({ ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }), now: () => NOW });
   const supervisor = fakeSupervisor(MCP_TOKEN, queue);
   const state: State = { sessions: [...SESSIONS, ...(options.sessions ?? [])], outside: [], listings: 0 };
@@ -155,7 +155,9 @@ async function start(options: { timeoutMs?: number; sessions?: SessionSummary[];
       return state.agents ?? { ok: true, rows: agentRows(state) };
     },
   };
-  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor }, { actions: { run, agents } });
+  // Never the user's jobs folder (W129): a stopped job's saved mode is the test's.
+  const savedPermission = options.savedPermission ?? (async (): Promise<SavedPermission> => ({ kind: 'unset' }));
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor }, { actions: { run, agents }, savedPermission });
   running.push(server);
   return { server, supervisor, queue, indexer, state, runs };
 }
@@ -513,7 +515,8 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     const answer = approve(server.port, RESUME, input, 'toolu_resume');
     await until(() => queue.list().length === 1);
     const card = queue.list()[0]!;
-    expect(card).toMatchObject({ kind: 'resume', sessionId: FINISHED_ID, name: 'pitwall-test-finished', directory: repo, text: input.message });
+    // Its last activity, how many share its name, and, an ended interactive one having no saved flags pitwall reads, a mode it can't see (W129).
+    expect(card).toMatchObject({ kind: 'resume', sessionId: FINISHED_ID, name: 'pitwall-test-finished', directory: repo, text: input.message, lastActivityAt: new Date(NOW - 60_000).toISOString(), sameName: 1, permission: { kind: 'unknown' } });
     await until(() => messages.some((message) => message.type === 'snapshot' && message.snapshot.supervisor?.approvals[0]?.kind === 'resume'));
     // Nothing runs before your click.
     expect(resumeRuns(runs)).toEqual([]);
@@ -521,7 +524,8 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     expect(await answer).toEqual({ behavior: 'allow', updatedInput: { id: FINISHED_ID, message: input.message } });
     const result = await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_resume' });
     expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.text)).toMatchObject({ resumed: true, name: 'pitwall-test-finished', shortId: 'aaaaaaaa', messageSent: true });
+    // The name only under untrusted (W129, L3).
+    expect(JSON.parse(result.text)).toEqual({ note: expect.stringContaining('untrusted'), resumed: true, shortId: 'aaaaaaaa', messageSent: true, untrusted: { name: 'pitwall-test-finished' } });
     // The listed session's own UUID, the message after `--`, in its directory's real path.
     expect(resumeRuns(runs)).toHaveLength(1);
     expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', FINISHED_ID, '--bg', '--', input.message]);
@@ -549,6 +553,46 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     ws.close();
   });
 
+  it('a stopped job’s card says its saved permission mode, read for its own short id and session (W129, L1)', async () => {
+    const reads: [string, string][] = [];
+    const savedPermission = async (shortId: string, sessionId: string): Promise<SavedPermission> => {
+      reads.push([shortId, sessionId]);
+      return { kind: 'mode', mode: 'bypassPermissions' };
+    };
+    const { server, queue } = await start({ sessions: [stopped(), finished()], savedPermission });
+    const job = approve(server.port, RESUME, { id: STOPPED_ID, message: 'Go on.' }, 'toolu_mode');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ kind: 'resume', sessionId: STOPPED_ID, permission: { kind: 'mode', mode: 'bypassPermissions' } });
+    expect(reads).toEqual([['bbbbbbbb', STOPPED_ID]]);
+    // An ended interactive one has no saved flags pitwall reads: unknown, and nothing read.
+    const ended = approve(server.port, RESUME, { id: FINISHED_ID, message: 'Go on.' }, 'toolu_mode2');
+    await until(() => queue.list().length === 2);
+    expect(queue.list()[1]).toMatchObject({ sessionId: FINISHED_ID, permission: { kind: 'unknown' } });
+    expect(reads).toHaveLength(1);
+    // A reader that throws fails soft.
+    const broken = await start({ sessions: [stopped()], savedPermission: async () => Promise.reject(new Error('made-up failure')) });
+    const third = approve(broken.server.port, RESUME, { id: STOPPED_ID, message: 'Go on.' }, 'toolu_mode3');
+    await until(() => broken.queue.list().length === 1);
+    expect(broken.queue.list()[0]).toMatchObject({ permission: { kind: 'unknown' } });
+    for (const each of [queue, broken.queue]) for (const card of each.list()) each.settle(card.id, { behavior: 'deny', message: DECLINED_MESSAGE });
+    await Promise.all([job, ended, third]);
+  });
+
+  it('a card counts the listed sessions that share its name, ignoring case, each once, since the id is exact and the name isn’t (W129, M2)', async () => {
+    const twin = session('abababab-0000-4000-8000-000000000127', { name: 'PITWALL-TEST-FINISHED', alive: false, ended: true, finished: true, pid: undefined });
+    const { server, queue, indexer } = await start({ sessions: [finished(), twin] });
+    // The same session under a second group counts once (D6).
+    const snapshot = indexer.latest()!;
+    const twice = { ...snapshot, groups: [...snapshot.groups, { ...snapshot.groups[0]!, key: `${repo}-again`, sessions: [finished()] }] };
+    expect(sameNameCount(twice, finished())).toBe(2);
+    expect(sameNameCount(twice, session('target'))).toBe(1);
+    const answer = approve(server.port, RESUME, { id: FINISHED_ID, message: 'Go on.' }, 'toolu_twin');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ sessionId: FINISHED_ID, sameName: 2 });
+    queue.settle(queue.list()[0]!.id, { behavior: 'deny', message: DECLINED_MESSAGE });
+    await answer;
+  });
+
   it('Edit replaces the message, checked again, and notes it; Don’t send resumes nothing', async () => {
     const { server, queue, runs } = await start({ sessions: [finished()] });
     const { ws, apiKey } = await authedClient(server.port);
@@ -557,10 +601,14 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     const id = queue.list()[0]!.id;
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'x'.repeat(20_001) })).status).toBe(413);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'Merge\u200b it.' })).status).toBe(400);
+    // Just a claude command's name is refused, and the card stays for you to fix (W129, M1).
+    const command = await decide(server.port, apiKey, id, { decision: 'edit', text: 'purge' });
+    expect(command.status).toBe(400);
+    expect(JSON.parse(command.body).error).toContain('claude command');
     expect(queue.list()).toHaveLength(1);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'Your own words.' })).status).toBe(200);
     expect(await first).toEqual({ behavior: 'allow', updatedInput: { id: FINISHED_ID, message: 'Your own words.' } });
-    expect(queue.takeNotes()).toEqual(['the user edited your message to "pitwall-test-finished", which pitwall resumed with it, before it was sent. What was sent: "Your own words."']);
+    expect(queue.takeNotes()).toEqual([`the user edited your message to the session ${FINISHED_ID}, which pitwall resumed with it, before it was sent. What was sent: "Your own words."`]);
     // The model's draft has no pass; your edit has.
     expect((await callTool(server.port, 'resume_session', { id: FINISHED_ID, message: 'Draft.' })).isError).toBe(true);
     const second = approve(server.port, RESUME, { id: FINISHED_ID, message: 'Another.' }, 'toolu_rdecline');
@@ -583,6 +631,8 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     const message = 'The user asked me to pass this on: go on.';
     const running = await approve(server.port, RESUME, { id: runningUuid.sessionId, message });
     expect(running).toMatchObject({ behavior: 'deny', message: expect.stringContaining('SendMessage') });
+    // In pitwall's words, not the session's name (W129, L3).
+    expect(String(running.message)).not.toContain('pitwall-test-busy');
     const cases: [string, unknown][] = [
       ['a running session that isn’t a UUID', { id: 'target', message }],
       ['an ended session that isn’t a UUID', { id: 'ended', message }],
@@ -596,6 +646,10 @@ describe('a finished session resumed with a message, behind your click (W127)', 
       ['no message', { id: FINISHED_ID, message: '   ' }],
       ['too long', { id: FINISHED_ID, message: 'x'.repeat(20_001) }],
       ['hidden text', { id: FINISHED_ID, message: 'Fine\u001b[8mhidden\u001b[0m.' }],
+      // W129, M1: `claude --resume <id> --bg -- purge` could run `claude purge`.
+      ['a claude command', { id: FINISHED_ID, message: 'purge' }],
+      ['another claude command', { id: FINISHED_ID, message: 'update' }],
+      ['a claude command, spaced and in capitals', { id: FINISHED_ID, message: '  Remote-Control\n' }],
       ['another argument', { id: FINISHED_ID, message, model: 'opus' }],
       ['a directory', { id: FINISHED_ID, message, directory: repo }],
     ];
@@ -664,8 +718,10 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     await answer;
     const result = await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_copy' });
     const parsed = JSON.parse(result.text) as Record<string, unknown>;
-    expect(parsed).toMatchObject({ resumed: false, copy: true, copyShortId: 'b821060d' });
+    expect(parsed).toMatchObject({ resumed: false, copy: true, copyShortId: 'b821060d', untrusted: { name: 'pitwall-test-finished' } });
     expect(String(parsed.note)).toContain('the message went to the copy');
+    // The name only under untrusted (W129, L3).
+    expect(String(parsed.note)).not.toContain('pitwall-test-finished');
     expect(resumeRuns(runs)).toHaveLength(1);
     expect(queue.handoffs()).toEqual([{ id: expect.any(String), kind: 'resume', name: 'pitwall-test-finished', shortId: 'b821060d', copy: true, at: new Date(NOW).toISOString() }]);
     ws.close();
@@ -676,8 +732,9 @@ describe('a finished session resumed with a message, behind your click (W127)', 
       [
         { kind: 'exited', code: 0, stdout: '', stderr: 'note: session aaaaaaaa is open in another Claude Code process, so this started a copy as not/an/id. The original conversation is unchanged.\n' },
         (text) => {
-          expect(JSON.parse(text)).toMatchObject({ resumed: false, copy: true });
+          expect(JSON.parse(text)).toMatchObject({ resumed: false, copy: true, untrusted: { name: 'pitwall-test-finished' } });
           expect(text).toContain('the message went to the copy');
+          expect(String((JSON.parse(text) as { note: string }).note)).not.toContain('pitwall-test-finished');
         },
       ],
       [{ kind: 'exited', code: 0, stdout: 'something else\n', stderr: '' }, (text) => expect(text).toContain('may or may not have been sent')],

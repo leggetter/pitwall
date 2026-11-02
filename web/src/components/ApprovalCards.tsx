@@ -9,7 +9,13 @@
 //   removes text, as plainText() would. The server refuses text with a character that wouldn't show
 //   as itself (src/shared/hiddenText.ts); anything unusual left, such as a no-break space, is drawn as
 //   its code, U+00A0, with a note naming it. Taller than the box shows (8 lines, 4 on a short
-//   window), the card says how many lines and characters it has, to scroll through before Send. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX for a message and
+//   window), the card says how many lines and characters it has, to scroll through before Send. A
+//   text that starts with `/` or has `@` before a path says it may run a slash command or attach a
+//   file (W129, the re-review's I2), since it reaches Claude Code as a typed prompt.
+// - A resume card (W129, M2, L1) shows, as text, the session's folder, home as ~, and its last
+//   activity; how many listed sessions share its name when others do, since names aren't unique; and
+//   that it resumes with its own saved settings, its permission mode included, with a warning when
+//   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
 //
 // - Each decision POSTs a SupervisorDecision to supervisorApprovalPath(). The card stays busy until the
@@ -25,10 +31,21 @@ import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type K
 import { SPAWN_PROMPT_MAX, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
-import { visibleParts, type VisiblePart } from '../../../src/shared/hiddenText.js';
-import { plainText } from '../format.js';
+import { visibleParts, visibleString, type VisiblePart } from '../../../src/shared/hiddenText.js';
 import { characterCount } from '../relay.js';
-import { APPROVAL_GONE, approvalText, approvalTitle, decideApproval, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
+import {
+  APPROVAL_GONE,
+  approvalDirectory,
+  approvalText,
+  approvalTitle,
+  decideApproval,
+  RESUME_BYPASS_WARNING,
+  resumeBypassed,
+  resumePermissionText,
+  resumeWhereLead,
+  SUPERVISOR_TEXT_MAX,
+  typedPromptNotes,
+} from '../supervisor.js';
 import { Alert } from './Alert.js';
 import { Button } from './Button.js';
 import { ScrollBox, useOverflowing } from './ScrollBox.js';
@@ -257,10 +274,13 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const busy = phase.kind !== 'idle';
   const busyWith = (decision: SupervisorDecision['decision']) => phase.kind !== 'idle' && phase.decision === decision;
   const title = approvalTitle(approval);
-  const directory = approval.kind === 'message' ? undefined : plainText(approval.directory);
+  // The whole path, as it is, with anything that wouldn't show as its code (W129, I3): never a filter that removes text.
+  const directory = approval.kind === 'message' ? undefined : visibleString(approval.directory);
   const text = approvalText(approval);
   const parts = visibleParts(text);
-  const notes = [overflowing || text.split('\n').length > APPROVAL_TEXT_LINES ? lengthNote(text) : undefined, hiddenNote(parts)].filter((note) => note !== undefined);
+  const notes = [overflowing || text.split('\n').length > APPROVAL_TEXT_LINES ? lengthNote(text) : undefined, hiddenNote(parts), ...(approval.kind === 'message' ? [] : typedPromptNotes(text))].filter(
+    (note) => note !== undefined,
+  );
   return (
     <li className="approval-card" data-approval={approval.id} data-kind={approval.kind} aria-labelledby={ids.heading} aria-busy={busy || undefined}>
       {/* Takes focus when the card before it goes (above), with no ring of its own, as the view's heading. */}
@@ -281,7 +301,29 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
         Not sent unless you answer by <Timestamp at={approval.expiresAt} format="time" />
       </p>
       {approval.kind === 'spawn' && <p className="approval-note">{SPAWN_NOTE}</p>}
-      {approval.kind === 'resume' && <p className="approval-note">{RESUME_NOTE}</p>}
+      {approval.kind === 'resume' && (
+        <>
+          {/* Names aren't unique (W129, M2): where it is and when it was last active, as text. */}
+          <p className="approval-where">
+            {resumeWhereLead(approval.sameName)}
+            <bdi className="approval-folder">{approvalDirectory(approval)}</bdi>
+            {approval.lastActivityAt === undefined ? (
+              '.'
+            ) : (
+              <>
+                , last active <Timestamp at={approval.lastActivityAt} />.
+              </>
+            )}
+          </p>
+          <p className="approval-note">{RESUME_NOTE}</p>
+          <p className="approval-note approval-permission">{resumePermissionText(approval.permission)}</p>
+          {resumeBypassed(approval.permission) && (
+            <Alert tone="warning" className="approval-bypass">
+              {RESUME_BYPASS_WARNING}
+            </Alert>
+          )}
+        </>
+      )}
       {editing === undefined ? (
         <div className="approval-body">
           <p className="approval-label" id={ids.text}>

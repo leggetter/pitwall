@@ -288,6 +288,18 @@
   color: var(--pw-text-muted);
 }
 
+/* A resume's folder and last activity (W129): as the meta line, in the body's colour, since it says which session. */
+.approval-where {
+  color: var(--pw-text);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
+.approval-folder {
+  font-family: var(--pw-font-mono);
+}
+
 .approval-body {
   display: flex;
   flex-direction: column;

@@ -567,6 +567,10 @@ export class World {
       text: 'The user asked me to pass this on: please finish the made-up guide’s last section, then open a draft PR for it.',
       at: this.#ago(1),
       expiresAt: this.#ago(-28),
+      // W129: its folder and last activity, a name another listed session shares, and a mode that skips the prompts, so the card shows each line.
+      ...(ended.lastActivityAt === undefined ? {} : { lastActivityAt: ended.lastActivityAt }),
+      sameName: 2,
+      permission: { kind: 'mode', mode: 'bypassPermissions' },
     };
   }
 

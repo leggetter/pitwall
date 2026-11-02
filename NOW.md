@@ -8,7 +8,7 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 
 **M5, the supervisor, on `m5/integration`.** Built, not yet in `main`. Every row of its work breakdown has merged into the integration branch, [#110](https://github.com/leggetter/pitwall/pull/110) to [#125](https://github.com/leggetter/pitwall/pull/125) (W110 to W123): per-session recaps, pitwall's MCP server, the supervisor process and its panel, approvals, New session from here, model and effort per kind of work, W116's findings, recaps as a summary and to-dos, a wider Preferences, and Plan status on the recap strip.
 
-- **Security:** W116's review approved M5 for `main` once W120's fixes merged; its re-check confirmed all seven fixed ([#122](https://github.com/leggetter/pitwall/pull/122)). Two Info items from the re-check are in "Nice to have, later".
+- **Security:** W116's review approved M5 for `main` once W120's fixes merged; its re-check confirmed all seven fixed ([#122](https://github.com/leggetter/pitwall/pull/122)). Two Info items from the re-check are in "Nice to have, later". The re-review of W124 to W128 (2026-11-02) approved M5 for `main` with non-blocking findings, which W129 fixes.
 - **Merging into `main`** waits on Phil's try-out and his word. The full app check (`npm run appcheck`) is for that merge (AGENTS.md, "Efficiency").
 
 ## Open work
@@ -19,6 +19,7 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 | W125, session names in the supervisor's replies open the session; list_prs's old PRs don't need you | In review, into `m5/integration` |
 | W126, why a recap's answer was refused; a fence and a disagreeing waitingOn repaired (Phil's report, 2026-11-02) | In review, into `m5/integration` |
 | W127, the supervisor resumes a finished session and sends it a message (resume_session, spike 011, prompt v5) | In review, into `m5/integration` ([#131](https://github.com/leggetter/pitwall/pull/131)) |
+| W129, the security re-review's findings (W124 to W128): resume message checks, the resume card's folder, activity, shared name and permission mode, and doc fixes | In review, into `m5/integration` |
 | W128, Needs you names the PR; a recap for a finished session whose PR needs you; Rename pushed to "Nice to have, later" | Merged ([#130](https://github.com/leggetter/pitwall/pull/130)) |
 | M5 try-out | Phil's, on port 4519; started, W124 came from it |
 | Merge `m5/integration` into `main` | Waits on Phil's word after the try-out |

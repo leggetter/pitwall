@@ -46,7 +46,9 @@
 //                   (resumeProblem()); its directory still at or under a root by its real path
 //                   (checkDirectory()). The runner checks a fresh `claude agents` and the directory
 //                   again just before it runs, and Claude Code refuses a workspace it doesn't trust.
-//                   message: as a message's; no other field
+//                   message: as a message's, and not just a claude command, as a new session's
+//                   prompt (W129, the re-review's M1): `claude --resume <id> --bg -- purge` could run
+//                   `claude purge`; no other field
 //   all text        no character that doesn't show as itself (hiddenTextProblem(), W120, W116's
 //                   F1): no C0 or C1 control but tab and newline, so no terminal escape; no bidi
 //                   control, zero-width or tag character, or other format or default-ignorable
@@ -63,12 +65,14 @@
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
 import { hiddenTextProblem } from '../shared/hiddenText.js';
-import { MCP_TOOLS, SUPERVISOR_MESSAGE_MAX, type IndexSnapshot, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
+import { MCP_TOOLS, SUPERVISOR_MESSAGE_MAX, type IndexSnapshot, type SavedPermission, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
 import { checkDirectory, MAX_PROMPT_LENGTH, resumeProblem, validateSpawnRequest, type ResumeRunner, type SpawnRunner, type ValidSpawn } from './actions.js';
+import { isClaudeCommand } from './claudeCommands.js';
 import type { McpTool, McpToolResult } from './mcp.js';
+import { NAME_MAX, plainField, UNTRUSTED_NOTE } from './mcpTools.js';
 import { isAddressable, nameKey } from './relayPrompt.js';
 import { findSession } from './sessions.js';
 import { isSafeSessionId } from '../index/index.js';
@@ -105,6 +109,12 @@ export interface SupervisorActionSources {
    * leaves out sessions outside the roots and pitwall's own. The server passes the index's source.
    */
   agents: Pick<AgentsSource, 'list'>;
+  /**
+   * The permission mode a finished session resumes in, for its card (W129, the re-review's L1): a
+   * background job's saved flags, read by the job-file adapter (src/index/jobs.ts). Without one, or
+   * for an ended interactive session, which has no saved flags pitwall reads, it's 'unknown'.
+   */
+  savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission>;
 }
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -146,6 +156,23 @@ function checkText(text: unknown, max: number, what: string): Checked<string> {
   const hidden = hiddenTextProblem(text, what);
   if (hidden !== undefined) return { ok: false, error: hidden };
   return { ok: true, value: text };
+}
+
+/**
+ * A resume's message (W129, the re-review's M1): a message's text, and never just the name of a
+ * claude command, since `claude --resume <id> --bg -- <message>` could run that command instead, as
+ * a new session's prompt could (claudeCommands.ts, validateSpawnRequest()).
+ */
+export function checkResumeText(text: unknown): Checked<string> {
+  const checked = checkText(text, SUPERVISOR_MESSAGE_MAX, 'message');
+  if (!checked.ok) return checked;
+  if (isClaudeCommand(checked.value)) {
+    return {
+      ok: false,
+      error: `The message can't be just "${checked.value.trim().toLowerCase()}": that's the name of a claude command, which claude --resume could run instead of resuming the session. Add a few words.`,
+    };
+  }
+  return checked;
 }
 
 /** Whether `to` could be a session's name, as the relay addresses one, and nothing that reads as an address. */
@@ -256,14 +283,15 @@ export async function checkResume(input: unknown, snapshot: IndexSnapshot | unde
   const hidden = hiddenTextProblem(id, 'id');
   if (hidden !== undefined) return { ok: false, error: hidden };
   if (!isSafeSessionId(id)) return { ok: false, error: 'That isn’t a session id: pass the id list_sessions gives.' };
-  const text = checkText(input.message, SUPERVISOR_MESSAGE_MAX, 'message');
+  const text = checkResumeText(input.message);
   if (!text.ok) return text;
   if (snapshot === undefined) return { ok: false, error: 'pitwall hasn’t listed the sessions yet.' };
   const session = findSession(snapshot, id);
   if (session === undefined) return { ok: false, error: 'No session pitwall lists has that id. Call list_sessions with finished: true for the ids of finished ones.' };
   if (own.has(session.sessionId) || OWN_NAMES.has(nameKey(session.name.trim()))) return { ok: false, error: 'pitwall’s own sessions can’t be resumed.' };
   if (session.alive || session.pid !== undefined) {
-    return { ok: false, error: `${JSON.stringify(session.name)} is running, so it takes a message instead: propose it with SendMessage, to that name.` };
+    // Not the name, which is untrusted, in pitwall's own words (W129, the re-review's L3).
+    return { ok: false, error: 'That session is running, so it takes a message instead: propose it with SendMessage, to its name from list_sessions.' };
   }
   if (session.stale) return { ok: false, error: 'That session has been blocked for over a week, so pitwall won’t resume it for you. The user can open it from the list.' };
   const problem = resumeProblem(session);
@@ -271,6 +299,25 @@ export async function checkResume(input: unknown, snapshot: IndexSnapshot | unde
   const dir = await checkDirectory(session.cwd, snapshot.roots);
   if (!dir.ok) return { ok: false, error: dir.error };
   return { ok: true, value: { session, directory: dir.path, text: text.value } };
+}
+
+/** How many listed sessions have `session`'s name, ignoring case, itself included, each counted once (W129, M2). */
+export function sameNameCount(snapshot: IndexSnapshot, session: SessionSummary): number {
+  const key = nameKey(session.name);
+  const ids = new Set<string>([session.sessionId]);
+  // A session can be under more than one group (D6), so by id.
+  for (const group of snapshot.groups) for (const each of group.sessions) if (nameKey(each.name) === key) ids.add(each.sessionId);
+  return ids.size;
+}
+
+/** The permission mode `session` resumes in, as far as pitwall can tell (W129, L1): only a background job has saved flags it reads. */
+export async function resumePermission(session: SessionSummary, read: SupervisorActionSources['savedPermission']): Promise<SavedPermission> {
+  if (read === undefined || session.kind !== 'background' || session.shortId === undefined) return { kind: 'unknown' };
+  try {
+    return await read(session.shortId, session.sessionId);
+  } catch {
+    return { kind: 'unknown' };
+  }
 }
 
 /** The input resume_session runs with, once allowed: the listed session's own id, and the message as the card showed it or your edit. */
@@ -342,7 +389,18 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
         const checked = await checkResume(input, sources.snapshots.latest(), own());
         if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
         const { session, directory, text } = checked.value;
-        draft = { kind: 'resume', sessionId: session.sessionId, name: session.name, directory, text };
+        // What the card shows beside the name, which isn't unique (W129, M2, L1): its folder, its last activity, how many share its name, and its saved permission mode.
+        const snapshot = sources.snapshots.latest();
+        draft = {
+          kind: 'resume',
+          sessionId: session.sessionId,
+          name: session.name,
+          directory,
+          text,
+          ...(session.lastActivityAt === undefined ? {} : { lastActivityAt: session.lastActivityAt }),
+          sameName: snapshot === undefined ? 1 : sameNameCount(snapshot, session),
+          permission: await resumePermission(session, sources.savedPermission),
+        };
         runInput = resumeInput(session.sessionId, text);
       } else {
         const checked = await checkSpawn(input, sources.snapshots.latest());
@@ -437,7 +495,8 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
       const { result } = outcome;
       if (result.ok) {
         sources.approvals.handoff({ kind: 'resume', name: session.name, sessionId: session.sessionId, shortId: result.shortId });
-        return { text: JSON.stringify({ resumed: true, name: session.name, shortId: result.shortId, messageSent: true }) };
+        // The name is the session's, so it's untrusted (W129, the re-review's L3).
+        return { text: JSON.stringify({ note: UNTRUSTED_NOTE, resumed: true, shortId: result.shortId, messageSent: true, untrusted: { name: plainField(session.name, NAME_MAX) } }) };
       }
       if (result.copyShortId !== undefined) {
         // Claude Code started a copy, and the message went to it (spike 011): said, never hidden.
@@ -447,7 +506,8 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
             resumed: false,
             copy: true,
             copyShortId: result.copyShortId,
-            note: `${session.name} was open in another Claude Code process, so Claude Code started a copy of its conversation as ${result.copyShortId}, and the message went to the copy, not to ${session.name}, which is unchanged. Tell the user, who can stop and remove the copy.`,
+            note: `The session was open in another Claude Code process, so Claude Code started a copy of its conversation as ${result.copyShortId}, and the message went to the copy, not to the session, which is unchanged. Tell the user, who can stop and remove the copy. ${UNTRUSTED_NOTE}`,
+            untrusted: { name: plainField(session.name, NAME_MAX) },
           }),
         };
       }
@@ -457,7 +517,8 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
           text: JSON.stringify({
             resumed: false,
             copy: true,
-            note: `${session.name} was open in another Claude Code process, so Claude Code started a copy of its conversation, and the message went to the copy, not to ${session.name}, which is unchanged. pitwall didn't get the copy's id, so it can't link to it. Tell the user, who can find it in the list as a background session with no name, and stop and remove it.`,
+            note: `The session was open in another Claude Code process, so Claude Code started a copy of its conversation, and the message went to the copy, not to the session, which is unchanged. pitwall didn't get the copy's id, so it can't link to it. Tell the user, who can find it in the list as a background session with no name, and stop and remove it. ${UNTRUSTED_NOTE}`,
+            untrusted: { name: plainField(session.name, NAME_MAX) },
           }),
         };
       }
@@ -484,7 +545,8 @@ export type DecisionAnswer = { status: 200 } | { status: 400 | 404 | 409; error:
 /** The note the supervisor reads before your next message, after you edited what it proposed. */
 export function editNote(draft: ApprovalDraft, sent: string): string {
   if (draft.kind === 'message') return `the user edited your message to ${JSON.stringify(draft.to)} before it was sent. What was sent: ${JSON.stringify(sent)}`;
-  if (draft.kind === 'resume') return `the user edited your message to ${JSON.stringify(draft.name)}, which pitwall resumed with it, before it was sent. What was sent: ${JSON.stringify(sent)}`;
+  // By its id, not its name, which is untrusted (W129, L3).
+  if (draft.kind === 'resume') return `the user edited your message to the session ${draft.sessionId}, which pitwall resumed with it, before it was sent. What was sent: ${JSON.stringify(sent)}`;
   return `the user edited the first prompt of your new session in ${JSON.stringify(draft.directory)} before it started. What was sent: ${JSON.stringify(sent)}`;
 }
 
@@ -540,7 +602,8 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
     if (approval.kind === 'resume') {
       const text = decision.decision === 'edit' ? decision.text : approval.text;
       if (decision.decision === 'edit') {
-        const checkedText = checkText(text, SUPERVISOR_MESSAGE_MAX, 'message');
+        // An edit you can fix stays: a claude command's name too (W129, M1).
+        const checkedText = checkResumeText(text);
         if (!checkedText.ok) return { status: 400, error: checkedText.error };
       }
       // Rebuilt from the card's own session, never a field the card didn't show.

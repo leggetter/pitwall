@@ -84,7 +84,7 @@ export const READ_ENTRY_MAX = 2_000;
 const READ_MAX_PAGES = 3;
 
 /** Limits for one-line text fields. */
-const NAME_MAX = 200;
+export const NAME_MAX = 200;
 const TITLE_MAX = 300;
 const PATH_MAX = 500;
 const LINE_MAX = 400;

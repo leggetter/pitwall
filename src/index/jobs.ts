@@ -15,10 +15,19 @@
 //              cut to 200;
 //              absent, null or empty is 'none', and so is the start placeholder, "send a prompt to
 //              start", which a resumed session shows though it asked nothing (spike 006, finding 2)
+//
+// And, for a resume's card only (W129, the re-review's L1), readSavedPermission(): the permission
+// mode in the job's `respawnFlags`, the flags Claude Code saved when the job started and wakes it
+// with on `claude --resume` ("woke session <id> with its saved options", spike 011). An array of
+// strings, such as `["--name", "n", "--permission-mode", "plan", "--model", "haiku"]` (W129, checked
+// live on Claude Code 2.1.316): `--permission-mode <mode>` or `--permission-mode=<mode>` is taken
+// when it's one of Claude Code's mode names, `--dangerously-skip-permissions` reads as
+// bypassPermissions, and anything else is 'unknown', never shown.
 
 import { constants } from 'node:fs';
 import { lstat, open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
+import { PERMISSION_MODES, type PermissionModeName, type SavedPermission } from '../shared/protocol.js';
 import { isRecord } from './guards.js';
 import { plainLine } from './text.js';
 import { defaultConfigDir } from './transcripts.js';
@@ -79,6 +88,63 @@ interface Cached {
   size: number;
   mtimeMs: number;
   needs: JobNeeds;
+}
+
+/** What a `state.json`'s text says the job's saved permission mode is, for the session `sessionId`. Pure; never throws. */
+export function parseSavedPermission(text: string, sessionId: string): SavedPermission {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { kind: 'unknown' };
+  }
+  if (!isRecord(parsed) || parsed.sessionId !== sessionId) return { kind: 'unknown' };
+  const flags = parsed.respawnFlags;
+  if (!Array.isArray(flags) || flags.length > 200 || !flags.every((flag) => typeof flag === 'string')) return { kind: 'unknown' };
+  let found: PermissionModeName | undefined;
+  for (let i = 0; i < flags.length; i++) {
+    const flag = flags[i] as string;
+    let value: string | undefined;
+    if (flag === '--dangerously-skip-permissions') value = 'bypassPermissions';
+    else if (flag === '--permission-mode') value = flags[++i] ?? '';
+    else if (flag.startsWith('--permission-mode=')) value = flag.slice('--permission-mode='.length);
+    else continue;
+    if (!(PERMISSION_MODES as readonly string[]).includes(value)) return { kind: 'unknown' };
+    // Skipping permissions wins over any mode beside it.
+    if (found !== 'bypassPermissions') found = value as PermissionModeName;
+  }
+  return found === undefined ? { kind: 'unset' } : { kind: 'mode', mode: found };
+}
+
+/**
+ * The saved permission mode of the background job `shortId`, from its `state.json`, checked against
+ * `sessionId`, read as read() reads, without a cache: only for a resume's card. Never rejects.
+ */
+export async function readSavedPermission(shortId: string, sessionId: string, options: Pick<JobReaderOptions, 'jobsDir'> = {}): Promise<SavedPermission> {
+  const text = await readJobFile(options.jobsDir ?? path.join(defaultConfigDir(), 'jobs'), shortId);
+  return text === undefined ? { kind: 'unknown' } : parseSavedPermission(text, sessionId);
+}
+
+/** A job's `state.json` as text, by read()'s rules, or undefined when it can't be used. */
+async function readJobFile(jobsDir: string, shortId: string): Promise<string | undefined> {
+  if (!SAFE_SHORT_ID.test(shortId)) return undefined;
+  const folder = path.join(jobsDir, shortId);
+  let handle: FileHandle;
+  try {
+    if (!(await lstat(folder)).isDirectory()) return undefined;
+    handle = await open(path.join(folder, 'state.json'), OPEN_FLAGS);
+  } catch {
+    return undefined;
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > JOB_FILE_MAX_BYTES) return undefined;
+    return await handle.readFile('utf8');
+  } catch {
+    return undefined;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 export function createJobReader(options: JobReaderOptions = {}): JobReader {

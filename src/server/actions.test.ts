@@ -28,6 +28,8 @@ import {
   MAX_PROMPT_LENGTH,
   parseBackgrounded,
   parseCopyNote,
+  CommandSlots,
+  createResumeRunner,
   resumeArgs,
   shellQuote,
   spawnArgs,
@@ -1365,6 +1367,36 @@ describe('helpers', () => {
   it('resumeArgs puts the supervisor’s message last, after --, so one that starts with - stays a message (W127, spike 011)', () => {
     expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', {}, '--dangerously-skip-permissions')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--', '--dangerously-skip-permissions']);
     expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', { effort: 'high' }, 'Go on.')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--effort', 'high', '--', 'Go on.']);
+  });
+
+  it('the shared resume runner never runs a prompt that’s blank or just a claude command’s name, whoever calls it (W129, M1)', async () => {
+    const runs: (readonly string[])[] = [];
+    const run: RunCommand = async (_file, args) => {
+      runs.push(args);
+      return { kind: 'exited', code: 0, stdout: '', stderr: '' };
+    };
+    const indexer = { latest: () => undefined, pollSoon: () => {}, noteRestart: () => {} };
+    const agents = { list: async (): Promise<AgentsResult> => ({ ok: true, rows: [] }) };
+    const runner = createResumeRunner(indexer, { run, agents, slots: new CommandSlots(4), limiter: { countStart: () => ({ ok: true }) } });
+    const ended: SessionSummary = {
+      sessionId: '5e66fcb3-0000-4000-8000-000000000129',
+      name: 'pitwall-test-ended',
+      kind: 'interactive',
+      cwd: '/made-up/folder',
+      alive: false,
+      ended: true,
+      finished: true,
+      status: 'idle',
+      startedAt: '2026-10-29T10:00:00.000Z',
+      stale: false,
+      transcript: 'ok',
+    };
+    for (const prompt of ['purge', ' Update ', 'remote-control', '   ']) {
+      const outcome = await runner.resume(ended, prompt);
+      expect(outcome.status, prompt).toBe(422);
+      expect(outcome.result.ok).toBe(false);
+    }
+    expect(runs).toEqual([]);
   });
 
   it('parseCopyNote reads the note Claude Code 2.1.316 prints for a session running in the background (spike 011)', () => {

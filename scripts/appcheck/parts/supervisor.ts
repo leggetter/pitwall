@@ -194,7 +194,7 @@ const part: Part = {
       await t.shot('long-draft');
     });
 
-    await t.step('a resume draft (W127): the finished session by its own name, the note, Send, then “Resumed” with Open', async () => {
+    await t.step('a resume draft (W127, W129): the finished session by its own name, its folder and last activity, a shared name, its saved mode, the note, Send, then “Resumed” with Open', async () => {
       await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: 'resume' });
       await page.waitFor('one card', `${CARDS}.length === 1`);
       const card = `${CARDS}[0]`;
@@ -208,6 +208,14 @@ const part: Part = {
         },
         'the card says what it resumes and that the message is its next turn',
       );
+      // W129: which session, in text, since names aren't unique (M2); its own saved settings, and a warning for a bypassed mode (L1).
+      const lines = await page.evaluate<{ where: string | null; permission: string | null; bypass: string | null; bypassShown: boolean; fits: boolean }>(
+        `(() => { const c = ${card}; const where = c.querySelector('.approval-where'); const bypass = c.querySelector('.approval-bypass'); const r = c.getBoundingClientRect(); return { where: where?.textContent ?? null, permission: c.querySelector('.approval-permission')?.textContent ?? null, bypass: bypass?.textContent ?? null, bypassShown: !!bypass && bypass.getBoundingClientRect().height > 0, fits: [where, bypass].every((el) => !el || (el.getBoundingClientRect().right <= r.right + 0.5 && el.scrollWidth <= el.clientWidth + 1)) }; })()`,
+      );
+      t.expect(/^2 listed sessions have this name; this is the one in ~\/\S+, last active .+ ago\.$/.test(lines.where ?? ''), 'the folder, home as ~, its last activity and the shared name, as text', lines.where);
+      t.expectEqual(lines.permission, 'Claude Code resumes it with its own saved settings, its permission mode included: bypassPermissions.', 'its own saved settings, permission mode included');
+      t.expect(lines.bypassShown && (lines.bypass ?? '').includes('no permission prompts'), 'a visible warning for bypassPermissions', lines.bypass);
+      t.expect(lines.fits, 'the new lines wrap inside the card', lines);
       const buttons = await page.evaluate<string[]>(`[...${card}.querySelectorAll('button')].map((b) => b.textContent.trim())`);
       t.expectEqual(buttons, ['Send', 'Edit', "Don't send"], 'Send, Edit and Don’t send');
       const box = await page.evaluate<{ right: number }>(`(() => { const r = ${card}.getBoundingClientRect(); return { right: r.right }; })()`);
