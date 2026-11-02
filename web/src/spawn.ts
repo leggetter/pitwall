@@ -191,6 +191,17 @@ export function directoryChoices(snapshot: Pick<IndexSnapshot, 'roots' | 'groups
   return paths.map((path) => ({ path, label: shortenHome(path) }));
 }
 
+/**
+ * The directory + New session starts in with a session open (#139, D27): the session's own, where
+ * it started, when pitwall lists it, the directory is still there, and it's at or under a root, in
+ * the open root tab when there is one (directoryProblem()). Undefined otherwise, for the dialog's
+ * usual first choice. A worktree's, which no group has, the dialog adds to its choices first.
+ */
+export function newSessionDirectory(session: Pick<SessionSummary, 'cwd' | 'cwdMissing'> | undefined, roots: readonly string[], tab?: string): string | undefined {
+  if (session === undefined || session.cwdMissing === true) return undefined;
+  return directoryProblem(session.cwd, roots, tab) === undefined ? session.cwd : undefined;
+}
+
 function isWithin(root: string, dir: string): boolean {
   const clean = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
   return clean === root || clean.startsWith(root.endsWith('/') ? root : `${root}/`);

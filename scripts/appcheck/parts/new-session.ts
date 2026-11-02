@@ -5,16 +5,18 @@
 // an option from the keyboard, and starts a session in it; files for the first prompt (W82), through
 // Attach files, a drop and a paste, refused ones, the server's refusal and its 503, Remove, which
 // asks the server to remove a kept one, an upload that's slow, one that fails, a start that sends
-// their ids, and a close that asks the server to remove them; Cancel closes it. W63's switch to the new
-// session's group and tab is its own part, new-session-selected.
+// their ids, and a close that asks the server to remove them; Cancel closes it. With a session open
+// (#139, D27), + New session and `n` start in that session's directory, a worktree's added first; with
+// none open, or its directory gone, the first of the groups' directories, as before. W63's switch to
+// the new session's group and tab is its own part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
-import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, NAMES } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
 import { FAIL_UPLOAD, SLOW_UPLOAD, STALLED_UPLOAD, UNAVAILABLE_UPLOAD } from '../server.js';
-import { chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, toasts, viewName } from './_dom.js';
+import { chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, openFromRow, toasts, viewName } from './_dom.js';
 
 const q = JSON.stringify;
 const field = (label: string) => `[...(${DIALOG}?.querySelectorAll('input, select, textarea') ?? [])].find((el) => el.labels?.[0]?.textContent.trim().startsWith(${q(label)}))`;
@@ -28,6 +30,10 @@ const COMBOBOX = `${DIALOG}?.querySelector('[role="combobox"]')`;
 const OPTIONS = `[...(${DIALOG}?.querySelectorAll('[role="listbox"] [role="option"]') ?? [])].filter((el) => !el.closest('[hidden]')).map((el) => el.textContent)`;
 const EXPANDED = `${COMBOBOX}?.getAttribute('aria-expanded')`;
 const ACTIVE = `document.getElementById(${COMBOBOX}?.getAttribute('aria-activedescendant') ?? '')`;
+/** The Directory select's options' values, in order. */
+const DIRECTORY_VALUES = `[...${DIRECTORY}.options].map((o) => o.value)`;
+/** A made-up worktree of the api-server repo, whose group keeps it, as a worktree's does (world.move()). */
+const WORKTREE = `${API_SERVER}/.claude/worktrees/pitwall-test-wt`;
 /** Each request for the directory list, as the fake server recorded it. */
 const listRequests = (requests: string[]) => requests.filter((request) => request.startsWith('GET /api/directories '));
 
@@ -150,6 +156,7 @@ const part: Part = {
       );
       const values = await page.evaluate<string[]>(`[...${DIRECTORY}.options].map((o) => o.value)`);
       for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(dir), `it offers ${dir}`, values);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), values[0], 'with no session open, the first choice is chosen, as before #139');
       t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
       t.expect(await page.evaluate(`!!${dialogButton('Start session')} && !!${dialogButton('Cancel')}`), 'Start session and Cancel');
       const card = await page.evaluate<{ left: number; right: number; top: number; bottom: number }>(dialogBox);
@@ -459,6 +466,56 @@ const part: Part = {
       await page.key('n');
       await page.waitFor('the dialog', `${dialogName} === 'New session'`);
       await page.key('Escape');
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+    });
+
+    const sessionOf = (sessionName: string) => server.world.byName(sessionName);
+
+    await t.step("with a session open, + New session starts in that session's directory (#139)", async () => {
+      await t.fresh({ search: '?view=all' });
+      await openFromRow(t, NAMES.inApi);
+      const cwd = sessionOf(NAMES.inApi).cwd;
+      await openDialog(t, 'New session');
+      const values = await page.evaluate<string[]>(DIRECTORY_VALUES);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), cwd, "the session's directory is chosen");
+      t.expect(values[0] !== cwd, 'which is not the first choice, so it was chosen for the session', values);
+      t.expectEqual(values.filter((value) => value === cwd).length, 1, 'and listed once');
+      t.expectEqual(await page.evaluate(`${PROMPT}.value`), '', 'the prompt is blank: nothing from its conversation');
+      await t.shot('session-open');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+    });
+
+    await t.step("n with a worktree's session open: its directory, which no group has, is added first and chosen, and the start sends it", async () => {
+      server.world.move(sessionOf(NAMES.inApi).sessionId, WORKTREE);
+      server.broadcast();
+      await page.waitFor('the moved session', `${viewName} === ${q(NAMES.inApi)}`);
+      await page.settle(100);
+      await page.evaluate(`(document.activeElement?.blur(), true)`);
+      await page.key('n');
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), WORKTREE, "the worktree's directory is chosen");
+      t.expectEqual(await page.evaluate(`${DIRECTORY_VALUES}[0]`), WORKTREE, 'first in the list');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.options[0].textContent`), '~/code/api-server/.claude/worktrees/pitwall-test-wt', 'with home as ~');
+      await t.shot('worktree');
+      await page.click('First prompt', PROMPT);
+      await page.type(FIRST_PROMPT);
+      server.clearRecords();
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns.map((spawn) => spawn.cwd), [WORKTREE], 'the start sent the worktree');
+    });
+
+    await t.step("with a session whose directory has gone open, it starts where it did before", async () => {
+      await t.fresh({ search: '?view=all' });
+      const gone = sessionOf(NAMES.endedGone);
+      await page.navigate(`/?view=all&session=${gone.sessionId}`);
+      await page.waitFor(`the ${NAMES.endedGone} view`, `${viewName} === ${q(NAMES.endedGone)}`, 10_000);
+      await openDialog(t, 'New session');
+      const values = await page.evaluate<string[]>(DIRECTORY_VALUES);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), values[0], 'the first choice, as with no session open');
+      t.expect(!values.includes(gone.cwd), 'and the gone directory is not offered', values);
+      await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
     });
   },

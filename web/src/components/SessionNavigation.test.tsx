@@ -628,7 +628,7 @@ describe('the divider', () => {
       await open('demo-a');
       openMenu();
       // An interactive session's End session (W90) comes after them.
-      expect(menuItems()).toEqual(['New session from here', 'Copy session ID', 'Make view wider', 'Make view narrower', 'Reset view width', 'End session']);
+      expect(menuItems()).toEqual(['Copy session ID', 'Make view wider', 'Make view narrower', 'Reset view width', 'End session']);
       // At the usual width there's nothing to reset.
       const reset = within(view()!).getByRole('menuitem', { name: 'Reset view width' });
       expect(reset.getAttribute('aria-disabled')).toBe('true');
@@ -676,7 +676,7 @@ describe('the divider', () => {
       renderDashboard();
       await open('demo-a');
       openMenu();
-      expect(menuItems()).toEqual(['New session from here', 'Copy session ID', 'End session']);
+      expect(menuItems()).toEqual(['Copy session ID', 'End session']);
     });
   });
 

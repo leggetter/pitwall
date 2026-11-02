@@ -189,7 +189,7 @@ M5.1's own items start at W131, once its breakdown is written.
 
 | W | What | Branch | Size | Status |
 | --- | --- | --- | --- | --- |
-| W130 | New session from here and its Draft from this session taken out, and + New session (the header button and `n`) defaulting to the selected session's directory ([#139](https://github.com/leggetter/pitwall/issues/139); D27) | `m5.1/new-session-default` | S | In progress |
+| W130 | New session from here and its Draft from this session taken out, and + New session (the header button and `n`) defaulting to the selected session's directory ([#139](https://github.com/leggetter/pitwall/issues/139); D27) | `m5.1/new-session-default` | S | In review |
 
 ## Open questions
 

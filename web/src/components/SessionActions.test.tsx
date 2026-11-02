@@ -93,7 +93,7 @@ describe('the actions menu', () => {
   it('has Copy session ID, Copy attach command, a separator, then Stop and Remove, for a background session', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
     const bg = await openView('pitwall-test-bg');
-    expect(openMenu(bg)).toEqual(['New session from here', '—', 'Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
+    expect(openMenu(bg)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
     expect(item(bg, 'Remove session').className).toContain('danger');
     expect(item(bg, 'Stop session').className).not.toContain('danger');
   });
@@ -101,7 +101,7 @@ describe('the actions menu', () => {
   it('has Copy session ID, then End session, for an interactive session, which keeps its /bg note', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
     const interactive = await openView('pitwall-test-interactive');
-    expect(openMenu(interactive)).toEqual(['New session from here', '—', 'Copy session ID', '—', 'End session']);
+    expect(openMenu(interactive)).toEqual(['Copy session ID', '—', 'End session']);
     expect(within(interactive).queryByRole('menuitem', { name: 'Remove session' })).toBeNull();
     expect(within(interactive).getByRole('button', { name: /Typing \/bg in its terminal moves it to the background/ })).toBeTruthy();
   });
@@ -109,7 +109,7 @@ describe('the actions menu', () => {
   it('leaves out Copy attach command when the short id fails the shell-safety check', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }), snap(background({ shortId: '$(touch pitwall-test)' })));
     const bg = await openView('pitwall-test-bg');
-    expect(openMenu(bg)).toEqual(['New session from here', '—', 'Copy session ID', '—', 'Stop session', 'Remove session']);
+    expect(openMenu(bg)).toEqual(['Copy session ID', '—', 'Stop session', 'Remove session']);
   });
 
   describe('copying', () => {
@@ -311,7 +311,7 @@ describe('Stop and Remove', () => {
     const view = await openView('pitwall-test-bg');
     update(snapshot([group({ sessions: [session({ sessionId: INTERACTIVE, name: 'pitwall-test-interactive' })] })]));
     await settle();
-    expect(openMenu(view)).toEqual(['New session from here', '—', 'Copy session ID', 'Copy attach command']);
+    expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command']);
     expect(within(view).getByText(/no longer listed/)).toBeTruthy();
   });
 });
@@ -336,9 +336,6 @@ describe('End session, for a running interactive session (W90)', () => {
     expect(end.className).toBe('menu-item');
     expect(end.querySelector('svg')).toBeTruthy();
     const menu = within(interactive).getByRole('menu');
-    // New session from here first (W118), then Copy session ID, then End session.
-    expect(document.activeElement?.textContent).toBe('New session from here');
-    fireEvent.keyDown(menu, { key: 'ArrowDown' });
     expect(document.activeElement?.textContent).toBe('Copy session ID');
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(end);
@@ -549,7 +546,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
     update(snapshot([group({ sessions: [background()] })]));
     await settle();
-    expect(openMenu(view)).toEqual(['New session from here', '—', 'Copy session ID']);
+    expect(openMenu(view)).toEqual(['Copy session ID']);
   });
 
   it('closes its question when the session ends some other way meanwhile, and then offers Resume in background (W67)', async () => {
