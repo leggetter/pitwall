@@ -185,11 +185,12 @@ Phil, 2026-11-02, as New session from here was taken out (W130, D27): a future f
 
 ## M5.1 work breakdown
 
-M5.1's own items start at W131, once its breakdown is written.
+M5.1's own items start at W131, the evidence the rest of it needs; the others follow once its numbers are in.
 
 | W | What | Branch | Size | Status |
 | --- | --- | --- | --- | --- |
-| W130 | New session from here and its Draft from this session taken out, and + New session (the header button and `n`) defaulting to the selected session's directory ([#139](https://github.com/leggetter/pitwall/issues/139); D27) | `m5.1/new-session-default` | S | In review |
+| W130 | New session from here and its Draft from this session taken out, and + New session (the header button and `n`) defaulting to the selected session's directory ([#139](https://github.com/leggetter/pitwall/issues/139); D27) | `m5.1/new-session-default` | S | Merged ([#142](https://github.com/leggetter/pitwall/pull/142)) |
+| W131 | A usage report before any efficiency rule (Phil, 2026-11-02: "my concern is we're applying rules without proof"): `scripts/usage-report.ts` reads the last two weeks of every repo's transcripts, read-only and through the transcript adapter, and prints totals by repo, model and day, cache reads against fresh input, cache writes and output, main sessions against sub-agents, and tokens per hour with overlaps, as raw tokens plus a stand-in cost at API list prices, labelled as one. Each draft rule becomes a claim it tests; the rules the numbers support go into the global `AGENTS.md` with their figures (D28), and the Usage view reuses its code. Then one blog-editing session on Sonnet for Phil to judge, not the evals post | `m5.1/usage-report` | M | Not started |
 
 ## Open questions
 
@@ -206,6 +207,7 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
   - **Code-split the web UI:** the main bundle is 571 KB (176 KB gzipped), over Vite's 500 kB warning; the supervisor panel, the PR views and Preferences could load on demand. Served from localhost, so it costs only parse time.
   - **The Supervisor item's selected look** matches All sessions' when its view is open; a lighter current-only look might read better (W114's review).
   - **The PR list's placeholder** shows for about 8 s after a restart, until the first fetch.
+  - **The session view full page** ([#143](https://github.com/leggetter/pitwall/issues/143)): the Conversation or Terminal tab given the whole window, for reading a lot of text or a wide table (Phil, 2026-11-02).
   - **Open in Terminal on the "Workspace not trusted" card:** a button that opens a terminal in the directory with `claude` running, so you accept Claude Code's trust prompt without copying the command; pitwall still never trusts a directory for you (Phil, 2026-11-02: a UX nag, not for now).
   - **"Not needed" on Needs you:** hides a session's Needs you until it takes a new turn, so a wrong reason can be cleared without the model or stopping the session. The recap prompt's rule for a session you've said is done covers the case seen ([#140](https://github.com/leggetter/pitwall/issues/140)).
 - **Pull requests**
