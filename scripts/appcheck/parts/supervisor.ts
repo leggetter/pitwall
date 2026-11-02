@@ -211,7 +211,7 @@ const part: Part = {
         mentions,
         [
           { label: 'Open session pitwall-test-review', text: 'pitwall-test-review', parent: 'STRONG', tab: 0 },
-          { label: 'Open pull request example/demo-app #57', text: 'example/demo-app#57', parent: 'P', tab: 0 },
+          { label: 'Open pull request example/demo-app#57', text: 'example/demo-app#57', parent: 'P', tab: 0 },
         ],
         'the session, in bold as written, and the PR, each a Tab stop',
       );

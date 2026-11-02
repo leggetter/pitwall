@@ -430,8 +430,36 @@ describe('list_prs', () => {
       [4, false, true],
     ]);
     expect(all.older).toMatchObject({ count: 2 });
-    expect(((await call(made.list_prs!, { older: true, needsYou: true })).json.prs as Record<string, unknown>[]).map((each) => each.number)).toEqual([1, 3]);
+    const both = (await call(made.list_prs!, { older: true, needsYou: true })).json;
+    expect((both.prs as Record<string, unknown>[]).map((each) => each.number)).toEqual([1, 3]);
+    // The note says what the answer holds: with needsYou the older ones aren't in it.
+    expect((both.older as { note: string }).note).toContain('needsYou: true leaves them out');
+    expect((both.older as { note: string }).note).not.toContain('each marked older');
+    expect((all.older as { note: string }).note).toContain('each marked older');
     expect((await call(made.list_prs!, { older: 'yes' })).isError).toBe(true);
+  });
+
+  it('does not count an unclaimed PR as older: the web UI lists it nowhere, old or not (W125)', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const fetchedAt = NOW - 60_000;
+    const old = (days: number) => new Date(fetchedAt - days * day).toISOString();
+    const made = tools({
+      prs: {
+        fetchedAt: new Date(fetchedAt).toISOString(),
+        prs: [
+          pr(1, { updatedAt: old(200), place: { kind: 'unclaimed' } }),
+          pr(2, { updatedAt: old(200), place: { kind: 'not-cloned', root: '/made/up' } }),
+        ],
+      },
+    });
+    const plain = (await call(made.list_prs!)).json;
+    expect((plain.prs as Record<string, unknown>[]).map((each) => [each.number, each.place, each.older ?? false])).toEqual([[1, 'unclaimed', false]]);
+    expect(plain.older).toMatchObject({ count: 1 });
+    const all = (await call(made.list_prs!, { older: true })).json;
+    expect((all.prs as Record<string, unknown>[]).map((each) => [each.number, each.older ?? false])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
   });
 
   it('says nothing of older PRs when there are none', async () => {

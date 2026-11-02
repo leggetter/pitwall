@@ -7,9 +7,12 @@
 //
 // - **What matches:** a session's name, its short id (background sessions) or its full id, as a
 //   whole: not inside a longer word, name, path or file name, so a letter, digit, mark, `_`, `-` or
-//   `/` on either side, or a `.` with a letter or digit beyond it, means it isn't one. Any case.
-//   Longest first, so "pr-894 docs" wins over "pr-894" where both are names, and the leftmost wins
-//   where two overlap.
+//   `/` on either side, or a `.` with a letter or digit beyond it, means it isn't one. Any case,
+//   by one simple fold (each character to its lowercase when that's one character, else as it is)
+//   applied to the names and the text alike. Longest first, so "pr-894 docs" wins over "pr-894"
+//   where both are names, and the leftmost wins where two overlap. Found with a trie of the names
+//   walked from each place a name could start, so the cost follows the text and the longest
+//   name, not how many names there are.
 // - **What doesn't:** a name shorter than MENTION_MIN_LENGTH characters, which plain words would
 //   match ("api", "ui"); a generic name, one word of letters only or digits only ("website", "docs",
 //   "2024"), unless it's the whole of a bold or italic span, as the supervisor writes a session's
@@ -21,7 +24,7 @@
 // - **PRs:** `owner/name#123`, as a whole, for a PR in pitwall's own list, in any case. A bare `#123`
 //   isn't one: which repo it is would be a guess.
 
-import { visibleParts } from '../../src/shared/hiddenText.js';
+import { visibleParts, visibleString } from '../../src/shared/hiddenText.js';
 import type { PullRequestSummary, SessionSummary } from '../../src/shared/protocol.js';
 import type { NotNeeded } from './notNeeded.js';
 import { prKey, prName } from './prs.js';
@@ -52,12 +55,30 @@ const AFTER = String.raw`(?!${JOINS})(?!\.[\p{L}\p{N}])`;
 /** A PR as `owner/name#123`: GitHub's owner and repo name characters. */
 const PR = new RegExp(String.raw`${BEFORE}([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100})#([1-9][0-9]{0,9})${AFTER}`, 'gu');
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const length = (text: string) => Array.from(text).length;
-const key = (text: string) => text.toLowerCase();
+
+/** A character in lowercase when that is one code point of the same length, else as it is ("İ" stays). */
+function foldChar(char: string): string {
+  const lower = char.toLowerCase();
+  return lower.length === char.length && length(lower) === 1 ? lower : char;
+}
+/** Both sides of every comparison go through this one fold. */
+const key = (text: string) => Array.from(text, foldChar).join('');
 
 /** Whether every character of `text` shows as itself (visibleParts()). */
 const shows = (text: string) => visibleParts(text).every((part) => part.kind === 'text');
+
+/** `text` without the spaces and tabs (and newlines) at its ends, and only those: not U+FEFF or NBSP, which don't show. */
+const trimPlain = (text: string) => text.replace(/^[ \t\n]+|[ \t\n]+$/g, '');
+
+const JOIN = new RegExp(`^${JOINS}$`, 'u');
+const LETTER_OR_DIGIT = /^[\p{L}\p{N}]$/u;
+
+/** A name on a path through the trie: each step a folded character; a hit where a name ends. */
+interface Node {
+  next: Map<string, Node>;
+  target?: MentionTarget;
+}
 
 /**
  * The session a name means when several share it: the one that needs you, or else the one alive,
@@ -80,7 +101,7 @@ export function createMentions(sessions: readonly SessionSummary[], prs: readonl
   // Each name or id, by its lowercase form, with every session it could mean.
   const byKey = new Map<string, { text: string; sessions: SessionSummary[] }>();
   for (const session of sessions) {
-    const words = new Set([session.name.trim(), session.shortId ?? '', session.sessionId]);
+    const words = new Set([trimPlain(session.name), session.shortId ?? '', session.sessionId]);
     for (const word of words) {
       if (length(word) < MENTION_MIN_LENGTH || !shows(word)) continue;
       const entry = byKey.get(key(word)) ?? { text: word, sessions: [] };
@@ -96,31 +117,72 @@ export function createMentions(sessions: readonly SessionSummary[], prs: readonl
   }
   const prsByKey = new Map(prs.map((pr) => [`${key(pr.repo)}#${pr.number}`, pr]));
 
-  const specific = [...targets.entries()].filter(([, each]) => !each.generic).map(([lower]) => lower);
-  // Longest first, so the longer of two names that start at the same place wins.
-  specific.sort((a, b) => b.length - a.length);
-  const names = specific.length === 0 ? undefined : new RegExp(`${BEFORE}(?:${specific.map(escape).join('|')})${AFTER}`, 'giu');
+  // A trie of the names that link anywhere in a sentence; the generic ones link only as a whole span.
+  const root: Node = { next: new Map() };
+  for (const [folded, each] of targets) {
+    if (each.generic) continue;
+    let node = root;
+    for (const char of folded) {
+      let next = node.next.get(char);
+      if (next === undefined) node.next.set(char, (next = { next: new Map() }));
+      node = next;
+    }
+    node.target = each.target;
+  }
+  const searchable = root.next.size > 0;
+
+  /** Whether a name may start at code point `at`: nothing that joins before it, and not `x.` before it. */
+  const startsHere = (chars: string[], at: number) =>
+    !(at > 0 && JOIN.test(chars[at - 1]!)) && !(at > 1 && chars[at - 1] === '.' && LETTER_OR_DIGIT.test(chars[at - 2]!));
+  /** Whether a name may end before code point `end`: nothing that joins after it, and not `.x` after it. */
+  const endsHere = (chars: string[], end: number) =>
+    !(end < chars.length && JOIN.test(chars[end]!)) && !(end + 1 < chars.length && chars[end] === '.' && LETTER_OR_DIGIT.test(chars[end + 1]!));
 
   function sessionParts(text: string, whole: boolean): MentionPart[] {
-    if (whole) {
-      const found = targets.get(key(text.trim()));
-      if (found !== undefined && text.trim() !== '') {
-        const start = text.indexOf(text.trim());
+    // The check is on the text as written: trimming first would drop U+FEFF and NBSP, which don't show.
+    if (whole && shows(text)) {
+      const core = trimPlain(text);
+      const found = core === '' ? undefined : targets.get(key(core));
+      if (found !== undefined) {
+        const start = text.indexOf(core);
         return withText([
           { kind: 'text', text: text.slice(0, start) },
-          { kind: 'mention', text: text.trim(), target: found.target },
-          { kind: 'text', text: text.slice(start + text.trim().length) },
+          { kind: 'mention', text: core, target: found.target },
+          { kind: 'text', text: text.slice(start + core.length) },
         ]);
       }
     }
-    if (names === undefined) return [{ kind: 'text', text }];
+    if (!searchable) return [{ kind: 'text', text }];
+    const chars = Array.from(text);
+    const folded = chars.map(foldChar);
+    const offsets: number[] = [0];
+    for (const char of chars) offsets.push(offsets[offsets.length - 1]! + char.length);
     const parts: MentionPart[] = [];
-    let at = 0;
-    for (const match of text.matchAll(names)) {
-      const found = targets.get(key(match[0]));
-      if (found === undefined) continue;
-      parts.push({ kind: 'text', text: text.slice(at, match.index) }, { kind: 'mention', text: match[0], target: found.target });
-      at = match.index + match[0].length;
+    let at = 0; // in UTF-16 units, where the plain text after the last mention starts
+    for (let i = 0; i < chars.length; ) {
+      let node = root.next.get(folded[i]!);
+      if (node === undefined || !startsHere(chars, i)) {
+        i++;
+        continue;
+      }
+      let end = -1;
+      let target: MentionTarget | undefined;
+      for (let j = i + 1; ; j++) {
+        if (node.target !== undefined && endsHere(chars, j)) {
+          end = j;
+          target = node.target;
+        }
+        const next: Node | undefined = j < chars.length ? node.next.get(folded[j]!) : undefined;
+        if (next === undefined) break;
+        node = next;
+      }
+      if (target === undefined) {
+        i++;
+        continue;
+      }
+      parts.push({ kind: 'text', text: text.slice(at, offsets[i]) }, { kind: 'mention', text: text.slice(offsets[i], offsets[end]), target });
+      at = offsets[end]!;
+      i = end;
     }
     parts.push({ kind: 'text', text: text.slice(at) });
     return withText(parts);
@@ -151,10 +213,14 @@ function withText(parts: MentionPart[]): MentionPart[] {
   return kept.length === 0 ? [{ kind: 'text', text: '' }] : kept;
 }
 
-/** A mention's accessible name: what it does and to what, the name as pitwall knows it. */
-export function mentionLabel(target: MentionTarget): string {
-  const name = visibleParts(target.name)
-    .map((part) => (part.kind === 'text' ? part.text : `[${part.label}]`))
-    .join('');
-  return target.kind === 'session' ? `Open session ${name}` : `Open pull request ${name}`;
+/**
+ * A mention's accessible name (WCAG 2.5.3, Label in Name): what it does, then the text as it shows,
+ * so the name holds the visible text, then the name as pitwall knows it when that isn't the text
+ * (an id, or another case). A hidden character is drawn as its code.
+ */
+export function mentionLabel(target: MentionTarget, text: string = target.name): string {
+  const shown = visibleString(text);
+  if (target.kind === 'pr') return `Open pull request ${shown}`;
+  const name = visibleString(target.name);
+  return key(shown) === key(name) ? `Open session ${shown}` : `Open session ${shown} (${name})`;
 }
