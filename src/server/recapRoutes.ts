@@ -34,7 +34,7 @@
 // time, plan statuses at most one per session.
 import type { Hono } from 'hono';
 import type { Indexer } from '../index/index.js';
-import type { RecapEngine } from '../recaps/engine.js';
+import { PLAN_MAX_CONCURRENT, type RecapEngine } from '../recaps/engine.js';
 import { planStatusPath, planStatusRefreshPath, recapPath, recapRefreshPath, type PlanStatusResult, type RecapRefreshResult } from '../shared/protocol.js';
 import { LOOKUP_ERRORS } from './actions.js';
 import { resolveSession } from './sessions.js';
@@ -103,6 +103,9 @@ export function registerRecaps(app: Hono, indexer: Pick<Indexer, 'latest'>, reca
         return answer({ ok: false, error: "Today's recaps are used up, so the next plan status can be made after midnight.", busy: 'spent' }, 429);
       case 'running':
         c.header('Retry-After', String(result.retryAfterSeconds));
+        if (result.others === true) {
+          return answer({ ok: false, error: `pitwall is making ${PLAN_MAX_CONCURRENT} plan statuses for other sessions now, as many as it makes at a time. Try again in a few seconds.`, busy: 'running', others: true }, 429);
+        }
         return answer({ ok: false, error: "A plan status of this session is being made now. It'll show here in a few seconds.", busy: 'running' }, 429);
       case 'failed':
         return answer({ ok: false, error: result.reason }, 502);

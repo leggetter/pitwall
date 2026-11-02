@@ -10,7 +10,7 @@ import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, REC
 import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
-import { createRecapEngine, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
+import { createRecapEngine, OWN_NAME_MS, PAUSE_AFTER_FAILURES, PLAN_MAX_CONCURRENT, PLAN_MODEL_REJECTED, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
 import { ANSWER_INVALID, CALL_FAILED, PLAN_STATUS_SYSTEM_PROMPT, planStatusArgs, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
@@ -727,6 +727,43 @@ describe('plan status (W123)', () => {
     await h.reply(h.calls[2], 'oops', 1);
     expect(await third).toEqual({ kind: 'failed', reason: 'The plan status call exited with code 1.' });
     expect(h.engine.planStatus(a)?.plan).toBe(PLAN.plan);
+    expect(h.engine.health().error).toBeUndefined();
+  });
+
+  it(`makes at most PLAN_MAX_CONCURRENT (${PLAN_MAX_CONCURRENT}) at a time, of all sessions, answering others 'running'`, async () => {
+    const h = harness();
+    h.start();
+    const [a, b, c] = [quiet(h, 'a'), quiet(h, 'b'), quiet(h, 'c')];
+    await h.poll([a, b, c]);
+    const first = h.engine.makePlanStatus(a);
+    const second = h.engine.makePlanStatus(b);
+    await tick();
+    expect(h.calls).toHaveLength(2);
+    expect(await h.engine.makePlanStatus(c)).toEqual({ kind: 'running', retryAfterSeconds: 5, others: true });
+    expect(h.calls).toHaveLength(2);
+    await h.reply(h.calls[0], envelope({ found: false }));
+    await first;
+    // One has finished, so there's room for c.
+    const third = h.engine.makePlanStatus(c);
+    await tick();
+    expect(h.calls).toHaveLength(3);
+    await h.reply(h.calls[1], envelope({ found: false }));
+    await h.reply(h.calls[2], envelope({ found: false }));
+    expect((await second).kind).toBe('made');
+    expect((await third).kind).toBe('made');
+  });
+
+  it("says in its own words which setting to change when Claude Code refuses the model, and leaves recaps' health alone", async () => {
+    const h = harness({ work: () => ({ model: 'claude-haiku-9-9' }) });
+    h.start();
+    const a = quiet(h, 'a');
+    await h.poll([a]);
+    const made = h.engine.makePlanStatus(a);
+    await tick();
+    await h.reply(h.calls[0], envelope("There's an issue with the selected model (claude-haiku-9-9). It may not exist or you may not have access to it.", { is_error: true, total_cost_usd: 0 }), 1);
+    expect(await made).toEqual({ kind: 'failed', reason: PLAN_MODEL_REJECTED });
+    expect(PLAN_MODEL_REJECTED).toMatch(/plan status/);
+    expect(PLAN_MODEL_REJECTED).toMatch(/"work.recaps"/);
     expect(h.engine.health().error).toBeUndefined();
   });
 

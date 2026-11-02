@@ -55,6 +55,10 @@ export const PLAN_CHANGES_LABEL = 'Changes:';
 export const PLAN_OFF_TEXT = "Plan status is off: pitwall was started with --no-recaps, so it doesn't make one.";
 export const PLAN_NO_TRANSCRIPT_TEXT = "pitwall can't read this session's plan: it has no transcript pitwall can read.";
 export const PLAN_NOT_LISTED_TEXT = "It's no longer listed, so pitwall can't read its plan.";
+/** After a 429 'running' with `others`: pitwall is making as many as it does at a time, for other sessions. */
+export const PLAN_FULL_TEXT = 'pitwall is making plan statuses for other sessions now, as many as it makes at a time. Try again in a few seconds.';
+/** Said once to a screen reader when one is shown after it was loaded or made (the panel's live region). */
+export const PLAN_STATUS_READY = 'Plan status ready.';
 export const planFailedText = (status: number | undefined) => `${couldNot('make the plan status', status)} Try again in a moment.`;
 export const planLoadFailedText = (status: number | undefined) => `${couldNot('load the plan status', status)} Try again in a moment.`;
 
@@ -197,6 +201,8 @@ export function usePlanStatus({ api, session, health, listed, hidden }: UsePlanS
       }
       const body = isRecord(result.body) ? result.body : {};
       if (result.status === 429) {
+        // Busy with other sessions': none of this one is coming, so there's nothing to wait for.
+        if (body.busy === 'running' && body.others === true) return setState({ kind: 'error', message: PLAN_FULL_TEXT });
         if (body.busy === 'running') {
           setWaitingFrom({ at: flagAt });
           return setState({ kind: 'making' });
