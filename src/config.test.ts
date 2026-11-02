@@ -599,3 +599,65 @@ describe('readCapped', () => {
     expect(read(0)).toBeUndefined();
   });
 });
+
+describe('work: the model and effort for each kind of work (W119)', () => {
+  const error = (text: string): string => {
+    try {
+      parse(text);
+    } catch (thrown) {
+      return (thrown as Error).message;
+    }
+    throw new Error('it parsed');
+  };
+
+  it("reads each kind's model and effort, and leaves the kinds it doesn't name empty", () => {
+    const { work, warnings, roots } = parse(`{
+      "work": {
+        "session":    { "model": "claude-opus-5-5", "effort": "high" },
+        "subagents":  { "model": "sonnet" },
+        "supervisor": { "model": "opus", "effort": "medium" },
+        "recaps":     { "effort": "low" },
+      },
+    }`);
+    expect(warnings).toEqual([]);
+    expect(roots).toBeUndefined();
+    expect(work).toEqual({
+      session: { model: 'claude-opus-5-5', effort: 'high' },
+      subagents: { model: 'sonnet' },
+      supervisor: { model: 'opus', effort: 'medium' },
+      recaps: { effort: 'low' },
+      relay: {},
+    });
+  });
+
+  it('takes "default" for Claude Code\'s own, and no work block at all', () => {
+    expect(parse('{ "work": { "relay": { "model": "default", "effort": "default" } } }').work?.relay).toEqual({ model: 'default', effort: 'default' });
+    expect(parse('{ "roots": ["/a"] }').work).toBeUndefined();
+  });
+
+  it('warns of a kind or a field it does not know, as for any unknown key', () => {
+    const { warnings, work } = parse('{ "work": { "triage": { "model": "opus" }, "recaps": { "model": "haiku", "temperature": 0 } } }');
+    expect(warnings).toEqual([
+      `${FILE}: unknown key "work.triage", ignored. A newer pitwall may use it.`,
+      `${FILE}: unknown key "work.recaps.temperature", ignored. A newer pitwall may use it.`,
+    ]);
+    expect(work?.recaps).toEqual({ model: 'haiku' });
+  });
+
+  it.each([
+    ['work', '{ "work": ["opus"] }', '"work" must be an object'],
+    ['a kind', '{ "work": { "session": "opus" } }', '"work.session" must be an object'],
+    ['a model with an option in it', '{ "work": { "session": { "model": "opus --dangerously-skip-permissions" } } }', '"work.session.model" must be a Claude Code model'],
+    ['a model that is no Claude model', '{ "work": { "recaps": { "model": "gpt-5" } } }', '"work.recaps.model" must be a Claude Code model'],
+    ['a sub-agent alias Claude Code documents only for sessions', '{ "work": { "subagents": { "model": "opusplan" } } }', '"work.subagents.model" must be a Claude Code model: opus, sonnet, haiku or fable'],
+    ['an effort Claude Code ignores', '{ "work": { "supervisor": { "effort": "extreme" } } }', '"work.supervisor.effort" must be low, medium, high, xhigh or max'],
+    ['ultracode, which turns on workflows too', '{ "work": { "session": { "effort": "ultracode" } } }', '"work.session.effort" must be low, medium, high, xhigh or max'],
+    ['an effort for sub-agents', '{ "work": { "subagents": { "effort": "low" } } }', "\"work.subagents.effort\" can't be set: Claude Code has no effort setting for a session's sub-agents"],
+  ])('stops at %s, naming its key, never its value', (_, text, expected) => {
+    const got = error(text);
+    expect(got).toContain(`${FILE}: ${expected}`);
+    expect(got).not.toContain('dangerously');
+    expect(got).not.toContain('gpt-5');
+    expect(got).not.toContain('extreme');
+  });
+});

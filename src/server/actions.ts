@@ -87,6 +87,8 @@ import { matchRoot } from '../index/roots.js';
 import { isSessionUuid } from '../index/transcripts.js';
 import {
   ATTACHMENTS_MAX_PER_SESSION,
+  isEffortLevel,
+  isWorkModel,
   removePath,
   resumePath,
   SPAWN_PATH,
@@ -95,12 +97,15 @@ import {
   type ActionResult,
   type ResumeResult,
   type SpawnResult,
+  type WorkChoice,
+  WORK_DEFAULT,
 } from '../shared/protocol.js';
 import { UNKNOWN_ATTACHMENT_ERROR, type AttachmentFile, type AttachmentStore } from './attachments.js';
 import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
+import { EFFORT_PROBLEM, mergeChoices, modelProblem, withEffort, workArgs, type WorkStore } from './work.js';
 
 export interface ActionOptions {
   /** Default: runCommand. Tests pass a fake, so they never run `claude`. */
@@ -145,6 +150,11 @@ export interface ActionOptions {
    * spawn route and the supervisor's spawn_session (W115), so they share them. Default: a new one.
    */
   spawner?: SpawnRunner;
+  /**
+   * The model and effort for sessions and their sub-agents (W119): what spawn uses when the request
+   * names none, and what resume always uses. Default: none, so no flags, as before W119.
+   */
+  work?: Pick<WorkStore, 'choice'>;
 }
 
 /** What spawn needs from the AttachmentStore. */
@@ -167,8 +177,6 @@ export const MAX_CWD_LENGTH = 4096;
  */
 export const NAME_PATTERN = /^[A-Za-z0-9._](?:[A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])?$/;
 
-/** A short model alias such as `sonnet` or `claude-haiku-4-5`: letters, digits, `-` and `.`, at most 40, not starting with `-`. */
-export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,39}$/;
 
 /**
  * A short id that's safe to pass to `claude stop` and `claude rm`. The same
@@ -186,7 +194,12 @@ export interface ValidSpawn {
   /** The user's own prompt, without the `@` lines spawnPrompt() adds. */
   prompt: string;
   name?: string;
+  /** isWorkModel(), or WORK_DEFAULT for no `--model` whatever the defaults say (W119). */
   model?: string;
+  /** isEffortLevel(), or WORK_DEFAULT for no `--effort`. */
+  effort?: WorkChoice['effort'];
+  /** CLAUDE_CODE_SUBAGENT_MODEL for the session's sub-agents, from the defaults (W119). Never from the request. */
+  subagentModel?: string;
   /** The kept files for SpawnRequest.attachments, in its order. Absent for none. */
   attachments?: readonly AttachmentFile[];
 }
@@ -205,7 +218,7 @@ export async function validateSpawnRequest(
   attachments?: Pick<SpawnAttachments, 'lookup'>,
 ): Promise<SpawnValidation> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return invalid('The body must be a JSON object.');
-  const { cwd, prompt, name, model, attachments: ids } = body as Record<string, unknown>;
+  const { cwd, prompt, name, model, effort, attachments: ids } = body as Record<string, unknown>;
 
   if (typeof prompt !== 'string' || prompt.trim() === '') return invalid('The first prompt is required.');
   if (prompt.length > MAX_PROMPT_LENGTH) return invalid(`The first prompt can be at most ${MAX_PROMPT_LENGTH} characters.`);
@@ -220,9 +233,8 @@ export async function validateSpawnRequest(
   if (name !== undefined && (typeof name !== 'string' || !NAME_PATTERN.test(name))) {
     return invalid('The name can have letters, digits, spaces, ".", "_" and "-", at most 64, and must start with a letter, digit, "." or "_".');
   }
-  if (model !== undefined && (typeof model !== 'string' || !MODEL_PATTERN.test(model))) {
-    return invalid('The model must be a short alias such as sonnet, opus or haiku: letters, digits, "-" and ".", at most 40.');
-  }
+  if (model !== undefined && model !== WORK_DEFAULT && !isWorkModel(model)) return invalid(`The model ${modelProblem('session')}.`);
+  if (effort !== undefined && effort !== WORK_DEFAULT && !isEffortLevel(effort)) return invalid(`The effort ${EFFORT_PROBLEM}.`);
   if (ids !== undefined) {
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) return invalid('The attachments must be a list of attachment ids.');
     if (ids.length > ATTACHMENTS_MAX_PER_SESSION) return invalid(`A new session can have at most ${ATTACHMENTS_MAX_PER_SESSION} attachments.`);
@@ -235,6 +247,7 @@ export async function validateSpawnRequest(
   const spawn: ValidSpawn = { cwd: dir.path, prompt };
   if (name !== undefined) spawn.name = name as string;
   if (model !== undefined) spawn.model = model as string;
+  if (effort !== undefined) spawn.effort = effort as WorkChoice['effort'];
   if (ids !== undefined && ids.length > 0) {
     const found = attachments ? await attachments.lookup(ids as string[]) : { ok: false as const, error: UNKNOWN_ATTACHMENT_ERROR };
     if (!found.ok) return invalid(found.error);
@@ -289,7 +302,7 @@ function invalid(error: string): { ok: false; error: string } {
 export function spawnArgs(spawn: ValidSpawn): string[] {
   const args = ['--bg'];
   if (spawn.name !== undefined) args.push('--name', spawn.name);
-  if (spawn.model !== undefined) args.push('--model', spawn.model);
+  args.push(...workArgs({ ...(spawn.model === undefined ? {} : { model: spawn.model }), ...(spawn.effort === undefined ? {} : { effort: spawn.effort }) }));
   for (const file of spawn.attachments ?? []) args.push(`--add-dir=${file.dir}`);
   args.push('--', spawnPrompt(spawn));
   return args;
@@ -337,8 +350,8 @@ export function parseCopyNote(output: string): { found: true; shortId?: string }
 }
 
 /** The arguments for resuming an ended session in the background, with no prompt. */
-export function resumeArgs(sessionId: string): string[] {
-  return ['--resume', sessionId, '--bg'];
+export function resumeArgs(sessionId: string, choice: WorkChoice = {}): string[] {
+  return ['--resume', sessionId, '--bg', ...workArgs(choice)];
 }
 
 /**
@@ -544,6 +557,22 @@ export interface SpawnRunner {
   readonly limiter: SpawnLimiter;
 }
 
+/**
+ * `spawn` with the defaults for sessions where it names no model or effort, field by field, and the
+ * sub-agents' model from the defaults (W119). The same object without `work`.
+ */
+export function withSessionWork(spawn: ValidSpawn, work: Pick<WorkStore, 'choice'> | undefined): ValidSpawn {
+  if (work === undefined) return spawn;
+  const session = mergeChoices({ ...(spawn.model === undefined ? {} : { model: spawn.model }), ...(spawn.effort === undefined ? {} : { effort: spawn.effort }) }, work.choice('session'));
+  const subagents = work.choice('subagents').model;
+  return {
+    ...spawn,
+    ...(session.model === undefined ? {} : { model: session.model }),
+    ...(session.effort === undefined ? {} : { effort: session.effort }),
+    ...(subagents === undefined || subagents === WORK_DEFAULT ? {} : { subagentModel: subagents }),
+  };
+}
+
 export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}): SpawnRunner {
   const run = options.run ?? runCommand;
   const now = options.now ?? Date.now;
@@ -557,7 +586,10 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
   );
   const attachments = options.attachments;
 
-  async function start(spawn: ValidSpawn): Promise<SpawnOutcome> {
+  async function start(request: ValidSpawn): Promise<SpawnOutcome> {
+    // The model and effort the request names, else the defaults for sessions, and the defaults for
+    // their sub-agents (W119): for New session's dialog and the supervisor's spawn_session alike.
+    const spawn = withSessionWork(request, options.work);
     // Checked again and taken, then the slot, with nothing that waits between: two spawns can't
     // both use one attachment, and one that can't be used doesn't count toward the rate limit.
     const ids = spawn.attachments?.map((file) => file.id) ?? [];
@@ -576,7 +608,9 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
       let result: CommandResult;
       try {
         // PWD is the directory it runs in, as for resume: a new session records where it started.
-        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...env(), PWD: spawn.cwd }, timeoutMs });
+        // CLAUDE_CODE_SUBAGENT_MODEL for its sub-agents, and no inherited CLAUDE_CODE_EFFORT_LEVEL over its --effort (W119).
+        const childEnv = withEffort(env(), spawn, spawn.subagentModel === undefined ? {} : { model: spawn.subagentModel });
+        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...childEnv, PWD: spawn.cwd }, timeoutMs });
       } finally {
         slot.release();
       }
@@ -638,6 +672,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
   const env = () => childEnvironment(options.env ?? process.env, options.token);
   // New sessions, from New session's dialog here and from the supervisor's spawn_session (W115): one limit for both.
   const spawner = options.spawner ?? createSpawnRunner(options);
+  // A resumed session's model and effort, and its sub-agents' model (W119): the defaults for sessions.
+  const sessionWork = () => ({ session: options.work?.choice('session') ?? {}, subagents: options.work?.choice('subagents') ?? {} });
   const limiter = spawner.limiter;
 
   const spawnResult = (c: Context, result: SpawnResult, status: 201 | 400 | 413 | 415 | 422 | 429 | 502 | 503 | 504) => {
@@ -788,7 +824,9 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       // one a session started through a symlink is in. The check just resolved that `cwd` to
       // `dir.path`, so the two name the same directory; one that no longer resolves to a directory
       // under a root was refused with 409 above, rather than run with PWD set to the realpath.
-      const result = await run(claudeBin, resumeArgs(sessionId), { cwd: dir.path, env: { ...env(), PWD: cwd }, timeoutMs });
+      // The defaults for sessions and their sub-agents (W119): Claude Code takes `--model` and `--effort` on a resume too.
+      const work = sessionWork();
+      const result = await run(claudeBin, resumeArgs(sessionId, work.session), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
           indexer.pollSoon();

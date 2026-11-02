@@ -20,7 +20,8 @@
 // Your messages go over stdin, never a command line, so `ps` shows none of them. The MCP config
 // file holds the bearer token for pitwall's MCP server, so it's a 0600 file, never inline JSON,
 // which `ps` would show (spike 009, finding 4).
-import { MCP_SERVER_NAME, MCP_TOOLS, SUPERVISOR_MODEL } from '../shared/protocol.js';
+import { MCP_SERVER_NAME, MCP_TOOLS, SUPERVISOR_MODEL, type WorkChoice } from '../shared/protocol.js';
+import { workArgs } from '../server/work.js';
 import { relayEnvironment } from '../server/relay.js';
 
 /** The supervisor's session name: what `claude agents --json` lists it as, and what a session sees as the sender. */
@@ -150,7 +151,7 @@ How to write
  *   and `settings`, supervisorSettings().
  * - `--resume`: the conversation pitwall kept the id of, whose system prompt is this version's.
  */
-export function supervisorArgs(options: { mcpConfig: string; settings: string; resume?: string; model?: string }): string[] {
+export function supervisorArgs(options: { mcpConfig: string; settings: string; resume?: string } & WorkChoice): string[] {
   return [
     '-p',
     '--input-format',
@@ -162,8 +163,8 @@ export function supervisorArgs(options: { mcpConfig: string; settings: string; r
     '--include-hook-events',
     '--name',
     SUPERVISOR_NAME,
-    '--model',
-    options.model ?? SUPERVISOR_MODEL,
+    // SUPERVISOR_MODEL unless the config file or the app chose another (W119): none for WORK_DEFAULT.
+    ...workArgs({ model: options.model ?? SUPERVISOR_MODEL, ...(options.effort === undefined ? {} : { effort: options.effort }) }),
     '--tools',
     SUPERVISOR_BUILTIN_TOOLS.join(','),
     '--permission-mode',

@@ -4,6 +4,7 @@ import type { RecapEngine } from '../recaps/engine.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
+import type { WorkStore } from './work.js';
 
 export { DEFAULT_PORT, PortInUseError } from './server.js';
 export { createRelayManager, type RelayManager } from './relay.js';
@@ -62,6 +63,12 @@ export interface ServerOptions {
    * so a test never reaches the model.
    */
   supervisor?: Supervisor;
+  /**
+   * The model and effort for each kind of work (W119): the config file's defaults and the app's
+   * overrides, for this run. The CLI makes it, so the relay, recaps and the supervisor read the same
+   * one. Default: a new one with no config, which is pitwall's own defaults.
+   */
+  work?: WorkStore;
 }
 
 export interface RunningServer {

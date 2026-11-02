@@ -30,6 +30,7 @@ import { createRecapEngine } from './recaps/engine.js';
 import { createSupervisor } from './supervisor/supervisor.js';
 import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
+import { createWorkStore } from './server/work.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
 import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, SUPERVISOR_MODEL } from './shared/protocol.js';
@@ -103,6 +104,18 @@ Config file:
                         owner no other root lists, or "none" for its own
                         clones only. Without it, each owner goes to the root
                         with the most clones from it.
+  work                  The model and effort for each kind of work pitwall
+                        starts: "session" (New session and resume),
+                        "subagents" (a new session's sub-agents, model only),
+                        "supervisor", "recaps" and "relay", each
+                        { "model": ..., "effort": ... }. A model is opus,
+                        sonnet, haiku, fable or another Claude Code alias, or
+                        a full name such as claude-opus-5-5; an effort is low,
+                        medium, high, xhigh or max; "default" for either is
+                        Claude Code's own. Without them, sessions get Claude
+                        Code's defaults, the supervisor ${SUPERVISOR_MODEL},
+                        recaps ${RECAP_MODEL} and the relay haiku. Preferences
+                        can change them for a run, without writing the file.
 
   A flag wins over an environment variable, which wins over the file. Roots
   given as arguments replace the file's, and each keeps its "github" settings
@@ -565,14 +578,17 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
 
   const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   // The relay (D8) starts on the first message. The index leaves its own session out, and shows its exchanges.
-  const relay = createRelayManager();
+  // The model and effort for each kind of work (W119): the config file's `work`, then the app's
+  // overrides for this run. The relay, recaps and the supervisor read it at each start or call.
+  const work = createWorkStore({ ...(config.work === undefined ? {} : { config: config.work }), ...(config.found ? { configFile: config.file } : {}) });
+  const relay = createRelayManager({ work: () => work.choice('relay') });
   // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and
   // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.
   // Your messages through the relay are yours in a recap's input, by their ids (W110's review).
-  const recaps = command.recaps ? createRecapEngine({ relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) } }) : undefined;
+  const recaps = command.recaps ? createRecapEngine({ relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) }, work: () => work.choice('recaps') }) : undefined;
   // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
   // With --no-supervisor, there's none, and pitwall never runs it.
-  const supervisor = command.supervisor ? createSupervisor() : undefined;
+  const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor') }) : undefined;
   const indexer = startIndexer({
     roots,
     intervalMs,
@@ -596,6 +612,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       indexer,
       token,
       relay,
+      work,
       onAuthenticated: () => launchFileUsed?.(),
       webRoot: resolveWebRoot(),
       // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.

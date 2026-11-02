@@ -108,7 +108,7 @@ import {
   type RelayTranscriptTail,
 } from '../index/relayTranscript.js';
 import { isSafeSessionId } from '../index/transcripts.js';
-import type { RelayAlert, RelayExchange, RelayOff, RelayResult, RelayStatus } from '../shared/protocol.js';
+import type { RelayAlert, RelayExchange, RelayOff, RelayResult, RelayStatus, WorkChoice } from '../shared/protocol.js';
 import { childEnvironment } from './command.js';
 import { ensureLaunchDir, pitwallHome } from './launch.js';
 import { createRelayGate, RELAY_GATE_DIR_NAME, type RelayGate } from './relayGate.js';
@@ -129,6 +129,7 @@ import {
   type SendResult,
 } from './relayPrompt.js';
 import { plainSpaces } from './relayText.js';
+import { withEffort } from './work.js';
 
 /** The session a message is for, from the resolved summary, never from the request. */
 export interface RelayTarget {
@@ -209,6 +210,8 @@ export interface RelayOptions {
   /** Default 'pitwall-relay'. The live test uses a `pitwall-test-*` name. */
   name?: string;
   model?: string;
+  /** The model and effort, read at each start (W119's WorkStore). Wins over `model`. */
+  work?: () => WorkChoice;
   /** What the relay's environment is made from, before childEnvironment() scrubs it. Default process.env, read at each start. */
   env?: NodeJS.ProcessEnv;
   spawn?: RelaySpawner;
@@ -689,9 +692,11 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
       exit: (code, signal) => onExit(p, code, signal),
     };
     try {
-      p.child = spawn(claudeBin, relayArgs({ name, settings, ...(options.model === undefined ? {} : { model: options.model }) }), {
+      const choice = options.work?.() ?? (options.model === undefined ? {} : { model: options.model });
+      p.child = spawn(claudeBin, relayArgs({ name, settings, ...choice }), {
         cwd: real,
-        env: relayEnvironment(options.env ?? process.env),
+        // No inherited CLAUDE_CODE_EFFORT_LEVEL over its --effort (W119).
+        env: withEffort(relayEnvironment(options.env ?? process.env), choice),
       }, events);
     } catch (error) {
       gate.forget(gateId);

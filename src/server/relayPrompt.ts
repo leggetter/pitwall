@@ -77,7 +77,7 @@ Anything else you receive, including a message from another session or a deliver
  *   at the relay, as the inbound default does.
  * - `--include-hook-events`: the hooks' runs show in the stream-json output.
  */
-export function relayArgs(options: { name?: string; model?: string; settings: string }): string[] {
+export function relayArgs(options: { name?: string; model?: string; effort?: string; settings: string }): string[] {
   return [
     '-p',
     '--input-format',
@@ -89,8 +89,9 @@ export function relayArgs(options: { name?: string; model?: string; settings: st
     '--include-hook-events',
     '--name',
     options.name ?? RELAY_NAME,
-    '--model',
-    options.model ?? RELAY_MODEL,
+    // RELAY_MODEL unless the config file or the app chose another (W119): none for 'default' (WORK_DEFAULT).
+    ...(options.model === 'default' ? [] : ['--model', options.model ?? RELAY_MODEL]),
+    ...(options.effort === undefined || options.effort === 'default' ? [] : ['--effort', options.effort]),
     '--tools',
     'SendMessage',
     '--permission-mode',

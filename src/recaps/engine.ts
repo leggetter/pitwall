@@ -51,8 +51,10 @@ import {
   type RecapSummary,
   type SessionRecap,
   type SessionSummary,
+  type WorkChoice,
 } from '../shared/protocol.js';
 import { pitwallHome } from '../server/launch.js';
+import { modelRejectedMessage } from '../server/work.js';
 import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
@@ -116,6 +118,8 @@ export interface RecapEngineOptions {
   claudeBin?: string;
   /** Default RECAP_MODEL. */
   model?: string;
+  /** The model and effort for each call, read as it starts (W119's WorkStore). Wins over `model`. */
+  work?: () => WorkChoice;
   /** Default `$PITWALL_HOME/recap`, or `~/.pitwall/recap`. Created 0700, and nothing is written to it. */
   dir?: string;
   /** What the call's environment is made from, before recapEnvironment(). Default process.env, read at each call. */
@@ -496,7 +500,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     save();
     const outcome = await runRecapCall({
       claudeBin,
-      args: recapArgs(options.model === undefined ? {} : { model: options.model }),
+      args: recapArgs(options.work?.() ?? (options.model === undefined ? {} : { model: options.model })),
       cwd,
       env: recapEnvironment(options.env ?? process.env),
       input,
@@ -707,6 +711,8 @@ export function readOutcome(outcome: Exclude<CallOutcome, { kind: 'stopped' }>):
     case 'exit': {
       const envelope = parseEnvelope(outcome.stdout);
       const cost = envelope.costUsd === undefined ? {} : { costUsd: envelope.costUsd };
+      // A refused model exits 1, with a result that says so (W119): pitwall's words for that, not the exit code.
+      if (!envelope.ok && envelope.reason === modelRejectedMessage('recaps')) return { ok: false, reason: envelope.reason, ...cost };
       if (outcome.code !== 0) {
         const how = outcome.code === null ? `was stopped by ${outcome.signal ?? 'a signal'}` : `exited with code ${outcome.code}`;
         return { ok: false, reason: `The recap call ${how}.`, ...cost };

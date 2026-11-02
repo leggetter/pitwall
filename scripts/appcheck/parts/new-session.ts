@@ -138,7 +138,10 @@ const part: Part = {
       await t.fresh({ search: '?view=all' });
       await openDialog(t, 'New session');
       const labels = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('label.field-label')].map((l) => l.textContent.trim())`);
-      t.expectEqual(labels, ['Directory', 'Name optional', 'Model optional', 'First prompt'], 'its fields');
+      t.expectEqual(labels, ['Directory', 'Name optional', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
+      // Model and Effort start from the defaults for sessions, which their first options name (W119): the made-up config file's.
+      await page.waitFor('the defaults for sessions', `${field('Effort')}?.options[0]?.textContent === 'Default: high'`);
+      t.expectEqual(await page.evaluate(`${field('Model')}.options[0].textContent`), 'Default: opus', "Model's first option names the default");
       const values = await page.evaluate<string[]>(`[...${DIRECTORY}.options].map((o) => o.value)`);
       for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(dir), `it offers ${dir}`, values);
       t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
@@ -160,12 +163,13 @@ const part: Part = {
       t.expectEqual(await page.evaluate(chooseOption(DIRECTORY, API_SERVER)), API_SERVER, 'the directory chosen');
       await page.click('Name', field('Name'));
       await page.type(name);
+      t.expectEqual(await page.evaluate(chooseOption(field('Effort'), 'low')), 'low', 'the effort chosen (W119)');
       await page.click('First prompt', PROMPT);
       await page.type(FIRST_PROMPT);
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expect((await page.evaluate<string[]>(toasts)).includes(`Started ${name}. Its view opens when it shows up in the list.`), 'the toast says it started', await page.evaluate(toasts));
-      t.expectEqual(server.records.spawns, [{ cwd: API_SERVER, name, promptLength: FIRST_PROMPT.length }], 'the fake server got the start, once');
+      t.expectEqual(server.records.spawns, [{ cwd: API_SERVER, name, effort: 'low', promptLength: FIRST_PROMPT.length }], 'the fake server got the start, once, with the effort and no model, so the default');
       await page.waitFor('its view', `${viewName} === ${q(name)}`, 8000);
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list [data-open-session]')].some((el) => el.textContent.trim() === ${q(name)})`), 'its row is listed');
       await t.shot('started');

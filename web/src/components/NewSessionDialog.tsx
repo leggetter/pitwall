@@ -6,7 +6,8 @@
 // - Fields: Directory, a select of the groups' directories plus "Another directory under a root…",
 //   which reveals a combobox of the directories under the roots (W70), fetched once per opening, the
 //   first time it's chosen, and narrowed as you type (directories.ts); Name and Model, optional,
-//   Model's "Other…" revealing a field; and the first prompt. With a root tab open (W38), the
+//   Model's "Other…" revealing a field, and Effort (W119), each starting from pitwall's defaults for
+//   sessions, which the first option names once they've loaded (modelEffort.ts); and the first prompt. With a root tab open (W38), the
 //   directories are that tab's, and a typed one must be in that tab, so the session is listed where
 //   it was started from. A chosen directory is sent as its absolute path; a typed one as before, or
 //   from a `~/` path under a root.
@@ -48,7 +49,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import type { DirectoryList, IndexSnapshot, SpawnRequest } from '../../../src/shared/protocol.js';
+import { EFFORT_LEVELS, WORK_DEFAULT, type DirectoryList, type EffortLevel, type IndexSnapshot, type SpawnRequest, type WorkSettings } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { DRAFT_HINTS, DRAFT_LABEL, draftState, withDraft } from '../fromSession.js';
 import { ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
@@ -63,6 +64,7 @@ import {
   type DirectoryOption,
 } from '../directories.js';
 import { plainText, shortenHome } from '../format.js';
+import { CLAUDE_DEFAULT_TEXT, fetchWorkSettings, valueText } from '../modelEffort.js';
 import {
   directoryChoices,
   directoryProblem,
@@ -88,6 +90,14 @@ import '../actions.css';
 /** The picker's "type one" choice. No path can contain a NUL, so it can't collide with one. */
 const OTHER = '\u0000other';
 const MODELS = ['sonnet', 'opus', 'haiku'] as const;
+
+/**
+ * The Model and Effort fields' first option: pitwall's default for sessions, once loaded (W119), as
+ * "Default: opus", or "Default" when it's Claude Code's own or hasn't loaded.
+ */
+export function sessionDefaultText(value: string | undefined): string {
+  return value === undefined || value === WORK_DEFAULT ? 'Default' : `Default: ${valueText(value)}`;
+}
 
 /** The sentence before the trust command (4: Dialogs, New session dialog). */
 export const TRUST_TEXT = "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:";
@@ -195,7 +205,7 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
 
 export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice, draft }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
-  const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), prompt: useId(), draft: useId() };
+  const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId(), draft: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
 
@@ -220,6 +230,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   const [name, setName] = useState(prefill?.name ?? '');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
+  const [effort, setEffort] = useState<'' | EffortLevel | typeof WORK_DEFAULT>('');
+  // pitwall's defaults for sessions (W119), for the first options' words. Without them, "Default".
+  const [work, setWork] = useState<WorkSettings>();
   const [prompt, setPrompt] = useState(prefill?.prompt ?? '');
   const [busy, setBusy] = useState(false);
   // Problems show once a submit has been tried, then follow the typing.
@@ -264,6 +277,17 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
       if (alive.current && !controller.signal.aborted) setListing(list ? { kind: 'ready', list } : { kind: 'failed' });
     });
   };
+
+  // The defaults for sessions, once per opening. A failure leaves "Default", which the server still applies.
+  useEffect(() => {
+    if (!api) return;
+    const controller = new AbortController();
+    void fetchWorkSettings(api, controller.signal).then((loaded) => {
+      if (loaded !== undefined && !controller.signal.aborted) setWork(loaded);
+    });
+    return () => controller.abort();
+  }, [api]);
+  const defaults = work?.effective.session;
 
   // With no directory to choose but a typed one, the field is there from the start.
   useEffect(() => {
@@ -396,6 +420,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     const request: SpawnRequest = { cwd, prompt };
     if (name !== '') request.name = name;
     if (model !== '') request.model = model;
+    if (effort !== '') request.effort = effort;
     if (attachments.ids.length > 0) request.attachments = [...attachments.ids];
     submitting.current = true;
     setBusy(true);
@@ -604,7 +629,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
         </label>
         <span className="select">
           <select id={ids.model} className="select-input" value={modelChoice} onChange={edit(setModelChoice)} {...disabled}>
-            <option value="">Default</option>
+            <option value="">{sessionDefaultText(defaults?.model)}</option>
+            {defaults?.model !== undefined && defaults.model !== WORK_DEFAULT && <option value={WORK_DEFAULT}>{CLAUDE_DEFAULT_TEXT}</option>}
             {MODELS.map((alias) => (
               <option key={alias} value={alias}>
                 {alias}
@@ -619,8 +645,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
             id={ids.customModel}
             type="text"
             className="field-input mono"
-            aria-label="Model alias"
-            maxLength={40}
+            aria-label="Model alias or full name"
+            maxLength={64}
             autoComplete="off"
             spellCheck={false}
             value={customModel}
@@ -636,6 +662,24 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
             {shown.model}
           </p>
         )}
+      </div>
+
+      <div className="field">
+        <label className="field-label" htmlFor={ids.effort}>
+          Effort <span className="field-optional">optional</span>
+        </label>
+        <span className="select">
+          <select id={ids.effort} className="select-input" value={effort} onChange={edit((value) => setEffort(value as typeof effort))} {...disabled}>
+            <option value="">{sessionDefaultText(defaults?.effort)}</option>
+            {defaults?.effort !== undefined && defaults.effort !== WORK_DEFAULT && <option value={WORK_DEFAULT}>{CLAUDE_DEFAULT_TEXT}</option>}
+            {EFFORT_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+          <Icon name="select" className="select-icon" />
+        </span>
       </div>
 
       <div className="field">

@@ -6,7 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFacts } from '../index/index.js';
 import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
-import { RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type SessionSummary } from '../shared/protocol.js';
+import { RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
+import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
 import { createRecapEngine, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
@@ -630,5 +631,33 @@ describe('close', () => {
     await h.poll(sessions);
     expect(h.calls).toHaveLength(1);
     expect(h.engine.health().calls).toBe(1);
+  });
+});
+
+describe('the model and effort for recaps (W119)', () => {
+  it("reads the store's choice at each call, so a change in Preferences reaches the next recap", async () => {
+    let choice: WorkChoice = { model: 'claude-haiku-5-5' };
+    const h = harness({ work: () => choice, env: { PATH: '/usr/bin:/bin', HOME: '/made-up/home', CLAUDE_CODE_EFFORT_LEVEL: 'max' } });
+    h.start();
+    await h.poll([h.add('a')]);
+    expect(h.calls[0]!.args).toEqual(recapArgs());
+    await h.reply(h.calls[0], envelope(answer()));
+    choice = { model: 'sonnet', effort: 'low' };
+    await h.poll([h.add('a'), h.add('b')]);
+    expect(h.calls).toHaveLength(2);
+    const args = h.calls[1]!.args;
+    expect(args.slice(args.indexOf('--model'), args.indexOf('--model') + 4)).toEqual(['--model', 'sonnet', '--effort', 'low']);
+    // An inherited effort can't change what's chosen: the call's environment leaves it out.
+    expect(h.calls[1]!.env).not.toHaveProperty('CLAUDE_CODE_EFFORT_LEVEL');
+  });
+
+  it("says in pitwall's words which setting to change when Claude Code refuses the model", async () => {
+    const h = harness({ work: () => ({ model: 'claude-haiku-9-9' }) });
+    h.start();
+    await h.poll([h.add('a')]);
+    const refused = envelope("There's an issue with the selected model (claude-haiku-9-9). It may not exist or you may not have access to it.", { is_error: true, total_cost_usd: 0 });
+    await h.reply(h.calls[0], refused, 1);
+    expect(h.engine.health().error).toBe(modelRejectedMessage('recaps'));
+    expect(h.engine.health().error).toMatch(/Preferences, under Models and effort, or in the config file's "work.recaps"/);
   });
 });

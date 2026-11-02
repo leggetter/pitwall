@@ -65,9 +65,10 @@ import { ConversationCursorError, readConversationPage } from '../index/conversa
 import { runFile } from '../index/exec.js';
 import { isRecord } from '../index/guards.js';
 import { defaultConfigDir, encodeProjectDir, isSessionUuid } from '../index/transcripts.js';
-import { MCP_SERVER_NAME, type ConversationPage, type SupervisorState } from '../shared/protocol.js';
+import { MCP_SERVER_NAME, type ConversationPage, type SupervisorState, type WorkChoice } from '../shared/protocol.js';
 import { createApprovalQueue, type ApprovalQueue } from './approvals.js';
 import { createSupervisorGate, SUPERVISOR_GATE_DIR_NAME, type SupervisorGate } from './gate.js';
+import { isModelRejection, modelRejectedMessage } from '../server/work.js';
 import { ensureLaunchDir, pitwallHome } from '../server/launch.js';
 import { checkClaudeVersion, spawnRelayChild, type RelayChild, type RelayChildEvents, type RelaySpawner } from '../server/relay.js';
 import { nameKey, oneLine, userMessageLine } from '../server/relayPrompt.js';
@@ -208,6 +209,8 @@ export interface SupervisorOptions {
   claudeBin?: string;
   /** Default SUPERVISOR_MODEL. */
   model?: string;
+  /** The model and effort, read at each start (W119's WorkStore). Wins over `model`. */
+  work?: () => WorkChoice;
   /** What its environment is made from, before supervisorEnvironment(). Default process.env, read at each start. */
   env?: NodeJS.ProcessEnv;
   /** Starts its process, without a shell. Tests pass a fake that speaks stream-json. */
@@ -475,7 +478,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     configOwner = p;
     try {
       const settings = supervisorSettings(gate.hooks(gateId));
-      p.child = spawn(claudeBin, supervisorArgs({ mcpConfig: configFile, settings, ...(resume === undefined ? {} : { resume }), ...(options.model === undefined ? {} : { model: options.model }) }), {
+      p.child = spawn(claudeBin, supervisorArgs({ mcpConfig: configFile, settings, ...(resume === undefined ? {} : { resume }), ...(options.work?.() ?? (options.model === undefined ? {} : { model: options.model })) }), {
         cwd,
         env: supervisorEnvironment(options.env ?? process.env),
       }, events);
@@ -788,6 +791,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     const total = event.total_cost_usd;
     if (typeof total === 'number' && Number.isFinite(total) && total >= 0) p.lastTotalCost = total;
     if (cost !== undefined) costUsd = (costUsd ?? 0) + cost;
+    // A model Claude Code refused (W119): every turn would fail the same way, so it stops, saying which setting to change.
+    if (event.is_error === true && typeof event.result === 'string' && isModelRejection(event.result)) return trip(p, modelRejectedMessage('supervisor'));
     changed();
     pump();
   }

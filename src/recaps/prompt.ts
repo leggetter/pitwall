@@ -14,7 +14,8 @@
 // the model's or claude's output.
 import { plainLine } from '../index/text.js';
 import { isRecord } from '../index/guards.js';
-import { RECAP_FIELD_MAX, RECAP_MODEL, RECAP_TITLE_MAX_WORDS, RECAP_WAITING_ON, type RecapWaitingOn } from '../shared/protocol.js';
+import { RECAP_FIELD_MAX, RECAP_MODEL, RECAP_TITLE_MAX_WORDS, RECAP_WAITING_ON, type RecapWaitingOn, type WorkChoice } from '../shared/protocol.js';
+import { isModelRejection, modelRejectedMessage, workArgs } from '../server/work.js';
 import { relayEnvironment } from '../server/relay.js';
 
 /** The recap call's session name: what `claude agents --json` lists it as while it runs (finding 1). */
@@ -71,12 +72,12 @@ Write to the user as "you", never by their name, even where the material names t
  * - `--system-prompt`, not `--append-system-prompt`: it replaces Claude Code's default prompt
  *   (3,759 input tokens against 707 for a one-line prompt).
  */
-export function recapArgs(options: { model?: string } = {}): string[] {
+export function recapArgs(options: WorkChoice = {}): string[] {
   return [
     '-p',
     '--no-session-persistence',
-    '--model',
-    options.model ?? RECAP_MODEL,
+    // RECAP_MODEL unless the config file or the app chose another (W119): none for WORK_DEFAULT.
+    ...workArgs({ model: options.model ?? RECAP_MODEL, ...(options.effort === undefined ? {} : { effort: options.effort }) }),
     '--output-format',
     'json',
     '--tools',
@@ -208,6 +209,10 @@ export function parseEnvelope(stdout: string): RecapEnvelope {
   if (!isRecord(parsed) || parsed.type !== 'result') return { ok: false, reason: ENVELOPE_UNREADABLE };
   const cost = typeof parsed.total_cost_usd === 'number' && Number.isFinite(parsed.total_cost_usd) && parsed.total_cost_usd >= 0 ? parsed.total_cost_usd : undefined;
   const withCost = <T extends object>(result: T): T & { costUsd?: number } => (cost === undefined ? result : { ...result, costUsd: cost });
+  // A model Claude Code refused (W119): its result says so, and pitwall says which setting to change.
+  if (parsed.is_error === true && typeof parsed.result === 'string' && isModelRejection(parsed.result)) {
+    return withCost({ ok: false as const, reason: modelRejectedMessage('recaps') });
+  }
   if (parsed.is_error !== false || parsed.subtype !== 'success') return withCost({ ok: false as const, reason: CALL_FAILED });
   if (typeof parsed.result !== 'string') return withCost({ ok: false as const, reason: ENVELOPE_UNREADABLE });
   const duration = typeof parsed.duration_ms === 'number' && Number.isFinite(parsed.duration_ms) && parsed.duration_ms >= 0 ? parsed.duration_ms : undefined;

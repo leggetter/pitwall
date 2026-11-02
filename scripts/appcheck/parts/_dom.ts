@@ -54,6 +54,12 @@ export const focused = `(() => {
   if (el.closest('.attach-terminal')) return 'the terminal';
   if (el.matches('section.session-view h2')) return 'the view heading';
   if (el.type === 'radio') return el.closest('fieldset').querySelector('legend').textContent + '/' + el.labels[0].textContent;
+  // A select in Preferences' Models and effort (W119) by its row and label, such as Recaps/Effort; another by its label.
+  if (el.tagName === 'SELECT' && el.labels.length > 0) {
+    const row = el.closest('.work-row')?.querySelector('.work-row-name')?.textContent;
+    const label = el.labels[0].textContent.trim();
+    return row ? row + '/' + label : label;
+  }
   return (el.getAttribute('aria-label') ?? el.textContent ?? el.tagName).trim().slice(0, 60);
 })()`;
 

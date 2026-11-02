@@ -173,7 +173,7 @@ describe('the Preferences dialog', () => {
     renderApp();
     const dialog = openPreferences();
     expect(dialog.getAttribute('aria-modal')).toBe('true');
-    expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Each change applies at once, and this browser remembers it.');
+    expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Each change applies at once. This browser remembers the view settings; pitwall keeps the models for this run.');
     expect(dialog.classList.contains('md')).toBe(true);
     expect(dialog.querySelector('.dialog-foot')).toBeNull();
     expect(within(dialog).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close']);
@@ -183,10 +183,11 @@ describe('the Preferences dialog', () => {
     renderApp();
     const dialog = openPreferences();
     const sections = within(dialog).getAllByRole('region');
-    expect(sections.map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? '')?.textContent)).toEqual(['Repo list', 'Session view']);
-    expect(within(dialog).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Repo list', 'Session view']);
+    expect(sections.map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? '')?.textContent)).toEqual(['Repo list', 'Session view', 'Models and effort']);
+    expect(within(dialog).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Repo list', 'Session view', 'Models and effort']);
     const groupsIn = (section: HTMLElement) => within(section).getAllByRole('group').map((each) => each.querySelector('legend')?.textContent);
-    expect(sections.map(groupsIn)).toEqual([[GROUP_BY], [BACKGROUND_TAB, TERMINAL_FOCUS]]);
+    // Models and effort (W119) has none without the API: its selects load from the server.
+    expect(sections.slice(0, 2).map(groupsIn)).toEqual([[GROUP_BY], [BACKGROUND_TAB, TERMINAL_FOCUS]]);
     for (const each of within(dialog).getAllByRole('group')) {
       expect(each.tagName).toBe('FIELDSET');
       expect(each.firstElementChild?.tagName).toBe('LEGEND');
@@ -217,7 +218,7 @@ describe('the Preferences dialog', () => {
     renderApp();
     const dialog = openPreferences();
     const headings = within(dialog).getAllByRole('heading').map((heading) => heading.textContent);
-    expect(headings).toEqual(['Preferences', 'Repo list', 'Session view']);
+    expect(headings).toEqual(['Preferences', 'Repo list', 'Session view', 'Models and effort']);
     expect(within(dialog).queryByRole('group', { name: 'Single-key shortcuts' })).toBeNull();
     expect(within(dialog).queryByRole('group', { name: 'Theme' })).toBeNull();
     // Nothing else to tick or press, and no radio for the shortcuts' On and Off or the theme's three.

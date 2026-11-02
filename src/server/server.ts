@@ -51,6 +51,12 @@
 //   GET /api/supervisor/conversation   its own transcript, paged as a session's, under the same limit;
 //                                      404 before it has one, and with --no-supervisor
 //   POST /api/supervisor/approvals/:id  your decision on one of its drafts (W115), supervisorRoutes.ts
+//
+// The model and effort for each kind of work (W119), pitwall's defaults, the config file's and the
+// app's overrides for this run (work.ts):
+//
+//   GET /api/work, POST /api/work       then work.ts: WorkSettings; POST replaces the overrides, JSON,
+//                                      at most 4 KiB, each value checked, else 400 and nothing changes
 //   /mcp                                outside /api/*, so neither the token nor the apiKey is taken
 //                                      there: Host only, then mcp.ts: no Origin, POST, the running
 //                                      supervisor's own bearer token, JSON, at most 64 KiB. 404 with
@@ -119,6 +125,7 @@ import { resolveSession } from './sessions.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { HandshakeSlots } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
+import { createWorkStore, registerWork } from './work.js';
 
 export const DEFAULT_PORT = 4517;
 
@@ -239,6 +246,8 @@ export async function startServerWithInternals(
   const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
   // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
+  // The model and effort for each kind of work (W119): the CLI's store, or pitwall's own defaults.
+  const work = options.work ?? createWorkStore();
   // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close().
   const prs = options.prs ?? prsOff();
   // Per-session recaps (M5, W110), or off. Started once listening, closed on close().
@@ -252,7 +261,7 @@ export async function startServerWithInternals(
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
   const snapshots = createSnapshotView(supervised ?? recapped ?? indexer, prs);
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
-  const actionOptions: ActionOptions = { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments };
+  const actionOptions: ActionOptions = { token, spawned, resumed, work, ...internals.actions, slots: commandSlots, attachments };
   const spawner = internals.actions?.spawner ?? createSpawnRunner(actionOptions);
   // What the supervisor can do behind your click (W115): its approvals, checked against this snapshot.
   const supervisorActions: SupervisorActionSources | undefined =
@@ -311,6 +320,7 @@ export async function startServerWithInternals(
     registerRecaps(app, indexer, recaps);
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
+    registerWork(app, work);
     internals.routes?.(app);
   };
   const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
