@@ -24,7 +24,7 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 | M5 try-out | Phil's, on port 4519; started, W124 came from it |
 | Merge `m5/integration` into `main` | Waits on Phil's word after the try-out |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
-| W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly is the likely cause |
+| W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | M5.1, efficiency | After M5; not started |
 | M6, triage | After M5.1; not started |
 
