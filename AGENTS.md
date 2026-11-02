@@ -80,7 +80,7 @@ PLAN.md                  the living design: architecture, security, open milesto
 docs/plan-archive.md     history: M0 to M5 work breakdowns, findings and decisions
 .claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
-docs/decisions.md        settled decisions, D1 to D26, with their reasoning
+docs/decisions.md        settled decisions, D1 to D27, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some

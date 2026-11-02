@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-02, on `m5.1/integration`, as #141 fixed #140.
+Last updated: 2026-11-02, on `m5.1/new-session-default`, starting W130.
 
 ## Current milestone
 
@@ -17,7 +17,7 @@ Last updated: 2026-11-02, on `m5.1/integration`, as #141 fixed #140.
 | --- | --- |
 | M5.1, efficiency | Not started |
 | [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you) | Fixed in the recap prompt ([#141](https://github.com/leggetter/pitwall/pull/141)), merged into `m5.1/integration`. Checked live on Haiku: an ended session, old prompt 3 of 3 "you", new 2 of 2 "nothing"; one that asks you something, or that's done with only part of the work, still "you" (2 of 2 each). A "Not needed" action is in "Nice to have, later" |
-| [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory), Phil's UX feedback | Not started; small, a UI change with the `new-session` app-check part |
+| W130: [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory), and New session from here taken out (D27) | In progress on `m5.1/new-session-default`; a UI change with the `new-session` app-check part. Fork this session is in `PLAN.md`'s "Later: forking a session" |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
@@ -25,8 +25,8 @@ Last updated: 2026-11-02, on `m5.1/integration`, as #141 fixed #140.
 
 ## Next, in order
 
-1. **M5.1, efficiency:** work profiles, a Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Break it into W items in `PLAN.md` first, starting at W130.
-2. **[#139](https://github.com/leggetter/pitwall/issues/139)** (New session defaults to the selected session's directory): a quick UX fix, between M5.1's items or before them.
+1. **W130** ([#139](https://github.com/leggetter/pitwall/issues/139), D27): finish, review and merge into `m5.1/integration`.
+2. **M5.1, efficiency:** work profiles, a Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Break it into W items in "M5.1 work breakdown" first, starting at W131.
 3. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
 4. **M6, triage,** on the coordination model: split work, shared state, graded oversight, and shared decisions first with a goal check at the end, with Peers part of it, show only (Phil, 2026-11-02): "M6 - Triage" and "Considering: Peers" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
@@ -40,7 +40,7 @@ Read these as the work needs them, not all at the start.
 
 - **[`AGENTS.md`](AGENTS.md):** the rules (never touch a real session, pinned dependencies at least 14 days old, security rules, worktrees in `.worktrees/<name>`), "Efficiency", and the commands and layout.
 - **[`PLAN.md`](PLAN.md):** read the section the work is in. "Architecture" and "Interfaces pitwall relies on" for what pitwall depends on; "Security" before touching the server, a spawned process or storage; "M5.1", "M6", "Considering: Peers" and "Later: chatting with a session" for what's next; "Nice to have, later" for small items.
-- **[`docs/decisions.md`](docs/decisions.md):** settled decisions D1 to D26 with their reasoning. D4 (the supervisor), D8 (the relay), D24 (the config file) and D26 (recaps) matter for what's next.
+- **[`docs/decisions.md`](docs/decisions.md):** settled decisions D1 to D27 with their reasoning. D4 (the supervisor), D8 (the relay), D24 (the config file) and D26 (recaps) matter for what's next.
 - **[`docs/design-system.md`](docs/design-system.md):** tokens, layout and components, before a UI change. A UI change runs the app check: [`scripts/appcheck/README.md`](scripts/appcheck/README.md).
 - **[`docs/plan-archive.md`](docs/plan-archive.md):** history, for M0 to M5: work breakdowns, findings, reviews and decisions. Look a W number up here when an old one is cited.
 - **[`docs/spikes/`](docs/spikes/):** what each spike measured; 009 (the supervisor process), 010 (recaps) and 011 (resuming a finished session with a message) are M5's.

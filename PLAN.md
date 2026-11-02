@@ -176,6 +176,21 @@ Phil, 2026-10-29: the Terminal tab takes input, so why can't a more chat-like vi
 
 The bullets (what already happens, the research, the leans) are in "Considerations, detail" in the [archive](docs/plan-archive.md).
 
+### Later: forking a session
+
+Phil, 2026-11-02, as New session from here was taken out (W130, D27): a future feature to consider. Fork this session would start a new session with a copy of the session's conversation, through Claude Code's `--resume <id> --fork-session`, which pitwall doesn't use yet. It's what New session from here's wording implied but never did.
+
+- **To check first:** that `--fork-session` is in Claude Code's documented CLI reference, and how it behaves for a background session that's still running.
+- **The trade-off:** the fork re-reads the whole copied context on every turn, which runs against M5.1's efficiency goal, so it suits trying another direction on the same work, not unrelated work, which is New session's.
+
+## M5.1 work breakdown
+
+M5.1's own items start at W131, once its breakdown is written.
+
+| W | What | Branch | Size | Status |
+| --- | --- | --- | --- | --- |
+| W130 | New session from here and its Draft from this session taken out, and + New session (the header button and `n`) defaulting to the selected session's directory ([#139](https://github.com/leggetter/pitwall/issues/139); D27) | `m5.1/new-session-default` | S | In progress |
+
 ## Open questions
 
 - **Is pitwall open-sourced, and how?** Decided (Phil, 2026-10-28): it goes public, under Apache-2.0 (D21).
