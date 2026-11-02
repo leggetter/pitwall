@@ -194,8 +194,8 @@ Show top-level sessions talking to each other beside the Sub-agents tab, which k
 
 The bullets (what already happens, the research, the leans) are in "Considerations, detail" in the [archive](docs/plan-archive.md).
 
-- **Peers is part of M6** (Phil, 2026-11-02, yes): sessions message each other directly, and pitwall shows and watches it ("M6 - Triage").
-- **Open with Phil: should Peers be cut back?** The 2026-11-02 research questions directing peer coordination: [CooperBench](https://arxiv.org/abs/2601.13295) found agents "on average 30% lower success rates when working together". Whether Peers shrinks to showing the messages sessions already send, and leaves coordination to batches and the ledger, is undecided; the decision above stands until Phil says.
+- **Peers is part of M6, show only** (Phil, 2026-11-02: option A, after the research): pitwall shows the messages sessions already send each other, both sides linked, a Peers tab beside Sub-agents, and "waiting on a peer" as a triage reason. pitwall never prompts or relies on sessions coordinating with each other, and the supervisor never uses peer messaging to run a batch ("M6 - Triage").
+- **Why show only:** the 2026-11-02 research questions directing peer coordination: [CooperBench](https://arxiv.org/abs/2601.13295) found agents "on average 30% lower success rates when working together" than doing both tasks alone.
 
 ### Later: chatting with a session, and sessions pitwall hosts ([#108](https://github.com/leggetter/pitwall/issues/108))
 
@@ -235,9 +235,9 @@ Every row below has merged into `m5/integration`. Each row's long detail, as it 
 ## Open questions
 
 - **Is pitwall open-sourced, and how?** Decided (Phil, 2026-10-28): it goes public, under Apache-2.0 (D21).
-- **Should the supervisor survive pitwall restarts?** Lean: yes. With option B it stops with pitwall, and pitwall resumes its conversation by session id on the next run, which spike 009 checks.
-- **Peers ([#99](https://github.com/leggetter/pitwall/issues/99) (Agent conversations: show top-level sessions talking to each other)):** part of M6 (Phil, 2026-11-02); whether to cut it back to showing the messages sessions already send is open ("Considering: Peers"). The name is settled: Peers, not agent conversations (Phil, 2026-10-29).
-- **Cursor's Claude Code extension panel:** do I use it? Its sessions keep a separate list and may not appear in `claude agents --json`.
+- **The supervisor survives pitwall restarts** (Phil, 2026-11-02, yes, as built in W113): it stops with pitwall, and pitwall resumes its conversation by session id on the next run (spike 009), starting a new one only when the system prompt's version changes.
+- **Peers ([#99](https://github.com/leggetter/pitwall/issues/99) (Agent conversations: show top-level sessions talking to each other)):** show only, part of M6 (Phil, 2026-11-02, option A; "Considering: Peers"). The name is settled: Peers, not agent conversations (Phil, 2026-10-29).
+- **Cursor's Claude Code extension panel:** rarely (Phil, 2026-11-02: "I very occasionally run the Claude Code extension within an IDE"). Whether its sessions appear in `claude agents --json` stays unchecked; worth a spike only if missing sessions show up. Not urgent.
 
 ## Nice to have, later
 
@@ -273,12 +273,12 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
 
 The finished ones are in [`docs/plan-archive.md`](docs/plan-archive.md), under "Suggested actions, finished".
 
-- [ ] The first paste into New session's prompt lost (W89, investigating)
+- [ ] The first paste into New session's prompt lost (W89, parked: Phil, 2026-11-02, "Don't worry about it"; he'll say if it happens again; Grammarly is the likely cause)
 - [ ] Vite and happy-dom's fixes, once 14 days old (W86, on or after 2026-11-04)
 - [ ] A config file beside the CLI's flags ([#101](https://github.com/leggetter/pitwall/issues/101)): the minimal one, the roots and each root's GitHub owners, is W103, in review in [#106](https://github.com/leggetter/pitwall/pull/106) (D24); the rest of #101 later (Phil, 2026-10-29)
 - [ ] M5: supervisor
 - [ ] M6: triage
-- [ ] Peers, sessions talking to each other: part of M6, its scope open ([#99](https://github.com/leggetter/pitwall/issues/99) (Agent conversations: show top-level sessions talking to each other))
+- [ ] Peers, sessions talking to each other: show only, part of M6 ([#99](https://github.com/leggetter/pitwall/issues/99) (Agent conversations: show top-level sessions talking to each other))
 - [ ] Chatting with a session from the Conversation tab, and sessions pitwall hosts: later, after M5 ([#108](https://github.com/leggetter/pitwall/issues/108))
 - [ ] A session asking the supervisor to spin off work, as an approval card labelled with the session that asked: after M5 (Phil, 2026-10-29)
 - [ ] M5.1: efficiency, after M5 (work profiles, a Usage view with a run rate, the supervisor applying them; Phil, 2026-11-02)
