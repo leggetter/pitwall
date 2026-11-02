@@ -35,6 +35,25 @@ import { currentStep, turnStartIndex, turnStarted, type WorkingLineState } from 
 
 export { SUPERVISOR_PARAM };
 
+/**
+ * A model id as people say it: `claude-opus-5-5` is "Opus 5.5". Anything else is shown as it is.
+ */
+export function modelName(model: string): string {
+  const match = /^claude-([a-z]+)-(\d+)-(\d+)$/.exec(model);
+  return match ? `${match[1]!.charAt(0).toUpperCase()}${match[1]!.slice(1)} ${match[2]}.${match[3]}` : model;
+}
+
+/**
+ * Text in pitwall's words that may name a command in backticks, as W113's errors do, split into its
+ * plain parts and its code parts, so the page shows the command in code style, never the backticks.
+ */
+export function codeParts(text: string): Array<{ code: boolean; text: string }> {
+  return plainText(text)
+    .split(/(`[^`\n]+`)/)
+    .filter((part) => part !== '')
+    .map((part) => (/^`[^`\n]+`$/.test(part) ? { code: true, text: part.slice(1, -1) } : { code: false, text: part }));
+}
+
 /** The supervisor's name, as the repo list's item and its view's heading say it. */
 export const SUPERVISOR_NAME = 'Supervisor';
 
@@ -210,7 +229,7 @@ export const STATUS_NOTES: Readonly<Record<SupervisorStatus, string>> = {
   starting: 'pitwall is starting it.',
   idle: 'It waits for your next message.',
   working: "It's working on a turn. A message you send now waits until the turn ends.",
-  held: "A background session has its conversation, so pitwall can't run it.",
+  held: "Another session has its conversation, so pitwall can't run it.",
   failed: "It stopped, or couldn't start.",
 };
 
@@ -238,7 +257,7 @@ const STOP_COMMAND = /claude stop ([A-Za-z0-9][A-Za-z0-9_-]{0,63})(?![A-Za-z0-9_
 
 /**
  * The `claude stop` command a held supervisor's error names, for its copy button, or undefined when
- * it names none. pitwall never runs it: the background session it stops is yours (D2).
+ * it names none, as for an interactive session or another pitwall's supervisor. pitwall never runs it: the session it stops is yours (D2).
  */
 export function heldCommand(error: string | undefined): string | undefined {
   const match = error === undefined ? null : STOP_COMMAND.exec(plainText(error));

@@ -145,8 +145,8 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
     const outcome = await decideApproval(api, approval.id, decision, requests.current?.signal);
     if (!alive.current) return;
     if (outcome.kind === 'decided') {
+      // An edit stays open, read-only, with Send edit busy, until the snapshot drops the card.
       setPhase({ kind: 'decided', decision: decision.decision });
-      setEditing(undefined);
       return;
     }
     setPhase({ kind: 'idle' });

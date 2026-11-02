@@ -5,7 +5,7 @@
 //   reopens the relay alert;
 // - recaps aren't being made (M5, W111): the day's budget is spent, or the latest call failed, which
 //   the snapshot's `recaps` says (recapsStripText()). Nothing while they're fine or off.
-// - the supervisor can't run (M5, W114): it's held, as a background session has its conversation, or
+// - the supervisor can't run (M5, W114): it's held, as another session has its conversation, or
 //   it has failed, which the snapshot's `supervisor` says, with Open, which opens its view, where the
 //   `claude stop` command and Start are. Nothing while it's off, starting, idle or working.
 // It inverts with the theme, --pw-text-inverse on --pw-text, so it never uses a tone colour, and it
@@ -14,6 +14,7 @@
 import type { RecapHealth, RelayOff, SupervisorState } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { budgetSpent, recapsStripText } from '../recap.js';
+import { CodeText, withoutBackticks } from './CodeText.js';
 import { Icon } from './Icon.js';
 import { Tooltip } from './Tooltip.js';
 
@@ -65,11 +66,12 @@ export function RecapsStrip({ health }: { health: RecapHealth | undefined }) {
  * otherwise. Its error says what to do; the view has the command to copy, and Start.
  */
 export function supervisorStripText(state: SupervisorState | undefined): string | undefined {
-  if (state?.status === 'held') {
-    return `The supervisor can't run: ${state.error === undefined ? 'a background session has its conversation.' : plainText(state.error)}`;
-  }
-  if (state?.status === 'failed') return `The supervisor stopped: ${state.error === undefined ? "it exited, or couldn't start." : plainText(state.error)}`;
-  return undefined;
+  if (state?.status !== 'held' && state?.status !== 'failed') return undefined;
+  const error = state.error === undefined ? undefined : plainText(state.error).trim();
+  // An error that already names the supervisor says it all, as W113's "The supervisor stopped as it started…" does.
+  if (error !== undefined && /^the supervisor\b/i.test(error)) return error;
+  if (state.status === 'held') return `The supervisor can't run: ${error ?? 'another session has its conversation.'}`;
+  return `The supervisor stopped: ${error ?? "it exited, or couldn't start."}`;
 }
 
 export function SupervisorStrip({ state, onOpen }: { state: SupervisorState | undefined; onOpen?: (() => void) | undefined }) {
@@ -78,8 +80,10 @@ export function SupervisorStrip({ state, onOpen }: { state: SupervisorState | un
   return (
     <div className="app-strip" data-strip="supervisor">
       <Icon name="warning" />
-      <Tooltip content={text} relation="none" onlyIfCut>
-        <p className="app-strip-text">{text}</p>
+      <Tooltip content={withoutBackticks(text)} relation="none" onlyIfCut>
+        <p className="app-strip-text">
+          <CodeText text={text} />
+        </p>
       </Tooltip>
       {onOpen && (
         <button type="button" className="link-button app-strip-link" onClick={onOpen}>

@@ -312,7 +312,9 @@ describe('its states', () => {
     renderDashboard(snap({ status: 'held', approvals: [], error }), { search: '?view=all&supervisor' });
     await settle();
     expect(viewOf().getByText(HELD_TITLE)).toBeDefined();
-    expect(view()!.querySelector('.supervisor-error')?.textContent).toBe(error);
+    // The command in code style, never its backticks.
+    expect(view()!.querySelector('.supervisor-error')?.textContent).toBe(error.replaceAll('`', ''));
+    expect(view()!.querySelector('.supervisor-error code')?.textContent).toBe('claude stop 1a2b3c4d');
     expect(view()!.querySelector('.command-chip')?.textContent).toBe('claude stop 1a2b3c4d');
     expect(viewOf().getByRole('button', { name: 'Copy the stop command' })).toBeDefined();
     expect(viewOf().getByRole('button', { name: 'Start' })).toBeDefined();
@@ -321,6 +323,31 @@ describe('its states', () => {
     expect(descriptionOf(sendButton())).toBe(SUPERVISOR_SEND_HELD);
     // The app strip says so too, with Open.
     expect(document.querySelector('[data-strip="supervisor"]')?.textContent).toContain("The supervisor can't run:");
+    expect(document.querySelector('[data-strip="supervisor"]')?.textContent).not.toContain('`');
+  });
+
+  it('says a failed start once: not again under the alert that says it, and gone when the status changes', async () => {
+    const error = 'The supervisor stopped as it started (exit code 1). Press Start to try again.';
+    const fetch = fakeServer({ post: () => ({ status: 502, body: { ok: false, error } }) });
+    renderDashboard(snap({ status: 'failed', approvals: [], error }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(viewOf().getByRole('button', { name: 'Start' }));
+    await settle();
+    expect(viewOf().queryByRole('alert')).toBeNull();
+    // The strip says the error once, with no "The supervisor stopped:" before it.
+    expect(document.querySelector('[data-strip="supervisor"] .app-strip-text')?.textContent).toBe(error);
+  });
+
+  it('takes a start’s refusal away when the status changes', async () => {
+    const fetch = fakeServer({ post: () => ({ status: 409, body: { ok: false, error: 'Made up: held.' } }) });
+    const { update } = renderDashboard(snap({ status: 'off', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(viewOf().getByRole('button', { name: 'Start' }));
+    await settle();
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't start the supervisor. Made up: held.");
+    update(snap({ status: 'held', approvals: [], error: 'Made up: another session has it.' }));
+    await settle();
+    expect(viewOf().queryByRole('alert')).toBeNull();
   });
 
   it('failed: the error, with Start', async () => {
@@ -404,6 +431,19 @@ describe('its message box', () => {
     expect(viewOf().queryByRole('button', { name: /^Stop/ })).toBeNull();
     // Stop went with focus on it: the text box has it now.
     expect(document.activeElement).toBe(box());
+  });
+
+  it('counts a 409 from Stop as done: the turn had already ended', async () => {
+    const fetch = fakeServer({ post: () => ({ status: 409, body: { ok: false, error: "The supervisor isn't working on anything." } }) });
+    const { update } = renderDashboard(snap({ status: 'working', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(viewOf().getByRole('button', { name: 'Stop' }));
+    await settle();
+    expect(viewOf().queryByRole('alert')).toBeNull();
+    expect(viewOf().getByRole('button', { name: 'Stopping…' })).toBeDefined();
+    update(snap({ status: 'idle', approvals: [] }));
+    await settle();
+    expect(viewOf().queryByRole('button', { name: /^Stop/ })).toBeNull();
   });
 
   it('has no Stop while it’s idle', async () => {
@@ -493,6 +533,13 @@ describe('its draft cards', () => {
     fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Send edit' }));
     await settle();
     expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('m1'), body: { decision: 'edit', text: 'Please rerun only the made-up e2e tests.' } }]);
+    // Taken: the edit stays, read-only, with Send edit busy and focus on it, until the snapshot drops the card.
+    const kept = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' }) as HTMLTextAreaElement;
+    expect(kept.value).toBe('Please rerun only the made-up e2e tests.');
+    expect(kept.readOnly).toBe(true);
+    const busy = within(cards()[0]!).getByRole('button', { name: 'Sending…' });
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    expect(within(cards()[0]!).getByRole('button', { name: 'Cancel' }).getAttribute('aria-disabled')).toBe('true');
   });
 
   it('Edit, then Cancel or Escape: the text as it was, and focus on Edit; the view stays open', async () => {

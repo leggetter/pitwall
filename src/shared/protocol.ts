@@ -1729,8 +1729,9 @@ export type RecapRefreshResult = ActionResult | { ok: false; error: string; busy
  * - 'starting': its process is starting or resuming.
  * - 'idle': running, waiting for you.
  * - 'working': a turn is running, yours or one a session's reply started.
- * - 'held': a background session holds its session id, so pitwall can't resume it; `error` says so
- *   and names `claude stop <id>`. pitwall never stops it for you.
+ * - 'held': another session holds its session id, a background session, an interactive one or another
+ *   pitwall's supervisor, so pitwall can't resume it; `error` says so and what frees it, naming
+ *   `claude stop <id>` for a background one. pitwall never stops or ends it for you.
  * - 'failed': it exited or couldn't start; `error` says why, in pitwall's words, never claude's output.
  */
 export type SupervisorStatus = 'off' | 'starting' | 'idle' | 'working' | 'held' | 'failed';

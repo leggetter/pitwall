@@ -5,15 +5,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SUPERVISOR_MESSAGE_PATH, supervisorApprovalPath, type ConversationEntry } from '../../src/shared/protocol.js';
 import { createApiClient, type FetchLike } from './api.js';
+import { supervisorStripText } from './components/AppStrip.js';
 import { withPr } from './openPr.js';
 import { withSession } from './openSession.js';
 import {
   APPROVAL_GONE,
   approvalTitle,
   asSupervisorState,
+  codeParts,
   costText,
   decideApproval,
   heldCommand,
+  modelName,
   parseSupervisor,
   sendOutcome,
   sendToSupervisor,
@@ -103,6 +106,30 @@ describe('its words', () => {
     expect(approvalTitle(message as never)).toBe('Message to pitwall-test-api');
     expect(approvalTitle(spawn as never)).toBe('New session in ~/code/demo-app, named pr-57');
     expect(approvalTitle({ ...spawn, name: undefined } as never)).toBe('New session in ~/code/demo-app');
+  });
+});
+
+describe('model names and commands in its words', () => {
+  it('says a model as people do', () => {
+    expect(modelName('claude-opus-5-5')).toBe('Opus 5.5');
+    expect(modelName('something-else')).toBe('something-else');
+  });
+
+  it('splits a command in backticks out of a sentence', () => {
+    expect(codeParts('Run `claude stop ab12` to hand it back.')).toEqual([
+      { code: false, text: 'Run ' },
+      { code: true, text: 'claude stop ab12' },
+      { code: false, text: ' to hand it back.' },
+    ]);
+  });
+});
+
+describe('the app strip’s line', () => {
+  it('says the supervisor once', () => {
+    expect(supervisorStripText({ status: 'failed', approvals: [], error: 'The supervisor stopped (exit code 1).' })).toBe('The supervisor stopped (exit code 1).');
+    expect(supervisorStripText({ status: 'failed', approvals: [] })).toBe("The supervisor stopped: it exited, or couldn't start.");
+    expect(supervisorStripText({ status: 'held', approvals: [] })).toBe("The supervisor can't run: another session has its conversation.");
+    expect(supervisorStripText({ status: 'idle', approvals: [] })).toBeUndefined();
   });
 });
 

@@ -1621,11 +1621,11 @@ pitwall's supervisor (M5, W113, W114; D4): one headless Claude Code session pitw
 | `starting` | "Starting", subtle info with the spinner | the working line says "Starting the supervisor", with no time |
 | `idle` | "Idle", subtle neutral | |
 | `working` | "Working", subtle info with its dot | the working line, and Stop beside Send |
-| `held` | "Held", subtle warning | a warning alert, "A background session has its conversation", with the error in pitwall's words, the `claude stop` command it names as a [command chip](#copy) to copy ("Copy the stop command"), and outline sm Start, for once you've run it. pitwall never stops your session (D2). Send is off, saying why |
+| `held` | "Held", subtle warning | a warning alert, "Another session has its conversation", since a background session, an interactive one or another pitwall's supervisor can hold it (W113's `heldError()`), with the error in pitwall's words, any command in it in code style, never its backticks; for a background session, the `claude stop` command it names as a [command chip](#copy) to copy ("Copy the stop command"); and outline sm Start, for once you've stopped or closed it. pitwall never stops or ends that session (D2). Send is off, saying why |
 | `failed` | "Failed", subtle danger | a danger alert with the error, and outline sm Start |
 | `--no-supervisor` | | no item; a `?supervisor` URL shows an [empty state](#empty-states), "The supervisor is off" |
 
-- **Start:** POSTs `SUPERVISOR_START_PATH`; busy, "Starting…", until the snapshot says it's starting, or 30 s; a refusal is a danger alert with `role="alert"`, "Couldn't start the supervisor." and pitwall's reason, as the 409 a held one gets.
+- **Start:** POSTs `SUPERVISOR_START_PATH`; busy, "Starting…", until the snapshot says it's starting, or 30 s; a refusal is a danger alert with `role="alert"`, "Couldn't start the supervisor." and pitwall's reason, as the 409 a held one gets, unless the held or failed alert above already says the same reason. Any change of status takes it away.
 - **Its conversation:** the session view's [conversation](#conversation), from `supervisorConversationPath()`, as a region named "Conversation": markdown as pitwall's own elements (D15), folded tool calls, Load earlier and Jump to latest. Fetched again when its status or last turn changes, after a message is taken, and every 2 s while it works or starts, a transcript or not. The [working line](#conversation) (W102) comes from the snapshot's status, which pitwall has from the process it runs, not from the transcript's mark of a turn's end.
 - **A new conversation,** with nothing in it yet (a 404, or no entries): an empty state in the body, the `supervisor` icon, "Ask the supervisor about your sessions", one sentence on what it does and that it sends nothing until you say so, then "Put a question in the message box:" and three outline sm questions, "Which sessions need me, and why?", "What's running, in a sentence each?" and "What should I work on next?". Each fills the box, with focus there; none sends. Not while it starts or works, when the working line is there instead.
 
@@ -1640,6 +1640,7 @@ What it wants to do that waits on your click (W115 builds the server side; until
   - **Its text,** labelled "Message" or "First prompt": the model's, so plain text in `<bdi>`, line breaks kept, never markdown or HTML, eight lines then it scrolls (four on short windows).
   - **Actions,** sm: primary Send (`send`), outline Edit, ghost Don't send.
 - **Deciding:** each POSTs a `SupervisorDecision` to `supervisorApprovalPath()`. The pressed button is busy, "Sending…" or "Declining…", and the others are off, until the snapshot drops the card, since that's when pitwall has acted; after 30 s with the card still there, it can be answered again, with a note to check the conversation first. A 404 is a neutral alert, "It's no longer waiting: it was answered in another tab, withdrawn, or ran out of time."; any other failure a danger alert in pitwall's words, "Couldn't send it (HTTP 500). If this card is still here, try again.", or with the server's reason.
+- **Send edit, taken:** the editor stays, read-only, with Send edit busy and focus on it, until the snapshot drops the card.
 - **Edit:** the text in place, in a text box labelled "Edit the message" or "Edit the first prompt", three to eight lines, its count from 80% of `SUPERVISOR_MESSAGE_MAX` (20,000); primary Send edit, which sends `{ decision: 'edit', text }`, and ghost Cancel. ⌘/Ctrl + Enter sends the edit; Escape cancels it, not the view. Send edit is off while it's empty or over the limit, saying why.
 - **Focus:** Edit puts it in the editor, and Cancel or Escape back on Edit. A card that goes with focus in it hands focus to the next card's heading, or the one before's, or, with none left, the message box.
 - **Announcements:** none for a snapshot that adds or drops a card; the decisions' failures are `role="alert"`.
@@ -1657,7 +1658,7 @@ The session view's [message box](#message-box) in look and keys, "Message the su
 
 #### The app strip
 
-While it's held or has failed, a line of the [app strip](#app-strip-and-page-alerts): "The supervisor can't run: *error*" or "The supervisor stopped: *error*", with Open, which opens its view, where the command and Start are.
+While it's held or has failed, a line of the [app strip](#app-strip-and-page-alerts): "The supervisor can't run: *error*" or "The supervisor stopped: *error*", or the error alone when it starts "The supervisor…" already, any command in it in code style, with Open, which opens its view, where the command and Start are.
 
 ### Message box
 
