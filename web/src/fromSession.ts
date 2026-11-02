@@ -2,15 +2,19 @@
 // actions menu, and 4: Dialogs, the New session dialog): a session's actions menu opens New session
 // in that session's directory, which you can change, with a blank prompt. Draft from this session, in
 // the dialog, adds the text you selected in the session's conversation, quoted, after one line naming
-// the session. All pure, but conversationSelection(), which reads the page's selection.
+// the session by its id. All pure, but conversationSelection(), which reads the page's selection.
 //
-// - Nothing pitwall or a model chose goes in the prompt: no recap, no title, no summary. A prompt
-//   pitwall fills in is sent as typed by you (D25's rule), so the draft is only what you selected,
-//   and the session's name in pitwall's fixed words. It goes into the prompt field, where you see and
-//   can change all of it before Start session.
-// - The selection is read when the actions menu's button is pressed (SessionView), before the press
-//   can move it, and only when it lies in that view's conversation: text selected anywhere else, or
-//   none, leaves Draft from this session off, saying to select text there first.
+// - Nothing pitwall or a model chose goes in the prompt: no recap, no title, no summary, and not the
+//   session's name, which can be Claude Code's generated title or whatever a process passed with
+//   --name, the supervisor's included (PR #120's review). A prompt pitwall fills in is sent as typed by
+//   you (D25's rule), so the draft is only what you selected, and the session's id in pitwall's fixed
+//   words. The readable name is in the dialog's subtitle, which isn't sent. It all goes into the
+//   prompt field, where you see and can change it before Start session.
+// - The selection is read when the actions menu's button is pressed, and as the menu opens when no
+//   press came first, as from a screen reader's click (SessionView), and only when both its ends are in
+//   that view's entries (`ol.conversation`): never pitwall's own text around them, such as an alert,
+//   Load earlier, the status line or Jump to latest. Text selected anywhere else, or none, leaves Draft
+//   from this session off, saying to select text there first.
 
 import { plainText } from './format.js';
 import { MAX_PROMPT_LENGTH } from './spawn.js';
@@ -27,37 +31,43 @@ export const NEW_FROM_HERE_HINTS = {
 
 /** What the dialog's Draft from this session says beside it: what it does, or why it's off. */
 export const DRAFT_HINTS = {
-  ready: 'Adds the text you selected in its conversation to the prompt, quoted, after a line naming the session.',
+  ready: "Adds the text you selected in its conversation to the prompt, quoted, after a line with the session's ID.",
   none: 'To quote it, select text in its conversation, then choose New session from here again.',
   added: "The text you selected is in the prompt. Delete it from there to add it again.",
   tooLong: `The text you selected doesn't fit in the prompt with what's there: at most ${MAX_PROMPT_LENGTH.toLocaleString('en')} characters. Select less of it.`,
 } as const;
 
-/** What New session from here opens with: the session's directory and name, and what was selected in its conversation. */
+/** What New session from here opens with: the session's directory, id and name, and what was selected in its conversation. */
 export interface FromSession {
   /** Absolute: chosen in Directory, and added to its choices when no group has it, as a worktree's. */
   cwd: string;
-  /** The session's name, for the subtitle and the draft's line. */
+  /** The session's id, for the draft's line. */
+  sessionId: string;
+  /** The session's name, for the subtitle alone: never sent. */
   name: string;
   /** The text selected in its conversation as its actions menu opened, or '' for none. */
   selection: string;
 }
 
 /**
- * The text selected in `panel`, the session view's conversation, or '' when there's none, or it
- * starts or ends outside it. Read from the page's Selection, as the browser copies it.
+ * The text selected in the entries of `panel`, the session view's conversation, its `ol.conversation`,
+ * or '' when there's none, or it starts or ends outside them. Read from the page's Selection, as the
+ * browser copies it.
  */
 export function conversationSelection(panel: Element | null | undefined, selection: Selection | null | undefined = typeof window === 'undefined' ? null : window.getSelection()): string {
-  if (!panel || !selection || selection.rangeCount === 0 || selection.isCollapsed) return '';
-  const inside = (node: Node | null) => node !== null && panel.contains(node);
+  const entries = panel?.querySelector('ol.conversation');
+  if (!entries || !selection || selection.rangeCount === 0 || selection.isCollapsed) return '';
+  const inside = (node: Node | null) => node !== null && entries.contains(node);
   if (!inside(selection.anchorNode) || !inside(selection.focusNode)) return '';
   return selection.toString();
 }
 
-/** One line naming the session, as you'd write it: "From my session "fix-auth":". Its name on one line, as text. */
-export function sourceLine(name: string): string {
-  const oneLine = plainText(name).replace(/\s+/g, ' ').trim();
-  return `From my session "${oneLine}":`;
+/**
+ * One line naming the session by its id, in pitwall's fixed words: "From my session <id>:". The id
+ * keeps only letters, digits, `_` and `-`, which a session's id, a UUID, has.
+ */
+export function sourceLine(sessionId: string): string {
+  return `From my session ${sessionId.replace(/[^A-Za-z0-9_-]/g, '')}:`;
 }
 
 /**
@@ -74,9 +84,9 @@ export function quoteSelection(text: string): string {
 }
 
 /** The draft: the line naming the session, a blank line, then the quote. Undefined when the selection is only space. */
-export function draftText(from: Pick<FromSession, 'name' | 'selection'>): string | undefined {
+export function draftText(from: Pick<FromSession, 'sessionId' | 'selection'>): string | undefined {
   const quote = quoteSelection(from.selection);
-  return quote === '' ? undefined : `${sourceLine(from.name)}\n\n${quote}`;
+  return quote === '' ? undefined : `${sourceLine(from.sessionId)}\n\n${quote}`;
 }
 
 /** The prompt with the draft added: at its start, then a blank line, then what was there, or a blank line for you to type after. */

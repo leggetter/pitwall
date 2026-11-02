@@ -57,12 +57,13 @@ function renderAt(sessionId: string) {
   const history = fakeHistory(`?view=all&session=${sessionId}`);
   const fetch = fakeServer();
   const api = createApiClient({ apiKey: API_KEY, fetch });
-  render(
+  const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
-      <Dashboard view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} />
-    </ApiContext.Provider>,
+      <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} />
+    </ApiContext.Provider>
   );
-  return { fetch };
+  const result = render(ui(snap()));
+  return { fetch, update: (next: IndexSnapshot) => result.rerender(ui(next)) };
 }
 
 const settle = () => act(async () => {});
@@ -116,15 +117,16 @@ describe('the draft', () => {
     expect(quoteSelection(' \n\t\n')).toBe('');
   });
 
-  it('names the session on one line, in pitwall’s fixed words, as text', () => {
-    expect(sourceLine('demo-live')).toBe('From my session "demo-live":');
-    expect(sourceLine('two\nlines‮ here ')).toBe('From my session "two lines here":');
+  it('names the session by its id, in pitwall’s fixed words, never its name (#120’s review)', () => {
+    expect(sourceLine(id(1))).toBe(`From my session ${id(1)}:`);
+    // Only what an id has: letters, digits, _ and -.
+    expect(sourceLine('a"b c\nd\u202e')).toBe('From my session abcd:');
   });
 
   it('is the source line, a blank line and the quote: nothing else, and nothing for an empty selection', () => {
-    expect(draftText({ name: 'demo-live', selection: 'one\ntwo' })).toBe('From my session "demo-live":\n\n> one\n> two');
-    expect(draftText({ name: 'demo-live', selection: '   ' })).toBeUndefined();
-    expect(draftText({ name: 'demo-live', selection: '' })).toBeUndefined();
+    expect(draftText({ sessionId: id(1), selection: 'one\ntwo' })).toBe(`From my session ${id(1)}:\n\n> one\n> two`);
+    expect(draftText({ sessionId: id(1), selection: '   ' })).toBeUndefined();
+    expect(draftText({ sessionId: id(1), selection: '' })).toBeUndefined();
   });
 
   it('goes at the prompt’s start, before what was typed, or before a blank line to type after', () => {
@@ -139,12 +141,14 @@ describe('the draft', () => {
     expect(draftState('', '> a')).toBe('ready');
   });
 
-  it('reads a selection only when it starts and ends in the conversation', () => {
+  it('reads a selection only when it starts and ends in the conversation’s entries, never pitwall’s own text around them', () => {
     const panel = document.createElement('div');
-    panel.innerHTML = '<p>inside text</p>';
+    panel.innerHTML = '<div role="alert">The transcript changed.</div><ol class="conversation"><li><p>inside text</p></li><li><p>more text</p></li></ol><div role="status">2 new · Jump to latest</div>';
     const outside = document.createElement('p');
     outside.textContent = 'outside text';
     document.body.append(panel, outside);
+    const [alert, status] = [panel.querySelector('[role="alert"]')!.firstChild!, panel.querySelector('[role="status"]')!.firstChild!];
+    const [first, second] = [...panel.querySelectorAll('ol p')].map((each) => each.firstChild as Node) as [Node, Node];
     const selection = window.getSelection()!;
     const select = (start: Node, end: Node) => {
       const range = document.createRange();
@@ -153,10 +157,19 @@ describe('the draft', () => {
       selection.removeAllRanges();
       selection.addRange(range);
     };
-    select(panel.querySelector('p')!.firstChild!, panel.querySelector('p')!.firstChild!);
+    select(first, first);
     expect(conversationSelection(panel, selection)).toBe('inside text');
-    select(panel.querySelector('p')!.firstChild!, outside.firstChild!);
+    select(first, second);
+    expect(conversationSelection(panel, selection)).toContain('more text');
+    // An end in pitwall's own text, an alert before the entries or the status line after them, or outside the panel: nothing.
+    select(alert, first);
     expect(conversationSelection(panel, selection)).toBe('');
+    select(second, status);
+    expect(conversationSelection(panel, selection)).toBe('');
+    select(first, outside.firstChild!);
+    expect(conversationSelection(panel, selection)).toBe('');
+    // A panel with no entries yet.
+    expect(conversationSelection(outside, selection)).toBe('');
     selection.removeAllRanges();
     expect(conversationSelection(panel, selection)).toBe('');
     expect(conversationSelection(null, selection)).toBe('');
@@ -186,7 +199,7 @@ describe('New session from here', () => {
     expect(describedBy(draftButton())).toBe(DRAFT_HINTS.none);
   });
 
-  it('drafts the selected text, quoted, after a line naming the session, and sends only that and what you type', async () => {
+  it('drafts the selected text, quoted, after a line with the session’s id, and sends only that and what you type', async () => {
     const { fetch } = renderAt(id(1));
     await settle();
     const selected = selectReply();
@@ -199,7 +212,7 @@ describe('New session from here', () => {
 
     fireEvent.click(draftButton());
     await settle();
-    const draft = `From my session "demo-live":\n\n${quoteSelection(selected)}`;
+    const draft = `From my session ${id(1)}:\n\n${quoteSelection(selected)}`;
     expect(quoteSelection(selected)).toBe('> The made-up export retries three times.\n> Then it gives up.');
     expect(prompt().value).toBe(`${draft}\n\n`);
     expect(document.activeElement).toBe(prompt());
@@ -217,6 +230,48 @@ describe('New session from here', () => {
     // Its directory and the prompt as typed: never the title, a recap or anything else pitwall or a model chose.
     expect(body).toEqual({ cwd: WORKTREE, prompt: `${draft}\n\nMake the retries configurable.` });
     expect(String(body.prompt)).not.toContain('A made-up title');
+    // Nor its name, which can be Claude Code's generated title or any process's --name (#120's review).
+    expect(String(body.prompt)).not.toContain('demo-live');
+  });
+
+  it('uses a selection once: chosen again with nothing pressed, as from a screen reader’s click, it reads the selection afresh', async () => {
+    renderAt(id(1));
+    await settle();
+    selectReply();
+    chooseFromMenu();
+    await settle();
+    expect(draftButton().getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
+    await settle();
+    window.getSelection()!.removeAllRanges();
+    // No pointerdown or key: the menu reads the selection as it opens, now none, rather than the last one.
+    fireEvent.click(menuButton());
+    fireEvent.click(item(NEW_FROM_HERE_LABEL));
+    await settle();
+    expect(draftButton().getAttribute('aria-disabled')).toBe('true');
+    expect(describedBy(draftButton())).toBe(DRAFT_HINTS.none);
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
+    await settle();
+    // And the other way: selected, then opened with no press, it's read as the menu opens.
+    selectReply();
+    fireEvent.click(menuButton());
+    fireEvent.click(item(NEW_FROM_HERE_LABEL));
+    await settle();
+    expect(draftButton().getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('is off for a session no longer listed, saying why', async () => {
+    const { update } = renderAt(id(1));
+    await settle();
+    update(snapshot([group({ key: DEMO, label: 'demo-app', sessions: sessions().filter((each) => each.sessionId !== id(1)) })]));
+    await settle();
+    fireEvent.click(menuButton());
+    const off = item(NEW_FROM_HERE_LABEL);
+    expect(off.getAttribute('aria-disabled')).toBe('true');
+    expect(describedBy(off)).toContain(NEW_FROM_HERE_HINTS.unlisted);
+    fireEvent.click(off);
+    await settle();
+    expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
   });
 
   it('ignores text selected outside the conversation', async () => {

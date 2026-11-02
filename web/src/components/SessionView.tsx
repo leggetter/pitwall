@@ -56,7 +56,8 @@
 //
 // New session from here (W118, fromSession.ts), first in the actions menu, opens New session in the
 // session's directory, with a blank prompt and Draft from this session, which quotes the text that
-// was selected in this view's conversation as the menu's button was pressed. It's there for live and
+// was selected in this view's conversation entries as the menu's button was pressed, or the menu
+// opened. It's there for live and
 // ended sessions alike, off, saying why, while the directory has gone or the session isn't listed.
 //
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
@@ -473,22 +474,39 @@ export function SessionView({
   const heading = headingRef ?? ownHeading;
   const menuButton = useRef<HTMLButtonElement>(null);
   const returnFocusToMenu = useCallback(() => focusQuietly(menuButton.current), []);
-  // The text selected in the conversation as the menu's button is pressed, by pointer or key, before
-  // the press can move it: what New session from here's Draft from this session quotes (W118).
+  // The text selected in the conversation's entries as the menu's button is pressed, by pointer or
+  // key, before the press can move it, or as the menu opens with no press first, as from a screen
+  // reader's click: what New session from here's Draft from this session quotes (W118). Used once.
   const pressedSelection = useRef('');
+  const pressed = useRef(false);
+  const readSelection = useCallback(() => {
+    pressedSelection.current = conversationSelection(document.getElementById(conversationPanelId));
+  }, [conversationPanelId]);
+  const onMenuOpen = useCallback(
+    (open: boolean) => {
+      if (open && !pressed.current) readSelection();
+      pressed.current = false;
+    },
+    [readSelection],
+  );
   useEffect(() => {
     const button = menuButton.current;
     if (!button) return;
     const read = () => {
-      pressedSelection.current = conversationSelection(document.getElementById(conversationPanelId));
+      readSelection();
+      pressed.current = true;
+    };
+    // Only the keys that open it: Tab past the button changes nothing.
+    const readKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown' || event.key === 'ArrowUp') read();
     };
     button.addEventListener('pointerdown', read, true);
-    button.addEventListener('keydown', read, true);
+    button.addEventListener('keydown', readKey, true);
     return () => {
       button.removeEventListener('pointerdown', read, true);
-      button.removeEventListener('keydown', read, true);
+      button.removeEventListener('keydown', readKey, true);
     };
-  }, [conversationPanelId]);
+  }, [readSelection]);
   const conversationTab = useRef<HTMLButtonElement>(null);
   const terminalTab = useRef<HTMLButtonElement>(null);
   const subagentsTab = useRef<HTMLButtonElement>(null);
@@ -840,7 +858,11 @@ export function SessionView({
           icon: 'add',
           disabled: !listed || session.cwdMissing === true,
           hint: session.cwdMissing ? NEW_FROM_HERE_HINTS.missing : NEW_FROM_HERE_HINTS.unlisted,
-          onSelect: () => onNewSession({ cwd: session.cwd, name: session.name, selection: pressedSelection.current }),
+          onSelect: () => {
+            const selection = pressedSelection.current;
+            pressedSelection.current = '';
+            onNewSession({ cwd: session.cwd, sessionId: session.sessionId, name: session.name, selection });
+          },
         },
         { kind: 'separator', id: 'new-from-here-separator' },
       ]
@@ -961,7 +983,7 @@ export function SessionView({
           end={
             <>
               {star && <StarButton sessionId={sessionId} name={session.name} starred={star.starred} onStar={star.onStar} size="md" shortcut={SHORTCUT_KEYS.star} />}
-              <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />
+              <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} onOpenChange={onMenuOpen} />
             </>
           }
         >
