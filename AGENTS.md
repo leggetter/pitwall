@@ -14,7 +14,7 @@ M1, the read-only index, M2, interacting with sessions from the web UI, M3, the 
 
 M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitwall/pull/69) to [PR #86](https://github.com/leggetter/pitwall/pull/86)) and merged on 2026-10-28, after W85's security review approved it. End session for interactive sessions (spike 005) merged into `main` as W90 in [PR #93](https://github.com/leggetter/pitwall/pull/93), and W85's non-blocking findings were W87.
 
-M4, Phil's open pull requests, is being built on `m4/integration`, which merges into `main` with Phil's approval. See "M4 - My open pull requests" and "M4 work breakdown" in `PLAN.md`, and `docs/design-system.md`.
+M4, Phil's open pull requests, was built on `m4/integration` (W92 to W117) and merged into `main` on 2026-11-02 in [PR #117](https://github.com/leggetter/pitwall/pull/117), after Phil's try-out and W108's security review. M5, the supervisor, is being built on `m5/integration`. See "M5 - Supervisor" and "M5 work breakdown" in `PLAN.md`.
 
 ## Rules
 
