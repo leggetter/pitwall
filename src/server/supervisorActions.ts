@@ -451,6 +451,19 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
           }),
         };
       }
+      // It may have gone: never say it wasn't sent (#131's review).
+      if (outcome.uncertain === 'copy') {
+        return {
+          text: JSON.stringify({
+            resumed: false,
+            copy: true,
+            note: `${session.name} was open in another Claude Code process, so Claude Code started a copy of its conversation, and the message went to the copy, not to ${session.name}, which is unchanged. pitwall didn't get the copy's id, so it can't link to it. Tell the user, who can find it in the list as a background session with no name, and stop and remove it.`,
+          }),
+        };
+      }
+      if (outcome.uncertain === 'unknown') {
+        return { text: `pitwall couldn't confirm the resume, so the message may or may not have been sent: ${result.error} Tell the user to check the session in the list before anything is tried again.`, isError: true };
+      }
       if (outcome.running === true) return notResumed(`${result.error} It's running now: propose a message to it with SendMessage instead.`);
       const hint = result.hint === undefined ? '' : ` The user can run this to fix it: ${result.hint}`;
       return notResumed(`${result.error}${hint}`);
