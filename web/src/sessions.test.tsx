@@ -58,8 +58,16 @@ const filters = (text: string, chips: FilterChip[] = []): Filters => ({ text, ch
 const names = (listed: readonly Listed[]) => listed.map(({ session: shown }) => shown.name);
 
 describe('the filter chips', () => {
-  it('are Interactive and Background, in that order', () => {
-    expect(FILTER_CHIPS).toEqual(['interactive', 'background']);
+  it('are Interactive, Background and Has PR, in that order (W106)', () => {
+    expect(FILTER_CHIPS).toEqual(['interactive', 'background', 'has-pr']);
+  });
+
+  it('Has PR: only a session that owns an open PR, and with a kind chip, only of that kind (W106)', () => {
+    const owner = SESSIONS['interactive-idle'];
+    expect(ALL.filter((name) => matchesChips(SESSIONS[name], new Set<FilterChip>(['has-pr']), SESSIONS[name] === owner))).toEqual(['interactive-idle']);
+    expect(matchesChips(owner, new Set<FilterChip>(['has-pr', 'interactive']), true)).toBe(true);
+    expect(matchesChips(owner, new Set<FilterChip>(['has-pr', 'background']), true)).toBe(false);
+    expect(matchesChips(owner, new Set<FilterChip>(['interactive']))).toBe(true);
   });
 
   it('let everything through when none is on', () => {

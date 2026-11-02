@@ -7,14 +7,21 @@
 // The rows come sorted. While the pointer is over the list or focus is inside it, a snapshot that
 // would reorder them waits until both have left, so nothing moves under the reader; rows that are
 // added or removed apply at once, and every row updates in place.
+//
+// A row is a piece of work (W106, work.ts): a session's, with the open PRs it owns, or a PR's that no
+// session owns (PrRow.tsx), each in the order the sort gives. The Pull requests view is this list too,
+// with its own filters, notices over the rows and a foot after them (PrList.tsx).
 
 import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
-import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
+import { ENDED_SHOWN_DAYS, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
+import { prKey } from '../prs.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
+import { isPrRow, rowKey, type ListRow } from '../work.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
+import { PrRow, PrStartButton } from './PrRow.js';
 import { ScrollBox } from './ScrollBox.js';
 import { SessionRow } from './SessionRow.js';
 
@@ -23,6 +30,8 @@ export interface SessionListHeading {
   label: string;
   /** A group's kind, for its icon. With several roots, the open root tab says which root it's under (W38). */
   kind?: SessionGroup['kind'] | undefined;
+  /** A repo with no clone under the root (W106): its own icon, and "not cloned" after its name. */
+  notCloned?: boolean | undefined;
 }
 
 export interface SessionListSummary {
@@ -46,7 +55,14 @@ export interface SessionListProps {
   headingAction?: ReactNode;
   /** The filter field, the chips and the Sort setting, once there are sessions to filter. */
   filters?: ReactNode;
-  current: readonly Listed[];
+  /** Notices over the rows, as the Pull requests view's about a fetch that failed (W106). */
+  notices?: ReactNode;
+  /** After the rows, as the Pull requests view's Show older and hidden line (W106). Not with an empty state. */
+  foot?: ReactNode;
+  /** More classes for the list's <main>: the Pull requests view's `pr-list`. */
+  className?: string;
+  /** The rows: sessions', and PRs' that no session owns (W106). */
+  current: readonly ListRow[];
   finished: readonly Listed[];
   /** An empty, loading or no-match state, in place of the rows. */
   empty?: ReactNode;
@@ -80,6 +96,18 @@ export interface SessionListProps {
    * ENDED_SHOWN_DAYS (W67). The section shows for it even when none of its rows is shown.
    */
   older?: OlderEnded | undefined;
+  /** The open PRs each session owns, most urgent first (W106, work.ts), for its row's PR badge, its attention and its line 2. */
+  owned?: ReadonlyMap<string, readonly PullRequestSummary[]> | undefined;
+  /** Opens a PR row's PR in the third column (W106). PR rows' titles aren't buttons without it. */
+  onOpenPr?: ((key: string) => void) | undefined;
+  /** ↑ or ↓ on a PR row's title: the next or previous row in the list as shown. */
+  onStepPr?: ((key: string, by: 1 | -1) => void) | undefined;
+  /** The open PR's key, whose row is marked open. */
+  openPrKey?: string | undefined;
+  /** Starts a session for a PR row's PR (W107): its row's action. PR rows have none without it. */
+  onStartPr?: ((pr: PullRequestSummary) => void) | undefined;
+  /** Offer Resume on the current rows of finished sessions that own an open PR (W107, RowResume.tsx). */
+  offerResume?: boolean;
 }
 
 /**
@@ -106,8 +134,11 @@ export function Summary({ total, shown, attention }: SessionListSummary) {
   );
 }
 
-/** The rows' name buttons in the order shown, without those in a collapsed Finished section. */
-const rowButtons = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>('[data-open-session]')].filter((button) => !button.closest('[hidden]'));
+/** The rows' name buttons, a session's or a PR's title (W106), in the order shown, without those in a collapsed Finished section. */
+const rowButtons = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>('[data-open-session], [data-open-pr]')].filter((button) => !button.closest('[hidden]'));
+
+/** The row a name button opens, as rowKey() names it. */
+const buttonRow = (button: HTMLElement) => button.dataset.openSession ?? `pr:${button.dataset.openPr ?? ''}`;
 
 /** A row's own control that can have focus: its name's button, its star toggle (W53), or its Not needed now toggle (W88). */
 type RowPart = 'open' | 'star' | 'not-needed';
@@ -120,11 +151,11 @@ function partOf(row: HTMLElement, part: RowPart): HTMLElement {
   return (part === 'open' ? null : row.closest('li.session')?.querySelector<HTMLElement>(PART_SELECTOR[part])) ?? row;
 }
 
-/** Which of its row's controls `target` is, and its session's id, or undefined for anything else. */
+/** Which of its row's controls `target` is, and its row's key (rowKey()), or undefined for anything else. */
 function rowPart(target: HTMLElement | undefined): { part: RowPart; id: string } | undefined {
   if (target?.dataset.starSession !== undefined) return { part: 'star', id: target.dataset.starSession };
   if (target?.dataset.notNeededSession !== undefined) return { part: 'not-needed', id: target.dataset.notNeededSession };
-  if (target?.dataset.openSession !== undefined) return { part: 'open', id: target.dataset.openSession };
+  if (target?.dataset.openSession !== undefined || target?.dataset.openPr !== undefined) return { part: 'open', id: buttonRow(target) };
   return undefined;
 }
 
@@ -134,14 +165,14 @@ const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.l
  * `items` in the order last shown while `holding`, with any that have gone left out and any new ones
  * in their place (holdOrder). Otherwise, or when `key` changes, in the order given.
  */
-function useHeldOrder(items: readonly Listed[], holding: boolean, key: string): readonly Listed[] {
-  const ids = items.map(({ session }) => session.sessionId);
+function useHeldOrder<T extends ListRow>(items: readonly T[], holding: boolean, key: string): readonly T[] {
+  const ids = items.map(rowKey);
   const [shown, setShown] = useState(() => ({ key, ids }));
   const next = holding && shown.key === key ? holdOrder(shown.ids, ids) : ids;
   // Remembered from this render for the next one, as React suggests for state from earlier renders.
   if (shown.key !== key || !sameIds(shown.ids, next)) setShown({ key, ids: next });
   if (sameIds(next, ids)) return items;
-  const byId = new Map(items.map((item) => [item.session.sessionId, item]));
+  const byId = new Map(items.map((item) => [rowKey(item), item]));
   return next.flatMap((id) => byId.get(id) ?? []);
 }
 
@@ -234,6 +265,9 @@ export function SessionList({
   summary,
   headingAction,
   filters,
+  notices,
+  foot,
+  className,
   current,
   finished,
   empty,
@@ -251,6 +285,12 @@ export function SessionList({
   onNotNeeded,
   inert = false,
   older,
+  owned,
+  onOpenPr,
+  onStepPr,
+  openPrKey,
+  onStartPr,
+  offerResume = false,
 }: SessionListProps) {
   const headingId = useId();
   const main = useRef<HTMLElement>(null);
@@ -273,7 +313,7 @@ export function SessionList({
     const active = document.activeElement;
     const lost = active === null || active === document.body;
     const rows = main.current ? rowButtons(main.current) : [];
-    if (lost && was !== undefined && !rows.some((row) => row.dataset.openSession === was.id)) {
+    if (lost && was !== undefined && !rows.some((row) => buttonRow(row) === was.id)) {
       const row = rows[Math.min(was.index, rows.length - 1)];
       const next = (row && partOf(row, was.part)) ?? headingRef?.current ?? undefined;
       if (next) {
@@ -287,7 +327,7 @@ export function SessionList({
   const onFocusIn = (event: FocusEvent<HTMLElement>) => {
     setFocusInside(true);
     const found = rowPart(event.target instanceof HTMLElement ? event.target : undefined);
-    const index = found === undefined || !main.current ? -1 : rowButtons(main.current).findIndex((button) => button.dataset.openSession === found.id);
+    const index = found === undefined || !main.current ? -1 : rowButtons(main.current).findIndex((button) => buttonRow(button) === found.id);
     focusedRow.current = found !== undefined && index >= 0 ? { ...found, index } : undefined;
   };
 
@@ -298,7 +338,7 @@ export function SessionList({
   return (
     <main
       ref={main}
-      className="session-list"
+      className={className ? `session-list ${className}` : 'session-list'}
       aria-labelledby={headingId}
       onPointerEnter={() => setPointerInside(true)}
       onPointerLeave={() => setPointerInside(false)}
@@ -315,9 +355,14 @@ export function SessionList({
       <div className="session-list-head">
         <div className="session-list-title-row">
           <h2 className="session-list-title" id={headingId} ref={headingRef} tabIndex={-1}>
-            {heading.kind && <Icon name={heading.kind === 'git' ? 'repo' : 'directory'} className="session-list-kind" />}
+            {heading.kind && <Icon name={heading.notCloned ? 'external' : heading.kind === 'git' ? 'repo' : 'directory'} className="session-list-kind" />}
             <span className="session-list-label">{plainText(heading.label)}</span>
-            {heading.kind && <span className="visually-hidden">, {heading.kind === 'git' ? 'git repo' : 'directory'}</span>}
+            {heading.kind && <span className="visually-hidden">, {heading.notCloned ? 'not cloned' : heading.kind === 'git' ? 'git repo' : 'directory'}</span>}
+            {heading.notCloned && (
+              <span className="session-list-not-cloned" aria-hidden="true">
+                Not cloned
+              </span>
+            )}
           </h2>
           {headingAction ? (
             <div className="session-list-end">
@@ -331,23 +376,40 @@ export function SessionList({
         {filters && <div className="session-list-filters">{filters}</div>}
       </div>
       <div className="session-list-body">
+        {notices}
         {empty ?? (
           <ul className="sessions">
-            {shownCurrent.map(({ session, group }) => (
-              <SessionRow
-                key={session.sessionId}
-                session={session}
-                group={group}
-                showGroup={showGroup}
-                onOpen={onOpen}
-                onStep={onStep}
-                isOpen={session.sessionId === openSessionId}
-                starred={starred?.has(session.sessionId) ?? false}
-                onStar={onStar}
-                notNeeded={notNeeded}
-                onNotNeeded={onNotNeeded}
-              />
-            ))}
+            {shownCurrent.map((row) =>
+              isPrRow(row) ? (
+                <PrRow
+                  key={rowKey(row)}
+                  pr={row.pr}
+                  group={row.group}
+                  showGroup={showGroup}
+                  isOpen={prKey(row.pr) === openPrKey}
+                  onOpen={onOpenPr}
+                  onStep={onStepPr}
+                  older={row.older === true}
+                  actions={onStartPr && <PrStartButton pr={row.pr} onStart={onStartPr} />}
+                />
+              ) : (
+                <SessionRow
+                  key={row.session.sessionId}
+                  session={row.session}
+                  group={row.group}
+                  showGroup={showGroup}
+                  onOpen={onOpen}
+                  onStep={onStep}
+                  isOpen={row.session.sessionId === openSessionId}
+                  starred={starred?.has(row.session.sessionId) ?? false}
+                  onStar={onStar}
+                  notNeeded={notNeeded}
+                  onNotNeeded={onNotNeeded}
+                  owned={owned?.get(row.session.sessionId)}
+                  offerResume={offerResume}
+                />
+              ),
+            )}
             {(shownFinished.length > 0 || (older !== undefined && older.count > 0)) && (
               <FinishedSection
                 finished={shownFinished}
@@ -366,6 +428,7 @@ export function SessionList({
             )}
           </ul>
         )}
+        {empty === undefined && foot}
       </div>
     </main>
   );

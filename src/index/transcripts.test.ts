@@ -17,6 +17,7 @@ import {
   setNameOf,
   stripSystemReminders,
   TITLE_MAX,
+  turnSignalOf,
   userPromptOf,
   type Fields,
   type TranscriptReaderOptions,
@@ -104,6 +105,9 @@ describe('userPromptOf', () => {
     expect(userPromptOf(user('Another Claude session sent a message: hello'))).toBeUndefined();
     expect(userPromptOf(user('before <cross-session-message from="x">hi</cross-session-message>'))).toBeUndefined();
     expect(userPromptOf(user([text('<cross-session-message from="x">hi</cross-session-message>')]))).toBeUndefined();
+    // Newer versions' tag too (W99).
+    expect(userPromptOf(user('<agent-message from="a1b2c3">hi</agent-message>'))).toBeUndefined();
+    expect(userPromptOf(user([text('before <agent-message from="x">hi</agent-message>')]))).toBeUndefined();
   });
 
   it('does not exclude a prompt whose only cross-session mention is inside a system reminder', () => {
@@ -397,11 +401,127 @@ describe("applyEntry: the turn's end and the newest prompt (W69)", () => {
     expect(fieldsOf(user('no time', { timestamp: undefined })).lastPromptMs).toBeUndefined();
   });
 
+  it('keeps the turn ended through a message from another session or a task notification, so a question stays in Needs you until a turn runs (W102)', () => {
+    const asked = () => [user('go'), assistant([text('Tea or coffee?')]), turnDuration()];
+    const message = user('Another Claude session sent a message:\n<cross-session-message from="pitwall-test-peer">hi</cross-session-message>', { isMeta: true, origin: { kind: 'peer' } });
+    const notification = user('<task-notification><status>completed</status></task-notification>', { origin: { kind: 'task-notification' } });
+    expect(fieldsOf(...asked(), message).turnEnded).toBe(true);
+    expect(fieldsOf(...asked(), notification).turnEnded).toBe(true);
+    // Claude's first entry runs one, a thinking block's alone included.
+    expect(fieldsOf(...asked(), notification, assistant([{ type: 'thinking', thinking: 'made up', signature: 'sig' }], 'm2')).turnEnded).toBe(false);
+  });
+
   it('reads turn_duration lines through the pre-filter', () => {
     const fields: Fields = {};
     applyLine(fields, JSON.stringify(assistant([text('Done?')])));
     applyLine(fields, JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 9 }));
     expect(fields.turnEnded).toBe(true);
+  });
+});
+
+/** What arrived while the session was mid-turn, as Claude Code 2.1.312 records it: a queued_command attachment, with no user entry (W99). */
+function queued(prompt: unknown, attachment: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const at = nextTimestamp();
+  return {
+    type: 'attachment',
+    isSidechain: false,
+    userType: 'external',
+    timestamp: at,
+    attachment: { type: 'queued_command', prompt, commandMode: 'prompt', source_uuid: '00000000-0000-4000-8000-000000000099', timestamp: at, ...attachment },
+    ...extra,
+  };
+}
+const typedMidTurn = (prompt: unknown, attachment: Record<string, unknown> = {}) => queued(prompt, { origin: { kind: 'human' }, humanTurn: true, ...attachment });
+
+describe('applyEntry: what arrives mid-turn (W99)', () => {
+  it('reads a prompt typed while Claude worked as the newest prompt, at its time, with system reminders stripped', () => {
+    const before = [user('Fix the made-up test.'), assistant([text('Should I run the tests?')]), user([toolResult('r')])];
+    const prompt = typedMidTurn('<system-reminder>harness note</system-reminder>\nAlso check the made-up flag.');
+    const fields = fieldsOf(...before, prompt);
+    expect(fields.userPrompt).toBe('Also check the made-up flag.');
+    expect(fields.promptAfterText).toBe(true);
+    expect(fields.lastPromptMs).toBe(Date.parse(prompt.timestamp as string));
+    expect(fields.lastActivityMs).toBe(Date.parse(prompt.timestamp as string));
+    // Claude carries on after it, so the turn's text after it counts as newer.
+    expect(fieldsOf(user('go'), prompt, assistant([text('Checking.')], 'm2')).promptAfterText).toBe(false);
+  });
+
+  it("reads a prompt's text blocks, not its images, as a prompt between turns does, and caps it at 300 characters", () => {
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } };
+    expect(fieldsOf(typedMidTurn([text('Look at this.'), image], { imagePasteIds: [1] })).userPrompt).toBe('Look at this.');
+    expect(fieldsOf(user('kept'), typedMidTurn([image])).userPrompt).toBe('kept');
+    expect(fieldsOf(typedMidTurn('p'.repeat(1000))).userPrompt).toHaveLength(300);
+  });
+
+  it("is not a typed prompt to the ended-session scanner, which goes by Claude Code's own marker", () => {
+    expect(fieldsOf(typedMidTurn('Also this.')).typedPrompt).toBeUndefined();
+  });
+
+  it('runs the turn again, as a prompt does', () => {
+    expect(fieldsOf(user('go'), assistant([text('Tea or coffee?')]), turnDuration(), typedMidTurn('tea')).turnEnded).toBe(false);
+  });
+
+  it("doesn't count a message from another session, a sub-agent's report, a task notification or a sub-agent's meta message as a prompt", () => {
+    const entries = [
+      queued('<cross-session-message from="uds:/tmp/cc-socks/1.sock" from-name="pitwall-test-peer">Please review.</cross-session-message>', {
+        isMeta: true,
+        origin: { kind: 'peer', from: 'uds:/tmp/cc-socks/1.sock', msg_id: 'made-up-msg' },
+      }),
+      queued('<agent-message from="a1b2c3">The made-up report.</agent-message>', { isMeta: true, origin: { kind: 'peer', from: 'a1b2c3', senderTaskId: 'a1b2c3' } }),
+      queued('<task-notification><task-id>b7</task-id><status>completed</status></task-notification>', { commandMode: 'task-notification', origin: { kind: 'task-notification' } }),
+      queued('<task-notification><task-id>b8</task-id><status>failed</status></task-notification>', { commandMode: 'task-notification' }),
+      queued('Carry on.', { isMeta: true, origin: { kind: 'coordinator' }, commandMode: undefined }),
+    ];
+    const first = user('the real prompt');
+    const fields = fieldsOf(first, ...entries);
+    expect(fields.userPrompt).toBe('the real prompt');
+    expect(fields.lastPromptMs).toBe(Date.parse(first.timestamp as string));
+  });
+
+  it('reads nothing from an unexpected shape', () => {
+    for (const entry of [
+      queued('a shell command', { commandMode: 'bash', origin: { kind: 'human' } }),
+      queued(42, { origin: { kind: 'human' } }),
+      queued({ text: 'an object' }, { origin: { kind: 'human' } }),
+      queued([toolResult('a result is never a prompt')], { origin: { kind: 'human' } }),
+      queued('a sidechain prompt', { origin: { kind: 'human' } }, { isSidechain: true }),
+      { type: 'attachment', timestamp: nextTimestamp(), attachment: { type: 'todo_reminder', prompt: 'not a queued command' } },
+      { type: 'attachment', timestamp: nextTimestamp(), attachment: 'queued_command' },
+    ]) {
+      expect(fieldsOf(user('kept'), entry).userPrompt, JSON.stringify(entry).slice(0, 120)).toBe('kept');
+    }
+  });
+
+  it("never reads a message from another session as the user's prompt, whatever the attachment's origin and meta say", () => {
+    for (const body of ['<cross-session-message from="uds:/tmp/cc-socks/7.sock" from-name="pitwall-test-peer">Wrapped.</cross-session-message>', '<agent-message from="a1b2c3">Wrapped too.</agent-message>']) {
+      for (const entry of [
+        queued(body),
+        queued(body, { commandMode: undefined }),
+        queued(body, { commandMode: 'task-notification' }),
+        queued(body, { origin: 'human' }),
+        queued(body, { origin: {} }),
+        queued(body, { origin: { kind: 'made-up-kind' } }),
+        queued(body, { origin: { kind: 'coordinator' }, commandMode: undefined }),
+        queued(body, { origin: { kind: 'human' } }, { isMeta: true }),
+        queued(body, { origin: { kind: 'human' } }),
+      ]) {
+        const fields = fieldsOf(user('kept'), entry);
+        expect(fields.userPrompt, JSON.stringify(entry.attachment).slice(0, 160)).toBe('kept');
+      }
+    }
+  });
+
+  it('reads no prompt from one with no origin, or with meta on its entry rather than its attachment', () => {
+    expect(fieldsOf(user('kept'), queued('No origin.')).userPrompt).toBe('kept');
+    expect(fieldsOf(user('kept'), { ...typedMidTurn('Meta on the entry.'), isMeta: true }).userPrompt).toBe('kept');
+  });
+
+  it('reads queued_command lines through the pre-filter, which a line without "user" in it would not pass otherwise', () => {
+    const fields: Fields = {};
+    const line = JSON.stringify(typedMidTurn('Through the filter.'));
+    expect(line).not.toContain('"user"');
+    applyLine(fields, line);
+    expect(fields.userPrompt).toBe('Through the filter.');
   });
 });
 
@@ -1011,3 +1131,33 @@ function lineOfBytes(bytes: number): string {
   const overhead = Buffer.byteLength(`${JSON.stringify({ type: 'attachment', body: '' })}\n`);
   return `${JSON.stringify({ type: 'attachment', body: 'x'.repeat(bytes - overhead) })}\n`;
 }
+
+describe('turnSignalOf: what an entry says of the turn, for W69 and the working line (W102)', () => {
+  it('ends at Claude Code\'s mark, and runs for Claude\'s entries, a thinking block\'s alone included, a prompt and a tool result', () => {
+    expect(turnSignalOf(turnDuration())).toBe('ended');
+    expect(turnSignalOf(assistant([{ type: 'thinking', thinking: 'made up', signature: 'sig' }]))).toBe('running');
+    expect(turnSignalOf(assistant([text('Done.')]))).toBe('running');
+    expect(turnSignalOf(user('A made-up prompt.'))).toBe('running');
+    expect(turnSignalOf(user([toolResult('ok')]))).toBe('running');
+    expect(turnSignalOf(queued('Typed mid-turn.', { origin: { kind: 'human' } }))).toBe('running');
+  });
+
+  it('says a message or a task notification arrived, between turns or mid-turn', () => {
+    expect(turnSignalOf(user('Another Claude session sent a message:\n<cross-session-message from="x">hi</cross-session-message>', { isMeta: true }))).toBe('arrived');
+    expect(turnSignalOf(user('<agent-message from="a1">report</agent-message>', { isMeta: true, origin: { kind: 'peer', from: 'a1' } }))).toBe('arrived');
+    expect(turnSignalOf(user('<task-notification><status>completed</status></task-notification>'))).toBe('arrived');
+    expect(turnSignalOf(user('Build finished', { origin: { kind: 'task-notification' } }))).toBe('arrived');
+    expect(turnSignalOf(queued('<task-notification><status>failed</status></task-notification>', { commandMode: 'task-notification', origin: { kind: 'task-notification' } }))).toBe('arrived');
+  });
+
+  it('says nothing for a sidechain\'s entries, a meta entry, a local command, a compaction and other system entries', () => {
+    expect(turnSignalOf(turnDuration({ isSidechain: true }))).toBeUndefined();
+    expect(turnSignalOf(assistant([text('sub-agent')], 's1', { isSidechain: true }))).toBeUndefined();
+    expect(turnSignalOf(user('<local-command-caveat>Caveat: made up.</local-command-caveat>', { isMeta: true }))).toBeUndefined();
+    expect(turnSignalOf(user('<command-name>/model</command-name>', { promptSource: 'typed' }))).toBeUndefined();
+    expect(turnSignalOf(user('<local-command-stdout>Set model</local-command-stdout>'))).toBeUndefined();
+    expect(turnSignalOf(user('This session is being continued…', { isCompactSummary: true }))).toBeUndefined();
+    expect(turnSignalOf({ type: 'system', subtype: 'away_summary', content: 'recap' })).toBeUndefined();
+    expect(turnSignalOf({ type: 'attachment', attachment: { type: 'note' } })).toBeUndefined();
+  });
+});

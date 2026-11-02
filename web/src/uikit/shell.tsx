@@ -13,7 +13,7 @@ import { HideButton } from '../components/HideButton.js';
 import { RepoDrawer } from '../components/RepoDrawer.js';
 import { RepoList } from '../components/RepoList.js';
 import { SessionList, type SessionListHeading, type SessionListSummary } from '../components/SessionList.js';
-import { SortSelect } from '../components/SortSelect.js';
+import { SortMenu } from '../components/SortMenu.js';
 import type { ConnectionState } from '../connection.js';
 import { shortenHome } from '../format.js';
 import { groupSessions, type GroupBy } from '../groupBy.js';
@@ -50,7 +50,7 @@ const UPDATED = ago(0.05);
 /** The Sort setting, with state of its own. */
 function LiveSort({ start = 'urgency' }: { start?: SortOrder }) {
   const [order, setOrder] = useState(start);
-  return <SortSelect value={order} onChange={setOrder} />;
+  return <SortMenu value={order} onChange={setOrder} />;
 }
 
 /** The filters and the Sort setting after them, as the session list's header has them, with state of their own. */
@@ -488,7 +488,7 @@ export function FilterSpecimens() {
       <Specimen title="In a narrow window" note="The field on its line, the chips and Clear filters on the next, and Sort on its own after them, since the three don't fit on one line. Press a chip or clear the text: nothing moves." width={320}>
         <LiveFilters start={filters('export', 'interactive')} />
       </Specimen>
-      <Specimen title="The Sort setting" note="Urgency, the default, then Recent and Name. Each one keeps its own choice here; in the app it's one setting, kept in pitwall.sort.v1.">
+      <Specimen title="The Sort setting" note="A ghost sm menu button, named Sort by its tooltip, whose menu is a radio group: Urgency, the default, then Recent and Name, the chosen one checked (W106's review). Each one keeps its own choice here; in the app it's one setting, kept in pitwall.sort.v1.">
         <div className="uikit-row">
           {SORT_ORDERS.map((order) => (
             <LiveSort key={order} start={order} />

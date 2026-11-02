@@ -387,6 +387,25 @@ describe('asConversationPage', () => {
     ]);
   });
 
+  it('keeps the mid-turn mark only when it is true, and the turn’s end only as a boolean (W102)', () => {
+    const body = {
+      sessionId: SID,
+      turnEnded: false,
+      entries: [
+        { kind: 'user', text: 'typed mid-turn', midTurn: true },
+        { kind: 'user', text: 'between turns', midTurn: 'yes' },
+        { kind: 'notice', text: 'compacted', midTurn: 1 },
+      ],
+    };
+    expect(asConversationPage(body, SID)).toEqual({
+      sessionId: SID,
+      turnEnded: false,
+      entries: [{ kind: 'user', text: 'typed mid-turn', midTurn: true }, { kind: 'user', text: 'between turns' }, { kind: 'notice', text: 'compacted' }],
+    });
+    expect(asConversationPage({ sessionId: SID, entries: [], turnEnded: true }, SID)?.turnEnded).toBe(true);
+    expect(asConversationPage({ sessionId: SID, entries: [], turnEnded: 'yes' }, SID)).toEqual({ sessionId: SID, entries: [] });
+  });
+
   it('drops entries that are not well formed, and fields of the wrong type', () => {
     const body = {
       sessionId: SID,

@@ -73,7 +73,7 @@ describe('the keyboard shortcuts dialog', () => {
     expect(byWhat.get('Focus the filter field')).toEqual({ what: 'Focus the filter field', caps: '/', heard: 'Slash' });
     expect(byWhat.get('Open the New session dialog')?.caps).toBe('n');
     expect(byWhat.get('Show keyboard shortcuts')?.caps).toBe('?');
-    expect(byWhat.get('Next or previous session in the list, showing it if a session is open')).toMatchObject({ caps: 'j k', heard: 'J or K' });
+    expect(byWhat.get('Next or previous session in the list, or pull request in Pull requests, showing it if one is open')).toMatchObject({ caps: 'j k', heard: 'J or K' });
     expect(byWhat.get('Star or unstar the open session')).toEqual({ what: 'Star or unstar the open session', caps: 's', heard: 'S' });
     expect(byWhat.get('In the repo list: move, jump to either end, select')).toMatchObject({ caps: '↓ ↑ Home End ↵', heard: 'Down arrow or Up arrow, Home or End, Enter' });
     expect(byWhat.get('In an open menu: move, jump to either end, choose, close')?.caps).toBe('↑ ↓ Home End ↵ Esc');

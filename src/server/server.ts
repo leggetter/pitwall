@@ -7,7 +7,12 @@
 //                               the apiKey, not the token, and an Origin, else 403
 //   GET /api/directories        then directories.ts: the directories under the snapshot's roots
 //   GET /api/editors            then editors.ts: the editors found at startup
-//   POST /api/attachments       then attachments.ts: the one body that isn't JSON, the file's bytes
+//   GET /api/prs                then prs.ts: your open PRs, the latest list the poller has (M4);
+//                               POST /api/prs/refresh asks it for a fetch, at most one a minute,
+//                               else 429, and 409 with --no-prs; POST /api/prs/clone, clone.ts,
+//                               clones a not-cloned PR's repo into its root, one at a time and
+//                               at most 3 a minute, else 429 (W107)
+//   POST /api/attachments      then attachments.ts: the one body that isn't JSON, the file's bytes
 //                               with its own Content-Type, at most 10 MiB, its type checked; DELETE
 //                               /api/attachments/:id removes one no spawn has used
 //   /api/sessions/:sessionId/*  then resolveSession() (sessions.ts): a safe id, else 400; a
@@ -30,6 +35,9 @@
 //                               session that resolveSession() finds
 //   static files                Host only. They are the public build output.
 //
+// The snapshot, on GET /api/snapshot and /ws, carries each session's PR links only to PRs in the
+// current list, and goes out again when the list changes that (snapshotLinks.ts, D14, W105).
+//
 // The token can read the API, for scripts. The apiKey, which only a client
 // that answered a challenge gets, can read it too, and is the only credential
 // for state-changing requests. Neither is ever logged. No response carries
@@ -41,6 +49,7 @@ import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
+import { prsOff } from '../prs/index.js';
 import {
   ATTACH_PATH,
   CONVERSATION_STALE_STATUS,
@@ -54,10 +63,13 @@ import {
 import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
+import { createCloneRoute, type CloneOptions } from './clone.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
+import { registerPrs } from './prs.js';
+import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import {
@@ -152,6 +164,8 @@ export interface ServerInternals {
    * clean-up's bounds and its log (W84). The folder is ServerOptions.pitwallHome's.
    */
   attachments?: Omit<AttachmentStoreOptions, 'home'>;
+  /** Clone and start (W107, clone.ts): tests pass a fake runFile and file system calls, so no test runs gh or touches a real root. */
+  clone?: CloneOptions;
 }
 
 export async function startServerWithInternals(
@@ -184,11 +198,20 @@ export async function startServerWithInternals(
   const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
   // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
-  // The directory list (W70), then the input routes: attachments (W79), spawn, stop and remove (W12),
-  // resume (W66), the editors and open in an editor (W72), whose detection starts here, end session
-  // (W90), which never ends the relay, the relay (W11), then any a test adds.
+  // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close().
+  const prs = options.prs ?? prsOff();
+  // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
+  const snapshots = createSnapshotView(indexer, prs);
+  // Clone and start (W107): its route, its sweep of what a killed pitwall left once listening, and on close() its running clone stopped.
+  const clone = createCloneRoute(indexer, prs, internals.clone);
+  // The directory list (W70), your open PRs, Refresh (M4) and Clone and start (W107), then the input routes: attachments
+  // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
+  // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
+  // test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
+    registerPrs(app, prs);
+    clone.register(app);
     registerAttachments(app, attachments);
     registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
@@ -196,7 +219,7 @@ export async function startServerWithInternals(
     registerRelay(app, indexer, relay);
     internals.routes?.(app);
   };
-  const app = createApp({ indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
+  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -245,7 +268,7 @@ export async function startServerWithInternals(
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
-      handleClient(ws, { indexer, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots }),
+      handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs }),
     );
   });
 
@@ -260,18 +283,26 @@ export async function startServerWithInternals(
   headers = Object.entries(securityHeaders(port));
   // At startup, for anything an earlier run left, then on a timer.
   attachments.start();
+  // The first fetch of your open PRs, now that there's a server to show them.
+  prs.start();
+  clone.start();
 
   let closed: Promise<void> | undefined;
   return {
     url: `http://${LOOPBACK_HOST}:${port}`,
     port,
     close() {
+      // No more fetches, and no more 'prs' messages to clients that are closing.
+      prs.stop();
+      snapshots.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
           closing = true;
         }),
         attach.close(),
         relay.close(),
+        // gh and git run in a session of their own, so nothing else stops them: SIGTERM, then the temp folder removed.
+        clone.close(),
         attachments.close(),
       ]).then(() => undefined);
       return closed;
@@ -290,6 +321,8 @@ function gateStatus(req: IncomingMessage, port: number | undefined): number | un
 }
 
 interface AppContext {
+  /** What GET SNAPSHOT_PATH answers: the index's snapshot with only the links to open PRs (snapshotLinks.ts). */
+  snapshots: SnapshotView;
   indexer: Indexer;
   token: string;
   apiKey: string;
@@ -298,7 +331,7 @@ interface AppContext {
   routes: ServerInternals['routes'];
 }
 
-function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
+function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
   const app = new Hono();
   // Conversation pages being read now.
   let conversationReads = 0;
@@ -319,7 +352,7 @@ function createApp({ indexer, token, apiKey, webRoot, port, routes }: AppContext
 
   app.get(SNAPSHOT_PATH, (c) => {
     c.header('Cache-Control', 'no-store');
-    const snapshot = indexer.latest();
+    const snapshot = snapshots.latest();
     if (!snapshot) return c.body(null, 503);
     return c.json(snapshot);
   });

@@ -201,6 +201,11 @@ const bearer = { authorization: `Bearer ${TOKEN}` };
 interface Client {
   ws: WebSocket;
   messages: ServerMessage[];
+  /**
+   * The 'prs' messages (M4), kept apart from `messages`, so the tests of the session snapshot's
+   * messages read them as they always have. prs.test.ts tests where 'prs' comes among them.
+   */
+  prs: ServerMessage[];
   closed: Promise<{ code: number }>;
   nextMessage(): Promise<ServerMessage>;
 }
@@ -211,9 +216,14 @@ function connectWs(port: number, options: { origin?: string; headers?: Record<st
     headers: options.headers ?? {},
   });
   const messages: ServerMessage[] = [];
+  const prs: ServerMessage[] = [];
   const waiters: ((message: ServerMessage) => void)[] = [];
   ws.on('message', (data) => {
     const message = JSON.parse(String(data)) as ServerMessage;
+    if (message.type === 'prs') {
+      prs.push(message);
+      return;
+    }
     const waiter = waiters.shift();
     if (waiter) waiter(message);
     else messages.push(message);
@@ -222,6 +232,7 @@ function connectWs(port: number, options: { origin?: string; headers?: Record<st
   return {
     ws,
     messages,
+    prs,
     closed,
     nextMessage: () => {
       const queued = messages.shift();
@@ -260,6 +271,7 @@ function connectAttach(port: number): Client {
   return {
     ws,
     messages,
+    prs: [],
     closed,
     nextMessage: () => {
       const queued = messages.shift();
@@ -1319,6 +1331,7 @@ describe('startServer', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(client.ws.readyState).toBe(WebSocket.OPEN);
       expect(client.messages).toEqual([]);
+      expect(JSON.stringify(client.prs)).not.toContain(TOKEN);
 
       indexer.push(snapshot('2026-10-16T00:00:05.000Z'));
       expect((await client.nextMessage()).type).toBe('heartbeat');

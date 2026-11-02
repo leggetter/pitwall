@@ -152,6 +152,11 @@
   height: 640px;
 }
 
+/* The PR list on its own (W95) fills its frame, as the session list's column, so its rows scroll. */
+.uikit-frame > .pr-list {
+  height: 100%;
+}
+
 .uikit-frame-short {
   height: 420px;
 }

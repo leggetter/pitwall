@@ -20,9 +20,11 @@ export interface CopyButtonProps {
   /** The text on screen, selected when the clipboard refuses. */
   target?: RefObject<HTMLElement | null> | undefined;
   className?: string | undefined;
+  /** sm, 24 px, beside text, as by a path; md, 28 px, among a view header's other icon buttons, as the PR view's Copy link (W95). */
+  size?: 'sm' | 'md';
 }
 
-export function CopyButton({ text, label, target, className }: CopyButtonProps) {
+export function CopyButton({ text, label, target, className, size = 'sm' }: CopyButtonProps) {
   const copy = useCopy();
   const toast = useToast();
   const button = useRef<HTMLButtonElement>(null);
@@ -66,7 +68,7 @@ export function CopyButton({ text, label, target, className }: CopyButtonProps) 
       <button
         ref={button}
         type="button"
-        className={['icon-button ghost sm copy-button', result === 'copied' && 'copied', className].filter(Boolean).join(' ')}
+        className={['icon-button ghost', size, 'copy-button', result === 'copied' && 'copied', className].filter(Boolean).join(' ')}
         aria-label={label}
         data-copy={result}
         onClick={onClick}

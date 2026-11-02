@@ -26,6 +26,21 @@
 // page. When a page boundary falls between them, the result is on the newer
 // page: its cursor carries the result line's place in the file, and the older
 // page reads that one line again once it meets the call.
+//
+// What arrives while the session is mid-turn, a prompt typed meanwhile, a message
+// from another session or a sub-agent, or a task notification, Claude Code
+// records only as a `queued_command` attachment (W99). Each is read as the user
+// entry it stands for (queuedEntryOf(), in transcripts.ts), so it becomes what
+// that entry would, and a message from the relay that came mid-turn says where
+// the relay's messages come from as one that came between turns does. A message
+// from a session names its `msg_id` in either form, so a page that met both would
+// show it once; Claude Code wasn't seen writing both for any of these.
+//
+// For the web UI's working line (W102): each of those, a compaction summary and
+// Claude Code's own API error notice is marked `midTurn`, since none of them began
+// a turn, and the newest page says whether its newest turn has ended, by Claude
+// Code's `turn_duration` mark (spike 007, finding 4), which a page otherwise skips,
+// with W69's rule for what runs a turn (turnSignalOf(), in transcripts.ts).
 
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -34,7 +49,7 @@ import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shar
 import { isRecord } from './guards.js';
 import type { SubagentLabels } from './subagents.js';
 import { cap, truncate } from './text.js';
-import { stripSystemReminders } from './transcripts.js';
+import { queuedEntryOf, stripSystemReminders, turnSignalOf, type TurnSignal } from './transcripts.js';
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -225,6 +240,8 @@ export async function readConversationPage(
       // A question dialog's call on this page whose result was on a newer one: that result's line again.
       const answerBytesRead = await result.builder.readAnswers(handle, size);
       const page: ConversationPage = { sessionId, entries: result.builder.finish(earlier) };
+      // Only the newest page runs to the end of the transcript, so only it can say whether the turn has ended (W102).
+      if (cursor === undefined && result.builder.turnEnded !== undefined) page.turnEnded = result.builder.turnEnded;
       if (result.stop !== undefined) {
         page.before = encodeCursor({
           offset: result.stop.offset,
@@ -676,8 +693,13 @@ type Item =
   /** `to`: a SendMessage call's recipient, trimmed, with or without a message, to find a sub-agent by (W76). */
   | { kind: 'tool'; id: string | undefined; name: string; summary: string; at: string | undefined; send?: SendCall; ask?: AskCall; to?: string }
   | { kind: 'result'; id: string; state: ResultState; answers?: DialogAnswers }
-  /** `peer`: who a message from a peer came from, as its `origin.from` says: a sub-agent's id for its report (W76). */
-  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string };
+  /**
+   * `peer`: who a message from a peer came from, as its `origin.from` says: a sub-agent's id for its report (W76).
+   * `msgId`: its `origin.msg_id`, the same in the user entry and the mid-turn attachment that can stand for it (W99).
+   */
+  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string; msgId?: string }
+  /** What the line says of the turn (turnSignalOf(), W102): it ended, one runs, or something arrived that starts one. */
+  | { kind: 'turn'; signal: TurnSignal };
 
 /** A SendMessage call on the page whose result, if it has one yet, didn't fail, and where its line starts. */
 interface SendDraft extends SendCall {
@@ -722,6 +744,10 @@ class PageBuilder {
   private readonly drafts: Draft[] = [];
   /** The addresses the relay's messages on this page came from, each with the offset of the earliest such line. */
   private readonly relayFrom = new Map<string, number>();
+  /** The `msg_id`s of the messages from peers on this page, so one written twice shows once (W99). At most a page's entries. */
+  private readonly msgIds = new Set<string>();
+  /** Whether the newest turn on the page has ended (noteTurn()), once a line has said; undefined until then (W102). */
+  turnEnded: boolean | undefined;
 
   constructor(
     readonly pending: Map<string, Pending>,
@@ -738,10 +764,24 @@ class PageBuilder {
   offer(line: string, offset: number, end: number): 'taken' | 'full' {
     const items = itemsOfLine(line, this.sidechain);
     if (items.length === 0) return 'taken';
+    this.noteTurn(items);
     const added = this.newEntries(items);
     if (this.drafts.length > 0 && this.drafts.length + added > this.maxEntries) return 'full';
     for (let i = items.length - 1; i >= 0; i--) this.apply(items[i] as Item, offset, end);
     return 'taken';
+  }
+
+  /**
+   * Whether the newest turn has ended (W102), from the newest line that says either, by W69's rule
+   * (turnSignalOf()): a `turn_duration` mark says it has; any assistant line, a thinking block's alone
+   * included, a tool's result or a prompt says one is running, and so does a message or a task
+   * notification that arrived, which Claude Code starts a turn for. A local command and its output, a
+   * compaction and the rest say neither. Lines are offered newest first, so the first that says wins.
+   */
+  private noteTurn(items: Item[]): void {
+    if (this.turnEnded !== undefined) return;
+    const turn = items.find((item) => item.kind === 'turn');
+    if (turn?.kind === 'turn') this.turnEnded = turn.signal === 'ended';
   }
 
   /** How many new entries the line's items would add, given the oldest entry so far. */
@@ -750,8 +790,9 @@ class PageBuilder {
     let added = 0;
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i] as Item;
-      if (item.kind === 'result') continue;
+      if (item.kind === 'result' || item.kind === 'turn') continue;
       if (item.kind === 'text' && joins(oldest, item.messageId)) continue;
+      if (item.kind === 'entry' && item.msgId !== undefined && this.msgIds.has(item.msgId)) continue;
       added++;
       oldest = { assistant: item.kind === 'text', messageId: item.kind === 'text' ? item.messageId : undefined };
     }
@@ -766,6 +807,8 @@ class PageBuilder {
 
   private apply(item: Item, offset: number, end: number): void {
     switch (item.kind) {
+      case 'turn':
+        return;
       case 'result': {
         this.pending.delete(item.id);
         const result: Pending = { state: item.state };
@@ -823,6 +866,11 @@ class PageBuilder {
         const address = this.relayName === undefined ? undefined : relayAddress(item.sender, this.relayName);
         if (address !== undefined) this.relayFrom.set(address, Math.min(offset, this.relayFrom.get(address) ?? offset));
         if (this.full()) return;
+        // Already on the page, from the newer of its two forms.
+        if (item.msgId !== undefined) {
+          if (this.msgIds.has(item.msgId)) return;
+          this.msgIds.add(item.msgId);
+        }
         const subagent = item.entry.kind === 'cross-session' ? this.subagentOf(item.peer) ?? this.subagentOf(item.entry.from) : undefined;
         this.drafts.push({ kind: 'entry', entry: subagent === undefined ? item.entry : { ...item.entry, subagent } });
         return;
@@ -1029,8 +1077,18 @@ function questionWithinBudget(entry: ConversationEntry, questions: AskedQuestion
 export function itemsOfLine(line: string, sidechain = false): Item[] {
   // Cheap pre-filter: every line this reads names one of these. Not "system":
   // Claude Code's internal api-request lines carry a system prompt, and they
-  // can be most of a transcript's bytes.
-  if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"local_command"')) return [];
+  // can be most of a transcript's bytes. Nor "attachment": Claude Code writes
+  // many kinds, and only a queued_command's is read (W99).
+  // A turn's end is a small `system` entry of its own, `turn_duration` (W102).
+  if (
+    !line.includes('"user"') &&
+    !line.includes('"assistant"') &&
+    !line.includes('"local_command"') &&
+    !line.includes('"queued_command"') &&
+    !line.includes('"turn_duration"')
+  ) {
+    return [];
+  }
   let entry: unknown;
   try {
     entry = JSON.parse(line);
@@ -1038,7 +1096,15 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
     return [];
   }
   if (!isRecord(entry) || (entry.isSidechain === true && !sidechain)) return [];
-  const at = timestampOf(entry);
+  const items = entryItems(entry, timestampOf(entry));
+  // What the line says of the session's turn (W102). Never a sidechain's, so a sub-agent's page has none.
+  const signal = turnSignalOf(entry);
+  if (signal !== undefined) items.push({ kind: 'turn', signal });
+  return items;
+}
+
+/** The entries, tool calls and results a parsed line contributes, by its type. */
+function entryItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
   switch (entry.type) {
     case 'assistant':
       return assistantItems(entry, at);
@@ -1046,6 +1112,14 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
       return userItems(entry, at);
     case 'system':
       return systemItems(entry, at);
+    case 'attachment': {
+      // What arrived mid-turn, as the user entry it stands for (W99), marked as having come mid-turn,
+      // so it doesn't read as what started the turn (W102).
+      const queued = queuedEntryOf(entry);
+      const items = queued === undefined ? [] : userItems(queued, at);
+      for (const item of items) if (item.kind === 'entry') item.entry.midTurn = true;
+      return items;
+    }
     default:
       return [];
   }
@@ -1064,8 +1138,9 @@ function assistantItems(entry: Record<string, unknown>, at: string | undefined):
   const messageId = typeof message.id === 'string' ? message.id : undefined;
   const content = message.content;
   if (entry.isApiErrorMessage === true) {
+    // Claude Code's own error, written on Claude's side of a turn: never what started one (W102).
     const text = textOf(content)?.trim();
-    return text ? [notice(text, at)] : [];
+    return text ? [midTurn(notice(text, at))] : [];
   }
   if (typeof content === 'string') {
     const text = content.trim();
@@ -1204,7 +1279,8 @@ function shortText(content: unknown, max: number): string | undefined {
 
 function userItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
   if (entry.isCompactSummary === true) {
-    return [notice('Conversation compacted: Claude continued from a summary of the earlier conversation.', at)];
+    // Written as a turn goes on, or by a /compact that runs no turn of its own: never what started one (W102).
+    return [midTurn(notice('Conversation compacted: Claude continued from a summary of the earlier conversation.', at))];
   }
   const message = entry.message;
   if (!isRecord(message)) return [];
@@ -1235,12 +1311,16 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   const unreminded = stripSystemReminders(raw ?? '');
   const text = unreminded.trim();
   const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
-  if (text.startsWith(CROSS_SESSION_PREFIX) || origin === 'peer') {
+  // A message from another session, whatever else says so: never the user's prompt (W99).
+  if (text.startsWith(CROSS_SESSION_PREFIX) || origin === 'peer' || startsWithCrossSessionTag(text)) {
     if (text === '') return [];
     const item = crossSession(text, at);
     // Who it came from, as Claude Code recorded it: a sub-agent's id for its report (W76).
     const from = origin === 'peer' && isRecord(entry.origin) ? entry.origin.from : undefined;
     if (item.kind === 'entry' && typeof from === 'string' && from.length <= ADDRESS_MAX) item.peer = from;
+    // Which message it is, a session's to this one (W99).
+    const msgId = origin === 'peer' && isRecord(entry.origin) ? entry.origin.msg_id : undefined;
+    if (item.kind === 'entry' && typeof msgId === 'string' && msgId !== '' && msgId.length <= ADDRESS_MAX) item.msgId = msgId;
     return [item];
   }
   if (entry.isMeta === true) return [];
@@ -1263,7 +1343,10 @@ function asTyped(text: string): string {
   return text.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
 }
 
-/** Claude Code writes local slash-command output as `system` entries too. Other system entries are left out. */
+/**
+ * Claude Code writes local slash-command output as `system` entries too. Other system entries are left
+ * out, its mark that a turn has ended (W102) included: that's no entry, and itemsOfLine() notes it.
+ */
 function systemItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
   if (entry.subtype !== 'local_command' || typeof entry.content !== 'string') return [];
   return localCommandNotice(entry.content.trim(), at) ?? [];
@@ -1345,10 +1428,21 @@ function crossSession(text: string, at: string | undefined): Item {
   return { kind: 'entry', entry, sender: name === undefined ? { address } : { name, address } };
 }
 
+/** True when `text` opens with one of the tags a message from another session is wrapped in. */
+function startsWithCrossSessionTag(text: string): boolean {
+  return CROSS_SESSION_TAGS.some((tag) => text.startsWith(`<${tag}`) && /^[\s>]/.test(text.charAt(tag.length + 1)));
+}
+
 function notice(text: string, at: string | undefined): Item {
   const entry: ConversationEntry = withAt({ kind: 'notice', text: truncate(text, NOTICE_MAX) }, at);
   if (text.length > NOTICE_MAX) entry.truncated = true;
   return { kind: 'entry', entry };
+}
+
+/** An entry item marked as written during a turn, so it isn't read as what started one (ConversationEntry.midTurn, W102). */
+function midTurn(item: Item): Item {
+  if (item.kind === 'entry') item.entry.midTurn = true;
+  return item;
 }
 
 function withAt(entry: ConversationEntry, at: string | undefined): ConversationEntry {

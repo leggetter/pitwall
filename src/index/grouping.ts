@@ -35,9 +35,9 @@ export interface GroupResolver {
   prune(): void;
 }
 
-// Variables that would point git at another repository than the one `-C` names,
-// for example when pitwall runs inside a git hook.
-const GIT_REPO_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_NAMESPACE'];
+// Variables that would point git at another repository than the one `-C` names, or its objects
+// elsewhere, for example when pitwall runs inside a git hook. W107's clone drops them too.
+const GIT_REPO_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE'];
 
 /** `env` without the variables that would point git at another repository than the one `-C` names. */
 export function gitEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {

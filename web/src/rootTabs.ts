@@ -22,7 +22,7 @@
 import type { IndexSnapshot, SessionGroup } from '../../src/shared/protocol.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import type { NotNeeded } from './notNeeded.js';
-import { countAttention, sessionsIn } from './sessions.js';
+import { countNeeds, NO_WORK, type Work } from './work.js';
 
 export const ROOT_TAB_KEY = 'pitwall.root-tab.v1';
 
@@ -69,15 +69,16 @@ export function selectionTab(selection: Rooted, snapshot: Pick<IndexSnapshot, 'r
   return roots[0];
 }
 
-/** The groups a tab lists: those the index put under its root. Every group, with no tab. */
-export function tabGroups(groups: readonly SessionGroup[], tab: string | undefined): readonly SessionGroup[] {
+/** The groups a tab lists: those the index put under its root, or the server placed a PR under (W106). Every group, with no tab. */
+export function tabGroups<T extends SessionGroup>(groups: readonly T[], tab: string | undefined): readonly T[] {
   return tab === undefined ? groups : groups.filter((group) => group.root === tab);
 }
 
 /**
- * How many of a root's sessions need you, each counted once, though in Every repo it worked in it may
- * be in several of the root's groups: an inactive tab's badge. Not those marked not needed now (W88).
+ * How many of a root's rows need you, each session counted once, though in Every repo it worked in it
+ * may be in several of the root's groups: an inactive tab's badge. Not what's marked not needed now
+ * (W88). With `work` (W106), a session that needs you through a PR it owns, and a PR row that needs you.
  */
-export function tabAttention(groups: readonly SessionGroup[], root: string, notNeeded?: NotNeeded): number {
-  return countAttention(sessionsIn(tabGroups(groups, root)), notNeeded);
+export function tabAttention(groups: readonly SessionGroup[], root: string, notNeeded?: NotNeeded, work: Work = NO_WORK): number {
+  return countNeeds(tabGroups(groups, root), notNeeded, work);
 }

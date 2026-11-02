@@ -1,4 +1,5 @@
 import type { Indexer } from '../index/index.js';
+import type { PrSource } from '../prs/index.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
 
@@ -34,6 +35,13 @@ export interface ServerOptions {
    * the real ~/.pitwall.
    */
   pitwallHome?: string;
+  /**
+   * Your open pull requests (M4): the poller the CLI makes with createPrPoller(), which the
+   * server starts once it's listening and stops on close(). Without it, pull requests are off, as
+   * with `--no-prs`: GET PRS_PATH answers the 'off' list, Refresh answers 409, and nothing runs
+   * gh, so a test never reaches GitHub.
+   */
+  prs?: PrSource;
 }
 
 export interface RunningServer {

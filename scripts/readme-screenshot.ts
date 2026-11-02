@@ -1,6 +1,7 @@
 // README screenshot: the production build on the app check's fake server, with a made-up world in
-// place of its fixtures: public repo names under ~/work, made-up sessions, and one made-up
-// conversation open on its Conversation tab. No real session or transcript is read.
+// place of its fixtures: public repo names under ~/work, made-up sessions, one made-up conversation
+// open on its Conversation tab, and a few made-up open pull requests under example/, one of them
+// opened by a hero session (W95). No real session, transcript or pull request is read.
 //   npm run build && npx tsx scripts/readme-screenshot.ts <outDir> [light|dark]
 // then copy <outDir>/hero-light.png to docs/images/pitwall-light.png. Needs the app check's pinned
 // chrome-headless-shell (npm run appcheck:install-shell).
@@ -9,7 +10,7 @@ import { join } from 'node:path';
 import { defaultHeadlessShell, launchChrome } from './appcheck/chrome.js';
 import { Page } from './appcheck/page.js';
 import { importBuilt, madeUpToken, startFakeServer } from './appcheck/server.js';
-import type { ConversationEntry, IndexSnapshot, SessionGroup, SessionSummary } from '../src/shared/protocol.js';
+import type { ConversationEntry, IndexSnapshot, PullRequestList, PullRequestSummary, SessionGroup, SessionSummary } from '../src/shared/protocol.js';
 
 const [out, theme = 'light'] = process.argv.slice(2) as [string, 'light' | 'dark'];
 const DIST = join(import.meta.dirname, '../dist');
@@ -47,11 +48,27 @@ const docs = make('quickstarts', 'Docs link check', 2, {
 });
 const starred = [
   job('mcp-events-bridge', 'Bridge release', 4, { state: 'blocked', needsYou: { reason: 'claude-code', text: 'May I push the branch and open the PR?' } }),
-  make('hookdeck-cli', 'CLI release prep', 7, { askedYou: { reason: 'question', excerpt: 'Tag the release now, or wait for the docs?' }, needsYou: { reason: 'asked' } }),
-  make('hookdeck-go-sdk', 'Fix a flaky test', 9, { status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' }, lastUserPrompt: 'Find out why the retry test fails one run in ten.' }),
+  make('hookdeck-cli', 'CLI release prep', 7, {
+    askedYou: { reason: 'question', excerpt: 'Tag the release now, or wait for the docs?' },
+    needsYou: { reason: 'asked' },
+    // It opened the made-up #312, below, so its row carries it (W106).
+    prLinks: [{ kind: 'opened', repo: 'example/hookdeck-cli', number: 312, lastAt: ago(91) }],
+  }),
+  make('hookdeck-go-sdk', 'Fix a flaky test', 9, {
+    status: 'waiting',
+    waitingFor: 'permission prompt',
+    needsYou: { reason: 'prompt' },
+    lastUserPrompt: 'Find out why the retry test fails one run in ten.',
+    // It pushed the made-up #57's branch, whose checks are failing, so its badge says so (W106).
+    prLinks: [{ kind: 'pushed', repo: 'example/hookdeck-go-sdk', branch: 'fix-57', lastAt: ago(13) }],
+  }),
   docs,
   job('outpost', 'Dependency updates', 16, { state: 'blocked', needsYou: { reason: 'claude-code', text: 'Merge the minor bumps, or review each one?' } }),
-  make('hookdeck-typescript-sdk', 'Build fix', 25, { lastUserPrompt: 'Open the PR once the build passes.' }),
+  make('hookdeck-typescript-sdk', 'Build fix', 25, {
+    lastUserPrompt: 'Open the PR once the build passes.',
+    // It opened the made-up #128, below, so its row has the PR's badge.
+    prLinks: [{ kind: 'opened', repo: 'example/hookdeck-typescript-sdk', number: 128, lastAt: ago(26) }],
+  }),
   job('n8n-nodes-hookdeck', 'Node docs refresh', 140, { state: 'done', alive: false, pid: undefined, finished: true }),
 ];
 const others = [
@@ -70,6 +87,38 @@ const snapshot = (): IndexSnapshot => {
   ];
   return { generatedAt: new Date().toISOString(), roots: [ROOT], groups: groups.filter((g) => g.sessions.length > 0), source: { ok: true } };
 };
+
+// Made-up open pull requests (W95), in made-up repos under example/ named for the hero's, each placed
+// under its clone (W106): one with failing checks that Fix a flaky test pushed to, one Build fix
+// opened, one approved that CLI release prep opened, and one that asks your review, with no session.
+const pullRequest = (repo: string, number: number, title: string, minutes: number, extra: Partial<PullRequestSummary> = {}): PullRequestSummary => ({
+  url: `https://github.com/example/${repo}/pull/${number}`,
+  repo: `example/${repo}`,
+  repoLabel: `example/${repo}`,
+  number,
+  title,
+  draft: false,
+  createdAt: ago(minutes + 60 * 24),
+  updatedAt: ago(minutes),
+  head: { repo: `example/${repo}`, branch: `fix-${number}` },
+  checks: 'passing',
+  mergeable: 'clean',
+  relation: 'authored',
+  place: { kind: 'cloned', root: ROOT, key: `${ROOT}/${repo}`, label: repo },
+  ...extra,
+});
+const prList = (): PullRequestList => ({
+  fetchedAt: ago(1),
+  source: { ok: true },
+  refreshing: false,
+  prs: [
+    pullRequest('hookdeck-go-sdk', 57, 'Make the retry test deterministic', 12, { checks: 'failing', failingChecks: ['test (1.23)'], review: 'review-required' }),
+    pullRequest('hookdeck-typescript-sdk', 128, 'Fix the ESM build', 24, { checks: 'pending' }),
+    pullRequest('hookdeck-cli', 312, 'Prepare the 1.4 release', 90, { review: 'approved' }),
+    pullRequest('outpost', 1043, 'Add a made-up delivery metric', 50, { relation: 'review-requested', reviewRequest: { via: 'direct' }, review: 'review-required' }),
+  ],
+  roots: [{ root: ROOT, owners: ['example'], source: 'clones' }],
+});
 
 const conversation: ConversationEntry[] = [
   { kind: 'user', at: ago(9), text: 'Check the docs for broken links, and tell me what you find before fixing anything.' },
@@ -102,6 +151,7 @@ const token = madeUpToken();
 const server = await startFakeServer({ port: 4620, webRoot: join(DIST, 'web'), built: await importBuilt(DIST), token });
 const world = server.world as unknown as Record<string, unknown>;
 world.snapshot = snapshot;
+world.prList = prList;
 world.session = (id: string) => sessions.find((s) => s.sessionId === id);
 world.conversation = (id: string) => (sessions.some((s) => s.sessionId === id) ? { sessionId: id, entries: id === docs.sessionId ? conversation : [] } : undefined);
 world.subagents = (id: string) => ({ sessionId: id, subagents: [], truncated: false });

@@ -1,8 +1,10 @@
 // The command runner, on real child processes. They're `node -e` scripts,
 // never `claude`.
-import { realpath } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { absoluteSearchPath, childSearchPath, DEFAULT_SEARCH_PATH } from '../index/exec.js';
 import { childEnvironment, MAX_OUTPUT_BYTES, runCommand } from './command.js';
 import { allowSignalsTo } from '../test/noClaude.js';
 
@@ -179,5 +181,98 @@ describe('childEnvironment', () => {
 
   it('drops undefined values and keeps the rest exactly as they are', () => {
     expect(childEnvironment({ ...KEPT_BASE, UNSET: undefined, SPACED: ' a b ', EMPTY: '' })).toEqual({ ...KEPT_BASE, SPACED: ' a b ', EMPTY: '' });
+  });
+
+  // W96's finding (W98): an empty or relative entry finds a bare command in the child's working directory.
+  describe.skipIf(process.platform === 'win32')('PATH', () => {
+    it('keeps only its absolute directories, in their order, duplicates included', () => {
+      expect(absoluteSearchPath('/opt/homebrew/bin:/usr/bin:/bin')).toBe('/opt/homebrew/bin:/usr/bin:/bin');
+      expect(absoluteSearchPath('.:/usr/bin')).toBe('/usr/bin');
+      expect(absoluteSearchPath('/usr/bin::/bin')).toBe('/usr/bin:/bin');
+      expect(absoluteSearchPath(':/usr/bin')).toBe('/usr/bin');
+      expect(absoluteSearchPath('/usr/bin:')).toBe('/usr/bin');
+      expect(absoluteSearchPath('/b:bin:./bin:../bin:node_modules/.bin:/a')).toBe('/b:/a');
+      expect(absoluteSearchPath('/usr/bin:/bin:/usr/bin')).toBe('/usr/bin:/bin:/usr/bin');
+      // An absolute path is kept as it's written, spaces and all.
+      expect(absoluteSearchPath('/Applications/My Tools/bin:/usr/bin/../bin')).toBe('/Applications/My Tools/bin:/usr/bin/../bin');
+    });
+
+    // The coordinator's call (2026-10-29): as bash's own command search reads it, so a literal `~/.dotnet/tools` keeps working.
+    it('expands an entry that is ~ or starts with ~/ to the home directory, in its place', () => {
+      const HOME = '/Users/example';
+      expect(absoluteSearchPath('/usr/bin:~/.dotnet/tools', HOME)).toBe('/usr/bin:/Users/example/.dotnet/tools');
+      expect(absoluteSearchPath('~/bin:/usr/bin:~:/bin', HOME)).toBe('/Users/example/bin:/usr/bin:/Users/example:/bin');
+      expect(absoluteSearchPath('.:~/bin::bin', HOME)).toBe('/Users/example/bin');
+      expect(absoluteSearchPath('~/', HOME)).toBe('/Users/example/');
+      // A home directory with a trailing slash gives no doubled one, and `/` as home stays absolute.
+      expect(absoluteSearchPath('~/bin', '/Users/example/')).toBe('/Users/example/bin');
+      expect(absoluteSearchPath('~/bin:~', '/')).toBe('/bin:/');
+      // The default is this user's.
+      expect(absoluteSearchPath('~/.dotnet/tools')).toBe(`${homedir()}/.dotnet/tools`);
+    });
+
+    it("drops every other ~ entry: another user's, one not followed by a slash, and one a home directory that isn't absolute can't make absolute", () => {
+      const HOME = '/Users/example';
+      expect(absoluteSearchPath('~root/bin:/usr/bin', HOME)).toBe('/usr/bin');
+      expect(absoluteSearchPath('~example/bin:~bin:~~/bin:/usr/bin', HOME)).toBe('/usr/bin');
+      expect(absoluteSearchPath('bin/~/x:./~/bin:/usr/bin', HOME)).toBe('/usr/bin');
+      expect(absoluteSearchPath('~/bin:~', 'relative-home')).toBeUndefined();
+      expect(absoluteSearchPath('~/bin:/usr/bin', '')).toBe('/usr/bin');
+    });
+
+    // W98's review: a home directory with a `:` would split the entry in two, the second relative.
+    it('drops a ~ entry whose home directory has a : in it', () => {
+      expect(absoluteSearchPath('~/bin:/usr/bin:~', '/Users/a:b')).toBe('/usr/bin');
+      expect(childEnvironment({ PATH: '~/bin:/usr/bin', HOME: '/Users/a:bin' })).toEqual({ PATH: '/usr/bin', HOME: '/Users/a:bin' });
+    });
+
+    it('is undefined when no absolute directory is left', () => {
+      for (const value of ['', ':', '::', '.', 'a::b', 'bin:./x:']) expect(absoluteSearchPath(value), JSON.stringify(value)).toBeUndefined();
+    });
+
+    it('gives a child PATH cut that way, and /usr/bin:/bin, never an empty PATH, when nothing is left', () => {
+      expect(childEnvironment({ PATH: '.:/usr/bin::bin:/opt/bin:', HOME: '/Users/example' })).toEqual({ PATH: '/usr/bin:/opt/bin', HOME: '/Users/example' });
+      // An empty PATH searches the working directory, and a bash further down would pick its own default, ending in `.` (W98's review).
+      expect(DEFAULT_SEARCH_PATH).toBe('/usr/bin:/bin');
+      expect(childEnvironment({ PATH: '.:', HOME: '/Users/example' })).toEqual({ PATH: DEFAULT_SEARCH_PATH, HOME: '/Users/example' });
+      expect(childEnvironment({ PATH: '', HOME: '/Users/example' })).toEqual({ PATH: DEFAULT_SEARCH_PATH, HOME: '/Users/example' });
+      expect(childSearchPath('bin::.')).toBe(DEFAULT_SEARCH_PATH);
+      expect(childSearchPath('/opt/bin:.')).toBe('/opt/bin');
+      // A PATH that isn't there stays out: the child then searches libuv's or execvp's own default.
+      expect(childEnvironment({ HOME: '/Users/example' })).toEqual({ HOME: '/Users/example' });
+    });
+
+    // W98's review: the child's own HOME, which is what its shells read `~` as.
+    it("reads ~ as the environment's own HOME when that's absolute, and as os.homedir() otherwise", () => {
+      expect(childEnvironment({ PATH: '~/bin:/usr/bin', HOME: '/Users/example' })).toEqual({ PATH: '/Users/example/bin:/usr/bin', HOME: '/Users/example' });
+      expect(childEnvironment({ PATH: '/usr/bin:~/.dotnet/tools:~other/bin' })).toEqual({ PATH: `/usr/bin:${homedir()}/.dotnet/tools` });
+      expect(childEnvironment({ PATH: '~/bin', HOME: 'relative-home' })).toEqual({ PATH: `${homedir()}/bin`, HOME: 'relative-home' });
+      expect(childEnvironment({ PATH: '~/bin', HOME: '' })).toEqual({ PATH: `${homedir()}/bin`, HOME: '' });
+    });
+
+    it('cuts PATH alone: other variables with paths in them, and a lowercase path, are kept as they are', () => {
+      const others = { MANPATH: ':/usr/share/man', NODE_OPTIONS: '--require ./x.js', CDPATH: '.:/Users/example', path: '.:/usr/bin' };
+      expect(childEnvironment({ PATH: '/usr/bin', ...others })).toEqual({ PATH: '/usr/bin', ...others });
+    });
+
+    it('still drops a PATH that holds the token', () => {
+      expect(childEnvironment({ PATH: `/usr/bin:/tmp/${TOKEN}`, HOME: '/Users/example' }, TOKEN)).toEqual({ HOME: '/Users/example' });
+    });
+
+    // With fakes only: a made-up program planted in the working directory, as in /tmp, where stop and remove run.
+    it("keeps runCommand, which spawn, stop, remove and resume use, from finding a bare command in its working directory", async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'pitwall-test-planted-'));
+      try {
+        await writeFile(join(dir, 'pitwall-test-planted'), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+        const unfiltered = await runCommand('pitwall-test-planted', [], { ...base, cwd: dir, env: { PATH: '.:/usr/bin' } });
+        expect(unfiltered).toMatchObject({ kind: 'exited', code: 0, stdout: 'planted\n' });
+        for (const PATH of ['.:/usr/bin', '/usr/bin::/bin', '/usr/bin:', '']) {
+          const result = await runCommand('pitwall-test-planted', [], { ...base, cwd: dir, env: childEnvironment({ PATH }) });
+          expect(result, JSON.stringify(PATH)).toEqual({ kind: 'failed', reason: 'not-found', message: 'pitwall-test-planted was not found' });
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 });

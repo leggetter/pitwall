@@ -4,8 +4,8 @@ import { once } from 'node:events';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
@@ -13,6 +13,7 @@ import {
   browserCommand,
   claimOpenMarker,
   currentDirectory,
+  effectiveRoots,
   envFileProblem,
   fallbackPortMessage,
   FIXED_TOKEN_LINE,
@@ -34,7 +35,7 @@ import { pitwallOrigin, proofFor } from './test/proof.js';
 
 describe('parseCliArgs', () => {
   it('defaults to no roots, the default port and opening the browser', () => {
-    expect(parseCliArgs([], {})).toEqual({ kind: 'run', roots: [], open: true });
+    expect(parseCliArgs([], {})).toEqual({ kind: 'run', roots: [], open: true, prs: true });
   });
 
   it('takes several roots, --port and --no-open in any order', () => {
@@ -43,12 +44,13 @@ describe('parseCliArgs', () => {
       roots: ['a', 'b'],
       port: 5000,
       open: false,
+      prs: true,
     });
-    expect(parseCliArgs(['--port=0', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], port: 0, open: true });
+    expect(parseCliArgs(['--port=0', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], port: 0, open: true, prs: true });
   });
 
   it('treats everything after -- as a root', () => {
-    expect(parseCliArgs(['--', '--port'], {})).toEqual({ kind: 'run', roots: ['--port'], open: true });
+    expect(parseCliArgs(['--', '--port'], {})).toEqual({ kind: 'run', roots: ['--port'], open: true, prs: true });
   });
 
   it('skips the browser when PITWALL_NO_OPEN=1', () => {
@@ -72,7 +74,7 @@ describe('parseCliArgs', () => {
   });
 
   it('takes --interval in whole seconds from 1 to 300, as milliseconds', () => {
-    expect(parseCliArgs(['--interval', '2', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], intervalMs: 2000, open: true });
+    expect(parseCliArgs(['--interval', '2', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], intervalMs: 2000, open: true, prs: true });
     expect(parseCliArgs(['--interval=1'], {})).toMatchObject({ intervalMs: 1000 });
     expect(parseCliArgs(['--interval', '300'], {})).toMatchObject({ intervalMs: 300_000 });
     expect(parseCliArgs(['--interval', '010'], {})).toMatchObject({ intervalMs: 10_000 });
@@ -108,9 +110,42 @@ describe('parseCliArgs', () => {
     expect(USAGE.replace(/\s+/g, ' ')).toContain('Reusing it keeps one token alive across runs');
   });
 
+  it('turns pull requests off with --no-prs (M4, W93), anywhere among the roots', () => {
+    expect(parseCliArgs(['a', '--no-prs', 'b'], {})).toEqual({ kind: 'run', roots: ['a', 'b'], open: true, prs: false });
+    expect(parseCliArgs(['--no-prs', '--no-open'], {})).toMatchObject({ open: false, prs: false });
+    expect(() => parseCliArgs(['--no-prs=1'], {})).toThrow(UsageError);
+    expect(() => parseCliArgs(['--prs'], {})).toThrow(UsageError);
+  });
+
+  it('says in the help what --no-prs does, and that pitwall otherwise runs gh', () => {
+    expect(USAGE).toContain('[--no-open] [--no-prs]');
+    expect(USAGE.replace(/\s+/g, ' ')).toContain(
+      "--no-prs Don't list your open pull requests, and never run gh. Without it, pitwall runs gh api graphql at start, every 3 minutes and on Refresh, for your open PRs on github.com. gh must be installed and logged in.",
+    );
+  });
+
   it('rejects unknown options', () => {
     expect(() => parseCliArgs(['--host', '0.0.0.0'], {})).toThrow(UsageError);
     expect(() => parseCliArgs(['--token', 'x'], {})).toThrow(UsageError);
+  });
+
+  it('takes --config <path> as given, and refuses it without a path (W103)', () => {
+    expect(parseCliArgs(['--config', 'my.json', 'a'], {})).toEqual({ kind: 'run', roots: ['a'], config: 'my.json', open: true, prs: true });
+    expect(parseCliArgs(['--config=~/p.json'], {})).toMatchObject({ config: '~/p.json' });
+    expect(() => parseCliArgs(['--config'], {})).toThrow(UsageError);
+    expect(() => parseCliArgs(['--config='], {})).toThrow(new UsageError('--config needs a path'));
+  });
+
+  it('says in the help where the config file is, its example, precedence, and that it never holds the token (W103)', () => {
+    expect(USAGE).toContain('[--config <path>]');
+    const help = USAGE.replace(/\s+/g, ' ');
+    expect(help).toContain('--config <path> Read this config file instead of ~/.pitwall/config.json. It must exist.');
+    expect(help).toContain("With --config, pitwall reads that file. Without it, pitwall reads config.json in ~/.pitwall, or in PITWALL_HOME when that's set, if it's there.");
+    expect(help).toContain('On macOS and Linux, the file must be yours, and not writable by group or others.');
+    expect(help).toContain('{ "path": "~/work", "github": { "owners": ["example-co"] } }');
+    expect(help).toContain("Roots given as arguments replace the file's, and each keeps its \"github\" settings when it's the same directory as one in the file.");
+    expect(help).toContain("It can't hold a token: PITWALL_TOKEN comes from the environment only, and GitHub's stays in gh.");
+    expect(help).toContain('PITWALL_HOME Where config.json, launch files and attachments are, instead of ~/.pitwall.');
   });
 });
 
@@ -152,6 +187,44 @@ describe('resolveRoots', () => {
 
   it('fails clearly for a root that is a file', () => {
     expect(() => resolveRoots(['file'], tmp)).toThrow(new UsageError(`root is not a directory: ${join(tmp, 'file')}`));
+  });
+});
+
+describe('effectiveRoots (W103)', () => {
+  let tmp: string;
+  const file = '/home/example/.pitwall/config.json';
+  const configured = (...paths: string[]) => ({ file, roots: paths.map((path, i) => ({ key: `roots[${i}]`, path, real: path })) });
+
+  beforeAll(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'pitwall-test-'));
+    await mkdir(join(tmp, 'a'));
+    await mkdir(join(tmp, 'b'));
+    await writeFile(join(tmp, 'file'), '');
+  });
+
+  afterAll(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("uses the arguments when there are any, replacing the file's roots", () => {
+    expect(effectiveRoots(['a'], configured(join(tmp, 'b')), tmp)).toEqual([join(tmp, 'a')]);
+  });
+
+  it("uses the file's roots without arguments, in their order", () => {
+    expect(effectiveRoots([], configured(join(tmp, 'b'), join(tmp, 'a')), tmp)).toEqual([join(tmp, 'b'), join(tmp, 'a')]);
+  });
+
+  it('uses the current directory with neither', () => {
+    expect(effectiveRoots([], { file }, tmp)).toEqual([tmp]);
+  });
+
+  it("names the file's key when one of its roots isn't a directory", () => {
+    expect(() => effectiveRoots([], configured(join(tmp, 'a'), join(tmp, 'file')), tmp)).toThrow(
+      new UsageError(`root is not a directory: ${join(tmp, 'file')} ("roots[1]" in ${file})`),
+    );
+    expect(() => effectiveRoots([], configured(join(tmp, 'missing')), tmp)).toThrow(
+      new UsageError(`root does not exist: ${join(tmp, 'missing')} ("roots[0]" in ${file})`),
+    );
   });
 });
 
@@ -450,12 +523,51 @@ echo '[]'
 `;
 
 /**
+ * A stand-in for `gh` (M4, W93), put first on the PATH of every CLI these tests
+ * start, directly or through npm run dev, beside the fake claude, so the PR
+ * poller never runs the real one, which would reach GitHub with the user's
+ * login: noClaude.ts can't see a process the CLI starts. It
+ * records its arguments, NUL-separated, in gh-args-<search>, and what it saw
+ * of its environment, next to itself, then prints the answer to that search
+ * (W101): one made-up PR of yours, one that asks your review by name, and no
+ * mention.
+ */
+const FAKE_GH = `#!/bin/sh
+search=
+for arg in "$@"; do
+  case "$arg" in
+    q=*review-requested:@me*) search=review-requested ;;
+    q=*mentions:@me*) search=mentioned ;;
+    q=*author:@me*) search=authored ;;
+  esac
+done
+printf '%s\\0' "$@" > "$(dirname "$0")/gh-args-$search"
+{
+  echo "GH_PROMPT_DISABLED=\${GH_PROMPT_DISABLED-unset}"
+  echo "GH_NO_UPDATE_NOTIFIER=\${GH_NO_UPDATE_NOTIFIER-unset}"
+  if [ -n "\${PITWALL_TOKEN+set}" ]; then echo "PITWALL_TOKEN=set"; else echo "PITWALL_TOKEN=unset"; fi
+} > "$(dirname "$0")/gh-env"
+case "$search" in
+  authored) echo '{"data":{"viewer":{"login":"pitwall-test-viewer"},"search":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/example/demo-app/pull/7","number":7,"title":"Add a demo feature","isDraft":false,"createdAt":"2026-10-01T09:00:00Z","updatedAt":"2026-10-20T09:00:00Z","headRefName":"feature/demo","headRepository":{"nameWithOwner":"example/demo-app"},"repository":{"nameWithOwner":"example/demo-app"},"reviewDecision":null,"mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}]}}}' ;;
+  review-requested) echo '{"data":{"viewer":{"login":"pitwall-test-viewer"},"search":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/example/demo-app/pull/8","number":8,"title":"Review a demo feature","isDraft":false,"createdAt":"2026-10-01T09:00:00Z","updatedAt":"2026-10-21T09:00:00Z","headRefName":"feature/review","headRepository":{"nameWithOwner":"example/demo-app"},"repository":{"nameWithOwner":"example/demo-app"},"reviewDecision":"REVIEW_REQUIRED","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]},"reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"User","login":"pitwall-test-viewer"}}]}}]}}}' ;;
+  *) echo '{"data":{"viewer":{"login":"pitwall-test-viewer"},"search":{"issueCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}' ;;
+esac
+`;
+
+/**
  * Stand-ins for `open` (macOS) and `xdg-open` (Linux), first on the CLI's PATH
- * so no test ever opens a real browser. Each call appends its argument count
- * and then each argument, one per line, to $PITWALL_TEST_OPEN_LOG.
+ * so no test ever opens a real browser. Each call writes what it saw of its
+ * environment to $PWTEST_OPEN_LOG.env, then appends its argument count and
+ * each argument, one per line, to $PWTEST_OPEN_LOG. Not PITWALL_*, which
+ * childEnvironment() keeps from the opener (W98).
  */
 const FAKE_OPENER = `#!/bin/sh
-printf '%s\\n' "$#" "$@" >> "\${PITWALL_TEST_OPEN_LOG:?}"
+{
+  printf 'PATH=%s\\n' "$PATH"
+  if [ -n "\${PITWALL_HOME+set}" ]; then echo "PITWALL_HOME=set"; else echo "PITWALL_HOME=unset"; fi
+  if [ -n "\${PITWALL_NO_OPEN+set}" ]; then echo "PITWALL_NO_OPEN=set"; else echo "PITWALL_NO_OPEN=unset"; fi
+} > "\${PWTEST_OPEN_LOG:?}.env"
+printf '%s\\n' "$#" "$@" >> "\${PWTEST_OPEN_LOG:?}"
 `;
 
 /** Each recorded call of the fake opener, as its list of arguments. */
@@ -509,6 +621,7 @@ describe('pitwall (the process)', () => {
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
   });
@@ -521,7 +634,7 @@ describe('pitwall (the process)', () => {
   const fresh = (name: string) => join(tmp, `${name}-${++n}`);
 
   /**
-   * Runs the CLI with the fake claude and the fake openers first on PATH. It
+   * Runs the CLI with the fake claude, the fake gh and the fake openers first on PATH. It
    * doesn't open a browser unless the test sets PITWALL_NO_OPEN to 0, and its
    * PITWALL_HOME is always a temp directory, never the real ~/.pitwall.
    */
@@ -531,7 +644,7 @@ describe('pitwall (the process)', () => {
         ...process.env,
         PITWALL_NO_OPEN: '1',
         PITWALL_HOME: fresh('home'),
-        PITWALL_TEST_OPEN_LOG: fresh('opened'),
+        PWTEST_OPEN_LOG: fresh('opened'),
         PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
         ...env,
       },
@@ -600,6 +713,7 @@ describe('pitwall (the process)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Usage: pitwall [root...]');
     expect(result.stdout).toContain('--interval <seconds>');
+    expect(result.stdout).toContain('--no-prs');
   });
 
   it('exits 1 with a clear message for an --interval out of range', async () => {
@@ -688,6 +802,63 @@ describe('pitwall (the process)', () => {
     expect((await result).code).toBe(0);
   }, 30_000);
 
+  /** GET /api/prs, once `ready` says the list is what the test waits for. */
+  async function prsWhen(url: string, ready: (list: { fetchedAt?: string; source: { ok: boolean } }) => boolean): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const res = await fetch(`${url}/api/prs`, { headers: { authorization: `Bearer ${token}` } });
+      const list = (await res.json()) as { fetchedAt?: string; source: { ok: boolean } };
+      if (ready(list) || Date.now() > deadline) return list;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  it('fetches your open PRs at start with gh api graphql, one call per search, -f fields only, never prompting, without the token (M4, W93, W101)', async () => {
+    const searches = ['authored', 'review-requested', 'mentioned'];
+    for (const search of searches) await rm(join(bin, `gh-args-${search}`), { force: true });
+    await rm(join(bin, 'gh-env'), { force: true });
+    const { child, result, url } = await start();
+    const list = await prsWhen(url, (list) => list.fetchedAt !== undefined);
+    expect(list).toMatchObject({
+      source: { ok: true },
+      refreshing: false,
+      prs: [
+        { repo: 'example/demo-app', number: 8, url: 'https://github.com/example/demo-app/pull/8', relation: 'review-requested', reviewRequest: { via: 'direct' } },
+        { repo: 'example/demo-app', number: 7, url: 'https://github.com/example/demo-app/pull/7', relation: 'authored' },
+      ],
+    });
+
+    const q = {
+      authored: 'q=is:pr is:open author:@me archived:false sort:updated-desc',
+      'review-requested': 'q=is:pr is:open review-requested:@me -author:@me archived:false sort:updated-desc',
+      mentioned: 'q=is:pr is:open mentions:@me -author:@me archived:false sort:updated-desc',
+    } as Record<string, string>;
+    for (const search of searches) {
+      const args = (await readFile(join(bin, `gh-args-${search}`), 'utf8')).split('\0').slice(0, -1);
+      expect(args.slice(0, 4), search).toEqual(['api', 'graphql', '--hostname', 'github.com']);
+      expect(args.filter((arg) => arg.startsWith('-')), search).toEqual(['--hostname', '-f', '-f']);
+      expect(args, search).toContain(q[search]);
+    }
+    expect((await readFile(join(bin, 'gh-env'), 'utf8')).split('\n')).toEqual(['GH_PROMPT_DISABLED=1', 'GH_NO_UPDATE_NOTIFIER=1', 'PITWALL_TOKEN=unset', '']);
+
+    child.kill('SIGTERM');
+    expect((await result).code).toBe(0);
+  }, 30_000);
+
+  it('with --no-prs, never runs gh, and serves the off list', async () => {
+    for (const search of ['authored', 'review-requested', 'mentioned']) await rm(join(bin, `gh-args-${search}`), { force: true });
+    const { child, result, url } = await start(['--no-prs']);
+    expect((await firstSnapshot(url)).status).toBe(200);
+    const list = await prsWhen(url, () => true);
+    expect(list).toEqual({ source: { ok: false, reason: 'off', error: 'Pull requests are off: pitwall was started with --no-prs.' }, refreshing: false, prs: [] });
+    // Long enough for a fetch at start to have run the fake gh, as the test above shows it does.
+    await new Promise((r) => setTimeout(r, 500));
+    for (const search of ['authored', 'review-requested', 'mentioned']) expect(existsSync(join(bin, `gh-args-${search}`))).toBe(false);
+
+    child.kill('SIGTERM');
+    expect((await result).code).toBe(0);
+  }, 30_000);
+
   it('removes PITWALL_TOKEN from its environment before it runs claude', async () => {
     await rm(join(bin, 'token-seen'), { force: true });
     const { child, result, url } = await start();
@@ -704,7 +875,7 @@ describe('pitwall (the process)', () => {
     async function startOpening(env: NodeJS.ProcessEnv = {}) {
       const home = fresh('home');
       const log = fresh('opened');
-      const started = await start([], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log, ...env });
+      const started = await start([], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PWTEST_OPEN_LOG: log, ...env });
       await waitUntil(async () => (await openerCalls(log)).length > 0);
       return { ...started, home, log };
     }
@@ -735,6 +906,26 @@ describe('pitwall (the process)', () => {
       expect(output.code).toBe(0);
       expect(output.stdout + output.stderr).not.toContain(token);
       expect(existsSync(file)).toBe(false);
+    }, 30_000);
+
+    // W96's finding (W98): an empty or relative PATH entry would find `open` in the directory pitwall started in.
+    it('gives the opener the environment every child gets: no PITWALL_ variables, and only the absolute directories on PATH, ~/ expanded', async () => {
+      const path = `${bin}${delimiter}${delimiter}.${delimiter}relative-bin${delimiter}~/pwtest-bin${delimiter}${process.env.PATH ?? ''}${delimiter}`;
+      const { child, result, log } = await startOpening({ PATH: path });
+      const seen = await readFile(`${log}.env`, 'utf8');
+      // Two the CLI keeps in its own environment: what it was started with, never deleted.
+      expect(seen).toContain('PITWALL_HOME=unset\n');
+      expect(seen).toContain('PITWALL_NO_OPEN=unset\n');
+      const entries = /^PATH=(.*)$/m.exec(seen)?.[1]?.split(delimiter) ?? [];
+      expect(entries[0]).toBe(bin);
+      expect(entries[1]).toBe(join(homedir(), 'pwtest-bin'));
+      expect(entries.filter((entry) => !isAbsolute(entry))).toEqual([]);
+      // As bash reads them: `~` and `~/...` are the home directory, and any other relative or empty entry is dropped.
+      const home = (entry: string) => (entry === '~' ? homedir() : entry.startsWith('~/') ? `${homedir()}${entry.slice(1)}` : entry);
+      expect(entries).toEqual(path.split(delimiter).map(home).filter((entry) => isAbsolute(entry)));
+
+      child.kill('SIGTERM');
+      expect((await result).code).toBe(0);
     }, 30_000);
 
     it('deletes the launch file on SIGINT too', async () => {
@@ -865,7 +1056,7 @@ describe('pitwall (the process)', () => {
       const link = fresh('link');
       await symlink(target, link);
       const log = fresh('opened');
-      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: link, PITWALL_TEST_OPEN_LOG: log }));
+      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: link, PWTEST_OPEN_LOG: log }));
       expect(result.code).toBe(1);
       expect(result.stderr).toContain(`pitwall: ${link} is a symbolic link.`);
       expect(result.stdout).not.toContain('running at');
@@ -877,7 +1068,7 @@ describe('pitwall (the process)', () => {
       await mkdir(home);
       await chmod(home, 0o755);
       const log = fresh('opened');
-      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log }));
+      const result = await exited(run(['--port', '0', tmp], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PWTEST_OPEN_LOG: log }));
       expect(result.code).toBe(1);
       expect(result.stderr).toContain(`pitwall: ${home} can be read or entered by other users (mode 755). Run chmod 700 ${home}`);
       expect(result.stdout).not.toContain('running at');
@@ -899,7 +1090,7 @@ describe('pitwall (the process)', () => {
       const marker = fresh('marker');
       const log = fresh('opened');
       const home = fresh('home');
-      const env = { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PITWALL_TEST_OPEN_LOG: log, PITWALL_OPEN_MARKER: marker };
+      const env = { PITWALL_NO_OPEN: '0', PITWALL_HOME: home, PWTEST_OPEN_LOG: log, PITWALL_OPEN_MARKER: marker };
 
       const first = await start([], env);
       await waitUntil(async () => (await openerCalls(log)).length > 0);
@@ -929,7 +1120,7 @@ describe('pitwall (the process)', () => {
           run(['--port', String(squatter.port), tmp], {
             PITWALL_TOKEN: token,
             PITWALL_NO_OPEN: '0',
-            PITWALL_TEST_OPEN_LOG: log,
+            PWTEST_OPEN_LOG: log,
             PITWALL_OPEN_MARKER: marker,
           }),
         );
@@ -1022,6 +1213,7 @@ describe('npm run dev (scripts/dev.ts)', () => {
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'vite'), FAKE_VITE, { mode: 0o755 });
@@ -1041,7 +1233,7 @@ describe('npm run dev (scripts/dev.ts)', () => {
         PITWALL_DEV_PORT: String(port),
         PITWALL_NO_OPEN: '0',
         PITWALL_HOME: files.home,
-        PITWALL_TEST_OPEN_LOG: files.log,
+        PWTEST_OPEN_LOG: files.log,
         PITWALL_TEST_DEV_LOG: files.devLog,
       },
     });
@@ -1401,6 +1593,7 @@ describe('npm run dev: what the CLI prints on every restart (W51)', () => {
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     await writeFile(join(bin, 'open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'xdg-open'), FAKE_OPENER, { mode: 0o755 });
     await writeFile(join(bin, 'vite'), FAKE_VITE, { mode: 0o755 });
@@ -1426,7 +1619,7 @@ describe('npm run dev: what the CLI prints on every restart (W51)', () => {
       PITWALL_DEV_PORT: String(port),
       PITWALL_NO_OPEN: '0',
       PITWALL_HOME: join(tmp, `home-${++n}`),
-      PITWALL_TEST_OPEN_LOG: join(tmp, `opened-${n}`),
+      PWTEST_OPEN_LOG: join(tmp, `opened-${n}`),
       PITWALL_TEST_DEV_LOG: devLog,
     };
     delete childEnv.PITWALL_TOKEN;
@@ -1492,6 +1685,7 @@ describe('pitwall (the process): PITWALL_TOKEN comes from the environment only (
     bin = join(tmp, 'bin');
     await mkdir(bin);
     await writeFile(join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+    await writeFile(join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
     // A .env where the CLI runs, as someone else's repo might have.
     await writeFile(join(tmp, '.env'), `PITWALL_TOKEN=${FROM_FILE}\n`);
   });

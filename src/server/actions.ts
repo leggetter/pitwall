@@ -37,9 +37,11 @@
 //     200  resumed: { ok: true, shortId }, the id `claude attach` takes. It waits for a prompt,
 //          and needs you until you send one (Indexer.noteRestart, NeedsYou's 'restarted', W69)
 //     400, 404, 503  from resolveSession()
-//     409  not an ended session (SessionSummary.ended), or its id isn't a UUID; a resume of it is
-//          already running; a fresh `claude agents` lists its session id in any row, as when its
-//          terminal is open again (spike 006, finding 5); then, checked after that listing,
+//     409  not an ended session (SessionSummary.ended) or a background session that isn't running
+//          (W107), or its id isn't a UUID; a resume of it is already running; for an ended one, a
+//          fresh `claude agents` lists its session id in any row, as when its terminal is open again
+//          (spike 006, finding 5), and for a background one, it lists a process for it, an
+//          interactive row with its id, or no row of its own; then, checked after that listing,
 //          immediately before the run, its directory has gone, or no longer resolves to a directory
 //          under a root (W81); or Claude Code started a copy instead, with `copyShortId`, which
 //          pitwall leaves for the user
@@ -78,7 +80,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { createAgentsSource, listedSessionIds, type AgentsSource } from '../index/agents.js';
+import { createAgentsSource, listedSessionIds, sessionPids, type AgentsSource } from '../index/agents.js';
 import { hasUnsafeCharacters } from '../index/guards.js';
 import type { Indexer } from '../index/index.js';
 import { matchRoot } from '../index/roots.js';
@@ -689,8 +691,11 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
     const { session } = lookup;
     // From the resolved summary, never the route parameter. A UUID only: `claude --resume` takes a name too.
     const { sessionId, cwd } = session;
-    if (session.ended !== true || !isSessionUuid(sessionId)) {
-      return answer({ ok: false, error: 'Only an interactive session that has ended can be resumed from pitwall.' }, 409);
+    // A background session that isn't running, stopped or finished, comes back the same way, under
+    // its own short id: Claude Code "woke session <id> with its saved options" (W107, checked live).
+    const stoppedJob = session.kind === 'background' && !session.alive && session.pid === undefined;
+    if ((session.ended !== true && !stoppedJob) || !isSessionUuid(sessionId)) {
+      return answer({ ok: false, error: "Only an interactive session that has ended, or a background session that isn't running, can be resumed from pitwall." }, 409);
     }
     if (session.cwdMissing === true) {
       return answer({ ok: false, error: `It started in ${cwd}, which no longer exists, and Claude Code resumes a session only from where it started.` }, 409);
@@ -707,7 +712,18 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       if (!listing.ok) {
         return answer({ ok: false, error: `pitwall couldn't check that the session isn't running again, so it didn't resume it: ${listing.error}.` }, 502);
       }
-      if (listedSessionIds(listing).has(sessionId)) {
+      if (stoppedJob) {
+        // Its own row is listed, as a background job's always is: it must still be one, with no process.
+        const rows = listing.rows.filter((row) => row.sessionId === sessionId);
+        if (sessionPids(listing, sessionId).size > 0 || rows.some((row) => row.kind !== 'background')) {
+          indexer.pollSoon();
+          return answer({ ok: false, error: "It's running again, so pitwall didn't resume it." }, 409);
+        }
+        if (rows.length === 0) {
+          indexer.pollSoon();
+          return answer({ ok: false, error: 'Claude Code no longer lists it as a background session, so pitwall didn’t resume it.' }, 409);
+        }
+      } else if (listedSessionIds(listing).has(sessionId)) {
         indexer.pollSoon();
         return answer(
           { ok: false, error: "It's running again, in a terminal or in the background, so pitwall didn't resume it: that would start a copy." },

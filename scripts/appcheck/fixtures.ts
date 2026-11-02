@@ -1,7 +1,10 @@
 // The made-up world the fake server serves: sessions under /Users/example/code (and, for two root
-// tabs, /Users/example/oss), their conversations, and what spawn, the relay and resume change. Nothing here
-// comes from a real session or transcript: every name is pitwall-test-*, every path is under
-// /Users/example, and every link goes to example.com or github.com/example.
+// tabs, /Users/example/oss), their conversations, and what spawn, the relay and resume change, and
+// your made-up open pull requests (M4, W95), with the sessions' links to them and where the server
+// placed each one (W106). Nothing here comes
+// from a real session, transcript or pull request: every name is pitwall-test-*, every path is under
+// /Users/example, every link goes to example.com or github.com/example, and the PRs are in made-up
+// repos or public ones, such as example/event-relay, with invented titles.
 //
 // Parts refer to sessions by the names in NAMES, so a fixture can change without touching a part.
 
@@ -10,6 +13,11 @@ import type {
   ConversationPage,
   DirectoryList,
   IndexSnapshot,
+  PrLink,
+  PullRequestList,
+  PullRequestPlace,
+  PullRequestRelation,
+  PullRequestSummary,
   RelayExchange,
   SessionGroup,
   SessionSummary,
@@ -27,6 +35,8 @@ export const BLOG = `${OSS}/blog`;
 export const DOCS_SITE = `${CODE}/docs-site`;
 /** A directory no session has worked in, which New session's autocomplete offers (W70). */
 export const DEMO_APP_WEB = `${DEMO_APP}/web`;
+/** A cloned repo with no session (W106): the server places its PRs under it, so the page builds its group. */
+export const EVENT_RELAY = `${CODE}/event-relay`;
 
 /** The sessions parts use, by role. */
 export const NAMES = {
@@ -36,7 +46,10 @@ export const NAMES = {
   asked: 'pitwall-test-review',
   /** Interactive and idle, with every kind of conversation entry and links: the message box's session. It has no sub-agents (W77). */
   conversation: 'pitwall-test-api',
-  /** Background and running: Terminal opens and attaches. */
+  /**
+   * Background and running: Terminal opens and attaches. Its turn is running, with a command still out,
+   * so its Conversation tab ends with the working line (W102), until `world.endTurn()`.
+   */
   running: 'pitwall-test-nightly-export',
   running2: 'pitwall-test-retry-worker',
   running3: 'pitwall-test-index-rebuild',
@@ -77,6 +90,11 @@ export const NAMES = {
   endedOld: 'pitwall-test-ended-old',
   /** Ended twenty days ago, alone in docs-site: the group is in the repo list only with Show older on. */
   endedOldOnly: 'pitwall-test-ended-old-docs',
+  /**
+   * Ended three days ago in api-server, having opened PRS.endedWork, which is still open (W106): its work
+   * isn't finished, so it's listed with the rest, not in Finished.
+   */
+  endedPr: 'pitwall-test-ended-pr',
 } as const;
 
 /** The short id the copy Claude Code starts in place of NAMES.endedCopy has. */
@@ -110,6 +128,76 @@ export const LINKS = {
 
 const MINUTE = 60_000;
 
+/**
+ * Your made-up open pull requests (W95), by role, as their keys (`owner/name/number`). Three aren't
+ * yours (W101): two ask your review, of you and of a made-up team, and one mentions you. Where each is
+ * listed (W106): a session owns six, which are listed with it; the rest are rows of their own, under
+ * demo-app, api-server, event-relay, which is cloned but has no session, and example/sdk-docs, which
+ * isn't cloned; two older ones are behind the Pull requests view's Show older; and no root claims two.
+ */
+export const PRS = {
+  /**
+   * example/demo-app #51: checks failing, three named and five in all. pitwall-test-api opened it, then
+   * pitwall-test-docs pushed its branch, so pitwall-test-docs owns it; pitwall-test-review named it in a reply.
+   */
+  failing: 'example/demo-app/51',
+  /** example/demo-app #48: approved and passing. pitwall-test-review opened it; pitwall-test-nightly-export pushed its branch since, and owns it. */
+  approved: 'example/demo-app/48',
+  /** example/event-relay #612: conflicts and changes requested. pitwall-test-review opened it and owns it; pitwall-test-in-api named it in a reply. */
+  conflicts: 'example/event-relay/612',
+  /** example/event-relay #605: a draft, checks pending, GitHub still checking for conflicts. No session: a row under event-relay. */
+  draft: 'example/event-relay/605',
+  /** example/api-server #19: passing, no review needed. pitwall-test-from-root pushed it and owns it; the ended pitwall-test-ended-notes was given it. */
+  quiet: 'example/api-server/19',
+  /** example/docs-site #7, updated 120 days ago: review required. Not cloned, and behind Show older. */
+  older: 'example/docs-site/7',
+  /** example/event-relay #41, updated 200 days ago: checks failing, which nothing counts until Show older. */
+  olderFailing: 'example/event-relay/41',
+  /** example/demo-app #57, 40 minutes ago: your review requested, of you by name. It needs you. No session: a row under demo-app. */
+  review: 'example/demo-app/57',
+  /** example/event-relay #618, 2 hours ago: your review requested through example/reviewers, with its author's failing checks. It needs you. A row under event-relay. */
+  teamReview: 'example/event-relay/618',
+  /** example/api-server #23, 5 hours ago: it mentions you; not yours, and your review isn't asked. It never needs you. A row under api-server. */
+  mentioned: 'example/api-server/23',
+  /** example/sdk-docs #9, 3 hours ago: passing. The repo isn't cloned, and the root claims its owner: a row under example/sdk-docs, not cloned. */
+  notCloned: 'example/sdk-docs/9',
+  /** example/api-server #31, a day ago: passing. The ended pitwall-test-ended-pr opened it, and owns it. */
+  endedWork: 'example/api-server/31',
+  /** other-org/made-up-tool #4: no root claims its owner, so it's only counted. */
+  unclaimed: 'other-org/made-up-tool/4',
+  /** third-org/made-up-lib #2: placed nowhere, as by a server that doesn't place PRs, so it's only counted too. */
+  unplaced: 'third-org/made-up-lib/2',
+} as const;
+
+/** The made-up team example/event-relay #618 asks a review of (W101). */
+export const PR_TEAM = 'example/reviewers';
+
+/**
+ * What the PR source says (W95), for the steps that check each state: 'ok', the list; 'mine', the
+ * list with only your own PRs, as once you've reviewed each one asked and nothing mentions you
+ * (W101); 'partial', a fetch in which your own search worked and the other two failed, the
+ * review-requested one with its list from two hours ago kept, the mentions one never listed
+ * (W101's review); 'loading', before the first fetch has finished; 'off', `--no-prs`; 'gh-missing',
+ * 'gh-auth' and 'error', a fetch that failed with no list; 'stale', one that failed after a list,
+ * which is kept, two hours old.
+ */
+export type PrsState = 'ok' | 'mine' | 'partial' | 'loading' | 'off' | 'gh-missing' | 'gh-auth' | 'error' | 'stale';
+
+/** The error each failed state says, in pitwall's made-up words. */
+export const PRS_ERRORS: Readonly<Record<Exclude<PrsState, 'ok' | 'mine' | 'partial' | 'loading'>, string>> = {
+  off: 'Pull requests are off: pitwall was started with --no-prs.',
+  'gh-missing': "gh isn't on pitwall's PATH.",
+  'gh-auth': "gh isn't logged in to github.com.",
+  error: 'Made up: gh took longer than 30 seconds.',
+  stale: 'Made up: no network.',
+};
+
+/** What 'partial' says of the two searches that failed (W101's review), in made-up words. */
+export const PRS_SEARCH_ERRORS = {
+  'review-requested': 'Made up: GitHub ended the request after 10 seconds.',
+  mentioned: 'Made up: gh api failed with exit code 1.',
+} as const;
+
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
 const SUBAGENT_CURSOR = 'pt77-older';
 
@@ -121,6 +209,8 @@ interface Spawned {
 export interface ResetOptions {
   /** One root, /Users/example/code, or two, with /Users/example/oss as well. */
   roots?: 1 | 2;
+  /** What the PR source says (W95): 'ok', the list, by default. */
+  prs?: PrsState;
   /** Group labels by key, in place of the made-up ones, such as a longer name for a heading. */
   labels?: Readonly<Record<string, string>>;
 }
@@ -135,6 +225,20 @@ export class World {
   #nextSpawn = 0;
   /** NAMES.inApi has the most sub-agents a list carries, and more (manySubagents()). */
   #manySubagents = false;
+  /** The sessions whose running turn `endTurn()` has ended, until the next reset (W102). */
+  #turnsEnded = new Set<string>();
+  /** What the PR source says, and whether a fetch is running (W95). */
+  #prs: PrsState = 'ok';
+  #prsRefreshing = false;
+  /** When the latest fetch finished, and started: a refresh within PRS_REFRESH_MIN_MS of the start gets 429. */
+  #prsFetchedAt = 0;
+  #prsFetchStarted = 0;
+  /** The repos Clone and start has cloned since the last reset (W107), by repo, with where. */
+  #cloned = new Map<string, string>();
+  /** Whether a clone fails, as gh does for a repo you can't see (W107). */
+  #cloneFails = false;
+  /** PRs listed with another relation than their own until the next reset, by key (W108): `notYours()`. */
+  #relations = new Map<string, PullRequestRelation>();
 
   constructor() {
     this.reset();
@@ -146,6 +250,15 @@ export class World {
     this.#labels = options.labels ?? {};
     this.#spawned = [];
     this.#manySubagents = false;
+    this.#turnsEnded = new Set();
+    this.#prs = options.prs ?? 'ok';
+    this.#prsRefreshing = false;
+    // Fetched two minutes ago, by the poll, so a refresh now is allowed.
+    this.#prsFetchedAt = this.#now - 2 * MINUTE;
+    this.#prsFetchStarted = this.#prsFetchedAt - 8_500;
+    this.#cloned = new Map();
+    this.#cloneFails = false;
+    this.#relations = new Map();
     this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
   }
 
@@ -181,6 +294,96 @@ export class World {
     return { generatedAt: new Date().toISOString(), roots: this.roots, groups: named.filter((group) => group.sessions.length > 0), source: { ok: true } };
   }
 
+  /**
+   * Your open PRs (W95), as GET PRS_PATH and the 'prs' message have them: the list in the state the
+   * world is in. A failed state other than 'stale' has no list, and no fetchedAt; 'stale' keeps the
+   * list from two hours ago; 'loading' has neither, and a fetch running.
+   */
+  prList(): PullRequestList {
+    const refreshing = this.#prsRefreshing || this.#prs === 'loading';
+    const fetchedAt = new Date(this.#prsFetchedAt).toISOString();
+    const worked = (at: string) => ({ authored: { fetchedAt: at }, 'review-requested': { fetchedAt: at }, mentioned: { fetchedAt: at } });
+    // Which owners each root claims (W106): example for the code root, from its clones; none for the second.
+    const roots = [{ root: CODE, owners: ['example'], source: 'clones' as const }, ...(this.#roots === 2 ? [{ root: OSS, owners: 'none' as const, source: 'config' as const }] : [])];
+    if (this.#prs === 'ok') return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests(), roots };
+    if (this.#prs === 'mine') {
+      return { fetchedAt, source: { ok: true }, refreshing, searches: worked(fetchedAt), prs: this.#pullRequests().filter((pr) => pr.relation === 'authored'), roots };
+    }
+    if (this.#prs === 'partial') {
+      const searches = {
+        authored: { fetchedAt },
+        'review-requested': { fetchedAt: this.#ago(125), failed: { reason: 'error' as const, error: PRS_SEARCH_ERRORS['review-requested'] } },
+        mentioned: { failed: { reason: 'error' as const, error: PRS_SEARCH_ERRORS.mentioned } },
+      };
+      return { fetchedAt, source: { ok: true }, refreshing, searches, prs: this.#pullRequests().filter((pr) => pr.relation !== 'mentioned'), roots };
+    }
+    if (this.#prs === 'loading') return { source: { ok: true }, refreshing, prs: [] };
+    const reason = this.#prs === 'stale' ? 'error' : this.#prs;
+    const source = { ok: false as const, reason, error: PRS_ERRORS[this.#prs] };
+    if (this.#prs === 'stale') {
+      const failed = { fetchedAt: this.#ago(125), failed: { reason: 'error' as const, error: source.error } };
+      return { fetchedAt: this.#ago(125), source, refreshing, searches: { authored: failed, 'review-requested': failed, mentioned: failed }, prs: this.#pullRequests(), roots };
+    }
+    return { source, refreshing, prs: [] };
+  }
+
+  /** Until the next reset, the PR source says `state` (W95). The server sends the list to the page. */
+  /**
+   * Clone and start (W107), as src/server/clone.ts answers it: the repo of a PR placed 'not-cloned' is
+   * cloned to `<root>/<name>`, and its PRs are placed under the clone from then on, until the next
+   * reset; 'missing' for a repo with no PR in the list, 'placed' for one that isn't placed 'not-cloned',
+   * and 'failed' while failClones() is on. Nothing is written anywhere.
+   */
+  clone(repo: string): { result: 'cloned'; cwd: string; label: string } | { result: 'missing' | 'placed' | 'failed' } {
+    const prs = this.#pullRequests().filter((pr) => pr.repo === repo.toLowerCase());
+    if (prs.length === 0) return { result: 'missing' };
+    const pr = prs.find((each) => each.place?.kind === 'not-cloned');
+    if (pr?.place?.kind !== 'not-cloned') return { result: 'placed' };
+    if (this.#cloneFails) return { result: 'failed' };
+    const cwd = `${pr.place.root}/${pr.repoLabel.slice(pr.repoLabel.indexOf('/') + 1)}`;
+    this.#cloned.set(pr.repo, cwd);
+    return { result: 'cloned', cwd, label: pr.repoLabel };
+  }
+
+  /** Until the next reset, every clone fails, as gh does for a repo you can't see (W107). */
+  failClones(): void {
+    this.#cloneFails = true;
+  }
+
+  /** Until the next reset, the PR `key` (PRS) is listed as `relation`, as one of yours mentioned by someone else's would be (W108). The server sends the list to the page. */
+  listAs(key: string, relation: PullRequestRelation): void {
+    this.#relations.set(key, relation);
+  }
+
+  setPrs(state: PrsState): void {
+    this.#prs = state;
+    this.#prsRefreshing = false;
+  }
+
+  /**
+   * A refresh (W95), in the order W93's poller answers it (src/prs/poller.ts, refresh()): 'off' with
+   * pull requests off; 'running' while a fetch runs, before the first included; 'soon', with the
+   * seconds left, within PRS_REFRESH_MIN_MS of the latest fetch's start; otherwise 'started', and
+   * `done`, which ends the fetch, as it works and the source is ok again.
+   */
+  refreshPrs(minMs: number): { result: 'off' } | { result: 'running' } | { result: 'soon'; seconds: number } | { result: 'started'; done: () => void } {
+    if (this.#prs === 'off') return { result: 'off' };
+    if (this.#prsRefreshing || this.#prs === 'loading') return { result: 'running' };
+    const now = Date.now();
+    const since = now - this.#prsFetchStarted;
+    if (since < minMs) return { result: 'soon', seconds: Math.max(1, Math.ceil((minMs - since) / 1000)) };
+    this.#prsFetchStarted = now;
+    this.#prsRefreshing = true;
+    return {
+      result: 'started',
+      done: () => {
+        this.#prsRefreshing = false;
+        this.#prs = 'ok';
+        this.#prsFetchedAt = Date.now();
+      },
+    };
+  }
+
   /** The directories under each root, as GET DIRECTORIES_PATH lists them (W70): shallower first, then by path. */
   directories(): DirectoryList {
     const code = { root: CODE, dirs: [{ path: 'api-server', repo: true as const }, { path: 'demo-app', repo: true as const }, { path: 'docs-site', repo: true as const }, { path: 'notes' }, { path: 'api-server/cmd' }, { path: 'demo-app/docs' }, { path: 'demo-app/web' }, { path: 'api-server/cmd/server' }], truncated: false };
@@ -202,8 +405,21 @@ export class World {
   conversation(sessionId: string): ConversationPage | undefined {
     const session = this.#sessions.get(sessionId);
     if (!session) return undefined;
+    if (session.name === NAMES.running) return { sessionId, ...this.#working(sessionId) };
     const entries = session.name === NAMES.conversation ? this.#everyKind() : session.name === NAMES.inApi ? this.#namingSubagents() : this.#short(session);
     return { sessionId, entries };
+  }
+
+  /**
+   * Until the next reset, the session's running turn ends (W102), as the index lists it on its next
+   * poll: a background job is done, with its process still there, and its activity moves; its newest
+   * page has the command's result and Claude's reply, and says the turn has ended.
+   */
+  endTurn(sessionId: string): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    this.#turnsEnded.add(sessionId);
+    this.#sessions.set(sessionId, { ...session, state: 'done', lastActivityAt: new Date().toISOString() });
   }
 
   /** A listed session's sub-agents (W77): NAMES.inApi's, and none for the rest. */
@@ -292,7 +508,8 @@ export class World {
    * needs you until you prompt it (NeedsYou's 'restarted', W69).
    */
   resume(sessionId: string): { shortId: string; list: () => void } {
-    const shortId = sessionId.slice(0, 8);
+    // A background job wakes under its own short id (W107); an ended session takes its id's first 8.
+    const shortId = this.#sessions.get(sessionId)?.shortId ?? sessionId.slice(0, 8);
     return {
       shortId,
       list: () => {
@@ -407,23 +624,26 @@ export class World {
         waitingFor: 'permission prompt',
         needsYou: { reason: 'prompt' },
         lastUserPrompt: 'Update the made-up getting started guide.',
+        // It pushed #51's branch after pitwall-test-api opened it, so it owns #51 now (W106).
+        prLinks: [this.#link('pushed', PRS.failing, 20)],
       }),
       session(NAMES.asked, {
         title: 'Review the retry change',
         askedYou: { reason: 'question', excerpt: 'Should I retry the failed batch now, or wait for tonight?' },
         needsYou: { reason: 'asked' },
         relay: { sentAt: this.#ago(30), status: 'delivered', reply: { at: this.#ago(29), text: 'Thanks, looking at it now.' } },
+        prLinks: [this.#link('opened', PRS.conflicts, 70), this.#link('opened', PRS.approved, 9 * 60), this.#link('mentioned', PRS.failing, 15)],
       }),
-      session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.' }),
-      job(NAMES.running),
+      session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.', prLinks: [this.#link('opened', PRS.failing, 26)] }),
+      job(NAMES.running, { prLinks: [this.#link('pushed', PRS.approved, 8 * 60)] }),
       job(NAMES.running2),
       job(NAMES.running3),
       job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } }),
       job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
-      session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)] }),
-      session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route', subagentsRunning: 2 }),
+      session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)], prLinks: [this.#link('pushed', PRS.quiet, 3 * 60)] }),
+      session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route', subagentsRunning: 2, prLinks: [this.#link('mentioned', PRS.conflicts, 60)] }),
       session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } }),
-      ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes' }),
+      ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes', prLinks: [this.#link('prompted', PRS.quiet, 2 * 24 * 60)] }),
       ended(NAMES.endedAsked, 1, { askedYou: { reason: 'question', excerpt: 'Should the made-up guide keep the old screenshots?' } }),
       ended(NAMES.endedCopy, 3),
       ended(NAMES.endedBusy, 3.5),
@@ -433,8 +653,75 @@ export class World {
       ended(NAMES.endedSlow, 4.75),
       ended(NAMES.endedOld, 10),
       ended(NAMES.endedOldOnly, 20, { cwd: DOCS_SITE }),
+      ended(NAMES.endedPr, 3, { cwd: API_SERVER, title: 'Add a made-up retry header', prLinks: [this.#link('opened', PRS.endedWork, 3 * 24 * 60)] }),
     ];
     return all;
+  }
+
+  /** The made-up open PRs, newest updated first, as the search returns them. */
+  #pullRequests(): PullRequestSummary[] {
+    // Where the server places each one (W106): under its clone, or not cloned under the root that claims example.
+    const clones: Readonly<Record<string, string>> = { 'example/demo-app': DEMO_APP, 'example/api-server': API_SERVER, 'example/event-relay': EVENT_RELAY, ...Object.fromEntries(this.#cloned) };
+    const placeOf = (repo: string): PullRequestPlace | undefined => {
+      const clone = clones[repo];
+      if (clone) return { kind: 'cloned', root: CODE, key: clone, label: clone.slice(CODE.length + 1) };
+      if (repo.startsWith('example/')) return { kind: 'not-cloned', root: CODE };
+      return repo.startsWith('other-org/') ? { kind: 'unclaimed' } : undefined;
+    };
+    const make = (key: string, minutes: number, extra: Partial<PullRequestSummary>): PullRequestSummary => {
+      const [owner = '', name = '', number = '0'] = key.split('/');
+      const repo = `${owner}/${name}`;
+      const place = placeOf(repo);
+      return {
+        ...(place ? { place } : {}),
+        url: `https://github.com/${repo}/pull/${number}`,
+        repo,
+        repoLabel: repo,
+        number: Number(number),
+        title: 'A made-up change',
+        draft: false,
+        createdAt: this.#ago(minutes + 3 * 24 * 60),
+        updatedAt: this.#ago(minutes),
+        head: { repo, branch: `pitwall-test/${name}-${number}` },
+        checks: 'passing',
+        mergeable: 'clean',
+        relation: 'authored',
+        ...extra,
+        ...(this.#relations.has(key) ? { relation: this.#relations.get(key) as PullRequestRelation } : {}),
+      };
+    };
+    const day = 24 * 60;
+    return [
+      make(PRS.failing, 25, { title: 'Add a made-up health route', checks: 'failing', failingChecks: ['test (22.x)', 'lint', 'e2e (chrome)'], failingCount: 5, review: 'review-required' }),
+      make(PRS.conflicts, 70, { title: 'Retry made-up deliveries with backoff', mergeable: 'conflicts', review: 'changes-requested' }),
+      make(PRS.quiet, 3 * 60, { title: 'Add a made-up rate limit to the API' }),
+      make(PRS.approved, 9 * 60, { title: 'Tidy the made-up export job', review: 'approved' }),
+      make(PRS.draft, 4 * day, { title: 'Document the made-up retry headers', draft: true, checks: 'pending', mergeable: 'unknown' }),
+      make(PRS.older, 120 * day, { title: 'Move the made-up guide to its own page', review: 'review-required' }),
+      make(PRS.olderFailing, 200 * day, { title: 'A made-up old experiment with queues', checks: 'failing', failingChecks: ['build'] }),
+      make(PRS.review, 40, { title: 'Add a made-up retry budget', review: 'review-required', relation: 'review-requested', reviewRequest: { via: 'direct' } }),
+      make(PRS.teamReview, 2 * 60, {
+        title: 'Rename the made-up delivery states',
+        checks: 'failing',
+        failingChecks: ['lint'],
+        review: 'review-required',
+        relation: 'review-requested',
+        reviewRequest: { via: 'team', team: PR_TEAM },
+      }),
+      make(PRS.mentioned, 5 * 60, { title: 'Ask about the made-up rate limit headers', review: 'review-required', relation: 'mentioned' }),
+      make(PRS.notCloned, 3 * 60, { title: 'Add a made-up example to the SDK docs' }),
+      make(PRS.endedWork, day, { title: 'Add a made-up retry header' }),
+      make(PRS.unclaimed, 6 * 60, { title: 'A made-up fix elsewhere' }),
+      make(PRS.unplaced, 7 * 60, { title: 'A made-up fix in another org' }),
+    ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  }
+
+  /** A session's link to one of PRS (W95): by repo and number, or for 'pushed', by its head branch. */
+  #link(kind: PrLink['kind'], key: string, minutes: number): PrLink {
+    const [owner = '', name = '', number = '0'] = key.split('/');
+    const repo = `${owner}/${name}`;
+    if (kind === 'pushed') return { kind, repo, branch: `pitwall-test/${name}-${number}`, lastAt: this.#ago(minutes) };
+    return { kind, repo, number: Number(number), lastAt: this.#ago(minutes) };
   }
 
   #subagents(): SubagentSummary[] {
@@ -457,6 +744,25 @@ export class World {
       { kind: 'tool', at: this.#ago(6), toolName: 'Agent', text: `Agent: ${SUBAGENTS.reading.description}`, subagent: SUBAGENTS.reading },
       { kind: 'tool', at: this.#ago(2), toolName: 'SendMessage', text: 'SendMessage', subagent: SUBAGENTS.reading },
     ];
+  }
+
+  /**
+   * NAMES.running's turn (W102): your prompt 3 minutes ago, a test run that failed, a prompt you typed
+   * mid-turn, which doesn't restart the turn's time, and a command still waiting on its result, as
+   * the server sends them, a call's `toolError` set once its result is in. After endTurn(), the
+   * command's result, Claude's reply, and the turn's end.
+   */
+  #working(sessionId: string): Pick<ConversationPage, 'entries' | 'turnEnded'> {
+    const entries: ConversationEntry[] = [
+      { kind: 'user', at: this.#ago(3.4), text: 'Run the made-up export tests and fix what fails.' },
+      { kind: 'assistant', at: this.#ago(3.3), markdown: true, text: "I'll run the export tests first." },
+      { kind: 'tool', at: this.#ago(3.2), toolName: 'Bash', text: 'Bash: npm test -- export', toolError: true },
+      { kind: 'user', at: this.#ago(1.5), text: 'Skip the slow ones for now.', midTurn: true },
+      { kind: 'tool', at: this.#ago(0.5), toolName: 'Bash', text: 'Bash: npm test -- export --skip-slow' },
+    ];
+    if (!this.#turnsEnded.has(sessionId)) return { entries, turnEnded: false };
+    const done = { ...entries[entries.length - 1], toolError: false } as ConversationEntry;
+    return { entries: [...entries.slice(0, -1), done, { kind: 'assistant', at: new Date().toISOString(), markdown: true, text: 'The made-up export tests pass now.' }], turnEnded: true };
   }
 
   #short(session: SessionSummary): ConversationEntry[] {

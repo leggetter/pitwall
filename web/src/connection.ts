@@ -1,6 +1,7 @@
 // The live connection to the pitwall server: answer the challenge, hand the
 // apiKey to the API client, keep the latest snapshot and the latest poll's
-// time and health, and reconnect with backoff unless the token was rejected.
+// time and health, keep the latest list of your open pull requests (M4, W95),
+// and reconnect with backoff unless the token was rejected.
 //
 // The handshake (src/shared/protocol.ts, PROTOCOL_VERSION 3): the server sends
 // a challenge with a nonce, and the page answers with base64url(HMAC-SHA256(
@@ -17,11 +18,13 @@ import {
   WS_PATH,
   type ClientMessage,
   type IndexSnapshot,
+  type PullRequestList,
   type ServerMessage,
   type SourceHealth,
 } from '../../src/shared/protocol.js';
 import type { ApiKeys } from './api.js';
 import { computeProof, parseChallenge, SECRET_SHAPE, type Prover } from './proof.js';
+import { parsePullRequestList } from './prs.js';
 
 export { computeProof, type Prover };
 
@@ -62,6 +65,12 @@ export interface ConnectionView {
    * else changed.
    */
   lastPoll?: PollStatus;
+  /**
+   * Your open pull requests (M4): the newest 'prs' message, which the server sends right after the
+   * first snapshot and again on each change. Undefined until one has arrived, as from a pitwall from
+   * before M4, which never sends one. A reconnect keeps it until the next one arrives.
+   */
+  prs?: PullRequestList;
   /** The newest `{ type: 'error' }` message from the server, or a handshake problem the page can't fix itself. */
   serverError?: string;
 }
@@ -131,6 +140,11 @@ export function parseServerMessage(data: unknown): ServerMessage | undefined {
       return { type: 'heartbeat', generatedAt: candidate.generatedAt, source: candidate.source };
     }
     return undefined;
+  }
+  if (candidate.type === 'prs') {
+    // Read field by field (prs.ts): a PR that isn't the contract's shape is left out, and a list that isn't one is ignored.
+    const prs = parsePullRequestList(candidate.prs);
+    return prs ? { type: 'prs', prs } : undefined;
   }
   if (candidate.type === 'error' && typeof candidate.error === 'string') {
     return { type: 'error', error: candidate.error };
@@ -249,6 +263,8 @@ export function createConnection(options: ConnectionOptions): Connection {
         // The index is alive and nothing changed: the snapshot stays as it is.
         attempt = 0;
         update({ state: 'live', lastPoll: { generatedAt: message.generatedAt, source: message.source } });
+      } else if (message.type === 'prs') {
+        update({ prs: message.prs });
       } else if (message.type === 'error') {
         update({ serverError: message.error });
       }

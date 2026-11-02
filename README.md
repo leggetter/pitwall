@@ -14,7 +14,7 @@ Claude Code has two kinds of session, and pitwall handles both. Interactive sess
 
 - **Lists every Claude Code session under a directory,** wherever it was started: Warp, Cursor or any other terminal. Sessions are grouped by git repo, with worktrees under the repo they belong to. Finished background sessions, and interactive sessions that ended recently, stay listed.
 - **Shows which sessions need you, and why:** a prompt on screen, a question it asked you, or what Claude Code says a background session needs.
-- **Opens a session** to read its conversation, and its sub-agents' in a tab of their own.
+- **Opens a session** to read its conversation, and its sub-agents' in a tab of their own. While it works, the conversation ends with what it's doing and for how long, such as "Working · 2m 14s, Running Bash: npm test", or what it's waiting on you for.
 - **Lets you steer it:** send an interactive session a message, or drive a background session in a terminal in the page, permission prompts and dialogs included.
 - **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, ends a running interactive session, leaving its terminal at the shell, and brings an ended interactive session back in the background.
 - **Opens a session's directory** in VS Code or Cursor.
@@ -40,7 +40,7 @@ npm run build
 node dist/cli.js ~/code
 ```
 
-- **The root:** `~/code` stands for the directory that holds your work. pitwall lists every session whose working directory is in it or below it. Give two or more roots, such as `~/work ~/oss`, to get a tab for each, or none for the current directory.
+- **The root:** `~/code` stands for the directory that holds your work. pitwall lists every session whose working directory is in it or below it. Give two or more roots, such as `~/work ~/oss`, to get a tab for each, or none for the current directory. To stop typing them, list them in the [config file](#configuration).
 - **npm's notes:** `npm ci` may say it skipped install scripts for `esbuild`, `fsevents` and `node-pty`, as recent npm 11 releases do by default. On macOS that's fine: `node-pty`, the one native module, loads the macOS build it ships with, and pitwall makes its helper executable the first time it attaches. It may also report advisories in two dev dependencies, Vite and happy-dom. pitwall uses Vite only to build the web UI, never its dev server, and happy-dom only in `npm test`.
 - **On Linux,** which is untried, `node-pty` ships no build and compiles in its install script, which needs Python, `make` and a C++ compiler. npm 10 runs that script, as CI does; npm 11 skips it unless it's approved (`npm help install-scripts`). Without it, attaching to a session fails with a message, and the rest of pitwall works.
 
@@ -56,18 +56,21 @@ node dist/cli.js ~/code
 
 - **It reads, and changes nothing:**
   - `claude agents --json --all`, every 5 seconds, for the list of sessions.
-  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you and which repos it worked in.
+  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you, which repos it worked in, and the pull requests it opened, pushed to, was linked to by Claude Code, was given in a prompt or named in Claude's replies.
   - To find ended sessions, the start and end of every transcript in `~/.claude/projects/` changed in the last 30 days, whatever its directory, kept in memory. Only those under your roots are listed.
   - `ps` for when a session's process started, and, before End session, its command name and the parent pids, never a command line; `claude --version` before its relay starts; and `/Applications` and `~/Applications` for VS Code and Cursor.
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
+  - The git remotes of every repo under your roots, two levels down, and of every repo your sessions worked in, with `git config --local --no-includes --get-regexp`, at start, every 5 minutes, when the roots change and on Refresh, to place each pull request under the clone of its repo, or under the root whose GitHub owners cover it. It never fetches, pulls or changes a repo, and only with pull requests on.
+  - `gh api graphql` on github.com, with your GitHub login, at start, every 3 minutes and on Refresh, at most once a minute: three searches, each in pages of 25, for your open pull requests, the open ones that ask your review, or a team's you're on, and the open ones that mention you. `--no-prs` turns it off, and pitwall then never runs `gh`.
 - **It acts only when you ask:**
   - **Message** an interactive session, through a headless Haiku session it runs, `pitwall-relay`, which can send only the exact message you wrote, to the session you picked. The session sees it as a message from another session, so a message can't approve a permission prompt.
   - **Attach** to a background session, in a terminal in the page. Opening a running one's view attaches to it by default, since that's where it takes input. One that has finished asks first, because attaching restarts it.
-  - **Start** a session with `claude --bg`, and **stop** or **remove** a background one with `claude stop` or `claude rm`, after a confirmation.
+  - **Start** a session with `claude --bg`, and **stop** or **remove** a background one with `claude stop` or `claude rm`, after a confirmation. A session pitwall starts or resumes gets your environment without pitwall's own variables, and with PATH's absolute entries only, a leading `~` expanded, so a relative entry such as `./node_modules/.bin` isn't on it ([D23](docs/decisions.md#d23---a-childs-path-keeps-only-its-absolute-directories)).
   - **End** a running interactive session, after a confirmation, by sending its Claude Code process SIGTERM, never SIGKILL. Its terminal goes back to the shell, and its conversation is kept, but a reply in progress is lost. One that's still working asks again, naming what's running. pitwall never ends a relay, its own or another pitwall's, or a process it runs under.
-  - **Resume** an ended interactive session in the background, with `claude --resume <id> --bg`.
+  - **Resume** an ended interactive session, or a background one that has stopped, in the background, with `claude --resume <id> --bg`.
+  - **Clone** a pull request's repo, when no root has a clone of it, with `gh repo clone` and your GitHub login, into the root that claims its owner, after a click that shows where and whose it is: a pull request that isn't yours gets a warning that cloning it puts someone else's code on this machine. pitwall picks the folder itself, refuses one that exists, and never clones into your home folder or a folder above it, where a new folder could be `~/bin` or `~/Applications`. It clones into a hidden temporary folder in the root and moves it into place only then, and removes only that temporary folder when anything fails, or when pitwall stops mid-clone ([D25](docs/decisions.md#d25---cloning-a-pull-requests-repo-is-the-servers-decision-after-a-click)).
   - **Open** a session's directory in VS Code or Cursor.
-- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
+- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, and the files you attach to a new session's first prompt. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay is a Claude Code session too, so Claude Code keeps its transcript in `~/.claude/projects/`, as it does for every session.
 
 ### Security, in brief
 
@@ -83,7 +86,7 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 - **Undocumented rows:** pitwall finds the interactive sessions running in your terminals through their rows in `claude agents --json`, which Claude Code's docs don't describe: they describe background sessions only. If a release drops those rows, pitwall loses most of its value ([D1](docs/decisions.md#d1---the-session-list-comes-from-claude-agents---json---all)).
 - **Internal files:** transcripts, sub-agents' folders and job state are Claude Code's internal formats, which change between versions. pitwall reads them read-only, behind adapters that fail soft: a file it can't read shows as unavailable, or as less detail, never as a crash.
 - **A running interactive session can only be messaged, not driven.** For anything more, such as answering a prompt, type `/bg` in the session's terminal to move it to the background, and pitwall can then attach to it ([D2](docs/decisions.md#d2---interactive-sessions-relay-messages-or-bg-for-full-control)).
-- **Untrusted directories:** Claude Code won't start a session from a script in a directory you haven't trusted. New session then shows Claude Code's error and the command to run; pitwall never grants trust for you.
+- **Untrusted directories:** Claude Code won't start a session from a script in a directory you haven't trusted. New session then shows Claude Code's error and the command to run; pitwall never grants trust for you. A repo pitwall clones isn't trusted either, even under a root you trust, since Claude Code's trust in a folder doesn't cover a git repo inside it: run `claude` in it once, as New session says after the clone. Trusting it lets the repo's own Claude Code settings, hooks and MCP servers run, so only trust a repo whose code you'd run.
 - **Cost:** each message you send starts a turn on the target session's own model, plus a Haiku turn in the relay.
 
 ## Use
@@ -91,28 +94,52 @@ A page that can type into your sessions can run code as you, so pitwall guards i
 From the clone, after `npm run build`:
 
 ```
-node dist/cli.js [root...] [--port <n>] [--interval <seconds>] [--no-open]
+node dist/cli.js [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
 ```
 
 `npm start -- [root...]`, with the same options, runs the same thing.
 
 | Option | What it does | Default |
 | --- | --- | --- |
-| `root...` | The directories to watch. Sessions whose working directory is in a root or below it are listed. Two or more roots get a tab each | The current directory |
+| `root...` | The directories to watch. Sessions whose working directory is in a root or below it are listed. Two or more roots get a tab each. They replace the config file's roots | The config file's roots, or the current directory |
+| `--config <path>` | Read this [config file](#configuration) instead of `~/.pitwall/config.json`. It must exist | `~/.pitwall/config.json`, if it's there |
 | `--port <n>` | The port on 127.0.0.1. A busy default falls back to a free port; a port you give fails if it's busy. `0` always picks a free one | 4517 |
 | `--interval <seconds>` | How often to poll `claude agents`, in whole seconds from 1 to 300 | 5 |
 | `--no-open` | Don't open the browser. `PITWALL_NO_OPEN=1` does the same | Opens it |
+| `--no-prs` | Don't list your open pull requests, so pitwall never runs `gh`. Without it, pitwall runs `gh api graphql` at start, every 3 minutes and on Refresh, for your open PRs on github.com, and those that ask your review or mention you; `gh` must be installed and logged in | Lists them |
 | `-h`, `--help` | Show the help, with every option and variable | |
 | `-v`, `--version` | Show the version | |
 
 - **`PITWALL_TOKEN`:** a fixed token instead of a new one every run, so a pinned tab keeps working across restarts on the same port. It must be at least 32 characters from `A-Z`, `a-z`, `0-9`, `-` and `_`, with at least 8 different ones and not one piece repeated, as in `abcabc…`. It isn't printed. Any page or script that ever saw it can drive every later run that uses it, so use it only on a single-user machine ([D7](docs/decisions.md#d7---the-browser-is-opened-through-a-launch-file-not-a-url-with-the-token-in-it)). pitwall reads it from the environment only, never from a `.env` file.
-- **`PITWALL_HOME`:** where pitwall keeps its own files, instead of `~/.pitwall`.
+- **`PITWALL_HOME`:** where pitwall keeps its own files and reads its config file, instead of `~/.pitwall`.
+
+### Configuration
+
+With `--config <path>`, pitwall reads that file, which must exist. Without it, pitwall reads `config.json` in `~/.pitwall`, or in `PITWALL_HOME` when that's set, if it's there; with no file, every setting is its default. It's JSON, with `//` and `/* */` comments and trailing commas allowed. For now it holds the roots, and each root's GitHub owners:
+
+```jsonc
+{
+  "roots": [
+    // A path: absolute, or starting with ~/
+    "~/oss",
+    // Or an object, with the GitHub owners whose pull requests it lists
+    { "path": "~/work", "github": { "owners": ["example-co"] } },
+  ],
+}
+```
+
+- **`roots`:** the roots to watch when you give none as arguments. Each is a path, absolute or starting with `~/`, or an object with a `path` and `github`.
+- **`github.owners`:** whose pull requests a root lists for repos it has no clone of: a list of GitHub users and organizations, `"all"` for every owner no other root lists, or `"none"` for pull requests in its own clones only. Without it, each owner goes to the root with the most clones whose `origin` remote points at it; another remote, such as `upstream`, never counts, since it can name anyone, and a stranger's pull request that mentions you would then be offered for Clone. List an owner here to claim it anyway. An owner can be listed for one root only, and only one root can have `"all"`. The page lists each pull request under its clone's group, or under the root that claims its owner as a repo that isn't cloned.
+- **Precedence:** a flag, then an environment variable, then the file, then the default. Roots you give as arguments replace the file's, not add to them, but each still keeps its `github` settings when it's the same directory as a root in the file, by its real path, so `pitwall ~/work` alone keeps `~/work`'s owners.
+- **Mistakes:** a bad value stops pitwall with a message naming the key and the file, as a bad flag does. An unknown key is a warning, so an older pitwall can read a newer file.
+- **Security** ([D24](docs/decisions.md#d24---a-config-file-beside-the-flags)): the file decides which directories pitwall reads, so on macOS and Linux it must be yours and not writable by group or others, or pitwall refuses it. It never holds a token: a key named like one, or a GitHub token anywhere in it, is an error, since `PITWALL_TOKEN` comes from the environment only and GitHub's stays in `gh`. No message quotes a value from the file. Nothing in it can turn off the token, the `Host` and `Origin` checks or listening on 127.0.0.1 alone, and pitwall reads no config file from inside a repo.
 
 ### In the page
 
 - **Three columns:** repos, then the selected repo's sessions, then the open session. Needs you, All sessions and Starred head the repo list. On a narrower window the session view lies over the list, and the repo list becomes a drawer.
 - **A session's view** has its conversation, a Terminal tab for a background session, and a Sub-agents tab once it has any. An interactive session's view ends with a message box, where ⌘↵ (Ctrl+Enter elsewhere) sends and Enter adds a line. Its actions menu stops or removes a background session, ends a running interactive one, opens the directory in an editor and copies the session's commands. An ended session's view offers Resume in background.
 - **Finished and ended sessions** sit in a Finished section at the end of each list. Not needed now takes a session out of Needs you until what it needs changes.
+- **Pull requests** are listed with the session that worked on them last, or as rows of their own, under their repos. A pull request with no session has a New session button on its row and in its view, which opens New session in its clone, named `pr-<number>`, with a first prompt that names the pull request and why it needs you, all of which you can change; the new session then owns it. For a repo you haven't cloned, Clone and start says where it will clone it first, then opens New session there. A finished or ended session that owns an open pull request stays in the list, with Resume on its row.
 - **Keyboard:** `/` filters, `n` starts a session, `j` and `k` step to the next or previous session, `s` stars the open session and `?` lists every shortcut. F6 leaves the terminal. The shortcuts dialog can turn the single-key ones off.
 - **Preferences:** how to group sessions (by main repo, where they started, or every repo they worked in), which tab a running background session opens on, and whether the terminal takes the keyboard. The header's theme switch follows the system, or sets light or dark.
 
@@ -129,6 +156,7 @@ flowchart TB
     server["Server, on 127.0.0.1: HTTP and WebSocket"]
     pty["node-pty: claude attach id"]
     relay["Relay: pitwall-relay"]
+    prs["PR poller"]
   end
 
   subgraph machine["On your machine"]
@@ -137,6 +165,8 @@ flowchart TB
     interactive["Interactive sessions, in your terminals"]
     editor["VS Code or Cursor"]
   end
+
+  github["github.com, through gh api graphql"]
 
   page ~~~ index
   page <-->|"HTTP and WebSocket, with the token"| server
@@ -148,10 +178,13 @@ flowchart TB
   server -->|"your message"| relay
   relay -->|"SendMessage, through the gate"| interactive
   server -->|opens| editor
+  prs -->|"every 3 min, and on Refresh"| github
+  prs -->|"your open PRs"| server
 ```
 
 - **The index** turns what it reads into a snapshot of the sessions under your roots: each one grouped by repo, with read-only `git`, and whether it needs you. The server pushes a snapshot to the page only when something changed.
-- **A conversation** comes over HTTP, a page at a time, and only when you open the session.
+- **A conversation** comes over HTTP, a page at a time, and only when you open the session. While the session works and its conversation is on screen, the newest page is fetched every 2 s, read backwards from the end of its transcript.
+- **The PR poller** runs three `gh api graphql` searches, one call each, for your open pull requests and those that ask your review or mention you, on its own timer, never with the session poll, so `gh` keeps your GitHub token and pitwall never reads it. The server pushes the list to the page when it changes.
 - **The terminal in the page** is xterm.js, on its own WebSocket, connected to a pseudo-terminal (PTY) that runs `claude attach <id>`. So you get Claude Code's whole interface, permission prompts included.
 - **The relay** exists because the documented way to message an interactive session is Claude Code's cross-session messaging, which only a Claude session can use. So pitwall runs a headless one, `claude -p` named `pitwall-relay`, with `SendMessage` as its only tool, and a gate hook that lets it send only the message you wrote ([D8](docs/decisions.md#d8---messages-to-interactive-sessions-go-through-one-headless-relay-session)).
 
@@ -183,10 +216,10 @@ sequenceDiagram
 
 ## Roadmap
 
-- **Now:** small fixes.
-- **Pull requests beside sessions (M4):** your open pull requests, with CI and review state, grouped by org and then repo. A pull request whose link appears in a session's recent turns names that session, and the session's row gets a badge.
-- **A supervisor (M5):** a background Claude Code session that pitwall starts and shows in its own panel, which you talk to instead of visiting each session. It lists, summarises, messages and starts sessions, and takes over from the relay. M5 also titles each session from its recent turns rather than its first prompt.
+- **Now, pull requests with their sessions (M4):** your open pull requests, and the open ones that ask your review or mention you, with CI and review state. A session that worked on a pull request carries it on its row, and one no session has worked on is a row of its own under its repo, cloned or not. A row needs you when its pull request does: failing checks, conflicts or changes requested on your own, or a review requested of you. A session that ended with its pull request still open stays in the list until it closes.
+- **A supervisor (M5):** a Claude Code session that pitwall runs and shows in its own chat panel, which you talk to instead of visiting each session. It lists and summarises sessions, and messages or starts them once you approve. M5 also gives each session a recap of why it started, where it is now and what's next, shown in its view, and its title comes from the same recap.
 - **Triage (M6):** urgency with reasons, from the index, the supervisor and M4's pull requests. The supervisor reads each idle session's latest turns to judge whether it really needs you. Triage tells "blocked on you" from "blocked on someone else", and pairs pull requests with sessions: "CI is failing on your PR, and the session that opened it is idle."
+- **Considering, undecided: Peers ([#99](https://github.com/leggetter/pitwall/issues/99)).** Sessions already message each other with Claude Code's cross-session messaging. pitwall could show who a session has talked to, and both sides of each exchange as one thread, apart from sub-agents. The supervisor's messages would show the same way, as its audit trail.
 
 The detail is in [`PLAN.md`](PLAN.md), and what's been decided in [`docs/decisions.md`](docs/decisions.md).
 
@@ -196,7 +229,7 @@ Apache-2.0: see [`LICENSE`](LICENSE). The bundled fonts and icons keep their own
 
 ## More
 
-- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D21, with their reasoning.
+- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D25, with their reasoning.
 - **[`PLAN.md`](PLAN.md):** the living plan: status, what's next, open questions, and each milestone's work.
 - **[`docs/design-system.md`](docs/design-system.md):** the web UI's design system: tokens, layout, components, content and accessibility.
 - **[`docs/spikes/`](docs/spikes/):** the experiments behind the decisions, one write-up each.

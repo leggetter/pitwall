@@ -1,0 +1,263 @@
+// Where each PR is listed (place.ts, W105). Every repo, owner, path and PR here is made up.
+import { describe, expect, it } from 'vitest';
+import type { LocalRepo } from '../index/repos.js';
+import type { PullRequestList, PullRequestSummary, RootOwners } from '../shared/protocol.js';
+import { prNode } from '../test/prs.js';
+import { claimingRoot, cloneIndex, placeOf, placePullRequests, rootOwners, type OwnersByRoot } from './place.js';
+import { parsePullRequest } from './parse.js';
+
+const HOME = '/home/someone';
+const WORK = '/home/someone/work';
+const OSS = '/home/someone/oss';
+const ROOTS = [WORK, OSS];
+
+/** A clone, with its remotes as `name=owner/repo`. */
+const clone = (key: string, root: string, ...remotes: string[]): LocalRepo => ({
+  key,
+  root,
+  remotes: remotes.map((remote) => {
+    const [name = '', slug = ''] = remote.split('=');
+    return { name, slug };
+  }),
+});
+
+const pr = (repo: string, number = 1, overrides: Record<string, unknown> = {}): PullRequestSummary =>
+  parsePullRequest(prNode({ repo, number, ...overrides }))!;
+
+describe('rootOwners', () => {
+  it('without config, gives each owner to the root with the most clones of it, the first root on a tie', () => {
+    const repos = [
+      clone(`${WORK}/a`, WORK, 'origin=example-org/a'),
+      clone(`${WORK}/b`, WORK, 'origin=example-org/b'),
+      clone(`${WORK}/c`, WORK, 'origin=someone/c'),
+      clone(`${OSS}/d`, OSS, 'origin=someone/d'),
+      clone(`${OSS}/e`, OSS, 'origin=someone/e'),
+      clone(`${OSS}/f`, OSS, 'origin=example-org/f'),
+      // One each: the tie goes to the first root given.
+      clone(`${WORK}/g`, WORK, 'origin=example-tie/g'),
+      clone(`${OSS}/h`, OSS, 'origin=example-tie/h'),
+      // A clone counts once, for its origin's owner alone, whatever its other remotes name (W108).
+      clone(`${OSS}/i`, OSS, 'origin=example-fork/i', 'upstream=example-fork/i-old', 'up=example-up/i'),
+    ];
+    expect(rootOwners(ROOTS, repos)).toEqual<RootOwners[]>([
+      { root: WORK, owners: ['example-org', 'example-tie'], source: 'clones' },
+      { root: OSS, owners: ['example-fork', 'someone'], source: 'clones' },
+    ]);
+    expect(rootOwners([OSS, WORK], repos).find((r) => r.root === OSS)?.owners).toContain('example-tie');
+  });
+
+  it("counts only origin remotes: an upstream, or any other remote, pointing at a stranger's account never claims it (W108)", () => {
+    // The reviewer's probe: one clone whose upstream names someone's own public repo, which they
+    // could open a PR on that mentions you. Before, that was enough for the root to claim them.
+    const repos = [
+      clone(`${OSS}/tool`, OSS, 'origin=someone/tool', 'upstream=a-stranger/tool'),
+      clone(`${OSS}/lib`, OSS, 'fork=a-stranger/lib', 'mine=someone/lib'),
+      clone(`${OSS}/site`, OSS, 'upstream=a-stranger/site'),
+    ];
+    const owners = rootOwners(ROOTS, repos);
+    expect(owners).toEqual<RootOwners[]>([
+      { root: WORK, owners: [], source: 'clones' },
+      { root: OSS, owners: ['someone'], source: 'clones' },
+    ]);
+    expect(claimingRoot('a-stranger', owners)).toBeUndefined();
+    const stranger = pr('a-stranger/new-thing', 3);
+    expect(placeOf(stranger, cloneIndex(repos, ROOTS), owners, HOME)).toEqual({ kind: 'unclaimed' });
+    // A config list still names any owner.
+    const configured = rootOwners(ROOTS, repos, new Map([[OSS, ['a-stranger']]]));
+    expect(placeOf(stranger, cloneIndex(repos, ROOTS), configured, HOME)).toEqual({ kind: 'not-cloned', root: OSS });
+    // And a clone of the PR's own repo still places it, through any remote: it's on this machine already.
+    expect(placeOf(pr('a-stranger/site', 4), cloneIndex(repos, ROOTS), owners, HOME)).toMatchObject({ kind: 'cloned', key: `${OSS}/site` });
+  });
+
+  it('is every root, with no owners, when there are no clones, and leaves out clones under no root it was given', () => {
+    expect(rootOwners(ROOTS, [clone('/elsewhere/x', '/elsewhere', 'origin=example/x')])).toEqual([
+      { root: WORK, owners: [], source: 'clones' },
+      { root: OSS, owners: [], source: 'clones' },
+    ]);
+    expect(rootOwners([], [])).toEqual([]);
+  });
+
+  it("gives a configured root its config, lowercase and each once, and infers no owner a configured list names", () => {
+    const repos = [clone(`${OSS}/a`, OSS, 'origin=example-org/a'), clone(`${OSS}/b`, OSS, 'origin=someone/b')];
+    const config: OwnersByRoot = new Map([[WORK, ['Example-Org', 'example-org', 'not an owner', 'another-org']]]);
+    expect(rootOwners(ROOTS, repos, config)).toEqual<RootOwners[]>([
+      { root: WORK, owners: ['example-org', 'another-org'], source: 'config' },
+      { root: OSS, owners: ['someone'], source: 'clones' },
+    ]);
+  });
+
+  describe('with config: the most clones claims an owner unless its config says otherwise (W105’s review)', () => {
+    const A = '/home/someone/a';
+    const B = '/home/someone/b';
+    const C = '/home/someone/c';
+    const clones = (root: string, n: number, owner = 'example-x') => Array.from({ length: n }, (_, i) => clone(`${root}/${owner}-${i}`, root, `origin=${owner}/r${i}`));
+    /** Which root claims each owner. */
+    const claims = (roots: string[], repos: LocalRepo[], config: [string, string[] | 'all' | 'none'][], ...owners: string[]) => {
+      const each = rootOwners(roots, repos, new Map(config));
+      return owners.map((owner) => claimingRoot(owner, each));
+    };
+
+    it("gives an owner to the root configured 'all' with the most clones of it, not to an unconfigured one with fewer", () => {
+      const repos = [...clones(A, 10), ...clones(B, 1)];
+      expect(rootOwners([A, B], repos, new Map([[A, 'all']]))).toEqual<RootOwners[]>([
+        { root: A, owners: 'all', source: 'config' },
+        { root: B, owners: [], source: 'clones' },
+      ]);
+      expect(claims([A, B], repos, [[A, 'all']], 'example-x')).toEqual([A]);
+    });
+
+    it("passes it to the next root by clones when the one with the most is 'none' or a list that doesn't name it", () => {
+      const repos = [...clones(A, 10), ...clones(B, 1), ...clones(C, 3)];
+      const values: (string[] | 'none')[] = ['none', ['example-other']];
+      for (const value of values) {
+        const config: [string, string[] | 'all' | 'none'][] = [[A, value]];
+        expect(rootOwners([A, B, C], repos, new Map(config)).map((r) => r.owners)).toEqual([value, [], ['example-x']]);
+        expect(claims([A, B, C], repos, config, 'example-x')).toEqual([C]);
+      }
+    });
+
+    it("gives an owner a configured list names to that root, whatever the clones say, and no other root lists it", () => {
+      const repos = [...clones(A, 1), ...clones(B, 10)];
+      expect(rootOwners([A, B], repos, new Map([[A, ['Example-X']]]))).toEqual<RootOwners[]>([
+        { root: A, owners: ['example-x'], source: 'config' },
+        { root: B, owners: [], source: 'clones' },
+      ]);
+      expect(claims([A, B], repos, [[A, ['example-x']], [B, 'all']], 'example-x')).toEqual([A]);
+    });
+
+    it("falls back to the first root configured 'all' when no root with clones claims it, or no root has any", () => {
+      const repos = [...clones(A, 3), ...clones(B, 2)];
+      expect(claims([A, B, C], repos, [[A, 'none'], [B, ['example-other']], [C, 'all']], 'example-x', 'example-stranger')).toEqual([C, C]);
+      expect(claims([A, B], repos, [[A, 'none'], [B, ['example-other']]], 'example-x', 'example-stranger')).toEqual([undefined, undefined]);
+    });
+
+    it("breaks a tie by the order the roots were given, 'all' or not", () => {
+      const repos = [...clones(A, 2), ...clones(B, 2)];
+      expect(claims([A, B], repos, [[A, 'all']], 'example-x')).toEqual([A]);
+      expect(claims([B, A], repos, [[A, 'all']], 'example-x')).toEqual([B]);
+      expect(rootOwners([B, A], repos, new Map([[A, 'all']]))[0]?.owners).toEqual(['example-x']);
+    });
+
+    it('changes nothing for a configured root that is not one of the roots', () => {
+      const repos = [...clones(A, 2), ...clones(B, 1)];
+      expect(rootOwners([A, B], repos, new Map([['/home/someone/other', 'all']]))).toEqual(rootOwners([A, B], repos));
+    });
+  });
+});
+
+describe('claimingRoot', () => {
+  const owners: RootOwners[] = [
+    { root: '/a', owners: 'all', source: 'config' },
+    { root: '/b', owners: ['example-org'], source: 'clones' },
+    { root: '/c', owners: ['example-org', 'example-listed'], source: 'config' },
+    { root: '/d', owners: 'none', source: 'config' },
+    { root: '/e', owners: ['example-listed'], source: 'config' },
+  ];
+
+  it("is the first root whose configured list names the owner, else the one inferred for it, else the first 'all'", () => {
+    expect(claimingRoot('example-listed', owners)).toBe('/c');
+    expect(claimingRoot('Example-Org', owners)).toBe('/c');
+    expect(claimingRoot('example-org', owners.filter((r) => r.root !== '/c'))).toBe('/b');
+    expect(claimingRoot('anyone-else', owners)).toBe('/a');
+  });
+
+  it("is nothing when no root lists the owner and none is 'all': 'none' claims nothing", () => {
+    expect(claimingRoot('anyone-else', owners.filter((r) => r.owners !== 'all'))).toBeUndefined();
+    expect(claimingRoot('anyone', [])).toBeUndefined();
+  });
+});
+
+describe('placeOf', () => {
+  const owners = rootOwners(ROOTS, [clone(`${WORK}/x`, WORK, 'origin=example-org/x')], new Map([[OSS, ['someone']]]));
+  const place = (p: PullRequestSummary, repos: LocalRepo[]) => placeOf(p, cloneIndex(repos), owners, HOME);
+
+  it("is 'cloned' in a repo with any remote for the PR's repo, with its key, root and group label", () => {
+    const repos = [clone(`${WORK}/tools/demo-app`, WORK, 'origin=someone/demo-app-fork', 'upstream=example/demo-app')];
+    expect(place(pr('example/demo-app'), repos)).toEqual({ kind: 'cloned', root: WORK, key: `${WORK}/tools/demo-app`, label: 'tools/demo-app' });
+  });
+
+  it("is 'cloned' in a clone of the head's repo, a fork's, only when there's none of the PR's own", () => {
+    const fork = clone(`${OSS}/demo-app`, OSS, 'origin=someone/demo-app');
+    const head = { headRepository: { nameWithOwner: 'someone/demo-app' } };
+    expect(place(pr('example/demo-app', 1, head), [fork])).toMatchObject({ kind: 'cloned', key: `${OSS}/demo-app` });
+    const upstream = clone(`${WORK}/upstream-app`, WORK, 'origin=example/demo-app');
+    expect(place(pr('example/demo-app', 1, head), [fork, upstream])).toMatchObject({ kind: 'cloned', key: `${WORK}/upstream-app` });
+  });
+
+  it('with several clones, takes the one named like the repo, then the one whose origin it is, then the first by path', () => {
+    const named = clone(`${WORK}/zz/demo-app`, WORK, 'upstream=example/demo-app');
+    const origin = clone(`${WORK}/aa/old-name`, WORK, 'origin=example/demo-app');
+    const other = clone(`${WORK}/aa/another`, WORK, 'upstream=example/demo-app');
+    const both = clone(`${WORK}/zz/z/Demo-App`, WORK, 'origin=example/demo-app');
+    expect(place(pr('example/demo-app'), [other, origin, named])).toMatchObject({ key: named.key });
+    expect(place(pr('example/demo-app'), [other, origin, named, both])).toMatchObject({ key: both.key });
+    expect(place(pr('example/demo-app'), [other, origin])).toMatchObject({ key: origin.key });
+    expect(place(pr('example/demo-app'), [clone(`${WORK}/b`, WORK, 'up=example/demo-app'), other])).toMatchObject({ key: other.key });
+  });
+
+  it('with clones alike under two roots, takes the one under the first root given, then the first by path', () => {
+    const inOss = clone(`${OSS}/a/demo-app`, OSS, 'origin=example/demo-app');
+    const inWork = clone(`${WORK}/z/demo-app`, WORK, 'origin=example/demo-app');
+    expect(placeOf(pr('example/demo-app'), cloneIndex([inOss, inWork], [WORK, OSS]), owners, HOME)).toMatchObject({ key: inWork.key });
+    expect(placeOf(pr('example/demo-app'), cloneIndex([inOss, inWork], [OSS, WORK]), owners, HOME)).toMatchObject({ key: inOss.key });
+    const second = clone(`${WORK}/a/demo-app`, WORK, 'origin=example/demo-app');
+    expect(placeOf(pr('example/demo-app'), cloneIndex([inOss, inWork, second], [WORK, OSS]), owners, HOME)).toMatchObject({ key: second.key });
+    // A better rank still wins over the root's order.
+    const named = clone(`${OSS}/b/demo-app`, OSS, 'origin=example/demo-app');
+    const unnamed = clone(`${WORK}/old-name`, WORK, 'origin=example/demo-app');
+    expect(placeOf(pr('example/demo-app'), cloneIndex([named, unnamed], [WORK, OSS]), owners, HOME)).toMatchObject({ key: named.key });
+  });
+
+  it("labels a clone outside its root as grouping.ts does, with the home directory as ~", () => {
+    expect(place(pr('example/demo-app'), [clone('/home/someone/elsewhere/demo-app', WORK, 'origin=example/demo-app')])).toMatchObject({
+      root: WORK,
+      label: '~/elsewhere/demo-app',
+    });
+  });
+
+  it("is 'not-cloned' with the root that claims the owner, and 'unclaimed' when none does", () => {
+    expect(place(pr('example-org/y'), [])).toEqual({ kind: 'not-cloned', root: WORK });
+    expect(place(pr('someone/z'), [])).toEqual({ kind: 'not-cloned', root: OSS });
+    expect(place(pr('stranger/z'), [])).toEqual({ kind: 'unclaimed' });
+    // The head's owner doesn't claim it.
+    expect(place(pr('stranger/z', 1, { headRepository: { nameWithOwner: 'someone/z' } }), [])).toEqual({ kind: 'unclaimed' });
+  });
+
+  it("is 'cloned' whatever its root's owners say: a root configured 'none' still lists its clones' PRs", () => {
+    const none = rootOwners(ROOTS, [], new Map([[WORK, 'none'], [OSS, 'none']]));
+    expect(placeOf(pr('stranger/z'), cloneIndex([clone(`${WORK}/z`, WORK, 'origin=stranger/z')]), none, HOME)).toMatchObject({ kind: 'cloned', root: WORK });
+  });
+});
+
+describe('placePullRequests', () => {
+  const list = (prs: PullRequestSummary[]): PullRequestList => ({ fetchedAt: '2026-10-29T12:00:00.000Z', source: { ok: true }, refreshing: false, prs });
+
+  it('places every PR, as copies, and adds the roots’ owners, leaving the rest as it was', () => {
+    const prs = [pr('example/demo-app', 1), pr('example/other', 2), pr('stranger/x', 3)];
+    const given = list(prs);
+    const placed = placePullRequests(given, ROOTS, [clone(`${WORK}/demo-app`, WORK, 'origin=example/demo-app')], undefined, HOME);
+    expect(placed).toEqual({
+      ...given,
+      prs: [
+        { ...prs[0], place: { kind: 'cloned', root: WORK, key: `${WORK}/demo-app`, label: 'demo-app' } },
+        { ...prs[1], place: { kind: 'not-cloned', root: WORK } },
+        { ...prs[2], place: { kind: 'unclaimed' } },
+      ],
+      roots: [
+        { root: WORK, owners: ['example'], source: 'clones' },
+        { root: OSS, owners: [], source: 'clones' },
+      ],
+    });
+    expect(given.prs[0]).not.toHaveProperty('place');
+    expect(given).not.toHaveProperty('roots');
+  });
+
+  it('places with no roots and no repos too: each PR unclaimed', () => {
+    expect(placePullRequests(list([pr('example/demo-app')]), [], [], undefined, HOME)).toMatchObject({ prs: [{ place: { kind: 'unclaimed' } }], roots: [] });
+  });
+
+  it("returns the 'off' list as it is", () => {
+    const off: PullRequestList = { source: { ok: false, reason: 'off', error: 'off' }, refreshing: false, prs: [] };
+    expect(placePullRequests(off, ROOTS, [], undefined, HOME)).toBe(off);
+  });
+});

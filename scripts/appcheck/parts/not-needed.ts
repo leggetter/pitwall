@@ -42,7 +42,9 @@ const part: Part = {
     };
 
     await t.step("each row that needs you has a Not needed now toggle, at the end of line 2, under the star, not pressed; a row that needs nothing has none", async () => {
-      await t.fresh({ search: '?view=all' });
+      // Pull requests off, so this part checks W88's marks alone: a session that needs you through a PR
+      // it owns stays in Needs you whatever its mark says (W106), which the prs part checks.
+      await t.fresh({ search: '?view=all', prs: 'off' });
       for (const name of NEEDING) {
         const state = await page.evaluate<{ pressed: string | null; last: boolean; under: number } | null>(
           `(() => {
@@ -141,7 +143,7 @@ const part: Part = {
     });
 
     await t.step('a mark lasts through a reload', async () => {
-      await t.fresh({ search: '?view=needs-you' });
+      await t.fresh({ search: '?view=needs-you', prs: 'off' });
       await page.click(`the toggle on ${NAMES.waiting}`, toggle(NAMES.waiting));
       await page.waitFor('the row to leave', `${rowNames}.length === 2`);
       await page.reload();

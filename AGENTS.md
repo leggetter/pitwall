@@ -12,7 +12,9 @@ Read `PLAN.md` first. It says what exists, what's next and which decisions are s
 
 M1, the read-only index, M2, interacting with sessions from the web UI, M3, the design system and restyle, and M3.1, the work after M3, are merged into `main` ([PR #6](https://github.com/leggetter/pitwall/pull/6), [PR #19](https://github.com/leggetter/pitwall/pull/19), [PR #51](https://github.com/leggetter/pitwall/pull/51), [PR #87](https://github.com/leggetter/pitwall/pull/87)).
 
-M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitwall/pull/69) to [PR #86](https://github.com/leggetter/pitwall/pull/86)) and merged on 2026-10-28, after W85's security review approved it. End session for interactive sessions (spike 005) is built as W90, in review in [PR #93](https://github.com/leggetter/pitwall/pull/93), and W85's non-blocking findings were W87. Next is M4, Phil's open pull requests. See "M3.1 work breakdown" in `PLAN.md` and `docs/design-system.md`.
+M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitwall/pull/69) to [PR #86](https://github.com/leggetter/pitwall/pull/86)) and merged on 2026-10-28, after W85's security review approved it. End session for interactive sessions (spike 005) merged into `main` as W90 in [PR #93](https://github.com/leggetter/pitwall/pull/93), and W85's non-blocking findings were W87.
+
+M4, Phil's open pull requests, is being built on `m4/integration`, which merges into `main` with Phil's approval. See "M4 - My open pull requests" and "M4 work breakdown" in `PLAN.md`, and `docs/design-system.md`.
 
 ## Rules
 
@@ -42,8 +44,10 @@ npm run dev -- [root...] rebuild the web UI and restart the server on change. Us
 npm run typecheck        server (tsconfig.json) and web UI (web/tsconfig.json)
 npm test                 vitest run: src/**/*.test.ts and web/**/*.test.tsx
 npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <seconds>` sets the poll (default 5),
-                         `--port <n>` the port (default 4517, or a free one if it's busy), and
-                         `--no-open` leaves the browser alone
+                         `--port <n>` the port (default 4517, or a free one if it's busy),
+                         `--no-open` leaves the browser alone, `--no-prs` turns off your open
+                         pull requests, so pitwall never runs gh, and `--config <path>` reads that
+                         config file instead of ~/.pitwall/config.json (README's Configuration)
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
                          (scripts/appcheck/README.md); --list, --only <part>, --widths, --themes, --ports
 npm run appcheck:install-shell    once on macOS: the pinned chrome-headless-shell it runs in
@@ -56,17 +60,23 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 ```
 PLAN.md                  the living plan: status, decisions, milestones
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
-docs/decisions.md        settled decisions, D1 to D22, with their reasoning
+docs/decisions.md        settled decisions, D1 to D25, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
 src/shared/protocol.ts   the contract between the index, the server and the web UI
 src/index/               the session index. Entry point index.ts: startIndexer()
 src/server/              the local HTTP and WebSocket server. Entry point index.ts: startServer()
+src/prs/                 your open pull requests (M4): three gh api graphql searches, in pages of 25, yours,
+                         those that ask your review and those that mention you (W101), read defensively,
+                         on its own poller, each PR placed under its repo or root (W105, place.ts).
+                         Entry point index.ts: createPrPoller(), prsOff() for --no-prs
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
-src/test/                test helpers shared across test files, such as the v3 proof, and noClaude.ts,
-                         which fails any server test that would run `claude` without PITWALL_LIVE=1, or
-                         open an editor at all; not built
+src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
+                         the roots and each root's GitHub owners, ownersByRoot() for the PR side
+src/test/                test helpers shared across test files, such as the v3 proof, made-up PRs, and
+                         noClaude.ts, which fails any server test that would run `claude` or `gh` without
+                         PITWALL_LIVE=1, or open an editor at all; not built
 web/                     the React web UI, built by Vite to dist/web
 web/public/theme-init.js sets the theme before first paint (a same-origin script, for the CSP)
 web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out

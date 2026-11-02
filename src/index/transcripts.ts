@@ -450,6 +450,7 @@ export function applyLine(fields: Fields, line: string): void {
   if (
     !line.includes('"user"') &&
     !line.includes('"assistant"') &&
+    !line.includes('"queued_command"') &&
     !line.includes('"ai-title"') &&
     !line.includes('"custom-title"') &&
     !line.includes('"agent-name"') &&
@@ -469,6 +470,12 @@ export function applyLine(fields: Fields, line: string): void {
 
 export function applyEntry(fields: Fields, entry: unknown): void {
   if (!isRecord(entry)) return;
+  if (entry.type === 'attachment') {
+    // What arrived mid-turn counts as the user entry it stands for (W99): a prompt typed then is a prompt.
+    const queued = queuedEntryOf(entry);
+    if (queued !== undefined) applyEntry(fields, queued);
+    return;
+  }
   const type = entry.type;
   if (type === 'ai-title') {
     // No timestamp, and not activity: Claude Code writes these on its own.
@@ -489,7 +496,7 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   }
   if (type === 'system') {
     // Claude Code writes it when a turn ends, after the turn's last entry (spike 007, finding 4). Not activity.
-    if (entry.subtype === 'turn_duration' && entry.isSidechain !== true) fields.turnEnded = true;
+    if (turnSignalOf(entry) === 'ended') fields.turnEnded = true;
     return;
   }
   if (type !== 'user' && type !== 'assistant') return;
@@ -508,7 +515,7 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if (type === 'assistant') {
     // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
     // sub-agent's, which can run on after the main turn has ended.
-    if (fields.turnEnded !== undefined && entry.isSidechain !== true) fields.turnEnded = false;
+    if (fields.turnEnded !== undefined && turnSignalOf(entry) === 'running') fields.turnEnded = false;
     const text = assistantTextOf(entry);
     if (text === undefined) return;
     const sameMessage =
@@ -527,8 +534,10 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   }
   // Only a prompt or a tool's result means a turn is running again. A meta entry, a local command such
   // as /model and its output, or a manual /compact's summary come with no turn and no turn_duration
-  // after them, so they leave the last turn's end, and the question it asked, as they were.
-  if (fields.turnEnded !== undefined && (prompt !== undefined || isToolResult(entry))) fields.turnEnded = false;
+  // after them, so they leave the last turn's end, and the question it asked, as they were. So does a
+  // message or a task notification that arrived ('arrived'): one isn't always followed by a turn, and
+  // a question should stay in Needs you until one runs (W102 reads it the other way, turnSignalOf()).
+  if (fields.turnEnded !== undefined && turnSignalOf(entry) === 'running') fields.turnEnded = false;
   if ((prompt !== undefined || typed) && at !== undefined && (fields.lastPromptMs === undefined || at > fields.lastPromptMs)) {
     fields.lastPromptMs = at;
   }
@@ -590,6 +599,8 @@ export function titleText(text: string): string {
 }
 
 const CROSS_SESSION_PREFIX = 'Another Claude session sent a message:';
+/** The tags a message from another session is wrapped in: the older one, and newer versions' (W99). */
+const CROSS_SESSION_TAGS = ['cross-session-message', 'agent-message'] as const;
 
 /**
  * Text that starts with one of these is written by Claude Code, not typed as a
@@ -610,13 +621,25 @@ const NOT_A_PROMPT_PREFIXES = [
 ];
 
 /**
- * A user entry's prompt, or undefined when the entry isn't one the user typed:
- * meta entries (including cross-session messages), compact summaries,
- * sidechains, tool results, entries whose `origin.kind` marks them as from
- * another session or a task notification, and Claude Code's own wrappers.
- * `<system-reminder>` blocks are stripped first.
+ * A user entry's prompt, truncated to USER_PROMPT_MAX characters, or undefined
+ * when the entry isn't one the user typed, by promptTextOf()'s rule.
  */
 export function userPromptOf(entry: Record<string, unknown>): string | undefined {
+  const text = promptTextOf(entry);
+  return text === undefined ? undefined : truncate(text, USER_PROMPT_MAX);
+}
+
+/**
+ * A user entry's prompt, whole and trimmed, or undefined when the entry isn't
+ * one the user typed: meta entries (including cross-session messages), compact
+ * summaries, sidechains, tool results, entries whose `origin.kind` marks them
+ * as from another session or a task notification, and Claude Code's own
+ * wrappers. `<system-reminder>` blocks are stripped first. The rule behind
+ * lastUserPrompt, and behind the 'prompted' PR links (prLinks.ts, W94). A
+ * prompt typed mid-turn is read from the user entry its attachment stands for
+ * (queuedEntryOf(), W99).
+ */
+export function promptTextOf(entry: Record<string, unknown>): string | undefined {
   if (entry.isMeta === true || entry.isCompactSummary === true || entry.isSidechain === true) return undefined;
   const origin = entry.origin;
   if (isRecord(origin) && (origin.kind === 'peer' || origin.kind === 'task-notification')) return undefined;
@@ -629,9 +652,98 @@ export function userPromptOf(entry: Record<string, unknown>): string | undefined
   const raw = textOf(content);
   if (raw === undefined) return undefined;
   const text = stripSystemReminders(raw).trim();
-  if (text === '' || text.includes('<cross-session-message')) return undefined;
+  if (text === '' || CROSS_SESSION_TAGS.some((tag) => text.includes(`<${tag}`))) return undefined;
   if (NOT_A_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix))) return undefined;
-  return truncate(text, USER_PROMPT_MAX);
+  return text;
+}
+
+/** The modes of a `queued_command` attachment that stand for a user entry: a prompt, or a task notification. */
+const QUEUED_MODES = new Set(['prompt', 'task-notification']);
+/** The origins of one that stand for a user entry: a prompt the user typed, a message from a peer, a task notification. */
+const QUEUED_KINDS = new Set(['human', 'peer', 'task-notification']);
+
+/**
+ * The user entry a `queued_command` attachment stands for, or undefined for any other entry (W99).
+ * Claude Code (v2.1.312) writes one, and no user entry, for what arrives while a session is mid-turn:
+ * a prompt the user typed meanwhile (`origin.kind: "human"`), a message from another session or a
+ * sub-agent's report (`peer`), a task notification (`task-notification`, or no `origin` in older
+ * versions) and, in a sub-agent's transcript, a message from the session that started it
+ * (`coordinator`, meta). Its `prompt` is the user entry's content, a string or text and image blocks,
+ * and its `origin` and `isMeta` are the user entry's, so read as one it becomes what that would: the
+ * readers' own rules then say whether it's a prompt, a message or a notice. Only text and image
+ * blocks are kept, so it's never a tool's result.
+ *
+ * The attachment has no `Another Claude session sent a message:` line, the user entry's second sign
+ * that a message isn't the user's, so its origin has to say what it is: only `human`, `peer` and
+ * `task-notification` are read, and with no origin only `commandMode: "task-notification"`, which then
+ * reads as one. Anything else gives undefined: a `coordinator` message, shown in neither form; an
+ * origin that isn't a record or is of an unknown kind; a prompt with no origin. `commandMode` is
+ * `prompt` or `task-notification`, or absent, as on the coordinator's, peers' and meta prompts in
+ * sub-agents' transcripts; another, unseen so far, gives undefined too: a shell command's, say,
+ * wouldn't read as typed. Meta on the attachment or on the entry. Internal and undocumented.
+ */
+export function queuedEntryOf(entry: Record<string, unknown>): Record<string, unknown> | undefined {
+  const attachment = entry.attachment;
+  if (entry.type !== 'attachment' || !isRecord(attachment) || attachment.type !== 'queued_command') return undefined;
+  const mode = attachment.commandMode;
+  if (mode !== undefined && !(typeof mode === 'string' && QUEUED_MODES.has(mode))) return undefined;
+  const origin = attachment.origin;
+  if (origin === undefined ? mode !== 'task-notification' : !isRecord(origin) || typeof origin.kind !== 'string' || !QUEUED_KINDS.has(origin.kind)) return undefined;
+  const prompt = attachment.prompt;
+  const content =
+    typeof prompt === 'string' ? prompt : Array.isArray(prompt) ? prompt.filter((block) => isRecord(block) && (block.type === 'text' || block.type === 'image')) : undefined;
+  if (content === undefined) return undefined;
+  const user: Record<string, unknown> = { type: 'user', message: { role: 'user', content }, origin: origin ?? { kind: 'task-notification' } };
+  for (const key of ['timestamp', 'isSidechain', 'sessionKind'] as const) if (entry[key] !== undefined) user[key] = entry[key];
+  if (attachment.isMeta === true || entry.isMeta === true) user.isMeta = true;
+  return user;
+}
+
+/**
+ * What an entry says of the session's turn: one rule for W69's turn's end (applyEntry(), for askedYou
+ * and End session's turnState) and the conversation page's (ConversationPage.turnEnded, W102). Never
+ * for a sidechain's entry, a sub-agent's, which can run on after the main turn has ended.
+ * - 'ended': Claude Code's mark that a turn ended, a `system` entry of subtype `turn_duration`
+ *   (spike 007, finding 4).
+ * - 'running': an entry that runs a turn: any assistant entry, a thinking block's alone included; a
+ *   prompt you typed (promptTextOf()), mid-turn ones included (W99); a tool's result.
+ * - 'arrived': a message from another session or a sub-agent, or a task notification. Claude Code
+ *   starts a turn for most that come between turns (the W102 review: 428 of 438 task notifications
+ *   after a turn's end), but not all. The working line reads it as running, since Claude Code's own
+ *   status says first whether it works; W69 leaves the turn's end as it was, so a question asked
+ *   stays in Needs you, and End session's check reads the session as idle until Claude's first entry,
+ *   a few seconds later.
+ * Undefined for anything else: a meta entry, a local command and its output, a compaction, a slash
+ * command's wrapper, other system entries and attachments.
+ */
+export type TurnSignal = 'ended' | 'running' | 'arrived';
+
+export function turnSignalOf(entry: Record<string, unknown>): TurnSignal | undefined {
+  if (entry.isSidechain === true) return undefined;
+  if (entry.type === 'attachment') {
+    // What arrived mid-turn, as the user entry it stands for (W99).
+    const queued = queuedEntryOf(entry);
+    return queued === undefined ? undefined : turnSignalOf(queued);
+  }
+  if (entry.type === 'system') return entry.subtype === 'turn_duration' ? 'ended' : undefined;
+  if (entry.type === 'assistant') return 'running';
+  if (entry.type !== 'user') return undefined;
+  if (isToolResult(entry) || promptTextOf(entry) !== undefined) return 'running';
+  return arrived(entry) ? 'arrived' : undefined;
+}
+
+/** The longest text read to tell what arrived: the markers are at its start. */
+const ARRIVED_READ_MAX = 4 * 1024;
+
+/** A user entry that's a message from another session or a sub-agent, or a task notification, by its origin or how it starts. */
+function arrived(entry: Record<string, unknown>): boolean {
+  const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
+  if (origin === 'peer' || origin === 'task-notification') return true;
+  const message = entry.message;
+  const raw = isRecord(message) ? textOf(message.content) : undefined;
+  if (raw === undefined) return false;
+  const text = stripSystemReminders(cap(raw, ARRIVED_READ_MAX)).trim();
+  return text.startsWith(CROSS_SESSION_PREFIX) || text.startsWith('<task-notification>') || CROSS_SESSION_TAGS.some((tag) => text.startsWith(`<${tag}`));
 }
 
 /** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */

@@ -3,7 +3,9 @@ import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile }
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PR_LINKS_MAX, PR_LINKS_STRONG_MAX } from '../shared/protocol.js';
 import { RunError, type RunFile } from './exec.js';
+import { addLink, newestLinks, toPrLink, type FoundLink } from './prLinks.js';
 import { createWorkedInScanner, type ScannerFs, type WorkedInScanner, type WorkedInScannerOptions } from './workedIn.js';
 
 // Every transcript, path and repo here is made up.
@@ -520,6 +522,432 @@ describe('createWorkedInScanner', () => {
       s.track([{ sessionId: 'second', file: other, startKey: repo('app') }, { sessionId: SESSION, file: main, startKey: repo('app') }], [code]);
       await s.settled();
       expect(opened).toEqual([path.basename(main), path.basename(other)]);
+    });
+  });
+
+  describe('PR links (W94)', () => {
+    const APP = 'https://github.com/example/demo-app';
+    const API = 'https://github.com/example/demo-api';
+    const time = (minute: number) => new Date(AT + minute * 60_000).toISOString();
+    const subagents = () => path.join(projects, SESSION, 'subagents');
+    let next = 0;
+
+    /** A tool call, as Claude Code writes one, and its id. */
+    function use(name: string, input: unknown, minute: number, extra: Record<string, unknown> = {}): { line: string; id: string } {
+      const id = `toolu_made_up_${++next}`;
+      const entry = { type: 'assistant', timestamp: time(minute), cwd: repo('app'), ...extra, message: { id: `msg_${next}`, content: [{ type: 'tool_use', id, name, input }] } };
+      return { id, line: `${JSON.stringify(entry)}\n` };
+    }
+    /** A tool's result, on its own line, as Claude Code writes them. */
+    function result(id: string, content: unknown, minute: number, options: { error?: boolean; extra?: Record<string, unknown> } = {}): string {
+      const block = { tool_use_id: id, type: 'tool_result', content, ...(options.error === undefined ? {} : { is_error: options.error }) };
+      return `${JSON.stringify({ type: 'user', timestamp: time(minute), ...options.extra, message: { role: 'user', content: [block] } })}\n`;
+    }
+    /** A Bash call and its result a minute later. */
+    function ran(command: string, output: string, minute: number, options: { error?: boolean; extra?: Record<string, unknown> } = {}): string {
+      const { id, line } = use('Bash', { command }, minute, options.extra);
+      return line + result(id, output, minute + 1, options);
+    }
+    /** Claude's text, on its own line. */
+    const said = (text: string, minute: number, extra: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ type: 'assistant', timestamp: time(minute), ...extra, message: { id: `msg_said_${++next}`, content: [{ type: 'text', text }] } })}\n`;
+    /** Claude's text and a tool call on one line, as the API returns a message. */
+    const saidAndUsed = (text: string, minute: number, extra: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ type: 'assistant', timestamp: time(minute), cwd: repo('app'), ...extra, message: { id: `msg_both_${++next}`, content: [{ type: 'text', text }, { type: 'tool_use', id: `toolu_both_${next}`, name: 'Read', input: { file_path: path.join(repo('app'), 'a.ts') } }] } })}\n`;
+    /** A prompt you typed. */
+    const typed = (content: unknown, minute: number, extra: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ type: 'user', timestamp: time(minute), promptSource: 'typed', ...extra, message: { role: 'user', content } })}\n`;
+
+    const ghCreated = (n: number, repoUrl = APP) => `Creating pull request for feature/one into main in example/demo-app\n\n${repoUrl}/pull/${n}\n`;
+    const pushedNew = (branch: string, remote = `${APP}.git`) =>
+      ['remote: ', `remote: Create a pull request for '${branch}' on GitHub by visiting:`, `remote:      ${APP}/pull/new/${branch}`, 'remote: ', `To ${remote}`, ` * [new branch]      ${branch} -> ${branch}`, ''].join('\n');
+
+    async function links(s: WorkedInScanner = start({ run: fakeGit().run })) {
+      s.track([{ sessionId: SESSION, file: main, startKey: repo('app') }], [code]);
+      await s.settled();
+      return s.prLinks(SESSION);
+    }
+
+    it('opened: the URL gh pr create printed, and the first a GitHub MCP create_pull_request tool returned', async () => {
+      const mcp = use('mcp__github__create_pull_request', { owner: 'example', repo: 'demo-api', title: 't', head: 'feature/two', base: 'main' }, 3);
+      const rest = { url: 'https://api.github.com/repos/example/demo-api/pulls/7', html_url: `${API}/pull/7`, body: `Follows ${API}/pull/6` };
+      await writeFile(main, ran('gh pr create --title "A made-up title" --body b', ghCreated(12), 1) + mcp.line + result(mcp.id, [{ type: 'text', text: JSON.stringify(rest) }], 4));
+      expect(await links()).toEqual([
+        { kind: 'opened', repo: 'example/demo-api', number: 7, lastAt: time(4) },
+        { kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(2) },
+      ]);
+    });
+
+    it('pushed: each branch a git push pushed, under the GitHub repo its To line names, with gh pr create in the same command', async () => {
+      const both = `${pushedNew('feature/one')}\n${APP}/pull/12\n`;
+      const twoRemotes = ['To github.com:example/demo-app.git', '   1a2b3c4..5d6e7f8  main -> main', `To git@github.com:example/demo-api.git`, ' + 1a2b3c4...5d6e7f8 feature/two -> feature/two (forced update)', ''].join('\n');
+      await writeFile(main, ran('git push -u origin feature/one && gh pr create --fill', both, 1) + ran('git push origin main && git push upstream +feature/two', twoRemotes, 5));
+      expect(await links()).toEqual([
+        { kind: 'pushed', repo: 'example/demo-api', branch: 'feature/two', lastAt: time(6) },
+        { kind: 'pushed', repo: 'example/demo-app', branch: 'main', lastAt: time(6) },
+        { kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(2) },
+        { kind: 'pushed', repo: 'example/demo-app', branch: 'feature/one', lastAt: time(2) },
+      ]);
+    });
+
+    it('pushed: none for rejected, deleted or up-to-date refs, tags, or a remote that is not GitHub', async () => {
+      const output = [`To ${APP}.git`, ' ! [rejected]        main -> main (fetch first)', ' - [deleted]         feature/old', ' = [up to date]      feature/two -> feature/two', ' * [new tag]         v1 -> v1', 'To gitlab.com:example/demo-app.git', ' * [new branch]      feature/x -> feature/x', ''].join('\n');
+      await writeFile(main, ran('git push --all; git push --tags; true', output, 1) + ran('git push', 'Everything up-to-date\n', 3));
+      expect(await links()).toEqual([]);
+    });
+
+    it('prompted: a PR URL in a prompt you typed, as a string or text blocks, system reminders aside', async () => {
+      await writeFile(
+        main,
+        typed(`please review ${APP}/pull/12/files and https://github.com/Example/Demo-API/pull/3#discussion_r1`, 1) +
+          typed([{ type: 'text', text: `<system-reminder>${APP}/pull/99</system-reminder>\nnow ${APP}/pull/13` }], 2),
+      );
+      expect(await links()).toEqual([
+        { kind: 'prompted', repo: 'example/demo-app', number: 13, lastAt: time(2) },
+        { kind: 'prompted', repo: 'example/demo-api', number: 3, lastAt: time(1) },
+        { kind: 'prompted', repo: 'example/demo-app', number: 12, lastAt: time(1) },
+      ]);
+    });
+
+    it('prompted: not from messages from other sessions, meta lines, task notices, compact summaries or command output', async () => {
+      await writeFile(
+        main,
+        [
+          typed(`Another Claude session sent a message:\n${APP}/pull/1`, 1),
+          typed(`<cross-session-message from="made-up">${APP}/pull/2</cross-session-message>`, 1),
+          typed(`${APP}/pull/3`, 1, { origin: { kind: 'peer' } }),
+          typed(`${APP}/pull/4`, 1, { isMeta: true }),
+          typed(`<task-notification>${APP}/pull/5</task-notification>`, 1),
+          typed(`${APP}/pull/6`, 1, { isCompactSummary: true }),
+          typed(`<bash-stdout>${APP}/pull/7</bash-stdout>`, 1),
+          typed(`<local-command-stdout>${APP}/pull/8</local-command-stdout>`, 1),
+        ].join(''),
+      );
+      expect(await links()).toEqual([]);
+    });
+
+    it('prompted: a PR URL in a prompt you typed while Claude worked, not in a message or task notice that arrived then (W99)', async () => {
+      /** What arrived mid-turn: a queued_command attachment, with no user entry. */
+      const queued = (prompt: unknown, minute: number, attachment: Record<string, unknown>) =>
+        `${JSON.stringify({ type: 'attachment', timestamp: time(minute), attachment: { type: 'queued_command', prompt, commandMode: 'prompt', ...attachment } })}\n`;
+      await writeFile(
+        main,
+        [
+          queued(`also look at ${APP}/pull/14`, 1, { origin: { kind: 'human' }, humanTurn: true }),
+          queued([{ type: 'text', text: `and ${API}/pull/4` }, { type: 'image', source: {} }], 2, { origin: { kind: 'human' } }),
+          queued(`<cross-session-message from="uds:/tmp/made-up.sock">${APP}/pull/1</cross-session-message>`, 3, { isMeta: true, origin: { kind: 'peer' } }),
+          queued(`<task-notification>${APP}/pull/2</task-notification>`, 3, { commandMode: 'task-notification', origin: { kind: 'task-notification' } }),
+          queued(`${APP}/pull/3`, 3, { commandMode: 'bash', origin: { kind: 'human' } }),
+          // Nothing whose origin doesn't say a human typed it, and no wrapped message even when it does.
+          queued(`${APP}/pull/5`, 3, {}),
+          queued(`${APP}/pull/6`, 3, { origin: 'human' }),
+          queued(`${APP}/pull/7`, 3, { origin: { kind: 'made-up-kind' } }),
+          queued(`${APP}/pull/8`, 3, { origin: { kind: 'coordinator' }, commandMode: undefined }),
+          `${JSON.stringify({ type: 'attachment', isMeta: true, timestamp: time(3), attachment: { type: 'queued_command', prompt: `${APP}/pull/9`, commandMode: 'prompt', origin: { kind: 'human' } } })}\n`,
+          queued(`<agent-message from="a1b2c3">${APP}/pull/10</agent-message>`, 3, { origin: { kind: 'human' } }),
+          queued(`<cross-session-message from="x">${APP}/pull/11</cross-session-message>`, 3, { origin: { kind: 'human' } }),
+        ].join(''),
+      );
+      expect(await links()).toEqual([
+        { kind: 'prompted', repo: 'example/demo-api', number: 4, lastAt: time(2) },
+        { kind: 'prompted', repo: 'example/demo-app', number: 14, lastAt: time(1) },
+      ]);
+    });
+
+    it("mentioned: a PR URL in Claude's own text, newest of each, not in its thinking or tool input", async () => {
+      const view = use('Bash', { command: `gh pr view ${APP}/pull/20` }, 3);
+      const thinking = `${JSON.stringify({ type: 'assistant', timestamp: time(4), message: { id: 'm-think', content: [{ type: 'thinking', thinking: `${APP}/pull/21` }] } })}\n`;
+      await writeFile(main, said(`Opened [#12](${APP}/pull/12).`, 1) + said(`${APP}/pull/12 is green now`, 5) + view.line + thinking + said('No links here.', 6) + saidAndUsed(`Reading ${API}/pull/2`, 7));
+      expect(await links()).toEqual([
+        { kind: 'mentioned', repo: 'example/demo-api', number: 2, lastAt: time(7) },
+        { kind: 'mentioned', repo: 'example/demo-app', number: 12, lastAt: time(5) },
+      ]);
+    });
+
+    it('counts no PR URL in tool output: gh pr list, a file read, git push’s remote lines, or a sub-agent’s report', async () => {
+      const read = use('Read', { file_path: path.join(repo('app'), 'NOTES.md') }, 3);
+      const agent = use('Agent', { description: 'made-up', prompt: `look at ${APP}/pull/30` }, 5);
+      const existing = [`remote: View pull request for feature/one => ${APP}/pull/31`, `To ${APP}.git`, '   1a2b3c4..5d6e7f8  feature/one -> feature/one', ''].join('\n');
+      await writeFile(
+        main,
+        ran('gh pr list', `${APP}/pull/1\n${APP}/pull/2\n`, 1) +
+          read.line +
+          result(read.id, `see ${APP}/pull/3\n${APP}/pull/4`, 4) +
+          agent.line +
+          result(agent.id, [{ type: 'text', text: `Done: ${APP}/pull/32` }], 6) +
+          ran('git push', existing, 7),
+      );
+      expect(await links()).toEqual([{ kind: 'pushed', repo: 'example/demo-app', branch: 'feature/one', lastAt: time(8) }]);
+    });
+
+    it("opens nothing from a failed result, nor from a call whose result never came, but takes a failed push's accepted refs", async () => {
+      const exists = `a pull request for branch "feature/one" into branch "main" already exists:\n${APP}/pull/12\n`;
+      const mcp = use('mcp__github__create_pull_request', { owner: 'example', repo: 'demo-app' }, 5);
+      const interrupted = use('Bash', { command: 'gh pr create --fill' }, 7);
+      const rejected = [`To ${APP}.git`, ' ! [rejected]        main -> main (fetch first)', ' ! [rejected]        feature/two -> feature/two (atomic push failed)', "error: failed to push some refs to 'https://github.com/example/demo-app.git'", ''].join('\n');
+      await writeFile(
+        main,
+        // The push went through and gh failed, as the PR already exists: pushed, not opened.
+        ran('git push -u origin feature/one && gh pr create --fill', `Exit code 1\n${pushedNew('feature/one')}${exists}`, 1, { error: true }) +
+          // The push went through and the tests after it failed.
+          ran('git push origin feature/three && npm test', `Exit code 1\n${pushedNew('feature/three')}made-up test failure\n`, 3, { error: true }) +
+          ran('git push --atomic origin main feature/two', `Exit code 1\n${rejected}`, 11, { error: true }) +
+          mcp.line +
+          result(mcp.id, [{ type: 'text', text: `${APP}/pull/13` }], 6, { error: true }) +
+          interrupted.line +
+          result(interrupted.id, '[Request interrupted by user for tool use]', 8, { error: true }) +
+          use('Bash', { command: 'gh pr create --fill' }, 9).line +
+          typed('a made-up prompt', 10),
+      );
+      expect(await links()).toEqual([
+        { kind: 'pushed', repo: 'example/demo-app', branch: 'feature/three', lastAt: time(4) },
+        { kind: 'pushed', repo: 'example/demo-app', branch: 'feature/one', lastAt: time(2) },
+      ]);
+    });
+
+    it('drops a link with no time, but gives a result without one its call’s time', async () => {
+      const create = use('Bash', { command: 'gh pr create --fill' }, 1);
+      const untimed = use('Bash', { command: 'gh pr create --fill' }, 3);
+      const noTime = (line: string) => `${JSON.stringify({ ...JSON.parse(line), timestamp: undefined })}\n`;
+      await writeFile(
+        main,
+        noTime(typed(`${APP}/pull/5`, 0)) +
+          `${JSON.stringify({ type: 'assistant', timestamp: 'not a time', message: { id: 'm-untimed', content: [{ type: 'text', text: `${APP}/pull/6` }] } })}\n` +
+          create.line +
+          noTime(result(create.id, ghCreated(12), 2)) +
+          noTime(untimed.line) +
+          noTime(result(untimed.id, ghCreated(13), 4)),
+      );
+      expect(await links()).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(1) }]);
+    });
+
+    it('prunes a file past 440 links to what the result keeps, and keeps what merging them whole would', async () => {
+      const lines: string[] = [];
+      const found = new Map<string, FoundLink>();
+      // 1,500 lines with times out of order and repeats, some newer than when they were pruned.
+      for (let i = 0; i < 1500; i++) {
+        const minute = (i * 37) % 1009;
+        const number = ((i * 13) % 700) + 1;
+        if (i % 3 === 0) {
+          lines.push(said(`${API}/pull/${number}`, minute));
+          addLink(found, { kind: 'mentioned', repo: 'example/demo-api', number, at: AT + minute * 60_000 });
+        } else {
+          lines.push(typed(`${APP}/pull/${number}`, minute));
+          addLink(found, { kind: 'prompted', repo: 'example/demo-app', number, at: AT + minute * 60_000 });
+        }
+      }
+      expect(found.size).toBeGreaterThan(440);
+      await writeFile(main, lines.join(''));
+      expect(await links()).toEqual(newestLinks(found.values()).map(toPrLink));
+    });
+
+    it('stops waiting on a call after 10,000 lines without its result', async () => {
+      const filler = (n: number) => `${JSON.stringify({ type: 'progress', timestamp: time(2) })}\n`.repeat(n);
+      const late = use('Bash', { command: 'gh pr create --fill' }, 1);
+      const inTime = use('Bash', { command: 'gh pr create --fill' }, 3);
+      await writeFile(main, late.line + filler(10_000) + inTime.line + filler(9_998) + result(inTime.id, ghCreated(13), 4) + result(late.id, ghCreated(12), 4));
+      expect(await links()).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 13, lastAt: time(4) }]);
+    });
+
+    it('waits on at most 32 calls at once, dropping the oldest', async () => {
+      const waiting = Array.from({ length: 33 }, (_, i) => use('mcp__github__create_pull_request', {}, i));
+      await writeFile(main, waiting.map((w) => w.line).join('') + waiting.map((w, i) => result(w.id, `${APP}/pull/${i + 1}`, 50)).join(''));
+      // The 32 it waited for; all have the same time, so lowest number first.
+      expect(((await links()) ?? []).map((l) => l.number)).toEqual(Array.from({ length: 32 }, (_, i) => i + 2));
+    });
+
+    it('sub-agents: counts what one opened and pushed, not its prompts or its text', async () => {
+      await mkdir(subagents(), { recursive: true });
+      await writeFile(main, typed('a made-up prompt', 1));
+      const sidechain = { isSidechain: true, agentId: 'a1' };
+      await writeFile(
+        path.join(subagents(), 'agent-a1.jsonl'),
+        // A sub-agent's "user" lines are its parent's prompt: without isSidechain too, they don't count.
+        typed(`work on ${API}/pull/40`, 2) +
+          typed(`and ${API}/pull/41`, 2, sidechain) +
+          said(`Opened ${API}/pull/42`, 9) +
+          saidAndUsed(`Reading ${API}/pull/43`, 9) +
+          ran('git push -u origin feature/two', pushedNew('feature/two', `${API}.git`), 3, { extra: sidechain }) +
+          ran('gh pr create --fill', ghCreated(42, API), 5, { extra: sidechain }),
+      );
+      expect(await links()).toEqual([
+        { kind: 'opened', repo: 'example/demo-api', number: 42, lastAt: time(6) },
+        { kind: 'pushed', repo: 'example/demo-api', branch: 'feature/two', lastAt: time(4) },
+      ]);
+    });
+
+    it('keeps the newest of a link found in more than one file', async () => {
+      await mkdir(subagents(), { recursive: true });
+      await writeFile(main, ran('git push', pushedNew('feature/one'), 1));
+      await writeFile(path.join(subagents(), 'agent-a1.jsonl'), ran('git push', pushedNew('feature/one'), 7));
+      await writeFile(path.join(subagents(), 'agent-a2.jsonl'), ran('git push', pushedNew('feature/one'), 4));
+      expect(await links()).toEqual([{ kind: 'pushed', repo: 'example/demo-app', branch: 'feature/one', lastAt: time(8) }]);
+    });
+
+    describe("linked: Claude Code's own pr-link entries (W105)", () => {
+      /** A `pr-link` entry as Claude Code writes one, made up. */
+      const prLink = (number: number, minute: number, overrides: Record<string, unknown> = {}) =>
+        `${JSON.stringify({ type: 'pr-link', sessionId: SESSION, prNumber: number, prUrl: `${APP}/pull/${number}`, prRepository: 'Example/Demo-App', timestamp: time(minute), ...overrides })}\n`;
+
+      it('links each PR an entry names, with the newest of its times, however often it is written again', async () => {
+        await writeFile(main, prLink(12, 1) + prLink(12, 2) + typed('a made-up prompt', 3) + prLink(13, 4) + prLink(12, 9) + prLink(12, 5));
+        expect(await links()).toEqual([
+          { kind: 'linked', repo: 'example/demo-app', number: 12, lastAt: time(9) },
+          { kind: 'linked', repo: 'example/demo-app', number: 13, lastAt: time(4) },
+        ]);
+      });
+
+      it('keeps it beside the same PR’s other links, one per kind', async () => {
+        await writeFile(main, ran('gh pr create --fill', ghCreated(12), 1) + prLink(12, 3) + typed(`${APP}/pull/12`, 4));
+        expect((await links())?.map((l) => [l.kind, l.number, l.lastAt])).toEqual([
+          ['prompted', 12, time(4)],
+          ['linked', 12, time(3)],
+          ['opened', 12, time(2)],
+        ]);
+      });
+
+      it("reads one in a sub-agent's transcript too, though Claude Code writes them in the parent's", async () => {
+        await mkdir(subagents(), { recursive: true });
+        await writeFile(main, typed('a made-up prompt', 1));
+        await writeFile(path.join(subagents(), 'agent-a1.jsonl'), prLink(14, 2));
+        expect(await links()).toEqual([{ kind: 'linked', repo: 'example/demo-app', number: 14, lastAt: time(2) }]);
+      });
+
+      it("leaves out one that isn't well formed, names another session, or isn't an entry of its own", async () => {
+        const nested = use('Read', { file_path: path.join(repo('app'), 'notes.jsonl') }, 1);
+        await writeFile(
+          main,
+          prLink(20, 1, { prUrl: `${API}/pull/20` }) +
+            prLink(21, 1, { prUrl: `${APP}/pull/22` }) +
+            prLink(23, 1, { prNumber: '23' }) +
+            prLink(24, 1, { prUrl: `${APP}/pull/24/files` }) +
+            prLink(25, 1, { timestamp: 'soon' }) +
+            prLink(26, 1, { sessionId: '77777777-7777-4777-8777-777777777772' }) +
+            `${prLink(27, 1).slice(0, -2)}\n` +
+            // A transcript read by a tool, which holds an entry inside its result: not this session's.
+            nested.line +
+            result(nested.id, prLink(28, 1), 2) +
+            `${JSON.stringify({ type: 'user', timestamp: time(2), message: { content: [{ type: 'pr-link', prNumber: 29, prUrl: `${APP}/pull/29`, prRepository: 'example/demo-app', sessionId: SESSION, timestamp: time(2) }] } })}\n`,
+        );
+        expect(await links()).toEqual([]);
+      });
+
+      it('reads one by how its line starts, whatever its length, and parses only the lines that could link', async () => {
+        const long = `${JSON.stringify({ type: 'pr-link', sessionId: SESSION, prNumber: 30, prUrl: `${APP}/pull/30`, prRepository: 'example/demo-app', timestamp: time(1), more: 'x'.repeat(4096) })}\n`;
+        // Keys in another order: not read.
+        const reordered = `${JSON.stringify({ sessionId: SESSION, type: 'pr-link', prNumber: 32, prUrl: `${APP}/pull/32`, prRepository: 'example/demo-app', timestamp: time(3) })}\n`;
+        await writeFile(main, long + prLink(31, 2) + reordered + typed('a made-up prompt', 3).repeat(50) + said('a made-up reply', 4).repeat(50));
+        const parse = vi.spyOn(JSON, 'parse');
+        try {
+          expect(await links()).toEqual([
+            { kind: 'linked', repo: 'example/demo-app', number: 31, lastAt: time(2) },
+            { kind: 'linked', repo: 'example/demo-app', number: 30, lastAt: time(1) },
+          ]);
+          // Each once: the two that start like one as entries, and the reordered one, which names a
+          // PR URL in the main transcript, by W94's rule, which reads no link from it.
+          expect(parse.mock.calls.filter(([text]) => String(text).includes('"pr-link"'))).toHaveLength(3);
+          expect(parse.mock.calls.filter(([text]) => String(text).includes('made-up'))).toHaveLength(0);
+        } finally {
+          parse.mockRestore();
+        }
+      });
+    });
+
+    it('is empty for a scanned session with no links, and undefined before its first scan', async () => {
+      await writeFile(main, typed('a made-up prompt', 1) + said('a made-up reply', 2));
+      const s = start({ run: fakeGit().run });
+      s.track([{ sessionId: SESSION, file: main, startKey: repo('app') }], [code]);
+      expect(s.prLinks(SESSION)).toBeUndefined();
+      await s.settled();
+      expect(s.prLinks(SESSION)).toEqual([]);
+      s.track([], [code]);
+      expect(s.prLinks(SESSION)).toBeUndefined();
+    });
+
+    it('reads appended lines only, a result written after its call included, and a line split across reads', async () => {
+      const create = use('Bash', { command: 'gh pr create --fill' }, 1);
+      await writeFile(main, create.line);
+      const s = start({ run: fakeGit().run, chunkBytes: 64 });
+      expect(await links(s)).toEqual([]);
+      const before = s.stats().bytesRead;
+      const added = result(create.id, ghCreated(12), 2) + said(`${APP}/pull/12 is up`, 3);
+      await appendFile(main, added.slice(0, 50));
+      expect(await links(s)).toEqual([]);
+      await appendFile(main, added.slice(50));
+      expect(await links(s)).toEqual([
+        { kind: 'mentioned', repo: 'example/demo-app', number: 12, lastAt: time(3) },
+        { kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(2) },
+      ]);
+      expect(s.stats().bytesRead - before).toBe(Buffer.byteLength(added));
+    });
+
+    it('rescans a file that shrank or was replaced, without keeping its old links or counting any twice', async () => {
+      await writeFile(main, ran('gh pr create --fill', ghCreated(12), 1) + typed(`${APP}/pull/5`, 3));
+      const s = start({ run: fakeGit().run });
+      expect((await links(s))?.map((l) => [l.kind, l.number])).toEqual([
+        ['prompted', 5],
+        ['opened', 12],
+      ]);
+      await writeFile(main, typed(`${APP}/pull/6`, 4));
+      expect(await links(s)).toEqual([{ kind: 'prompted', repo: 'example/demo-app', number: 6, lastAt: time(4) }]);
+      const replacement = path.join(projects, 'next.tmp');
+      await writeFile(replacement, `${typed('a made-up prompt that pads the file past its old size', 1).repeat(3)}${ran('gh pr create --fill', ghCreated(13), 5)}`);
+      await rename(replacement, main);
+      expect(await links(s)).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 13, lastAt: time(6) }]);
+    });
+
+    it(`keeps at most ${PR_LINKS_STRONG_MAX} strong links and ${PR_LINKS_MAX} mentioned ones, each the newest of its kind (W105)`, async () => {
+      const prompts = Array.from({ length: 15 }, (_, i) => typed(`${APP}/pull/${i + 1}`, i)).join('');
+      const mentions = Array.from({ length: 25 }, (_, i) => said(`${API}/pull/${i + 1}`, 100 + i)).join('');
+      await writeFile(main, prompts + mentions);
+      const kept = (await links()) ?? [];
+      expect(kept).toHaveLength(15 + PR_LINKS_MAX);
+      expect(kept.slice(0, PR_LINKS_MAX).map((l) => [l.kind, l.number])).toEqual(Array.from({ length: PR_LINKS_MAX }, (_, i) => ['mentioned', 25 - i]));
+      expect(kept.slice(PR_LINKS_MAX).map((l) => [l.kind, l.number])).toEqual(Array.from({ length: 15 }, (_, i) => ['prompted', 15 - i]));
+      // 200 more strong links, all newer: the oldest strong ones go, and the mentions stay.
+      await appendFile(main, Array.from({ length: 200 }, (_, i) => typed(`${APP}/pull/${100 + i}`, 200 + i)).join(''));
+      const after = (await links()) ?? [];
+      expect(after.filter((l) => l.kind === 'prompted').map((l) => l.number)).toEqual(Array.from({ length: PR_LINKS_STRONG_MAX }, (_, i) => 299 - i));
+      expect(after.filter((l) => l.kind === 'mentioned')).toHaveLength(PR_LINKS_MAX);
+    });
+
+    it('has no prLinks for a transcript that can’t be read, tries again later, and keeps none in memory meanwhile', async () => {
+      await writeFile(main, ran('gh pr create --fill', ghCreated(12), 1));
+      let refuse = true;
+      const fs: Partial<ScannerFs> = {
+        open: async (file) => {
+          if (refuse && file === main) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+          const { open } = await import('node:fs/promises');
+          return open(file, 'r');
+        },
+      };
+      let clock = AT;
+      const s = start({ run: fakeGit().run, fs, now: () => clock, retryMs: 30_000 });
+      expect(await links(s)).toBeUndefined();
+      refuse = false;
+      expect(await links(s)).toBeUndefined();
+      clock += 30_000;
+      expect(await links(s)).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(2) }]);
+      await rm(main);
+      expect(await links(s)).toBeUndefined();
+    });
+
+    it('parses only lines that could link: tool calls, results it waits on, and main-transcript lines naming a PR', async () => {
+      const read = use('Read', { file_path: path.join(repo('app'), 'NOTES.md') }, 1);
+      const create = use('Bash', { command: 'gh pr create --fill' }, 3);
+      await mkdir(subagents(), { recursive: true });
+      await writeFile(path.join(subagents(), 'agent-a1.jsonl'), said(`${APP}/pull/9`, 1, { isSidechain: true }));
+      await writeFile(main, read.line + result(read.id, `${APP}/pull/1`, 2) + typed('a made-up prompt', 2) + said('a made-up reply', 2) + create.line + result(create.id, ghCreated(12), 4));
+      const parse = vi.spyOn(JSON, 'parse');
+      try {
+        expect(await links()).toEqual([{ kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: time(4) }]);
+        const parsed = parse.mock.calls.map(([text]) => String(text));
+        expect(parsed.filter((text) => text.includes(read.id) && text.includes('"tool_result"'))).toHaveLength(0);
+        expect(parsed.filter((text) => text.includes('made-up prompt') || text.includes('made-up reply') || text.includes('/pull/9'))).toHaveLength(0);
+        expect(parsed.filter((text) => text.includes(create.id))).toHaveLength(2);
+      } finally {
+        parse.mockRestore();
+      }
     });
   });
 });

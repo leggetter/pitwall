@@ -136,17 +136,19 @@ const KINDS: ReadonlySet<ConversationEntryKind> = new Set(['user', 'assistant', 
  */
 export function asConversationPage(body: unknown, sessionId: string): ConversationPage | undefined {
   if (typeof body !== 'object' || body === null) return undefined;
-  const { sessionId: id, entries, before } = body as Record<string, unknown>;
+  const { sessionId: id, entries, before, turnEnded } = body as Record<string, unknown>;
   if (id !== sessionId || !Array.isArray(entries)) return undefined;
   if (before !== undefined && (typeof before !== 'string' || before === '')) return undefined;
   const page: ConversationPage = { sessionId, entries: entries.flatMap((entry) => asEntry(entry) ?? []) };
   if (before !== undefined) page.before = before;
+  // Whether the newest turn has ended (W102): anything but a boolean says nothing.
+  if (typeof turnEnded === 'boolean') page.turnEnded = turnEnded;
   return page;
 }
 
 function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const { kind, at, text, markdown, toolName, toolError, from, subagent, questions, truncated } = value as Record<string, unknown>;
+  const { kind, at, text, markdown, toolName, toolError, from, subagent, questions, truncated, midTurn } = value as Record<string, unknown>;
   if (typeof kind !== 'string' || !KINDS.has(kind as ConversationEntryKind) || typeof text !== 'string') return undefined;
   const entry: ConversationEntry = { kind: kind as ConversationEntryKind, text };
   if (typeof at === 'string') entry.at = at;
@@ -161,6 +163,8 @@ function asEntry(value: unknown): ConversationEntry | undefined {
   }
   if (kind === 'question' && Array.isArray(questions)) entry.questions = questions.slice(0, QUESTIONS_SHOWN).flatMap((question) => asQuestion(question) ?? []);
   if (truncated === true) entry.truncated = true;
+  // Written while a turn ran, so it didn't begin one (W102).
+  if (midTurn === true) entry.midTurn = true;
   return entry;
 }
 

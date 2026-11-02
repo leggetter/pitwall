@@ -187,6 +187,128 @@ export interface SessionSummary {
    * be read, and when no repo passes the rule.
    */
   workedIn?: WorkedIn[];
+  /**
+   * The pull requests this session opened, pushed to, was linked to by Claude
+   * Code (W105) or was given in a prompt, and the ones Claude named in its
+   * replies, from its transcript and its sub-agents' (M4, W94). Newest first,
+   * one per kind and PR (or pushed branch), at most PR_LINKS_STRONG_MAX strong
+   * links and PR_LINKS_MAX mentioned ones. The index doesn't know which PRs are open
+   * or whose they are, and keeps them all; the server sends only those that match
+   * a PR in the current PullRequestList (prLinkMatches()), and the snapshot again
+   * when the list changes that (D14, W105), so none is sent before the first fetch
+   * or with `--no-prs`. Absent until the session's transcripts have been scanned,
+   * when they can't be read, and when none is left.
+   */
+  prLinks?: PrLink[];
+}
+
+/**
+ * How a session is linked to a pull request (M4; coordinator's call,
+ * 2026-10-28). In Phil's transcripts from the 30 days to 2026-10-28, 22
+ * sessions named at least one of his 50 open PRs, and one named 13, mostly in
+ * tool output such as `gh pr list`, so a URL anywhere in a transcript isn't a
+ * link.
+ *
+ * - 'opened': the session created it. Its URL is in the result of a `gh pr
+ *   create`, or of a GitHub MCP server's create-pull-request tool.
+ * - 'pushed': the session pushed a branch, by `git push`'s output, which
+ *   names the repo and the branch. It matches the PR whose head is that branch
+ *   in that repo.
+ * - 'linked': Claude Code linked the session to it itself, with a `pr-link`
+ *   transcript entry (M4 redesign, W104). The entry is internal, read behind
+ *   the transcript adapter; what makes one is documented (agent view, "Pull
+ *   request status"): `gh pr create`, a `gh` edit, comment, close or ready on
+ *   it, and a push or `gh pr checkout` that Claude Code matches to it. A
+ *   sub-agent's link is written in its parent's transcript. Claude Code
+ *   writes the current PR's entry again and again, so `lastAt` is the newest.
+ * - 'prompted': its URL is in a prompt you typed. Messages from other
+ *   sessions don't count, as for SessionSummary.lastUserPrompt.
+ * - 'mentioned': its URL is in Claude's own text in a reply. Tool input and
+ *   output never count.
+ *
+ * All but 'mentioned' are strong (prLinkIsStrong()): only those can make a
+ * session a PR's owner (prOwner()). The PR view lists 'mentioned' ones apart,
+ * as "Mentioned in".
+ */
+export type PrLinkKind = 'opened' | 'pushed' | 'linked' | 'prompted' | 'mentioned';
+
+/** One link from a session to a pull request (SessionSummary.prLinks). */
+export interface PrLink {
+  kind: PrLinkKind;
+  /**
+   * Lowercase `owner/name`. For 'pushed', the repo pushed to, compared with
+   * PullRequestSummary.head; otherwise compared with PullRequestSummary.repo.
+   */
+  repo: string;
+  /** The PR's number. Every kind but 'pushed'. */
+  number?: number;
+  /** The branch pushed, as the remote names it, without `refs/heads/`. 'pushed' only. */
+  branch?: string;
+  /** ISO 8601: the newest time the session did it. */
+  lastAt: string;
+}
+
+/**
+ * The most 'mentioned' links one session carries (SessionSummary.prLinks), newest first. Strong
+ * links have their own, higher cap, PR_LINKS_STRONG_MAX: with one cap of 20 for all of them, 10 of
+ * Phil's sessions lost older strong links, and only 187 of 324 real pairs were kept (2026-10-29).
+ */
+export const PR_LINKS_MAX = 20;
+
+/** The most strong links one session carries (prLinkIsStrong()), newest first. */
+export const PR_LINKS_STRONG_MAX = 200;
+
+/** True for the kinds that say a session worked on the PR (PrLinkKind). */
+export function prLinkIsStrong(link: PrLink): boolean {
+  return link.kind !== 'mentioned';
+}
+
+/**
+ * How strongly a link makes its session a PR's owner (prOwner()): 2 for 'opened', 'pushed' and
+ * 'linked', which say the session acted on it; 1 for 'prompted', which owns only when no session
+ * acted on it; 0 for 'mentioned', which never owns.
+ */
+export function prLinkRank(link: PrLink): 0 | 1 | 2 {
+  if (link.kind === 'mentioned') return 0;
+  return link.kind === 'prompted' ? 1 : 2;
+}
+
+/**
+ * The session that owns `pr` (M4 redesign, W104; Phil, 2026-10-29: "if a session has worked on a
+ * pull request, the pull request should not be shown and should effectively be part of an agent
+ * session"). Of the sessions with a link that matches it (prLinkMatches()), the one whose best
+ * matching link has the highest prLinkRank(), then the newest `lastAt`, then the smallest
+ * sessionId, so the answer is stable. So another session acting on the PR later takes it over.
+ * Undefined when no session has a strong link to it. An ended session keeps its PR: the PR's work
+ * isn't finished while it's open, so that session stays out of Finished (Phil, 2026-10-29).
+ */
+export function prOwner<T extends { sessionId: string; prLinks?: PrLink[] | undefined }>(
+  pr: PullRequestSummary,
+  sessions: readonly T[],
+): T | undefined {
+  let best: { session: T; rank: number; at: number } | undefined;
+  for (const session of sessions) {
+    for (const link of session.prLinks ?? []) {
+      const rank = prLinkRank(link);
+      if (rank === 0 || !prLinkMatches(link, pr)) continue;
+      const parsed = Date.parse(link.lastAt);
+      const at = Number.isFinite(parsed) ? parsed : 0;
+      const better =
+        best === undefined ||
+        rank > best.rank ||
+        (rank === best.rank && (at > best.at || (at === best.at && session.sessionId < best.session.sessionId)));
+      if (better) best = { session, rank, at };
+    }
+  }
+  return best?.session;
+}
+
+/** True when `link` points at `pr`: by repo and number, or for 'pushed', by the PR's head. */
+export function prLinkMatches(link: PrLink, pr: PullRequestSummary): boolean {
+  if (link.kind === 'pushed') {
+    return pr.head !== undefined && link.repo === pr.head.repo && link.branch === pr.head.branch;
+  }
+  return link.repo === pr.repo && link.number === pr.number;
 }
 
 /** One repo a session worked in, beyond its start (SessionSummary.workedIn). */
@@ -344,12 +466,16 @@ export const PROTOCOL_VERSION = 3;
  *   other than generatedAt changed.
  * - 'heartbeat': sent after every poll that didn't change the snapshot, so the
  *   UI can show the index is alive without receiving the whole snapshot again.
+ * - 'prs' (M4): your open pull requests, sent right after the first
+ *   'snapshot', and again whenever anything in the list changes, `refreshing`
+ *   included. Its own poller sends it, never the session poll.
  */
 export type ServerMessage =
   | { type: 'challenge'; version: number; nonce: string }
   | { type: 'authenticated'; apiKey: string }
   | { type: 'snapshot'; snapshot: IndexSnapshot }
   | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
+  | { type: 'prs'; prs: PullRequestList }
   | { type: 'error'; error: string };
 
 /**
@@ -481,6 +607,16 @@ export interface ConversationEntry {
   questions?: AskedQuestion[];
   /** True when `text` was cut to the limit. */
   truncated?: boolean;
+  /**
+   * True on an entry written while a turn ran, so it never began one (W102):
+   * what arrived mid-turn, a prompt typed while Claude worked, a message from
+   * another session or a sub-agent, or a task notification (W99's
+   * `queued_command` attachments); a compaction summary; and Claude Code's own
+   * API error notice. The web UI's working line counts a turn's time from the
+   * newest 'user', 'cross-session' or 'notice' entry without it, before
+   * Claude's entries since.
+   */
+  midTurn?: true;
 }
 
 /**
@@ -496,6 +632,22 @@ export interface ConversationPage {
    * the page reaches the start of the transcript.
    */
   before?: string;
+  /**
+   * On the newest page only (W102): true when Claude Code's mark that a turn
+   * ended, a `turn_duration` system entry (spike 007, finding 4), is newer than
+   * every entry that runs a turn: any of Claude's lines, a thinking block's
+   * alone included, a tool's result or a prompt, or a message from another
+   * session or a task notification, which Claude Code starts a turn for; false
+   * when one of those is newer, as always for an older Claude Code, which
+   * writes no such mark. Absent when the page has neither, as for an empty
+   * transcript, and on a sub-agent's page, whose entries are all its own. The
+   * index's rule for its own turn's end (W69) is the same, but leaves a
+   * message or a task notification out, so a question asked stays in Needs
+   * you. The web UI hides its working line when it's true, whatever Claude
+   * Code's status says, which a plugin's monitor can keep at busy (spike 007,
+   * finding 6).
+   */
+  turnEnded?: boolean;
 }
 
 /** The status a conversation request gets for a cursor made for another version of the transcript. */
@@ -866,14 +1018,19 @@ export type ResumeResult =
  * background: `claude --resume <sessionId> --bg`, with no prompt, in the
  * session's own `cwd`, never a directory the request names. POST, no body.
  * It runs in the directory's real path as checked just before it starts, and
- * only for a session id that is a UUID (W73, W81).
+ * only for a session id that is a UUID (W73, W81). Since W107, a background
+ * session that isn't running, stopped or finished, too: the same command
+ * wakes it under its own short id ("note: woke session <id> with its saved
+ * options", checked live on Claude Code 2.1.312), so a stopped job that owns
+ * an open PR can be resumed from its row as an ended one can.
  *
- * - 404 when the snapshot doesn't list the session, and 409 when it isn't
- *   ended or its id isn't a UUID, when its directory no longer exists or
- *   now resolves elsewhere,
+ * - 404 when the snapshot doesn't list the session, and 409 when it's neither
+ *   ended nor a background session that isn't running, or its id isn't a
+ *   UUID, when its directory no longer exists or now resolves elsewhere,
  *   when a resume of it is already running, or when a fresh
  *   `claude agents --json` lists its session id in any row, as when its
- *   terminal is open again.
+ *   terminal is open again; for a background one, when that listing gives it
+ *   a process, an interactive row, or no row of its own.
  * - 429 with `Retry-After` past 4 stop, remove, resume or open commands at
  *   once, and, since it starts a long-lived session, past spawn's limit of
  *   sessions started in the last minute, which it shares (W81).
@@ -992,6 +1149,363 @@ export interface OpenInEditorRequest {
 export function openInEditorPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/open`;
 }
+
+// ---------------------------------------------------------------------------
+// M4: your open pull requests. Read-only and separate from the session index:
+// its own poller runs its three searches (W101), one `gh api graphql` call
+// each, every PRS_POLL_INTERVAL_MS, with no shell, so GitHub's token stays
+// inside gh. PR titles from private repos are as sensitive as session data.
+// ---------------------------------------------------------------------------
+
+/**
+ * A GitHub owner, as a regular expression's source, to put inside a larger pattern: letters,
+ * digits, `-`, and `_` for an Enterprise Managed User's `name_shortcode`, starting with a letter or
+ * digit, at most 100 characters. W93's reader (src/prs/parse.ts) and the web UI (web/src/prs.ts,
+ * openPr.ts) use this one pattern, so an owner one keeps the other never drops. Case is GitHub's;
+ * PullRequestSummary.repo and PrLink.repo are the lowercase form.
+ */
+export const GITHUB_OWNER_PATTERN = '[A-Za-z0-9][A-Za-z0-9_-]{0,99}';
+
+/**
+ * A GitHub repo name, as a regular expression's source: letters, digits, `.`, `-` and `_`, at most
+ * 100 characters. It also matches `.` and `..`, which GitHub never names a repo and every user of it
+ * refuses on its own. Neither pattern can hold a `/`, `?`, `#`, `@`, `%` or space, so `owner/name`
+ * can't step outside a PR's own path in a URL.
+ */
+export const GITHUB_REPO_NAME_PATTERN = '[A-Za-z0-9._-]{1,100}';
+
+/**
+ * The latest commit's status check rollup: SUCCESS is 'passing'; FAILURE and
+ * ERROR are 'failing'; PENDING and EXPECTED are 'pending'; 'none' when the
+ * commit has no checks.
+ */
+export type PullRequestChecks = 'passing' | 'failing' | 'pending' | 'none';
+
+/** GitHub's reviewDecision. */
+export type PullRequestReview = 'approved' | 'changes-requested' | 'review-required';
+
+/**
+ * How a pull request is yours (W101; Phil, 2026-10-29: "cover cases where I've been requested or
+ * probably tagged, because not everybody follows the request process"). Each is one of the fetch's
+ * searches, open PRs only, in repos that aren't archived:
+ *
+ * - 'authored': you opened it (`author:@me`).
+ * - 'review-requested': your review is requested, of you or of a team you're on
+ *   (`review-requested:@me -author:@me`; GitHub's docs say it includes a team's requests). They also
+ *   say a requested person leaves the results once they've reviewed, so a PR asked of you leaves
+ *   the next fetch's list. For a team's, that isn't documented; likely, the team's request is met by
+ *   a member's review on its behalf (PullRequestReview.onBehalfOf). pitwall also leaves out one
+ *   whose own requests no longer name you or a team, as GitHub's search index lags behind a review.
+ * - 'mentioned': it @-mentions you (`mentions:@me`), and you didn't open it (`-author:@me`) and
+ *   aren't asked to review it.
+ *
+ * A PR that more than one search finds is listed once, as the first of PR_RELATIONS that found it.
+ */
+export type PullRequestRelation = 'authored' | 'review-requested' | 'mentioned';
+
+/** The relations, in the order that decides which one a PR found by several searches is. */
+export const PR_RELATIONS: readonly PullRequestRelation[] = ['authored', 'review-requested', 'mentioned'];
+
+/**
+ * How your review was requested (PullRequestSummary.reviewRequest), from the PR's review requests:
+ *
+ * - 'direct': of you, by name, as `user-review-requested:@me` finds.
+ * - 'team': not of you by name, so of a team you're on. `team` is its `org/slug`
+ *   (GITHUB_OWNER_PATTERN, a slash, then GITHUB_REPO_NAME_PATTERN), when exactly one team was asked;
+ *   with several, pitwall can't tell which one you're on, so it names none.
+ */
+export type PullRequestReviewRequest = { via: 'direct' } | { via: 'team'; team?: string };
+
+/**
+ * GitHub's mergeable. 'unknown' while GitHub is still working it out, as it
+ * often is just after a push: 13 of Phil's 50 open PRs on 2026-10-28.
+ */
+export type PullRequestMergeable = 'clean' | 'conflicts' | 'unknown';
+
+export interface PullRequestSummary {
+  /**
+   * `https://github.com/<owner>/<name>/pull/<number>`. The server leaves out a
+   * PR whose URL isn't exactly that, for its own repo and number, so the web
+   * UI can link it as it is.
+   */
+  url: string;
+  /** Lowercase `owner/name`: what PrLink.repo is compared with. */
+  repo: string;
+  /** `owner/name` as GitHub spells it, for display. */
+  repoLabel: string;
+  number: number;
+  /**
+   * Plain text, with control and bidi control characters removed, at most
+   * PR_TITLE_MAX characters. Shown in `<bdi>`, never as Markdown.
+   */
+  title: string;
+  draft: boolean;
+  /** ISO 8601. */
+  createdAt: string;
+  /** ISO 8601. */
+  updatedAt: string;
+  /**
+   * The head branch, and the repo it's in as lowercase `owner/name`: a fork's,
+   * for a PR from a fork. What a 'pushed' PrLink is compared with. Absent when
+   * that repo no longer exists, and when the branch's name is empty, over 255
+   * characters, or has a control or bidi control character, so a branch is
+   * always one pitwall can compare and show as it is.
+   */
+  head?: { repo: string; branch: string };
+  checks: PullRequestChecks;
+  /**
+   * When `checks` is 'failing': the failing checks' names, plain text, at most
+   * PR_FAILING_CHECKS_MAX. A check run fails with conclusion FAILURE,
+   * TIMED_OUT, CANCELLED, ACTION_REQUIRED or STARTUP_FAILURE, and a status
+   * context with state FAILURE or ERROR.
+   */
+  failingChecks?: string[];
+  /** When more checks failed than failingChecks lists: how many failed in all. */
+  failingCount?: number;
+  /** Absent when GitHub reports no decision, as in a repo that requires no reviews. */
+  review?: PullRequestReview;
+  mergeable: PullRequestMergeable;
+  /** How it's yours (W101): you opened it, your review is requested, or it mentions you. */
+  relation: PullRequestRelation;
+  /**
+   * For relation 'review-requested': of you by name, or of a team you're on. Absent when the PR's
+   * review requests don't say, as when none of them could be read.
+   */
+  reviewRequest?: PullRequestReviewRequest;
+  /**
+   * Where the PR is listed when no session owns it (prOwner()), from the server, which knows every
+   * repo under the roots and the config file (M4 redesign, W104). Absent from a server that
+   * doesn't place PRs, which the web UI treats as 'unclaimed'.
+   */
+  place?: PullRequestPlace;
+}
+
+/**
+ * Where a PR with no owning session is listed (PullRequestSummary.place):
+ *
+ * - 'cloned': a git repo under a root has a GitHub remote, any of its remotes, for the PR's repo,
+ *   or failing that for its head's repo (a fork's clone). `key` is that repo's top-level directory,
+ *   the SessionGroup.key its group has or would have, and `label` its label as SessionGroup.label
+ *   is or would be. With several clones: the one whose directory is named like the repo, then
+ *   the one whose `origin` points at it, then the one under the first root given, then the first
+ *   by path.
+ * - 'not-cloned': no clone, and `root` claims the repo's owner (RootOwners). The web UI lists the
+ *   repo under that root as not cloned, `owner/name`, with its PRs.
+ * - 'unclaimed': no root claims it. Not listed, but counted, so the UI can say how many are hidden
+ *   and how to show them.
+ */
+export type PullRequestPlace =
+  | { kind: 'cloned'; root: string; key: string; label: string }
+  | { kind: 'not-cloned'; root: string }
+  | { kind: 'unclaimed' };
+
+/**
+ * Which GitHub owners (orgs or users) a root claims, for PRs in repos no root has a clone of
+ * (PullRequestPlace 'not-cloned'). Owners are lowercase. An owner is claimed (Phil, 2026-10-29:
+ * each owner goes to the root with the most clones from it, and the config file overrides that;
+ * the rule as set in W105's review), ties always by the order the roots were given:
+ *
+ * 1. By the root whose configured list (`github.owners`) names it.
+ * 2. Otherwise, by the root with the most clones whose `origin` remote points at it, counting every
+ *    root's, unless that root's config is 'none' or a list that doesn't name it: then by the next
+ *    root by clones that would claim it, one with no config or with 'all'. Only `origin` (W108's
+ *    finding): a remote such as `upstream` can name anyone, a stranger whose own public repo could
+ *    have a PR that mentions you, and claiming their owner would offer that repo for Clone.
+ * 3. Otherwise, by the first root configured 'all'. None claims it otherwise.
+ *
+ * `owners` is the config file's value for a root it configures (source 'config'): a list, 'all' or
+ * 'none'. For any other root (source 'clones'), the owners step 2 gives it. An owner step 2 gives a
+ * root configured 'all' is in no list, and step 3 reaches it, since the config file allows one root
+ * with 'all' (W103, D24).
+ */
+export interface RootOwners {
+  /** An absolute, real-path root, as IndexSnapshot.roots has it. */
+  root: string;
+  owners: string[] | 'all' | 'none';
+  source: 'config' | 'clones';
+}
+
+/**
+ * True for a PR that needs you, which the Pull requests item counts:
+ *
+ * - One you opened with failing checks, merge conflicts or changes requested, drafts included.
+ * - One whose review is requested of you, or of a team you're on (W101): it waits on you until the
+ *   request is met, when the next fetch drops it (PullRequestRelation).
+ *
+ * One that only mentions you never does, and neither do another author's failing checks or
+ * conflicts: they're theirs to fix.
+ */
+export function prNeedsAttention(pr: PullRequestSummary): boolean {
+  if (pr.relation === 'review-requested') return true;
+  if (pr.relation !== 'authored') return false;
+  return pr.checks === 'failing' || pr.mergeable === 'conflicts' || pr.review === 'changes-requested';
+}
+
+/**
+ * Whether the latest fetch worked. On a failure the reason says why, and
+ * `error` says it in pitwall's words, never gh's output:
+ *
+ * - 'off': pitwall was started with `--no-prs`, and never runs gh.
+ * - 'gh-missing': there's no `gh` on PATH.
+ * - 'gh-auth': gh isn't logged in to github.com (gh's exit code 4).
+ * - 'error': anything else, such as a timeout, no network or a response
+ *   pitwall can't read.
+ */
+export type PullRequestSource =
+  | { ok: true }
+  | { ok: false; reason: 'off' | 'gh-missing' | 'gh-auth' | 'error'; error: string };
+
+/**
+ * One search's part of the list (W101; PullRequestList.searches). Each search is its own call, so
+ * one can fail while the others work; its PRs are then the last it found, from `fetchedAt`.
+ */
+export interface PullRequestSearchState {
+  /** ISO 8601: when this search last worked. Absent until it has. */
+  fetchedAt?: string;
+  /** Set when its latest try failed: why, in pitwall's words, never gh's output. */
+  failed?: { reason: 'gh-missing' | 'gh-auth' | 'error'; error: string };
+}
+
+/** Your open pull requests: GET PRS_PATH, and the 'prs' WebSocket message. */
+export interface PullRequestList {
+  /** ISO 8601: when the newest fetch in which any search worked finished. Absent until one has. */
+  fetchedAt?: string;
+  /**
+   * Whether the latest fetch worked: ok when any of its searches did, so a list exists, even if
+   * another failed, which `searches` says. Not ok, with why, only when every one failed.
+   */
+  source: PullRequestSource;
+  /**
+   * Each search's part (W101), by relation, once a fetch has finished: when it last worked and
+   * whether its latest try failed. Absent before the first fetch and with `--no-prs`.
+   */
+  searches?: Partial<Record<PullRequestRelation, PullRequestSearchState>>;
+  /** True while a fetch is running. */
+  refreshing: boolean;
+  /**
+   * Your open PRs on github.com, in repos that aren't archived: those you
+   * opened, those whose review is requested of you, and those that mention
+   * you (PullRequestRelation), each once, newest updatedAt first. At most
+   * PRS_MAX from each search, so at most PRS_LIST_MAX. After a search fails,
+   * its last good PRs stay, from its own fetchedAt in `searches`. Empty before the first
+   * fetch that worked. The web UI shows those updated in the last
+   * PRS_SHOWN_DAYS, and the rest behind Show older.
+   */
+  prs: PullRequestSummary[];
+  /** True when GitHub found more than PRS_MAX for any one search, and the rest of it were left out. */
+  truncated?: true;
+  /** Which owners each root claims (RootOwners), so the UI can explain where a PR is and why one is hidden. */
+  roots?: RootOwners[];
+}
+
+/** GET: the latest PullRequestList, with the same authorization as SNAPSHOT_PATH. */
+export const PRS_PATH = '/api/prs';
+
+/**
+ * POST, no body: fetch your open PRs now, answered with an ActionResult. It
+ * needs what every state-changing request needs: the apiKey, pitwall's
+ * Origin and its exact Host. ok when a fetch started or one was already
+ * running; the list arrives as a 'prs' message.
+ *
+ * - 409 when pull requests are off (`--no-prs`).
+ * - 429 with `Retry-After` when the latest fetch started less than
+ *   PRS_REFRESH_MIN_MS ago.
+ */
+export const PRS_REFRESH_PATH = '/api/prs/refresh';
+
+/** How often the PR poller fetches: 3 minutes. Never tied to the session poll. */
+export const PRS_POLL_INTERVAL_MS = 3 * 60 * 1000;
+
+/**
+ * The shortest gap between the starts of two fetches that a refresh may cause: a minute (W100;
+ * Phil, 2026-10-29: "Every 15 seconds seems a bit excessive"). A fetch took about 8.5 s on
+ * 2026-10-28.
+ */
+export const PRS_REFRESH_MIN_MS = 60 * 1000;
+
+/**
+ * A pass of a search that takes longer, all its pages, fails with reason 'error'; a second pass,
+ * when the first's pages repeated or missed a PR, has its own (src/prs/fetch.ts). GitHub itself ends a single
+ * request after 10 s. Since W105 a page holds 25 PRs: on 2026-10-29 the author search's 55 took
+ * three pages, 3.7, 4.8 and 2.9 s, 11.4 s in all, so the 8 pages of PRS_MAX would take about 36 s,
+ * more than the 30 s this was for one or two pages of 100.
+ */
+export const PRS_FETCH_TIMEOUT_MS = 60 * 1000;
+
+/** The most PRs one search keeps: 8 pages of 25 since W105 (src/prs/fetch.ts, PRS_PAGE_SIZE). */
+export const PRS_MAX = 200;
+
+/** The most PRs a list holds: PRS_MAX from each of the searches (PR_RELATIONS). */
+export const PRS_LIST_MAX = PRS_MAX * PR_RELATIONS.length;
+
+/** The web UI lists PRs updated in this many days, and the rest behind Show older. */
+export const PRS_SHOWN_DAYS = 90;
+
+/** The longest PR title kept, in characters. */
+export const PR_TITLE_MAX = 300;
+
+/** The most failing checks' names kept per PR. */
+export const PR_FAILING_CHECKS_MAX = 5;
+
+// ---------------------------------------------------------------------------
+// W107: Clone and start, for a PR whose repo has no clone under the roots
+// (PullRequestPlace 'not-cloned'). Cloning is the server's: the page names the
+// repo, and the server decides the root and the directory (D25).
+// ---------------------------------------------------------------------------
+
+/** Body of a POST to CLONE_PATH (W107). */
+export interface CloneRequest {
+  /**
+   * The PR's repo, `owner/name`, as PullRequestSummary.repo has it. Nothing else: the server finds it
+   * among its current list's PRs placed 'not-cloned', and takes the root from that place and the
+   * directory's name from GitHub's spelling of the repo's name (`repoLabel`), never from the request.
+   */
+  repo: string;
+}
+
+export type CloneResult =
+  /**
+   * Cloned, at `cwd`, `<root>/<name>`, a real path under the root. Claude Code doesn't trust a new
+   * clone, a git repo nested in the root, until you've run `claude` in it once (W107's check, and
+   * Claude Code's docs, "Project allow rules and workspace trust"), so `hint` is the command that
+   * trusts it, for the user to run, as spawn's 422 has it; none for a path with a `'` or `\` (W87).
+   */
+  | { ok: true; cwd: string; hint?: string }
+  /** Nothing cloned, and nothing left behind. `error` is pitwall's own words, never gh's output. */
+  | { ok: false; error: string };
+
+/**
+ * Clone a not-cloned PR's repo into its root (W107, D25), answered with a CloneResult: `gh repo clone
+ * <owner>/<name> <temp dir> -- --quiet` through the index's runFile, with no shell, the scrubbed
+ * environment, `GH_PROMPT_DISABLED`, `GH_HOST=github.com` and `GIT_TERMINAL_PROMPT=0`, without the
+ * `GIT_*` variables that would redirect it, from a 0700 directory of pitwall's own, in a process
+ * group of its own with no terminal, into a fresh `.pitwall-clone-*` directory inside the root, then
+ * renamed into place only while `<root>/<name>` still doesn't exist. POST a CloneRequest, with the
+ * apiKey, `Host` and `Origin` checks of every state-changing request.
+ *
+ * - 201 with the new directory.
+ * - 400 for a body that isn't a CloneRequest, or a repo whose name isn't one pitwall clones: `.`,
+ *   `..`, one starting with `.`, or one GITHUB_REPO_NAME_PATTERN doesn't match. 413, 415 as for spawn.
+ * - 404 when no PR in the server's current list is in that repo.
+ * - 409 when pull requests are off; when its PRs aren't placed 'not-cloned', as once it's cloned or
+ *   when no root claims its owner; when that root isn't one of the snapshot's, or isn't a directory
+ *   at its own real path; when `<root>/<name>` exists, of any kind, or appears while it clones; or
+ *   when a clone of it is already running.
+ * - 429 with `Retry-After` while another clone runs, or past CLONE_RATE.
+ * - 502 when gh isn't installed, isn't logged in, or fails; 503 before the first snapshot, and while
+ *   pitwall shuts down, which stops a running clone's whole group; 504 past CLONE_TIMEOUT_MS. Each
+ *   removes the temp directory, and only that. At start, pitwall removes those a killed pitwall left.
+ */
+export const CLONE_PATH = '/api/prs/clone';
+
+/** How long a clone may take: 5 minutes. The temp directory is removed after. */
+export const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** The most clones started in a minute, so a stuck page can't fill a disk. One runs at a time. */
+export const CLONE_RATE = { max: 3, windowMs: 60 * 1000 } as const;
+
+/** The prefix of the temp directory a clone goes into, inside its root: hidden, so neither discovery nor New session's list reads it. */
+export const CLONE_TEMP_PREFIX = '.pitwall-clone-';
 
 // ---------------------------------------------------------------------------
 // Attach (W10, D3, D9): a WebSocket per attached background session, carrying

@@ -80,6 +80,8 @@ export interface MenuButtonProps {
   buttonRef?: RefObject<HTMLButtonElement | null>;
   /** Whether the menu is open, for a caller that needs to know (Escape's layering). */
   onOpenChange?: (open: boolean) => void;
+  /** The button's size: md, the default, or sm, as the filter bar's Sort is (W106's review). */
+  size?: 'sm' | 'md';
 }
 
 const isItem = (entry: MenuEntry): entry is MenuItem => entry.kind === undefined || entry.kind === 'item';
@@ -115,7 +117,7 @@ export function closeMenus(within: Element): boolean {
   return closed;
 }
 
-export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: MenuButtonProps) {
+export function MenuButton({ label, icon, entries, buttonRef, onOpenChange, size = 'md' }: MenuButtonProps) {
   const menuId = useId();
   const own = useRef<HTMLButtonElement>(null);
   const button = buttonRef ?? own;
@@ -301,7 +303,7 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange }: Me
         <button
           ref={button}
           type="button"
-          className="icon-button ghost md"
+          className={`icon-button ghost ${size}`}
           aria-haspopup="menu"
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}

@@ -457,7 +457,7 @@ describe('ignored', () => {
     expect(pressedStars()).toBe(0);
   }
 
-  it('while typing: in the filter field, the message box, the Sort select, something contenteditable and the terminal', async () => {
+  it('while typing: in the filter field, the message box, something contenteditable and the terminal', async () => {
     setWidth(1300);
     const { container } = renderDashboard();
     await open('demo-a');
@@ -466,9 +466,6 @@ describe('ignored', () => {
     const box = within(view()!).getByRole('textbox', { name: 'Message to demo-a' });
     box.focus();
     pressesNothing(box);
-    const sort = screen.getByRole('combobox', { name: 'Sort' });
-    sort.focus();
-    pressesNothing(sort);
     const editable = document.createElement('div');
     editable.contentEditable = 'true';
     editable.tabIndex = 0;

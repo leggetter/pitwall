@@ -24,6 +24,11 @@
 //   saying why, while one is uploading or has failed. A drop anywhere else in the page does nothing,
 //   rather than the browser opening the file in pitwall's place. Closing the dialog without starting
 //   drops them, and asks the server to remove the uploaded ones.
+// - For a pull request (W107, prStart.ts): opened prefilled, with the PR's directory chosen, added to
+//   the choices when no group has it, as a new clone's, its name and its prompt, all of which you can
+//   change, a subtitle that names the PR, and a notice at the top of the body, as after a clone, which
+//   says how to trust the new folder. What was typed is measured against the prefill, so a click on
+//   the backdrop still closes it until you change something.
 
 import {
   useContext,
@@ -35,6 +40,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
 import type { DirectoryList, IndexSnapshot, SpawnRequest } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
@@ -110,14 +116,28 @@ export const DIRECTORY_TEXT = {
   narrow: 'Keep typing to narrow them.',
 } as const;
 
+/** What the dialog opens with (W107): a PR's directory, name and prompt, each one you can change. */
+export interface NewSessionPrefill {
+  /** Absolute: chosen in Directory, and added to its choices when no group has it, as a new clone. */
+  cwd: string;
+  name?: string;
+  prompt?: string;
+}
+
 export interface NewSessionDialogProps {
   /** For the roots and the groups' directories. */
   snapshot: Pick<IndexSnapshot, 'roots' | 'groups'>;
   onClose: () => void;
-  /** The server started a session. The dialog is done; the caller closes it. */
-  onStarted: (started: StartedSession) => void;
+  /** The server started a session, from `request`. The dialog is done; the caller closes it. */
+  onStarted: (started: StartedSession, request: SpawnRequest) => void;
   /** With two or more roots, the open root tab, whose directories alone it offers (W38). */
   tab?: string | undefined;
+  /** Opened for a pull request (W107): the fields it starts with. */
+  prefill?: NewSessionPrefill | undefined;
+  /** In place of the subtitle, as one that names the pull request. */
+  subtitle?: ReactNode;
+  /** At the top of the body: what happened before it opened, such as a clone, and what to do next. */
+  notice?: ReactNode;
 }
 
 /**
@@ -161,16 +181,22 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
   return truncated ? `${count} Not every directory is listed.` : count;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
   const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), prompt: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
 
-  const choices = useMemo(() => directoryChoices(snapshot, tab), [snapshot, tab]);
+  // A prefilled directory no group has, as a new clone, goes first.
+  const prefilledCwd = prefill?.cwd;
+  const choices = useMemo(() => {
+    const listed = directoryChoices(snapshot, tab);
+    if (prefilledCwd === undefined || listed.some((choice) => choice.path === prefilledCwd)) return listed;
+    return [{ path: prefilledCwd, label: shortenHome(prefilledCwd) }, ...listed];
+  }, [snapshot, tab, prefilledCwd]);
   // The roots it offers directories under: the open tab's, or every one.
   const roots = tab === undefined ? snapshot.roots : [tab];
-  const [dirChoice, setDirChoice] = useState(() => choices[0]?.path ?? OTHER);
+  const [dirChoice, setDirChoice] = useState(() => prefilledCwd ?? choices[0]?.path ?? OTHER);
   const [customDir, setCustomDir] = useState('');
   // The option chosen from the list, while the field still shows it.
   const [accepted, setAccepted] = useState<{ label: string; path: string }>();
@@ -179,10 +205,10 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
   const combobox = useRef<HTMLInputElement>(null);
   // Set when a choice reveals the combobox, so focus moves into it once it's there.
   const revealing = useRef(false);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(prefill?.name ?? '');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(prefill?.prompt ?? '');
   const [busy, setBusy] = useState(false);
   // Problems show once a submit has been tried, then follow the typing.
   const [checked, setChecked] = useState(false);
@@ -328,8 +354,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     attachments: attachmentsProblem(attachments.pending, attachments.failed),
   };
   const shown: Partial<typeof problems> = checked ? problems : {};
-  // Something typed, or a file added: a click on the backdrop leaves the dialog open.
-  const dirty = customDir !== '' || name !== '' || customModel !== '' || prompt !== '' || attachments.items.length > 0;
+  // Something typed, or a file added: a click on the backdrop leaves the dialog open. A prefill isn't typing.
+  const dirty =
+    customDir !== '' || name !== (prefill?.name ?? '') || customModel !== '' || prompt !== (prefill?.prompt ?? '') || attachments.items.length > 0 || dirChoice !== (prefilledCwd ?? dirChoice);
   // Why Start session is off: a file uploading or failed. Busy says so itself, with its label.
   const startOff = busy ? undefined : problems.attachments;
 
@@ -366,7 +393,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
       case 'started':
         // Its files are the session's now: closing mustn't ask the server to remove them.
         attachments.started();
-        onStarted({ shortId: outcome.shortId, name: outcome.name });
+        onStarted({ shortId: outcome.shortId, name: outcome.name }, request);
         return;
       case 'refused':
         setFailure(outcome);
@@ -422,9 +449,11 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
     <Dialog
       title="New session"
       subtitle={
-        <>
-          Starts a background session with <code>claude --bg</code>, which you can open from the list.
-        </>
+        subtitle ?? (
+          <>
+            Starts a background session with <code>claude --bg</code>, which you can open from the list.
+          </>
+        )
       }
       onClose={onClose}
       busy={busy}
@@ -450,6 +479,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab }: NewSessi
         </>
       }
     >
+      {notice}
       <div className="field">
         <label className="field-label" htmlFor={ids.dir}>
           Directory

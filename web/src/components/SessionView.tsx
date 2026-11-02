@@ -48,12 +48,17 @@
 // such an entry opens that sub-agent's transcript there. The footer goes while the tab is open: there's
 // no message box for a sub-agent.
 //
+// The Pull requests tab (W106, SessionPrs.tsx), after Sub-agents, lists the open PRs the session owns,
+// with what the PR view says of each, then those it's strongly linked to that another session owns.
+// It shows once the session owns one or is strongly linked to one, and stays, as Sub-agents does. The
+// header's PR links (W95) name the ones it owns.
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import type { Editor, EditorId, SessionSummary } from '../../../src/shared/protocol.js';
+import type { Editor, EditorId, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import type { BackgroundTab } from '../backgroundTab.js';
@@ -70,15 +75,18 @@ import { replyInConversation } from '../relay.js';
 import { attachCommand, isNotNeeded, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
 import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
+import { turnMode, WORKING_POLL_MS, workingLineState } from '../working.js';
 import { Alert } from './Alert.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Button } from './Button.js';
 import { ConversationPanel, SubagentLinkContext, useConversation, type PageLoader, type SubagentRef } from './Conversation.js';
 import { CopyButton } from './CopyButton.js';
-import { COPY_RESUME_COMMAND, EndedFooter, RESUME_LABEL, useResume } from './EndedSession.js';
+import { COPY_RESUME_COMMAND, EndedFooter, isDormant, RESUME_LABEL, useResume } from './EndedSession.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
+import { SessionPrLinks } from './PrBadges.js';
+import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
@@ -131,6 +139,8 @@ export const BACKGROUND_NOTES = {
   running: 'To message it, type in its Terminal tab, which attaches to it.',
   /** Finished, or its process exited: attaching restarts it, and the terminal asks first. */
   notRunning: 'To message it, open its Terminal tab, which asks before restarting it.',
+  /** The same, with Resume in background beside it (W107). */
+  resumable: 'To message it, open its Terminal tab, which asks before restarting it, or resume it here in the background.',
 } as const;
 
 /**
@@ -224,8 +234,12 @@ function plainKey(event: KeyboardEvent): boolean {
   return !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement);
 }
 
-interface FrameProps {
+export interface FrameProps {
   layout: SessionViewLayout;
+  /** The region's id, which rows' aria-controls name: the session view's, or the PR view's (W95). */
+  id?: string;
+  /** Another class beside session-view, such as the PR view's. */
+  className?: string;
   /** In a root tab that isn't open: hidden, with no id, and Escape isn't its. */
   hidden?: boolean;
   /** Slide in, over the list: when it opens, not when it changes from one session to the next. */
@@ -240,7 +254,7 @@ interface FrameProps {
  * The view's region: a <section> named by its heading, which is a non-modal dialog when it overlays
  * the list. It slides in when it opens over the list, but not when the window then crosses 1,200 px.
  */
-function Frame({ layout, hidden = false, animate, titleId, onEscape, children }: FrameProps) {
+export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false, animate, titleId, onEscape, children }: FrameProps) {
   const [opening, setOpening] = useState(animate && layout === 'overlay');
   const onEscapeRef = useRef(onEscape);
   const hiddenRef = useRef(hidden);
@@ -260,9 +274,9 @@ function Frame({ layout, hidden = false, animate, titleId, onEscape, children }:
 
   return (
     <section
-      id={hidden ? undefined : SESSION_VIEW_ID}
+      id={hidden ? undefined : id}
       hidden={hidden}
-      className={['session-view', layout === 'column' ? 'in-column' : 'overlay', opening && 'opening'].filter(Boolean).join(' ')}
+      className={['session-view', className, layout === 'column' ? 'in-column' : 'overlay', opening && 'opening'].filter(Boolean).join(' ')}
       {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : {})}
       aria-labelledby={titleId}
       onAnimationEnd={(event) => {
@@ -274,21 +288,23 @@ function Frame({ layout, hidden = false, animate, titleId, onEscape, children }:
   );
 }
 
-interface TopProps {
+export interface TopProps {
   compact: boolean;
   onClose: () => void;
+  /** At 600 px and narrower, the button in Close's place: "Back to sessions", or "Back to pull requests" over the PR list (W95). */
+  backLabel?: string | undefined;
   children: ReactNode;
   /** Between the heading and Close: the actions menu. */
   end?: ReactNode;
 }
 
 /** Line 1: Back at compact widths, the heading, then whatever goes at the end and Close. */
-function Top({ compact, onClose, children, end }: TopProps) {
+export function Top({ compact, onClose, backLabel = 'Back to sessions', children, end }: TopProps) {
   return (
     <div className="session-view-top">
       {compact && (
         <Button variant="ghost" icon="back" className="session-view-back" onClick={onClose} aria-keyshortcuts="Escape">
-          Back to sessions
+          {backLabel}
         </Button>
       )}
       {children}
@@ -369,6 +385,14 @@ export interface SessionViewProps {
    * its Terminal tab in this page, the default, or never. Read each time the terminal attaches.
    */
   terminalFocus?: TerminalFocus | undefined;
+  /** At 600 px and narrower, the button in Close's place: "Back to pull requests" while the PR list is under the view (W95). */
+  backLabel?: string | undefined;
+  /**
+   * The open pull requests the session owns (W106, work.ts), most urgent first, a line of the header
+   * while it has any (W95); those it's strongly linked to that another session owns; and a way to open
+   * one's view. The Pull requests tab lists both.
+   */
+  prs?: { owned: readonly PullRequestSummary[]; linked: readonly LinkedPr[]; onOpen: (pr: PullRequestSummary) => void } | undefined;
   /**
    * The newest poll's time, a snapshot's or a heartbeat's generatedAt: while its Sub-agents tab is open
    * and any of them run, the tab asks for the list again at this pace (W77). Left out, as in the
@@ -377,7 +401,7 @@ export interface SessionViewProps {
   polledAt?: string | undefined;
 }
 
-type Tab = 'conversation' | 'terminal' | 'subagents';
+type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
 
 /** A copy from the actions menu that the clipboard refused: the text isn't on screen, so the header shows it. */
 type Refused = { label: string; text: string };
@@ -404,6 +428,8 @@ export function SessionView({
   openedBy,
   terminalFocus = DEFAULT_TERMINAL_FOCUS,
   polledAt,
+  backLabel,
+  prs,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -415,6 +441,8 @@ export function SessionView({
     terminalPanel: useId(),
     subagentsTab: useId(),
     subagentsPanel: useId(),
+    prsTab: useId(),
+    prsPanel: useId(),
     typeHint: useId(),
   };
   const ownHeading = useRef<HTMLHeadingElement>(null);
@@ -424,6 +452,7 @@ export function SessionView({
   const conversationTab = useRef<HTMLButtonElement>(null);
   const terminalTab = useRef<HTMLButtonElement>(null);
   const subagentsTab = useRef<HTMLButtonElement>(null);
+  const prsTab = useRef<HTMLButtonElement>(null);
   const pathRef = useRef<HTMLSpanElement>(null);
   const fallbackRef = useRef<HTMLElement>(null);
   const alive = useRef(true);
@@ -443,7 +472,6 @@ export function SessionView({
     () => (api ? (before) => getConversation(api, sessionId, before, requests.current?.signal) : undefined),
     [api, sessionId],
   );
-  const conversation = useConversation(session.lastActivityAt, loader);
   const signal = useCallback(() => requests.current?.signal, []);
   const subagents = useSubagents(api, sessionId, signal);
   const actions = useSessionActions(session, onClose);
@@ -458,6 +486,8 @@ export function SessionView({
 
   // An ended interactive session (W67): no process, so no Terminal tab and no message box.
   const ended = session.ended === true;
+  // Ended, or a background session that isn't running: Resume in background brings either back (W107).
+  const dormant = isDormant(session);
   // An interactive session, or a background one that can't be attached from here.
   const background = session.kind === 'background';
   const terminalOff = !background
@@ -481,6 +511,20 @@ export function SessionView({
   useLayoutEffect(() => {
     if (chosen === undefined && !hidden) setChosen(openingTab());
   });
+  // The newest page every 2 s too while Claude Code says the session works and its Conversation tab is
+  // shown (W102), until that page says the turn has ended: so the working line's step keeps up.
+  const claudeSaysWorking = turnMode(session, listed, undefined) === 'working';
+  const conversation = useConversation(session.lastActivityAt, loader, { pollMs: claudeSaysWorking && tab === 'conversation' && !hidden ? WORKING_POLL_MS : undefined });
+  // The working line at the end of the conversation, and what its status region says (W102).
+  const mode = turnMode(session, listed, conversation.state.turnEnded);
+  const canAttachHere = background && !terminalOff;
+  // From the newest page, the one waiting behind Jump to latest while there is one, which `turnEnded` is from too.
+  const newestPage = conversation.state.ahead ?? conversation.state;
+  const { entries: conversationEntries, before: earlierCursor } = newestPage;
+  const working = useMemo(
+    () => workingLineState(mode, session, canAttachHere, conversationEntries, earlierCursor !== undefined),
+    [mode, session, canAttachHere, conversationEntries, earlierCursor],
+  );
   // Opened by stepping: its first terminal waits, and takes no focus. Opening a tab yourself ends that.
   const [quiet, setQuiet] = useState(stepped);
   const [attachStatus, setAttachStatus] = useState<AttachStatus>();
@@ -555,6 +599,7 @@ export function SessionView({
       if (next === 'terminal') focusQuietly(terminalTab.current);
       // Safari doesn't give a clicked button focus, and the footer, which may have had it, goes with this tab.
       if (next === 'subagents') focusQuietly(subagentsTab.current);
+      if (next === 'prs') focusQuietly(prsTab.current);
     }
     // Switching to Conversation or Sub-agents unmounts the terminal, which detaches.
     if (next !== 'terminal') setAttachStatus(undefined);
@@ -619,13 +664,13 @@ export function SessionView({
   // seconds before the attach, and asked to resume, not to type. In a root tab that isn't open (W38),
   // this waits until that tab is.
   useLayoutEffect(() => {
-    if (ended || hidden || !takePressed()) return;
+    if (dormant || hidden || !takePressed()) return;
     if (openingTab() === 'terminal') {
       asked.current = undefined;
       setQuiet(false);
       setChosen('terminal');
     }
-  }, [ended, hidden]);
+  }, [dormant, hidden]);
 
   // The ended footer went with focus inside it, Resume in background's say, as the session was listed
   // as running or left the list: focus goes to the Terminal tab, the way in, or the heading where
@@ -653,7 +698,7 @@ export function SessionView({
   };
 
   // ← and → (and Home and End) move focus between the tabs; Enter or Space opens one, never focus alone (4: Tabs).
-  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => moveTabFocus(event, [conversationTab.current, terminalTab.current, subagentsTab.current]);
+  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => moveTabFocus(event, [conversationTab.current, terminalTab.current, subagentsTab.current, prsTab.current]);
 
   const onHeaderKey = (event: KeyboardEvent<HTMLElement>) => {
     if (!onStep || event.defaultPrevented || !plainKey(event)) return;
@@ -678,7 +723,7 @@ export function SessionView({
   // j, k, ↑ and ↓ wait for a resume's request too, so its result shows in the view it was asked from.
   const requesting = busy || resume.phase === 'running';
   const resumeCopy = ended ? resumeCommand(session) : undefined;
-  const canResume = ended && listed && !session.cwdMissing;
+  const canResume = dormant && listed && !session.cwdMissing;
   const onRunningRef = useRef(onRunningChange);
   onRunningRef.current = onRunningChange;
   useEffect(() => {
@@ -843,12 +888,21 @@ export function SessionView({
   }, [firstPage, subagentsOpen, ensureSubagents]);
   const subagentCount = subagentsCount(subagents.state);
 
+  // The Pull requests tab shows once the session owns an open PR or is strongly linked to one (W106). Then it stays, as Sub-agents does.
+  const ownedPrs = prs?.owned ?? [];
+  const linkedPrs = prs?.linked ?? [];
+  const hasPrs = ownedPrs.length > 0 || linkedPrs.length > 0;
+  const [prsRevealed, setPrsRevealed] = useState(false);
+  if (hasPrs && !prsRevealed) setPrsRevealed(true);
+  const prsShown = prs !== undefined && (prsRevealed || hasPrs);
+
   return (
     <Frame layout={layout} hidden={hidden} animate={animate} titleId={ids.title} onEscape={onEscape}>
       <header className="session-view-head" onKeyDown={onHeaderKey}>
         <Top
           compact={compact}
           onClose={onClose}
+          backLabel={backLabel}
           end={
             <>
               {star && <StarButton sessionId={sessionId} name={session.name} starred={star.starred} onStar={star.onStar} size="md" shortcut={SHORTCUT_KEYS.star} />}
@@ -945,6 +999,7 @@ export function SessionView({
             <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
           </p>
         )}
+        {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
         {refused && (
           <p className="session-view-copy-fallback">
             {refused.label}: <code ref={fallbackRef}>{plainText(refused.text)}</code>
@@ -1024,11 +1079,37 @@ export function SessionView({
             {subagentCount !== undefined && <span className="session-tab-count"> ({subagentCount})</span>}
           </button>
         )}
+        {/* Once the session owns an open PR or is strongly linked to one (W106). */}
+        {prsShown && (
+          <button
+            ref={prsTab}
+            type="button"
+            role="tab"
+            id={ids.prsTab}
+            className="session-tab"
+            aria-selected={tab === 'prs'}
+            aria-controls={ids.prsPanel}
+            tabIndex={tab === 'prs' ? 0 : -1}
+            onClick={() => openTab('prs')}
+            data-session-tab="prs"
+          >
+            <Icon name="repo" />
+            Pull requests
+            {hasPrs && <span className="session-tab-count"> ({sessionPrsCount(ownedPrs, linkedPrs)})</span>}
+          </button>
+        )}
       </div>
 
       <SubagentLinkContext.Provider value={subagentsShown ? openSubagent : undefined}>
         {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
-        <ConversationPanel conversation={conversation} id={ids.conversationPanel} labelledBy={ids.conversationTab} hidden={tab !== 'conversation' || hidden} />
+        <ConversationPanel
+          conversation={conversation}
+          id={ids.conversationPanel}
+          labelledBy={ids.conversationTab}
+          hidden={tab !== 'conversation' || hidden}
+          working={working}
+          workingReady={listed && conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
+        />
         {subagentsShown && (
           <SubagentsPanel
             api={api}
@@ -1046,6 +1127,10 @@ export function SessionView({
           />
         )}
       </SubagentLinkContext.Provider>
+
+      {prsShown && prs && (
+        <SessionPrsPanel owned={ownedPrs} linked={linkedPrs} onOpen={prs.onOpen} id={ids.prsPanel} labelledBy={ids.prsTab} hidden={tab !== 'prs' || hidden} />
+      )}
 
       {!ended && (
         <div
@@ -1100,7 +1185,11 @@ export function SessionView({
         // which it's about, and which then has the room; not once it's no longer listed, or where it
         // can't be attached, as the tab's tooltip says.
         <footer className="session-view-foot">
-          <p className="session-view-note">{session.alive ? BACKGROUND_NOTES.running : BACKGROUND_NOTES.notRunning}</p>
+          {canResume ? (
+            <EndedFooter session={session} resume={resume} onCopy={undefined} note={BACKGROUND_NOTES.resumable} onFocusLeaving={onFootFocusLeaving} />
+          ) : (
+            <p className="session-view-note">{session.alive ? BACKGROUND_NOTES.running : BACKGROUND_NOTES.notRunning}</p>
+          )}
         </footer>
       )}
     </Frame>

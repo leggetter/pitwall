@@ -28,9 +28,11 @@
 //
 // - On macOS, each editor's app bundle in /Applications, then ~/Applications, and only a real
 //   directory: lstat, so a symlink there is never followed. It opens with `/usr/bin/open -a <bundle>`.
-// - On Linux and the other Unixes, its command on PATH, in PATH's order: the first regular,
-//   executable file, resolved to an absolute path then. A PATH entry that isn't absolute, such as
-//   `.` or an empty one, is skipped, since it would be read against pitwall's own directory.
+// - On Linux and the other Unixes, its command on PATH as every child gets it (childSearchPath(),
+//   W98), in its order: the first regular, executable file, resolved to an absolute path then.
+//   That's PATH's absolute entries, with a leading `~` expanded to the home directory, so a `code`
+//   in `~/.local/bin` is found, or /usr/bin:/bin when none is left. An entry that isn't absolute,
+//   such as `.` or an empty one, is skipped, since it would be read against pitwall's own directory.
 // - On Windows, none: `code` and `cursor` there are `.cmd` scripts, which need a shell to run.
 // - It gives up after 2 seconds, as on a PATH entry on a network mount that hangs, with what it found.
 //
@@ -46,7 +48,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { RunError, runFile as defaultRunFile, type RunFile } from '../index/exec.js';
+import { childSearchPath, RunError, runFile as defaultRunFile, type RunFile } from '../index/exec.js';
 import type { Indexer } from '../index/index.js';
 import { EDITORS_PATH, openInEditorPath, type ActionResult, type Editor, type EditorId, type EditorList } from '../shared/protocol.js';
 import { checkDirectory, CommandSlots, LOOKUP_ERRORS, RateWindow } from './actions.js';
@@ -104,7 +106,7 @@ const nodeFs: DetectionFs = { lstat: fsLstat, stat: fsStat, access: fsAccess };
 export interface EditorDetection {
   /** Default process.platform. */
   platform?: NodeJS.Platform;
-  /** For ~/Applications on macOS. Default os.homedir(). */
+  /** For ~/Applications on macOS, and what a `~` in PATH stands for elsewhere. Default os.homedir(). */
   home?: string;
   /** PATH, elsewhere. Default process.env.PATH, read once, as detection starts. */
   path?: string | undefined;
@@ -120,6 +122,8 @@ export async function detectEditors(options: EditorDetection = {}): Promise<Foun
   const fs = options.fs ?? nodeFs;
   const home = options.home ?? os.homedir();
   const searchPath = 'path' in options ? options.path : process.env.PATH;
+  // Where a child would look, `~` as this home directory. With no PATH at all, nowhere.
+  const dirs = searchPath === undefined ? [] : childSearchPath(searchPath, home).split(':');
   const found: FoundEditor[] = [];
   const look = async () => {
     for (const editor of KNOWN_EDITORS) {
@@ -128,7 +132,7 @@ export async function detectEditors(options: EditorDetection = {}): Promise<Foun
         const bundle = await findBundle(editor.bundle, home, fs);
         if (bundle !== undefined) found.push({ id, label, file: MAC_OPEN, args: ['-a', bundle] });
       } else {
-        const command = await findCommand(editor.command, searchPath, fs);
+        const command = await findCommand(editor.command, dirs, fs);
         if (command !== undefined) found.push({ id, label, file: command, args: [] });
       }
     }
@@ -161,9 +165,9 @@ async function findBundle(bundle: string, home: string, fs: DetectionFs): Promis
   return undefined;
 }
 
-/** The first regular, executable `command` in an absolute PATH entry, as an absolute path. */
-async function findCommand(command: string, searchPath: string | undefined, fs: DetectionFs): Promise<string | undefined> {
-  for (const dir of (searchPath ?? '').split(':')) {
+/** The first regular, executable `command` in one of `dirs` that's absolute, as an absolute path. */
+async function findCommand(command: string, dirs: readonly string[], fs: DetectionFs): Promise<string | undefined> {
+  for (const dir of dirs) {
     if (!path.posix.isAbsolute(dir)) continue;
     const candidate = path.posix.join(dir, command);
     try {
